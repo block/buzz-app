@@ -56,7 +56,10 @@ async function harness(
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,
-    authority: async () => ({ relayAuthor: getPublicKey(key) }),
+    authority: async () => ({
+      relayAuthor: getPublicKey(key),
+      artifactSupport: true,
+    }),
     upstreamFetch: async (url, init) => {
       upstream.push(String(url));
       const filters = JSON.parse(init?.body ?? "[]");

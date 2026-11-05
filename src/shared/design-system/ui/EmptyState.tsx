@@ -25,9 +25,11 @@ export function EmptyState({
       className="buzz-empty-state"
     >
       <div className="buzz-empty-state-content">
-        <span className="buzz-empty-state-icon" aria-hidden="true">
-          {icon}
-        </span>
+        {icon != null && (
+          <span className="buzz-empty-state-icon" aria-hidden="true">
+            {icon}
+          </span>
+        )}
         <div className="buzz-empty-state-copy">
           <Heading className="buzz-empty-state-title">{title}</Heading>
           {description != null && (

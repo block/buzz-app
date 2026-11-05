@@ -53,7 +53,8 @@ import tabStyles from "./ChannelTabs.module.css";
 export const historyPanel = (entry: PanelOpening) =>
   !entry.channelContext &&
   (entry.panel.key === "buzz.profiles/profile" ||
-    entry.panel.key === "buzz.github/object");
+    entry.panel.key === "buzz.github/object" ||
+    entry.panel.key === "buzz.relay-notes/note");
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
@@ -323,6 +324,8 @@ export function useConversationTabs({
     canOpen: (target: string) => !!panels.resolve(target),
     open: (target: string) => {
       if (!panelActive(entry)) return false;
+      if (parseBuzzLink(target)?.format === "note" && openLink(target))
+        return true;
       const next = panels.resolve(target);
       if (!next) return false;
       const existing = entryList.current.find(
@@ -343,6 +346,8 @@ export function useConversationTabs({
     },
     push: (target: string) => {
       if (!panelActive(entry)) return false;
+      if (parseBuzzLink(target)?.format === "note" && openLink(target))
+        return true;
       const next = panelOpening(panels, entry.channelId, target, entry.rootId);
       if (!next) return false;
       open(next, true);

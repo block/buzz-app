@@ -39,6 +39,31 @@ describe("open target boundary", () => {
     ])
       expect(() => parseOpenTarget(invalid)).toThrow();
   });
+  it("binds a working-note pane and its history view to its originating conversation", () => {
+    const note = {
+      id: "11111111-1111-4111-8111-111111111111",
+      channel: "22222222-2222-4222-8222-222222222222",
+      dialog: "history",
+      offset: 100,
+      revision: "a".repeat(64),
+    };
+    expect(parseOpenTarget({ ...conversation, note })).toMatchObject({ note });
+    for (const invalid of [
+      { ...note, markdown: "draft" },
+      { ...note, channel: "general" },
+      { ...note, offset: -1 },
+      { ...note, dialog: "share" },
+    ])
+      expect(() =>
+        parseOpenTarget({ ...conversation, note: invalid }),
+      ).toThrow();
+    expect(() =>
+      parseOpenTarget({ ...conversation, note, panel: "members" }),
+    ).toThrow();
+    expect(() =>
+      parseOpenTarget({ ...conversation, note, detail: { target: "profile" } }),
+    ).toThrow();
+  });
   it("canonicalizes and freezes a detached, bounded identity-scoped target", () => {
     const input = {
       ...conversation,

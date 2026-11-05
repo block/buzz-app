@@ -129,6 +129,10 @@
   .buzz-textarea[data-variant="code"] {
     @apply text-mono;
   }
+  .buzz-textarea[data-variant="code"][data-text-size="body"] {
+    @apply text-body;
+    font-family: var(--font-mono);
+  }
   .buzz-input::placeholder,
   .buzz-textarea::placeholder {
     color: var(--text-metadata);

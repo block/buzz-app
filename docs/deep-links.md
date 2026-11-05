@@ -25,6 +25,7 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://repo?owner=<64-hex key>&d=<identifier>[&tab=<section>]`
 - `buzz://pr?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
 - `buzz://issue?id=<64-hex event>&owner=<64-hex key>&d=<repository>`
+- `buzz://page?community=<https-origin>&channel=<uuid>&id=<uuid>`
 - `buzz://join?relay=<wss-url>&code=<code>[&policy_receipt=<receipt>]`
 - `buzz://connect?relay=<wss-url>`
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
@@ -79,7 +80,13 @@ another client decorated still opens; a duplicated known parameter is rejected a
 ambiguous. The `channel` forms carry everything in the path and ignore any query.
 The same forms work in message content.
 
-The navigation forms above do not carry a community, so each binds to the currently
+Legacy `buzz://note` document links remain accepted. Page links carry their canonical HTTPS community origin, channel UUID and
+stable document UUID. They open the registered Pages workspace through OS ingress;
+inside a same-community conversation they open its right-pane document tab.
+These links reject extra or repeated parameters. A document link never joins a
+community or grants access. See [Pages](connected-notes.md).
+
+The other navigation forms above do not carry a community, so each binds to the currently
 selected community and viewer, and fails `unavailable` when no community is
 selected or no identity is known. `buzz://join` is the separate invitation form.
 It holds through identity setup and opens the

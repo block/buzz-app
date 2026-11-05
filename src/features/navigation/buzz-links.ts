@@ -9,9 +9,12 @@ import {
   type GitPluginSource,
   type NavigationScope,
 } from "./targets";
+import { parseNoteUrl, type NoteAddress } from "../notes/model";
+import { notePageTarget } from "../notes/target";
 
 type BuzzLink =
   | { format: "plugin-install"; source: GitPluginSource }
+  | { format: "note"; address: NoteAddress; community: string }
   | { format: "removed" }
   | { format: "entity"; route: EntityRoute }
   | {
@@ -120,6 +123,13 @@ export function parseBuzzLink(href: string): BuzzLink | null {
     const entity = parseEntityLink(url);
     if (entity) return { format: "entity", route: entity };
     if (url.hostname === "plugin") return parsePluginLink(url, href);
+    const note = parseNoteUrl(href);
+    if (note)
+      return {
+        format: "note",
+        address: { id: note.id, channel: note.channel },
+        community: note.community,
+      };
     const channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
     const eventPattern = /^[a-f0-9]{64}$/i;
     // Query parameters outside a form's grammar are ignored, values and repeats
@@ -191,6 +201,11 @@ export function buzzLinkTarget(href: string, scope: NavigationScope) {
       kind: "settings",
       section: "plugins",
       pluginImport: link.source,
+    });
+  if (link.format === "note")
+    return notePageTarget(link.address, {
+      viewer: scope.viewer,
+      communityOrigin: link.community,
     });
   if (link.format === "entity") return entityTarget(link.route, scope);
   if (link.format === "removed")

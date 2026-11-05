@@ -208,6 +208,8 @@ import TablerPaperclipIcon from "@tabler/icons-react/dist/esm/icons/IconPapercli
 export const PaperclipIcon = defineIcon("tabler", TablerPaperclipIcon);
 import TablerFileTextIcon from "@tabler/icons-react/dist/esm/icons/IconFileText.mjs";
 export const FileTextIcon = defineIcon("tabler", TablerFileTextIcon);
+import TablerFileIcon from "@tabler/icons-react/dist/esm/icons/IconFile.mjs";
+export const FileIcon = defineIcon("tabler", TablerFileIcon);
 import TablerFlagIcon from "@tabler/icons-react/dist/esm/icons/IconFlag.mjs";
 export const FlagIcon = defineIcon("tabler", TablerFlagIcon);
 import TablerFolderOpenIcon from "@tabler/icons-react/dist/esm/icons/IconFolderOpen.mjs";

@@ -17,6 +17,7 @@ import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
 import { historyPanel, useConversationTabs } from "./useConversationTabs";
+import { noteUrl, parseNoteUrl } from "../../features/notes/model";
 import tabStyles from "./ChannelTabs.module.css";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -701,7 +702,7 @@ function ChannelWorkspace({
       return;
     // Passive history retains Members; explicit dismissal retires its visit.
     // The guard above keeps cleanup from overwriting a routed handoff.
-    const { panel: _panel, ...target } = navigation.target;
+    const { panel: _panel, note: _note, ...target } = navigation.target;
     if (open) void navigator.open({ ...target, panel: "members" });
     else navigator.dismiss([navigation.entryId], target);
   };
@@ -987,10 +988,42 @@ function ChannelWorkspace({
   const returnFocus = useRef<
     { trigger: HTMLElement; channelId: string | undefined } | undefined
   >(undefined);
+  const navigateNote = useCallback(
+    (href: string) => {
+      const target = navigator?.snapshot().entry.target;
+      if (
+        !navigator ||
+        target?.kind !== "conversation" ||
+        target.channelId !== currentId
+      )
+        return false;
+      const note = parseNoteUrl(href);
+      if (!note || note.community !== target.scope.communityOrigin)
+        return false;
+      const { note: _note, panel: _panel, detail: _detail, ...base } = target;
+      tabState.leaveVisit();
+      void navigator.open(
+        { ...base, note: { id: note.id, channel: note.channel } },
+        { focus: "preserve" },
+      );
+      return true;
+    },
+    [navigator, currentId, tabState.leaveVisit],
+  );
   const visitPanel = useCallback(
     (entry: PanelOpening) => {
       const target = navigator?.snapshot().entry.target;
       if (!navigator || target?.kind !== "conversation") return;
+      const note = parseNoteUrl(entry.target);
+      if (note) {
+        if (
+          target.channelId !== entry.channelId ||
+          target.note?.id !== note.id ||
+          target.note.channel !== note.channel
+        )
+          navigateNote(entry.target);
+        return;
+      }
       if (
         target.channelId === entry.channelId &&
         target.detail?.target === entry.target &&
@@ -1009,7 +1042,7 @@ function ChannelWorkspace({
         },
       });
     },
-    [navigator, tabState.leaveVisit],
+    [navigator, tabState.leaveVisit, navigateNote],
   );
   // Closing selects locally first. Retire the closed content while preserving
   // its surviving neighbour, including a panel beside a main-pane thread.
@@ -1024,6 +1057,7 @@ function ChannelWorkspace({
     const detail = entries.find(
       (entry) => panelTabId(entry) === selected && historyPanel(entry),
     );
+    const note = detail && parseNoteUrl(detail.target);
     const thread =
       tabState.tabs.find((tab) => tab.id === selected) ??
       (pane === "side"
@@ -1038,19 +1072,21 @@ function ChannelWorkspace({
         (thread?.kind === "thread" ? thread.channelId : undefined) ??
         currentId ??
         target.channelId,
-      ...(detail
-        ? {
-            detail: {
-              target: detail.target,
-              ...(detail.rootId ? { rootId: detail.rootId } : {}),
-            },
-          }
-        : thread?.kind === "thread"
+      ...(note
+        ? { note: { id: note.id, channel: note.channel } }
+        : detail
           ? {
-              messageId: thread.messageId,
-              threadRootId: rootOfTab(thread),
+              detail: {
+                target: detail.target,
+                ...(detail.rootId ? { rootId: detail.rootId } : {}),
+              },
             }
-          : {}),
+          : thread?.kind === "thread"
+            ? {
+                messageId: thread.messageId,
+                threadRootId: rootOfTab(thread),
+              }
+            : {}),
     };
   };
   const keptTabReturn = useRef<{
@@ -1317,6 +1353,10 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
+  const routedNote =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.note
+      : undefined;
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1328,7 +1368,15 @@ function ChannelWorkspace({
     if (routedThread || !requestedMessage || exact?.inTimeline) {
       const detail =
         navigation.target.kind === "conversation"
-          ? navigation.target.detail
+          ? (navigation.target.detail ??
+            (routedNote
+              ? {
+                  target: noteUrl(
+                    routedNote,
+                    navigation.target.scope.communityOrigin,
+                  ),
+                }
+              : undefined))
           : undefined;
       const kept = keptTabReturn.current;
       const retained =
@@ -1351,7 +1399,7 @@ function ChannelWorkspace({
           detail.target,
           detail.rootId,
         );
-        if (entry && historyPanel(entry)) open(entry);
+        if (entry && historyPanel(entry)) open(entry, !!routedNote);
         else navigation.complete({ status: "failed", reason: "unavailable" });
       }
       if (kept && navigation.entryId !== kept.from) {
@@ -1425,6 +1473,7 @@ function ChannelWorkspace({
     currentId,
     panels,
     panelTrigger,
+    routedNote,
   ]);
   // Menu panels belong to one visit. Retire only this visit's keyed entries.
   useEffect(() => {
@@ -1645,7 +1694,12 @@ function ChannelWorkspace({
         tabState.select(id);
         return true;
       }
-      if (isBuzzLink(url) && navigator && viewer) {
+      const notePanel =
+        parsed?.format === "note" &&
+        parsed.community === scope.slice(0, -((viewer?.length ?? 0) + 1)) &&
+        !!panels.resolve(url);
+      if (notePanel && navigateNote(url)) return true;
+      if (isBuzzLink(url) && navigator && viewer && !notePanel) {
         const target = buzzLinkTarget(url, {
           viewer,
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
@@ -1683,6 +1737,7 @@ function ChannelWorkspace({
       return false;
     },
     [
+      navigateNote,
       panels,
       open,
       relay,

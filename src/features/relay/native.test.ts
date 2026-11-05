@@ -230,7 +230,21 @@ it("reads back expired delivery with strong consistency without re-signing or pu
     vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
   ).toBe(false);
 });
+it.each([
+  {},
+  { supported_extensions: ["nip-cl"] },
+  { supported_extensions: "nip-ar" },
+])(
+  "does not offer artifact writes without NIP-AR advertisement: %o",
+  async (extensions) => {
+    discovery = extensions;
+    expect(
+      (await connectNativeTransport(community)).configArtifacts,
+    ).toBeUndefined();
+  },
+);
 it("publishes config artifacts straight to the relay, re-sending identical bytes and keeping typed refusals", async () => {
+  discovery = { supported_extensions: ["nip-ar"] };
   const transport = await connectNativeTransport(community);
   assert.exists(transport.configArtifacts);
   expect(transport.configArtifacts.kinds).toEqual([45010]);

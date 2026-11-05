@@ -227,6 +227,14 @@ export function TextareaExamples() {
         <Field label="Required notes" error="Add a short description.">
           <Textarea rows={3} required />
         </Field>
+        <Field label="Document source">
+          <Textarea
+            variant="code"
+            textSize="body"
+            rows={4}
+            defaultValue="# A document"
+          />
+        </Field>
         <Field
           label="Configuration"
           description="The feature owns parsing and saving."

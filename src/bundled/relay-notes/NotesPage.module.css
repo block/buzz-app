@@ -1,24 +1,3 @@
-.split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-}
-.split[data-side] {
-  grid-template-columns: minmax(0, 1fr) minmax(
-      20rem,
-      var(--secondary-panel-width, 28rem)
-    );
-}
-.main,
-.side {
-  min-width: 0;
-  min-height: 0;
-}
-.side {
-  position: relative;
-  border-inline-start: 1px solid var(--border-standard);
-}
 .page {
   display: flex;
   flex-direction: column;
@@ -35,11 +14,15 @@
   min-height: 0;
 }
 .body {
-  container: shared-notes-collection / inline-size;
   flex: 1;
 }
 .document {
   height: 100%;
+  padding-block-start: var(--space-8);
+  overflow-wrap: anywhere;
+}
+.document > * {
+  flex-shrink: 0;
 }
 .document > h2,
 .document > p,
@@ -53,88 +36,6 @@
 }
 .description > p {
   margin: 0;
-}
-.notes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-4);
-  padding: var(--space-1);
-}
-@container shared-notes-collection (min-width: 24rem) {
-  .notes {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@container shared-notes-collection (min-width: 42rem) {
-  .notes {
-    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
-  }
-}
-.noteItem {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.noteCard {
-  flex: 0 0 auto;
-  min-height: 0;
-  aspect-ratio: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-4);
-  min-width: 0;
-  padding: var(--space-5);
-  padding-block-end: 0;
-  overflow: hidden;
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-panel);
-  background: transparent;
-  color: var(--text-standard);
-  text-align: start;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-  transition: background-color var(--duration-state) var(--easing-state);
-}
-.noteHeading {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-.noteTitle {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.noteCard[aria-current] {
-  border-color: var(--border-prominent);
-}
-@media (hover: hover) and (pointer: fine) {
-  .noteCard:hover {
-    background: var(--affordance-subtle-hover);
-  }
-}
-.noteCard:active {
-  background: var(--affordance-subtle-pressed);
-}
-.summary {
-  flex: 1;
-  min-height: 0;
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    black calc(100% - var(--space-6)),
-    transparent
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    black calc(100% - var(--space-6)),
-    transparent
-  );
-  overflow: hidden;
-  white-space: pre-line;
 }
 .markdown {
   overflow-wrap: anywhere;
@@ -163,90 +64,47 @@
 .markdown ol {
   padding-inline-start: var(--space-6);
 }
-@media (max-width: 52rem) {
-  .split[data-side] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .split[data-side] > .main,
-  .side > [data-panel-resize] {
-    display: none;
-  }
-  .side {
-    border-inline-start: 0;
-  }
+.markdown ul {
+  list-style-type: disc;
+}
+.markdown ol {
+  list-style-type: decimal;
 }
 
-.folders {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 11rem), 1fr));
-  gap: var(--space-4);
-  min-width: 0;
-  padding: var(--space-1);
-}
-.folderCard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-width: 0;
-  min-height: 12rem;
-  padding: var(--space-6) var(--space-4);
-  border: 0;
-  border-radius: var(--radius-panel);
-  corner-shape: squircle;
-  background: var(--affordance-subtle);
-  color: var(--text-standard);
-  cursor: pointer;
-  transition: background-color var(--duration-state) var(--easing-state);
-}
-@media (hover: hover) and (pointer: fine) {
-  .folderCard:hover {
-    background: var(--affordance-subtle-hover);
-  }
-}
-.folderCard:active {
-  background: var(--affordance-subtle-pressed);
-}
-.folderName {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  text-align: center;
-}
-.folderAvatar {
-  width: 4rem;
-  height: 4rem;
-}
-.folderHeader {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.folderHeader h2 {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
 .byline {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-1);
 }
-.identifier {
-  max-width: 100%;
-  overflow-wrap: anywhere;
+.collection,
+.fullView,
+.noteView {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
-
-.noteItem > .byline {
-  padding-inline: var(--space-2);
-}
-
-.folderGroups {
+.fullView > section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
 }
-.folderGroups h2 {
-  margin: 0 0 var(--space-3);
+.noteView {
+  flex: 1;
+}
+.titleList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.titleList > li {
+  padding-block: var(--space-2);
+}
+
+/* Match the channel timeline's centered reading column. */
+.body > *,
+.document > * {
+  width: min(100%, 52rem);
+  margin-inline: auto;
 }

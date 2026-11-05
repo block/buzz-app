@@ -144,6 +144,20 @@ async function harness(
 const blob = "c".repeat(64);
 const filters = [{ kinds: [0], limit: 1 }];
 
+test.each([true, false])(
+  "offers the artifact writer only with relay NIP-AR support: %s",
+  async (artifactSupport) => {
+    const h = await harness(() => Response.json([]), { artifactSupport });
+    try {
+      const transport = await connectBrokerTransport(h.base);
+      expect(transport.configArtifacts !== undefined).toBe(artifactSupport);
+      expect(transport.writer.kinds.includes(45010)).toBe(artifactSupport);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 test.each([
   [202, { status: "aborted" }],
   [409, { error: { code: "must_archive" } }],

@@ -324,6 +324,52 @@ that agent in Buzz; they do not notify the external app through this connection.
   before allowing a fresh participation invitation; failed checks keep the original.
   If the original invitation was applied and the person was later removed, Retry
   clears the old row without re-adding them. Use **Add** in People to invite them again.
+- **Pages**, when the plugin is enabled, brings pages from you and agents into
+  one newest-first list of title links, with one search. Open a title to view
+  the page in a full-page view; **Back to pages** returns to the list and preserves
+  drafts. The list and page use the same centered reading width as channels.
+  **+ New page** sits below the page titles and opens a blank editor. Start with
+  a title or the body; an unnamed page saves as **Untitled page**. Blank visits
+  create nothing. New pages are private to you; **Share page** opens the same
+  member picker as Solo chats and team channels. Sharing a blank draft first
+  creates its page. The filter button inside search offers
+  **Show deleted pages**. Search and filters disable for an empty collection;
+  existing queries and active filters remain clearable. Deleted pages keep the
+  filter available.
+  People and agents author the same channel-backed pages, which retain
+  revisions. Agents can start with **page_help** for the link and read/edit/save
+  workflow. These plugin tools must be enabled on the device running the agent;
+  sharing a page does not install tools on another host.
+  Published NIP-23 notes and the separate plural `notes_*` tools do
+  not feed this page; existing published records are unchanged.
+  Existing pages open in **Editing** with the body focused when you have edit access, with the formatting bar
+  pinned at the bottom. The byline shows **Saved** with its timestamp, or **Saving…** while saving. Changes auto-save after a short typing pause, with a
+  maximum interval during continuous typing. **Page actions → Revision history → Disable auto-save**
+  remembers your choice for that page on this device. When disabled, **Save**
+  appears between the mode dropdown and Refresh when modified. Choose **Viewing**
+  to preview. Save failures keep your draft and offer **Retry save**; conflicting
+  revisions require comparison. Clicking the blank area below the body places the cursor at the end
+  while editing. **Link** accepts a URL or a loaded page;
+  linking grants no access. **Page actions → Markdown source** opens source
+  editing in a taller, larger-text field; **Formatted text** in that menu switches back.
+  **Page actions → Revision history** lists retained versions in a submenu. Select
+  one to preview it, then **Restore this version** to save it immediately as a new
+  latest revision, even with auto-save disabled. Pending edits require confirmation;
+  all saved history is kept. Deleted pages show their last saved contents; the
+  **Restore** button beside Refresh restores them in one click. The empty
+  collection includes its own **New page** button.
+  **Page actions → Linked pages** appears when loaded pages link to the current
+  page and lists those pages. **Share page** opens the same searchable
+  member picker used by channels. Owners and admins can add people or agents and
+  use each person's menu to choose **Viewing only**, **Participating**, or **Admin**
+  access. New pages start private. **General access → View only** lets everyone in
+  the community read the page and all retained revisions, after confirmation;
+  existing editors keep editing. Community-readable pages appear in Pages lists.
+  Choose **Private** to restrict reading to explicit members again. Membership changes
+  are explicit. Opening or reading a page never adds people or agents.
+  Pages are readable by the relay operator. In a conversation, Back/Forward can
+  revisit a page; closing its tab retires those visits. Collapsing the tab pane
+  only hides it.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose

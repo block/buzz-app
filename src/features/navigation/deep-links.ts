@@ -14,6 +14,7 @@ import {
   parseExternalAuthorization,
   type ExternalAuthorization,
 } from "../agents/external-connection";
+import { notePageTarget } from "../notes/target";
 
 export type DeepLinkStep =
   | Readonly<{ open: OpenTarget }>
@@ -73,6 +74,13 @@ export function deepLinkStep(
         }),
       };
     if (!client.viewer || !client.selected) return { fail: "unavailable" };
+    if (link.format === "note")
+      return {
+        open: notePageTarget(link.address, {
+          viewer: client.viewer,
+          communityOrigin: link.community,
+        }),
+      };
     if (link.format === "removed")
       return {
         open: {

@@ -380,6 +380,9 @@ export async function connectNativeTransport(
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
+  const artifactSupport =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("nip-ar");
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
@@ -530,21 +533,32 @@ export async function connectNativeTransport(
     // Artifact saves go straight to the relay, which accepts a replay of an
     // already-accepted revision, so they skip `writer`'s 15-minute retry
     // block below. Signing applies the artifact size bound.
-    configArtifacts: {
-      kinds: [ARTIFACT_KIND],
-      async sign(event, signal) {
-        if (event.kind !== ARTIFACT_KIND) throw new Error("Not an artifact");
-        const signed = await writer.sign(event, signal);
-        if (signed.kind !== ARTIFACT_KIND || signed.pubkey !== transport.viewer)
-          throw new Error("Invalid artifact signature");
-        return signed;
-      },
-      async publish(event, signal) {
-        if (event.kind !== ARTIFACT_KIND || event.pubkey !== transport.viewer)
-          throw new Error("Not this viewer's artifact");
-        return (await writer.publish(event, signal)) ?? "";
-      },
-    },
+    ...(artifactSupport
+      ? {
+          configArtifacts: {
+            kinds: [ARTIFACT_KIND],
+            async sign(event: EventTemplate, signal: AbortSignal) {
+              if (event.kind !== ARTIFACT_KIND)
+                throw new Error("Not an artifact");
+              const signed = await writer.sign(event, signal);
+              if (
+                signed.kind !== ARTIFACT_KIND ||
+                signed.pubkey !== transport.viewer
+              )
+                throw new Error("Invalid artifact signature");
+              return signed;
+            },
+            async publish(event: RelayEvent, signal: AbortSignal) {
+              if (
+                event.kind !== ARTIFACT_KIND ||
+                event.pubkey !== transport.viewer
+              )
+                throw new Error("Not this viewer's artifact");
+              return (await writer.publish(event, signal)) ?? "";
+            },
+          },
+        }
+      : {}),
     async openDirectMessage(pubkeys, signal) {
       signal.throwIfAborted();
       const id = await invoke<string>("relay_direct_message", {

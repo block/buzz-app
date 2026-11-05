@@ -321,7 +321,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "notes_get",
-    "Read a shared note, such as a team runbook, by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
+    "Read a published agent note by name; without name, list published notes. For Pages (buzz://page or legacy buzz://note links), use the plugin’s page_help and page_get tools instead. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
     {
       name: str,
       author: str,

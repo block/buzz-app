@@ -17,6 +17,14 @@ export type GitPluginSource = Readonly<{
   path?: string;
   commit?: string;
 }>;
+export type NoteDestination = Readonly<{
+  id: string;
+  channel: string;
+  edit?: boolean;
+  dialog?: "share" | "history" | "link" | "delete";
+  revision?: string;
+  offset?: number;
+}>;
 export type OpenTarget =
   | Readonly<{ version: 1; kind: "home" }>
   | Readonly<{
@@ -60,6 +68,8 @@ export type OpenTarget =
       panel?: "members";
       /** Read-only content selected beside this conversation; never an action. */
       detail?: Readonly<{ target: string; rootId?: string }>;
+      /** Working document displayed beside this conversation, never an access grant. */
+      note?: NoteDestination;
     }>;
 
 const MAX_BYTES = 8192;
@@ -72,6 +82,8 @@ const paramKey = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const gitCommit = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const MAX_PARAMS = 16;
 const MAX_PARAM_LENGTH = 1024;
+const uuid =
+  /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const invalid = () => new Error("Invalid or unsupported navigation target");
 function record(value: unknown): Record<string, unknown> {
   if (
@@ -326,9 +338,60 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "threadRootId",
           "panel",
           "detail",
+          "note",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
+        let note: NoteDestination | undefined;
+        if (value.note !== undefined) {
+          const raw = record(value.note);
+          fields(raw, [
+            "id",
+            "channel",
+            "edit",
+            "dialog",
+            "revision",
+            "offset",
+          ]);
+          if (
+            value.panel !== undefined ||
+            value.detail !== undefined ||
+            (raw.edit !== undefined && typeof raw.edit !== "boolean") ||
+            (raw.dialog !== undefined &&
+              (typeof raw.dialog !== "string" ||
+                !["share", "history", "link", "delete"].includes(raw.dialog)))
+          )
+            throw invalid();
+          if (
+            raw.revision !== undefined &&
+            (raw.dialog !== "history" ||
+              typeof raw.revision !== "string" ||
+              !hex.test(raw.revision))
+          )
+            throw invalid();
+          if (
+            raw.offset !== undefined &&
+            (raw.dialog !== "history" ||
+              !Number.isInteger(raw.offset) ||
+              Number(raw.offset) < 0 ||
+              Number(raw.offset) > 10000)
+          )
+            throw invalid();
+          note = Object.freeze({
+            id: text(raw.id, uuid),
+            channel: text(raw.channel, uuid),
+            ...(raw.edit !== undefined ? { edit: raw.edit as boolean } : {}),
+            ...(raw.dialog !== undefined
+              ? {
+                  dialog: raw.dialog as "share" | "history" | "link" | "delete",
+                }
+              : {}),
+            ...(raw.revision !== undefined
+              ? { revision: String(raw.revision).toLowerCase() }
+              : {}),
+            ...(raw.offset !== undefined ? { offset: Number(raw.offset) } : {}),
+          });
+        }
         if (
           value.panel !== undefined &&
           value.panel !== "members" &&
@@ -363,6 +426,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),
           ...(detail ? { detail } : {}),
+          ...(note ? { note } : {}),
         };
         break;
       }

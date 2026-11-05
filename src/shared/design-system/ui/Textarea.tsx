@@ -7,6 +7,7 @@ export function Textarea({
   variant = "text",
   surface = "inset",
   appearance = "field",
+  textSize = "default",
   id,
   name,
   value,
@@ -17,6 +18,8 @@ export function Textarea({
   ...props
 }: TextareaProps & {
   variant?: "text" | "code";
+  /** Document editing can use body sizing while retaining the code face. */
+  textSize?: "default" | "body";
   surface?: "inset" | "panel";
   /** A transparent, outlined field instead of the default inset fill. */
   appearance?: "field" | "outlined";
@@ -41,6 +44,7 @@ export function Textarea({
       data-buzz-ui=""
       className="buzz-textarea"
       data-variant={variant}
+      data-text-size={textSize}
       data-surface={surface}
       data-appearance={appearance}
     />

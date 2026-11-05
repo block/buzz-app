@@ -1058,6 +1058,8 @@ sides (16px at the default scale), with manual vertical resizing and a code vari
 Agent instructions intentionally use `appearance="outlined"`: one container-radius
 border over a transparent background, with no inset fill or nested SettingsGroup.
 Focus strengthens that same border. Preserve this choice in creation and profiles.
+Markdown document source uses `Textarea variant="code" textSize="body"` to retain the mono face at the shared body size. The feature owns available-height layout; ordinary code fields retain compact mono sizing.
+
 Use `surface="panel"` when a standalone textarea needs an opaque surface over a
 floating dialog; the default inset surface remains for fields on panels.
 In Chromium and WebKit, the native resize grip uses text-metadata and sits 4px

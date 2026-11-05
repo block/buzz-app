@@ -62,7 +62,11 @@ import { AuthorSettings } from "./AuthorSettings";
 import { GitHubHooks } from "./GitHubHooks";
 import { PullCard } from "./PullCard";
 import { announcedUrl, isAnnouncement } from "./relay-pull";
-import { startPublisher } from "./publisher";
+import {
+  createPublisherStatus,
+  nativeCardKey,
+  startPublisher,
+} from "./publisher";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { createPullSources } from "./relay-pulls";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -90,7 +94,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "a member"
     );
   };
-  ctx.effect(() => startPublisher(ctx.relay, gh));
+  const publisher = createPublisherStatus();
+  ctx.effect(() => startPublisher(ctx.relay, gh, publisher));
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);
@@ -150,7 +155,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     matches: () => false,
     channelMenu: { label: "GitHub repositories", eligible: canFollow },
     component: ({ channelContext }: PanelProps) => (
-      <GitHubHooks relay={ctx.relay} channelContext={channelContext} />
+      <GitHubHooks
+        relay={ctx.relay}
+        channelContext={channelContext}
+        publisher={gh && nativeCardKey ? publisher : undefined}
+      />
     ),
   });
   ctx.conversation.registerMessage({

@@ -1157,6 +1157,10 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
             serde_json::json!({"community":"invalid","relay":"","secret":""}),
         ),
         (
+            "relay_github_card_key",
+            serde_json::json!({"community":"invalid","hook":"h"}),
+        ),
+        (
             "relay_channel_publish",
             serde_json::json!({"community":"invalid","route":"channel-lifecycle","event":{}}),
         ),

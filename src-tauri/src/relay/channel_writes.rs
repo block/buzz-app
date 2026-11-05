@@ -255,6 +255,17 @@ mod tests {
             .await
             .is_err());
     }
+
+    #[tokio::test]
+    async fn github_card_keys_differ_by_community_and_hook() {
+        let host = IdentityHost::fixture();
+        let key = |community: &str, hook: &str| host.github_card_key(community.into(), hook.into());
+        let first = key("https://a.example", "hook").await.unwrap();
+        assert_eq!(first.len(), 64);
+        assert_eq!(key("https://a.example", "hook").await.unwrap(), first);
+        assert_ne!(key("https://b.example", "hook").await.unwrap(), first);
+        assert_ne!(key("https://a.example", "other").await.unwrap(), first);
+    }
 }
 
 #[tauri::command]
@@ -314,6 +325,23 @@ pub(crate) async fn relay_seal_hook_secret(
         return Err("Invalid webhook secret".into());
     }
     host.seal_hook_secret(relay, secret).await
+}
+
+/// The viewer's card key for one GitHub hook in a community; see `github_card_key`.
+#[tauri::command]
+pub(crate) async fn relay_github_card_key(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    hook: String,
+) -> Result<String> {
+    origin(&community)?;
+    if hook.is_empty()
+        || hook.len() > 64
+        || !hook.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err("Invalid hook".into());
+    }
+    host.github_card_key(community, hook).await
 }
 
 #[tauri::command]

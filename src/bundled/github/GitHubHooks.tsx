@@ -13,6 +13,7 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import type { PublisherStatus } from "./publisher";
 import {
   HOOK_EVENTS,
   HOOK_TYPE,
@@ -33,6 +34,7 @@ const tabIcon = <GithubLogoIcon size="1rem" />;
 
 type Setup = Readonly<{ url: string; repo: string; secret: string }>;
 type Mode = "device" | "relay";
+const noVersion = () => 0;
 
 type HookView = ReturnType<RelaySession["artifacts"]["sync"]>;
 const NONE = { status: "loading", events: [] } as const;
@@ -124,21 +126,27 @@ function Hooks({
   origin,
   channel,
   seal,
+  publisher,
 }: {
   session: RelaySession;
   origin: string;
   channel: string;
   seal: Seal | undefined;
+  publisher: PublisherStatus | undefined;
 }) {
   const { status, hooks } = useHooks(session, channel);
+  useSyncExternalStore(
+    publisher?.subscribe ?? noSubscribe,
+    publisher?.version ?? noVersion,
+  );
   const [repo, setRepo] = useState("");
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState("");
   const [setup, setSetup] = useState<Setup>();
-  const [mode, setMode] = useState<Mode>("device");
+  const [mode, setMode] = useState<Mode>(publisher ? "device" : "relay");
   const name = repositoryOf(repo);
   const viewer = session.viewer;
-  const able = mode === "device" ? !!viewer : !!seal;
+  const able = mode === "device" ? !!viewer && !!publisher : !!seal;
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
     setError("");
@@ -166,11 +174,12 @@ function Hooks({
             event.preventDefault();
             if (!name || !able || duplicate || busy) return;
             void run("follow", async () => {
-              if (mode === "device" || !seal) {
+              if (mode === "device") {
                 await followFromDevice(session, channel, name);
                 setRepo("");
                 return;
               }
+              if (!seal) return;
               const { d, secret } = await follow(
                 session,
                 origin,
@@ -213,7 +222,12 @@ function Hooks({
                 <Radio
                   value="device"
                   label="Publish from this device"
-                  description="Your Buzz reads the repository with gh and posts its pull requests as you, while it is open."
+                  disabled={!publisher}
+                  description={
+                    publisher
+                      ? "Your Buzz reads the repository with gh and posts its pull requests as you, while it is open."
+                      : "Needs the desktop app, which reads GitHub with your gh sign-in."
+                  }
                 />
                 <Radio
                   value="relay"
@@ -264,7 +278,8 @@ function Hooks({
               {...(hook.publisher && {
                 subtitle:
                   hook.publisher === viewer
-                    ? "Published from your Buzz. Cards update while it is open."
+                    ? (publisher?.get(channel, hook.d) ??
+                      "Published from your Buzz. Cards update while it is open.")
                     : "Published from a member's Buzz. Cards update while it is open.",
               })}
               trailing={
@@ -317,7 +332,12 @@ function Hooks({
 export function GitHubHooks({
   relay,
   channelContext,
-}: { relay: RelayData } & Pick<PanelProps, "channelContext">) {
+  publisher,
+}: {
+  relay: RelayData;
+  /** This device's publishing, where it can publish. */
+  publisher?: PublisherStatus | undefined;
+} & Pick<PanelProps, "channelContext">) {
   usePanelTabTitle("GitHub", tabIcon);
   const state = useSyncExternalStore(relay.subscribe, relay.snapshot);
   if (
@@ -338,6 +358,7 @@ export function GitHubHooks({
       origin={state.origin}
       channel={channelContext.channelId}
       seal={canSeal() ? sealHookSecret : undefined}
+      publisher={publisher}
     />
   );
 }

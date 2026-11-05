@@ -13,16 +13,18 @@ Preview GitHub repositories, pull requests, issues, and commits without leaving 
 4. Choose **Open on GitHub** to see the full page.
 5. To post a repository's pull requests in a channel, open the channel menu,
    choose **GitHub repositories** and follow the repository, choosing how:
-   - **Publish from this device**: your Buzz reads the repository with your
-     `gh` sign-in about once a minute and posts its pull requests as you. It
-     needs nothing on GitHub, but cards only update while your Buzz is open.
-     New cards start only for pull requests that change after you follow.
+   - **Publish from this device** (desktop app with `gh`): your Buzz reads the
+     repository with your `gh` sign-in about once a minute and posts its pull
+     requests as you. It needs nothing on GitHub, but cards only update while
+     your Buzz is open. New cards start only for pull requests that change
+     after you follow. Anything it can't keep shows under the repository.
    - **Relay webhook**: add the webhook it shows (payload URL, secret,
      `application/json`, and the pull request, review, check suite, check run
      and status events) in the repository's settings on GitHub. The secret is
      shown once; **Regenerate secret** makes a new one. GitHub must be able to
      reach the community, and following needs the desktop app.
-6. Pull requests a channel follows show as a card in the channel and their
-   links stay current, without `gh`. A card is trusted when the community
-   wrote it, or when the person a channel's hook names as its publisher did,
-   for that hook's repository; the community's own card wins.
+6. Pull requests a channel follows show as a card in the channel. A card the
+   community wrote also keeps the pull request's links current everywhere,
+   without `gh`. A card a publisher wrote shows only on that publisher's own
+   announcement, and only while the channel's hook still names them as its
+   publisher for that repository.

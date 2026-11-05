@@ -140,7 +140,7 @@ const CATALOG = [
 
 /** Applies the plugin to a stand-in context; setup steps run until killed. */
 function applied({
-  loggedIn = true,
+  keySaved = true,
   available = true,
   version = "2.1.292",
   latest = version,
@@ -155,7 +155,8 @@ function applied({
   remote?: boolean;
   /** The community's channels; no community connection without them. */
   channels?: readonly ChannelSummary[];
-  loggedIn?: boolean;
+  /** Whether an API key is saved; saving one in a test saves it. */
+  keySaved?: boolean;
   available?: boolean;
   version?: string;
   latest?: string;
@@ -164,6 +165,7 @@ function applied({
   catalog?: { listed: boolean; ready?: Promise<void>; models?: typeof CATALOG };
 } = {}) {
   let type: AgentType<Config> | undefined;
+  let saved = keySaved;
   const home = mkdtempSync(join(tmpdir(), "claude-tabs-"));
   homes.push(home);
   for (const [path, content] of Object.entries(files)) {
@@ -209,10 +211,10 @@ function applied({
     const streaming = args.includes("--input-format stream-json");
     let kill: () => void = () => undefined;
     const exited = new Promise<number | null>((resolve) => {
-      if (name === "install" || args === "auth login" || streaming)
-        kill = () => resolve(null);
+      if (name === "install" || streaming) kill = () => resolve(null);
       else setTimeout(() => resolve(missing ? 127 : 0), 0);
     });
+    if (name === "save-key") saved = true;
     queueMicrotask(() =>
       options.onStdout?.(
         missing
@@ -223,9 +225,13 @@ function applied({
               ? "Darwin arm64\n"
               : args === "--version"
                 ? `${version} (Claude Code)\n`
-                : args === "auth status --json"
-                  ? JSON.stringify({ loggedIn, email: "me@example.com" })
-                  : "",
+                : name === "key"
+                  ? saved
+                    ? "sk-ant-api03-saved\n"
+                    : ""
+                  : name === "save-key"
+                    ? "Saved the Anthropic API key.\n"
+                    : "",
       ),
     );
     return {
@@ -856,7 +862,9 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   const installedType = installed().type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
-  expect(await screen.findByText("Claude is signed in.")).toBeVisible();
+  expect(
+    await screen.findByText("Claude runs with your Anthropic API key."),
+  ).toBeVisible();
   expect(screen.queryByLabelText("Default model")).not.toBeInTheDocument();
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -950,49 +958,45 @@ it("preserves native behavior for invalid defaults and keeps explicit agent mode
   );
 });
 
-it("can cancel sign-in and try again", async () => {
-  const installedType = installed({ loggedIn: false }).type;
-  const Setup = providerSetup(installedType);
+it("asks for an API key and is ready once one is saved", async () => {
+  const { type, spawn } = installed({ keySaved: false });
+  const Setup = providerSetup(type);
   render(<Setup onClose={vi.fn()} />);
   const user = userEvent.setup();
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Claude 2.1.292 needs you to sign in.",
+      "Claude 2.1.292 needs an Anthropic API key.",
     ),
   );
-  expect(screen.queryByText("Connection")).not.toBeInTheDocument();
-  expect(installedType.provider?.snapshot()).toMatchObject({
+  expect(type.provider?.snapshot()).toMatchObject({
     readiness: "attention",
-    attentionLabel: "Log in to Claude Code",
+    attentionLabel: "Add Claude API key",
   });
-  const signIn = await screen.findByRole("button", { name: "Sign in" });
-  await user.click(signIn);
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Waiting for Claude Code sign-in…",
-    ),
-  );
-  expect(screen.getByLabelText("Sign-in code")).toHaveAccessibleDescription(
-    "If the browser shows a code to paste, enter it here.",
-  );
+  // The key goes in the dialog, not through a footer action.
   expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
-  const cancel = screen.getByRole("button", { name: "Cancel" });
-  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  expect(installedType.provider?.snapshot()).toHaveProperty("blocking", true);
-  await user.click(cancel);
-  const retry = await screen.findByRole("button", { name: "Sign in" });
-  expect(installedType.provider?.snapshot()).not.toHaveProperty("blocking");
-  expect(retry).toHaveFocus();
-  await user.click(retry);
-  expect(await screen.findByRole("button", { name: "Cancel" })).toBeVisible();
+  const field = screen.getByLabelText("Anthropic API key");
+  expect(field).toHaveAttribute("type", "password");
+  await user.type(field, "sk-ant-api03-pasted");
+  await user.click(screen.getByRole("button", { name: "Save key" }));
+  expect(
+    await screen.findByText("Claude runs with your Anthropic API key."),
+  ).toBeVisible();
+  expect(type.provider?.snapshot()).toEqual({ readiness: "ready" });
+  const save = spawn.mock.calls.find(
+    ([, options]) => options?.args?.[2] === "save-key",
+  );
+  expect(save?.[1]?.args?.slice(1)).toEqual(["claude.sh", "save-key"]);
+  expect(screen.getByRole("button", { name: "Done" })).toBeVisible();
 });
 
 it("replaces generic installation copy with the latest installer state", async () => {
   const installedType = installed({ available: false }).type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "Claude is not installed.",
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Claude is not installed.",
+    ),
   );
   await userEvent
     .setup()
@@ -1006,37 +1010,15 @@ it("replaces generic installation copy with the latest installer state", async (
   expect(screen.queryByLabelText("Setup output")).toBeNull();
 });
 
-it("starts viable provider recovery directly from its attention action", async () => {
-  const { type, spawn } = installed({ loggedIn: false });
-  const Setup = providerSetup(type);
-  render(<Setup onClose={vi.fn()} />);
+it("opens its dialog for a missing key rather than running a step", async () => {
+  const { type } = installed({ keySaved: false });
   await waitFor(() =>
     expect(type.provider?.snapshot()).toMatchObject({
       readiness: "attention",
-      attentionLabel: "Log in to Claude Code",
+      attentionLabel: "Add Claude API key",
     }),
   );
-  // Offered once the update check on load has finished.
-  await waitFor(() =>
-    expect(type.provider?.attentionAction).toBeTypeOf("function"),
-  );
-  const action = type.provider?.attentionAction;
-  act(() => action?.());
-  await waitFor(() =>
-    expect(spawn).toHaveBeenCalledWith(
-      "claude-sh",
-      expect.objectContaining({
-        args: [expect.any(String), "claude.sh", "run", "auth", "login"],
-      }),
-    ),
-  );
   expect(type.provider?.attentionAction).toBeUndefined();
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Waiting for Claude Code sign-in…",
-    ),
-  );
-  expect(type.provider?.snapshot()).toHaveProperty("blocking", true);
 });
 
 it("saves settings as one config", async () => {
@@ -1646,38 +1628,21 @@ it("shares one customization-free discovery across cards and workspace changes",
   expect(probes[0]?.[1]?.args).not.toContain("bypassPermissions");
 });
 
-it("does not open a competing Claude sign-in or let it cancel the owner", async () => {
-  const { type, spawn } = installed({ loggedIn: false });
+it("asks for the key where an agent is created, then offers its models", async () => {
+  const { type } = installed({ keySaved: false });
   const Model = type.CreateModel;
   if (!Model) throw new Error("Missing model field");
-  render(
-    [1, 2].map((id) => (
-      <Model
-        key={id}
-        config={DEFAULT_CONFIG}
-        disabled={false}
-        onChange={vi.fn()}
-      />
-    )),
+  render(<Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.type(
+    await screen.findByLabelText("Anthropic API key"),
+    "sk-ant-api03-pasted",
   );
-  await waitFor(() => {
-    const buttons = screen.getAllByRole("button", { name: "Sign in" });
-    expect(buttons).toHaveLength(2);
-    expect(buttons[0]).toBeEnabled();
-  });
-  const buttons = screen.getAllByRole("button", { name: "Sign in" });
-  if (!buttons[0] || !buttons[1]) throw new Error("Missing sign-in");
-  fireEvent.click(buttons[0]);
-  fireEvent.click(buttons[1]);
+  await user.click(screen.getByRole("button", { name: "Save key" }));
   expect(
-    spawn.mock.calls.filter(
-      ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
-    ),
-  ).toHaveLength(1);
-  expect(
-    screen.getAllByRole("dialog", { name: "Sign in to Claude" }),
-  ).toHaveLength(1);
-  expect(buttons[1]).toBeDisabled();
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
 });
 
 it("offers an update before discovering models on a pre-safe-mode Claude copy", async () => {
@@ -1721,12 +1686,11 @@ it("separates identity fields from runtime settings without changing the stored 
 });
 
 it.each([
-  { available: true, action: "Sign in", title: "Sign in to Claude" },
   { available: false, action: "Install Claude", title: "Set up Claude" },
 ])(
   "keeps failed Claude $action output in its open dialog",
   async ({ available, action, title }) => {
-    const { type, spawn } = installed({ loggedIn: false, available });
+    const { type, spawn } = installed({ keySaved: false, available });
     const Model = type.CreateModel;
     if (!Model) throw new Error("Missing model field");
     render(
@@ -1737,10 +1701,7 @@ it.each([
     const original = spawn.getMockImplementation();
     if (!original) throw new Error("Missing spawn implementation");
     spawn.mockImplementation(async (id, options = {}) => {
-      if (
-        options.args?.includes("install") ||
-        options.args?.slice(-2).join(" ") === "auth login"
-      )
+      if (options.args?.includes("install"))
         throw new Error("Setup could not start");
       return original(id, options);
     });
@@ -2001,32 +1962,6 @@ it("keeps same-channel recent threads visibly distinguishable", () => {
   );
 });
 
-it("focuses the code only when its compact sign-in disclosure is expanded", async () => {
-  const { type } = installed({ loggedIn: false });
-  const Model = type.CreateModel;
-  if (!Model) throw new Error("Missing model controls");
-  const user = userEvent.setup();
-  render(<Model config={DEFAULT_CONFIG} onChange={vi.fn()} disabled={false} />);
-  await user.click(await screen.findByRole("button", { name: "Sign in" }));
-  const dialog = await screen.findByRole("dialog", {
-    name: "Sign in to Claude",
-  });
-  await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
-  const expand = await screen.findByRole("button", { name: "Enter a code" });
-  expect(screen.queryByLabelText("Sign-in code")).toBeNull();
-  await user.click(expand);
-  const code = await screen.findByLabelText("Sign-in code");
-  await waitFor(() => expect(code).toHaveFocus());
-  await user.type(code, "retained-code");
-  await user.click(expand);
-  expect(screen.queryByLabelText("Sign-in code")).toBeNull();
-  await user.click(expand);
-  await waitFor(() =>
-    expect(screen.getByLabelText("Sign-in code")).toHaveFocus(),
-  );
-  expect(screen.getByLabelText("Sign-in code")).toHaveValue("retained-code");
-});
-
 it("clears unsupported saved effort when changing the creation model", async () => {
   const Model = installed().type.CreateModel;
   if (!Model) throw new Error("Missing model control");
@@ -2045,18 +1980,46 @@ it("clears unsupported saved effort when changing the creation model", async () 
   });
 });
 
-it("saves reviews' own sign-in through stdin, keeps its result, and cancels a save", async () => {
+it("replaces the key through stdin and keeps the result", async () => {
+  const { steps, field, save } = await heldKeySaves();
+  expect(field()).toHaveAttribute("type", "password");
+  expect(save()).toHaveAttribute("aria-disabled", "true");
+  const user = userEvent.setup();
+  const key = "sk-ant-api03-secret";
+  await user.type(field(), key);
+  await user.click(save());
+  await waitFor(() => expect(steps).toHaveLength(1));
+  const [first] = steps;
+  if (!first) throw new Error("Expected the save step");
+  expect(first.options.args?.slice(1)).toEqual(["claude.sh", "save-key"]);
+  expect(first.options.args?.join(" ")).not.toContain(key);
+  await waitFor(() => expect(first.stdin).toEqual([`${key}\n`]));
+  act(() => {
+    first.options.onStdout?.("Saved the Anthropic API key.\n");
+    first.exit(0);
+  });
+  expect(await screen.findByText("Saved the Anthropic API key.")).toBeVisible();
+  expect(field()).toHaveValue("");
+  expect(await screen.findByRole("button", { name: "Done" })).toBeVisible();
+
+  // A refused key's fixed line stays, with the pasted value kept to fix.
+  await user.type(field(), "not-a-key");
+  await user.click(save());
+  await waitFor(() => expect(steps).toHaveLength(2));
+  act(() => {
+    steps[1]?.options.onStderr?.("That is not an Anthropic API key.\n");
+    steps[1]?.exit(1);
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "That is not an Anthropic API key.",
+  );
+  expect(field()).toHaveValue("not-a-key");
+});
+
+// Holds each save-key step until the test ends it.
+async function heldKeySaves() {
   const { type, spawn } = installed();
   const Setup = providerSetup(type);
-  const onClose = vi.fn();
-  render(<Setup onClose={onClose} />);
-  expect(await screen.findByText("Claude is signed in.")).toBeVisible();
-  const field = () => screen.getByLabelText("Sign in for reviews");
-  expect(field()).toHaveAttribute("type", "password");
-  const save = () =>
-    screen.getByRole("button", { name: "Save review sign-in" });
-  expect(save()).toHaveAttribute("aria-disabled", "true");
-  // Each save's step is held until the test ends it.
   const steps: {
     options: HostProcessOptions;
     stdin: string[];
@@ -2066,7 +2029,7 @@ it("saves reviews' own sign-in through stdin, keeps its result, and cancels a sa
   const answer = spawn.getMockImplementation();
   if (!answer) throw new Error("Expected the host spawn");
   spawn.mockImplementation(async (id, options = {}) => {
-    if (options.args?.[2] !== "review-token") return answer(id, options);
+    if (options.args?.[2] !== "save-key") return answer(id, options);
     let exit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => {
       exit = resolve;
@@ -2083,94 +2046,22 @@ it("saves reviews' own sign-in through stdin, keeps its result, and cancels a sa
       exited,
     };
   });
-  const user = userEvent.setup();
-  const token = "sk-ant-oat01-secret";
-  await user.type(field(), token);
-  await user.click(save());
-  await waitFor(() => expect(steps).toHaveLength(1));
-  const [first] = steps;
-  if (!first) throw new Error("Expected the save step");
-  expect(first.options.args?.slice(1)).toEqual(["claude.sh", "review-token"]);
-  await waitFor(() => expect(first.stdin).toEqual([`${token}\n`]));
-  expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
-  act(() => {
-    first.options.onStdout?.(
-      "Saved the sign-in for Claude security reviews.\n",
-    );
-    first.exit(0);
-  });
-  expect(
-    await screen.findByText("Saved the sign-in for Claude security reviews."),
-  ).toBeVisible();
-  expect(field()).toHaveValue("");
-  expect(await screen.findByRole("button", { name: "Done" })).toBeVisible();
-
-  // A refused token's fixed line stays, with the pasted value kept to fix.
-  await user.type(field(), "not-a-token");
-  await user.click(save());
-  await waitFor(() => expect(steps).toHaveLength(2));
-  act(() => {
-    steps[1]?.options.onStderr?.("That is not a Claude token.\n");
-    steps[1]?.exit(1);
-  });
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "That is not a Claude token.",
-  );
-  expect(field()).toHaveValue("not-a-token");
-
-  // Cancel stops the save, not the dialog.
-  await user.click(save());
-  await waitFor(() => expect(steps).toHaveLength(3));
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(steps[2]?.killed).toBe(true));
-  expect(await screen.findByRole("button", { name: "Done" })).toBeVisible();
-  expect(onClose).not.toHaveBeenCalled();
-  expect(screen.queryByRole("alert")).toBeNull();
-});
-
-// Holds each review-token step until the test ends it.
-async function heldReviewSaves() {
-  const { type, spawn } = installed();
-  const Setup = providerSetup(type);
-  const steps: {
-    options: HostProcessOptions;
-    exit(code: number | null): void;
-    killed: boolean;
-  }[] = [];
-  const answer = spawn.getMockImplementation();
-  if (!answer) throw new Error("Expected the host spawn");
-  spawn.mockImplementation(async (id, options = {}) => {
-    if (options.args?.[2] !== "review-token") return answer(id, options);
-    let exit!: (code: number | null) => void;
-    const exited = new Promise<number | null>((resolve) => {
-      exit = resolve;
-    });
-    const step = { options, exit, killed: false };
-    steps.push(step);
-    return {
-      write: async () => undefined,
-      end: async () => undefined,
-      kill: async () => {
-        step.killed = true;
-        exit(null);
-      },
-      exited,
-    };
-  });
   const view = render(<Setup onClose={vi.fn()} />);
-  expect(await screen.findByText("Claude is signed in.")).toBeVisible();
+  expect(
+    await screen.findByText("Claude runs with your Anthropic API key."),
+  ).toBeVisible();
   return {
     view,
     steps,
-    field: () => screen.getByLabelText("Sign in for reviews"),
-    save: () => screen.getByRole("button", { name: "Save review sign-in" }),
+    field: () => screen.getByLabelText("Replace API key"),
+    save: () => screen.getByRole("button", { name: "Save key" }),
   };
 }
 
 it("keeps focus in the field through a save started there", async () => {
-  const { steps, field } = await heldReviewSaves();
+  const { steps, field } = await heldKeySaves();
   const user = userEvent.setup();
-  await user.type(field(), "not-a-token");
+  await user.type(field(), "not-a-key");
   await user.keyboard("{Enter}");
   await waitFor(() => expect(steps).toHaveLength(1));
   // Natively disabled, a browser would drop its focus; jsdom does not.
@@ -2180,33 +2071,29 @@ it("keeps focus in the field through a save started there", async () => {
   // A second Enter while saving starts nothing.
   await user.keyboard("{Enter}");
   act(() => {
-    steps[0]?.options.onStderr?.("That is not a Claude token.\n");
+    steps[0]?.options.onStderr?.("That is not an Anthropic API key.\n");
     steps[0]?.exit(1);
   });
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "That is not a Claude token.",
+    "That is not an Anthropic API key.",
   );
   expect(steps).toHaveLength(1);
   expect(document.activeElement).toBe(field());
 });
 
 it("keeps focus on Save after a keyboard save clears the field", async () => {
-  const { steps, field, save } = await heldReviewSaves();
+  const { steps, field, save } = await heldKeySaves();
   const user = userEvent.setup();
-  await user.type(field(), "sk-ant-oat01-secret");
+  await user.type(field(), "sk-ant-api03-secret");
   await user.tab();
   expect(document.activeElement).toBe(save());
   await user.keyboard("{Enter}");
   await waitFor(() => expect(steps).toHaveLength(1));
   act(() => {
-    steps[0]?.options.onStdout?.(
-      "Saved the sign-in for Claude security reviews.\n",
-    );
+    steps[0]?.options.onStdout?.("Saved the Anthropic API key.\n");
     steps[0]?.exit(0);
   });
-  expect(
-    await screen.findByText("Saved the sign-in for Claude security reviews."),
-  ).toBeVisible();
+  expect(await screen.findByText("Saved the Anthropic API key.")).toBeVisible();
   expect(field()).toHaveValue("");
   // Empty again, Save stays focusable: a browser drops a disabled one's focus.
   expect(save()).not.toBeDisabled();
@@ -2215,9 +2102,9 @@ it("keeps focus on Save after a keyboard save clears the field", async () => {
 });
 
 it("cancels a pending save when the dialog closes", async () => {
-  const { view, steps, field, save } = await heldReviewSaves();
+  const { view, steps, field, save } = await heldKeySaves();
   const user = userEvent.setup();
-  await user.type(field(), "sk-ant-oat01-secret");
+  await user.type(field(), "sk-ant-api03-secret");
   await user.click(save());
   await waitFor(() => expect(steps).toHaveLength(1));
   expect(steps[0]?.killed).toBe(false);

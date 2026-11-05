@@ -1437,6 +1437,47 @@ it("resumes an idle session at a newly saved effort", async () => {
   runtime.dispose();
 });
 
+it("resumes an idle session with new credentials", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (event: typeof root) => {
+    runtime.sync([
+      { key: self, pubkey: self, config: DEFAULT_CONFIG } as Agent,
+    ]);
+    return runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent,
+      config: DEFAULT_CONFIG,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+  };
+  await run(root);
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  runtime.restart();
+  await flush(10);
+  expect(first?.killed).toBe(true);
+  await run(reply);
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(second?.options.args).toContain("--resume");
+  runtime.dispose();
+});
+
 it("reads model ids and aliases as names", () => {
   expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
   expect(modelName("claude-sonnet-4-5-20250929")).toBe("Sonnet 4.5");

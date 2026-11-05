@@ -46,6 +46,7 @@ import {
   type SavedConversation,
   modelName as resolvedModelName,
 } from "./runtime";
+import { SignedIn, SignIn } from "./auth";
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
@@ -173,6 +174,8 @@ function ClaudeSignIn({
   const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
   const missing = state.status?.state === "missing";
   const outdated = state.status?.state === "outdated";
+  if (state.status?.state === "signed-out" && state.running !== "install")
+    return <SignIn setup={setup} disabled={disabled} variant="compact" />;
   return (
     <>
       <Button
@@ -182,15 +185,14 @@ function ClaudeSignIn({
         onClick={() => {
           if (setup.snapshot().running) return;
           setOpen(true);
-          void setup.run(missing || outdated ? "install" : "login");
+          if (missing || outdated) void setup.run("install");
         }}
       >
-        {missing ? "Install Claude" : outdated ? "Update Claude" : "Sign in"}
+        {missing ? "Install Claude" : outdated ? "Update Claude" : "Set up"}
       </Button>
       <Dialog
         open={open}
-        title={missing || outdated ? "Set up Claude" : "Sign in to Claude"}
-        description="Continue in your browser. If it gives you a code to paste, choose Enter a code below."
+        title="Set up Claude"
         onOpenChange={(next) => {
           setOpen(next);
           if (!next) void setup.cancel();
@@ -212,11 +214,13 @@ function ClaudeSetupPanel({
   variant?: "full" | "compact";
 }) {
   const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
-  const [code, setCode] = useState("");
   useEffect(() => {
     if (!setup.snapshot().status) void setup.check();
   }, [setup]);
   const status = state.status;
+  const signingIn =
+    state.running === "sign-in" ||
+    (status?.state === "signed-out" && !state.running);
   const line =
     !status || state.checking
       ? "Checking Claude…"
@@ -225,26 +229,26 @@ function ClaudeSetupPanel({
         : status.state === "outdated"
           ? `Claude ${status.version} is older than Buzz needs.`
           : status.state === "signed-out"
-            ? `Claude ${status.version} needs you to sign in.`
+            ? `Claude ${status.version} ${setup.auth.needs}.`
             : status.state === "ready"
               ? `Claude ${status.version} is ready${status.account ? ` (${status.account})` : ""}.`
               : status.message;
-  // One button per slot, so focus stays put as Install becomes Sign in and
-  // Cancel becomes Check again.
+  // One button per slot, so focus stays put as Install becomes Check again.
   const action =
     status?.state === "missing"
       ? ({ step: "install", label: "Install Claude" } as const)
       : status?.state === "outdated"
         ? ({ step: "install", label: "Update Claude" } as const)
-        : status?.state === "signed-out"
-          ? ({ step: "login", label: "Sign in" } as const)
-          : undefined;
+        : undefined;
   return (
     <section className="grid gap-2">
       {!(variant === "compact" && status?.state === "signed-out") && (
         <p role="status" className="m-0">
           {line}
         </p>
+      )}
+      {signingIn && (
+        <SignIn setup={setup} disabled={disabled} variant={variant} />
       )}
       <div className="flex flex-wrap gap-2">
         {action && (
@@ -260,27 +264,29 @@ function ClaudeSetupPanel({
             {action.label}
           </Button>
         )}
+        {/* A running sign-in has its own controls. */}
         {(variant !== "compact" ||
           status?.state !== "signed-out" ||
-          state.running) && (
-          <Button
-            variant="ghost"
-            disabled={!state.running && state.checking}
-            focusableWhenDisabled
-            onClick={() =>
-              void (state.running ? setup.cancel() : setup.check(true))
-            }
-          >
-            {state.running ? "Cancel" : "Check again"}
-          </Button>
-        )}
+          state.running) &&
+          state.running !== "sign-in" && (
+            <Button
+              variant="ghost"
+              disabled={!state.running && state.checking}
+              focusableWhenDisabled
+              onClick={() =>
+                void (state.running ? setup.cancel() : setup.check(true))
+              }
+            >
+              {state.running ? "Cancel" : "Check again"}
+            </Button>
+          )}
       </div>
       {status?.state === "missing" && (
         <p className="m-0 text-body-sm text-subtle">
           Downloads Buzz's own copy of Claude (about 250 MB) from
           downloads.claude.ai and keeps it on the latest release. It does not
           change the <code>claude</code> in your terminal, and uses the same
-          sign-in and settings.
+          settings.
         </p>
       )}
       {state.output && (
@@ -297,47 +303,6 @@ function ClaudeSetupPanel({
                 >
                   {state.output}
                 </pre>
-              ),
-            },
-          ]}
-        />
-      )}
-      {state.running === "login" && (
-        <Accordion
-          items={[
-            {
-              value: "code",
-              title: "Enter a code",
-              content: (
-                <div className="flex items-end gap-2">
-                  <Field
-                    label="Sign-in code"
-                    description="If the browser shows a code to paste, enter it here."
-                  >
-                    <Input
-                      autoFocus
-                      disabled={disabled}
-                      value={code}
-                      onValueChange={setCode}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" || !code.trim() || disabled)
-                          return;
-                        event.preventDefault();
-                        void setup.answer(code);
-                        setCode("");
-                      }}
-                    />
-                  </Field>
-                  <Button
-                    disabled={disabled || !code.trim()}
-                    onClick={() => {
-                      void setup.answer(code);
-                      setCode("");
-                    }}
-                  >
-                    Send
-                  </Button>
-                </div>
               ),
             },
           ]}
@@ -626,33 +591,11 @@ export function createTabs({
 
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
     const state = useSetupCatalog();
-    const [code, setCode] = useState("");
-    const [token, setToken] = useState("");
-    const [saving, setSaving] = useState<AbortController>();
-    // Kept until the dialog closes.
-    const [saved, setSaved] = useState<{ ok: boolean; text: string }>();
-    const saveToken = async () => {
-      const controller = new AbortController();
-      setSaving(controller);
-      setSaved(undefined);
-      try {
-        const text = await setup.saveReviewSignIn(
-          token.trim(),
-          controller.signal,
-        );
-        setToken("");
-        setSaved({ ok: true, text });
-      } catch (error) {
-        if (!controller.signal.aborted)
-          setSaved({ ok: false, text: message(error) });
-      } finally {
-        setSaving(undefined);
-      }
-    };
-    // Every dismissal cancels a save, as the footer Cancel does.
-    useEffect(() => () => saving?.abort(), [saving]);
     const status = state.status;
     const ready = status?.state === "ready" && !state.checking;
+    const signingIn =
+      state.running === "sign-in" ||
+      (status?.state === "signed-out" && !state.running);
     const line =
       !status || state.checking
         ? "Checking Claude…"
@@ -661,7 +604,7 @@ export function createTabs({
           : status.state === "outdated"
             ? `Claude ${status.version} is older than Buzz needs.`
             : status.state === "signed-out"
-              ? `Claude ${status.version} needs you to sign in.`
+              ? `Claude ${status.version} ${setup.auth.needs}.`
               : status.state === "error"
                 ? status.message
                 : undefined;
@@ -670,8 +613,8 @@ export function createTabs({
         ? ({ step: "install", label: "Install Claude" } as const)
         : status?.state === "outdated"
           ? ({ step: "install", label: "Update Claude" } as const)
-          : status?.state === "signed-out"
-            ? ({ step: "login", label: "Sign in" } as const)
+          : status?.state === "signed-out" && setup.auth.signIn
+            ? ({ step: "sign-in", label: "Sign in" } as const)
             : undefined;
     const latestOutputLine = state.output
       .replaceAll("\r", "\n")
@@ -695,7 +638,7 @@ export function createTabs({
               <strong>{line}</strong>
             </p>
           )}
-          {state.running ? (
+          {state.running === "install" && (
             <div className="flex flex-wrap items-center gap-2">
               <p
                 role="status"
@@ -706,18 +649,16 @@ export function createTabs({
                   aria-hidden="true"
                   className="motion-safe:animate-spin"
                 />
-                {state.running === "login"
-                  ? "Waiting for Claude Code sign-in…"
-                  : (latestOutputLine ?? "Installing Claude Code…")}
+                {latestOutputLine ?? "Installing Claude Code…"}
               </p>
             </div>
-          ) : null}
+          )}
           {status?.state === "missing" && !state.running && (
             <p className="m-0 text-body-sm text-subtle">
               Downloads Buzz's own copy of Claude (about 250 MB) from
               downloads.claude.ai and keeps it on the latest release. It does
               not change the <code>claude</code> in your terminal, and uses the
-              same sign-in and settings.
+              same settings.
             </p>
           )}
           {state.output && state.running !== "install" && (
@@ -729,28 +670,7 @@ export function createTabs({
               {state.output}
             </div>
           )}
-          {state.running === "login" && (
-            <form
-              className="grid gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void setup.answer(code);
-                setCode("");
-              }}
-            >
-              <Field
-                label="Sign-in code"
-                description="If the browser shows a code to paste, enter it here."
-              >
-                <div className="flex items-center gap-2">
-                  <Input value={code} onValueChange={setCode} />
-                  <Button type="submit" disabled={!code.trim()}>
-                    Send
-                  </Button>
-                </div>
-              </Field>
-            </form>
-          )}
+          {signingIn && <SignIn setup={setup} />}
           {status?.state === "error" && (
             <p className="m-0 text-body-sm text-subtle">
               Open Claude Code in a terminal for more details, then please try
@@ -758,72 +678,15 @@ export function createTabs({
             </p>
           )}
         </div>
-        {ready && (
-          <p className="m-0 text-body-sm text-subtle">Claude is signed in.</p>
-        )}
         {/* Kept through a routine check, so a paste or save goes on. */}
-        {status?.state === "ready" && (
-          <div className="grid gap-2" aria-busy={saving ? true : undefined}>
-            <Field
-              label="Sign in for reviews"
-              description={
-                <>
-                  Security reviews sign in apart from your agents. Run{" "}
-                  <code>claude setup-token</code> in Terminal, then paste the
-                  token it prints. It lasts a year.
-                </>
-              }
-            >
-              <Input
-                type="password"
-                autoComplete="off"
-                value={token}
-                readOnly={!!saving}
-                aria-disabled={saving ? true : undefined}
-                onValueChange={setToken}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" || event.nativeEvent.isComposing)
-                    return;
-                  event.preventDefault();
-                  if (token.trim() && !saving) void saveToken();
-                }}
-              />
-            </Field>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                disabled={!token.trim()}
-                focusableWhenDisabled
-                loading={!!saving}
-                onClick={saveToken}
-              >
-                Save review sign-in
-              </Button>
-              {saved && (
-                <p
-                  role={saved.ok ? "status" : "alert"}
-                  className={
-                    saved.ok
-                      ? "m-0 text-body-sm text-subtle"
-                      : "buzz-field-error m-0"
-                  }
-                >
-                  {saved.text}
-                </p>
-              )}
-            </div>
-          </div>
-        )}
+        {status?.state === "ready" && <SignedIn setup={setup} />}
         <ProviderDialogActions>
           <Button
             onClick={() =>
-              saving
-                ? saving.abort()
-                : state.running && !ready
-                  ? void setup.cancel()
-                  : onClose()
+              state.running && !ready ? void setup.cancel() : onClose()
             }
           >
-            {ready && !saving ? "Done" : "Cancel"}
+            {ready ? "Done" : "Cancel"}
           </Button>
           {!ready && action && !state.running && !state.checking && (
             <Button

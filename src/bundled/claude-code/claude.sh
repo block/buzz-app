@@ -6,8 +6,10 @@
 #   install VERSION PLATFORM SHA256  downloads a release, unless it is already
 #                                    downloaded, and checks it
 #   use VERSION                      makes a downloaded release the one in use
-#   review-token                     saves security reviews' sign-in from stdin
-#   review                           prints their folder, then that sign-in
+#   save-key                         saves the Anthropic API key from stdin
+#   key                              prints the saved API key
+#   review                           makes security reviews' folder and
+#                                    prints it
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
@@ -125,46 +127,51 @@ use)
       newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
   done
   ;;
-review-token)
-  # The token `claude setup-token` printed, read from stdin so it is never an
-  # argument, and never printed: only these fixed lines are.
-  [ -n "$review" ] || { echo "Claude security reviews need macOS" >&2; exit 2; }
-  token=""
-  IFS= read -r token || true
-  # Loosely, as its exact form is Claude's: one `sk-ant-` word.
+save-key)
+  # An Anthropic API key, read from stdin so it is never an argument, and
+  # never printed: only these fixed lines are.
+  key=""
+  IFS= read -r key || true
+  # Loosely, as its exact form is Anthropic's: one `sk-ant-` word.
   LC_ALL=C
-  case "$token" in
+  case "$key" in
   sk-ant-?*) ;;
-  *) token="" ;;
+  *) key="" ;;
   esac
-  case "$token" in "" | *[!A-Za-z0-9_-]*)
-    echo "That is not a Claude token. Paste what claude setup-token printed." >&2
+  case "$key" in "" | *[!A-Za-z0-9_-]*)
+    echo "That is not an Anthropic API key. Create one at console.anthropic.com and paste it here." >&2
     exit 1
     ;;
   esac
+  mkdir -p "$dir"
+  umask 077
+  # A new file only, then a rename over the old one, so no link is followed.
+  part="$dir/api-key.$$"
+  trap 'rm -f "$part"' EXIT
+  (set -C && printf '%s\n' "$key" >"$part")
+  if [ "$(uname)" = Darwin ]; then
+    mv -f -h "$part" "$dir/api-key"
+  else
+    mv -f -T "$part" "$dir/api-key"
+  fi
+  echo "Saved the Anthropic API key."
+  ;;
+key)
+  # Nothing until a key is saved, and never through a link.
+  if [ -f "$dir/api-key" ] && [ ! -h "$dir/api-key" ]; then
+    cat "$dir/api-key"
+  fi
+  ;;
+review)
+  # Reviews' own Claude folder, made on first use, which Buzz Security hides
+  # from contained agents.
+  [ -n "$review" ] || { echo "Claude security reviews need macOS" >&2; exit 2; }
   review_folder
   mkdir -p "${review%/*}"
   [ -d "$review" ] || mkdir -m 700 "$review"
   review_folder
   chmod 700 "$review"
-  umask 077
-  # A new file only, then a rename over the old one, so no link is followed.
-  part="$review/token.$$"
-  trap 'rm -f "$part"' EXIT
-  (set -C && printf '%s\n' "$token" >"$part")
-  mv -f -h "$part" "$review/token"
-  echo "Saved the sign-in for Claude security reviews."
-  ;;
-review)
-  # Nothing until a review folder exists; its folder alone until it holds a
-  # sign-in.
-  [ -n "$review" ] || { echo "Claude security reviews need macOS" >&2; exit 2; }
-  review_folder
-  [ -d "$review" ] || exit 0
   printf '%s\n' "$review"
-  if [ -f "$review/token" ] && [ ! -h "$review/token" ]; then
-    cat "$review/token"
-  fi
   ;;
 *)
   echo "Unknown command: $command" >&2

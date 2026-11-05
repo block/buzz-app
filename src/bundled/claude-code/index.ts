@@ -40,8 +40,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     complete: (model, prompt, signal) => setup.review(model, prompt, signal),
   });
   const providerDefaults = new ClaudeDefaults(agents.storage);
+  // No turn starts without credentials.
   const runtime = new ClaudeRuntime(
-    spawn ? { spawn } : {},
+    spawn ? { spawn: setup.auth.authorize(spawn, true) } : {},
     (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
     (key, signal) => agents.core(key, signal),
     agents.storage,
@@ -88,6 +89,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (spawn) {
     const unsubscribe = agents.subscribe(sync);
     const unsubscribeDefaults = providerDefaults.subscribe(sync);
+    const unsubscribeAuth = setup.auth.subscribe(() => runtime.restart());
     sync();
     const timer = setInterval(
       () => void setup.update(needed ?? false),
@@ -97,6 +99,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       clearInterval(timer);
       unsubscribe();
       unsubscribeDefaults();
+      unsubscribeAuth();
       runtime.dispose();
       setup.dispose();
     });
@@ -190,8 +193,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
         return state.status?.state === "missing" ||
           state.status?.state === "outdated"
           ? () => void setup.run("install")
-          : state.status?.state === "signed-out"
-            ? () => void setup.run("login")
+          : state.status?.state === "signed-out" && setup.auth.signIn
+            ? () => void setup.run("sign-in")
             : undefined;
       },
       DialogBody: ProviderDialogBody,

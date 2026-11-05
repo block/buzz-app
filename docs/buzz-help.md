@@ -723,10 +723,10 @@ available rather than silently discarding it.
   depend on the type. Do not assume a provider is configured or signed in.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
-  On macOS, Claude security reviews need their own sign-in: run
-  `claude setup-token` in Terminal and paste its token under **Sign in for
-  reviews** in Claude's **Edit configuration**. Until it is saved, Claude
-  reviews fail closed. It needs a Claude subscription and lasts a year.
+  Claude runs with an Anthropic API key pasted under **Anthropic API key**
+  there (or when creating a Claude agent); Buzz keeps it on this computer and
+  gives it to every Claude process, security reviews included. Until a key is
+  saved, Claude agents don't answer and Claude reviews fail closed.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key

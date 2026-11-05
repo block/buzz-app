@@ -80,6 +80,7 @@
     "allow-relay-kit-decode",
     "allow-relay-direct-message",
     "allow-relay-seal-hook-secret",
+    "allow-relay-github-card-key",
     "allow-relay-decode-sidebar",
     "allow-relay-sign-sidebar",
     "allow-relay-decode-reminders",

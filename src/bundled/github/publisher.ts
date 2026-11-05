@@ -3,15 +3,18 @@
 // keep the same `buzz.github.pull` cards, announcements and thread replies the
 // relay keeps for a webhook (block/buzz `api/github_hooks.rs`), signed by the
 // viewer. It runs only while this Buzz is open.
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   ARTIFACT_KIND,
   deliver,
   readHead,
+  type SnapshotRead,
 } from "../../features/agents/agent-config-artifacts";
 import { ARTIFACT_REVISION_KIND } from "../../features/relay/artifact-sync";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import type { RelayWriter } from "../../features/relay/transport";
 import type { GitHubCli } from "./gh";
 import { HOOK_TYPE, parseHook, type Hook } from "./hooks";
 import { PULL_TYPE } from "./relay-pull";
@@ -21,9 +24,15 @@ const MAX_BACKOFF_MS = 15 * 60_000;
 /** How soon to try a new announcement's root again: the card can name it only
  * once the relay holds the message. */
 const ROOT_RETRY_MS = 5_000;
-const ROOT_ATTEMPTS = 12;
-const MAX_CHANNELS = 256;
+export const ROOT_ATTEMPTS = 12;
+/** One `#h` value short of the relay's 256 values per filter, leaving room
+ * for `#type`. */
+const MAX_CHANNELS = 255;
 const TITLE_BYTES = 512;
+const HISTORY_PAGE = 100;
+const HISTORY_PAGES = 5;
+const DEVICE_KEY = "buzz.github.publisher.device";
+const PENDING_KEY = "buzz.github.publisher.pending";
 
 /** `buzz.github.pull` content v1, field for field as the relay writes it. */
 export type Pull = {
@@ -289,65 +298,52 @@ function reviewReplies(prev: Pull, next: Pull) {
   );
 }
 
-/** What the card holds now, as this device sees it. */
-export type Card = Readonly<{
-  pull?: Pull | undefined;
-  root?: string | undefined;
-  /** The viewer wrote the head; anyone else's head is put back. */
-  ours: boolean;
-}>;
-
-export type Step = Readonly<{
-  /** The card's next content, when it must be written. */
-  write?: Pull | undefined;
-  /** Post the announcement and root the card on it. */
-  announce: boolean;
-  replies: readonly string[];
-}>;
-
 export const serialize = (pull: Pull) => JSON.stringify(pull);
 
-/** What one pull request needs. A card starts only for an open pull request
- * that changed after the hook was made, so following a repository does not
- * post its backlog. */
-export function plan(
-  card: Card | undefined,
-  read: Read,
-  hookCreatedAt: number,
-): Step {
+/** Whether a pull request may start a card: open, and changed since the hook
+ * was made, so following a repository does not post its backlog. */
+export function isFresh(pull: Pull, hookCreatedAt: number) {
+  const updated = Date.parse(pull.updated_at) / 1000;
+  return (
+    (pull.state === "open" || pull.state === "draft") &&
+    Number.isFinite(updated) &&
+    updated > hookCreatedAt
+  );
+}
+
+/** Whether `read` changes `prev`, the card as this publisher last wrote it,
+ * and the thread replies the relay would post for that change. */
+export function changes(prev: Pull | undefined, read: Read) {
   const { pull, actors } = read;
-  if (!card) {
-    const updated = Date.parse(pull.updated_at) / 1000;
-    const fresh =
-      (pull.state === "open" || pull.state === "draft") &&
-      Number.isFinite(updated) &&
-      updated > hookCreatedAt;
-    return fresh
-      ? { write: pull, announce: true, replies: [] }
-      : { announce: false, replies: [] };
-  }
-  const prev = card.ours ? card.pull : undefined;
   const changed = !prev || serialize(prev) !== serialize(pull);
   const transition = prev && transitionReply(prev.state, pull.state, actors);
   return {
-    ...((changed || !card.ours) && { write: pull }),
-    announce: !card.root,
+    changed,
     replies:
-      prev && changed && card.root
+      prev && changed
         ? [...(transition ? [transition] : []), ...reviewReplies(prev, pull)]
         : [],
   };
 }
 
-/** The card's `d`: one per pull request per hook per channel, the same on
- * every device. A UUIDv8 of the first 16 bytes of the SHA-256. */
-export async function pullId(channel: string, hook: string, url: string) {
+const bytesOf = (hex: string) =>
+  Uint8Array.from(hex.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
+
+/** The card's `d`: a UUIDv8 of an HMAC under the hook's card key, which only
+ * the publisher's identity can derive, so no one else can claim it first. */
+export async function pullId(hookKey: string, channel: string, url: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    bytesOf(hookKey),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
   const digest = new Uint8Array(
-    await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(
-        `buzz-github-device-pull-v1\0${channel}\0${hook}\0${url}`,
-      ),
+    await crypto.subtle.sign(
+      "HMAC",
+      key,
+      new TextEncoder().encode(`${channel}\0${url}`),
     ),
   ).slice(0, 16);
   digest[6] = ((digest[6] ?? 0) & 0x0f) | 0x80;
@@ -372,15 +368,17 @@ function truncate(value: string, bytes: number) {
 const tag = (event: EventData, name: string) =>
   event.tags.find((entry) => entry[0] === name)?.[1];
 
-/** The card's tags, in the relay's order. */
+/** The card's tags, in the relay's order. `claim` marks an announcement this
+ * device is about to post, until the card is rooted on it. */
 export function cardTags(
   d: string,
   channel: string,
   hook: string,
   pull: Pull,
-  op: "create" | "update" | "restore",
+  op: "create" | "update",
   prev: string | undefined,
   root: string | undefined,
+  claim?: string,
 ) {
   return [
     ["ar", "1"],
@@ -394,14 +392,15 @@ export function cardTags(
     ["hook", hook],
     ["sha", pull.head_sha],
     ["state", pull.state],
+    ...(claim ? [["announcing", claim]] : []),
     ...(root ? [["root", root]] : []),
     ...(prev ? [["prev", prev]] : []),
   ];
 }
 
-function parsePull(content: string): Pull | undefined {
+function parsePull(event: EventData): Pull | undefined {
   try {
-    const body: unknown = JSON.parse(content);
+    const body: unknown = JSON.parse(event.content);
     return body && typeof body === "object" && (body as Pull).version === 1
       ? (body as Pull)
       : undefined;
@@ -410,21 +409,389 @@ function parsePull(content: string): Pull | undefined {
   }
 }
 
-class Conflict extends Error {}
+const reason = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
-type Target = Readonly<{ channel: string; hook: Hook }>;
+export type Target = Readonly<{ channel: string; hook: Hook }>;
+
+export type Deps = Readonly<{
+  viewer: string;
+  /** The community, as local storage keys name it. */
+  scope: string;
+  writer: RelayWriter;
+  read: SnapshotRead;
+  messages: Pick<RelaySession["messages"], "send" | "reply">;
+  storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  /** The hook's card key, hex. */
+  hookKey(hook: string): Promise<string>;
+}>;
+
+/** One round's result for a hook: whether to come back soon, and what to
+ * tell the person about it. */
+export type Outcome = Readonly<{ again: boolean; problems: string[] }>;
+
+/** The cards this identity publishes, kept as the relay keeps its own: from
+ * this publisher's latest revision of each, whatever anyone else wrote on top.
+ * NIP-AR lets any channel writer update any artifact, so another writer's head
+ * is only ever repaired, never believed. */
+export function createCards(deps: Deps) {
+  const { viewer, storage } = deps;
+  /** This device's latest accepted revision of each card, until sync has it. */
+  const written = new Map<string, EventData>();
+  const retired = new Map<string, string>();
+  const busy = new Set<string>();
+  const rootTries = new Map<string, number>();
+  const hookKeys = new Map<string, Promise<string>>();
+  let device = storage.getItem(DEVICE_KEY);
+  if (!device) {
+    device = crypto.randomUUID();
+    storage.setItem(DEVICE_KEY, device);
+  }
+  const claim = device;
+
+  const pendingKey = (key: string) =>
+    `${PENDING_KEY}:${deps.scope}:${key.replace("\0", ":")}`;
+  const pending = (key: string) => storage.getItem(pendingKey(key)) ?? "";
+
+  const hookKey = (hook: string) => {
+    let key = hookKeys.get(hook);
+    if (!key) {
+      key = deps.hookKey(hook);
+      hookKeys.set(hook, key);
+      key.catch(() => hookKeys.delete(hook));
+    }
+    return key;
+  };
+
+  /** The newer of what sync holds and what this device last wrote. Another
+   * writer's head wins a tie: a stale choice only costs a conflict. */
+  const latest = (key: string, synced: EventData | undefined) => {
+    const mine = written.get(key);
+    if (!mine) return synced;
+    if (!synced) return mine;
+    if (synced.id === mine.id) {
+      written.delete(key);
+      return synced;
+    }
+    const newer =
+      synced.pubkey === viewer
+        ? synced.created_at > mine.created_at
+        : synced.created_at >= mine.created_at;
+    return newer ? synced : mine;
+  };
+
+  /** This identity's latest revision of `d`, under whatever came after it. */
+  async function ownOf(
+    channel: string,
+    d: string,
+    key: string,
+    signal: AbortSignal,
+  ) {
+    for (let page = 0; page < HISTORY_PAGES; page++) {
+      const events = await deps.read(
+        [
+          {
+            kinds: [ARTIFACT_KIND],
+            "#h": [channel],
+            "#d": [d],
+            artifact: "history",
+            limit: HISTORY_PAGE,
+            offset: page * HISTORY_PAGE,
+          },
+        ],
+        { signal },
+      );
+      const own = events.find(
+        (event) => event.pubkey === viewer && tag(event, "d") === d,
+      );
+      if (own) return own;
+      if (events.length < HISTORY_PAGE) break;
+    }
+    return written.get(key);
+  }
+
+  async function write(
+    target: Target,
+    d: string,
+    key: string,
+    pull: Pull,
+    base: EventData | undefined,
+    root: string | undefined,
+    signal: AbortSignal,
+    claimed?: string,
+  ): Promise<"accepted" | "conflict"> {
+    const event = await deps.writer.sign(
+      {
+        kind: ARTIFACT_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        content: serialize(pull),
+        tags: cardTags(
+          d,
+          target.channel,
+          target.hook.d,
+          pull,
+          base ? "update" : "create",
+          base?.id,
+          root,
+          claimed,
+        ),
+      },
+      signal,
+    );
+    const delivery = await deliver(deps.writer, event, signal);
+    if (delivery.status === "accepted") {
+      written.set(key, event);
+      return "accepted";
+    }
+    if (delivery.status === "refused" && delivery.refusal === "conflict") {
+      written.delete(key);
+      return "conflict";
+    }
+    throw new Error(delivery.message);
+  }
+
+  type Result = "again" | string | undefined;
+  type Step = Readonly<{
+    target: Target;
+    d: string;
+    key: string;
+    read: Read;
+    signal: AbortSignal;
+  }>;
+  const label = (step: Step) => `#${step.read.pull.number}`;
+  const retire = (step: Step, problem: string) => {
+    retired.set(step.key, problem);
+    return problem;
+  };
+
+  /** `retry` is false after a conflict, which reads the head again. */
+  async function update(
+    step: Step,
+    hint: EventData | undefined,
+    retry: boolean,
+  ): Promise<Result> {
+    const { target, d, key, read, signal } = step;
+    const fresh = isFresh(read.pull, target.hook.createdAt);
+    let head = hint;
+    if (retry && !head && !fresh && !pending(key)) return undefined;
+    if (
+      !retry ||
+      !head ||
+      head.pubkey !== viewer ||
+      tag(head, "h") !== target.channel ||
+      tag(head, "op") === "delete"
+    )
+      head = await readHead(deps.read, target.channel, d, signal);
+    if (head && tag(head, "op") === "delete")
+      return retire(
+        step,
+        `${label(step)}'s card was deleted, so it is no longer kept.`,
+      );
+    if (!head) {
+      if (pending(key))
+        return retire(
+          step,
+          `${label(step)}'s card is gone from this channel, so it is no longer kept.`,
+        );
+      return fresh ? announce(step, undefined, undefined, retry) : undefined;
+    }
+    const own =
+      head.pubkey === viewer
+        ? head
+        : await ownOf(target.channel, d, key, signal);
+    if (!own)
+      return `${label(step)}'s card is in use by someone else, so it is not kept.`;
+    const root = tag(own, "root");
+    if (!root) return announce(step, head, own, retry);
+    if (pending(key)) storage.removeItem(pendingKey(key));
+    const prev = parsePull(own);
+    const { changed, replies } = changes(prev, read);
+    if (changed || head.id !== own.id) {
+      const result = await write(target, d, key, read.pull, head, root, signal);
+      if (result === "conflict")
+        return retry ? update(step, undefined, false) : undefined;
+    }
+    for (const text of replies) {
+      signal.throwIfAborted();
+      deps.messages.reply(target.channel, root, text);
+    }
+    return undefined;
+  }
+
+  /** Posts the card's announcement once: a card revision claims it first, so
+   * of any devices or polls racing, only the one whose claim lands posts, and
+   * the posted message's ID outlives a restart until the card is rooted. */
+  async function announce(
+    step: Step,
+    head: EventData | undefined,
+    own: EventData | undefined,
+    retry: boolean,
+  ): Promise<Result> {
+    const { target, d, key, read, signal } = step;
+    const posted = pending(key);
+    if (posted) return rootOn(step, head, posted, retry);
+    const holder = own && tag(own, "announcing");
+    if (holder && holder !== claim)
+      return `${label(step)}'s announcement is waiting on another device.`;
+    let base = head;
+    if (!holder) {
+      const result = await write(
+        target,
+        d,
+        key,
+        read.pull,
+        head,
+        undefined,
+        signal,
+        claim,
+      );
+      if (result === "conflict") {
+        if (!retry) return "again";
+        if (head) return update(step, undefined, false);
+        return (await readHead(deps.read, target.channel, d, signal))
+          ? update(step, undefined, false)
+          : retire(
+              step,
+              `${label(step)}'s card ID is taken by an artifact this channel doesn't hold, so it is not kept.`,
+            );
+      }
+      base = written.get(key);
+    }
+    signal.throwIfAborted();
+    const id = deps.messages.send(target.channel, announcement(read.pull));
+    storage.setItem(pendingKey(key), id);
+    return rootOn(step, base, id, true);
+  }
+
+  /** Roots the card on its posted announcement, which the relay accepts only
+   * once it holds the message. */
+  async function rootOn(
+    step: Step,
+    base: EventData | undefined,
+    id: string,
+    retry: boolean,
+  ): Promise<Result> {
+    const { target, d, key, read, signal } = step;
+    let result: "accepted" | "conflict" | Error;
+    try {
+      result = await write(target, d, key, read.pull, base, id, signal);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      result = error instanceof Error ? error : new Error(String(error));
+    }
+    if (result === "accepted") {
+      rootTries.delete(key);
+      return undefined;
+    }
+    if (result === "conflict")
+      return retry ? update(step, undefined, false) : "again";
+    const tries = (rootTries.get(key) ?? 0) + 1;
+    rootTries.set(key, tries);
+    return tries < ROOT_ATTEMPTS
+      ? "again"
+      : `${label(step)}'s announcement hasn't reached the channel yet.`;
+  }
+
+  /** Keeps one pull request's card. Each card is kept by one call at a time. */
+  async function keep(
+    target: Target,
+    read: Read,
+    synced: ReadonlyMap<string, EventData>,
+    signal: AbortSignal,
+  ): Promise<Result> {
+    const d = await pullId(
+      await hookKey(target.hook.d),
+      target.channel,
+      read.pull.url,
+    );
+    const key = `${target.channel}\0${d}`;
+    const problem = retired.get(key);
+    if (problem) return problem;
+    if (busy.has(key)) return undefined;
+    busy.add(key);
+    try {
+      return await update(
+        { target, d, key, read, signal },
+        latest(key, synced.get(key)),
+        true,
+      );
+    } finally {
+      busy.delete(key);
+    }
+  }
+
+  return {
+    /** Keeps every card `reads` names for `target`; one pull request's
+     * failure is only that pull request's. */
+    async round(
+      target: Target,
+      reads: readonly Read[],
+      synced: ReadonlyMap<string, EventData>,
+      signal: AbortSignal,
+    ): Promise<Outcome> {
+      let again = false;
+      const problems: string[] = [];
+      for (const read of reads) {
+        signal.throwIfAborted();
+        try {
+          const result = await keep(target, read, synced, signal);
+          if (result === "again") again = true;
+          else if (result) problems.push(result);
+        } catch (error) {
+          if (signal.aborted) throw error;
+          problems.push(`#${read.pull.number}: ${reason(error)}`);
+        }
+      }
+      return { again, problems };
+    },
+  };
+}
+
+/** What each hook this device publishes needs the person to know. */
+export type PublisherStatus = Readonly<{
+  get(channel: string, hook: string): string | undefined;
+  set(channel: string, hook: string, problem: string | undefined): void;
+  /** Changes whenever any hook's status does. */
+  version(): number;
+  subscribe(listener: () => void): () => void;
+}>;
+
+export function createPublisherStatus(): PublisherStatus {
+  const problems = new Map<string, string>();
+  const listeners = new Set<() => void>();
+  let version = 0;
+  return {
+    get: (channel, hook) => problems.get(`${channel}\0${hook}`),
+    set(channel, hook, problem) {
+      const key = `${channel}\0${hook}`;
+      if (problems.get(key) === problem) return;
+      if (problem) problems.set(key, problem);
+      else problems.delete(key);
+      version++;
+      for (const listener of [...listeners]) listener();
+    },
+    version: () => version,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+type View = ReturnType<RelaySession["artifacts"]["sync"]>;
 
 /** One session's publishing: its hooks, their cards, and a poll per hook. */
-function publish(session: RelaySession, gh: GitHubCli, viewer: string) {
+function publish(
+  session: RelaySession,
+  gh: GitHubCli,
+  deps: Deps,
+  status: PublisherStatus,
+) {
   const lifetime = new AbortController();
-  const writer = session.configArtifactWriter;
-  const read = session.snapshotRead;
-  type View = ReturnType<RelaySession["artifacts"]["sync"]>;
+  const cards = createCards(deps);
   let hookView: { key: string; view: View; stop(): void } | undefined;
   let cardView: { key: string; view: View; stop(): void } | undefined;
   const polls = new Map<string, { target: Target; stop(): void }>();
-  const written = new Map<string, EventData>();
-  const roots = new Map<string, { id: string; attempts: number }>();
 
   const open = (filter: object, listener: () => void) => {
     try {
@@ -448,158 +815,62 @@ function publish(session: RelaySession, gh: GitHubCli, viewer: string) {
     return map;
   };
 
-  async function sign(
-    target: Target,
-    d: string,
-    pull: Pull,
-    latest: EventData | undefined,
-    root: string | undefined,
-  ): Promise<EventData> {
-    if (!writer) throw new Error("This community can't hold cards.");
-    const op = !latest
-      ? "create"
-      : tag(latest, "op") === "delete"
-        ? "restore"
-        : "update";
-    const event = await writer.sign(
-      {
-        kind: ARTIFACT_KIND,
-        created_at: Math.floor(Date.now() / 1000),
-        content: serialize(pull),
-        tags: cardTags(
-          d,
-          target.channel,
-          target.hook.d,
-          pull,
-          op,
-          latest?.id,
-          root ?? (latest && tag(latest, "root")),
-        ),
-      },
-      lifetime.signal,
-    );
-    const delivery = await deliver(writer, event, lifetime.signal);
-    if (delivery.status === "accepted") {
-      written.set(`${target.channel}\0${d}`, event);
-      return event;
-    }
-    if (delivery.status === "refused" && delivery.refusal === "conflict")
-      throw new Conflict(delivery.message);
-    throw new Error(delivery.message);
-  }
-
-  const cardOf = (head: EventData | undefined): Card | undefined =>
-    head && {
-      pull: tag(head, "op") === "delete" ? undefined : parsePull(head.content),
-      root: tag(head, "root"),
-      ours: head.pubkey === viewer,
-    };
-
-  /** The newer of what sync holds and what this device last wrote. */
-  const current = (
-    key: string,
-    synced: EventData | undefined,
-  ): EventData | undefined => {
-    const mine = written.get(key);
-    if (!mine || synced?.id === mine.id) return synced;
-    return !synced || mine.created_at >= synced.created_at ? mine : synced;
-  };
-
-  async function once(target: Target) {
-    const [owner, name] = target.hook.repo.split("/");
-    const data = await gh(QUERY, { owner, name }, lifetime.signal);
-    const synced = heads();
-    let again = false;
-    for (const pull of readPulls(data, target.hook.repo)) {
-      lifetime.signal.throwIfAborted();
-      const d = await pullId(target.channel, target.hook.d, pull.pull.url);
-      const key = `${target.channel}\0${d}`;
-      let head: EventData | undefined = current(key, synced.get(key));
-      let step = plan(cardOf(head), pull, target.hook.createdAt);
-      // Sync leaves out a deleted card, and may not have another device's
-      // newest yet: only the head itself says whether to start one.
-      if (!head && step.write && read) {
-        head = await readHead(read, target.channel, d, lifetime.signal);
-        if (head) step = plan(cardOf(head), pull, target.hook.createdAt);
-      }
-      let latest = head;
-      try {
-        if (step.write)
-          latest = await sign(target, d, step.write, latest, undefined);
-        if (step.announce && latest) {
-          let pending = roots.get(key);
-          if (!pending) {
-            pending = {
-              id: session.messages.send(
-                target.channel,
-                announcement(pull.pull),
-              ),
-              attempts: 0,
-            };
-            roots.set(key, pending);
-          }
-          try {
-            await sign(target, d, pull.pull, latest, pending.id);
-            roots.delete(key);
-          } catch (error) {
-            if (error instanceof Conflict) throw error;
-            if (++pending.attempts >= ROOT_ATTEMPTS) roots.delete(key);
-            again = true;
-          }
-        }
-        const root = head && tag(head, "root");
-        if (root)
-          for (const reply of step.replies)
-            session.messages.reply(target.channel, root, reply);
-      } catch (error) {
-        if (!(error instanceof Conflict)) throw error;
-      }
-    }
-    return again;
-  }
-
   function poll(target: Target) {
+    const stopped = new AbortController();
+    const signal = AbortSignal.any([lifetime.signal, stopped.signal]);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let delay = POLL_MS;
-    let stopped = false;
+    const report = (problem: string | undefined) =>
+      status.set(target.channel, target.hook.d, problem);
     const tick = async () => {
-      if (stopped) return;
-      const status = cardView?.view.snapshot().status;
-      let next = POLL_MS;
-      if (status === "live" || status === "stale") {
+      if (signal.aborted) return;
+      let next = ROOT_RETRY_MS;
+      // Only a live sync holds every card; a stale or loading one could hide
+      // the card a round would otherwise start again.
+      if (cardView?.view.snapshot().status === "live") {
         try {
-          next = (await once(target)) ? ROOT_RETRY_MS : POLL_MS;
+          const [owner, name] = target.hook.repo.split("/");
+          const data = await gh(QUERY, { owner, name }, signal);
+          const outcome = await cards.round(
+            target,
+            readPulls(data, target.hook.repo),
+            heads(),
+            signal,
+          );
+          if (signal.aborted) return;
+          report(outcome.problems.join(" ") || undefined);
+          next = outcome.again ? ROOT_RETRY_MS : POLL_MS;
           delay = POLL_MS;
-        } catch {
-          if (stopped || lifetime.signal.aborted) return;
+        } catch (error) {
+          if (signal.aborted) return;
+          report(`${target.hook.repo} couldn't be read: ${reason(error)}`);
           delay = Math.min(delay * 2, MAX_BACKOFF_MS);
           next = delay;
         }
-      } else next = ROOT_RETRY_MS;
-      if (!stopped) timer = setTimeout(() => void tick(), next);
+      }
+      if (!signal.aborted) timer = setTimeout(() => void tick(), next);
     };
     timer = setTimeout(() => void tick(), 0);
     return () => {
-      stopped = true;
+      stopped.abort();
       clearTimeout(timer);
+      report(undefined);
     };
   }
 
   const syncCards = (targets: Target[]) => {
     const channels = [...new Set(targets.map((t) => t.channel))].sort();
-    const ds = [...new Set(targets.map((t) => t.hook.d))].sort();
-    const key = `${channels.join(",")}|${ds.join(",")}`;
+    const key = channels.join(",");
     if (cardView?.key === key) return;
     close(cardView);
     cardView = undefined;
-    if (!targets.length) return;
+    if (!channels.length) return;
     const held = open(
       {
         artifact: "current",
         kinds: [ARTIFACT_REVISION_KIND],
         "#h": channels,
         "#type": [PULL_TYPE],
-        "#hook": ds,
       },
       () => {},
     );
@@ -607,13 +878,17 @@ function publish(session: RelaySession, gh: GitHubCli, viewer: string) {
   };
 
   const hooksChanged = () => {
+    const snapshot = hookView?.view.snapshot();
+    // A loading or reconnecting view says nothing about which hooks are gone.
+    if (snapshot?.status === "loading" || snapshot?.status === "stale") return;
     const targets: Target[] = [];
-    for (const event of hookView?.view.snapshot().events ?? []) {
-      const hook = parseHook(event);
-      const channel = tag(event, "h");
-      if (hook && channel && hook.publisher === viewer)
-        targets.push({ channel, hook });
-    }
+    if (snapshot?.status === "live")
+      for (const event of snapshot.events) {
+        const hook = parseHook(event);
+        const channel = tag(event, "h");
+        if (hook && channel && hook.publisher === deps.viewer)
+          targets.push({ channel, hook });
+      }
     syncCards(targets);
     const keys = new Set<string>();
     for (const target of targets) {
@@ -642,13 +917,13 @@ function publish(session: RelaySession, gh: GitHubCli, viewer: string) {
             channel.channelType === "forum") &&
           !channel.cached &&
           !channel.archived &&
-          !!channel.members?.includes(viewer),
+          !!channel.members?.includes(deps.viewer),
       )
       .map((channel) => channel.id)
       .sort()
       .slice(0, MAX_CHANNELS);
     const key = ids.join(",");
-    if (hookView?.key === key) return;
+    if (hookView && hookView.key === key) return;
     close(hookView);
     hookView = undefined;
     if (ids.length) {
@@ -678,12 +953,25 @@ function publish(session: RelaySession, gh: GitHubCli, viewer: string) {
   };
 }
 
-/** Publishes from this device for whichever community is selected. */
+/** The viewer's card key for one hook, from the identity the desktop app
+ * holds; the browser has none, so it can't publish. */
+export type CardKey = (community: string, hook: string) => Promise<string>;
+export const nativeCardKey: CardKey | undefined = isTauri()
+  ? (community, hook) =>
+      invoke<string>("relay_github_card_key", { community, hook })
+  : undefined;
+
+/** Publishes from this device for whichever community is selected, where
+ * this device has `gh` and an identity that can derive card keys. */
 export function startPublisher(
   relay: RelayData,
   gh: GitHubCli | undefined,
+  status: PublisherStatus,
+  cardKey: CardKey | undefined = nativeCardKey,
+  storage?: Deps["storage"],
 ): () => void {
-  if (!gh) return () => {};
+  if (!gh || !cardKey) return () => {};
+  const kept = storage ?? localStorage;
   let active: { session: RelaySession; stop(): void } | undefined;
   const update = () => {
     const snapshot = relay.snapshot();
@@ -691,9 +979,29 @@ export function startPublisher(
     if (active?.session === session) return;
     active?.stop();
     active = undefined;
-    const viewer = session?.viewer;
-    if (session && viewer && session.configArtifactWriter)
-      active = { session, stop: publish(session, gh, viewer) };
+    if (snapshot.status !== "ready" || !session) return;
+    const viewer = session.viewer;
+    const writer = session.configArtifactWriter;
+    const read = session.snapshotRead;
+    const { origin, scope } = snapshot;
+    if (!viewer || !writer || !read || !origin || !scope) return;
+    active = {
+      session,
+      stop: publish(
+        session,
+        gh,
+        {
+          viewer,
+          scope,
+          writer,
+          read,
+          messages: session.messages,
+          storage: kept,
+          hookKey: (hook) => cardKey(origin, hook),
+        },
+        status,
+      ),
+    };
   };
   update();
   const stop = relay.subscribe(update);

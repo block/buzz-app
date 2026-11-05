@@ -1383,6 +1383,29 @@ impl IdentityHost {
         })
         .await
     }
+    /// A one-way key, per community and GitHub hook, from which only this
+    /// identity can name the pull request cards it publishes for that hook.
+    pub(crate) async fn github_card_key(&self, community: String, hook: String) -> Result<String> {
+        use hmac::{Hmac, Mac};
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            let mut mac = Hmac::<Sha256>::new_from_slice(key.0.as_ref()).map_err(|_| INVALID)?;
+            mac.update(b"buzz-github-device-pull-v1\0");
+            mac.update(community.as_bytes());
+            mac.update(b"\0");
+            mac.update(hook.as_bytes());
+            Ok(mac
+                .finalize()
+                .into_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect())
+        })
+        .await
+    }
     /// Only recipe plaintext may cross this boundary. Never export arbitrary decrypt.
     pub(crate) async fn kit_cipher(&self, ciphertext: String, encrypt: bool) -> Result<String> {
         with_identity(self.clone(), move |identity| {

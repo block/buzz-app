@@ -1,7 +1,8 @@
 // The pull requests followed in the channels shown: each channel's current
 // `buzz.github.pull` and `buzz.github.hook` artifacts, kept current by NIP-AR
 // sync. A card is trusted when the relay signed it, or the publisher of the
-// live hook it names did.
+// live hook it names did. Only the relay's cards speak for a pull request
+// anywhere it is linked; a publisher's shows only on its own announcement.
 import type { VerifiedEvent } from "nostr-tools";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -24,11 +25,11 @@ export type RelayPulls = Readonly<{
   /** Syncs `channel`'s pull requests while watched, and a while after. */
   watch(channel: string): () => void;
   subscribe(listener: () => void): () => void;
-  /** The newest pull request record for a canonical URL, the relay's own
-   * ahead of any publisher's. */
+  /** The relay's newest record for a canonical URL. */
   byUrl(url: string): PullRecord | undefined;
-  /** The record rooted on the relay's announcement `id`. */
-  byRoot(id: string): PullRecord | undefined;
+  /** The newest record rooted on announcement `id` that `author`, the
+   * announcement's signer, wrote: the relay or that publisher. */
+  byRoot(id: string, author: string): PullRecord | undefined;
   dispose(): void;
 }>;
 
@@ -48,6 +49,9 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
   const trusted = new WeakMap<PullRecord, PullRecord>();
   let urls = new Map<string, PullRecord>();
   let roots = new Map<string, PullRecord>();
+  const writerOf = (record: PullRecord) =>
+    record.publisher ?? session.relayAuthor ?? "";
+  const rootKey = (root: string, author: string) => `${root}\0${author}`;
   const cardOf = (event: VerifiedEvent) => {
     let card = cards.get(event);
     if (card === undefined) {
@@ -64,12 +68,6 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
     if (held && held.publisher === record.publisher) return held;
     trusted.set(card, record);
     return record;
-  };
-  const rank = (record: PullRecord) =>
-    [record.publisher ? 0 : 1, record.createdAt] as const;
-  const outranks = (a: PullRecord, b: PullRecord) => {
-    const [x, y] = [rank(a), rank(b)];
-    return x[0] !== y[0] ? x[0] > y[0] : x[1] > y[1];
   };
   const rebuild = () => {
     const nextUrls = new Map<string, PullRecord>();
@@ -93,8 +91,18 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
       const record = stable(card, vouched);
       const key = keyOf(record.pull.url);
       const held = key ? nextUrls.get(key) : undefined;
-      if (key && (!held || outranks(record, held))) nextUrls.set(key, record);
-      if (record.root) nextRoots.set(record.root, record);
+      if (
+        key &&
+        !record.publisher &&
+        (!held || held.createdAt < record.createdAt)
+      )
+        nextUrls.set(key, record);
+      if (record.root) {
+        const at = rootKey(record.root, writerOf(record));
+        const rooted = nextRoots.get(at);
+        if (!rooted || rooted.createdAt < record.createdAt)
+          nextRoots.set(at, record);
+      }
     }
     const same = (a: Map<string, PullRecord>, b: Map<string, PullRecord>) =>
       a.size === b.size &&
@@ -147,7 +155,7 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
       return () => listeners.delete(listener);
     },
     byUrl: (url) => urls.get(url),
-    byRoot: (id) => roots.get(id),
+    byRoot: (id, author) => roots.get(rootKey(id, author)),
     dispose() {
       for (const channel of [...synced.keys()]) release(channel);
       listeners.clear();

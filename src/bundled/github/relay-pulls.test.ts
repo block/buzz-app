@@ -103,7 +103,7 @@ it("syncs a watched channel's pull requests and indexes the relay's own by URL a
   const seven = head(7);
   publish(view, [seven, forged]);
   expect(pulls.byUrl(url.toLowerCase())?.pull.title).toBe("Pull 7");
-  expect(pulls.byRoot(`${"f".repeat(63)}7`)?.pull.number).toBe(7);
+  expect(pulls.byRoot(`${"f".repeat(63)}7`, relay)?.pull.number).toBe(7);
   expect(pulls.byUrl("https://github.com/block/buzz-app/pull/8")).toBe(
     undefined,
   );
@@ -118,7 +118,7 @@ it("syncs a watched channel's pull requests and indexes the relay's own by URL a
   expect(changed).toHaveBeenCalledTimes(2);
 });
 
-it("trusts a publisher's card while its hook names them, and prefers the relay's own", () => {
+it("trusts a publisher's card only on its own announcement, never for the pull request elsewhere", () => {
   const { session, views, publish } = fakeSession();
   const pulls = createRelayPulls(session);
   const changed = vi.fn();
@@ -127,46 +127,68 @@ it("trusts a publisher's card while its hook names them, and prefers the relay's
   const view = views[0];
   if (!view) throw new Error("no view");
   const mike = "c".repeat(64);
-  const hook = (author = mike, publisher = mike): VerifiedEvent =>
+  const mallory = "9".repeat(64);
+  const root = `${"f".repeat(63)}7`;
+  const hook = (author = mike, publisher = mike, d = "hook-d"): VerifiedEvent =>
     ({
-      id: "1".repeat(64),
+      id: `${d}`.padEnd(64, "1"),
       pubkey: author,
       sig: "",
       created_at: 1,
       kind: 45010,
       content: JSON.stringify({ version: 1, repo: "block/buzz-app" }),
       tags: [
-        ["d", "hook-d"],
+        ["d", d],
         ["h", channel],
         ["type", HOOK_TYPE],
         ["repo", "block/buzz-app"],
         ["publisher", publisher],
       ],
     }) as VerifiedEvent;
-  const card = {
-    ...head(7),
-    id: "2".repeat(64),
-    pubkey: mike,
-    created_at: 50,
-    tags: [...head(7).tags, ["hook", "hook-d"]],
-  } as VerifiedEvent;
+  const card = (
+    author = mike,
+    d = "hook-d",
+    state: "open" | "merged" = "open",
+  ) =>
+    ({
+      ...head(7, state),
+      id: `${author.slice(0, 1)}${state}`.padEnd(64, "2"),
+      pubkey: author,
+      created_at: 50,
+      tags: [
+        ...head(7, state).tags.map((entry) =>
+          entry[0] === "d" ? ["d", `${d}-card`] : entry,
+        ),
+        ["hook", d],
+      ],
+    }) as VerifiedEvent;
 
-  publish(view, [card]);
+  const own = card();
+  const followed = hook();
+  publish(view, [own]);
+  expect(pulls.byRoot(root, mike)).toBeUndefined();
+  publish(view, [own, followed]);
+  expect(pulls.byRoot(root, mike)?.publisher).toBe(mike);
   expect(pulls.byUrl(url.toLowerCase())).toBeUndefined();
-  publish(view, [card, hook()]);
-  expect(pulls.byUrl(url.toLowerCase())?.publisher).toBe(mike);
-  expect(pulls.byRoot(`${"f".repeat(63)}7`)?.publisher).toBe(mike);
   const calls = changed.mock.calls.length;
-  publish(view, [card, hook()]);
+  publish(view, [own, followed]);
   expect(changed).toHaveBeenCalledTimes(calls);
 
-  publish(view, [card, hook("9".repeat(64), mike)]);
+  publish(view, [own, hook(mallory, mike)]);
+  expect(pulls.byRoot(root, mike)).toBeUndefined();
+
+  const forged = card(mallory, "evil", "merged");
+  publish(view, [own, followed, forged, hook(mallory, mallory, "evil")]);
+  expect(pulls.byRoot(root, mike)?.pull.state).toBe("open");
+  expect(pulls.byRoot(root, mallory)?.pull.state).toBe("merged");
   expect(pulls.byUrl(url.toLowerCase())).toBeUndefined();
 
   const relayed = { ...head(7, "merged"), id: "3".repeat(64), created_at: 9 };
-  publish(view, [card, hook(), relayed as VerifiedEvent]);
+  publish(view, [own, followed, forged, relayed as VerifiedEvent]);
   expect(pulls.byUrl(url.toLowerCase())?.pull.state).toBe("merged");
   expect(pulls.byUrl(url.toLowerCase())?.publisher).toBeUndefined();
+  expect(pulls.byRoot(root, relay)?.publisher).toBeUndefined();
+  expect(pulls.byRoot(root, mike)?.publisher).toBe(mike);
 });
 
 it("keeps a channel's sync a while after its last reader, and one sync for all readers", () => {

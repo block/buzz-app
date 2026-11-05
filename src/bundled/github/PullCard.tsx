@@ -5,6 +5,7 @@ import inlineStyles from "../../shared/InlineReference.module.css";
 import { stateIcons } from "./pull-state-view";
 import { announcedUrl, type PullRecord } from "./relay-pull";
 import type { PullSources } from "./relay-pulls";
+import { keyOf } from "./pull-states";
 import styles from "./GitHub.module.css";
 
 const list = (names: readonly string[]) =>
@@ -52,8 +53,8 @@ function Facts({
 }
 
 /** An announcement of a pull request, as a card showing the state its
- * writer keeps for it; the announcement's own words until it has one. A
- * publisher's record shows only on that publisher's own announcement. */
+ * writer keeps for it; the announcement's own words until it has one. Only
+ * a record its signer wrote for the pull request it links counts. */
 export function PullCard({
   message,
   sources,
@@ -68,14 +69,16 @@ export function PullCard({
   const pulls = sources.selected();
   useEffect(() => pulls?.watch(message.channelId), [pulls, message.channelId]);
   const rooted = useSyncExternalStore(sources.subscribe, () =>
-    sources.selected()?.byRoot(message.id),
+    sources
+      .selected()
+      ?.byRoot(message.id, message.signerId ?? message.authorId),
   );
+  const linked = announcedUrl(message.content);
   const record =
-    rooted?.publisher &&
-    rooted.publisher !== (message.signerId ?? message.authorId)
-      ? undefined
-      : rooted;
-  const url = record?.pull.url ?? announcedUrl(message.content);
+    rooted && linked && keyOf(rooted.pull.url) === keyOf(linked)
+      ? rooted
+      : undefined;
+  const url = record?.pull.url ?? linked;
   if (!url) return null;
   const Icon = stateIcons[record?.pull.state ?? "open"];
   const title = record

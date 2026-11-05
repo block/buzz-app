@@ -298,6 +298,10 @@
   overflow: hidden;
 }
 
+.pluginIcon[data-packaged] img {
+  object-fit: contain;
+}
+
 .pluginIcon[data-branded] {
   --plugin-icon-lighting: url("./plugin-icon-background.svg");
   border-radius: 24%;

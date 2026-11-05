@@ -501,6 +501,13 @@ it.each([false, true])("groups plugins (Essentials=%s)", async (essentials) => {
   expect(search).toHaveValue("Invoices");
 });
 
+function gate<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 describe("installed plugin icons", () => {
   const dataUrl = "data:image/png;base64,iVBORw0KGgo=";
   function renderExternal(
@@ -508,7 +515,8 @@ describe("installed plugin icons", () => {
     iconPngRevision?: string,
   ) {
     const { cards } = registry([]);
-    const snapshot = {
+    const listeners = new Set<() => void>();
+    const stateFor = (revision: string) => ({
       ...pluginState,
       configuration: {
         status: "ready" as const,
@@ -525,7 +533,7 @@ describe("installed plugin icons", () => {
               },
               source: "external" as const,
               enabled: true,
-              revision: "abc123",
+              revision,
               previous: null,
               reloadable: true,
               error: null,
@@ -534,54 +542,110 @@ describe("installed plugin icons", () => {
           ],
         },
       },
-    };
+    });
+    let snapshot = stateFor("abc123");
     const plugins = {
-      subscribe: () => () => {},
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
       snapshot: () => snapshot,
       requests: noRequests,
       icon,
     } as unknown as Parameters<typeof Settings>[0]["plugins"];
     render(<Settings {...host} cards={cards} plugins={plugins} />);
     fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
-    return screen.getByRole("button", { name: "View External helper details" });
+    return {
+      card: () =>
+        screen.getByRole("button", { name: "View External helper details" }),
+      update(revision: string) {
+        act(() => {
+          snapshot = stateFor(revision);
+          for (const listener of listeners) listener();
+        });
+      },
+    };
   }
   const grid = (card: HTMLElement) =>
     card.querySelector("span[aria-hidden='true'] > svg");
 
   it("shows the plugin's own icon without branded styling, then falls back if it cannot be decoded", async () => {
     const icon = vi.fn(async () => dataUrl);
-    const card = renderExternal(icon, "png-revision");
-    await waitFor(() => expect(card.querySelector("img")).not.toBeNull());
-    const image = card.querySelector("img") as HTMLImageElement;
+    const { card } = renderExternal(icon, "png-revision");
+    await waitFor(() => expect(card().querySelector("img")).not.toBeNull());
+    const image = card().querySelector("img") as HTMLImageElement;
     expect(image).toHaveAttribute("src", dataUrl);
     expect(icon).toHaveBeenCalledExactlyOnceWith("example.helper", "abc123");
-    expect(grid(card)).toBeNull();
-    expect(card.querySelector("[data-packaged]")).not.toBeNull();
-    expect(card.querySelector("[data-branded]")).toBeNull();
+    expect(grid(card())).toBeNull();
+    expect(card().querySelector("[data-packaged]")).not.toBeNull();
+    expect(card().querySelector("[data-branded]")).toBeNull();
 
     fireEvent.error(image);
-    expect(card.querySelector("img")).toBeNull();
-    expect(grid(card)).not.toBeNull();
-    expect(card.querySelector("[data-packaged]")).toBeNull();
+    expect(card().querySelector("img")).toBeNull();
+    expect(grid(card())).not.toBeNull();
+    expect(card().querySelector("[data-packaged]")).toBeNull();
   });
 
   it("keeps the grid, without reading content, when the plugin has no icon revision", () => {
     const icon = vi.fn(async () => dataUrl);
-    const card = renderExternal(icon);
+    const { card } = renderExternal(icon);
     expect(icon).not.toHaveBeenCalled();
-    expect(card.querySelector("img")).toBeNull();
-    expect(grid(card)).not.toBeNull();
+    expect(card().querySelector("img")).toBeNull();
+    expect(grid(card())).not.toBeNull();
   });
 
   it("keeps the grid when reading the icon fails", async () => {
-    const icon = vi.fn(() =>
-      Promise.reject(new Error("Plugin was updated; refresh the catalog")),
+    let handled = false;
+    const icon = vi.fn(() => {
+      const read = Promise.reject(
+        new Error("Plugin was updated; refresh the catalog"),
+      );
+      // Attached before the component's handler, so both have run once this is seen.
+      read.catch(() => {
+        handled = true;
+      });
+      return read;
+    });
+    const { card } = renderExternal(icon, "png-revision");
+    await waitFor(() => expect(handled).toBe(true));
+    expect(icon).toHaveBeenCalledTimes(1);
+    expect(card().querySelector("img")).toBeNull();
+    expect(grid(card())).not.toBeNull();
+  });
+
+  it("never shows an icon read for a revision the plugin has since left", async () => {
+    const reads = new Map<
+      string,
+      ReturnType<typeof gate<string | undefined>>
+    >();
+    let staleSettled = false;
+    const icon = vi.fn((_id: string, revision: string) => {
+      const read = gate<string | undefined>();
+      reads.set(revision, read);
+      if (revision === "abc123")
+        void read.promise.then(() => {
+          staleSettled = true;
+        });
+      return read.promise;
+    });
+    const { card, update } = renderExternal(icon, "png-revision");
+    await waitFor(() =>
+      expect(icon).toHaveBeenCalledWith("example.helper", "abc123"),
     );
-    const card = renderExternal(icon, "png-revision");
-    await waitFor(() => expect(icon).toHaveBeenCalledTimes(1));
-    await icon.mock.results[0]?.value.catch(() => undefined);
-    expect(card.querySelector("img")).toBeNull();
-    expect(grid(card)).not.toBeNull();
+    update("def456");
+    await waitFor(() =>
+      expect(icon).toHaveBeenCalledWith("example.helper", "def456"),
+    );
+
+    reads.get("abc123")?.resolve("data:image/png;base64,STALE");
+    await waitFor(() => expect(staleSettled).toBe(true));
+    expect(card().querySelector("img")).toBeNull();
+    expect(grid(card())).not.toBeNull();
+
+    reads.get("def456")?.resolve(dataUrl);
+    await waitFor(() =>
+      expect(card().querySelector("img")).toHaveAttribute("src", dataUrl),
+    );
   });
 });
 

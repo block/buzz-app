@@ -1077,22 +1077,21 @@ it.for([
           ).toHaveTextContent("Builderlab sign-in did not finish. Try again.");
           expect(create).toBeDisabled();
           expect(name).toHaveValue("Browser");
-          // The inline action shows progress and cannot start another attempt.
+          // Pending native sign-in shows a cancellable spinner.
           signInGate = deferred();
           await user.click(signIn());
           const progress = await within(createDialog).findByRole("button", {
-            name: "Sign in to Builderlab",
+            name: "Cancel sign-in",
           });
           expect(progress).toHaveAttribute("aria-busy", "true");
           expect(
-            progress.querySelector(".buzz-button-spinner"),
+            progress.querySelector('[class~="motion-safe:animate-spin"]'),
           ).toBeInTheDocument();
           expect(create).toBeDisabled();
           await waitFor(() =>
             expect(signIns).toHaveBeenCalledTimes(beforeCreateLogin + 2),
           );
-          await user.click(progress);
-          expect(signIns).toHaveBeenCalledTimes(beforeCreateLogin + 2);
+          expect(progress).toBeEnabled();
           // Browser cancellation still returns to a retryable form.
           await act(async () => {
             await identity.service.cancelSignIn();

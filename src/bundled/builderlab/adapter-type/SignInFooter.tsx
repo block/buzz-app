@@ -165,6 +165,7 @@ export function AccountRecoverySheet({
   email,
   mismatch,
   detail,
+  onSwitchAccount,
   openIdentity,
 }: {
   session: BuilderlabSession;
@@ -172,6 +173,7 @@ export function AccountRecoverySheet({
   email?: string | undefined;
   mismatch: boolean;
   detail?: string | undefined;
+  onSwitchAccount?: () => void;
   openIdentity?: (() => void) | undefined;
 }) {
   return (
@@ -197,7 +199,12 @@ export function AccountRecoverySheet({
           active && brokerBuilderlab()
             ? new URL("/logout", oauthTarget()).href
             : undefined,
-        run: () => (brokerBuilderlab() ? session.signOut() : openIdentity?.()),
+        run: () => {
+          if (brokerBuilderlab()) {
+            onSwitchAccount?.();
+            session.signOut();
+          } else openIdentity?.();
+        },
       }}
     />
   );

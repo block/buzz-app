@@ -519,7 +519,8 @@ available rather than silently discarding it.
   the shared process. To lower the cost, remove servers agents don't need, or
   move heavy servers from user scope to local or project scope in the folders
   where you use them. Agents work in their **Workspace** folder (`~/.buzz` by
-  default), so keep those servers out of that folder and the folders above it.
+  default), so keep those servers out of that folder, the folders above it,
+  and any Git repository it is in.
 - **Settings → Agent details → Previous versions** expands saved revisions for
   agents whose configuration syncs here. Settings and instructions appear together
   in one feed, newest first, with a label on each version. Versions are kept

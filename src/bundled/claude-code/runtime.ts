@@ -862,6 +862,7 @@ export class ClaudeRuntime {
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
         async (deferred) => {
+          if (this.agents.get(agent.key) !== entry) return;
           const runtime = await this.connection(
             agent.key,
             key,

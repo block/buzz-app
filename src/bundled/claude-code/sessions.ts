@@ -316,6 +316,7 @@ export class AgentSessions {
           !live.process.busy)
       )
         continue;
+      if (this.options.strictResume) live.submitted = true;
       const savedState = this.touch(key, live, seen, contextRoot);
       if (this.options.strictResume) {
         await savedState;
@@ -401,6 +402,12 @@ export class AgentSessions {
       const opened = await this.open(key, saved?.id, 0);
       if (!("process" in opened)) return opened;
       live = opened;
+    }
+    if (this.options.strictResume) {
+      live.submitted = true;
+      await this.touch(key, live);
+      if (this.disposed || this.live.get(key) !== live || !live.process.running)
+        return { ok: false, error: "Claude was stopped", undelivered: true };
     }
     // Claude takes the command in stream-json input as it does in a terminal.
     const settled = await this.answer(key, live, "/compact", {});
@@ -621,19 +628,10 @@ export class AgentSessions {
     text: string,
     activity: TurnPick & ActivityReceipt,
   ) {
-    live.submitted = true;
     const sent = live.process.send(text, activity);
-    const saving = this.options.strictResume
-      ? Promise.resolve(this.touch(key, live)).then(
-          () => ({ ok: true as const }),
-          (error: unknown) => ({ ok: false as const, error }),
-        )
-      : Promise.resolve({ ok: true as const });
     // Sending made it busy; a snapshot read when it started is not.
     this.options.onChange?.();
     const settled = await sent;
-    const saved = await saving;
-    if (!saved.ok) return { ok: false, error: message(saved.error) };
     if (this.live.get(key) === live) {
       try {
         await this.touch(key, live);

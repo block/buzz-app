@@ -1212,19 +1212,22 @@ it("retains a missing remote session until the owner starts a new session", asyn
 
 it("waits for a remote session save before it sends the first prompt", async () => {
   const store = memoryStore();
+  let submitting = false;
   let saved!: () => void;
   const gate = new Promise<void>((resolve) => {
     saved = resolve;
   });
   const write = store.set;
   store.set = (key, value) => {
-    write(key, value);
-    return gate;
+    if (value.pending) return write(key, value);
+    submitting = true;
+    return gate.then(() => write(key, value));
   };
   const { pool, claudes } = sessions({ store, strictResume: true });
   const sent = pool.deliver("room", "hello", 10);
   try {
-    await vi.waitFor(() => expect(store.get("room")?.id).toBe("new-1"));
+    await vi.waitFor(() => expect(submitting).toBe(true));
+    expect(store.get("room")?.pending).toBe(true);
     expect(claudes()[0]?.prompts).toEqual([]);
   } finally {
     saved();
@@ -1324,14 +1327,12 @@ it("settles a failed remote save and permits the next delivery", async () => {
       error: "disk unavailable",
     });
     expect(f.pool.active("room")).toBe(false);
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([]);
     fail = false;
     await expect(f.pool.deliver("room", "two", 2)).resolves.toEqual({
       ok: true,
     });
-    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([
-      "one",
-      "two",
-    ]);
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual(["two"]);
   } finally {
     await f.pool.shutdown();
   }

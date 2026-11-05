@@ -580,3 +580,38 @@ it("cancels a remote New action while the prior target cleanup waits", async () 
     await f.cleanup();
   }
 });
+
+it("rejects retired remote work queued behind a New save", async () => {
+  const f = await remoteFixture();
+  await f.deliver();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered!: () => void;
+  const saving = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  f.control.save = async () => {
+    entered();
+    await gate;
+  };
+  const reset = f.runtime.session(f.agent, { channelId: "room" }, "new");
+  let queued: Promise<void> | undefined;
+  try {
+    await saving;
+    const before = f.handovers;
+    queued = f.deliver("retired-request");
+    await vi.waitFor(() => expect(f.handovers).toBeGreaterThan(before));
+    await f.runtime.retire(f.agent.key);
+  } finally {
+    release();
+  }
+  try {
+    await reset;
+    await queued;
+    expect(f.sessions).toHaveLength(1);
+  } finally {
+    await f.cleanup();
+  }
+});

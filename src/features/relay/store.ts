@@ -461,22 +461,27 @@ export function createChannelStore(
       // history. Showing one leaves a gap that a later page fills mid-list,
       // where the timeline can neither anchor the reader nor tell it from new
       // arrivals. That page shows them instead.
-      const floor =
-        (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
-      const shown = (event: import("./events").EventData) =>
-        !channelRowKind(event.kind) ||
-        ((floor === undefined || event.created_at >= floor) &&
-          (state.ceiling === undefined || event.created_at < state.ceiling));
+      const more = patch.hasMore ?? state.snapshot.hasMore;
+      const shown =
+        (floor: number | undefined) => (event: import("./events").EventData) =>
+          !channelRowKind(event.kind) ||
+          ((floor === undefined || event.created_at >= floor) &&
+            (state.ceiling === undefined || event.created_at < state.ceiling));
       const combined = new Map(
         [...state.events, ...state.notices.values(), ...state.traffic.values()]
-          .filter(shown)
+          .filter(shown(more ? state.floor : undefined))
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
       const own = (local?.snapshot() ?? []).filter((item) => {
         // An unconfirmed send's row is the only place that offers Retry.
         if (item.delivery !== "seen") state.sent.add(item.event.id);
-        return state.sent.has(item.event.id) || shown(item.event);
+        // Until a page sets the floor, history's extent is unknown, not
+        // unbounded: a confirmed send waits for the page that holds it.
+        return (
+          state.sent.has(item.event.id) ||
+          shown(more ? (state.floor ?? Infinity) : undefined)(item.event)
+        );
       });
       for (const item of own)
         if (

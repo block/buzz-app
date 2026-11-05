@@ -1643,8 +1643,9 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
 it("shows the viewer's own sends from before the loaded history only once paging reaches them", async () => {
   // The outbox keeps confirmed sends. One older than the head page must wait
   // for the older page, as every other row does: shown early, the reader
-  // scrolls up through their own messages with everyone else's missing. A
-  // failed send stays, since only its row offers Retry.
+  // scrolls up through their own messages with everyone else's missing, even
+  // while the head page loads. A failed send stays, since only its row offers
+  // Retry.
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
@@ -1689,6 +1690,8 @@ it("shows the viewer's own sends from before the loaded history only once paging
     await flush();
     owner.session.channels.ensure("c");
     await flush();
+    // Before the head answers, the history's extent is unknown, not unbounded.
+    expect(rows()).toEqual([lost.id]);
     wire.next().respond([
       seen,
       bounds(relay, "c", "head", {

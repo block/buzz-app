@@ -509,6 +509,16 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
+- Claude agents run one `claude` process per active conversation on this
+  computer, plus one shared process kept ready for the next new conversation.
+  Each loads the MCP servers from your own Claude Code configuration, so memory
+  use grows with active conversations times those servers. A conversation's
+  process stops after 15 minutes with no message, turn or background work; the
+  shared one stays while a Claude agent runs here. Protected agents load none
+  of your MCP servers and don't use the shared process. To lower the cost,
+  remove servers agents don't need, or move heavy user-scoped servers to
+  project scope in the folders where you use them; agents work in their
+  **Workspace** folder (`~/.buzz` by default).
 - **Settings → Agent details → Previous versions** expands saved revisions for
   agents whose configuration syncs here. Settings and instructions appear together
   in one feed, newest first, with a label on each version. Versions are kept

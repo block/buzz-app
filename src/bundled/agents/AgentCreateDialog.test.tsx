@@ -1232,6 +1232,52 @@ it("starts from an agent card's name, picture and instructions, in each harness 
   });
 });
 
+it("keeps an agent card's instructions cleared when choosing another harness", async () => {
+  // Like the bundled harnesses, empty instructions are not carried.
+  const carrying = (key: string, title: string): RegisteredAgentType => ({
+    ...notes,
+    key,
+    title,
+    carry: (config) => {
+      const { instructions } = config as Notes;
+      return instructions.trim() ? { instructions } : {};
+    },
+    adopt: (carry, config) => ({
+      ...(config as Notes),
+      instructions: carry.instructions ?? (config as Notes).instructions,
+    }),
+  });
+  const agents = { create: vi.fn(async () => made) } as unknown as Agents & {
+    create: ReturnType<typeof vi.fn>;
+  };
+  render(
+    <AgentCreateDialog
+      agents={agents}
+      types={[carrying("test/notes", "Notes"), carrying("test/other", "Other")]}
+      draft={{
+        name: "Tinker",
+        picture: "https://cdn.example/tinker/avatar.png",
+        instructions: "You are Tinker.",
+      }}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.clear(within(dialog).getByLabelText("Instructions"));
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Other" }));
+  expect(within(dialog).getByLabelText("Instructions")).toHaveValue("");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/other",
+      config: { notes: "start", instructions: "" },
+    }),
+  );
+});
+
 it("shows an agent card's pack avatar as that Gloopie", () => {
   const pack = agentAvatars.find((avatar) => avatar.id === "gloopies-13");
   if (!pack) throw new Error("gloopies-13 is missing from the catalog");

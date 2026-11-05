@@ -177,15 +177,18 @@ export function AgentCreateDialog({
     const item = types.find((candidate) => candidate.key === key);
     if (!item || key === type?.key) return;
     const next = seed(item);
-    // Typed instructions follow a new agent to its new harness.
-    const instructions = update
-      ? undefined
-      : type?.carry?.(config).instructions;
+    // Typed instructions follow a new agent to its new harness. A harness
+    // that carries none was emptied, so a card's text must not come back.
+    const carried =
+      update || !type?.carry ? undefined : type.carry(config).instructions;
+    const instructions = carried || (draft && type?.carry ? "" : undefined);
     restoreHarnessFocus.current = item.key;
     setConfigurationReady(false);
     chooseModel(
       item,
-      instructions && item.adopt ? item.adopt({ instructions }, next) : next,
+      instructions !== undefined && item.adopt
+        ? item.adopt({ instructions }, next)
+        : next,
     );
   };
   const create = async () => {

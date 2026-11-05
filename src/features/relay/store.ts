@@ -438,6 +438,10 @@ export function createChannelStore(
       ...next,
       channels: sameChannels ? list.channels : Object.freeze(channels),
     });
+    if (!sameChannels)
+      directory.protect(
+        list.channels.flatMap((channel) => channel.participants ?? []),
+      );
     notify(listListeners);
   }
   /** A head read replaces a detached segment: its rows and floor go with it.

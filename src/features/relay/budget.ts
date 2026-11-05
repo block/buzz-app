@@ -39,6 +39,8 @@ export class ByteLru<T> {
   constructor(
     public maxEntries: number,
     public maxBytes: number,
+    /** Entries eviction skips; the caller bounds how many it keeps. */
+    private keep?: (key: string) => boolean,
   ) {}
   /** Change both limits; shrinking evicts least recently used entries now. */
   resize(maxEntries: number, maxBytes: number) {
@@ -84,6 +86,7 @@ export class ByteLru<T> {
     for (const oldest of this.items.keys()) {
       if (this.items.size <= this.maxEntries && this.bytes <= this.maxBytes)
         break;
+      if (this.keep?.(oldest)) continue;
       this.delete(oldest);
       this.evictions++;
     }

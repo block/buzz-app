@@ -11655,6 +11655,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
     (await callTool(client, {}, "agent_create", {
       type: "example/echo",
       name: " Child ",
+      instructions: "Review PRs.",
     })) as string,
   );
   expect(result).toEqual({ requestId: expect.any(String), saved: false });
@@ -11664,6 +11665,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
     id: result.requestId,
     type: "example/echo",
     name: "Child",
+    instructions: "Review PRs.",
     requester: bot,
     community: "https://relay.example.test",
   });
@@ -11705,7 +11707,15 @@ it("dismisses a creation draft without creating an identity", async () => {
 });
 
 it("refuses agent creation through a stale handle or an unavailable type", async () => {
-  const { service, native, plugin, connect } = await setup();
+  const { service, native, plugin, connect, ctx } = await setup();
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register({
+      id: "plain",
+      title: "Plain",
+      defaults: () => ({ config: {} }),
+      run: vi.fn(),
+    });
   await service.create({ type: "example/echo", name: "Parent" });
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const handle = plugin.agents.handle(bot);
@@ -11716,6 +11726,14 @@ it("refuses agent creation through a stale handle or an unavailable type", async
   await expect(
     handle.createAgent?.({ type: "example/echo", name: " " }),
   ).rejects.toThrow("Name the agent");
+  await expect(
+    handle.createAgent?.({
+      type: "other/plain",
+      name: "Child",
+      instructions: "Triage.",
+    }),
+  ).rejects.toThrow("Plain agents have no instructions to set");
+  expect(service.creationRequests()).toEqual([]);
   connect(false);
   await expect(
     handle.createAgent?.({ type: "example/echo", name: "Child" }),

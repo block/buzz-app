@@ -108,16 +108,19 @@ export function AgentCreateDialog({
       return undefined;
     }
   };
-  /** The agent's settings in `item`, with the requested instructions. */
+  /** The agent's settings in `item`, or a new agent's defaults, with the
+   * requested instructions. */
   const seed = (item: RegisteredAgentType | undefined) => {
-    if (!update) return startingConfig(item);
-    const { agent, request } = update;
-    const config =
-      item?.key === agent.type
-        ? agent.config
+    const instructions = update
+      ? update.request.instructions
+      : request?.instructions;
+    const config = !update
+      ? startingConfig(item)
+      : item?.key === update.agent.type
+        ? update.agent.config
         : (migration(item)?.config ?? startingConfig(item));
-    return request.instructions !== undefined && item?.adopt
-      ? item.adopt({ instructions: request.instructions }, config)
+    return instructions !== undefined && item?.adopt
+      ? item.adopt({ instructions }, config)
       : config;
   };
   const [config, setConfig] = useState(() => seed(type));
@@ -156,7 +159,9 @@ export function AgentCreateDialog({
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
     if (!item || key === type?.key) return;
-    const next = seed(item);
+    // A new agent's request seeds only the first harness; from then on its
+    // instructions are what the owner left, cleared ones included.
+    const next = update ? seed(item) : startingConfig(item);
     // Typed instructions follow a new agent to its new harness.
     const instructions = update
       ? undefined

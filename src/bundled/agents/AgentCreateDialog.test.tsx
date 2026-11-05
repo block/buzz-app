@@ -20,6 +20,7 @@ import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import type {
   Agent,
+  AgentCreationRequest,
   Agents,
   NewAgent,
   RegisteredAgentType,
@@ -164,6 +165,7 @@ function setup(
   types: readonly RegisteredAgentType[],
   create: (input: NewAgent) => Promise<Agent> = async () => made,
   community?: string,
+  request?: AgentCreationRequest,
 ) {
   const agents = { create: vi.fn(create) } as unknown as Agents & {
     create: ReturnType<typeof vi.fn>;
@@ -177,6 +179,7 @@ function setup(
       community={community}
       onCreated={onCreated}
       onClose={onClose}
+      {...(request && { request })}
     />,
   );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
@@ -952,6 +955,52 @@ it("keeps typed instructions when choosing a harness or model", async () => {
     expect.objectContaining({
       type: "test/other",
       config: { notes: "start", instructions: "Keep this.", model: "deep" },
+    }),
+  );
+});
+
+it("keeps requested instructions the owner cleared when choosing a harness", async () => {
+  // Both carry instructions as the bundled harnesses do, omitting blank ones.
+  const carrying = (key: string, title: string): RegisteredAgentType => ({
+    ...notes,
+    key,
+    title,
+    defaults: () => ({ config: { notes: "start", instructions: "" } }),
+    carry: (config) => {
+      const { instructions } = config as Notes;
+      return instructions.trim() ? { instructions } : {};
+    },
+    adopt: (carry, config) => ({
+      ...(config as Notes),
+      instructions: carry.instructions ?? (config as Notes).instructions,
+    }),
+  });
+  const { agents, dialog, user } = setup(
+    [carrying("test/notes", "Notes"), carrying("test/other", "Other")],
+    undefined,
+    undefined,
+    {
+      id: "draft",
+      requester: "a".repeat(64),
+      requesterName: "Parent",
+      owner: "b".repeat(64),
+      community: "https://relay.example",
+      type: "test/notes",
+      name: "Nova",
+      instructions: "Review PRs.",
+    },
+  );
+  const instructions = within(dialog).getByLabelText("Instructions");
+  expect(instructions).toHaveValue("Review PRs.");
+  await user.clear(instructions);
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Other" }));
+  expect(within(dialog).getByLabelText("Instructions")).toHaveValue("");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/other",
+      config: { notes: "start", instructions: "" },
     }),
   );
 });

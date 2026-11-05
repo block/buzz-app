@@ -20,6 +20,7 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 function setup(current?: UserStatus) {
   const owner = createRelaySession(null);
@@ -67,6 +68,8 @@ it("calculates the selected preset at save time after a quick choice is edited",
   });
 });
 it("prefills and preserves an existing deadline, and validates a custom date before saving", async () => {
+  // Mid-month so the prefilled next-day deadline opens the calendar on today's month.
+  vi.useFakeTimers({ toFake: ["Date"], now: new Date(2026, 5, 15, 12) });
   const user = userEvent.setup();
   const now = Date.now();
   const expiresAt = Math.floor(now / 1000) + 86400;
@@ -207,7 +210,7 @@ it("names the custom code an unresolved emoji trigger will save", async () => {
   expect(trigger).toHaveAccessibleDescription(":bee-intensifies:");
 });
 
-it("keeps the focused emoji trigger when a refresh drops its custom code", async () => {
+it("keeps the focused emoji trigger and renames its hint when a refresh replaces its custom code", async () => {
   const owner = createRelaySession(null);
   owners.push(owner);
   const cached: UserStatus = {
@@ -246,8 +249,9 @@ it("keeps the focused emoji trigger when a refresh drops its custom code", async
   );
   expect(trigger).toHaveFocus();
   await waitFor(() =>
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/^:house:$/),
   );
+  expect(trigger).toHaveAccessibleDescription(":house:");
 });
 
 it("shows non-expiring status honestly and preserves it until a duration is selected", async () => {

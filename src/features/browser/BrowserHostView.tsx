@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -15,11 +16,12 @@ import {
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { BrowserViewProps } from "./api";
-import type {
-  BrowserAction,
-  BrowserBounds,
-  BrowserPlatform,
-  BrowserStatus,
+import {
+  addressInputUrl,
+  type BrowserAction,
+  type BrowserBounds,
+  type BrowserPlatform,
+  type BrowserStatus,
 } from "./platform";
 import type { BrowserSessions } from "./sessions";
 import styles from "./BrowserHostView.module.css";
@@ -116,6 +118,24 @@ export function BrowserHostView({
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
   }, [status.url]);
+
+  // macOS mouse back/forward, sent here while this page has focus.
+  const historyAction = useEffectEvent((event: Event, value: BrowserAction) => {
+    event.preventDefault();
+    action(value);
+  });
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const back = (event: Event) => historyAction(event, "back");
+    const forward = (event: Event) => historyAction(event, "forward");
+    element.addEventListener("buzz:history-back", back);
+    element.addEventListener("buzz:history-forward", forward);
+    return () => {
+      element.removeEventListener("buzz:history-back", back);
+      element.removeEventListener("buzz:history-forward", forward);
+    };
+  }, []);
 
   // In a tab, the page's title names it, so several websites tell apart.
   const tabHost = usePanelTabHost();
@@ -379,7 +399,10 @@ export function BrowserHostView({
   function navigate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     editing.current = false;
-    void run((sessionId) => platform.navigate(sessionId, draft));
+    const target = addressInputUrl(draft);
+    void run((sessionId) =>
+      platform.navigate(sessionId, target.url, target.fallbackToHttp),
+    );
   }
 
   function action(value: BrowserAction) {

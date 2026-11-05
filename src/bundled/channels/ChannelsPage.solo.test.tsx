@@ -12,6 +12,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
+import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -27,9 +28,20 @@ import {
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
 import { readView, writeView } from "../../shared/view-state";
-import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
+import { splitPartition } from "../../features/relay/partition";
+import {
+  ChannelsPage,
+  type ArchiveShortcut,
+  type ReadShortcut,
+} from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
+import type { ReadTarget } from "../../features/relay/read-state-model";
+
+vi.mock(
+  "../../features/messages/solo-model-picks-storage",
+  () => import("../../features/messages/solo-model-picks-storage-testing"),
+);
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -56,7 +68,20 @@ function fixture({
   archived = false,
   viewerNamed = false,
   others = [],
+  unread,
+  capability = "frontier-sync",
+  viewOnly = false,
+  canLeave,
+  preview,
 }: {
+  /** Observed unread messages in this chat; fakes the read state when given. */
+  unread?: number;
+  /** What the read state can do on this connection. */
+  capability?: "unsupported" | "read-only" | "frontier-sync";
+  viewOnly?: boolean;
+  canLeave?: boolean;
+  /** An unjoined reader of an open chat, including legacy admission defaults. */
+  preview?: { joinRole?: "member" | "guest" };
   /** Other Solo chats listed after this one in the sidebar's Chats. */
   others?: readonly string[];
   /** The viewer's own profile has loaded too. */
@@ -108,9 +133,15 @@ function fixture({
     id,
     name: "Planning",
     channelType: type,
-    private: true as const,
+    ...(!preview && { private: true as const }),
     creator: ownedBy ?? (placed ? viewer.pubkey : agent),
     members: [viewer.pubkey, agent, ...people],
+    ...(viewOnly && { readOnly: true as const, viewerRole: "guest" as const }),
+    ...(preview && {
+      members: [agent, ...people],
+      readOnly: true,
+      ...preview,
+    }),
     ...(archived && { archived }),
   };
   const neighbors = others.map((other, index) => ({
@@ -174,6 +205,30 @@ function fixture({
       : people.map((key) => [key, { name: "Teammate" }] as const)),
     ...(viewerNamed ? [[viewer.pubkey, { name: "Viewer" }] as const] : []),
   ]);
+  const markRead = vi.fn(async (_channelId: string) => ({}) as never);
+  // useSyncExternalStore needs stable snapshots.
+  const unreadState = {
+    observedCount: unread ?? 0,
+    attentionCount: 0,
+    coverage: "observed" as const,
+    freshness: "observed" as const,
+    manual: "none" as const,
+  };
+  const unreadStates = new Map<
+    string,
+    typeof unreadState & { target: ReadTarget }
+  >();
+  const noActivity = {
+    channelId: id,
+    items: [],
+    coverage: "observed" as const,
+    freshness: "observed" as const,
+  };
+  const readSync = {
+    capability,
+    status: "reconciled" as const,
+    completeness: "snapshot" as const,
+  };
   const session = {
     ...owner.session,
     profiles: {
@@ -195,10 +250,10 @@ function fixture({
       load: vi.fn(async () => ({
         channelId: id,
         channelType: "stream" as const,
-        canArchive: true,
+        canArchive: !viewOnly,
         canUnarchive: false,
-        canDelete: true,
-        canLeave: false,
+        canDelete: !viewOnly,
+        canLeave: canLeave ?? viewOnly,
         canHide: false,
       })),
       run,
@@ -240,6 +295,26 @@ function fixture({
       },
     },
     messages: { ...owner.session.messages, send },
+    unread:
+      unread === undefined
+        ? owner.session.unread
+        : {
+            ...owner.session.unread,
+            sync: () => readSync,
+            snapshot: (
+              target: Parameters<typeof owner.session.unread.snapshot>[0],
+            ) => {
+              const key = JSON.stringify(target);
+              let state = unreadStates.get(key);
+              if (!state) {
+                state = { ...unreadState, target };
+                unreadStates.set(key, state);
+              }
+              return state;
+            },
+            activity: () => noActivity,
+            markChannelRead: markRead,
+          },
     channelWrites: {
       ...owner.session.channelWrites,
       available: true,
@@ -285,25 +360,29 @@ function fixture({
     entryId: "visit",
     target: target?.(scope) ?? conversationTarget(scope, id),
     signal: abort.signal,
+    position: () => undefined,
+    savePosition() {},
     forSession: () => navigation,
     complete,
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigationSnapshot = {
+    entry: {
+      id: navigation.entryId,
+      target: behindSettings
+        ? { version: 1, kind: "settings", scope: null }
+        : navigation.target,
+    },
+    attempt: { signal: abort.signal },
+  };
   const navigator = {
     open,
     retry() {},
-    snapshot: () => ({
-      entry: {
-        id: navigation.entryId,
-        target: behindSettings
-          ? { version: 1, kind: "settings", scope: null }
-          : navigation.target,
-      },
-      attempt: { signal: abort.signal },
-    }),
+    snapshot: () => navigationSnapshot,
   } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
+  const read: ReadShortcut = {};
   const page = (sidebar = false) => (
     <ChannelNavigationProvider relay={relay}>
       {sidebar && (
@@ -331,6 +410,7 @@ function fixture({
         navigation={navigation}
         navigator={navigator}
         archive={archive}
+        read={read}
       />
     </ChannelNavigationProvider>
   );
@@ -340,11 +420,20 @@ function fixture({
     mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
     abort,
     archive,
+    read,
+    markRead,
     open,
     run,
     send,
     scope,
     session,
+    setArchived(archived: boolean) {
+      const next = { ...channel };
+      if (archived) next.archived = true;
+      else delete next.archived;
+      list = { ...list, channels: [next] };
+      emitList();
+    },
     // Chat activity: a new summary object for the same chat.
     retitle(name: string) {
       list = { ...list, channels: [{ ...channel, name }] };
@@ -377,6 +466,28 @@ it("offers no Archive shortcut outside a Solo chat", async () => {
   f.mount();
   await screen.findByRole("textbox", { name: "Message #Planning" });
   expect(f.archive.current).toBeUndefined();
+});
+
+it("turns /leave into the existing channel confirmation without posting it", async () => {
+  const f = fixture({ type: "stream", canLeave: true });
+  f.mount();
+  const editor = await screen.findByRole("textbox", {
+    name: "Message #Planning",
+  });
+  const user = userEvent.setup();
+  await user.type(editor, "/leave{Enter}");
+  const dialog = await screen.findByRole("dialog", {
+    name: "Leave channel: Planning",
+  });
+  expect(f.session.channelLifecycle.load).toHaveBeenCalledWith(
+    id,
+    expect.any(AbortSignal),
+  );
+  expect(f.send).not.toHaveBeenCalled();
+  expect(editor).toHaveValue("");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(editor).toHaveFocus());
+  expect(f.run).not.toHaveBeenCalled();
 });
 
 it("retires the Archive shortcut once the chat is archived", async () => {
@@ -461,6 +572,138 @@ it("renders a Solo draft route as the new chat composer", async () => {
   ).toBeVisible();
   expect(screen.queryByLabelText("Channel message history")).toBeNull();
   expect(f.archive.current).toBeUndefined();
+});
+
+it("keeps the newer destination when a departed New chat acquires model ownership", async () => {
+  const first = fixture({
+    target: (scope) => soloDraftTarget(scope, { agent }),
+  });
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, "locks");
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    requested = resolve;
+  });
+  let completed!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    completed = resolve;
+  });
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (_name: string, run: () => unknown) => {
+        requested();
+        await held;
+        try {
+          return run();
+        } finally {
+          completed();
+        }
+      },
+    },
+  });
+  const view = first.mount();
+  const user = userEvent.setup();
+  try {
+    await user.type(
+      await screen.findByRole("textbox", { name: "Message your agents" }),
+      "Start before navigating",
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waiting;
+    expect(first.send).toHaveBeenCalledOnce();
+    first.abort.abort();
+    view.unmount();
+    const newer = fixture({ type: "stream" });
+    newer.mount();
+    await screen.findByRole("textbox", { name: "Message #Planning" });
+    await act(async () => {
+      release();
+      await settled;
+    });
+    expect(first.open).not.toHaveBeenCalled();
+    expect(newer.open).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("textbox", { name: "Message #Planning" }),
+    ).toBeVisible();
+  } finally {
+    release();
+    if (descriptor) Object.defineProperty(navigator, "locks", descriptor);
+    else Reflect.deleteProperty(navigator, "locks");
+  }
+});
+
+it("keeps refused-start restoration visibly retryable when window ownership fails again", async () => {
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
+  let refuse!: () => void;
+  const ready = new Promise<void>((_resolve, reject) => {
+    refuse = () => reject(new ChatNotStarted("Channel creation rejected"));
+  });
+  f.session.channelWrites.start.mockImplementationOnce((chat) => ({
+    create: f.session.channelWrites.create(chat),
+    ready,
+  }));
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, "locks");
+  const available = {
+    request: async (_name: string, run: () => unknown) => run(),
+  };
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: available,
+  });
+  f.mountWithToasts();
+  const user = userEvent.setup();
+  try {
+    await user.type(
+      await screen.findByRole("textbox", { name: "Message your agents" }),
+      "Keep this message",
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async () => {
+          throw new Error("Lock refused");
+        },
+      },
+    });
+    await act(async () => {
+      refuse();
+      await ready.catch(() => {});
+    });
+    const retry = () =>
+      screen.findByRole("button", { name: "Retry restoring message" });
+    const firstRetry = await retry();
+    fireEvent.click(firstRetry);
+    // The toast consumes its action before invoking it; a second failure must
+    // offer a new action retaining the same refused prompt.
+    await waitFor(() => expect(firstRetry).not.toBeInTheDocument());
+    const offeredAgain = await retry();
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: available,
+    });
+    fireEvent.click(offeredAgain);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Message your agents" }),
+      ).toHaveTextContent("Keep this message"),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Retry restoring message" }),
+      ).toBeNull(),
+    );
+    expect(f.send).toHaveBeenCalledOnce();
+    expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
+  } finally {
+    if (descriptor) Object.defineProperty(navigator, "locks", descriptor);
+    else Reflect.deleteProperty(navigator, "locks");
+  }
 });
 
 it("starts a Solo draft route in its project, with that project's saved draft", async () => {
@@ -941,7 +1184,95 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
   await screen.findByRole("button", { name: "Chat actions" });
   expect(screen.getAllByText("Archived")).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "Share access" })).toBeNull();
+  expect(
+    await screen.findByRole("region", { name: "Archived chat" }),
+  ).toHaveTextContent("This chat is archived");
+  expect(screen.queryByRole("textbox")).toBeNull();
 });
+
+it.each([
+  { preview: { joinRole: "guest" as const }, joinable: true },
+  { preview: { joinRole: "member" as const }, joinable: false },
+  { preview: {}, joinable: false },
+])(
+  "offers Solo preview Join only for Guest admission ($preview)",
+  async ({ preview, joinable }) => {
+    fixture({ placed: false, preview }).mount();
+    expect(
+      await screen.findByRole("region", {
+        name:
+          "joinRole" in preview && preview.joinRole === "guest"
+            ? "Read-only chat"
+            : "Chat preview",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
+  },
+);
+
+it("lets a joined Solo viewer cancel Leave and restores focus to Chat actions", async () => {
+  const f = fixture({ placed: false, viewOnly: true });
+  f.mountWithSidebar();
+  const row = await screen.findByRole("button", { name: /^Planning/ });
+  expect(row).toBeVisible();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  const user = userEvent.setup();
+  const actions = screen.getByRole("button", { name: "Chat actions" });
+  await user.click(actions);
+  const leave = await screen.findByRole("menuitem", { name: "Leave chat" });
+  expect(screen.queryByRole("menuitem", { name: "Archive chat" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Delete chat" })).toBeNull();
+  await user.click(leave);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Leave chat: Planning",
+  });
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(actions).toHaveFocus());
+  expect(f.run).not.toHaveBeenCalled();
+});
+
+it.each(["solo", "stream"] as const)(
+  "replaces an archived %s composer with a notice and restores its draft on unarchive",
+  async (type) => {
+    const f = fixture({ type });
+    const place = type === "solo" ? "chat" : "channel";
+    f.mount();
+    const editor = await screen.findByRole("textbox");
+    expect(editor).toHaveFocus();
+    const user = userEvent.setup();
+    await user.click(editor);
+    await user.keyboard("Keep this draft");
+    await act(() => f.run("archive"));
+    expect(
+      await screen.findByRole("region", { name: `Archived ${place}` }),
+    ).toHaveTextContent(`This ${place} is archived`);
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+    // Remote unarchive restores composition without taking the reader's focus.
+    const history = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    history.focus();
+    expect(history).toHaveFocus();
+    act(() => f.setArchived(false));
+    expect(await screen.findByRole("textbox")).toHaveTextContent(
+      "Keep this draft",
+    );
+    expect(
+      screen.queryByRole("region", { name: `Archived ${place}` }),
+    ).toBeNull();
+    expect(history).toHaveFocus();
+    expect(f.send).not.toHaveBeenCalled();
+  },
+);
 
 it("does not recreate a consumed linked draft on history navigation", () => {
   const linked = "22222222-2222-4222-8222-222222222222";
@@ -974,4 +1305,67 @@ it("finishes a linked chat across roster updates without appending source prose"
   expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
   expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
   expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
+});
+
+it("marks the open conversation read from Escape while it shows unread", async () => {
+  const f = fixture({ unread: 3 });
+  f.mount();
+  await waitFor(() => expect(f.read.current?.available()).toBe(true));
+  await act(async () => f.read.current?.run());
+  expect(f.markRead).toHaveBeenCalledExactlyOnceWith(id);
+});
+
+it("offers no Escape mark-read for a read chat, without read sync, or after the visit", async () => {
+  const read = fixture();
+  read.mount();
+  await waitFor(() => expect(read.read.current).toBeDefined());
+  expect(read.read.current?.available()).toBe(false);
+  cleanup();
+  const unsynced = fixture({ unread: 2, capability: "read-only" });
+  unsynced.mount();
+  await waitFor(() => expect(unsynced.read.current).toBeDefined());
+  expect(unsynced.read.current?.available()).toBe(false);
+  cleanup();
+  const visit = fixture({ unread: 2 });
+  visit.mount();
+  await waitFor(() => expect(visit.read.current?.available()).toBe(true));
+  visit.abort.abort();
+  expect(visit.read.current?.available()).toBe(false);
+});
+
+it("offers no Escape mark-read for a read-only preview or the new message page", async () => {
+  const f = fixture({
+    unread: 2,
+    target: (scope) => ({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope: splitPartition(scope) as never,
+      route: { version: 1, params: "new-message" },
+    }),
+  });
+  f.mount();
+  await screen.findByRole("textbox", { name: /message/i }).catch(() => {});
+  expect(f.read.current).toBeUndefined();
+});
+
+it("reports a failed Escape mark-read in a toast and keeps the chat open", async () => {
+  const f = fixture({ unread: 1 });
+  f.markRead.mockRejectedValueOnce(new Error("offline"));
+  f.mountWithToasts();
+  await waitFor(() => expect(f.read.current?.available()).toBe(true));
+  await act(async () => f.read.current?.run());
+  expect(await screen.findByText("Couldn’t mark as read.")).toBeInTheDocument();
+});
+
+it("leaves Escape to a text field outside the composer", async () => {
+  const f = fixture({ unread: 1 });
+  f.mount();
+  await waitFor(() => expect(f.read.current?.available()).toBe(true));
+  const field = document.createElement("input");
+  document.body.append(field);
+  field.focus();
+  expect(f.read.current?.available()).toBe(false);
+  field.remove();
 });

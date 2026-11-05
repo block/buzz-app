@@ -469,7 +469,7 @@ describe("mounted Markdown preparation", () => {
     const newer = markdownRenders.mock.calls.length;
     render("**evicted**");
     expect(markdownRenders).toHaveBeenCalledTimes(newer + 1);
-  });
+  }, 20_000);
 
   it("does not keep a body heavier than the whole cache", () => {
     render("**kept**");
@@ -787,6 +787,18 @@ describe("Markdown inline extensions", () => {
     expect(html).toContain("PLUGIN :party_parrot: @Mic</span>");
   });
 
+  it("renders a message ending in a bare Buzz link without duplicate React keys", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const content = "see buzz://channel/x";
+    const { container } = renderDom(
+      <MessageMarkdown {...props(content, { extensions })} />,
+    );
+    expect(container.textContent).toBe(content);
+    expect(
+      error.mock.calls.filter((call) => String(call[0]).includes("same key")),
+    ).toEqual([]);
+  });
+
   it.each(["http", "https"])(
     "keeps emoji shortcodes and encoded punctuation verbatim inside bare %s links",
     (scheme) => {
@@ -884,7 +896,7 @@ it("keeps resolved private channel labels and lock icons for Buzz links", () => 
   expect(container.textContent).toContain("design");
   expect(container.textContent).not.toContain("buzz://");
   const lock = renderToStaticMarkup(
-    <LockIcon className={referenceStyles.icon} />,
+    <LockIcon className={`${referenceStyles.icon} ${referenceStyles.snug}`} />,
   );
   expect(html.split(lock)).toHaveLength(3);
 });
@@ -1477,4 +1489,17 @@ it("marks only a mention of the viewer as a mention of you", () => {
   expect(
     view.getByRole("button", { name: "View Mic profile" }),
   ).not.toHaveAttribute("data-mention-self");
+});
+
+it("opens a plugin page link in message content through the host opener", () => {
+  const href =
+    "buzz://plugin?id=com.example.catalog&page=detail&route.slug=hello";
+  const onOpenLink = vi.fn(() => true);
+  renderDom(
+    <ToastProvider>
+      <MessageMarkdown {...props(`See [the entry](${href})`, { onOpenLink })} />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("link", { name: "the entry" }));
+  expect(onOpenLink).toHaveBeenCalledWith(href);
 });

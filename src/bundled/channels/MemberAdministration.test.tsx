@@ -27,6 +27,7 @@ import { ChannelMembersButton } from "./ChannelMembersDialog";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 const stops: (() => void)[] = [];
+const memberData = () => screen.getByRole("region", { name: "Member list" });
 beforeEach(() => {
   // jsdom has no top layer; browser tests own popup paint and hit testing.
   HTMLElement.prototype.showPopover = function () {
@@ -142,6 +143,7 @@ async function setup(
           : event.tags.find(([key]) => key === "role")?.[1];
     tick++;
   });
+  const write = vi.fn();
   let dialogReads = false;
   const query = vi.fn(async (filters: Parameters<typeof matchesEvent>[1][]) => {
     if (targetRole === "absent" && filters.some((filter) => filter.search))
@@ -159,25 +161,29 @@ async function setup(
     (url: string, size?: "small") =>
       `https://media.example/${size ?? "original"}?url=${encodeURIComponent(url)}`,
   );
-  const sessionOwner = createRelaySession({
-    viewer: viewer.pubkey,
-    relayAuthor: relay.pubkey,
-    media,
-    query,
-    ...(supported
-      ? {
-          memberAdministration: {
-            sign: async (template) => signed(viewer, template),
-            publish,
-          },
-        }
-      : {}),
-    writer: {
-      kinds: [9, 9000],
-      sign: async (template) => signed(viewer, template),
-      publish: vi.fn(),
+  const sessionOwner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media,
+      query,
+      ...(supported
+        ? {
+            memberAdministration: {
+              sign: async (template) => signed(viewer, template),
+              publish,
+            },
+          }
+        : {}),
+      writer: {
+        kinds: [9, 9000],
+        sign: async (template) => signed(viewer, template),
+        publish: write,
+      },
     },
-  });
+    // jsdom has no IndexedDB; plain Add needs a loadable outbox.
+    { outboxStorage: { load: () => [], save: () => {} } },
+  );
   stops.push(sessionOwner.dispose);
   const session = sessionOwner.session;
   session.channels.ensureList();
@@ -226,6 +232,7 @@ async function setup(
     user,
     session,
     publish,
+    write,
     query,
     onOpenLink,
     onOpenConversation,
@@ -321,15 +328,20 @@ it.each([
       ["p", t.target.pubkey],
       ["role", role],
     ]);
-    await vi.waitFor(() =>
-      expect(screen.getByText("Morgan").closest("li")).toHaveTextContent(
-        role === "guest"
-          ? "Viewing only"
-          : role === "member"
-            ? "Participating"
-            : "Admin",
-      ),
-    );
+    await vi.waitFor(() => {
+      const row = required(screen.getByText("Morgan").closest("li"));
+      expect(
+        within(row).getByRole("button", { name: /Open profile/ }),
+      ).toHaveAccessibleName(new RegExp(`, ${role}$`));
+      if (role === "member")
+        expect(
+          within(row).queryByText("Participating"),
+        ).not.toBeInTheDocument();
+      else
+        expect(row).toHaveTextContent(
+          role === "guest" ? "Viewing only" : "Admin",
+        );
+    });
   },
 );
 
@@ -461,13 +473,14 @@ it.each([
 
 it("updates an agent's role label after refresh while keeping it under Agents", async () => {
   const t = await setup("member", "member", true, undefined, true);
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
   for (const role of ["admin", "owner", "member"]) {
     await vi.waitFor(() =>
-      expect(refresh).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     t.confirm(role);
-    await t.user.click(refresh);
+    await act(async () => {
+      await t.session.memberAdministration.refresh(id);
+    });
     await vi.waitFor(() =>
       expect(
         screen.getByRole("button", { name: /Open profile for Morgan/ }),
@@ -503,22 +516,34 @@ it("withholds initial rows until roles settle, then preserves content through re
   } finally {
     await act(async () => release());
   }
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
   expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   t.confirm("admin");
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await act(async () => {
+    await t.session.memberAdministration.refresh(id);
+  });
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
   expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   const query = required(t.query.getMockImplementation());
   t.query.mockRejectedValue(new Error("Read failed"));
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await act(async () => {
+    await t.session.memberAdministration.refresh(id);
+  });
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
   expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   t.query.mockImplementation(query);
   t.confirm("member");
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
   expect(memberOrder()).toEqual(["Carl", "Morgan", "Owner"]);
   expect(t.publish).not.toHaveBeenCalled();
 });
@@ -647,8 +672,9 @@ it.each(["names", "roles", "roster"] as const)(
 
 it("keeps resolved rows and focus while refreshing, and reopens warm without a spinner", async () => {
   const t = await setup();
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+  );
   const gate = deferred();
   const query = required(t.query.getMockImplementation());
   t.query.mockImplementation(async (filters) => {
@@ -656,21 +682,25 @@ it("keeps resolved rows and focus while refreshing, and reopens warm without a s
     return query(filters);
   });
   try {
+    const search = screen.getByRole("searchbox");
+    search.focus();
     const row = screen.getByRole("button", { name: /Open profile for Morgan/ });
     const list = screen.getByRole("region", { name: "Member list" });
     list.scrollTop = 24;
-    await t.user.click(refresh);
+    await act(async () => {
+      void t.session.memberAdministration.refresh(id);
+    });
     expect(
       screen.queryByRole("status", { name: "Loading members" }),
     ).toBeNull();
     expect(
       screen.getByRole("button", { name: /Open profile for Morgan/ }),
     ).toBe(row);
-    expect(refresh).toHaveFocus();
+    expect(search).toHaveFocus();
     expect(list.scrollTop).toBe(24);
     await act(async () => gate.resolve());
     await vi.waitFor(() =>
-      expect(refresh).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     await t.user.click(screen.getByRole("button", { name: "Close" }));
     const reopen = deferred();
@@ -821,13 +851,13 @@ it.each(["member", "guest"])(
     );
   },
 );
-it.each(["member", "admin", "guest"] as const)(
-  "shows the verified %s role beside an ellipsis menu until confirmation",
+it.each(["member", "bot", "admin", "guest"] as const)(
+  "labels only exceptions in the %s row while retaining its checked role-menu choice",
   async (role) => {
-    const t = await setup("owner", role);
+    const t = await setup("owner", role, true, undefined, role === "bot");
     const row = required(screen.getByText("Morgan").closest("li"));
     const caption =
-      role === "member"
+      role === "member" || role === "bot"
         ? "Participating"
         : role === "guest"
           ? "Viewing only"
@@ -835,7 +865,9 @@ it.each(["member", "admin", "guest"] as const)(
     const actions = within(row).getByRole("button", {
       name: "Actions for Morgan",
     });
-    expect(within(row).getByText(caption)).toBeVisible();
+    if (role === "member" || role === "bot")
+      expect(within(row).queryByText(caption)).not.toBeInTheDocument();
+    else expect(within(row).getByText(caption)).toBeVisible();
     expect(actions).not.toHaveTextContent(caption);
     expect(
       within(row).queryByRole("button", { name: "Access for Morgan" }),
@@ -855,7 +887,9 @@ it.each(["member", "admin", "guest"] as const)(
     await vi.waitFor(() => expect(actions).toHaveFocus());
     expect(
       within(row).getByRole("button", { name: /Open profile/ }),
-    ).toHaveAccessibleName(new RegExp(`, ${role}$`));
+    ).toHaveAccessibleName(
+      new RegExp(`, ${role === "bot" ? "member" : role}$`),
+    );
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -1046,13 +1080,11 @@ it("keeps unconfirmed roles and session recovery across close/reopen without rep
   await screen.findByText(/This request may have taken effect/);
   await vi.waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Refresh member data" }),
+      screen.getByRole("button", { name: "Retry member data" }),
     ).not.toHaveAttribute("aria-disabled", "true"),
   );
   t.confirm("admin");
-  await t.user.click(
-    screen.getByRole("button", { name: "Refresh member data" }),
-  );
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await vi.waitFor(() =>
     expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
       "confirmed",
@@ -1090,8 +1122,11 @@ it("pending operations survive closing while suppressing duplicate actions", asy
       screen.queryByText(/Checking permissions and waiting/),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Refresh member data" }),
-    ).toHaveAttribute("aria-disabled", "true");
+      screen.queryByRole("button", { name: "Retry member data" }),
+    ).toBeNull();
+    expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
+      "pending",
+    );
   } finally {
     await act(async () => release());
   }
@@ -1125,9 +1160,7 @@ it("retains roster and displays rejection with explicit refresh recovery", async
       screen.getByRole("button", { name: /Open profile for Morgan/ }),
     ).toBeVisible(),
   );
-  await t.user.click(
-    screen.getByRole("button", { name: "Refresh member data" }),
-  );
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByRole("button", { name: /^Actions for Morgan$/ });
   expect(t.publish).toHaveBeenCalledOnce();
 });
@@ -1150,9 +1183,13 @@ it.each(["failed", "uncertain"])(
         ? /This request may have taken effect/
         : "Permission changed";
     await screen.findByText(message);
-    const refresh = screen.getByRole("button", { name: "Refresh member data" });
     await vi.waitFor(() =>
-      expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+      expect(
+        screen.getByRole("button", { name: "Retry member data" }),
+      ).toBeVisible(),
+    );
+    await vi.waitFor(() =>
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -1164,7 +1201,9 @@ it.each(["failed", "uncertain"])(
       return query(...args);
     });
     try {
-      await t.user.click(refresh);
+      await t.user.click(
+        screen.getByRole("button", { name: "Retry member data" }),
+      );
       await vi.waitFor(() =>
         expect(t.session.memberAdministration.snapshot(id).status).toBe(
           "loading",
@@ -1186,42 +1225,38 @@ it.each(["failed", "uncertain"])(
 );
 
 it.each([true, false])(
-  "refreshes roster and roles from the header without writes (writer: %s)",
+  "applies live roster and role reads without writes (writer: %s)",
   async (supported) => {
     const t = await setup("owner", "member", supported);
     const section = screen.getByRole("region", { name: "People" });
-    const dialog = screen.getByRole("dialog", { name: "Manage members" });
-    const header = required(dialog.querySelector("header"));
-    const refresh = within(header).getByRole("button", {
-      name: "Refresh member data",
-    });
-    const close = within(header).getByRole("button", {
-      name: "Close",
-    });
-    expect(refresh).toHaveAttribute("data-variant", "ghost");
-    expect(refresh).toHaveAttribute("data-icon-size", "compact");
-    expect(refresh.nextElementSibling).toBe(close);
-    await vi.waitFor(() =>
-      expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
-    );
+    expect(
+      screen.queryByRole("button", { name: "Refresh member data" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Retry member data" }),
+    ).toBeNull();
     await t.user.type(screen.getByRole("searchbox"), "Morgan");
     await vi.waitFor(() =>
-      expect(refresh).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     t.confirm("admin");
-    await t.user.click(refresh);
+    await act(async () => {
+      await t.session.memberAdministration.refresh(id);
+    });
     await vi.waitFor(() =>
       expect(
         screen.getByRole("button", { name: /Open profile for Morgan/ }),
       ).toHaveAccessibleName(/, admin$/),
     );
     await vi.waitFor(() =>
-      expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     t.confirm(undefined);
-    await t.user.click(refresh);
+    await act(async () => {
+      await t.session.memberAdministration.refresh(id);
+    });
     await vi.waitFor(() =>
-      expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     // An empty role group is hidden; search results say why it is empty.
     expect(section).not.toBeInTheDocument();
@@ -1290,9 +1325,9 @@ it.each([false, true])(
         failure ? "error" : "ready",
       ),
     );
-    const refresh = screen.getByRole("button", { name: "Refresh member data" });
+
     await vi.waitFor(() =>
-      expect(refresh).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     expect(
       t.query.mock.calls.filter(([filters]) =>
@@ -1320,7 +1355,9 @@ it.each([false, true])(
         within(targetRow()).getByRole("button", { name: /Open profile/ }),
       ).toHaveAccessibleName(/Role unverified/);
       failRead = false;
-      await t.user.click(refresh);
+      await t.user.click(
+        screen.getByRole("button", { name: "Retry member data" }),
+      );
       await vi.waitFor(() =>
         expect(t.session.memberAdministration.snapshot(id).status).toBe(
           "ready",
@@ -1375,11 +1412,8 @@ it("does not reload roles after this channel's access is revoked", async () => {
 
 it("holds duplicate refreshes, retains the roster on read failure, and recovers explicitly", async () => {
   const t = await setup();
-  const refresh = screen.getByRole("button", {
-    name: "Refresh member data",
-  });
   await vi.waitFor(() =>
-    expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
   );
   const query = required(t.query.getMockImplementation());
   let release!: () => void;
@@ -1396,45 +1430,70 @@ it("holds duplicate refreshes, retains the roster on read failure, and recovers 
     return query(filters);
   });
   try {
-    await t.user.click(refresh);
-    await vi.waitFor(() => expect(started).toBe(2));
-    expect(refresh).toHaveAttribute("aria-busy", "true");
-    expect(refresh).toHaveAttribute("aria-disabled", "true");
-    expect(refresh.querySelector("svg")).toHaveClass(
-      "motion-safe:animate-spin",
-    );
+    await act(async () => {
+      void t.session.memberAdministration.refresh(id);
+    });
+    await vi.waitFor(() => expect(started).toBe(1));
+    expect(memberData()).toHaveAttribute("data-refreshing", "true");
+    expect(
+      screen.queryByRole("button", { name: "Retry member data" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Refresh member data" }),
+    ).toBeNull();
     expect(screen.queryByText("Loading members…")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Open profile for Morgan/ }),
     ).toBeVisible();
-    await t.user.click(refresh);
+    await act(async () => {
+      void t.session.memberAdministration.refresh(id);
+    });
   } finally {
     await act(async () => release());
   }
-  await screen.findByText(/The member list could not load/);
+  await screen.findByText("Member reads offline");
   await vi.waitFor(() =>
-    expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
   );
-  expect(started).toBe(2);
+  expect(started).toBe(1);
   expect(
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
   ).toHaveAttribute("aria-label", "People");
-  t.query.mockImplementation(query);
+  const recovery = deferred();
+  t.query.mockImplementation(async (filters) => {
+    await recovery.promise;
+    return query(filters);
+  });
   t.confirm("admin");
-  await t.user.click(refresh);
+  try {
+    await t.user.click(
+      screen.getByRole("button", { name: "Retry member data" }),
+    );
+    expect(memberData()).toHaveAttribute("data-refreshing", "true");
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    // The error-only action retires while the read is pending; it cannot replay.
+    expect(
+      screen.queryByRole("button", { name: "Retry member data" }),
+    ).toBeNull();
+    expect(t.publish).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => recovery.resolve());
+  }
   await vi.waitFor(() =>
     expect(
       screen.getByRole("button", { name: /Open profile for Morgan/ }),
     ).toHaveAccessibleName(/, admin$/),
   );
   await vi.waitFor(() =>
-    expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+    expect(memberData()).toHaveAttribute("data-refreshing", "false"),
   );
+  expect(screen.queryByText("Member reads offline")).not.toBeInTheDocument();
   expect(
-    screen.queryByText(/The member list could not load/),
-  ).not.toBeInTheDocument();
+    screen.queryByRole("button", { name: "Retry member data" }),
+  ).toBeNull();
+  expect(screen.getByRole("searchbox")).toHaveFocus();
   expect(t.publish).not.toHaveBeenCalled();
 });
 
@@ -1493,6 +1552,36 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     await vi.waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
+    expect(t.publish).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["button", "context"])(
+  "keeps a %s menu through a queued pre-opening scroll, then dismisses on new scrolling",
+  async (entry) => {
+    const t = await setup();
+    const list = memberData();
+    list.scrollTop = 24;
+    if (entry === "button") {
+      await t.user.click(
+        screen.getByRole("button", { name: /^Actions for Morgan$/ }),
+      );
+    } else {
+      const row = required(screen.getByText("Morgan").closest("li"));
+      fireEvent.contextMenu(row, { clientX: 100, clientY: 100, button: 2 });
+    }
+    const menu = await screen.findByRole("menu");
+    // The browser can deliver the scroll that revealed the row after opening.
+    fireEvent.scroll(list);
+    expect(menu).toHaveAttribute("data-open", "");
+    list.scrollTop = 48;
+    fireEvent.scroll(list);
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Manage members" }),
+    ).toBeVisible();
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
@@ -1753,36 +1842,103 @@ it("closing Members aborts the DM waiter and prevents late navigation", async ()
   expect(t.publish).not.toHaveBeenCalled();
 });
 
+it("shows action feedback above the member list so a long roster cannot hide it", async () => {
+  const t = await setup(
+    "member",
+    "absent",
+    true,
+    undefined,
+    false,
+    undefined,
+    true,
+  );
+  const list = memberData();
+  const aboveList = (element: HTMLElement) => {
+    expect(list).not.toContainElement(element);
+    expect(
+      element.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  };
+  let fail!: (reason: Error) => void;
+  t.openMessage.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  await t.user.click(
+    screen.getByRole("button", { name: /^Actions for Owner$/ }),
+  );
+  await t.user.click(
+    await screen.findByRole("menuitem", { name: "Send message" }),
+  );
+  aboveList(await screen.findByText("Opening conversation…"));
+  await act(async () => fail(new Error("DM unavailable")));
+  aboveList(await screen.findByText("DM unavailable"));
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(
+    new Error("Clipboard unavailable"),
+  );
+  await t.user.click(screen.getByRole("button", { name: "Copy link" }));
+  aboveList(await screen.findByText("Couldn’t copy the link."));
+  t.write.mockRejectedValueOnce(
+    new PublishRejected(
+      "blocked: you are not allowed to add members to this channel",
+    ),
+  );
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  await t.user.click(
+    await screen.findByRole("button", { name: /^Add Morgan \(/ }),
+  );
+  const refusal = await screen.findByText(/blocked: you are not allowed/);
+  aboveList(refusal);
+  expect(
+    within(refusal).getByRole("button", { name: "Retry adding Morgan" }),
+  ).toBeEnabled();
+  expect(within(list).queryByRole("alert")).toBeNull();
+  expect(screen.getAllByRole("alert")).toHaveLength(3);
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
 it("filters by present groups and resets to All on any search input", async () => {
   const t = await setup("admin", "member", true, undefined, true);
   const list = screen.getByRole("region", { name: "Member list" });
   const filter = () =>
-    screen.getByRole("combobox", { name: "Filter people and agents" });
-  expect(filter()).toHaveTextContent("All");
+    screen.getByRole("button", { name: /^Filter people and agents:/ });
+  expect(filter()).toHaveAccessibleName("Filter people and agents: All");
+  expect(filter()).toHaveAttribute("data-variant", "ghost");
+  expect(filter().closest(".buzz-input-group")).toContainElement(
+    screen.getByRole("searchbox"),
+  );
   await t.user.click(filter());
-  await screen.findByRole("option", { name: /^All/ });
-  expect(screen.getAllByRole("option").map((item) => item.textContent)).toEqual(
-    ["All · 3", "People · 2", "Agents · 1"],
-  );
-  expect(screen.getByRole("option", { name: "All · 3" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await t.user.click(screen.getByRole("option", { name: "Agents · 1" }));
+  await screen.findByRole("menuitemradio", { name: /^All/ });
+  expect(
+    screen.getAllByRole("menuitemradio").map((item) => item.textContent),
+  ).toEqual(["All · 3", "People · 2", "Agents · 1"]);
+  expect(
+    screen.getByRole("menuitemradio", { name: "All · 3" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await t.user.click(screen.getByRole("menuitemradio", { name: "Agents · 1" }));
   expect(within(list).getByText("Morgan")).toBeVisible();
   expect(within(list).queryByText("Carl (you)")).not.toBeInTheDocument();
   expect(within(list).queryByText("Owner")).not.toBeInTheDocument();
-  expect(filter()).toHaveTextContent("Agents");
+  expect(filter()).toHaveAccessibleName("Filter people and agents: Agents");
+  expect(filter()).toHaveAttribute("data-variant", "prominent");
   // Whitespace still starts search mode, even though matching trims it.
   await t.user.type(screen.getByRole("searchbox"), " ");
-  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /^Filter people and agents:/ }),
+  ).not.toBeInTheDocument();
   expect(within(list).getByText("Carl (you)")).toBeVisible();
   await t.user.clear(screen.getByRole("searchbox"));
-  expect(filter()).toHaveTextContent("All");
+  expect(filter()).toHaveAccessibleName("Filter people and agents: All");
   await t.user.click(filter());
-  await t.user.click(await screen.findByRole("option", { name: "Agents · 1" }));
+  await t.user.click(
+    await screen.findByRole("menuitemradio", { name: "Agents · 1" }),
+  );
   await t.user.type(screen.getByRole("searchbox"), "Carl");
-  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /^Filter people and agents:/ }),
+  ).not.toBeInTheDocument();
   const carl = within(list).getByText("Carl (you)");
   expect(carl).toBeVisible();
   // Only rows you can add show the typed letters; members stay unchanged.
@@ -1800,7 +1956,7 @@ it("filters by present groups and resets to All on any search input", async () =
 it("hides the identity filter when everyone is a person, including owners", async () => {
   await setup("owner", "owner");
   expect(
-    screen.queryByRole("combobox", { name: "Filter people and agents" }),
+    screen.queryByRole("button", { name: /^Filter people and agents:/ }),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "People · 3" })).toBeVisible();
 });
@@ -1808,9 +1964,11 @@ it("hides the identity filter when everyone is a person, including owners", asyn
 it("keeps agent owners in the Agents filter", async () => {
   const t = await setup("owner", "owner", true, undefined, true);
   await t.user.click(
-    screen.getByRole("combobox", { name: "Filter people and agents" }),
+    screen.getByRole("button", { name: /^Filter people and agents:/ }),
   );
-  await t.user.click(await screen.findByRole("option", { name: "Agents · 1" }));
+  await t.user.click(
+    await screen.findByRole("menuitemradio", { name: "Agents · 1" }),
+  );
   expect(
     screen.getByRole("button", { name: /^Open profile for Morgan/ }),
   ).toBeVisible();
@@ -1822,21 +1980,23 @@ it("keeps agent owners in the Agents filter", async () => {
 it("preserves the identity filter through role changes and resets on reopen", async () => {
   const t = await setup("admin", "member", true, undefined, true);
   const filter = () =>
-    screen.getByRole("combobox", { name: "Filter people and agents" });
+    screen.getByRole("button", { name: /^Filter people and agents:/ });
   await t.user.click(filter());
-  await t.user.click(await screen.findByRole("option", { name: "Agents · 1" }));
+  await t.user.click(
+    await screen.findByRole("menuitemradio", { name: "Agents · 1" }),
+  );
   t.confirm("admin");
   await act(async () => {
     await t.session.memberAdministration.refresh(id);
   });
-  expect(filter()).toHaveTextContent("Agents");
+  expect(filter()).toHaveAccessibleName("Filter people and agents: Agents");
   expect(
     screen.getByRole("button", { name: /Open profile for Morgan/ }),
   ).toHaveAccessibleName(/, admin$/);
   await t.user.click(screen.getByRole("button", { name: "Close" }));
   await t.user.click(screen.getByRole("button", { name: "Access" }));
   await screen.findByText("Morgan");
-  expect(filter()).toHaveTextContent("All");
+  expect(filter()).toHaveAccessibleName("Filter people and agents: All");
 });
 
 it.each(["bot", "member"])(
@@ -1917,9 +2077,7 @@ it.each(["other", "invalid"] as const)(
       ownership,
     );
     await vi.waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Refresh member data" }),
-      ).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     await t.user.click(
       screen.getByRole("button", { name: /^Actions for Morgan$/ }),

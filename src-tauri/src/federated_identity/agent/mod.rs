@@ -17,6 +17,7 @@ use grant::{Grant, GrantStore, SecureGrantStore};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -27,6 +28,8 @@ const SIGN_IN: &str = "Sign in to your organization to enroll this agent";
 const STOPPED: &str =
     "Your organization no longer accepts this agent; sign in again to re-enroll it";
 const CHANGED: &str = "Your organization sign-in changed; try again";
+const SHORT_LIVED: &str =
+    "The community's sign-in does not last long enough for Git. Ask its administrator to lengthen it.";
 const DELETED: &str = "This agent was deleted";
 
 /// Lists every agent's owner and pubkey, for retiring all grants at once.
@@ -61,6 +64,34 @@ pub(super) struct Inner {
             tokio::sync::oneshot::Receiver<()>,
         )>,
     >,
+}
+/// A session being installed, holding the wipe transaction open.
+pub(super) struct Prepared {
+    tokens: AgentTokens,
+    /// Whether this preparation itself recorded the pending retirement.
+    marked: bool,
+    _wiping: tokio::sync::OwnedMutexGuard<()>,
+}
+impl Prepared {
+    /// The session will not be installed and nothing of it was persisted:
+    /// withdraw only the retirement this preparation recorded. Every other
+    /// writer of the record holds the wipe lock, which this still holds.
+    pub(super) async fn abandon(self) {
+        if !self.marked {
+            return;
+        }
+        let (retired, at) = (self.tokens.0.retired.clone(), self.tokens.retiring_key());
+        // On failure the retirement stays recorded: a later wipe over-retires.
+        let _ = self
+            .tokens
+            .storage(move |store| {
+                let mut retired = lock(&retired);
+                store.set_pending(&at, false)?;
+                retired.pending = Some(false);
+                Ok(())
+            })
+            .await;
+    }
 }
 #[derive(Default)]
 struct Retired {
@@ -179,7 +210,8 @@ impl Admission {
 
 impl AgentTokens {
     pub(crate) fn new(identity: FederatedIdentity) -> Self {
-        Self::with_store(identity, Arc::new(SecureGrantStore))
+        let store = Arc::new(SecureGrantStore(identity.0.account.clone()));
+        Self::with_store(identity, store)
     }
     /// Tokens for a build without an organization: agents send no evidence.
     #[cfg(test)]
@@ -212,7 +244,7 @@ impl AgentTokens {
     pub(super) async fn preparing_session(
         identity: &FederatedIdentity,
         account: Option<String>,
-    ) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, String> {
+    ) -> Result<Option<Prepared>, String> {
         let Some(inner) = lock(&identity.0.agent_tokens).upgrade() else {
             return Ok(None);
         };
@@ -220,7 +252,7 @@ impl AgentTokens {
         let wiping = tokens.0.wiping.clone().lock_owned().await;
         let keys = tokens.grant_keys().await?;
         let (retired, at) = (tokens.0.retired.clone(), tokens.retiring_key());
-        tokens
+        let marked = tokens
             .storage(move |store| {
                 let mut retired = lock(&retired);
                 let foreign = keys.iter().try_fold(false, |foreign, key| {
@@ -231,14 +263,23 @@ impl AgentTokens {
                             }),
                     )
                 })?;
-                if foreign {
-                    store.set_pending(&at, true)?;
-                    retired.pending = Some(true);
+                if !foreign {
+                    return Ok(false);
                 }
-                Ok(())
+                let before = match retired.pending {
+                    Some(pending) => pending,
+                    None => store.pending(&at)?,
+                };
+                store.set_pending(&at, true)?;
+                retired.pending = Some(true);
+                Ok(!before)
             })
             .await?;
-        Ok(Some(wiping))
+        Ok(Some(Prepared {
+            tokens,
+            marked,
+            _wiping: wiping,
+        }))
     }
     fn slot(&self, agent: &str) -> Arc<AsyncMutex<Slot>> {
         lock(&self.0.slots).entry(agent.into()).or_default().clone()
@@ -342,6 +383,18 @@ impl AgentTokens {
         key: &Secret,
         incarnation: Stamp,
     ) -> Result<Admission, String> {
+        self.authorize_for(agent, key, incarnation, Duration::ZERO)
+            .await
+    }
+    /// As [`Self::authorize`], with evidence that stays valid for at least
+    /// `valid_for`, for a header handed to a later process such as Git.
+    pub(crate) async fn authorize_for(
+        &self,
+        agent: &AppAgent,
+        key: &Secret,
+        incarnation: Stamp,
+        valid_for: Duration,
+    ) -> Result<Admission, String> {
         let mut admission = Admission {
             tokens: self.clone(),
             agent: agent.pubkey.clone(),
@@ -350,7 +403,7 @@ impl AgentTokens {
             cached: None,
         };
         admission.dispatch()?;
-        admission.cached = self.acquire(agent, key, incarnation.key).await?;
+        admission.cached = self.acquire(agent, key, incarnation.key, valid_for).await?;
         admission.dispatch()?;
         Ok(admission)
     }
@@ -376,6 +429,7 @@ impl AgentTokens {
         agent: &AppAgent,
         key: &Secret,
         incarnation: u64,
+        valid_for: Duration,
     ) -> Result<Option<Cached>, String> {
         let Some(config) = self.0.identity.0.config.as_ref() else {
             return Ok(None);
@@ -399,6 +453,7 @@ impl AgentTokens {
                     .is_none_or(|account| *account == cached.account)
                 && cached.relay == relay
                 && cached.refresh_at > now
+                && cached.expires_at > tokio::time::Instant::now() + valid_for
             {
                 return Ok(Some(cached.clone()));
             }
@@ -479,6 +534,9 @@ impl AgentTokens {
             ..cached
         };
         slot.assertion = Some(cached.clone());
+        if cached.expires_at <= tokio::time::Instant::now() + valid_for {
+            return Err(SHORT_LIVED.into());
+        }
         Ok(Some(cached))
     }
 

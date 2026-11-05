@@ -1,7 +1,11 @@
 import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-test.use({ pluginFixtures: true, historyCounts: { alpha: 1, beta: 0 } });
+test.use({
+  enabledPlugins: ["buzz.workflows"],
+  pluginFixtures: true,
+  historyCounts: { alpha: 1, beta: 0 },
+});
 
 async function expectPageChoice(page, name, count) {
   const choices = await pageChoices(page, "Settings");
@@ -38,7 +42,7 @@ test("cold destination waits for its enabled provider to activate", async ({
       .poll(() => page.evaluate(() => window.delayFixture.started))
       .toBe(true);
     await expect(page.getByRole("main").getByRole("status")).toHaveText(
-      "Opening destination…",
+      "Loading…",
     );
     await expect
       .poll(() =>
@@ -134,7 +138,7 @@ test("native Settings traversal retains a dirty Profile behind an unavailable pr
   });
   await page.goForward();
   await expect(
-    page.getByText("This destination couldn’t open", { exact: true }),
+    page.getByText("This page isn’t available", { exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(() => window.retainedDraftEditor.isConnected),

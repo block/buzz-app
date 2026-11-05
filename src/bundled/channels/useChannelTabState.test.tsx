@@ -4,6 +4,14 @@ import { useEffect } from "react";
 import { afterEach, expect, test } from "vitest";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
+import {
+  claimProfileTranscript,
+  openProfileTranscript,
+  profileActivityViewTarget,
+  profileHistoryTarget,
+} from "../../features/profiles/target";
 import type {
   PanelOpening,
   RegisteredPanel,
@@ -260,6 +268,7 @@ test("opening a thread selects it, deduplicates its root and restores each chann
       channelId: "alpha",
       messageId: "root-b",
       replyRequest: undefined,
+      focusRequest: 1,
       pane: "side",
     },
   ]);
@@ -276,6 +285,32 @@ test("opening a thread selects it, deduplicates its root and restores each chann
     replyRequest: undefined,
   });
 });
+
+test.each(["main", "side"] as const)(
+  "ordinary openings request reply focus each time in the %s pane; restoration does not",
+  (pane) => {
+    const session = {} as RelaySession;
+    const h = renderHook(() => useChannelTabState(session, "alpha"));
+    const open = () =>
+      h.result.current.openThreadTab("alpha", "root", "root", undefined, pane);
+    act(open);
+    expect(h.result.current.tabs[0]).toMatchObject({ focusRequest: 1, pane });
+    act(open);
+    expect(h.result.current.tabs).toHaveLength(1);
+    expect(h.result.current.tabs[0]).toMatchObject({ focusRequest: 2, pane });
+    act(() => h.result.current.openThreadTab("alpha", "other", "other"));
+    act(open);
+    expect(h.result.current.tabs[0]).toMatchObject({ focusRequest: 3, pane });
+    act(() =>
+      h.result.current.enterVisit("restore", {
+        channelId: "alpha",
+        messageId: "root",
+        rootId: "root",
+      }),
+    );
+    expect(h.result.current.tabs[0]).toMatchObject({ focusRequest: 3, pane });
+  },
+);
 
 // Placement is one channel-owned list: a move reorders or crosses panes
 // without changing the tab's identity, and selection follows it.
@@ -314,7 +349,7 @@ test("moving a thread reorders it within a pane and across panes", () => {
   act(() => h.result.current.openThreadTab("alpha", "a", "a", "focus"));
   expect(
     h.result.current.tabs.find((tab) => tab.id === "thread:alpha:a"),
-  ).toMatchObject({ replyRequest: 1, focusRequest: 1 });
+  ).toMatchObject({ replyRequest: 1, focusRequest: 2 });
 });
 
 // A link's root hint is not identity: the reader's verified root merges a
@@ -473,6 +508,90 @@ test("explicit close identifies only the thread's addressed visits, not channel 
   expect(h.result.current.threadVisits("alpha", "other")).toEqual(["other"]);
   expect(h.result.current.threadVisits("beta", "root")).toEqual([]);
 });
+
+test.each([
+  ["profile", `buzz:agent-profile:${"a".repeat(64)}`],
+  ["activity", profileActivityViewTarget("a".repeat(64)) as string],
+  ["transcript", profileActivityViewTarget("a".repeat(64)) as string],
+])(
+  "closing %s after Back retires its retained version visit",
+  async (opening, base) => {
+    const scope = {
+      viewer: "b".repeat(64),
+      communityOrigin: "https://relay.example",
+    };
+    const channel = {
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "alpha",
+    } as const;
+    const host = createNavigationController(createMemoryHistory(channel));
+    const session = {} as RelaySession;
+    const h = renderHook(() => useChannelTabState(session, "alpha"));
+    if (opening === "transcript") openProfileTranscript(base, () => true);
+    const list = profileHistoryTarget(base);
+    const selected = profileHistoryTarget(base, {
+      side: "instructions",
+      id: "c".repeat(64),
+    });
+    try {
+      const others = [
+        `${base}#unknown`,
+        `${base}#version=invalid`,
+        profileHistoryTarget(`buzz:agent-profile:${"d".repeat(64)}`),
+        "https://github.com/sample/project/pull/42#versions",
+      ];
+      for (const [index, target] of others.entries()) {
+        act(() =>
+          h.result.current.enterVisit(
+            `other-${index}:detail`,
+            undefined,
+            true,
+            {
+              channelId: "alpha",
+              target,
+            },
+          ),
+        );
+      }
+      for (const target of [list, selected]) {
+        void host.navigation.open({ ...channel, detail: { target } });
+        act(() =>
+          h.result.current.enterVisit(
+            `${host.navigation.snapshot().entry.id}:detail`,
+            undefined,
+            true,
+            { channelId: "alpha", target },
+          ),
+        );
+      }
+      act(() => host.navigation.back());
+      expect(host.navigation.snapshot().entry.target).toEqual({
+        ...channel,
+        detail: { target: list },
+      });
+      // ChannelsPage uses this retirement set when explicitly closing the tab.
+      act(() =>
+        host.navigation.dismiss(
+          h.result.current.detailVisits("alpha", list),
+          channel,
+        ),
+      );
+      act(() => host.navigation.forward());
+      expect(host.navigation.snapshot().entry.target).toEqual(channel);
+      expect(h.result.current.detailVisits("beta", list)).toEqual([]);
+      for (const [index, target] of others.entries()) {
+        expect(h.result.current.detailVisits("alpha", target)).toEqual([
+          `other-${index}`,
+        ]);
+      }
+    } finally {
+      claimProfileTranscript(base);
+      host.dispose();
+    }
+  },
+);
 
 test("dismissal follows verified roots and retains thread visits beyond the layout snapshot limit", () => {
   const session = {} as RelaySession;
@@ -895,6 +1014,7 @@ test("an agent's tab leaves a page's side panel showing", () => {
     tabs.open("alpha", "r1");
   });
   expect(page.result.current.paneOpen).toBe(true);
+  expect(page.result.current.tabs[0]?.focusRequest).toBeUndefined();
 });
 
 test("an agent's main-pane tab leaves the conversation showing", () => {
@@ -908,7 +1028,7 @@ test("an agent's main-pane tab leaves the conversation showing", () => {
   expect(page.result.current).toMatchObject({
     mainSelected: undefined,
     paneOpen: true,
-    tabs: [{ id: "thread:alpha:r1", pane: "main" }],
+    tabs: [{ id: "thread:alpha:r1", pane: "main", focusRequest: undefined }],
   });
   act(() => page.result.current.selectMain("thread:alpha:r1"));
   expect(tabs.list("alpha")).toEqual([

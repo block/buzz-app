@@ -17,6 +17,10 @@ import type { Context } from "@deepseek-ai/cordis";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
 
+/** Any variant of the App-owned "page couldn't open" card. */
+const pageFailure =
+  /^(This page isn’t available|Can’t connect|You don’t have access to this|This link doesn’t work)$/;
+
 const activation = vi.hoisted(() => {
   const gate = {
     held: Promise.resolve(),
@@ -115,9 +119,7 @@ it("waits for a starting plugin before opening its addressed Settings card", asy
       ),
     );
     expect(current.navigation.snapshot().status).not.toBe("failed");
-    expect(
-      screen.queryByText("This destination couldn’t open"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(pageFailure)).not.toBeInTheDocument();
   } finally {
     await act(async () => activation.release());
   }
@@ -155,7 +157,7 @@ it("waits for a cold Settings provider address until its plugin registers", asyn
       ),
     );
     expect(current.navigation.snapshot().status).toBe("opening");
-    expect(screen.queryByText("This destination couldn’t open")).toBeNull();
+    expect(screen.queryByText(pageFailure)).toBeNull();
   } finally {
     await act(async () => activation.release());
   }
@@ -168,9 +170,61 @@ it("waits for a cold Settings provider address until its plugin registers", asyn
   await act(async () => {
     await current.plugins.change("disable", "test.gated");
   });
+  expect(await screen.findByText(pageFailure)).toBeVisible();
+});
+
+it("Back closes a Settings provider while leaving Settings open and Forward reopens it", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).not.toBe("pending"),
+  );
+  void current.navigation.open({
+    version: 1,
+    kind: "settings",
+    section: "agents",
+  });
+  const trigger = await screen.findByRole("button", {
+    name: "Gated provider, ready",
+  });
+  const agentSetup = current.navigation.snapshot().entry.target;
+  expect(agentSetup).not.toHaveProperty("provider");
+  fireEvent.click(trigger);
+  const provider = await screen.findByRole("dialog", {
+    name: "Gated provider",
+  });
+  expect(provider).toHaveAttribute("data-navigation-visit");
+  expect(current.navigation.snapshot().entry.target).toEqual({
+    ...agentSetup,
+    provider: "test.gated/provider",
+  });
+  expect(fireEvent.keyDown(provider, { ctrlKey: true, key: "[" })).toBe(false);
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Gated provider" })).toBeNull(),
+  );
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  expect(current.navigation.snapshot().entry.target).toEqual(agentSetup);
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Settings" }), {
+    ctrlKey: true,
+    key: "]",
+  });
   expect(
-    await screen.findByText("This destination couldn’t open"),
+    await screen.findByRole("dialog", { name: "Gated provider" }),
   ).toBeVisible();
+  expect(current.navigation.snapshot().entry.target).toEqual({
+    ...agentSetup,
+    provider: "test.gated/provider",
+  });
 });
 
 it("reports a settled plugin's absent Settings provider as unavailable", async () => {
@@ -202,13 +256,44 @@ it("reports a settled plugin's absent Settings provider as unavailable", async (
       "active",
     ),
   );
-  expect(
-    await screen.findByText("This destination couldn’t open"),
-  ).toBeVisible();
+  expect(await screen.findByText(pageFailure)).toBeVisible();
   expect(current.navigation.snapshot()).toMatchObject({
     status: "failed",
     reason: "unavailable",
   });
+});
+
+it("leaves the app's own navigation as the way out when Messages itself is unavailable", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope: null,
+      }),
+    )}`,
+  );
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  expect(
+    await screen.findByRole("heading", { name: "This page isn’t available" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
 });
 
 it("opens Pair mobile in Personal space with no saved communities", async () => {
@@ -361,8 +446,10 @@ function restoreMembership() {
 }
 function expectPending(current: AppServices) {
   expect(current.navigation.snapshot().status).toBe("opening");
-  expect(screen.getByText("Opening destination…")).toBeVisible();
-  expect(screen.queryByText("This destination couldn’t open")).toBeNull();
+  expect(
+    document.querySelector('.page-status [aria-busy="true"]'),
+  ).not.toBeNull();
+  expect(screen.queryByText(pageFailure)).toBeNull();
   expect(screen.queryByRole("button", { name: "Membership" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Profile" })).toBeNull();
 }
@@ -432,7 +519,7 @@ it("fails a completed ordinary-member read without exposing Membership", async (
   await waitFor(() =>
     expect(current.navigation.snapshot().status).toBe("failed"),
   );
-  expect(screen.getByText("This destination couldn’t open")).toBeVisible();
+  expect(screen.getByText(pageFailure)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Membership" })).toBeNull();
   expect(screen.queryByRole("heading", { name: "Membership" })).toBeNull();
 });
@@ -443,7 +530,7 @@ it.each([true, false])(
     fixture.fail();
     const current = restoreMembership();
     const retry = await screen.findByRole("button", {
-      name: "Retry navigation",
+      name: "Try again",
     });
     const main = document.getElementById("settings-content");
     if (!main) throw new Error("Missing Settings content focus target");
@@ -477,12 +564,12 @@ it("reconnects the selected Membership community after its transport fails", asy
   fixture.offline();
   fixture.owner();
   const current = restoreMembership();
-  await screen.findByRole("button", { name: "Retry navigation" });
+  await screen.findByRole("button", { name: "Try again" });
   expect(current.communities.snapshot().selected).toBe(primary);
   expect(current.relay.snapshot().status).toBe("error");
   const retry = vi.spyOn(current.relay, "retry");
   fixture.offline(false);
-  fireEvent.click(screen.getByRole("button", { name: "Retry navigation" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   await screen.findByRole("heading", { name: "Membership" });
   expect(retry).toHaveBeenCalledOnce();
   expect(current.navigation.snapshot().status).toBe("opened");
@@ -491,7 +578,7 @@ it("does not reconnect an unrelated community when the addressed Settings scope 
   const fixture = membershipFixture();
   fixture.offline();
   const current = restoreMembership();
-  await screen.findByRole("button", { name: "Retry navigation" });
+  await screen.findByRole("button", { name: "Try again" });
   const retry = vi.spyOn(current.relay, "retry");
   act(() => {
     void current.navigation.open({
@@ -502,10 +589,13 @@ it("does not reconnect an unrelated community when the addressed Settings scope 
   await waitFor(() =>
     expect(current.navigation.snapshot().reason).toBe("denied"),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Retry navigation" }));
-  await waitFor(() =>
-    expect(current.navigation.snapshot().status).toBe("failed"),
-  );
+  // Retry cannot grant access, so the denied card offers only a way out.
+  expect(
+    await screen.findByRole("heading", {
+      name: "You don’t have access to this",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   expect(current.navigation.snapshot().reason).toBe("denied");
   expect(retry).not.toHaveBeenCalled();
 });
@@ -553,7 +643,7 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
     expect(
       within(dialog).getByRole("button", { name: "Cancel" }),
     ).toBeDisabled();
-    expect(screen.queryByText("This destination couldn’t open")).toBeNull();
+    expect(screen.queryByText(pageFailure)).toBeNull();
   } finally {
     await act(async () => finish());
   }
@@ -567,7 +657,7 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
     }),
   );
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  expect(screen.queryByText("This destination couldn’t open")).toBeNull();
+  expect(screen.queryByText(pageFailure)).toBeNull();
   await waitFor(() =>
     expect(document.getElementById("settings-content")).toHaveFocus(),
   );
@@ -575,7 +665,7 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
   await act(async () => {
     void current.navigation.open(target);
   });
-  await screen.findByText("This destination couldn’t open");
+  await screen.findByText(pageFailure);
   expect(current.navigation.snapshot().reason).toBe("denied");
 });
 
@@ -616,4 +706,124 @@ it("opens removed Messages settings links at Appearance without adding a navigat
     section: "appearance",
   });
   expect(screen.queryByRole("button", { name: "Messages" })).toBeNull();
+});
+
+it("keeps a return path for addressed plugin settings and retires it on Close", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).not.toBe("pending"),
+  );
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginId: "buzz.pairing",
+    scope: null,
+  } as const;
+  const list = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    scope: null,
+  } as const;
+  void current.navigation.open(list);
+  await screen.findByRole("dialog", { name: "Settings" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  void current.navigation.open(target);
+  expect(
+    await screen.findByRole("complementary", { name: "Pair mobile details" }),
+  ).toBeVisible();
+  current.navigation.back();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual(list),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("complementary", { name: "Pair mobile details" }),
+    ).not.toBeInTheDocument(),
+  );
+  current.navigation.forward();
+  expect(
+    await screen.findByRole("complementary", { name: "Pair mobile details" }),
+  ).toBeVisible();
+  const appearance = { ...list, section: "appearance" };
+  void current.navigation.open(appearance);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  void current.navigation.open(target);
+  await screen.findByRole("complementary", { name: "Pair mobile details" });
+  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+      scope: null,
+    }),
+  );
+  current.navigation.back();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual(appearance),
+  );
+  current.navigation.back();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual(list),
+  );
+  expect(
+    screen.queryByRole("complementary", { name: "Pair mobile details" }),
+  ).not.toBeInTheDocument();
+});
+
+it("Back closes Settings onto the view beneath and Forward reopens it; other shortcuts stay blocked", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  // Whatever view the app settles on first lies beneath Settings.
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).not.toBe("pending"),
+  );
+  const beneath = current.navigation.snapshot().entry.target;
+  const settings = { version: 1, kind: "settings", scope: null } as const;
+  void current.navigation.open(settings);
+  const dialog = await screen.findByRole("dialog", { name: "Settings" });
+  expect(dialog).toHaveAttribute("data-navigation-visit");
+  const key = (init: KeyboardEventInit) =>
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close Settings" }), {
+      ctrlKey: true,
+      ...init,
+    });
+  // Home is not a Back/Forward shortcut: Settings keeps today's modal policy.
+  key({ key: "o", shiftKey: true });
+  await act(async () => {});
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  key({ key: "[" });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  expect(current.navigation.snapshot().entry.target).toEqual(beneath);
+  fireEvent.keyDown(document.body, { ctrlKey: true, key: "]" });
+  expect(await screen.findByRole("dialog", { name: "Settings" })).toBeVisible();
 });

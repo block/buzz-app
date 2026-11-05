@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
   type Ref,
 } from "react";
@@ -17,14 +18,18 @@ import type { RegisteredPage } from "../../features/pages/service";
 import type { AccountActionsService } from "../../features/account-actions/service";
 import type { Communities } from "../../features/communities/service";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
+import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import type { InviteLink } from "../../features/communities/invite-link";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityPicker } from "../../features/communities/CommunityPicker";
 import { ProfileButton } from "./ProfileButton";
+import { CommunityShortcuts } from "./CommunityShortcuts";
+import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
 import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
+import { BestieNavigationProvider } from "./BestieNavigation";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
   PopoverRoot,
@@ -32,13 +37,25 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import { PanelFrame } from "../../features/panels/PanelFrame";
+import { useRelayConnection } from "../../features/relay/react";
 import { macTitleBarDragHandlers } from "./title-bar";
 import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
-export function AppShell({
+export function AppShell(props: ComponentProps<typeof AppShellContent>) {
+  return (
+    <BestieNavigationProvider
+      pages={props.pages}
+      relay={props.communities.relay}
+    >
+      <AppShellContent {...props} />
+    </BestieNavigationProvider>
+  );
+}
+
+function AppShellContent({
   pages,
   selected,
   navigationAttempt,
@@ -54,11 +71,13 @@ export function AppShell({
   federatedIdentity,
   accountActions,
   appearance,
+  pluginRecommendations = 0,
   searchServices,
   navigationControls,
   onCommunitySelect,
   onOpenTarget,
   launchers,
+  backdrop,
   companion,
   creationAction,
   creationInSidebar = true,
@@ -83,12 +102,16 @@ export function AppShell({
   federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
   appearance: Appearance;
+  /** Managed plugin recommendations awaiting review, pointed out beside Plugins. */
+  pluginRecommendations?: number;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
   /** Community menu destinations, opened through the host's navigation. */
   onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
+  /** Plugin-painted layers behind the shell; absent by default. */
+  backdrop?: ReactNode;
   companion?: ReactNode;
   creationAction?: (
     open: boolean,
@@ -102,6 +125,8 @@ export function AppShell({
   const [creationContainer, setCreationContainer] =
     useState<HTMLDivElement | null>(null);
   const [creationOpen, setCreationOpen] = useState(false);
+  const connection = useRelayConnection(communities.relay);
+  const sidebarScope = connection.scope ?? "disconnected";
   const channelsNavigation = selected === "buzz.channels/channels";
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
@@ -169,10 +194,11 @@ export function AppShell({
           pages={sidebarPages}
           selected={selected}
           onSelect={onSelect}
+          previews
         />
       </nav>
     ) : null;
-    return sidebar ? (
+    const content = sidebar ? (
       sidebar(
         pageNavigation,
         creationAction && creationInSidebar && (
@@ -186,7 +212,25 @@ export function AppShell({
         </Panel>
       </div>
     );
-  }, [pages, selected, onSelect, sidebar, creationAction, creationInSidebar]);
+    const selectedPageHasSidebar = pages.some(
+      (page) => page.key === selected && !!page.sidebar,
+    );
+    return selectedPageHasSidebar ? (
+      <ResizableSidebar scope={sidebarScope} className="shell-sidebar">
+        {content}
+      </ResizableSidebar>
+    ) : (
+      content
+    );
+  }, [
+    pages,
+    selected,
+    onSelect,
+    sidebar,
+    sidebarScope,
+    creationAction,
+    creationInSidebar,
+  ]);
   const headerPages = useMemo(
     () =>
       orderPages(
@@ -290,6 +334,7 @@ export function AppShell({
       data-shell-tone={tone}
       className="shell-background flex h-dvh min-h-0 flex-col overflow-hidden text-ink"
     >
+      {backdrop}
       {/* biome-ignore lint/a11y/useValidAnchor: A skip link navigates to a real fragment; enhance focus without replacing the app route hash. */}
       <a
         href="#main-content"
@@ -461,6 +506,7 @@ export function AppShell({
                 accountActions={accountActions}
                 settingsSelected={selected === "settings"}
                 appearance={appearance}
+                pluginRecommendations={pluginRecommendations}
                 onSettings={(section) =>
                   onSelect("settings", section ? { section } : undefined)
                 }
@@ -495,9 +541,12 @@ export function AppShell({
                 onKeyDown={(event) => {
                   if (
                     event.key === "Escape" &&
+                    !event.shiftKey &&
                     navigationOpen &&
                     !event.defaultPrevented
                   ) {
+                    // Closing the drawer consumes Escape, so it marks nothing read.
+                    event.preventDefault();
                     setNavigationOpen(false);
                     navigationToggle.current?.focus();
                   }
@@ -511,7 +560,7 @@ export function AppShell({
                 className="min-h-0 min-w-0 flex-1"
               >
                 <Panel as="div" joined>
-                  <PanelFrame companion={companion}>
+                  <PanelFrame scope={connection.scope} companion={companion}>
                     <div
                       id={`shell-page-${panelKey}`}
                       {...(!compactPages && selectedTopbarPage
@@ -546,6 +595,19 @@ export function AppShell({
         </div>
       </div>
       {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
+      {searchServices && (
+        <>
+          <MarkAllReadShortcut
+            communities={communities}
+            shortcuts={searchServices.shortcuts}
+          />
+          <CommunityShortcuts
+            communities={communities}
+            shortcuts={searchServices.shortcuts}
+            onSelect={onCommunitySelect}
+          />
+        </>
+      )}
     </div>
   );
 }

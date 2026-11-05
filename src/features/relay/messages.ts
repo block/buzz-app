@@ -86,6 +86,22 @@ export function createMessages(
     validateMentions(channelId, unique);
     return unique.map((key) => ["p", key]);
   };
+  /** A one-to-one DM's agent partner must be `p`-tagged: a hosted agent is
+   * woken only by a `p` tag naming it, and local agents already treat any
+   * 1:1 DM message as addressed. Never a human partner: a `p` tag is a
+   * mention and would bypass their mute. "Agent" is the profile's `isAgent`
+   * (a NIP-OA `auth` tag or a declared agent flag), the app's shared agent
+   * signal. Only new messages and replies call this; edits and reactions
+   * are not new turns. */
+  const withDmAgents = (channelId: string, mentions: readonly string[]) => {
+    const profileMap = profiles?.snapshot();
+    return [
+      ...mentions,
+      ...unmentionedRecipients(channelId).filter(
+        (key) => profileMap?.get(key)?.isAgent,
+      ),
+    ];
+  };
   const referenceTags = (pubkeys: readonly string[]) => {
     if (
       pubkeys.length > 32 ||
@@ -241,20 +257,43 @@ export function createMessages(
       .flatMap((event) => linkedCopies(event, channelId))
       .filter((event) => !ids.includes(event.id));
     const all = [...ids, ...new Set(linked.map((event) => event.id))];
-    const removed = all.length <= 100 ? all : ids;
-    const targets = [...originals, ...(all.length <= 100 ? linked : [])];
-    return writer(5, channelId, authorization).send({
-      kind: 5,
-      content: "",
-      tags: [
-        ["h", channelId],
-        ...removed.map((id) => ["e", id]),
-        ...[...new Set(targets.map((event) => event.kind))].map((kind) => [
-          "k",
-          String(kind),
+    const targets = [
+      ...new Map(
+        [...originals, ...(all.length <= 100 ? linked : [])].map((event) => [
+          event.id,
+          event,
         ]),
-      ],
+      ).values(),
+    ];
+    // The relay accepts exactly one target per deletion, so each copy gets its
+    // own event. One that cannot be queued does not stop the rest; any failure
+    // is reported once every other target has been attempted.
+    const queue = writer(5, channelId, authorization);
+    const failures: unknown[] = [];
+    const operations = targets.flatMap((event) => {
+      try {
+        return [
+          queue.send({
+            kind: 5,
+            content: "",
+            tags: [
+              ["h", channelId],
+              ["e", event.id],
+              ["k", String(event.kind)],
+            ],
+          }),
+        ];
+      } catch (cause) {
+        failures.push(cause);
+        return [];
+      }
     });
+    if (failures.length)
+      throw new Error(
+        `Could not delete ${failures.length} of ${targets.length} linked messages`,
+        { cause: failures[0] },
+      );
+    return operations[0] as string;
   };
   return Object.freeze({
     send(
@@ -274,7 +313,7 @@ export function createMessages(
           content: text(message.content),
           tags: [
             ["h", channelId],
-            ...mentionTags(channelId, mentions),
+            ...mentionTags(channelId, withDmAgents(channelId, mentions)),
             ...referenceTags(references),
             ...pickTags(channelId, mentions, picks),
             ...emojiTags(content),
@@ -390,7 +429,7 @@ export function createMessages(
           ["h", channelId],
           ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
           ["e", parentId, "", "reply"],
-          ...mentionTags(channelId, mentions),
+          ...mentionTags(channelId, withDmAgents(channelId, mentions)),
           ...referenceTags(references),
           ...pickTags(channelId, mentions, picks),
           ...emojiTags(content),

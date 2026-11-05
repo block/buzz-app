@@ -1,3 +1,4 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useConversationPresentation } from "./ConversationPresentation";
 import {
   useContext,
@@ -42,8 +43,13 @@ import {
   LinkContentContext,
   LinkThreadTabContext,
 } from "./LinkLabelContext";
-import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
-import { useChannelReference } from "./channel-reference";
+import {
+  BuzzLinkPreview,
+  ChannelLinkPreview,
+  previewFailures,
+} from "./BuzzLinkPreview";
+import { namedChannel, useChannelReference } from "./channel-reference";
+import { useLinkedMessageByline } from "./linked-message";
 import { messageViewKey } from "../messages/view-key";
 import { soloChatLinkName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
@@ -59,6 +65,22 @@ export const resolveLink = (
   url: string,
   renderers: readonly Contribution<LinkRenderer>[],
 ) => resolveMatch(renderers, url);
+
+const previewGap = 8;
+
+/** Lift a preview above the hovered message's actions, not over them. */
+function clearMessageActions(link: HTMLElement | null) {
+  const actions = link
+    ?.closest("[data-actions-revealed]")
+    ?.querySelector("[data-message-actions]");
+  if (!link || !actions) return previewGap;
+  return Math.max(
+    previewGap,
+    link.getBoundingClientRect().top -
+      actions.getBoundingClientRect().top +
+      previewGap,
+  );
+}
 
 export function MessageLink({
   url,
@@ -97,6 +119,8 @@ export function MessageLink({
   const [description, setDescription] = useState<string>();
   if (!active && previewOpen) setPreviewOpen(false);
   const trigger = useRef<HTMLAnchorElement>(null);
+  // Entering the card hides the row's actions; keep its lift while it's open.
+  const lift = useRef(previewGap);
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination = parsed?.format === "legacy" ? parsed : undefined;
@@ -140,20 +164,22 @@ export function MessageLink({
   const chipName =
     chatName || sentChatName || destination?.channelId.slice(0, 8);
   const chatLabel = chatChip ? `Chat: ${chipName}` : undefined;
-  // DMs and sessions keep their existing presentation.
-  const named =
-    reference.state === "found" &&
-    !reference.hidden &&
-    reference.channelType !== "dm" &&
-    reference.channelType !== "solo"
-      ? reference
-      : undefined;
+  const named = namedChannel(reference);
   const withheld = reference.state === "withheld";
   // The authored label is message text, so it stays; the lock marks it. A raw
   // destination has no name to show.
   const shown = withheld && label === undefined ? "Private channel" : children;
+  // A raw message destination names its author once read; a draft never reads.
+  const byline = useLinkedMessageByline(
+    interactive && label === undefined && children === undefined
+      ? host
+      : undefined,
+    destination?.channelId,
+    destination?.messageId,
+  );
   const display =
     label ??
+    byline ??
     directoryLabel ??
     (named ? `#${named.name}` : withheld ? "Private channel" : undefined);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -214,6 +240,18 @@ export function MessageLink({
       if (internal) {
         event.preventDefault();
         openInternal();
+        return;
+      }
+      // Tauri's automatic external-link opener skips Command-clicks.
+      if (external && event.metaKey && event.button === 0 && isTauri()) {
+        event.preventDefault();
+        setNotice(undefined);
+        void invoke("plugin:opener|open_url", { url }).catch(() => {
+          setNotice({
+            text: "Couldn’t open the link in your browser.",
+            error: true,
+          });
+        });
         return;
       }
       if (
@@ -288,7 +326,7 @@ export function MessageLink({
               ? `${chatLabel}. Chat unavailable. You don’t have access, or it no longer exists.`
               : chatLabel
             : withheld
-              ? "Private channel. You aren’t a member, or it no longer exists."
+              ? previewFailures.withheld
               : !preview && !named
                 ? url
                 : undefined
@@ -359,8 +397,19 @@ export function MessageLink({
         trigger={menuTrigger}
         link={<a href={url} {...navigation} />}
         open={previewOpen && !!card && !menuOpen}
-        onOpenChange={setPreviewOpen}
+        onOpenChange={(next) => {
+          if (next) lift.current = previewGap;
+          setPreviewOpen(next);
+        }}
         side="top"
+        sideOffset={({ side }) => {
+          if (side !== "top") return previewGap;
+          lift.current = Math.max(
+            lift.current,
+            clearMessageActions(trigger.current),
+          );
+          return lift.current;
+        }}
         className={styles.popup ?? ""}
         aria-label={root.label}
       >

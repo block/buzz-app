@@ -1,3 +1,11 @@
+import { visibleTeams } from "../../features/agents/visible-teams";
+import type { OpenTarget } from "../../features/navigation/targets";
+import {
+  agentHistoryActive,
+  agentHistoryRoute,
+  agentHistoryTarget,
+} from "./routes";
+import { historyPresentation } from "../../features/agents/history-presentation";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
 import { communityDestination } from "../../features/communities/destination";
@@ -44,6 +52,11 @@ import {
   sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
+import {
+  AgentSaveState,
+  DiscardChanges,
+  useAgentSaveReports,
+} from "../../features/agents/AgentSaveButton";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import type {
@@ -55,23 +68,18 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
-import { useAgentChoices } from "../../features/agents/use-choices";
-import type { AgentChoicesSnapshot } from "../../features/agents/choices";
 import type { RelaySession } from "../../features/relay/session";
 import {
   readSnapshot,
   type SharedDefinition,
 } from "../../features/agents/agent-share";
-import {
-  chooseDefaultAgent,
-  restoreDefaultAgent,
-  useDefaultAgent,
-  useSavedAgent,
-} from "../../features/solo/default-agent";
+import { useDefaultAgent } from "../../features/solo/default-agent";
+import { useBestieChoice } from "./BestieChoice";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { targetKey } from "../../features/navigation/targets";
 import type { PageNavigation } from "../../features/navigation/service";
+import { SettingsSectionLink } from "../../features/navigation/SettingsSectionLink";
 import {
   BrainIcon,
   CheckIcon,
@@ -84,7 +92,6 @@ import {
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
@@ -113,7 +120,12 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
-import { agentProviderRoute, agentProviderTarget, agentRoute } from "./routes";
+import {
+  agentProviderRoute,
+  agentProviderTarget,
+  agentRoute,
+  conversationOpener,
+} from "./routes";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const message = (error: unknown) =>
@@ -170,9 +182,9 @@ export function AgentsPage({
   navigation?: PageNavigation;
   navigator?: Navigation;
 }) {
-  const split = usePanelSplit(448, 320);
   const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
+  const split = usePanelSplit(connection.scope, "agents", 448, 320);
   const channels = useChannelChoices(
     connection.status === "ready" ? connection.session.channels : undefined,
   );
@@ -271,21 +283,51 @@ export function AgentsPage({
   const find = (pubkey: string | undefined) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey);
   const selected = find(selectedKey);
-  const browse = (pubkey?: string) => setSelectedKey(pubkey);
+  // The open panel's unsaved edits, asked about before it is replaced or closed.
+  const [unsaved, reportUnsaved] = useAgentSaveReports();
+  const [leaving, setLeaving] = useState<{
+    pubkey: string | undefined;
+    then: (() => void) | undefined;
+  }>();
+  // The prompt is stale once nothing is left to discard behind it.
+  if (leaving && !unsaved.dirty) setLeaving(undefined);
+  // Choosing another agent or none asks first, as switching sections does,
+  // and returns false while the current one stays.
+  const browse = (pubkey?: string, then?: () => void) => {
+    const leaves = pubkey !== selectedKey;
+    if (leaves && (unsaved.saving || unsaved.dirty)) {
+      if (!unsaved.saving) setLeaving({ pubkey, then });
+      return false;
+    }
+    setSelectedKey(pubkey);
+    then?.();
+    return true;
+  };
   const build = (pubkey: string) => browse(pubkey);
+  // Removing an agent closes only its own panel, without asking.
+  const removed = (pubkey: string) =>
+    setSelectedKey((key) => (key === pubkey ? undefined : key));
+  // Focus inside the panel goes with it, so the closed agent's card takes it
+  // once the close goes ahead. Focus elsewhere stays.
+  const profileSide = useRef<HTMLElement>(null);
+  const closePanel = () => {
+    const pubkey = selectedKey;
+    const focus = document.activeElement;
+    const inside =
+      focus === document.body || profileSide.current?.contains(focus);
+    return browse(
+      undefined,
+      inside
+        ? () => focusCard(document.getElementById("agents-yours"), pubkey)
+        : undefined,
+    );
+  };
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   // Teams are shared by every community; this one shows each with a member
   // here, or with none in any community. A synced team always shows in its
   // home, and elsewhere only with a member there or while it has none.
-  const members = new Set(snapshot.agents.map((agent) => agent.pubkey));
-  const teams = snapshot.teams.filter(
-    (team) =>
-      team.members.some((pubkey) => members.has(pubkey)) ||
-      (team.revision
-        ? !team.members.length || agents.teamHere({ id: team.id })
-        : !team.members.some((pubkey) => agents.memberships(pubkey).length)),
-  );
+  const teams = visibleTeams(agents);
   // Only a team still saved, or one being made, keeps its editor open.
   const editing =
     editingTeam === "new" || teams.some((team) => team.id === editingTeam)
@@ -302,6 +344,10 @@ export function AgentsPage({
     routed && navigation.target.kind === "page"
       ? agentRoute(navigation.target.route?.params)
       : undefined;
+  const historyParams =
+    navigation?.target.kind === "page" && routedAgent === selected?.pubkey
+      ? navigation.target.route?.params
+      : undefined;
   const routedEntry = navigation?.entryId;
   useEffect(() => {
     if (!routedAgent || !routedEntry) return;
@@ -315,19 +361,24 @@ export function AgentsPage({
     changeTab(next);
   };
   const returnToAgents = returnTo("yours");
+  // The listing and its trigger go with it, so focus follows to the tab now
+  // shown.
+  const leaveListing = () => {
+    flushSync(() => {
+      setSharedSelection(undefined);
+      returnToAgents();
+    });
+    document.getElementById("agents-yours-tab")?.focus();
+  };
 
   const toolbarAction =
     (tab === "teams" ? teams.length > 0 : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
-  const openImport = () => {
-    browse();
-    setFlow("import");
-  };
-  const openMarketplace = () => {
-    browse();
-    changeTab("marketplace");
-  };
+  // Import is a dialog over the page, so an open agent and its draft stay.
+  const openImport = () => setFlow("import");
+  const openMarketplace = () =>
+    browse(undefined, () => changeTab("marketplace"));
   // Shown only beside the tabs; with no agents yet, the tiles stand in for it.
   const newAgentMenu = (
     <MenuRoot onOpenChange={refreshOnOpen}>
@@ -459,6 +510,8 @@ export function AgentsPage({
       typeOf,
       onSelect: browse,
       onBuild: build,
+      onRemoved: removed,
+      busy: unsaved.saving,
       newAgent: !toolbarAction && starts,
       // A published agent's toast opens it where everyone else finds it.
       onViewListing: (agent: SharedAgent) => {
@@ -483,6 +536,10 @@ export function AgentsPage({
     );
   })();
 
+  const openSettings =
+    navigator &&
+    ((section: string) =>
+      void navigator.open({ version: 1, kind: "settings", section }));
   const panel = selected ? (
     selected.unfinished || selected.place === "elsewhere" ? (
       <AgentPeek
@@ -491,10 +548,31 @@ export function AgentsPage({
         agent={selected}
         type={typeOf(selected)}
         channels={channels}
-        onClose={() => browse()}
+        onClose={closePanel}
+        onRemoved={() => removed(selected.pubkey)}
+        openSettings={openSettings}
       />
     ) : (
       <AgentDetails
+        historyPresentation={
+          navigation &&
+          navigator &&
+          !navigation.signal.aborted &&
+          navigator.snapshot().entry.id === navigation.entryId &&
+          navigation.target.kind === "page"
+            ? historyPresentation(
+                navigator,
+                agentHistoryRoute(historyParams),
+                (selection) =>
+                  agentHistoryTarget(
+                    navigation.target as Extract<OpenTarget, { kind: "page" }>,
+                    selected.pubkey,
+                    selection,
+                  ),
+                agentHistoryActive(historyParams),
+              )
+            : undefined
+        }
         communities={communities}
         messageAction={(variant) => (
           <AgentMessageButton
@@ -516,7 +594,14 @@ export function AgentsPage({
             ? connection.session.agentMemories
             : undefined
         }
-        onRemoved={() => browse()}
+        onRemoved={() => removed(selected.pubkey)}
+        openSettings={openSettings}
+        openConversation={conversationOpener(
+          navigator,
+          connection.viewer && connection.origin
+            ? { viewer: connection.viewer, communityOrigin: connection.origin }
+            : undefined,
+        )}
       />
     )
   ) : undefined;
@@ -624,20 +709,9 @@ export function AgentsPage({
                         selection={shared}
                         agents={agents}
                         types={runnable}
-                        // The panel and its trigger go with it, so focus
-                        // follows to the tab now shown.
-                        onImported={() => {
-                          flushSync(() => {
-                            setSharedSelection(undefined);
-                            returnToAgents();
-                          });
-                          document.getElementById("agents-yours-tab")?.focus();
-                        }}
-                        onOpen={(agent) => {
-                          setSharedSelection(undefined);
-                          returnToAgents();
-                          browse(agent.pubkey);
-                        }}
+                        onImported={leaveListing}
+                        // Stays on the listing if an unsaved draft is kept.
+                        onOpen={(agent) => browse(agent.pubkey, leaveListing)}
                       />
                     ),
                   },
@@ -647,7 +721,11 @@ export function AgentsPage({
           </aside>
         )}
         {panel && selected && (
-          <aside className={styles.side} hidden={tab !== "yours"}>
+          <aside
+            ref={profileSide}
+            className={styles.side}
+            hidden={tab !== "yours"}
+          >
             {split.handle}
             <Panel aria-label="Agent profile">
               <PanelWorkspace
@@ -659,8 +737,12 @@ export function AgentsPage({
                   {
                     id: selected.pubkey,
                     label: selected.name,
-                    content: panel,
-                    close: () => browse(),
+                    content: (
+                      <AgentSaveState value={reportUnsaved}>
+                        {panel}
+                      </AgentSaveState>
+                    ),
+                    close: closePanel,
                   },
                 ]}
               />
@@ -695,6 +777,17 @@ export function AgentsPage({
           />
         </Dialog>
       )}
+      {leaving && selected && (
+        <DiscardChanges
+          description={`Your unsaved changes to ${selected.name} will be lost.`}
+          onKeep={() => setLeaving(undefined)}
+          onDiscard={() => {
+            setLeaving(undefined);
+            setSelectedKey(leaving.pubkey);
+            leaving.then?.();
+          }}
+        />
+      )}
       {creating && (
         <AgentCreateDialog
           agents={agents}
@@ -714,6 +807,7 @@ export function AgentsPage({
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
           finalFocus={newAgentButton}
+          visit={routed}
           onClose={() => setProviderKey(undefined)}
         />
       )}
@@ -726,8 +820,13 @@ type InventoryProps = {
   agents: readonly Agent[];
   selected: string | undefined;
   typeOf(agent: Agent): RegisteredAgentType | undefined;
-  onSelect(pubkey?: string): void;
+  /** False while the current agent stays selected; then runs once another
+   * is, which may wait on a discard prompt. */
+  onSelect(pubkey?: string, then?: () => void): boolean;
   onBuild(pubkey: string): void;
+  onRemoved(pubkey: string): void;
+  /** A save is pending, so choosing another agent waits for it. */
+  busy?: boolean | undefined;
   newAgent: ReactNode;
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
@@ -737,8 +836,6 @@ type InventoryProps = {
   session?: RelaySession;
   onViewListing?: ((agent: SharedAgent) => void) | undefined;
 };
-
-type BestieAgent = AgentChoicesSnapshot["selectable"][number];
 
 /** Agents keeps Morgan's account-synced selection owner; this surface only
  * names an explicitly saved selection Bestie and asks before replacing it. */
@@ -750,122 +847,25 @@ function DefaultAgentInventory({
   // Keep Morgan's automatic fallback/adoption behavior active even though the
   // Bestie pill names only the explicit account-saved choice.
   useDefaultAgent(session, scope);
-  const saved = useSavedAgent(session, scope);
-  const choices = useAgentChoices(session, true, true);
-  const [error, setError] = useState("");
-  const [savingBestie, setSavingBestie] = useState(false);
-  const [replacement, setReplacement] = useState<{
-    current: BestieAgent;
-    replacing: BestieAgent;
-  }>();
-  // Only the latest choice reports its failure.
-  const latest = useRef(0);
-  const eligible = (pubkey: string) =>
-    session.agentChoices
-      .snapshot()
-      .selectable.find((agent) => agent.pubkey === pubkey);
-  const save = (pubkey: string) => {
-    if (!eligible(pubkey)) return;
-    const choice = ++latest.current;
-    setError("");
-    setSavingBestie(true);
-    chooseDefaultAgent(session, scope, pubkey)
-      .then(() => {
-        if (choice === latest.current) setReplacement(undefined);
-      })
-      .catch((failure: Error) => {
-        if (choice === latest.current) setError(failure.message);
-      })
-      .finally(() => {
-        if (choice === latest.current) setSavingBestie(false);
-      });
-  };
+  // A remote agent is asked about before it is made Bestie.
+  const bestie = useBestieChoice(
+    session,
+    scope,
+    (pubkey) => props.agents.find((agent) => agent.pubkey === pubkey)?.place,
+  );
   return (
     <>
       <Inventory
         {...props}
         session={session}
-        bestie={saved}
+        bestie={bestie.saved}
         defaultChoices={
-          new Set(choices.selectable.map((agent) => agent.pubkey))
+          new Set(bestie.choices.selectable.map((agent) => agent.pubkey))
         }
-        onMakeBestie={(pubkey) => {
-          const replacing = eligible(pubkey);
-          if (!replacing || pubkey === saved) return;
-          const previous = choices.identities.find(
-            (agent) => agent.pubkey === saved,
-          );
-          if (previous) setReplacement({ current: previous, replacing });
-          else save(pubkey);
-        }}
+        onMakeBestie={bestie.make}
       />
-      {replacement && (
-        <BestieReplacement
-          {...replacement}
-          pending={savingBestie}
-          error={error}
-          onClose={() => {
-            if (error) {
-              restoreDefaultAgent(
-                scope,
-                replacement.replacing.pubkey,
-                replacement.current.pubkey,
-              );
-              setError("");
-            }
-            setReplacement(undefined);
-          }}
-          onChoose={() => {
-            // A choice changed elsewhere while this dialog was open wins.
-            if (saved === replacement.current.pubkey)
-              save(replacement.replacing.pubkey);
-            else setReplacement(undefined);
-          }}
-        />
-      )}
-      {error && !replacement && <p role="alert">{error}</p>}
+      {bestie.view}
     </>
-  );
-}
-
-const bestieName = (agent: BestieAgent) =>
-  agent.managedName ?? agent.name ?? "Agent";
-
-function BestieReplacement({
-  current,
-  replacing,
-  pending,
-  error,
-  onChoose,
-  onClose,
-}: {
-  current: BestieAgent;
-  replacing: BestieAgent;
-  pending: boolean;
-  error: string;
-  onChoose(): void;
-  onClose(): void;
-}) {
-  const keep = useRef<HTMLButtonElement>(null);
-  return (
-    <AlertDialog
-      title={`Make ${bestieName(replacing)} your bestie?`}
-      description={`Your existing chats with ${bestieName(current)} will still be available in your DMs.`}
-      initialFocus={keep}
-      pending={pending}
-      onClose={onClose}
-      {...(error && { children: <p role="alert">{error}</p> })}
-      actions={
-        <>
-          <Button ref={keep} disabled={pending} onClick={onClose}>
-            Keep {bestieName(current)}
-          </Button>
-          <Button variant="prominent" loading={pending} onClick={onChoose}>
-            Switch to {bestieName(replacing)}
-          </Button>
-        </>
-      }
-    />
   );
 }
 
@@ -922,6 +922,13 @@ function CardContextMenu({
   );
 }
 
+/** By key: the list can change while a discard prompt is open. */
+function focusCard(root: ParentNode | null, pubkey: string | undefined) {
+  root
+    ?.querySelector<HTMLElement>(`[role="gridcell"][data-agent="${pubkey}"]`)
+    ?.focus();
+}
+
 /** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
 function Inventory({
@@ -931,6 +938,8 @@ function Inventory({
   typeOf,
   onSelect,
   onBuild,
+  onRemoved,
+  busy,
   newAgent,
   bestie,
   defaultChoices,
@@ -972,15 +981,14 @@ function Inventory({
       return;
     } else if (event.key === "Escape" && selected) {
       event.preventDefault();
-      onSelect();
+      onSelect(undefined, () => focusCard(grid.current, selected));
       return;
     }
     if (next === undefined) return;
     event.preventDefault();
-    onSelect(agents[next]?.pubkey);
-    grid.current
-      ?.querySelectorAll<HTMLElement>('[role="gridcell"]')
-      [next]?.focus();
+    // Focus follows the selection, including after a discard is confirmed.
+    const target = agents[next]?.pubkey;
+    onSelect(target, () => focusCard(grid.current, target));
   };
   return (
     <div ref={grid} className={cardStyles.grid}>
@@ -990,6 +998,7 @@ function Inventory({
         <div
           role="grid"
           aria-label="Agents"
+          aria-busy={busy || undefined}
           className="contents"
           onKeyDown={onKeyDown}
         >
@@ -1017,8 +1026,9 @@ function Inventory({
                   type={type}
                   onViewListing={onViewListing}
                   onBuild={() => onBuild(agent.pubkey)}
-                  onRemoved={() => onSelect()}
+                  onRemoved={() => onRemoved(agent.pubkey)}
                   role="gridcell"
+                  data-agent={agent.pubkey}
                   aria-label={isBestie ? `${agent.name}, Bestie` : agent.name}
                   data-selected={active}
                   aria-selected={active}
@@ -1030,8 +1040,14 @@ function Inventory({
                       !(event.target as Element).closest(
                         "[data-card-control], button, input",
                       )
-                    )
-                      onSelect(active ? undefined : agent.pubkey);
+                    ) {
+                      // A kept agent keeps focus, as the arrow keys leave it.
+                      const chose = onSelect(
+                        active ? undefined : agent.pubkey,
+                        () => focusCard(grid.current, agent.pubkey),
+                      );
+                      if (!chose) focusCard(grid.current, selected);
+                    }
                   }}
                   onDoubleClick={(event) => {
                     if (
@@ -1166,6 +1182,8 @@ function InventoryCard({
             >
               {Model && (
                 <Model
+                  agent={agent}
+                  openSettings={onBuild}
                   config={agent.config}
                   modelAppearance="glass-ghost"
                   disabled={saving}
@@ -1250,12 +1268,16 @@ function AgentPeek({
   type,
   channels,
   onClose,
+  onRemoved,
+  openSettings,
 }: {
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
   onClose(): void;
+  onRemoved(): void;
+  openSettings: ((section: string) => void) | undefined;
 }) {
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState("");
@@ -1285,8 +1307,11 @@ function AgentPeek({
             </>
           ) : (
             <>
-              This agent’s harness is unavailable in this client. Check Settings
-              → Plugins or use a build with this harness configured.
+              This agent’s harness is unavailable in this client. Check{" "}
+              <SettingsSectionLink section="plugins" open={openSettings}>
+                Manage plugins
+              </SettingsSectionLink>{" "}
+              or use a build with this harness configured.
             </>
           )}
         </p>
@@ -1307,7 +1332,7 @@ function AgentPeek({
               {error}
             </p>
           )}
-          <AgentDelete agents={agents} agent={agent} onRemoved={onClose} />
+          <AgentDelete agents={agents} agent={agent} onRemoved={onRemoved} />
           {agent.place === "here" && (
             <Section title="Wakes on">
               <AttentionSummary agent={agent} channels={channels} />

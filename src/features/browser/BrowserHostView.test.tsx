@@ -723,6 +723,7 @@ it("routes address and navigation controls to the active session", async () => {
   expect(platform.navigate).toHaveBeenCalledWith(
     "session-1",
     "https://other.example",
+    false,
   );
   expect(platform.action).toHaveBeenCalledWith("session-1", "back");
   expect(platform.action).toHaveBeenCalledWith("session-1", "forward");
@@ -755,6 +756,37 @@ it("keeps Reload keyboard-accessible while the website is loading", async () => 
   expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(platform.action).toHaveBeenCalledWith("session-1", "reload");
+});
+
+it("navigates address input without a scheme over https, falling back to http", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.status).toHaveBeenCalledWith("session-1"),
+  );
+  const address = screen.getByLabelText("Address");
+  await user.clear(address);
+  await user.type(address, "grugbrain.dev/{Enter}");
+  expect(platform.navigate).toHaveBeenCalledWith(
+    "session-1",
+    "https://grugbrain.dev/",
+    true,
+  );
+  await user.clear(address);
+  await user.type(address, "https://example.org/{Enter}");
+  expect(platform.navigate).toHaveBeenLastCalledWith(
+    "session-1",
+    "https://example.org/",
+    false,
+  );
 });
 
 it("shows a synchronous address validation error", async () => {
@@ -972,4 +1004,42 @@ it("restores the last approved app after eviction instead of a later consent tic
   expect(canResumeUrl).toHaveBeenCalledWith(destination);
   expect(canResumeUrl).toHaveBeenCalledWith(consent);
   lifetime.abort();
+});
+
+it("takes mouse back/forward requests for its page from app navigation", async () => {
+  const platform = fakePlatform();
+  const view = render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.status).toHaveBeenCalledWith("session-1"),
+  );
+  const page = view.container.querySelector(
+    '[data-browser-session="session-1"]',
+  );
+  if (!page) throw new Error("Browser page has no session");
+  const app = vi.fn((event: Event) => event.defaultPrevented);
+  window.addEventListener("buzz:history-back", app);
+  window.addEventListener("buzz:history-forward", app);
+  try {
+    for (const name of ["buzz:history-back", "buzz:history-forward"]) {
+      page.dispatchEvent(new Event(name, { cancelable: true, bubbles: true }));
+    }
+    await waitFor(() =>
+      expect(platform.action).toHaveBeenCalledWith("session-1", "forward"),
+    );
+    expect(platform.action).toHaveBeenCalledWith("session-1", "back");
+    expect(app.mock.results.map((result) => result.value)).toEqual([
+      true,
+      true,
+    ]);
+  } finally {
+    window.removeEventListener("buzz:history-back", app);
+    window.removeEventListener("buzz:history-forward", app);
+  }
 });

@@ -86,15 +86,24 @@ bound to another key is reported and never unbound.
 The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
-account before saving. Empty instructions can be saved to clear them.
+account before saving. A different signed-in account locks the fields and shows
+that requirement instead of the previous account's errors and retries. Signed-out
+panes hide stale settings errors and retries while retaining the draft.
+Empty instructions can be saved to clear them.
+Signed-out agent panes show a pinned sign-in card across every tab, including
+relay-backed Memory and Activity. Opening the pane does not start browser login;
+Sign in starts it, and Cancel sign-in cancels the shared account attempt.
+The card reserves its measured height for scrolling and clears once sign-in is
+verified. Slow settings/catalog reads offer a scoped retry after three seconds.
 The Identity tab also loads a separate model catalog from Builderlab. Choose a
 model and one of that model's thinking levels, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
 clears the effort choice. One shared Save action sits in the agent pane's bottom
 footer and saves the Identity draft. When model settings and instructions both
-change, they are sent in one update. Instructions alone remain editable when the
-model catalog is unavailable; a changed model requires a supported effort before
+change, they are sent in one update. While signed in to the original account,
+Instructions alone remain editable when the model catalog is unavailable;
+a changed model requires a supported effort before
 the draft can be saved.
 The model control uses the same family submenus as Goose. Builderlab's catalog
 aliases are mapped to families in `adapter-type/models.ts`; update that mapping
@@ -132,16 +141,26 @@ is confirmed. On another device, removal resolves the ID from the signed-in
 account's list; an unknown key is refused. Existing Settings-created
 agents are not migrated into this type.
 
+- `session.ts` is the `BuilderlabSession` consumers share. In an FI build it
+  projects the native NIP-FI session: native holds the token in OS secure
+  storage, so sign-in survives restart, and adds it as `Authorization: Bearer`
+  to this plugin's granted routes. Each session revision reads its account from
+  `/v1/auth/me`. A 401 refuses only that call; native then asks the adapter's
+  `GET /v1/session` once and ends the session only if the adapter refuses it.
+  Its sign-out lives in Identity → Organization sign-in, which `login/` links to,
+  because community sign-in shares the session.
 - `oauth/` owns browser handoff, code exchange, account verification, and the
-  plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
+  legacy plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
   sign-out, and disposal.
   `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
   sign-in before any plugin session exists, using this plugin's bundled native
   grant, at the build URL like the Settings card; that credential is separate
-  from the Settings session. The grant exists only while this plugin is
-  enabled, so with it turned off that sign-in refuses before opening the
-  browser.
+  from the Settings session. In an FI build it is the native NIP-FI sign-in
+  instead, and the app's later calls go through the forwarder as this
+  plugin's bundled installation (`bundledFederatedIdentity`). Either grant
+  exists only while this plugin is enabled, so with it turned off that
+  sign-in refuses before opening the browser.
   A successful first-run sign-in continues into the app-owned setup steps
   described in [identity](../../../docs/identity.md): the app reads the key
   bound to the account, the destinations saved to it (this plugin's
@@ -162,8 +181,8 @@ agents are not migrated into this type.
 - `agents/` lists the signed-in account's remote agents beneath login, with
   refresh and retry. Settings directs people to the **Agents** tab to create,
   edit instructions and delete agents. Listing does not activate agents or
-  publish community registrations. Requests reuse the OAuth credential through
-  native host HTTP; sign-out and navigation discard late results.
+  publish community registrations. Requests go through `session.request`;
+  sign-out and navigation discard late results.
   The client also supplies the hosted adapter's Beekeeper operations. Pending
   registration UUIDs survive restart, scoped to server, verified account and
   name. Retry the same name after an uncertain failure within the server's
@@ -211,4 +230,8 @@ The plugin also offers Builderlab as a Decisions API provider. It reads
 Builderlab is not listed in Settings > Decisions API and no decision request
 goes to it. While it is registered, it answers unless the user chose another
 provider; when it goes away, TypeSafe answers. Sign out and back in to refresh
-this capability.
+this capability. In an FI build the plugin names the native session by its
+revision, and native `decide` posts to the identity origin's API with that
+session as `Authorization: Bearer`, as for the build's other Builderlab calls;
+the token never reaches the webview. A 401 there refuses only that call, and
+native asks the adapter once whether the session still stands.

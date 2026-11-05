@@ -1,7 +1,11 @@
 import { useCallback, useState, useSyncExternalStore } from "react";
-import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
+import { LinkBreakIcon } from "../../shared/design-system/icons";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import type { ChannelLauncherProps } from "../../features/panels/service";
+import { useRelayConnection } from "../../features/relay/react";
 import type { ChatIconProps } from "../../features/conversation/service";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -10,6 +14,7 @@ import { ownSolo } from "../../features/solo/labels";
 import { writeLink, type SoloPulls } from "./solo-pull";
 import { describePull, pullTone, stateIcons } from "./pull-state-view";
 import styles from "./GitHub.module.css";
+import { useOpenGitHubLinksInBuzz } from "./link-preference";
 
 /** A Solo chat's linked pull request in place of its chat icon. */
 export function SoloPullIcon({
@@ -25,6 +30,78 @@ export function SoloPullIcon({
       <Icon size={16} aria-hidden="true" />
       <span className="sr-only">{describePull(pull)}: </span>
     </span>
+  );
+}
+
+/** Reuses the sidebar's linked state and the conversation host's panel opener. */
+export function SoloPullLauncher({
+  relay,
+  pullsFor,
+  context,
+  open,
+  canOpen,
+}: ChannelLauncherProps & {
+  relay: RelayData;
+  pullsFor(session: RelaySession): SoloPulls;
+}) {
+  const connection = useRelayConnection(relay);
+  const list = useChannelList(connection.session.channels);
+  if (
+    list.channels.find((channel) => channel.id === context.channelId)
+      ?.channelType !== "solo" ||
+    connection.scope !== context.scope ||
+    connection.viewer !== context.viewer
+  )
+    return null;
+  return (
+    <SessionPullLauncher
+      pulls={pullsFor(connection.session)}
+      channelId={context.channelId}
+      open={open}
+      canOpen={canOpen}
+    />
+  );
+}
+
+export function SessionPullLauncher({
+  pulls,
+  channelId,
+  open,
+  canOpen,
+}: {
+  pulls: SoloPulls;
+  channelId: string;
+  open(target: string): boolean;
+  canOpen(target: string): boolean;
+}) {
+  const inBuzz = useOpenGitHubLinksInBuzz();
+  const pull = useSoloPull(pulls, channelId);
+  if (!pull) return null;
+  const label = `Open linked ${describePull(pull).toLowerCase()}`;
+  const Icon = stateIcons[pull.state?.state ?? "open"];
+  return (
+    <IconButton
+      size="sm"
+      variant="ghost"
+      aria-label={label}
+      title={label}
+      disabled={inBuzz && !canOpen(pull.url)}
+      icon={<Icon size="1rem" aria-hidden="true" />}
+      {...(inBuzz
+        ? { onClick: () => open(pull.url) }
+        : {
+            nativeButton: false,
+            role: "link",
+            render: (props) => (
+              <a
+                {...props}
+                href={pull.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              />
+            ),
+          })}
+    />
   );
 }
 
@@ -162,6 +239,9 @@ export function SoloPullMenu({
         }
       }}
     >
+      <MenuIcon>
+        <LinkBreakIcon size={16} />
+      </MenuIcon>
       {busy ? "Unlinking pull request…" : "Unlink pull request"}
     </MenuItem>
   );

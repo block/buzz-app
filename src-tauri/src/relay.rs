@@ -253,12 +253,23 @@ pub(crate) async fn git_authorization(host: &IdentityHost, url: &Url) -> Result<
 /// `agent-config-artifacts.ts`.
 const ARTIFACT_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
 
+/// Content of a live channel Canvas, in UTF-8 bytes. Mirrors
+/// `LIVE_CANVAS_BYTES` in `canvas-limits.ts`.
+pub(crate) const LIVE_CANVAS_BYTES: usize = 256 * 1024;
+
+/// The largest complete signed Canvas event: the relay's default 512 KiB frame
+/// less the `["EVENT",…]` wrapper. Content within `LIVE_CANVAS_BYTES` can still
+/// escape past it. Mirrors `CANVAS_MAX_EVENT_BYTES` in `canvas-limits.ts`.
+pub(crate) const CANVAS_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
+
 /// Kinds whose events may exceed the default 64 KiB signing bound.
 fn signing_limit(kind: u16) -> Option<usize> {
     if catalog::is_catalog(kind) {
         Some(catalog::MAX_EVENT_BYTES)
     } else if kind == 45010 {
         Some(ARTIFACT_MAX_EVENT_BYTES)
+    } else if kind == 40100 {
+        Some(CANVAS_MAX_EVENT_BYTES)
     } else {
         None
     }
@@ -286,14 +297,19 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let artifact = event.kind == 45010;
+    let complete_limit = match event.kind {
+        45010 => Some(ARTIFACT_MAX_EVENT_BYTES),
+        40100 => Some(CANVAS_MAX_EVENT_BYTES),
+        _ => None,
+    };
     let signed = match signing_limit(event.kind) {
         Some(limit) => host.sign_bounded(event, limit).await?,
         None => host.sign(event).await?,
     };
     // The commitment bound above omits id, pubkey key and sig; the relay
     // limits the whole event.
-    if artifact && serde_json::to_vec(&signed).map_or(true, |b| b.len() > ARTIFACT_MAX_EVENT_BYTES)
+    if complete_limit
+        .is_some_and(|limit| serde_json::to_vec(&signed).map_or(true, |bytes| bytes.len() > limit))
     {
         return Err("Relay event is too large".into());
     }
@@ -414,7 +430,13 @@ fn valid_member_command(event: &EventTemplate) -> bool {
 
 // Match the broker's purpose-bound Canvas admission, including legacy untagged retries.
 fn valid_canvas(event: &EventTemplate) -> bool {
-    event.content.len() <= 24 * 1024
+    event.content.len() <= LIVE_CANVAS_BYTES
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("canvas-instructions"))
+            .count()
+            <= 1
         && event
             .tags
             .iter()
@@ -434,6 +456,7 @@ fn valid_canvas(event: &EventTemplate) -> bool {
             match tag[0].as_str() {
                 "h" => channel_writes::uuid(&tag[1]),
                 "client-id" => tag[1].encode_utf16().count() <= 128,
+                "canvas-instructions" => tag[1] == "unapproved",
                 "expected-revision" => {
                     tag[1] == "none"
                         || (tag[1].len() == 64
@@ -688,6 +711,37 @@ async fn admit_app_data(
     Ok(())
 }
 
+/// An incoming event's signature claim: the webview checks shape and that `id`
+/// hashes the event, then asks libsecp256k1 whether `sig` signs `id` for `pubkey`.
+#[derive(serde::Deserialize)]
+pub(crate) struct SignatureClaim {
+    id: String,
+    pubkey: String,
+    sig: String,
+}
+
+/// BIP-340 checks off the webview's main thread; one result per claim, in order.
+#[tauri::command]
+pub(crate) async fn relay_verify_signatures(claims: Vec<SignatureClaim>) -> Result<Vec<bool>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let secp = secp256k1::Secp256k1::verification_only();
+        claims.iter().map(|claim| signs(&secp, claim)).collect()
+    })
+    .await
+    .map_err(|_| "Signature verification could not complete".into())
+}
+
+fn signs(secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>, claim: &SignatureClaim) -> bool {
+    let (Ok(id), Ok(pubkey), Ok(sig)) = (
+        nostr::event::EventId::from_hex(&claim.id),
+        claim.pubkey.parse::<secp256k1::XOnlyPublicKey>(),
+        claim.sig.parse::<secp256k1::schnorr::Signature>(),
+    ) else {
+        return false;
+    };
+    secp.verify_schnorr(&sig, id.as_bytes(), &pubkey).is_ok()
+}
+
 fn verify_signature(event: &serde_json::Value) -> Result<()> {
     let parsed: nostr::event::Event =
         serde_json::from_value(event.clone()).map_err(|_| "Invalid outgoing signature")?;
@@ -730,11 +784,24 @@ pub(crate) async fn relay_info(community: &str) -> Result<serde_json::Value> {
     serde_json::from_slice(&body).map_err(|_| "Invalid community information".into())
 }
 
+static USER_AGENT: OnceLock<String> = OnceLock::new();
+
+/// Records the app version native relay requests report, once at startup.
+pub(crate) fn set_user_agent(version: impl std::fmt::Display) {
+    let _ = USER_AGENT.set(format!("Buzz/{version}"));
+}
+
+/// `User-Agent` for native relay HTTP and WebSocket requests.
+pub(crate) fn user_agent() -> &'static str {
+    USER_AGENT.get().map_or("Buzz", String::as_str)
+}
+
 fn client() -> Result<&'static reqwest::Client> {
     static CLIENT: OnceLock<std::result::Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
             let builder = reqwest::Client::builder()
+                .user_agent(user_agent())
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(30));
@@ -748,6 +815,21 @@ fn client() -> Result<&'static reqwest::Client> {
         .map_err(|_| "Relay network client is unavailable".into())
 }
 
+/// Status of a read the renderer abandoned; the renderer has stopped listening.
+const CANCELLED_READ: u16 = 499;
+
+/// Searches and reads the renderer may abandon. A dispatched write may already
+/// have reached the relay, so it is never cancelled. Mirrors `nativeRelayRequest`.
+fn cancellable_read(method: &str, path: &str) -> bool {
+    method == "POST" && matches!(path, "/query" | "/profiles/search" | "/gifs/search")
+}
+
+/// The upload registry's semantics: a cancel may overtake its read IPC.
+fn read_cancels() -> &'static Uploads {
+    static CANCELS: OnceLock<Uploads> = OnceLock::new();
+    CANCELS.get_or_init(Uploads::default)
+}
+
 #[tauri::command]
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
@@ -756,6 +838,7 @@ pub(crate) async fn relay_http(
     path: String,
     method: String,
     body: Option<String>,
+    id: Option<String>,
 ) -> Result<RelayResponse> {
     let url = request_url(&community, &path, &method)?;
     if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
@@ -792,7 +875,7 @@ pub(crate) async fn relay_http(
             return Err("Invalid outgoing signature".into());
         }
     }
-    send(
+    let request = send(
         host.inner(),
         Some(fi.inner()),
         url,
@@ -800,8 +883,52 @@ pub(crate) async fn relay_http(
         body,
         method == "POST",
         MAX_RESPONSE,
-    )
-    .await
+    );
+    cancellable(id.as_deref(), &method, &path, request).await
+}
+
+/// Runs `request`, or for a read with an `id`, until `relay_http_cancel` names it.
+async fn cancellable(
+    id: Option<&str>,
+    method: &str,
+    path: &str,
+    request: impl std::future::Future<Output = Result<RelayResponse>>,
+) -> Result<RelayResponse> {
+    let Some(id) = id else {
+        return request.await;
+    };
+    if !cancellable_read(method, path) {
+        return Err("Relay writes cannot be cancelled".into());
+    }
+    let id = upload_id(Some(id)).map_err(|_| "Invalid relay read")?;
+    let Some(cancelled) = read_cancels()
+        .start(id)
+        .map_err(|_| "Relay reads are busy")?
+    else {
+        return Ok(cancelled_read());
+    };
+    // Dropping the request future closes its connection.
+    let result = tokio::select! {
+        biased;
+        _ = cancelled => Ok(cancelled_read()),
+        result = request => result,
+    };
+    read_cancels().finish(id);
+    result
+}
+
+#[tauri::command]
+pub(crate) fn relay_http_cancel(id: String) -> Result<()> {
+    read_cancels().cancel(upload_id(Some(&id)).map_err(|_| "Invalid relay read")?);
+    Ok(())
+}
+
+fn cancelled_read() -> RelayResponse {
+    RelayResponse {
+        status: CANCELLED_READ,
+        headers: BTreeMap::new(),
+        body: String::new(),
+    }
 }
 
 async fn evidence(
@@ -1383,7 +1510,7 @@ async fn upload_file_authorized(
             .timeout(Duration::from_secs(600))
             .header("Authorization", auth)
             .header("Content-Type", kind)
-            .header("X-SHA-256", hash)
+            .header("X-SHA-256", &hash)
             .header(reqwest::header::CONTENT_LENGTH, size)
             .body(reqwest::Body::wrap_stream(file_chunks(
                 file,
@@ -1413,7 +1540,20 @@ async fn upload_file_authorized(
         {
             return Err(reason.into());
         }
-        read_response(response, 8192).await
+        let response = read_response(response, 8192).await?;
+        if (200..300).contains(&response.status) {
+            // Only this host knows the final bytes when preparation converted
+            // the source. Bind the returned descriptor before JavaScript can
+            // use it in the user's signed message.
+            let descriptor: serde_json::Value = serde_json::from_str(&response.body)
+                .map_err(|_| "Upload response is not a valid descriptor")?;
+            if descriptor["sha256"].as_str() != Some(hash.as_str())
+                || descriptor["size"].as_u64() != Some(size as u64)
+            {
+                return Err("Upload response does not match uploaded bytes".into());
+            }
+        }
+        Ok(response)
     };
     if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
         fi.during_admitted_operation(host, assertion, true, operation)
@@ -1433,8 +1573,9 @@ const FILE_DOWNLOAD_MAX: usize = 10 * 1024 * 1024;
 /// development broker's video limit. A video of exactly this size plays; a
 /// larger `Content-Length` gets 413 before any download, and a response
 /// without one is stopped and rejected with 413 once it passes this size.
-/// Edit this value to change the limit; it is compiled into the binary.
-const WHOLE_VIDEO_MAX: u64 = 500 * 1024 * 1024;
+/// On macOS it also bounds a download from the native media menu. Edit this
+/// value to change the limit; it is compiled into the binary.
+pub(crate) const WHOLE_VIDEO_MAX: u64 = 500 * 1024 * 1024;
 /// Open-ended ranges are shortened so playback starts after one small chunk;
 /// the media element requests the next range itself.
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
@@ -1503,7 +1644,7 @@ fn window_origin(url: &Url) -> Option<tauri::http::HeaderValue> {
 
 /// Decode only the custom scheme URLs emitted by convertFileSrc. The media URL
 /// is independently checked before any authenticated request is made.
-fn download_target(source: &str) -> Option<Url> {
+pub(crate) fn download_target(source: &str) -> Option<Url> {
     let url = Url::parse(source).ok()?;
     let host_ok = match url.scheme() {
         "buzz-media" => url.host_str() == Some("localhost"),
@@ -1527,7 +1668,7 @@ fn download_target(source: &str) -> Option<Url> {
 
 /// Never interpret untrusted attachment names as paths. A missing or invalid name
 /// falls back to the validated blob's basename.
-fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
+pub(crate) fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
     if safe_download_name(name) {
         name
     } else {
@@ -1613,27 +1754,33 @@ pub(crate) fn mark_download(_file: &std::fs::File, _path: &std::path::Path) -> s
     Ok(())
 }
 
+/// `filename`, then `stem (1).ext` up to `stem (999).ext`: the names a
+/// download tries in turn while each is taken. `Ada.agent.png` counts as
+/// `Ada (1).agent.png`, which still reads as a snapshot by its suffix.
+pub(crate) fn download_names(filename: &str) -> impl Iterator<Item = String> + '_ {
+    let (stem, ext) = filename
+        .find(".agent.")
+        .or_else(|| filename.rfind('.'))
+        .filter(|&at| at > 0)
+        .map_or((filename, ""), |at| (&filename[..at], &filename[at + 1..]));
+    (0..1000).map(move |index| {
+        if index == 0 {
+            filename.to_owned()
+        } else if ext.is_empty() {
+            format!("{stem} ({index})")
+        } else {
+            format!("{stem} ({index}).{ext}")
+        }
+    })
+}
+
 fn save_download(
     directory: &std::path::Path,
     filename: &str,
     body: &[u8],
 ) -> Result<std::path::PathBuf> {
     use std::io::Write as _;
-    // `Ada.agent.png` counts as `Ada (1).agent.png`, which still reads as a
-    // snapshot by its suffix.
-    let (stem, ext) = filename
-        .find(".agent.")
-        .or_else(|| filename.rfind('.'))
-        .filter(|&at| at > 0)
-        .map_or((filename, ""), |at| (&filename[..at], &filename[at + 1..]));
-    for index in 0..1000 {
-        let candidate = if index == 0 {
-            filename.to_owned()
-        } else if ext.is_empty() {
-            format!("{stem} ({index})")
-        } else {
-            format!("{stem} ({index}).{ext}")
-        };
+    for candidate in download_names(filename) {
         let path = directory.join(candidate);
         match std::fs::OpenOptions::new()
             .write(true)
@@ -1955,6 +2102,7 @@ fn media_url(target: &str) -> Option<Url> {
     let (hash, extension) = name.split_once('.').unwrap_or((name, ""));
     let extension_ok = extension.is_empty()
         || extension == "thumb.jpg"
+        || extension == "thumb.webp"
         || (extension.len() <= 8
             && extension
                 .bytes()

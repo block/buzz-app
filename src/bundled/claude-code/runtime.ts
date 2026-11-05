@@ -45,7 +45,9 @@ import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
+  recentNotesSection,
 } from "../../features/agent-harness/core-memory";
+import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
@@ -61,11 +63,13 @@ import {
   turnPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
+import { protectionHistoryEntry } from "./security";
 import {
   readSessionTitle,
   readTranscript,
   type Conversation,
 } from "./transcript";
+import { sessionPrompts } from "../../features/agents/session-prompts";
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -113,10 +117,11 @@ export type SavedConversation = Conversation &
     at: number;
   };
 
-const NAMES_TIMEOUT_MS = 2_000;
+const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
 type Entry = {
+  protected?: boolean;
   sessions: AgentSessions;
   config: Config;
   /** The team sections of the latest run; a change restarts idle sessions. */
@@ -159,6 +164,9 @@ const listing = (added: readonly AddedTool[]): Listing => ({
       ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
       : tool,
 });
+
+/** How long a session start waits for the agent's recent notes. */
+const NOTES_WAIT_MS = 2_000;
 
 export class ClaudeRuntime {
   private readonly agents = new Map<AgentKey, Entry>();
@@ -213,22 +221,42 @@ export class ClaudeRuntime {
   /** Brings the runtime in line with this type's agents: changed settings
    * restart idle sessions, removed agents stop, and a spare waits while any
    * agent is here. */
+  private readonly retirements = new Map<string, Promise<void>>();
+  async retire(pubkey: string) {
+    let retiring = this.retirements.get(pubkey);
+    if (!retiring) {
+      retiring = (async () => {
+        const entry = this.agents.get(pubkey);
+        this.agents.delete(pubkey);
+        await entry?.sessions.shutdown();
+      })();
+      this.retirements.set(pubkey, retiring);
+    }
+    try {
+      await retiring;
+    } finally {
+      // A failed retirement is not kept: the agent can start again, and its
+      // old processes are not stopped again.
+      if (this.retirements.get(pubkey) === retiring)
+        this.retirements.delete(pubkey);
+    }
+  }
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.key));
     // Deleted, signed out or its community disconnected: either way its
     // processes stop. Saved sessions stay so it resumes when it is back.
-    for (const [key, entry] of this.agents)
-      if (!current.has(key)) {
-        entry.sessions.dispose();
-        this.agents.delete(key);
-      }
+    for (const key of this.agents.keys())
+      if (!current.has(key)) void this.retire(key).catch(() => undefined);
     for (const agent of agents) {
+      if (this.retirements.has(agent.key)) continue;
       const next = this.resolveConfig(agent.config);
       const entry = this.agents.get(agent.key);
       if (!entry) {
-        this.entry(agent.key, next).name = agent.name;
+        const created = this.entry(agent, next);
+        created.name = agent.name;
         continue;
       }
+      entry.protected = !!agent.protection;
       if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
         entry.name !== agent.name
@@ -239,9 +267,9 @@ export class ClaudeRuntime {
       }
     }
     this.spare.warm(
-      ...agents.map((agent) => ({
-        ...where(this.resolveConfig(agent.config)),
-      })),
+      ...agents
+        .filter((agent) => !agent.protection)
+        .map((agent) => where(this.resolveConfig(agent.config))),
     );
     this.notify();
   }
@@ -335,7 +363,22 @@ export class ClaudeRuntime {
     working: boolean,
     signal: AbortSignal,
   ) {
-    return readTranscript(this.spawn, workspace, conversation, working, signal);
+    const prompts = this.prompts(conversation.agent);
+    return readTranscript(
+      this.spawn,
+      workspace,
+      conversation,
+      working,
+      signal,
+      (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+    ).then(
+      (transcript) =>
+        transcript && { ...transcript, turns: prompts.shown(transcript.turns) },
+    );
+  }
+  /** What each of the agent's sessions started with. */
+  private prompts(agent: AgentKey) {
+    return sessionPrompts(this.storage, "claude-code", agent);
   }
   /** The agent's latest session for a conversation that another build of the
    * app started, found in the workspace's Claude Code history. */
@@ -375,7 +418,13 @@ export class ClaudeRuntime {
   }
   private notify() {
     this.views.clear();
-    for (const listener of this.listeners) listener();
+    // One subscriber's error must not stop the others, or a stop in progress.
+    for (const listener of this.listeners)
+      try {
+        listener();
+      } catch (error) {
+        console.error("A Claude session subscriber failed", error);
+      }
   }
   private readonly controls = new SessionControls(() => this.notify());
   private controlKey(agent: Agent, place: SessionPlace) {
@@ -400,7 +449,7 @@ export class ClaudeRuntime {
   ) {
     const key = this.controlKey(agent, place);
     const control = `${agent.key}/${key}`;
-    const entry = this.entry(agent.key, config(agent.config));
+    const entry = this.entry(agent, config(agent.config));
     if (action === "interrupt") {
       this.controls.interrupt(control);
       entry.policies.get(key)?.cancel();
@@ -471,7 +520,7 @@ export class ClaudeRuntime {
       return;
     }
     signal.throwIfAborted();
-    const entry = this.entry(agent.key, settings);
+    const entry = this.entry(agent, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     // A pick is the owner's for this turn; otherwise a synced effort holds.
@@ -516,7 +565,6 @@ export class ClaudeRuntime {
           const text = turnPrompt({
             ...turn,
             agent: agent.key,
-            label: "@mention",
             channelLevel: topLevel && !solo,
             ...(wake
               ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
@@ -697,7 +745,7 @@ export class ClaudeRuntime {
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
-    const entry = this.entry(agent.key, this.resolveConfig(delivery.config));
+    const entry = this.entry(agent, this.resolveConfig(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
@@ -822,7 +870,7 @@ export class ClaudeRuntime {
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-          AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
+          AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
         );
         earlier = events
           .filter(
@@ -843,22 +891,15 @@ export class ClaudeRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const pubkeys = [
-      ...new Set([
-        event.pubkey,
-        ...unseen.map((item) => item.pubkey),
-        ...event.tags
-          .filter((tag) => tag[0] === "p")
-          .map((tag) => tag[1] ?? ""),
-      ]),
-    ].filter(Boolean);
-    if (reads)
-      await Promise.race([
-        reads.profiles(pubkeys).catch(() => undefined),
-        new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
-      ]);
-    const members = summary?.members ?? [];
-    const project = await reading;
+    const signingAuthority = reads?.workflowAuthority();
+    const [names, project] = await Promise.all([
+      readAuthorNames(
+        reads,
+        [event, ...unseen.slice(-CONTEXT_LIMIT)],
+        signingAuthority,
+      ),
+      reading,
+    ]);
     // An unread Canvas keeps the folders the chat had, not restarting it.
     if (project?.directories.length)
       entry.directories.set(key, project.directories);
@@ -877,15 +918,27 @@ export class ClaudeRuntime {
       context: unseen,
       contextRoot,
       total: earlier.length + 1,
-      name: (pubkey: string) => reads?.name(pubkey, members),
+      names,
+      ...(signingAuthority ? { signingAuthority } : {}),
       ...(project?.section ? { project: project.section } : {}),
     };
   }
 
-  private entry(agent: AgentKey, initial: Config): Entry {
+  /** Its entry, made with the agent's protection however it is first used,
+   * so a protected agent never launches unprotected before `sync`. */
+  private entry(
+    {
+      key: agent,
+      protection,
+    }: Readonly<{ key: AgentKey; protection?: unknown }>,
+    initial: Config,
+  ): Entry {
+    if (this.retirements.has(agent))
+      throw new Error("This agent’s previous native sessions have not retired");
     const existing = this.agents.get(agent);
     if (existing) return existing;
     const entry: Entry = {
+      protected: !!protection,
       config: initial,
       team: "",
       sessions: undefined as unknown as AgentSessions,
@@ -897,16 +950,33 @@ export class ClaudeRuntime {
     // it was given, until it is replaced.
     const tools =
       (cwd: string): ToolServer =>
-      async (conversation, message) => {
+      async (conversation, message, signal) => {
         const handle = entry.handle;
         const client =
           handle &&
           appClient(handle, {
+            // Its PreToolUse hook reviews every tool, Buzz's included.
+            nativeToolGate: true,
+            protectionContext: async () => {
+              if (!conversation)
+                throw new Error(
+                  "The native Claude conversation is unavailable",
+                );
+              return entry.sessions.protectionContext(conversation);
+            },
             relayAuthor: this.reads(agent)?.relayAuthor?.(),
             signingAuthority: this.reads(agent)?.workflowAuthority(),
-            read: (path) => readFile(this.spawn, cwd, path),
+            read: (path) =>
+              readFile(
+                this.spawn,
+                cwd,
+                path,
+                undefined,
+                handle.protection?.processProtection,
+              ),
             memories: (slug) => this.memories(agent, slug),
             remembered: () => this.forget(agent),
+            signal,
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
@@ -918,10 +988,28 @@ export class ClaudeRuntime {
           listing(this.added()),
         );
       };
+    const saved = localSessions(this.storage, agent);
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       spare: this.spare,
-      store: localSessions(this.storage, agent),
+      store: {
+        get: (key) => {
+          const value = saved.get(key);
+          return value?.protection === entry.handle?.protection?.stateKey
+            ? value
+            : undefined;
+        },
+        set: (key, value) =>
+          saved.set(key, {
+            ...value,
+            ...(entry.handle?.protection
+              ? { protection: entry.handle.protection.stateKey }
+              : {}),
+          }),
+        delete: (key) => saved.delete(key),
+      },
+      started: (session, text) =>
+        void this.prompts(agent).save(session, [{ label: "", text }]),
       onChange: () => this.notify(),
       fingerprint: (key) =>
         JSON.stringify([
@@ -937,10 +1025,48 @@ export class ClaudeRuntime {
         ]),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
-        const memory = await this.core(agent);
+        const gate = entry.handle?.protection;
+        if (entry.protected && !gate)
+          throw new Error("The protected agent has no live policy binding");
+        gate?.assertAvailable();
+        // Read once per process: a new note doesn't restart a session, and a
+        // slow read starts it without them.
+        const [memory, notes] = await Promise.all([
+          this.core(agent),
+          recentNotesSection((slug) =>
+            this.memories(agent, slug, AbortSignal.timeout(NOTES_WAIT_MS)),
+          ),
+        ]);
         const directories = key ? entry.directories.get(key) : undefined;
         return {
           ...where(entry.config),
+          ...(gate
+            ? {
+                protection: {
+                  gate,
+                  history: async (path: string, signal: AbortSignal) => {
+                    const bytes = await readFile(
+                      this.spawn,
+                      workspace,
+                      path,
+                      signal,
+                      gate.processProtection,
+                    );
+                    const lines = new TextDecoder().decode(bytes).split("\n");
+                    // Claude appends to its transcript as it goes, so the last
+                    // line may still be partial; the next hook reads it whole.
+                    const last = lines.pop() ?? "";
+                    const rows = lines
+                      .filter((line) => line.trim())
+                      .map((line) => JSON.parse(line) as unknown);
+                    try {
+                      if (last.trim()) rows.push(JSON.parse(last));
+                    } catch {}
+                    return rows.map(protectionHistoryEntry);
+                  },
+                },
+              }
+            : {}),
           ...(directories ? { directories } : {}),
           hook: (session, event, input) =>
             this.hook(agent, session, event, input),
@@ -955,6 +1081,7 @@ export class ClaudeRuntime {
             instructions,
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
+            notes,
           }),
         };
       },
@@ -964,14 +1091,15 @@ export class ClaudeRuntime {
   }
 
   /** The agent's memory, or only entry `slug`, as its community's reads give
-   * it. */
-  private memories(agent: AgentKey, slug?: string) {
+   * it. `stop` ends the read sooner than its own limit. */
+  private memories(agent: AgentKey, slug?: string, stop?: AbortSignal) {
     const reads = this.reads(agent);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
+    const limit = AbortSignal.timeout(READ_TIMEOUT_MS);
     return this.memoryReads.read(
       reads,
       pubkeyOf(agent),
-      AbortSignal.timeout(READ_TIMEOUT_MS),
+      stop ? AbortSignal.any([limit, stop]) : limit,
       slug,
     );
   }

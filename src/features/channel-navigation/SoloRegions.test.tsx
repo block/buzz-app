@@ -7,12 +7,14 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode, useCallback, useRef, useState } from "react";
 import { SoloRegions } from "./SoloRegions";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { MenuItem } from "../../shared/design-system/ui/Menu";
 import { SoloHeading } from "../../bundled/channels/SoloHeading";
 import { WorkspaceControl } from "../solo/WorkspaceControl";
 import type { OpenTarget } from "../navigation/targets";
@@ -519,9 +521,22 @@ it("replaces personal filing with a reveal chip and rejects a move selected just
   });
   const reveal = vi.fn();
   const stop = h.service.subscribeReveal(reveal);
+  const menuItems = [
+    {
+      key: "test/huddle",
+      id: "huddle",
+      pluginId: "test",
+      revision: "1",
+      component: () => <MenuItem>Start a huddle</MenuItem>,
+    },
+  ];
   render(
     <ToastProvider>
       <SoloHeading
+        chatMenus={{
+          subscribe: () => () => {},
+          snapshot: () => menuItems,
+        }}
         session={h.session}
         scope={h.scope}
         channel={channel}
@@ -540,6 +555,16 @@ it("replaces personal filing with a reveal chip and rejects a move selected just
   expect(
     await screen.findByRole("menuitem", { name: "Chat settings" }),
   ).toBeInTheDocument();
+  expect(
+    screen.getByRole("menuitem", { name: "Start a huddle" }),
+  ).toBeInTheDocument();
+  const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
+  expect(items.indexOf("Start a huddle")).toBeGreaterThan(
+    items.indexOf("Chat settings"),
+  );
+  expect(items.indexOf("Start a huddle")).toBeLessThan(
+    items.indexOf("Copy link"),
+  );
   expect(
     screen.queryByRole("menuitem", { name: "Move to" }),
   ).not.toBeInTheDocument();
@@ -1436,4 +1461,62 @@ it("hands a header menu action the durable trigger as its dialog origin", async 
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
   expect(selected).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])(
+  "preserves muted Solo unread markers in source and recovery destinations (recovery=%s)",
+  async (recovery) => {
+    const h = fixture();
+    const unread = {
+      ...h.session.unread.snapshot({ kind: "channel", channelId: "owned" }),
+      manual: "none" as const,
+      observedCount: 1,
+      attentionCount: 0,
+    };
+    const preferences = h.session.sidebarPreferences.snapshot();
+    Object.assign(h.session, {
+      sidebarPreferences: {
+        ...h.session.sidebarPreferences,
+        snapshot: () => ({
+          ...preferences,
+          data: { ...preferences.data, muted: ["owned"] },
+        }),
+      },
+      unread: { ...h.session.unread, snapshot: () => unread },
+    });
+    if (!recovery)
+      await h.register({
+        component: ({ ui }) => <Row ui={ui} channelId="owned" />,
+      });
+    mount(h);
+    const row = screen.getByRole("button", { name: /^Owned/ });
+    expect(
+      within(row).getByRole("img", { name: /^1 observed unread messages/ }),
+    ).toBeInTheDocument();
+    expect(row.querySelector("[data-channel-priority]")).toBeNull();
+  },
+);
+
+it("keeps a visible priority cue on a muted Solo recovery destination", () => {
+  const h = fixture();
+  const unread = {
+    ...h.session.unread.snapshot({ kind: "channel", channelId: "owned" }),
+    manual: "none" as const,
+    observedCount: 1,
+    attentionCount: 1,
+  };
+  const preferences = h.session.sidebarPreferences.snapshot();
+  Object.assign(h.session, {
+    sidebarPreferences: {
+      ...h.session.sidebarPreferences,
+      snapshot: () => ({
+        ...preferences,
+        data: { ...preferences.data, muted: ["owned"] },
+      }),
+    },
+    unread: { ...h.session.unread, snapshot: () => unread },
+  });
+  mount(h);
+  const row = screen.getByRole("button", { name: /^Owned/ });
+  expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
 });

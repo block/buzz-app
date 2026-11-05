@@ -1,5 +1,9 @@
 import { workflowOwner } from "../../features/relay/workflow-attribution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  messageSearchable,
+  searchDebounce,
+} from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
@@ -7,9 +11,12 @@ import { foldProfiles } from "../../features/relay/profiles";
 import { normalizeName } from "../../features/search/person-match";
 import {
   isHexPubkey,
+  isViewerHandle,
   normalizeFromHandle,
   normalizeInChannel,
+  operatorMatches,
   parseSearchOperators,
+  searchTextSyntax,
 } from "./parseSearchOperators";
 
 const noAgentNames: ReadonlyMap<string, string> = new Map();
@@ -137,6 +144,7 @@ export function useSearchMessages(
     [session],
   );
   const parsed = useMemo(() => parseSearchOperators(query), [query]);
+  const syntax = useMemo(() => searchTextSyntax(parsed.text), [parsed.text]);
   // Rerun the search only when the names change, not on every new map.
   const agentKey = JSON.stringify([...agentNames]);
   const agents = useMemo(
@@ -158,10 +166,24 @@ export function useSearchMessages(
   // An unfinished author token is an identity prompt, not free-text search.
   // Both from:name and from:@name take the same picker path until an exact key
   // is selected (or the token is completed with a space).
-  const unfinishedAuthor = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
+  // `me` is the viewer, never a name to pick.
+  const unfinishedAuthor = operatorMatches(
+    query,
+    /(?:^|\s)from:(@?)([^\s]*)$/gi,
+  ).at(-1);
+  const authorPrompt =
+    !!unfinishedAuthor &&
+    !isHexPubkey(unfinishedAuthor[2] ?? "") &&
+    !isViewerHandle(unfinishedAuthor[2] ?? "");
+  // A prefix search answers a short last word with no hits; a full-text
+  // search needs something to find, not only exclusions.
+  const textSearchable = syntax.fullText
+    ? syntax.positive
+    : messageSearchable(parsed.text);
   const canSearch =
-    !(unfinishedAuthor && !isHexPubkey(unfinishedAuthor[2] ?? "")) &&
-    (!!parsed.text || hasFilters);
+    !authorPrompt &&
+    // A filter alone reads history; typed text is always a relay search.
+    (parsed.text ? textSearchable : hasFilters);
   const newest = sort === "newest" && session.searchSort;
   // Without text the relay reads its ordinary newest-first history.
   const newestFirst = newest || !parsed.text;
@@ -197,7 +219,7 @@ export function useSearchMessages(
     if (!canSearch || unresolvedChannel) return;
     const controller = new AbortController();
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
-    const timer = setTimeout(() => {
+    const cancel = searchDebounce(() => {
       void (async (): Promise<{
         messages: readonly SearchMessage[];
         next?: Result["next"];
@@ -207,6 +229,9 @@ export function useSearchMessages(
         if (parsed.from) {
           if (isHexPubkey(parsed.from)) {
             author = parsed.from.toLowerCase();
+          } else if (isViewerHandle(parsed.from)) {
+            if (!session.viewer) return { messages: [] };
+            author = session.viewer;
           } else {
             const typed = normalizeFromHandle(parsed.from).trim();
             const handle = normalizeName(typed);
@@ -269,7 +294,9 @@ export function useSearchMessages(
           ...(parsed.text
             ? {
                 search: parsed.text,
-                search_mode: "prefix" as const,
+                search_mode: syntax.fullText
+                  ? ("fulltext" as const)
+                  : ("prefix" as const),
                 ...(newest ? { search_sort: "newest" as const } : {}),
               }
             : {}),
@@ -308,9 +335,9 @@ export function useSearchMessages(
               error: `Message search couldn’t finish${error instanceof Error && error.message ? `: ${error.message.slice(0, 240)}` : "."}${scopedChannelId ? " Try again." : " Pages and conversations are still available."}`,
             });
         });
-    }, 180);
+    });
     return () => {
-      clearTimeout(timer);
+      cancel();
       controller.abort();
       more.current?.abort();
     };
@@ -318,6 +345,7 @@ export function useSearchMessages(
     canSearch,
     session,
     parsed,
+    syntax,
     channelId,
     unresolvedChannel,
     owner,
@@ -361,6 +389,11 @@ export function useSearchMessages(
       ordinaryChannel(message.channelId),
     ),
     loading: canSearch && !unresolvedChannel && !current,
+    /** The last typed word is too short to search messages. */
+    tooShort:
+      !!parsed.text && !syntax.fullText && !messageSearchable(parsed.text),
+    /** The text only excludes words, so there is nothing to search for. */
+    onlyExclusions: !!parsed.text && syntax.fullText && !syntax.positive,
     error: current?.error,
     ambiguousAuthor: current?.ambiguousAuthor,
     newestFirst,

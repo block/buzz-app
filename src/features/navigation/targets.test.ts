@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
+import {
+  parseGitPluginSource,
+  parseOpenTarget,
+  targetKey,
+  type OpenTarget,
+} from "./targets";
 const viewer = "a".repeat(64);
 const conversation = {
   version: 1,
@@ -10,6 +15,20 @@ const conversation = {
 } as const;
 
 describe("open target boundary", () => {
+  it("bounds a scoped forwarding presentation independently of its underlying message", () => {
+    const target = parseOpenTarget({
+      ...conversation,
+      forward: "D".repeat(64),
+    });
+    expect(target).toEqual({
+      ...parseOpenTarget(conversation),
+      forward: "d".repeat(64),
+    });
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+    expect(() =>
+      parseOpenTarget({ ...conversation, forward: "invalid" }),
+    ).toThrow();
+  });
   it("bounds nested provider addresses to Agent setup and keeps their scope", () => {
     const target = {
       version: 1,
@@ -257,4 +276,143 @@ it("keeps explicit Personal space distinct from an unspecified page scope", () =
   expect(parseOpenTarget(personal)).toEqual(personal);
   expect(targetKey(personal)).not.toBe(targetKey(page));
   expect(() => parseOpenTarget({ ...conversation, scope: null })).toThrow();
+});
+
+it("addresses one installed plugin only within Plugins settings", () => {
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginId: "example.notes",
+  };
+  expect(parseOpenTarget(target)).toEqual(target);
+  expect(() => parseOpenTarget({ ...target, section: "profile" })).toThrow();
+  expect(() => parseOpenTarget({ ...target, pluginId: "../bad" })).toThrow();
+  expect(() =>
+    parseOpenTarget({
+      ...target,
+      pluginImport: {
+        repository: "https://example.com/repo",
+        reference: "main",
+      },
+    }),
+  ).toThrow();
+});
+
+it("retains copied Git source fields only on the Plugins settings destination", () => {
+  const source = {
+    repository: "https://github.com/example/plugin",
+    reference: "release",
+  };
+  const target = parseOpenTarget({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginImport: source,
+  });
+  source.reference = "changed";
+  expect(target).toMatchObject({ pluginImport: { reference: "release" } });
+  expect(() => parseOpenTarget({ ...target, section: "profile" })).toThrow();
+  expect(() =>
+    parseOpenTarget({ ...target, pluginImport: { ...source, enable: true } }),
+  ).toThrow();
+  const pinned = {
+    ...source,
+    path: "plugins/one",
+    commit: "a".repeat(40),
+  };
+  expect(parseOpenTarget({ ...target, pluginImport: pinned })).toMatchObject({
+    pluginImport: pinned,
+  });
+  expect(() =>
+    parseOpenTarget({ ...target, pluginImport: { ...pinned, path: "../x" } }),
+  ).toThrow();
+});
+
+const gitSource = {
+  repository: "https://github.com/example/plugin",
+  reference: "release",
+};
+it("keeps an optional plugin folder and lowercased commit on a Git source", () => {
+  const commit = "A".repeat(40);
+  expect(
+    parseGitPluginSource({ ...gitSource, path: "plugins/one", commit }),
+  ).toEqual({ ...gitSource, path: "plugins/one", commit: "a".repeat(40) });
+  expect(
+    parseGitPluginSource({ ...gitSource, commit: "b".repeat(64) }),
+  ).toEqual({ ...gitSource, commit: "b".repeat(64) });
+  expect(parseGitPluginSource(gitSource)).toEqual(gitSource);
+  expect(
+    Object.isFrozen(parseGitPluginSource({ ...gitSource, path: "x" })),
+  ).toBe(true);
+  expect(parseGitPluginSource({ ...gitSource, path: "" }).path).toBe(".");
+  expect(parseGitPluginSource({ ...gitSource, path: "." }).path).toBe(".");
+});
+
+it.each([
+  "/abs",
+  "../up",
+  "a/../b",
+  "a/..",
+  "a/./b",
+  "a//b",
+  "a/",
+  "a\\b",
+  "a\u0000b",
+  "a\nb",
+  "x".repeat(513),
+])("rejects the plugin folder %j", (path) => {
+  expect(() => parseGitPluginSource({ ...gitSource, path })).toThrow();
+});
+
+it.each([
+  "",
+  "abc123",
+  "a".repeat(39),
+  "a".repeat(41),
+  "a".repeat(63),
+  "g".repeat(40),
+  ` ${"a".repeat(40)}`,
+])("rejects the pinned commit %j", (commit) => {
+  expect(() => parseGitPluginSource({ ...gitSource, commit })).toThrow();
+});
+
+it("rejects non-string plugin folders and commits", () => {
+  expect(() => parseGitPluginSource({ ...gitSource, path: 1 })).toThrow();
+  expect(() => parseGitPluginSource({ ...gitSource, commit: 1 })).toThrow();
+  expect(() => parseGitPluginSource({ ...gitSource, path: null })).toThrow();
+});
+
+it("bounds plugin link targets to plain string params", () => {
+  const link = {
+    version: 1,
+    kind: "plugin",
+    pluginId: "com.example.catalog",
+    pageId: "detail",
+    params: { slug: "a", tab: "b" },
+    scope: { viewer, communityOrigin: "https://relay.example" },
+  } as const;
+  expect(parseOpenTarget(link)).toEqual(link);
+  expect(targetKey({ ...link, params: { tab: "b", slug: "a" } })).toBe(
+    targetKey(link),
+  );
+  const { pageId: _pageId, params: _params, scope: _scope, ...bare } = link;
+  expect(parseOpenTarget(bare)).toEqual(bare);
+  for (const invalid of [
+    { ...bare, pluginId: "Not.Valid" },
+    { ...bare, pageId: "" },
+    { ...bare, params: { n: 1 } },
+    { ...bare, params: { "bad key": "a" } },
+    { ...bare, params: { __proto__x: "a" } },
+    { ...bare, params: { slug: "x".repeat(1025) } },
+    {
+      ...bare,
+      params: Object.fromEntries(
+        Array.from({ length: 17 }, (_, index) => [`k${index}`, "v"]),
+      ),
+    },
+    { ...bare, params: ["a"] },
+    { ...bare, route: { version: 1, params: {} } },
+  ])
+    expect(() => parseOpenTarget(invalid)).toThrow();
 });

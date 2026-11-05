@@ -16,6 +16,7 @@ import type {
   NavigationOpenOptions,
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
+import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
 
 const channelsKey = "buzz.channels/channels";
 /** Presentation-only lease for an already-confirmed Settings departure. */
@@ -48,6 +49,11 @@ export function useAppNavigation(
   // runs from this mount, not from createServices(); otherwise a new user's first
   // frame was the timeout notice.
   useLayoutEffect(() => services.navigationHost.attach(), [services]);
+
+  const relay = useSyncExternalStore(
+    services.relay.subscribe,
+    services.relay.snapshot,
+  );
 
   const startup = plugins.configuration.status;
   const target = state.entry.target;
@@ -93,6 +99,8 @@ export function useAppNavigation(
         ? channelsKey
         : undefined;
   const page = pages.find((page) => page.key === pageKey);
+  const pluginLink = target.kind === "plugin" ? target : undefined;
+  const linked = pluginLink && linkedPage(pages, pluginLink);
   const membership = scope
     ? client.memberships.find(
         (item) => communityDestination(item.id).url === scope.communityOrigin,
@@ -120,7 +128,10 @@ export function useAppNavigation(
   const legacyMessagesSettings =
     settings && target.section === "buzz.channels/messages";
   let waiting =
-    legacyHome || legacyPage !== undefined || legacyMessagesSettings;
+    legacyHome ||
+    legacyPage !== undefined ||
+    legacyMessagesSettings ||
+    pluginLink !== undefined;
   if (scope === null) {
     waiting ||= client.status === "loading" || client.selected !== null;
   } else if (scope) {
@@ -150,6 +161,13 @@ export function useAppNavigation(
         failure = "unavailable";
       }
     }
+  }
+  if (pluginLink && !failure && !linked) {
+    if (
+      startup !== "loading" &&
+      plugins.activation[pluginLink.pluginId]?.status !== "starting"
+    )
+      failure = "unavailable";
   }
   if (
     target.kind === "settings" &&
@@ -206,6 +224,11 @@ export function useAppNavigation(
         ...target,
         section: "appearance",
       });
+    else if (pluginLink && linked && !failure)
+      services.navigationHost.resolve(
+        state.attempt,
+        linkedPageTarget(pluginLink, linked),
+      );
   }, [
     services,
     state.attempt,
@@ -214,6 +237,9 @@ export function useAppNavigation(
     legacyMessagesSettings,
     target,
     scope,
+    pluginLink,
+    linked,
+    failure,
   ]);
   const owner = useMemo(
     () => ({ attempt: state.attempt, page, waiting, failure }),
@@ -327,6 +353,31 @@ export function useAppNavigation(
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
+  // A visit that failed while its connection was down, or whose connection has
+  // dropped since, reopens by itself, once, when that connection is live again. A live connection alone does not prove
+  // a failed read recovered. Host-decided, denied and invalid visits keep their
+  // error; a page presenting its failure in place owns that Retry.
+  const offline =
+    relay.status === "connecting" || relay.status === "error" || !!relay.cached;
+  const failedOffline = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (
+      state.status !== "failed" ||
+      state.presented ||
+      state.ingress ||
+      failure ||
+      (state.reason !== "timeout" && state.reason !== "unavailable")
+    )
+      return;
+    if (offline) failedOffline.current = state.attempt.id;
+    else if (
+      relay.status === "ready" &&
+      failedOffline.current === state.attempt.id
+    ) {
+      failedOffline.current = undefined;
+      void navigation.retry();
+    }
+  }, [navigation, state, failure, offline, relay.status]);
   const select = (
     key: string,
     options?: Pick<NavigationOpenOptions, "focus"> & {
@@ -385,6 +436,12 @@ export function useAppNavigation(
     waiting,
     failure,
     selected: pageKey ?? target.kind,
+    /** The connection is down, including a settled refusal. */
+    offline: !failure && offline,
+    /** The connection is still being made or retried, and the visit reopens
+     * once it is live; not a refused or misconfigured connection. */
+    reconnecting:
+      !failure && (relay.status === "connecting" || !!relay.retrying),
     workspace: {
       page: workspacePage || undefined,
       target: workspaceTarget,
@@ -412,15 +469,44 @@ export function useAppNavigation(
         }, settings);
       }
     },
+    dismissPluginImport(request: PageNavigation | undefined) {
+      const current = request?.target;
+      if (!request || current?.kind !== "settings" || !current.pluginImport)
+        return;
+      const { pluginImport: _pluginImport, ...settings } = current;
+      navigation.dismiss([request.entryId], settings);
+    },
+    dismissPluginDetails(request: PageNavigation | undefined) {
+      const current = request?.target;
+      if (!request || current?.kind !== "settings" || !current.pluginId) return;
+      const { pluginId: _pluginId, ...settings } = current;
+      const parent = targetKey(settings);
+      navigation.dismiss((target) => {
+        if (target.kind !== "settings" || target.pluginId !== current.pluginId)
+          return false;
+        const { pluginId: _pluginId, ...settings } = target;
+        return targetKey(settings) === parent;
+      }, settings);
+    },
     leaveSettings() {
       const current = navigation.snapshot().entry.target;
       if (current.kind !== "settings") return;
-      const { section: _section, provider: _provider, ...dialog } = current;
+      const {
+        section: _section,
+        provider: _provider,
+        pluginId: _pluginId,
+        ...dialog
+      } = current;
       const dialogKey = targetKey(dialog);
       const dismiss = (fallback: OpenTarget) =>
         navigation.dismiss((target) => {
           if (target.kind !== "settings") return false;
-          const { section: _section, provider: _provider, ...dialog } = target;
+          const {
+            section: _section,
+            provider: _provider,
+            pluginId: _pluginId,
+            ...dialog
+          } = target;
           return targetKey(dialog) === dialogKey;
         }, fallback);
       const previous = lastNonSettings.current;

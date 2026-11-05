@@ -5,6 +5,7 @@ import {
   backUpWith,
   createBackupStatus,
   handoffBackupSession,
+  handoffFederatedBackupSession,
 } from "./backup";
 import { BACKUP_FAILURES } from "./backup-failure";
 
@@ -42,7 +43,8 @@ function native(initial: BackupStatus = at(1, 0, "idle")) {
         return watch();
       }
       if (command === "nsec_backup_state") return state();
-      if (command === "nsec_backup_session") return session(args?.credential);
+      if (command === "nsec_backup_session")
+        return session(args?.credential ?? args?.federated);
       if (command === "nsec_backup_set_choice") return choice();
       throw new Error(`Unexpected command: ${command}`);
     },
@@ -168,17 +170,54 @@ it("resolves a handoff to its ticket, or null when none is issued or the handoff
   });
 });
 
+it("hands off a federated revision with no credential, sharing the generation counter", async () => {
+  const send = vi.fn<
+    (command: string, args?: Record<string, unknown>) => Promise<unknown>
+  >(async () => 2);
+  await expect(
+    handoffFederatedBackupSession("revision-1", send as Send),
+  ).resolves.toBe(2);
+  await handoffFederatedBackupSession(null, send as Send);
+  await handoffBackupSession("hosted", "token", send as Send);
+  expect(send.mock.calls.map(([, args]) => args)).toEqual([
+    {
+      source: "builderlab",
+      generation: expect.any(Number),
+      credential: null,
+      federated: "revision-1",
+    },
+    {
+      source: "builderlab",
+      generation: expect.any(Number),
+      credential: null,
+      federated: null,
+    },
+    { source: "hosted", generation: expect.any(Number), credential: "token" },
+  ]);
+  const [first = 0, second = 0, third = 0] = send.mock.calls.map(
+    ([, args]) => args?.generation as number,
+  );
+  expect([second - first, third - second]).toEqual([1, 1]);
+  send.mockRejectedValueOnce(new Error("Invalid backup session"));
+  await expect(
+    handoffFederatedBackupSession("stale", send as Send),
+  ).resolves.toBeNull();
+});
+
 type Waiter = Parameters<typeof backUpWith>[0];
 const pubkey = "a".repeat(64);
 const commands = (host: ReturnType<typeof native>) =>
   host.send.mock.calls.map(([command, args]) =>
     command === "nsec_backup_session"
-      ? `${command}(${args?.credential ?? null})`
+      ? `${command}(${args?.credential ?? args?.federated ?? null})`
       : command,
   );
 /** The first-run waiter against the identity's real store over `host`, with a
  * deadline the test expires. */
-function backUp(host: ReturnType<typeof native>) {
+function backUp(
+  host: ReturnType<typeof native>,
+  session: Parameters<typeof backUpWith>[2] = { credential: "private-token" },
+) {
   const identity: Waiter = {
     backup: host.store(),
     setBackupChoice: ((pubkey: string, automatic: boolean) =>
@@ -195,7 +234,7 @@ function backUp(host: ReturnType<typeof native>) {
       expire = resolve;
     });
   });
-  const done = backUpWith(identity, pubkey, "private-token", {
+  const done = backUpWith(identity, pubkey, session, {
     after,
     send: host.send as Send,
   });
@@ -213,7 +252,7 @@ function backUp(host: ReturnType<typeof native>) {
       vi.waitFor(() =>
         expect(host.send).toHaveBeenCalledWith(
           "nsec_backup_session",
-          expect.objectContaining({ credential: "private-token" }),
+          expect.objectContaining(session),
         ),
       ),
   };
@@ -307,6 +346,34 @@ it("times out on the deadline, handing the slot back so the running pass retires
   });
   expect(commands(host).at(-1)).toBe("nsec_backup_session(null)");
 });
+
+it.each([
+  [
+    "completed",
+    (host: ReturnType<typeof native>) =>
+      host.watchers[0]?.onmessage(at(2, 1, "complete")),
+    "nsec_backup_session(fi-revision)",
+  ],
+  [
+    "timed-out",
+    (_host: ReturnType<typeof native>, backup: ReturnType<typeof backUp>) =>
+      backup.expire(),
+    "nsec_backup_session(null)",
+  ],
+] as const)(
+  "leaves an FI session, which the Builderlab plugin shares, with the uploader only after a %s pass",
+  async (_label, end, last) => {
+    const host = native();
+    const backup = backUp(host, { federated: "fi-revision" });
+    await backup.started();
+    end(host, backup);
+    await backup.failed;
+    expect(commands(host).slice(3)).toEqual([
+      "nsec_backup_session(fi-revision)",
+      last,
+    ]);
+  },
+);
 
 it("is unavailable without writing consent where native backup does not run", async () => {
   const host = native({ ...at(1, 0, "idle"), builderlab: false });

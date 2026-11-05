@@ -4,6 +4,7 @@ mod persistence;
 pub(crate) use persistence::root as storage_root;
 
 use crate::{
+    federated_identity::FederatedIdentity,
     identity::IdentityHost,
     nsec_backup_config::Config,
     oauth_callback::{OAuthCallbackHost, OAuthRequest},
@@ -47,10 +48,17 @@ impl Source {
     }
 }
 
+/// How a session authenticates to the backup service. A federated session
+/// keeps only the public NIP-FI revision; its token stays in `FederatedIdentity`.
+#[derive(Clone)]
+enum Auth {
+    Credential(Zeroizing<String>),
+    Federated(String),
+}
 #[derive(Clone)]
 struct Session {
     source: Source,
-    credential: Zeroizing<String>,
+    auth: Auth,
 }
 struct Candidate {
     handle: String,
@@ -267,6 +275,7 @@ pub(crate) struct NsecBackupHost {
     state: Arc<Mutex<State>>,
     config: Arc<Option<Config>>,
     root: Option<PathBuf>,
+    federated: Option<FederatedIdentity>,
 }
 impl Default for NsecBackupHost {
     fn default() -> Self {
@@ -281,20 +290,41 @@ impl Default for NsecBackupHost {
             config: Arc::new(config),
             // Default test hosts never access the OS account's backup directory.
             root: if cfg!(test) { None } else { storage_root() },
+            federated: None,
         }
     }
 }
+/// Whether this build was compiled with `BUZZ_NSEC_BACKUP_CONSENT=managed`.
+/// build.rs rejects managed consent without configured backup.
+fn managed_build() -> bool {
+    crate::nsec_backup_config::managed(option_env!("BUZZ_NSEC_BACKUP_CONSENT"), true) == Ok(true)
+}
+
 impl NsecBackupHost {
+    pub(crate) fn with_federated_identity(mut self, federated: FederatedIdentity) -> Self {
+        self.federated = Some(federated);
+        self
+    }
     pub(crate) async fn set_choice(
         &self,
         identity: IdentityHost,
         pubkey: &str,
         automatic: bool,
+        unless_saved: bool,
     ) -> Result<crate::nsec_backup_choice::BackupChoice> {
         let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
         let path = self.root.as_ref().ok_or(UNAVAILABLE)?.join("choice.json");
-        let choice =
-            crate::nsec_backup_choice::set(&identity, &path, config, pubkey, automatic).await?;
+        let managed = managed_build();
+        let choice = crate::nsec_backup_choice::set(
+            &identity,
+            &path,
+            config,
+            pubkey,
+            automatic,
+            managed,
+            unless_saved,
+        )
+        .await?;
         if automatic {
             self.trigger(identity);
         }
@@ -308,7 +338,14 @@ impl NsecBackupHost {
         // Source counters restart with each renderer document.
         state.generations = [None, None];
         // The watcher stays: a stale channel drops sends, and the new document registers.
-        if state.progress == Progress::Running {
+        // A consent wait belonged to a cleared session, so it ends too.
+        if matches!(
+            state.progress,
+            Progress::Running
+                | Progress::Waiting {
+                    reason: Waiting::NoConsent
+                }
+        ) {
             self.publish(&mut state, Progress::Idle);
         }
     }
@@ -377,12 +414,47 @@ impl NsecBackupHost {
         credential: Option<String>,
         identity: IdentityHost,
     ) -> Result<Option<u64>> {
-        // Reject a foreign service before copying a caller's already-held credential.
-        let credential = credential.map(Zeroizing::new);
+        // Wrap before any check so a rejected credential is still zeroized.
+        let auth = credential.map(|c| Auth::Credential(Zeroizing::new(c)));
+        self.handoff(source, generation, auth, identity)
+    }
+    /// At most one of `credential` and `federated` (an FI session revision).
+    fn session_from_ipc(
+        &self,
+        source: Source,
+        generation: u64,
+        credential: Option<String>,
+        federated: Option<String>,
+        identity: IdentityHost,
+    ) -> Result<Option<u64>> {
+        match (credential, federated) {
+            (credential, None) => self.session(source, generation, credential, identity),
+            (None, Some(revision)) => {
+                let auth = Some(Auth::Federated(revision));
+                self.handoff(source, generation, auth, identity)
+            }
+            _ => Err("Invalid backup session".into()),
+        }
+    }
+    fn handoff(
+        &self,
+        source: Source,
+        generation: u64,
+        auth: Option<Auth>,
+        identity: IdentityHost,
+    ) -> Result<Option<u64>> {
+        // Reject a foreign service before keeping a caller's already-held credential.
         if !self.source_allowed(source) {
             return Ok(None);
         }
-        if credential.as_ref().is_some_and(|c| !valid_credential(c)) {
+        let invalid = match &auth {
+            Some(Auth::Credential(credential)) => !valid_credential(credential),
+            Some(Auth::Federated(revision)) => {
+                source != Source::Builderlab || !self.federated_current(revision)
+            }
+            None => false,
+        };
+        if invalid {
             return Err("Invalid backup session".into());
         }
         let mut state = self.state.lock().map_err(|_| "Backup unavailable")?;
@@ -396,15 +468,65 @@ impl NsecBackupHost {
         state.generations[source.index()] = Some(generation);
         let active = state.sessions.last().is_some_and(|s| s.source == source);
         state.sessions.retain(|s| s.source != source);
-        if credential.is_none() && !active {
+        if auth.is_none() && !active {
             return Ok(None);
         }
         state.retire();
-        if let Some(credential) = credential {
-            state.sessions.push(Session { source, credential });
+        if let Some(auth) = auth {
+            state.sessions.push(Session { source, auth });
         }
         drop(state);
         Ok(self.trigger(identity))
+    }
+    /// Stops a federated session as signed out once its revision is retired,
+    /// so a request built under it is not sent after a native sign-out.
+    fn still_signed_in(&self, session: &Session) -> std::result::Result<(), Stop> {
+        match &session.auth {
+            Auth::Federated(revision) if !self.federated_current(revision) => {
+                Err(Stop::Failed(Failure::SignedOut))
+            }
+            _ => Ok(()),
+        }
+    }
+    fn federated_current(&self, revision: &str) -> bool {
+        self.federated
+            .as_ref()
+            .is_some_and(|fi| fi.with_session(|_, current, _| current == revision) == Some(true))
+    }
+    /// The session's token and whether it is an FI bearer, resolved now. A
+    /// federated session whose revision is no longer current is signed out.
+    fn token(&self, session: &Session) -> Option<(Zeroizing<String>, bool)> {
+        match &session.auth {
+            Auth::Credential(credential) => Some((credential.clone(), false)),
+            Auth::Federated(revision) => self
+                .federated
+                .as_ref()?
+                .with_session(|token, current, _| (current == revision).then(|| token.clone()))
+                .flatten()
+                .map(|token| (token, true)),
+        }
+    }
+    fn api(&self, session: &Session, root: &str) -> std::result::Result<Api, Stop> {
+        let (token, bearer) = self
+            .token(session)
+            .ok_or(Stop::Failed(Failure::SignedOut))?;
+        if bearer {
+            Api::bearer(root, &token)
+        } else {
+            Api::new(root, &token)
+        }
+        .map_err(|_| Stop::Failed(Failure::Unreachable))
+    }
+    fn client(&self, session: &Session, root: &str) -> std::result::Result<Client, Stop> {
+        let (token, bearer) = self
+            .token(session)
+            .ok_or(Stop::Failed(Failure::SignedOut))?;
+        if bearer {
+            Client::bearer(root, &token)
+        } else {
+            Client::new(root, &token)
+        }
+        .map_err(|error| Stop::Failed(classify(error, false)))
     }
     fn retry(&self, source: Source, identity: IdentityHost) -> Option<u64> {
         let mut state = self.state.lock().ok()?;
@@ -439,7 +561,14 @@ impl NsecBackupHost {
         let Some(session) = state.sessions.last().cloned() else {
             // A pass retired by a null handoff ends here, with no outcome of its own;
             // numbering it as the latest ticket settles a queued rerun's ticket too.
-            if state.progress == Progress::Running {
+            // A consent wait belonged to the session that is gone, so it ends too.
+            if matches!(
+                state.progress,
+                Progress::Running
+                    | Progress::Waiting {
+                        reason: Waiting::NoConsent
+                    }
+            ) {
                 state.pass = state.requested;
                 self.publish(
                     &mut state,
@@ -494,7 +623,6 @@ impl NsecBackupHost {
         session: &Session,
         epoch: u64,
     ) -> std::result::Result<Outcome, Stop> {
-        let unreachable = |_| Stop::Failed(Failure::Unreachable);
         let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
         self.valid(epoch)?;
         let pubkey = match identity.saved_viewer().await {
@@ -504,19 +632,21 @@ impl NsecBackupHost {
             // A denied, busy or locked store is not an absent key.
             Err(_) => return Err(Stop::Failed(Failure::Storage)),
         };
-        let consent = crate::nsec_backup_choice::read(
+        // Hold consent's shared lease until this pass ends, including persisted retries.
+        let Some(_consent) = crate::nsec_backup_choice::admit(
             &self.root.as_ref().ok_or(UNAVAILABLE)?.join("choice.json"),
             config,
             &pubkey,
-        )?;
-        if consent.automatic != Some(true) {
+            managed_build(),
+        )?
+        else {
             return Ok(Outcome::Waiting(Waiting::NoConsent));
-        }
-        // Hold consent's shared lease until this pass ends, including persisted retries.
+        };
         self.valid(epoch)?;
-        let api = Api::new(&config.service_url, &session.credential).map_err(unreachable)?;
+        let api = self.api(session, &config.service_url)?;
         let account = api.me().await?;
         self.valid(epoch)?;
+        self.still_signed_in(session)?;
         match api.current().await? {
             None => return Ok(Outcome::Waiting(Waiting::NotLinked)),
             Some(current) if current != pubkey => {
@@ -544,8 +674,7 @@ impl NsecBackupHost {
                 return Ok(Outcome::Complete);
             }
         }
-        let client = Client::new(&config.service_url, &session.credential)
-            .map_err(|error| Stop::Failed(classify(error, false)))?;
+        let client = self.client(session, &config.service_url)?;
         let enrollment = match client.enroll().await {
             Ok(enrollment) => enrollment,
             // Enrollment refuses an account with no binding; a later bind resolves it.
@@ -592,6 +721,7 @@ impl NsecBackupHost {
             return Ok(Outcome::Complete);
         };
         self.valid(epoch)?;
+        self.still_signed_in(session)?;
         let receipt = client
             .upload(envelope.as_bytes())
             .await
@@ -853,18 +983,29 @@ impl NsecBackupHost {
         }
         .await;
         if result.is_ok() {
-            let mut state = self.state.lock().map_err(|_| CANCELED)?;
-            if !state.closed
-                && state.restore_epoch == epoch
-                && state
-                    .restore
-                    .as_ref()
-                    .is_some_and(|attempt| attempt.id == id)
             {
-                state.restore.take();
+                let mut state = self.state.lock().map_err(|_| CANCELED)?;
+                if !state.closed
+                    && state.restore_epoch == epoch
+                    && state
+                        .restore
+                        .as_ref()
+                        .is_some_and(|attempt| attempt.id == id)
+                {
+                    state.restore.take();
+                }
             }
-            drop(state);
-            self.trigger(identity);
+            // The account already holds this key's backup, so it stays backed
+            // up with no prompt unless its owner saved a choice; saving wakes
+            // the uploader.
+            if self
+                .set_choice(identity.clone(), &pubkey, true, true)
+                .await
+                .is_err()
+            {
+                eprintln!("Automatic identity backup consent deferred");
+                self.trigger(identity);
+            }
         } else if let Ok(mut state) = self.state.lock() {
             if let Some(attempt) = state.restore.as_mut().filter(|attempt| attempt.id == id) {
                 attempt.installing = false;
@@ -966,16 +1107,33 @@ fn credential<'de, D: serde::Deserializer<'de>>(
 struct Api {
     http: reqwest::Client,
     root: String,
+    header: reqwest::header::HeaderName,
     credential: reqwest::header::HeaderValue,
 }
 impl Api {
     fn new(root: &str, credential: &str) -> Result<Self> {
-        let mut header = reqwest::header::HeaderValue::from_str(credential).map_err(|_| RETRY)?;
-        header.set_sensitive(true);
+        Self::build(
+            root,
+            reqwest::header::HeaderName::from_static("x-bb-session-credential"),
+            credential,
+        )
+    }
+    /// Authenticates with an FI session token as `Authorization: Bearer`.
+    fn bearer(root: &str, token: &str) -> Result<Self> {
+        Self::build(
+            root,
+            reqwest::header::AUTHORIZATION,
+            &Zeroizing::new(format!("Bearer {token}")),
+        )
+    }
+    fn build(root: &str, header: reqwest::header::HeaderName, credential: &str) -> Result<Self> {
+        let mut value = reqwest::header::HeaderValue::from_str(credential).map_err(|_| RETRY)?;
+        value.set_sensitive(true);
         Ok(Self {
             http: Self::http(root)?,
             root: root.to_owned(),
-            credential: header,
+            header,
+            credential: value,
         })
     }
     fn http(root: &str) -> Result<reqwest::Client> {
@@ -1034,7 +1192,7 @@ impl Api {
             self.http.get(url)
         };
         let response = request
-            .header("X-BB-Session-Credential", &self.credential)
+            .header(&self.header, &self.credential)
             .send()
             .await
             .map_err(|_| RETRY)?;
@@ -1122,8 +1280,15 @@ pub(crate) fn nsec_backup_session(
     source: Source,
     generation: u64,
     credential: Option<String>,
+    federated: Option<String>,
 ) -> Result<Option<u64>> {
-    host.session(source, generation, credential, identity.inner().clone())
+    host.session_from_ipc(
+        source,
+        generation,
+        credential,
+        federated,
+        identity.inner().clone(),
+    )
 }
 #[tauri::command]
 pub(crate) fn nsec_backup_retry(

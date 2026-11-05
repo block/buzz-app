@@ -1,6 +1,4 @@
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
-import { workflowLabel } from "../../features/relay/workflow-attribution";
-import { LightningIcon } from "../../shared/design-system/icons";
 import {
   type ReactNode,
   useCallback,
@@ -24,13 +22,22 @@ import type {
 } from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
-import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import type { PageNavigation } from "../../features/navigation/service";
+import { routeOf } from "./route";
+import {
+  hasUnread,
+  InboxRowButton,
+  rowIdentity,
+  rowProfileIds,
+} from "./InboxRow";
+import {
+  useChannelList,
+  useProfileGeneration,
+  useRelayConnection,
+} from "../../features/relay/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { messagePreview } from "../../features/notifications/content";
-import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -41,7 +48,6 @@ import {
 } from "./InboxFilters";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   PanelHeader,
   PanelHeaderLabel,
@@ -58,8 +64,6 @@ import {
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
 import styles from "./Inbox.module.css";
-import { dmLabel } from "./dm-label";
-import { channelText } from "../../features/channels/channel-icon";
 import {
   readView,
   subscribeView,
@@ -74,7 +78,6 @@ import {
   reopenArchives,
   updateArchive,
 } from "./archive";
-import { avatarMedia } from "../../shared/avatar-source";
 
 type AttentionFilter = "all" | "unread";
 const shows = [
@@ -103,6 +106,21 @@ type Filters = {
   attention: AttentionFilter;
 };
 const filtersKey = "inbox:filters";
+
+/** Whether focus is in the page or in a popup it opened, which portals outside it. */
+function holdsFocus(page: HTMLElement | null) {
+  const active = document.activeElement;
+  if (!page || !active) return false;
+  if (page.contains(active)) return true;
+  const popup = active.closest('[role="menu"]')?.id;
+  return (
+    !!popup &&
+    [...page.querySelectorAll("[aria-controls]")].some(
+      (trigger) => trigger.getAttribute("aria-controls") === popup,
+    )
+  );
+}
+
 /** Saved choices are per device/viewer/community; unknown or missing fields use defaults. */
 function readFilters(scope: string): Filters {
   const saved = readView<unknown>(scope, filtersKey, undefined);
@@ -140,7 +158,6 @@ const matchesActivity = (
       return item.thread;
   }
 };
-const hasUnread = (item: InboxItem) => item.unreadCount > 0 || item.manual;
 const targetOf = (item: InboxItem) => ({
   channelId: item.channelId,
   messageId: item.messageId,
@@ -162,17 +179,39 @@ const tabTarget = (
       };
 
 type Selection = { channelId: string; messageId: string; rootId?: string };
-// The row a tab opened, kept as long as the session's tabs so returning to
-// Inbox still archives and advances from the conversation it restores.
+// The row a tab opened and the list's offset, kept as long as the session's
+// tabs so returning to Inbox still archives and advances from the conversation
+// it restores, at the place it left. A relaunch starts at the top.
 const selections = new WeakMap<
   RelaySession,
-  { opened?: PageTabTarget | undefined; target?: Selection | undefined }
+  {
+    opened?: PageTabTarget | undefined;
+    target?: Selection | undefined;
+    scrollTop?: number | undefined;
+    /** Whether the selected row overlapped the list's visible box. */
+    selectedShown?: boolean | undefined;
+  }
 >();
+/** Whether the selected row overlaps the list's visible box, once rendered. */
+function selectedInView(list: HTMLElement) {
+  const row = list.querySelector("li[data-selected]");
+  if (!row) return undefined;
+  const bounds = list.getBoundingClientRect();
+  const rect = row.getBoundingClientRect();
+  return rect.bottom > bounds.top && rect.top < bounds.bottom;
+}
+/** Whether another tab covers the list, or it is hidden; neither is measured. */
+const covered = (list: HTMLElement) => !!list.closest("[hidden], [inert]");
 
 type InboxPageTabs = (props: PageTabsProps) => ReactNode;
 
 /** The open conversation's Archive/Restore, published for the Inbox shortcut. */
 export type ArchiveShortcut = { current?: (() => void) | undefined };
+
+// Each presentation of a visit (a new open, even of the same address) is a fresh
+// navigation object, so a route is applied once per object and never re-applied
+// by a remount or re-render of the same one.
+const appliedRoutes = new WeakSet<object>();
 
 export function InboxPage({
   relay,
@@ -181,9 +220,11 @@ export function InboxPage({
   tabs,
   host,
   archive,
+  navigation,
 }: {
   relay: RelayData;
   navigator: Navigation;
+  navigation?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
   /** The host tab workspace, `conversation.ui.Tabs`, while a plugin provides it. */
   tabs?: InboxPageTabs | undefined;
@@ -210,6 +251,7 @@ export function InboxPage({
             tabs={tabs}
             host={host}
             archive={archive}
+            navigation={navigation}
           />
         ) : (
           <div data-buzz-ui="" className={styles.page}>
@@ -247,6 +289,7 @@ type InboxViewProps = {
   tabs?: InboxPageTabs | undefined;
   host: ConversationHostServices;
   archive?: ArchiveShortcut | undefined;
+  navigation?: PageNavigation | undefined;
 };
 
 const never = () => false;
@@ -282,6 +325,7 @@ function InboxList({
   extensions,
   host,
   archive: archiveShortcut,
+  navigation,
   open: openTab,
   close: closeTab,
   isOpen,
@@ -290,7 +334,7 @@ function InboxList({
   close(target: PageTabTarget): boolean;
   isOpen(target: PageTabTarget): boolean;
 }) {
-  const split = usePanelSplit(undefined, 316, {
+  const split = usePanelSplit(session.scope, "inbox", undefined, 316, {
     defaultWidth: 420,
     maxRatio: 0.5,
   });
@@ -320,12 +364,51 @@ function InboxList({
   const [filters, setFilters] = useState(() => readFilters(archiveScope));
   const { show, activity, sender: senderFilter } = filters;
   const unreadOnly = filters.attention === "unread";
+  // Each list returns to the session's last offset once its rows show,
+  // unless the user has already scrolled it. The offset they chose wins,
+  // unless the selected row they could see has since left the view.
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const placed = useRef<HTMLDivElement | null>(null);
   function setFilter(patch: Partial<Filters>) {
     const next = { ...filters, ...patch };
     setFilters(next);
     writeView(archiveScope, filtersKey, next);
+    // A filter change keeps the list's current offset. A mounted list stays
+    // where it is, even empty at 0, rather than taking the saved offset when
+    // rows show. Drafts unmounts the list, so its offset is the saved one.
+    placed.current = scroller.current;
   }
   const [drafts, setDrafts] = useState(false);
+  // A shortcut's open carries filters; a plain open carries none and changes nothing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only a new presentation applies its route; later filter edits are the user's.
+  useEffect(() => {
+    const route = routeOf(navigation?.target);
+    // Back/Forward returns to the view as the user left it, not the opening filters.
+    if (
+      !navigation ||
+      !route ||
+      navigation.traversal ||
+      appliedRoutes.has(navigation)
+    )
+      return;
+    appliedRoutes.add(navigation);
+    // Like the menu, entering or leaving Drafts retires the Inbox action and
+    // restores focus the swapped surface dropped. Only focus in this page or
+    // its popups can drop; a fresh open leaves focus where navigation put it.
+    if (drafts !== "drafts" in route) {
+      cancelRetry();
+      viewFocus.current = holdsFocus(split.ref.current);
+    }
+    setDrafts("drafts" in route);
+    if ("drafts" in route) return;
+    const next = route.show ?? "inbox";
+    // Like the menu's Inbox/Archived choice, a new list ends the selection.
+    if (next !== show) {
+      cancelRetry();
+      setSelectedTarget(undefined);
+    }
+    setFilter({ ...route, show: next });
+  }, [navigation]);
   const subscribeArchives = useCallback(
     (listener: () => void) => subscribeView(archiveScope, listener),
     [archiveScope],
@@ -358,7 +441,11 @@ function InboxList({
     () => selections.get(session)?.target,
   );
   useEffect(() => {
-    selections.set(session, { opened, target: selectedTarget });
+    selections.set(session, {
+      ...selections.get(session),
+      opened,
+      target: selectedTarget,
+    });
   }, [session, opened, selectedTarget]);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
   const fallbackControl = useRef<HTMLButtonElement | null>(null);
@@ -567,22 +654,40 @@ function InboxList({
   useLayoutEffect(() => {
     archiveView.current = { show, visible, selected, opened };
   });
+  useLayoutEffect(() => {
+    const list = scroller.current;
+    // A covered list skips layout: measuring it forces that layout, and
+    // revealing a row in it scrolls nothing. It is placed on the commit that
+    // uncovers it; what showed before it was covered still holds.
+    if (!list || covered(list)) return;
+    // Compositor scrolling may update the position before its scroll event.
+    if (placed.current !== list && visible.length && list.scrollTop === 0) {
+      const saved = selections.get(session);
+      if (saved?.scrollTop) list.scrollTop = saved.scrollTop;
+      if (saved?.selectedShown && selectedInView(list) === false)
+        list
+          .querySelector("li[data-selected]")
+          ?.scrollIntoView({ block: "nearest" });
+    }
+    if (visible.length) placed.current = list;
+    // Selecting a row, or rows arriving above it, moves nothing the scroll
+    // handler sees, so record whether it shows after each commit too.
+    const shown = selectedInView(list);
+    if (typeof shown === "boolean")
+      selections.set(session, {
+        ...selections.get(session),
+        selectedShown: shown,
+      });
+  });
   const profileKey = [
     ...new Set([
       ...authorIds,
-      ...matching
-        .slice(0, 50)
-        .flatMap((item) =>
-          item.workflowOwnerId ? [item.workflowOwnerId] : [],
+      ...matching.slice(0, 50).flatMap((item) =>
+        rowProfileIds(
+          item,
+          list.channels.find((entry) => entry.id === item.channelId),
         ),
-      ...matching.slice(0, 50).flatMap((item) => {
-        const channel = list.channels.find(
-          (entry) => entry.id === item.channelId,
-        );
-        return channel?.channelType === "dm"
-          ? (channel.participants?.slice(0, 3) ?? [])
-          : [];
-      }),
+      ),
     ]),
   ]
     .sort()
@@ -601,12 +706,14 @@ function InboxList({
     selection.snapshot,
   );
   const name = useIdentityNames(session.names);
+  const profileGeneration = useProfileGeneration(session.profiles);
   useEffect(() => {
     // A settled discovery revision can retire earlier optional profile reads.
     void list.asOf;
+    void profileGeneration;
     if (profileIds.length && list.status === "ready")
       void session.profiles.ensure(profileIds, "background").catch(() => {});
-  }, [session, profileIds, list.status, list.asOf]);
+  }, [session, profileIds, list.status, list.asOf, profileGeneration]);
   useLayoutEffect(() => {
     const id = focusRow.current;
     if (id === undefined || pending) return;
@@ -807,7 +914,9 @@ function InboxList({
       else if (item.target.kind === "channel") {
         readChannel ??= session.unread.prepareChannelRead(item.channelId);
         await readChannel();
-      } else
+      } else if (item.timeline)
+        await session.unread.markTimelineRead(item.channelId, item.messageIds);
+      else
         while (remaining.length) {
           // Close/Escape retires undispatched steps, not the admitted save.
           // Its genuine storage/access rejection still propagates through run.
@@ -859,17 +968,20 @@ function InboxList({
     if (failure || pending || document.activeElement !== document.body) return;
     fallbackControl.current?.focus({ preventScroll: true });
   }, [failure, pending]);
+  function showView(value: ShowFilter) {
+    if (value === show) return;
+    cancelRetry();
+    setSelectedTarget(undefined);
+    setFilter({ show: value });
+  }
+  const filtered =
+    activity !== "all" || senderFilter !== "everyone" || unreadOnly;
   const toolbar = (
     <header className={styles.toolbar}>
       <InboxFilters
         view={drafts ? "drafts" : activity}
         show={show}
-        onShowChange={(value) => {
-          if (value === show) return;
-          cancelRetry();
-          setSelectedTarget(undefined);
-          setFilter({ show: value });
-        }}
+        onShowChange={showView}
         sender={senderFilter}
         unreadOnly={unreadOnly}
         triggerRef={fallbackControl}
@@ -930,7 +1042,23 @@ function InboxList({
         <div ref={workspace} className={styles.workspace}>
           <div className={styles.listPane}>
             {toolbar}
-            <div className={styles.scroll}>
+            <div
+              ref={scroller}
+              className={styles.scroll}
+              onScroll={(event) => {
+                // Saved as it moves, so any teardown keeps the last offset.
+                // Rows arriving above a covered list can still anchor it,
+                // which saves only the offset.
+                const list = event.currentTarget;
+                selections.set(session, {
+                  ...selections.get(session),
+                  scrollTop: list.scrollTop,
+                  ...(!covered(list) && {
+                    selectedShown: selectedInView(list),
+                  }),
+                });
+              }}
+            >
               {inbox.freshness === "stale" && !failure && (
                 <div className={styles.notice} role="status">
                   <span className="text-body text-subtle">
@@ -989,13 +1117,23 @@ function InboxList({
                           : "Mentions, direct messages, and replies in threads you participate in appear here."
                       }
                       action={
-                        show === "archived" && unreadOnly ? (
+                        filtered || show === "archived" ? (
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => setFilter({ attention: "all" })}
+                            onClick={() => {
+                              // Status stays; an unfiltered archive returns to Inbox.
+                              if (filtered)
+                                setFilter({
+                                  activity: "all",
+                                  sender: "everyone",
+                                  attention: "all",
+                                });
+                              else showView("inbox");
+                              fallbackControl.current?.focus();
+                            }}
                           >
-                            Show all archived conversations
+                            {filtered ? "Clear filters" : "Show Inbox"}
                           </Button>
                         ) : undefined
                       }
@@ -1011,30 +1149,8 @@ function InboxList({
                   const channel = list.channels.find(
                     (candidate) => candidate.id === item.channelId,
                   );
-                  const displayId = item.workflowOwnerId ?? item.authorId;
-                  const profile = profiles.get(displayId);
-                  const resolved = name(
-                    displayId,
-                    profile?.name ??
-                      formatPublicKey(displayId) ??
-                      "Unknown sender",
-                    channel?.members,
-                  );
-                  const sender = item.workflowOwnerId
-                    ? workflowLabel(resolved)
-                    : resolved;
-                  const dmName = dmLabel(
-                    channel?.participants,
-                    profiles,
-                    name,
-                    channel?.name ?? "Direct message",
-                  );
-                  const context =
-                    channel?.channelType === "dm"
-                      ? `DM · ${dmName}`
-                      : channel
-                        ? channelText(channel)
-                        : "Conversation";
+                  const identity = rowIdentity(item, channel, profiles, name);
+                  const { sender, context } = identity;
                   const unread = hasUnread(item);
                   const rowArchived = archived(item);
                   return (
@@ -1066,100 +1182,19 @@ function InboxList({
                             }
                           }}
                         >
-                          <NavigationItem
-                            aria-label={`Open ${sender} in ${context}`}
-                            aria-describedby={`${previewId}-${item.id}`}
+                          <InboxRowButton
+                            item={item}
+                            identity={identity}
+                            media={session.media}
+                            feed={feed}
+                            time={relativeTimestamp(item.createdAt)}
+                            previewId={`${previewId}-${item.id}`}
                             disabled={pending}
                             selected={selectedId === item.id}
                             ref={
                               item.id === visible[0]?.id
                                 ? fallbackRow
                                 : undefined
-                            }
-                            icon={
-                              <Avatar
-                                size="default"
-                                alt=""
-                                fallback={sender}
-                                fallbackContent={
-                                  item.workflowOwnerId ? (
-                                    <LightningIcon size={20} />
-                                  ) : undefined
-                                }
-                                src={
-                                  item.workflowOwnerId
-                                    ? undefined
-                                    : avatarMedia(
-                                        profile?.picture,
-                                        session.media,
-                                      )
-                                }
-                                shape={
-                                  item.workflowOwnerId || profile?.isAgent
-                                    ? "squircle"
-                                    : "circle"
-                                }
-                              />
-                            }
-                            label={
-                              <span className={styles.content}>
-                                <span className={styles.heading}>
-                                  <span className={styles.identity}>
-                                    <strong
-                                      className={`text-label-sm text-standard ${styles.sender}`}
-                                    >
-                                      {sender}
-                                    </strong>
-                                    <span
-                                      className={`text-caption ${styles.source}`}
-                                      data-inbox-source=""
-                                    >
-                                      {context}
-                                    </span>
-                                  </span>
-                                  <time
-                                    className={`text-caption text-subtle ${styles.rowDate}`}
-                                    dateTime={new Date(
-                                      item.createdAt * 1000,
-                                    ).toISOString()}
-                                  >
-                                    {relativeTimestamp(item.createdAt)}
-                                  </time>
-                                </span>
-                                <span
-                                  id={`${previewId}-${item.id}`}
-                                  className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
-                                >
-                                  {[
-                                    item.previewMessageId,
-                                    ...item.messageIds,
-                                  ].some(
-                                    (id) =>
-                                      id !== undefined &&
-                                      feed.incomplete.includes(id),
-                                  )
-                                    ? feed.status === "error"
-                                      ? "Preview unavailable. Retry inbox."
-                                      : "Preview updating…"
-                                    : messagePreview(item.preview)}
-                                </span>
-                              </span>
-                            }
-                            trailing={
-                              unread ? (
-                                <span
-                                  className={styles.unreadSlot}
-                                  role="img"
-                                  aria-label="Unread"
-                                >
-                                  <span className={styles.unreadDot} />
-                                </span>
-                              ) : (
-                                <span
-                                  className={styles.unreadSlot}
-                                  aria-hidden="true"
-                                />
-                              )
                             }
                             onClick={() => {
                               if (busy.current) return;

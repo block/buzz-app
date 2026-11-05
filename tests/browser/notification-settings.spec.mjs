@@ -5,7 +5,10 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
-test.use({ historyCounts: { alpha: 0, beta: 0 } });
+test.use({
+  enabledPlugins: ["buzz.reminders"],
+  historyCounts: { alpha: 0, beta: 0 },
+});
 
 async function settings(page) {
   await openSettings(page);
@@ -47,9 +50,14 @@ test("Notifications keeps settings separated and button labels contained at supp
     await expect(
       section.getByRole("button", { name: "Allow notifications" }),
     ).toBeVisible();
-    await expect(section.getByRole("switch")).toHaveCount(7);
+    await expect(section.getByRole("switch")).toHaveCount(8);
     // The per-event sound controls must be present for the geometry sweep.
-    for (const name of ["Direct messages", "@Mentions", "Thread replies"]) {
+    for (const name of [
+      "Direct messages",
+      "@Mentions",
+      "Thread replies",
+      "Solo chat completions",
+    ]) {
       await expect(section.getByRole("combobox", { name })).toBeVisible();
     }
     await expect(

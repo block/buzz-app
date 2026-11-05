@@ -8,7 +8,8 @@ import {
   isDefinitiveCanvasConflict,
 } from "./canvas-conflict";
 import {
-  CANVAS_BYTES,
+  LIVE_CANVAS_BYTES,
+  LIVE_CANVAS_LIMIT,
   coordinate,
   KIT_TAG,
   ME_KIT_TAG,
@@ -18,7 +19,9 @@ import {
   type KitRecord,
   type KitValue,
 } from "./model";
+import { CANVAS_HISTORY_PAGE } from "./canvas-limits";
 import { TEAM_MANIFEST_TAG } from "./team-payload";
+import { approvedCanvas, CANVAS_INSTRUCTIONS } from "./canvas-approval";
 
 export type CanvasHistoryCursor = { until: number; before_id: string };
 export type CanvasHistoryPage = {
@@ -30,6 +33,12 @@ export const selectedHead = (events: readonly RelayEvent[]) =>
   [...events].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
   )[0];
+/** A verified signature does not bind a query result to the requested Canvas. */
+function isChannelCanvas(event: RelayEvent, channel: string) {
+  if (event.kind !== 40100) return false;
+  const tags = event.tags.filter((tag) => tag[0] === "h");
+  return tags.length === 1 && tags[0]?.length === 2 && tags[0][1] === channel;
+}
 type Snapshot = {
   status: "idle" | "loading" | "ready" | "error" | "unavailable";
   entries: readonly KitEntry[];
@@ -337,14 +346,16 @@ export function createChannelKit({
       if (!canRead(channel))
         throw new Error("Canvas is unavailable after channel access changed");
       return selectedHead(
-        await fresh([
-          {
-            kinds: [40100],
-            "#h": [channel],
-            limit: 1,
-            ...(strong ? { consistency: "strong" as const } : {}),
-          },
-        ]),
+        (
+          await fresh([
+            {
+              kinds: [40100],
+              "#h": [channel],
+              limit: 1,
+              ...(strong ? { consistency: "strong" as const } : {}),
+            },
+          ])
+        ).filter((event) => isChannelCanvas(event, channel)),
       );
     },
     async history(
@@ -358,7 +369,7 @@ export function createChannelKit({
         {
           kinds: [40100],
           "#h": [channel],
-          limit: 25,
+          limit: CANVAS_HISTORY_PAGE,
           ...(cursor ?? { consistency: "strong" as const }),
         },
       ]);
@@ -368,8 +379,7 @@ export function createChannelKit({
       if (
         rows.some(
           (event) =>
-            event.kind !== 40100 ||
-            !event.tags.some((tag) => tag[0] === "h" && tag[1] === channel) ||
+            !isChannelCanvas(event, channel) ||
             (cursor &&
               (event.created_at > cursor.until ||
                 (event.created_at === cursor.until &&
@@ -386,21 +396,31 @@ export function createChannelKit({
       return {
         revisions,
         next:
-          rows.length >= 25 && last
+          rows.length >= CANVAS_HISTORY_PAGE && last
             ? { until: last.created_at, before_id: last.id }
             : undefined,
       };
     },
-    async save(channel: string, content: string, expected: string | undefined) {
+    async save(
+      channel: string,
+      content: string,
+      expected: string | undefined,
+      /** Partial editors retain approval; only a full-document save grants it. */
+      options?: { preserveApproval: boolean },
+    ) {
       signal.throwIfAborted();
       if (!outbox?.supports(40100) || !canWrite(channel))
         throw new Error("Canvas writing is unavailable in this channel");
-      if (new TextEncoder().encode(content).length > CANVAS_BYTES)
-        throw new Error("Keep Canvas below 24 KiB");
+      if (new TextEncoder().encode(content).length > LIVE_CANVAS_BYTES)
+        throw new Error(`Keep Canvas below ${LIVE_CANVAS_LIMIT}`);
       await ready;
       signal.throwIfAborted();
       const head = await canvas.read(channel);
       if (head?.id !== expected) throw new CanvasConflictError();
+      const unapproved =
+        options?.preserveApproval &&
+        (!head || !(await approvedCanvas(head, viewer)));
+      signal.throwIfAborted();
       const pending = local
         ?.snapshot()
         .find(
@@ -422,6 +442,7 @@ export function createChannelKit({
         tags: [
           ["h", channel],
           ["expected-revision", expected ?? "none"],
+          ...(unapproved ? [[CANVAS_INSTRUCTIONS, "unapproved"]] : []),
         ],
       });
       await confirm(id);

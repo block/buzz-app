@@ -21,11 +21,8 @@ export const ChannelBody = memo(function ChannelBody({
   onOpenThread,
   navigation,
   onContentReady,
-  activityLane,
 }: {
   onContentReady?(channelId: string): void;
-  /** The channel composer follows this body and shows conversation activity. */
-  activityLane?: boolean | undefined;
   cached: boolean;
   viewer?: string | undefined;
   navigation?: PageNavigation | undefined;
@@ -86,8 +83,13 @@ export const ChannelBody = memo(function ChannelBody({
     )
       return;
     if (window.status === "ready") navigation?.complete({ status: "opened" });
+    // The timeline shows this failure in place, beside its own Retry.
     else if (!cached && window.status === "error")
-      navigation?.complete({ status: "failed", reason: "unavailable" });
+      navigation?.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
   }, [cached, navigation, window.status]);
   // While recovery retries this timeline's head read it owns the one Retry
   // now, in its notice after the quiet delay; the empty timeline waits.
@@ -133,7 +135,6 @@ export const ChannelBody = memo(function ChannelBody({
       inlineTarget={inlineTarget}
       marksRead={marksRead}
       navigation={navigation}
-      activityLane={activityLane}
       chatPresentation={solo}
       historyControl={solo ? "scroll" : "button"}
     />

@@ -3,7 +3,9 @@ import {
   type ConversationInteractions,
 } from "./ConversationHost";
 import { ConversationPresentation } from "./ConversationPresentation";
+import { setGitHubLinksOpenInBrowserPreference } from "./github-link-preference";
 // @vitest-environment jsdom
+const emptyTyping: never[] = [];
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -30,7 +32,7 @@ import type { RelaySession } from "../relay/session";
 // its own mounted suites is reduced to the props this owner supplies.
 vi.mock("../relay/react", () => {
   const profiles = new Map();
-  return { useRowProfiles: () => profiles };
+  return { useProfileGeneration: () => 0, useRowProfiles: () => profiles };
 });
 vi.mock("../messages/MessageRow", () => ({
   MessageRow: ({ row, onOpenLink, onOpenMediaReview }: MessageRowProps) => (
@@ -83,6 +85,8 @@ vi.mock("../../shared/design-system/ui/Dialog", () => ({
 }));
 afterEach(() => {
   cleanup();
+  setGitHubLinksOpenInBrowserPreference(false);
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -142,6 +146,7 @@ function fixture(
     ],
   };
   const unread = {
+    revision: () => 0,
     sync: () => ({ capability: "unsupported" }),
     snapshot: () => undefined,
     subscribe: () => () => {},
@@ -158,6 +163,7 @@ function fixture(
   };
   const session = {
     viewer,
+    directMessages: { available: false },
     thread: () => ({
       snapshot: () => thread,
       subscribe: () => () => {},
@@ -165,12 +171,17 @@ function fixture(
       loadMore: async () => {},
       dispose() {},
     }),
-    channels: { subscribeList: () => () => {}, list: () => channels },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => channels,
+      window: () => ({ rows: [] }),
+    },
     profiles: {
       ensure: async () => {},
       snapshot: () => profiles,
       subscribe: () => () => {},
     },
+    typing: { subscribe: () => () => {}, snapshot: () => emptyTyping },
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry() {}, canRetry: () => true },
     media: () => undefined,
@@ -365,9 +376,9 @@ it("offers recovery for a failed edit left in the outbox", () => {
     } as unknown as OutgoingEvent,
   ]);
   render(<EmbeddedThread {...h.props} />);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Message edit: Relay refused the edit.",
-  );
+  expect(
+    screen.getByText("Message edit: Relay refused the edit."),
+  ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
   expect(h.outbox.retry).toHaveBeenCalledExactlyOnceWith("edit");
 });
@@ -413,3 +424,84 @@ it("the shared conversation host supplies live actions and retires them while it
   fireEvent.click(screen.getByText("Open profile"));
   expect(screen.getByText("Linked content")).toBeVisible();
 });
+
+it("an open channel reserves profile room for its roster and returns it when it closes", () => {
+  const { props } = fixture();
+  const release = vi.fn();
+  const reserve = vi.fn(() => release);
+  const session = {
+    ...props.session,
+    profiles: { ...props.session.profiles, reserve },
+  } as RelaySession;
+  const interactions: ConversationInteractions = {
+    onOpenLink: () => true,
+    canOpenLink: () => false,
+    onOpenMediaReview: () => {},
+  };
+  const page = (id?: string, active?: boolean) => (
+    <ConversationChannel
+      session={session}
+      scope={props.scope}
+      extensions={props.extensions}
+      channel={id ? { id, name: "Channel" } : undefined}
+      active={active}
+      interactions={interactions}
+    >
+      <input aria-label="Page state" />
+    </ConversationChannel>
+  );
+  const view = render(page("c"));
+  expect(reserve).toHaveBeenCalledExactlyOnceWith(1);
+  view.rerender(page());
+  expect(release).toHaveBeenCalledOnce();
+  view.rerender(page("d"));
+  expect(reserve).toHaveBeenCalledTimes(2);
+  // A retained tab in the background gives the room back until it is shown.
+  view.rerender(page("d", false));
+  expect(release).toHaveBeenCalledTimes(2);
+  view.rerender(page("d", true));
+  expect(reserve).toHaveBeenCalledTimes(3);
+  view.unmount();
+  expect(release).toHaveBeenCalledTimes(3);
+});
+
+// A catch-all panel makes exclusions observable: the preference must bypass it
+// only for HTTP(S) github.com, leaving other destinations to normal resolution.
+it.each([
+  ["https://github.com/block/buzz-app/pull/2026", true],
+  ["http://github.com/block/buzz-app", true],
+  ["https://GITHUB.COM/block/buzz-app", true],
+  ["https://www.github.com/block/buzz-app", false],
+  ["https://gist.github.com/example/123", false],
+  ["https://github.com.example.test/block/buzz-app", false],
+  ["ftp://github.com/block/buzz-app", false],
+  ["fixture:one", false],
+])(
+  "applies the browser preference only to supported GitHub links: %s",
+  (url, github) => {
+    const h = fixture();
+    let interactions: ConversationInteractions | undefined;
+    render(
+      <ConversationHost {...h.props}>
+        {(value) => {
+          interactions = value;
+          return null;
+        }}
+      </ConversationHost>,
+    );
+    // Read the setting on each action, including changes after the host mounts.
+    setGitHubLinksOpenInBrowserPreference(true);
+    let handled: boolean | undefined;
+    act(() => {
+      handled = interactions?.onOpenLink(url);
+    });
+    expect(handled).toBe(!github);
+    expect(!!screen.queryByText("Linked content")).toBe(!github);
+    setGitHubLinksOpenInBrowserPreference(false);
+    act(() => {
+      handled = interactions?.onOpenLink(url);
+    });
+    expect(handled).toBe(true);
+    expect(screen.getByText("Linked content")).toBeVisible();
+  },
+);

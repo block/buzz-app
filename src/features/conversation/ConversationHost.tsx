@@ -17,6 +17,7 @@ import {
   githubLinksOpenInBrowserPreference,
   isGitHubLink,
 } from "./github-link-preference";
+import { ForwardMessageProvider } from "../messages/ForwardMessage";
 import type { MediaReview } from "./Conversation";
 
 export type ConversationHostServices = Pick<
@@ -125,7 +126,11 @@ export function ConversationHost({
     return true;
   };
   return (
-    <>
+    <ForwardMessageProvider
+      session={session}
+      scope={scope}
+      navigation={host.navigation}
+    >
       {children(
         {
           onOpenLink: (url, origin) => open(url, origin?.rootId),
@@ -198,6 +203,6 @@ export function ConversationHost({
           />
         </Dialog>
       )}
-    </>
+    </ForwardMessageProvider>
   );
 }

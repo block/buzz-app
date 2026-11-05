@@ -45,6 +45,10 @@ function fixture() {
       live = { ...live, roster: { state } };
       for (const listener of listeners) listener();
     },
+    heads() {
+      live = { ...live, heads: [...live.heads] };
+      for (const listener of listeners) listener();
+    },
     listeners,
   };
 }
@@ -87,43 +91,70 @@ function View({
   );
 }
 
-it("reveals once after names, saved preferences, unread and Recent activity settle in any order", async () => {
+it.each(["recent", "plugin:example.plugin/rows/oldest"] as const)(
+  "reveals once after names, saved preferences, unread and %s activity settle in any order",
+  async (mode) => {
+    const selected = {
+      ...preferences,
+      data: { ...preferences.data, sort: { channels: mode } },
+    };
+    const h = fixture();
+    const view = render(
+      <StrictMode>
+        <View session={h.session} prefs={{ status: "loading" }} />
+      </StrictMode>,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+    await act(async () => {
+      h.resolve();
+    });
+    act(() => h.names());
+    view.rerender(
+      <StrictMode>
+        <View session={h.session} prefs={selected} />
+      </StrictMode>,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+    view.rerender(
+      <StrictMode>
+        <View
+          session={h.session}
+          value={{ ...list, activityStatus: "ready" }}
+          prefs={selected}
+        />
+      </StrictMode>,
+    );
+    expect(screen.getByRole("button", { name: "One" })).toBeVisible();
+    expect(screen.getByTestId("updating")).toHaveTextContent("false");
+    // A later refresh never blanks navigation, nor retains revoked rows.
+    view.rerender(
+      <StrictMode>
+        <View
+          session={h.session}
+          value={{ ...list, channels: [], activityStatus: "loading" }}
+          prefs={{ status: "loading" }}
+        />
+      </StrictMode>,
+    );
+    expect(screen.queryByText("Loading", { exact: true })).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  },
+);
+
+it("does not render again when only live heads change", () => {
   const h = fixture();
-  const view = render(
-    <StrictMode>
-      <View session={h.session} prefs={{ status: "loading" }} />
-    </StrictMode>,
-  );
-  expect(screen.queryByRole("button")).toBeNull();
-  await act(async () => {
-    h.resolve();
-  });
+  let renders = 0;
+  function Counted() {
+    renders += 1;
+    useSidebarStartup(h.session, list, preferences);
+    return null;
+  }
+  render(<Counted />);
+  const before = renders;
+  act(() => h.heads());
+  expect(renders).toBe(before);
   act(() => h.names());
-  view.rerender(
-    <StrictMode>
-      <View session={h.session} />
-    </StrictMode>,
-  );
-  expect(screen.queryByRole("button")).toBeNull();
-  view.rerender(
-    <StrictMode>
-      <View session={h.session} value={{ ...list, activityStatus: "ready" }} />
-    </StrictMode>,
-  );
-  expect(screen.getByRole("button", { name: "One" })).toBeVisible();
-  expect(screen.getByTestId("updating")).toHaveTextContent("false");
-  // A later refresh never blanks navigation, nor retains revoked rows.
-  view.rerender(
-    <StrictMode>
-      <View
-        session={h.session}
-        value={{ ...list, channels: [], activityStatus: "loading" }}
-        prefs={{ status: "loading" }}
-      />
-    </StrictMode>,
-  );
-  expect(screen.queryByText("Loading", { exact: true })).toBeNull();
-  expect(screen.queryByRole("button")).toBeNull();
+  expect(renders).toBe(before + 1);
 });
 
 it("caps cold presentation waiting after authorization without needing optional reads to finish", async () => {

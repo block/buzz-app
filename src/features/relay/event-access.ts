@@ -1,4 +1,5 @@
 import type { EventData } from "./events";
+import { channelRowChannel, channelRowKind } from "./membership";
 
 const AUXILIARY = new Set([5, 7, 9005, 40003, 39005]);
 /** Visibility, not a second membership model. Reference-only auxiliaries need
@@ -11,13 +12,19 @@ export function eventVisibility(
   const memo = new Map<string, boolean>();
   const visiting = new Set<string>();
   function visible(event: EventData): boolean {
+    if (channelRowKind(event.kind) && !channelRowChannel(event)) return false;
     const cached = memo.get(event.id);
     if (cached !== undefined) return cached;
     if (visiting.has(event.id) || visiting.size >= 32) return false;
     visiting.add(event.id);
-    const channels = event.tags.flatMap(([name, value]) =>
-      name === "h" && value ? [value] : [],
-    );
+    // The relay stores kind 0 globally and ignores a stray h tag
+    // (is_global_only_kind), so a profile is never a channel's evidence.
+    const channels =
+      event.kind === 0
+        ? []
+        : event.tags.flatMap(([name, value]) =>
+            name === "h" && value ? [value] : [],
+          );
     if ([39000, 39001, 39002].includes(event.kind)) {
       const channel = event.tags.find((tag) => tag[0] === "d")?.[1];
       if (channel) channels.push(channel);
@@ -41,4 +48,17 @@ export function eventVisibility(
     return allowed;
   }
   return visible;
+}
+/** Reads each channel's access once: for a visibility used in one synchronous
+ * pass, where access cannot change. */
+export function accessOnce(canAccess: (channelId: string) => boolean) {
+  const answers = new Map<string, boolean>();
+  return (channelId: string) => {
+    let allowed = answers.get(channelId);
+    if (allowed === undefined) {
+      allowed = canAccess(channelId);
+      answers.set(channelId, allowed);
+    }
+    return allowed;
+  };
 }

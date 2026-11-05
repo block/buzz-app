@@ -37,15 +37,19 @@ afterEach(() => {
 });
 
 async function fixture(subject = "account-a") {
-  const session = createOAuthSession(async () => ({
-    value: "credential",
-    account: {
-      subject,
-      email: "a@example.com",
-      canUseRemoteAgents: true,
-      canUseBuilderlabDecisions: false,
-    },
-  }));
+  const session = createOAuthSession(
+    async () => ({
+      value: "credential",
+      account: {
+        subject,
+        email: "a@example.com",
+        canUseRemoteAgents: true,
+        canUseBuilderlabDecisions: false,
+      },
+    }),
+    undefined,
+    { request: (input) => host.request(input) },
+  );
   await session.signIn();
   const request = vi.fn<Host["request"]>();
   const host: Host = {
@@ -63,7 +67,7 @@ async function fixture(subject = "account-a") {
           })
         : request(input),
   };
-  const client = createAgentClient(host, session);
+  const client = createAgentClient(session);
   const type = builderlabType(client, session, relay);
   if (!type.remote) throw new Error("Missing hosted adapter");
   return {
@@ -294,9 +298,11 @@ it("rejects a stop at once when signed out, without signing in or reaching Build
       canUseBuilderlabDecisions: false,
     },
   }));
-  const session = createOAuthSession(acquire);
+  const session = createOAuthSession(acquire, undefined, {
+    request: (input) => request(input),
+  });
   const request = vi.fn<Host["request"]>();
-  const client = createAgentClient({ runCommand: vi.fn(), request }, session);
+  const client = createAgentClient(session);
   const remote = builderlabType(client, session, relay).remote;
   if (!remote?.interrupt) throw new Error("Missing hosted adapter");
   await expect(remote.interrupt(interruption)).rejects.toThrow(
@@ -361,5 +367,81 @@ it("sends the picture when provisioning and publishes profile changes through Be
         agent_picture_url: "",
       }),
     }),
+  );
+});
+
+const withInstructions = (instructions: string, status = 2) =>
+  response({
+    status: 1,
+    agents: [
+      {
+        agent_id: "provider-id",
+        agent_pubkey: pubkey,
+        agent_name: "Helper",
+        status,
+        agent_instructions: instructions,
+      },
+    ],
+  });
+const edit = {
+  pubkey,
+  community: provision.community,
+  signal: provision.signal,
+};
+
+it("reads a hosted agent's instructions from the account's listing", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValueOnce(withInstructions("Be brief."));
+  expect(await h.remote.instructions?.get(edit)).toBe("Be brief.");
+  expect(h.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({ url: expect.stringContaining("/list-agents") }),
+  );
+  h.request.mockResolvedValueOnce(listing);
+  expect(await h.remote.instructions?.get(edit)).toBe("");
+});
+
+it("replaces a hosted agent's instructions with the provider's update", async () => {
+  const h = await fixture();
+  h.request
+    .mockResolvedValueOnce(withInstructions("Be brief."))
+    .mockResolvedValueOnce(response({ status: 1 }));
+  await h.remote.instructions?.set({ ...edit, instructions: "Be kind." });
+  expect(h.bodies()[1]).toEqual({
+    agent_pubkey: pubkey,
+    agent_instructions: "Be kind.",
+  });
+  expect(h.request).toHaveBeenLastCalledWith(
+    expect.objectContaining({ url: expect.stringContaining("/update-agent") }),
+  );
+});
+
+it("never starts browser login to read or replace a hosted agent's instructions", async () => {
+  const h = await fixture();
+  h.session.signOut();
+  const acquire = vi.spyOn(h.session, "ensureSignedIn");
+  await expect(h.remote.instructions?.get(edit)).rejects.toThrow(
+    "Sign in to Builderlab first.",
+  );
+  await expect(
+    h.remote.instructions?.set({ ...edit, instructions: "Be kind." }),
+  ).rejects.toThrow("Sign in to Builderlab first.");
+  expect(acquire).not.toHaveBeenCalled();
+  expect(h.request).not.toHaveBeenCalled();
+});
+
+it("refuses instructions the provider cannot take, and an agent it does not list", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValueOnce(withInstructions("Be brief."));
+  await expect(
+    h.remote.instructions?.set({ ...edit, instructions: "x".repeat(20_001) }),
+  ).rejects.toThrow("up to 20000 characters");
+  // Only Active agents take an edit, as in Builderlab's own settings.
+  h.request.mockResolvedValueOnce(withInstructions("Be brief.", 1));
+  await expect(
+    h.remote.instructions?.set({ ...edit, instructions: "Be kind." }),
+  ).rejects.toThrow("Only Active agents");
+  h.request.mockResolvedValueOnce(response({ status: 1 }));
+  await expect(h.remote.instructions?.get(edit)).rejects.toThrow(
+    "Agent not found in this Builderlab account.",
   );
 });

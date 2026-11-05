@@ -46,7 +46,14 @@ pub(crate) const AGENT_OWNERSHIP: &str = "dev.local.buzz.agent-ownership";
 /// Their keys live in the keychain. Anything else in these folders (hosting
 /// locks, saved logins, logs, run folders, and whatever is added later) is wiped.
 const KEPT: Kept = &[
-    (AGENTS, &["identities.json", buzz_agent_controller::JOINED]),
+    (
+        AGENTS,
+        &[
+            "identities.json",
+            buzz_agent_controller::JOINED,
+            "protection.json",
+        ],
+    ),
     (migrate_agents::LEGACY, &["identities.json"]),
     (OLD_AGENTS, &["agents.json", "defaults.json"]),
 ];
@@ -83,7 +90,7 @@ pub(crate) struct Paths {
     key_lock: PathBuf,
     /// Agent ownership locks; an erase waits until none is held.
     ownership: PathBuf,
-    app_data: PathBuf,
+    pub(crate) app_data: PathBuf,
     backups: PathBuf,
     /// Other app-owned folders: local data and WebView storage, caches.
     others: Vec<PathBuf>,

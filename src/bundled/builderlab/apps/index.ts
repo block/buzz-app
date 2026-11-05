@@ -4,7 +4,9 @@
 import { createElement, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
+import type { Host } from "../../../features/host/service";
 import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 import { createAppsClient, type Audience, type RuntimeProfile } from "./client";
 import {
   appName,
@@ -44,9 +46,13 @@ It returns the version/deployment IDs once accepted, even if readiness checking 
 
 export function applyApps(
   ctx: Ctx,
-  session: OAuthSession,
+  session: BuilderlabSession,
   /** Whether Settings can sign in; otherwise the app's own browser login is used. */
   loginAvailable: boolean,
+  /** The legacy sign-in the control-plane tools authenticate with; an FI
+   * build has none yet, so it offers no tools. */
+  legacy?: OAuthSession,
+  dev?: Pick<Host, "request" | "upload">,
 ) {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
@@ -90,8 +96,8 @@ export function applyApps(
     component: AppView,
   });
   const base = controlPlane();
-  if (!base) return;
-  const apps = () => createAppsClient(ctx.host, session, base);
+  if (!base || (!legacy && !dev)) return;
+  const apps = () => createAppsClient(ctx.host, legacy ?? session, base, dev);
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",

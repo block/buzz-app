@@ -4,7 +4,8 @@
 //! to the agent's community.
 use buzz_agent_controller::{
     inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
-    PortSource, Portables, Published, Removal, Secret, CREDENTIALS_BUSY,
+    PortSource, Portables, ProtectionBinding, ProtectionDefaults, Published, Removal, Secret,
+    CREDENTIALS_BUSY,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -53,6 +54,8 @@ pub(crate) struct AppAgentHost {
     hosting: Arc<Hosting>,
     /// Each agent's NIP-FI grant and assertions, for an organization's communities.
     tokens: AgentTokens,
+    /// Serializes owner prompts, without holding cross-process identity/custody locks.
+    protection_upgrade: Arc<Mutex<()>>,
 }
 impl AppAgentHost {
     /// `packaged` is false for a dev build, which steps aside for a packaged app.
@@ -66,13 +69,16 @@ impl AppAgentHost {
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
-        let agents = path.map(|path| {
+        let agents = path.and_then(|path| {
             let agents = AppAgents::open(path);
+            if agents.protection_upgrade_needed()? {
+                confirm_protection_storage(&agents, &Mutex::new(()), protection_upgrade_dialog)?;
+            }
             // So an older build can read the list again.
             if let Err(error) = agents.upgrade() {
                 eprintln!("Saved agent identities were not upgraded: {error}");
             }
-            agents
+            Ok(agents)
         });
         let listed = agents.clone();
         tokens.watch(move || {
@@ -96,6 +102,7 @@ impl AppAgentHost {
                 held: Mutex::default(),
             }),
             tokens,
+            protection_upgrade: Arc::default(),
         }
     }
     /// The saved identities, for readers outside Agents such as the inventory.
@@ -160,9 +167,21 @@ impl AppAgentHost {
         pubkey: String,
         relay: String,
     ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
+        self.signer_for(pubkey, relay, Duration::ZERO).await
+    }
+    /// As [`Self::signer`], with evidence valid for at least `valid_for`.
+    async fn signer_for(
+        &self,
+        pubkey: String,
+        relay: String,
+        valid_for: Duration,
+    ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
         let incarnation = self.tokens.stamp(&pubkey, &relay)?;
         let (agent, key) = self.key(self.agent(pubkey, relay).await?).await?;
-        let evidence = self.tokens.authorize(&agent, &key, incarnation).await?;
+        let evidence = self
+            .tokens
+            .authorize_for(&agent, &key, incarnation, valid_for)
+            .await?;
         Ok((agent, key, evidence))
     }
     /// Saves an imported identity with its key, opening the agent's next
@@ -301,6 +320,36 @@ impl AppAgentHost {
     }
 }
 
+/// Explicit native owner consent; no plugin argument can approve this upgrade.
+fn confirm_protection_storage(
+    agents: &AppAgents,
+    prompt: &Mutex<()>,
+    confirm: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    let _prompt = prompt
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if agents.protection_storage_current()? {
+        return Ok(());
+    }
+    if !confirm() {
+        return Err("Agent storage upgrade cancelled. Saved agents and defaults were left unchanged. Restart Buzz to retry a cancelled startup upgrade.".into());
+    }
+    agents.upgrade_protection_storage()
+}
+
+fn protection_upgrade_dialog() -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("Upgrade local agents for protection?")
+        .set_description("This is a one-way upgrade for ALL agents on this device. Older Buzz builds will no longer be able to list, run or remove any of these agents, even after protection is turned off.\n\nDevelopment Buzz shares these agents with the installed app. Close other Buzz builds before continuing and keep a compatible build installed. Agent identities and keys will be preserved.\n\nCancel leaves the saved files unchanged.")
+        .set_buttons(rfd::MessageButtons::OkCancelCustom("Upgrade agents".into(), "Cancel".into()))
+        .show();
+    // Windows without common-controls-v6 falls back to the standard OK label.
+    result == rfd::MessageDialogResult::Ok
+        || result == rfd::MessageDialogResult::Custom("Upgrade agents".into())
+}
+
 /// Which running copy of the app runs each agent. Every copy on this machine
 /// (the packaged app and any dev builds) shares the agent list and hears the
 /// same events. The packaged app always runs what it can and holds
@@ -324,8 +373,18 @@ impl Hosting {
     /// Whether this copy runs the agent. The packaged app always does, so a
     /// stuck dev build can never silence it. A dev build takes the agent if no
     /// other copy runs it, and lets go while the packaged app does.
-    #[allow(clippy::incompatible_msrv)] // `File` locking; see `sign_out::Instance`.
+    #[cfg(test)]
     fn claim(&self, pubkey: &str) -> Result<bool, String> {
+        self.claim_validated(pubkey, || Ok(()))
+    }
+    /// Newly acquired custody is provisional until admission is validated.
+    /// Validation errors leave an existing shared lock intact.
+    #[allow(clippy::incompatible_msrv)] // `File` locking; see `sign_out::Instance`.
+    fn claim_validated(
+        &self,
+        pubkey: &str,
+        validate: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
         if pubkey.len() != 64
             || !pubkey
                 .bytes()
@@ -337,27 +396,48 @@ impl Hosting {
         std::fs::create_dir_all(dir).map_err(|_| "Could not open agent hosting")?;
         let packaged = dir.join(format!("{pubkey}.packaged"));
         let mut held = self.held();
-        if self.packaged {
-            if !held.contains_key(pubkey) {
-                let file = open_lock(&packaged)?;
-                // A dev build checking for it holds it briefly; this tries again next time.
-                if lock(file.try_lock())? {
-                    held.insert(pubkey.into(), file);
-                }
-            }
-            return Ok(true);
-        }
-        if !lock(open_lock(&packaged)?.try_lock_shared())? {
+        if !self.packaged && !lock(open_lock(&packaged)?.try_lock_shared())? {
             held.remove(pubkey);
             return Ok(false);
         }
-        if !held.contains_key(pubkey) {
-            let file = open_lock(&dir.join(format!("{pubkey}.lock")))?;
-            if lock(file.try_lock())? {
-                held.insert(pubkey.into(), file);
-            }
+        if held.contains_key(pubkey) {
+            validate()?;
+            return Ok(true);
         }
-        Ok(held.contains_key(pubkey))
+        let path = if self.packaged {
+            packaged
+        } else {
+            dir.join(format!("{pubkey}.lock"))
+        };
+        let file = open_lock(&path)?;
+        if !lock(file.try_lock())? {
+            return Ok(false);
+        }
+        validate()?;
+        held.insert(pubkey.into(), file);
+        Ok(true)
+    }
+    /// Policy writes require this copy's custody and no overlapping dev/packaged host.
+    #[allow(clippy::incompatible_msrv)]
+    fn protecting<T>(
+        &self,
+        pubkey: &str,
+        change: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let held = self.held();
+        if !held.contains_key(pubkey) {
+            return Err("Change protection in the Buzz app that runs this agent".into());
+        }
+        let dir = self.dir.as_ref().map_err(Clone::clone)?;
+        let other = open_lock(&dir.join(format!(
+            "{pubkey}.{}",
+            if self.packaged { "lock" } else { "packaged" }
+        )))?;
+        if !lock(other.try_lock())? {
+            return Err("Quit the other copy of Buzz before changing protection".into());
+        }
+        // Both hosting locks stay held across the native CAS write.
+        change()
     }
 }
 /// Whether a try at a lock took it; closing the file lets go.
@@ -415,6 +495,9 @@ pub(crate) struct AppAgentSummary {
     home: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     joining: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protection: Option<ProtectionBinding>,
+    protection_revision: u64,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -429,6 +512,8 @@ impl From<AppAgent> for AppAgentSummary {
             deleting: agent.deleting,
             home: agent.home,
             joining: agent.joining,
+            protection: agent.protection,
+            protection_revision: agent.protection_revision,
         }
     }
 }
@@ -476,6 +561,52 @@ pub(crate) async fn app_agent_create(
         let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
         keys.insert(agent.pubkey.clone(), Arc::new(key));
         Ok(agent.into())
+    })
+    .await
+}
+
+/// Reads the owner's defaults without changing storage.
+#[tauri::command]
+pub(crate) async fn app_agent_protection_defaults(
+    host: tauri::State<'_, AppAgentHost>,
+    owner: String,
+) -> Result<ProtectionDefaults, String> {
+    let agents = host.agents()?;
+    blocking(move || agents.protection_defaults(&owner)).await
+}
+#[tauri::command]
+/// Changes only plugin defaults, after any required owner storage confirmation.
+pub(crate) async fn app_agent_set_protection_defaults(
+    host: tauri::State<'_, AppAgentHost>,
+    owner: String,
+    revision: u64,
+    provider: String,
+    policy: Option<Value>,
+) -> Result<(), String> {
+    let agents = host.agents()?;
+    let prompt = host.protection_upgrade.clone();
+    blocking(move || {
+        confirm_protection_storage(&agents, &prompt, protection_upgrade_dialog)?;
+        agents.set_protection_defaults(&owner, revision, &provider, policy)
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn app_agent_set_protection(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+    revision: u64,
+    provider: String,
+    policy: Option<Value>,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    let hosting = state.hosting.clone();
+    let prompt = state.protection_upgrade.clone();
+    blocking(move || {
+        confirm_protection_storage(&agents, &prompt, protection_upgrade_dialog)?;
+        hosting.protecting(&pubkey, || {
+            agents.set_protection(&pubkey, revision, &provider, policy)
+        })
     })
     .await
 }
@@ -710,9 +841,24 @@ pub(crate) async fn app_agent_forget(
 pub(crate) async fn app_agent_claim(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
+    revision: Option<u64>,
 ) -> Result<bool, String> {
     let hosting = state.hosting.clone();
-    blocking(move || hosting.claim(&pubkey)).await
+    let agents = state.agents.clone()?;
+    blocking(move || {
+        hosting.claim_validated(&pubkey, || {
+            let current = agents
+                .list()?
+                .into_iter()
+                .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            if current.protection_revision != revision.unwrap_or(0) {
+                return Err("Agent protection changed; refresh before running this agent".into());
+            }
+            Ok(())
+        })
+    })
+    .await
 }
 
 /// Lets another copy of the app run the agent, as when this one cannot.
@@ -740,9 +886,23 @@ pub(crate) async fn app_agent_publish(
 ) -> Result<Value, String> {
     let (agent, key, evidence) = state.signer(pubkey, relay).await?;
     let signed = agent.sign(&key, event.kind, event.content, event.tags)?;
+    let event_id = signed
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("Invalid agent event")?
+        .to_owned();
     evidence
         .run(true, post(&agent, &key, evidence.header(), signed))
         .await
+        .map_err(|error| publish_error(&event_id, error))
+}
+
+fn publish_error(event_id: &str, error: String) -> String {
+    if error == "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying." {
+        format!("Agent event {event_id} unconfirmed; it may or may not have been accepted")
+    } else {
+        error
+    }
 }
 
 /// Publishes changed public metadata. Safe to call any time; one publication
@@ -847,7 +1007,7 @@ async fn signed_read(
         .await
         .map_err(|_| "Agent read failed")?;
     let status = response.status();
-    Ok((status, bounded(response, 8 * 1024 * 1024).await?))
+    Ok((status, bounded(response, READ_LIMIT).await?))
 }
 
 /// Searches the agent's community for profiles whose `name` or `display_name`
@@ -983,8 +1143,12 @@ async fn upload(
 }
 
 /// The URL of repository `repo` of `owner` in the agent's community, and the
-/// `Authorization` header Git sends there as the agent for the next minute.
-/// The key stays native; the header grants only that repository.
+/// headers Git sends there as the agent for the next minute, one per line:
+/// `Authorization`, then the agent's sign-in evidence when the community
+/// requires it. The key stays native. These are the only assertion headers
+/// that leave native code: the NIP-98 proof grants only that repository for 60
+/// seconds; the assertion is scoped to the relay for its issuer's lifetime and
+/// is bound to the agent's key (NIP-FI, Assertion–key binding).
 #[tauri::command]
 pub(crate) async fn app_agent_git_auth(
     state: tauri::State<'_, AppAgentHost>,
@@ -993,17 +1157,28 @@ pub(crate) async fn app_agent_git_auth(
     owner: String,
     repo: String,
 ) -> Result<Value, String> {
-    use base64::Engine;
-    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
+    let (agent, key, evidence) = state.signer_for(pubkey, relay, GIT_EVIDENCE).await?;
     let (url, auth) = agent.git_auth(&key, &owner, &repo)?;
     let auth = serde_json::to_vec(&auth).map_err(|_| "Could not authorize Git")?;
-    Ok(serde_json::json!({
-        "url": url,
-        "header": format!(
-            "Authorization: Nostr {}",
-            base64::engine::general_purpose::STANDARD.encode(auth)
-        ),
-    }))
+    evidence.dispatch()?;
+    Ok(serde_json::json!({ "url": url, "header": git_headers(&auth, evidence.header()) }))
+}
+
+/// How long the Git headers must stay valid: the minute the `repo` tool
+/// promises, and a margin for a command that starts at its end.
+const GIT_EVIDENCE: Duration = Duration::from_secs(70);
+
+/// Git's header lines for a signed `auth` and the agent's sign-in `evidence`.
+fn git_headers(auth: &[u8], evidence: Option<&str>) -> String {
+    use base64::Engine;
+    let auth = format!(
+        "Authorization: Nostr {}",
+        base64::engine::general_purpose::STANDARD.encode(auth)
+    );
+    match evidence {
+        Some(evidence) => format!("{auth}\n{}: {evidence}", assertion::HEADER),
+        None => auth,
+    }
 }
 
 /// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
@@ -1196,6 +1371,10 @@ fn client() -> Result<&'static reqwest::Client, String> {
         .map_err(|_| "Agent client unavailable".into())
 }
 
+/// The most an agent read returns. Mirrors `CANVAS_READ_BYTES` in
+/// `canvas-limits.ts`, which sizes Canvas history pages to fit it.
+const READ_LIMIT: usize = 8 * 1024 * 1024;
+
 async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| "Agent request failed")? {
@@ -1242,18 +1421,24 @@ async fn post(
         .body(bytes)
         .send()
         .await
-        .map_err(|_| "Agent event unconfirmed; it may or may not have been accepted")?;
+        .map_err(|_| {
+            format!("Agent event {event_id} unconfirmed; it may or may not have been accepted")
+        })?;
     let status = response.status();
     let body = response.bytes().await.unwrap_or_default();
-    let receipt: Value =
-        serde_json::from_slice(&body[..body.len().min(16 * 1024)]).unwrap_or(Value::Null);
-    if !status.is_success()
-        || receipt.get("accepted").and_then(Value::as_bool) != Some(true)
-        || receipt.get("event_id").and_then(Value::as_str) != Some(event_id.as_str())
-    {
+    if !status.is_success() {
         return Err(format!(
             "The community refused the agent event: {}",
             reason(status, &body)
+        ));
+    }
+    let receipt: Value =
+        serde_json::from_slice(&body[..body.len().min(16 * 1024)]).unwrap_or(Value::Null);
+    if receipt.get("accepted").and_then(Value::as_bool) != Some(true)
+        || receipt.get("event_id").and_then(Value::as_str) != Some(event_id.as_str())
+    {
+        return Err(format!(
+            "Agent event {event_id} unconfirmed; it may or may not have been accepted"
         ));
     }
     Ok(signed)
@@ -1263,6 +1448,105 @@ async fn post(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[test]
+    fn git_headers_add_sign_in_evidence_only_when_present() {
+        assert_eq!(git_headers(b"{}", None), "Authorization: Nostr e30=");
+        assert_eq!(
+            git_headers(b"{}", Some("Bearer token")),
+            "Authorization: Nostr e30=\nNostr-Federated-Identity: Bearer token"
+        );
+    }
+
+    #[test]
+    fn declining_storage_upgrade_leaves_files_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        std::fs::write(&path, "[]").unwrap();
+        let agents = AppAgents::open(path.clone());
+        assert!(confirm_protection_storage(&agents, &Mutex::new(()), || false).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "[]");
+        assert!(!dir.path().join("protection.json").exists());
+        assert!(!agents.protection_storage_current().unwrap());
+    }
+
+    #[test]
+    fn storage_confirmation_holds_no_identity_lock_and_keeps_concurrent_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let key = Secret::generate().unwrap();
+        let agent = agent_at("wss://home.example".into(), &key);
+        std::fs::write(&path, serde_json::to_vec(&vec![agent.clone()]).unwrap()).unwrap();
+        let agents = AppAgents::open(path.clone());
+        confirm_protection_storage(&agents, &Mutex::new(()), || {
+            let other = AppAgents::open(path);
+            other.rename(&agent.pubkey, "Concurrent rename").unwrap();
+            other.upgrade_protection_storage().unwrap();
+            other
+                .set_protection(
+                    &agent.pubkey,
+                    0,
+                    "security.test",
+                    Some(serde_json::json!({})),
+                )
+                .unwrap();
+            true
+        })
+        .unwrap();
+        let kept = agents.get(&agent.pubkey, &agent.relay).unwrap();
+        assert_eq!(kept.name, "Concurrent rename");
+        assert_eq!(kept.protection_revision, 1);
+    }
+
+    #[test]
+    fn concurrent_local_protection_saves_share_one_upgrade_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = AppAgents::open(dir.path().join("identities.json"));
+        let prompt = Arc::new(Mutex::new(()));
+        let shown = Arc::new(AtomicU32::new(0));
+        let (entered, started) = std::sync::mpsc::channel();
+        let (allow, allowed) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let first_agents = agents.clone();
+            let first_prompt = prompt.clone();
+            let first_shown = shown.clone();
+            let first = scope.spawn(move || {
+                confirm_protection_storage(&first_agents, &first_prompt, || {
+                    first_shown.fetch_add(1, Ordering::SeqCst);
+                    entered.send(()).unwrap();
+                    allowed.recv().unwrap();
+                    true
+                })
+            });
+            started.recv().unwrap();
+            let second = scope.spawn(|| {
+                confirm_protection_storage(&agents, &prompt, || {
+                    shown.fetch_add(1, Ordering::SeqCst);
+                    true
+                })
+            });
+            allow.send(()).unwrap();
+            first.join().unwrap().unwrap();
+            second.join().unwrap().unwrap();
+        });
+        assert_eq!(shown.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn uncertain_evidence_keeps_the_signed_event_id() {
+        let id = "a".repeat(64);
+        assert_eq!(
+            publish_error(
+                &id,
+                "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying.".into(),
+            ),
+            format!("Agent event {id} unconfirmed; it may or may not have been accepted")
+        );
+        assert_eq!(
+            publish_error(&id, "The community refused the agent event: blocked".into()),
+            "The community refused the agent event: blocked"
+        );
+    }
 
     /// One saved key, behind a store that is busy for the first few reads.
     struct Busy(Mutex<Option<String>>, AtomicU32);
@@ -1310,6 +1594,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: AgentTokens::unconfigured(),
+            protection_upgrade: Arc::default(),
         };
         let agent = AppAgent {
             pubkey: key.pubkey().into(),
@@ -1325,6 +1610,8 @@ mod tests {
             deleting: false,
             home: None,
             joining: false,
+            protection: None,
+            protection_revision: 0,
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());
@@ -1496,6 +1783,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
+            protection_upgrade: Arc::default(),
         };
         let import = |key: &Secret| {
             let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
@@ -1591,6 +1879,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
+            protection_upgrade: Arc::default(),
         };
         let agents = host.agents().unwrap();
 
@@ -1635,6 +1924,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
+            protection_upgrade: Arc::default(),
         };
         let import = || {
             let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
@@ -1735,6 +2025,8 @@ mod tests {
             deleting: false,
             home: None,
             joining: false,
+            protection: None,
+            protection_revision: 0,
         }
     }
 
@@ -1895,6 +2187,43 @@ mod tests {
     }
 
     #[test]
+    fn failed_admission_releases_only_newly_acquired_custody() {
+        for packaged in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let agent = "a".repeat(64);
+            let one = hosting(Ok(dir.path().join("hosts")), packaged);
+            let other = hosting(Ok(dir.path().join("hosts")), packaged);
+            assert!(one
+                .claim_validated(&agent, || Err("changed revision".into()))
+                .is_err());
+            assert!(other.claim(&agent).unwrap());
+            other.held().remove(&agent);
+            assert!(one.claim(&agent).unwrap());
+            assert!(one
+                .claim_validated(&agent, || Err("read failed".into()))
+                .is_err());
+            assert!(!other.claim(&agent).unwrap());
+        }
+    }
+
+    #[test]
+    fn protection_changes_require_current_and_exclusive_hosting() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = "a".repeat(64);
+        let dev = hosting(Ok(dir.path().join("hosts")), false);
+        let packaged = hosting(Ok(dir.path().join("hosts")), true);
+        assert!(dev.protecting(&agent, || Ok(())).is_err());
+        assert!(dev.claim(&agent).unwrap());
+        assert!(dev.protecting(&agent, || Ok(())).is_ok());
+        assert!(packaged.claim(&agent).unwrap());
+        // A packaged takeover alone does not mean the dev process has stopped.
+        assert!(packaged.protecting(&agent, || Ok(())).is_err());
+        assert!(dev.protecting(&agent, || Ok(())).is_err());
+        assert!(!dev.claim(&agent).unwrap());
+        assert!(packaged.protecting(&agent, || Ok(())).is_ok());
+    }
+
+    #[test]
     fn one_copy_runs_each_agent_until_it_lets_go() {
         let dir = tempfile::tempdir().unwrap();
         let (first, second) = ("a".repeat(64), "b".repeat(64));
@@ -2045,6 +2374,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: AgentTokens::unconfigured(),
+            protection_upgrade: Arc::default(),
         };
         let import = || {
             let prepared = AppAgents::adopt(
@@ -2214,5 +2544,33 @@ mod tests {
         let (result, ()) = tokio::join!(query, retire);
         assert!(result.is_err(), "a retired query returned its parsed body");
         assert!(server.await.unwrap().contains("nostr-federated-identity:"));
+    }
+    #[test]
+    fn read_limit_mirrors_the_canvas_read_budget() {
+        let policy = include_str!("../../src/features/channel-templates/canvas-limits.ts");
+        assert_eq!(READ_LIMIT, 8 * 1024 * 1024);
+        assert!(policy.contains("export const CANVAS_READ_BYTES = 8 * 1024 * 1024;"));
+    }
+    #[tokio::test]
+    async fn bounded_admits_the_limit_and_refuses_one_byte_over() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (size, admitted) in [(READ_LIMIT, true), (READ_LIMIT + 1, false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(socket.read_u8().await.unwrap());
+                }
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n");
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&vec![b'x'; size]).await;
+            });
+            let response = reqwest::get(&url).await.unwrap();
+            let body = bounded(response, READ_LIMIT).await;
+            assert_eq!(body.map(|b| b.len()).ok(), admitted.then_some(size));
+            server.abort();
+        }
     }
 }

@@ -231,11 +231,12 @@ test("section disclosure toggles content and honors reduced motion", async ({
   app,
 }) => {
   await open(page, app);
-  const summary = page
+  const section = page
     .getByRole("navigation", { name: "Subscribed channels" })
-    .locator("summary")
-    .filter({ hasText: /^Channels$/ });
-  const section = summary.locator("xpath=ancestor::*[@data-sidebar-section]");
+    .locator('[data-sidebar-section="channels"]');
+  const summary = section.locator(
+    ":scope > div:first-child > details > summary",
+  );
   const contentId = await summary.getAttribute("aria-controls");
   expect(contentId).toBeTruthy();
   const content = section.locator(`[id="${contentId}"]`);
@@ -306,9 +307,7 @@ test("top bar swaps its pages for an overflow menu when narrow", async ({
   await expect(dialog).toHaveCount(0);
   await expect(search).toBeFocused();
   await openPage(page, "Bestie");
-  await expect(
-    page.getByRole("heading", { name: "Meet your Bestie" }),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Bestie" })).toBeVisible();
 });
 
 // Real responsive layout owns the Settings modal and the desktop sidebar.
@@ -815,7 +814,7 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
     exact: true,
   });
   const retry = sidebar.getByRole("button", {
-    name: "Retry channels",
+    name: "Try again",
     exact: true,
   });
   await expect(retry).toBeAttached();

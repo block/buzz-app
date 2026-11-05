@@ -83,21 +83,27 @@ export const groups: Group[] = [
   {
     id: "agent-coordination",
     title: "Agent coordination",
-    description: "Every compact entry keeps its author's avatar visible.",
+    description:
+      "Compact activity rows use author avatars, inline mentions, and expandable text.",
     examples: [
       {
         id: "repeated-agent",
         title: "Consecutive agent updates",
         description:
-          "Author icons remain visible before and after expanding a row.",
+          "Individual rows keep previews within the message width. Timeline group folding is exercised separately.",
         rows: [
+          message(
+            "coordination-intro",
+            "I’ll investigate the missing icons and check the rendered result.",
+            { authorId: agent },
+          ),
           message("coordination-first", "Investigating the missing icons.", {
             authorId: agent,
             audience: "agents",
           }),
           message(
             "coordination-next",
-            "Found the cause.\n\nThe fix is ready to try.",
+            "Found the cause. The activity rows were rendering their own avatars rather than using the conversation’s message grouping. I’m updating the shared grouping and matching the width of these previews to the surrounding messages.\n\nThe fix is ready to try.",
             {
               authorId: agent,
               audience: "agents",
@@ -332,7 +338,7 @@ export const groups: Group[] = [
         id: "workflow-owner",
         title: "Automated message",
         description:
-          "Automation leads; owner navigation is labelled. Open the information icon to inspect the separate owner and relay keys.",
+          "Automation leads; owner navigation is labelled. Rest on or open the information icon to read that the owner didn’t send it personally.",
         rows: foldMessages(
           "studio",
           workflowRelay.pubkey,
@@ -407,6 +413,43 @@ export const groups: Group[] = [
         "I reviewed the changes. **Two details** still need attention:\n\n- Align the labels.\n- Check the narrow layout.",
         { authorId: agent, agentEnvelope: true },
       ),
+      {
+        id: "edited",
+        title: "Edited messages",
+        description:
+          "An author's edit is marked after the last line, or below a closing block.",
+        rows: [
+          message("edited-own", "Hi how are ya.", { edited: true }),
+          message("edited-own-emoji", "🎉", { edited: true }),
+          message(
+            "edited-own-table",
+            "| Day | Room |\n| --- | --- |\n| Thu | 4B |",
+            {
+              edited: true,
+            },
+          ),
+          message("edited-teammate", "Moved the review to Thursday.", {
+            authorId: teammate,
+            edited: true,
+          }),
+          message(
+            "edited-block",
+            "Use this command instead:\n\n```sh\njust iterate\n```",
+            { authorId: teammate, edited: true },
+          ),
+          message("edited-attachment", "", {
+            authorId: teammate,
+            edited: true,
+            attachments: [
+              {
+                url: "https://fixture.test/landscape",
+                kind: "image",
+                dimensions: { width: 640, height: 360 },
+              },
+            ],
+          }),
+        ],
+      },
       single(
         "fallback",
         "Unknown author",
@@ -496,13 +539,6 @@ export const groups: Group[] = [
         "An explicit recipient plus a matching profile binds the name to its identity.",
         "@Sam Rivera could you review the spacing?",
         { mentions: [teammate] },
-      ),
-      single(
-        "edited",
-        "Edited content",
-        "The current renderer shows the replacement body without a separate edited badge.",
-        "Updated: the review is now at 3 pm.",
-        { edited: true },
       ),
     ],
   },

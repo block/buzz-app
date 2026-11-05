@@ -4,9 +4,11 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import type { HostRequest } from "../host/service";
 import { BackupError, type BackupStatus, createBackupStatus } from "./backup";
 import { BACKUP_FAILURES } from "./backup-failure";
+import { federatedFixture } from "../federated-identity/testing";
 import {
   backupOfferedFor,
   builderlabAccount,
+  federatedBuilderlabAccount,
   seededAccount,
 } from "./builderlab-account";
 
@@ -198,7 +200,7 @@ describe("linkedKey", () => {
   });
 });
 
-describe("ownedCommunities", () => {
+describe("communityList", () => {
   it("lists joinable hosts from the card's list route, skipping archived and unusable rows", async () => {
     const { request, sent } = kgoose(
       answer(200, {
@@ -217,7 +219,7 @@ describe("ownedCommunities", () => {
       }),
     );
     const account = builderlabAccount(credential, request, untouched);
-    expect(await account.ownedCommunities()).toEqual([
+    expect((await account.communityList()).owned).toEqual([
       { host: "design.example.com", url: "https://design.example.com" },
       { host: "buzz.example.org:8443", url: "https://buzz.example.org:8443" },
     ]);
@@ -232,13 +234,17 @@ describe("ownedCommunities", () => {
       kgoose(answer(400, { error: { code: "missing_mapping" } })).request,
       untouched,
     );
-    expect(await unlinked.ownedCommunities()).toEqual([]);
+    expect(await unlinked.communityList()).toEqual({
+      owned: [],
+      canCreate: false,
+      quotaLimit: undefined,
+    });
     const failing = builderlabAccount(
       credential,
       kgoose(answer(503, { error: { code: "relay_unavailable" } })).request,
       untouched,
     );
-    await expect(failing.ownedCommunities()).rejects.toThrow(
+    await expect(failing.communityList()).rejects.toThrow(
       /temporarily unavailable/,
     );
     const unparseable = builderlabAccount(
@@ -246,8 +252,98 @@ describe("ownedCommunities", () => {
       kgoose(answer(502, "<html>bad gateway</html>")).request,
       untouched,
     );
-    await expect(unparseable.ownedCommunities()).rejects.toThrow(
+    await expect(unparseable.communityList()).rejects.toThrow(
       "Builderlab community list failed (HTTP 502: not JSON).",
+    );
+  });
+});
+
+describe("hosted community creation", () => {
+  const listed = (quota: object) => answer(200, { communities: [], ...quota });
+  const create = (reply: ReturnType<typeof answer>) =>
+    builderlabAccount(credential, kgoose(reply).request, untouched);
+
+  it("allows creation within the list's quota, and lets a list with no readable quota through as the card does", async () => {
+    expect(
+      await create(
+        listed({ quota_used: 0, quota_limit: 2, can_create: true }),
+      ).communityList(),
+    ).toEqual({ owned: [], canCreate: true, quotaLimit: 2 });
+    expect(await create(listed({})).communityList()).toEqual({
+      owned: [],
+      canCreate: true,
+      quotaLimit: undefined,
+    });
+  });
+
+  it("refuses at the quota's limit", async () => {
+    expect(
+      await create(
+        listed({ quota_used: 1, quota_limit: 1, can_create: false }),
+      ).communityList(),
+    ).toEqual({ owned: [], canCreate: false, quotaLimit: 1 });
+  });
+
+  it("checks and creates an address through the card's routes, resolving the origin a join uses", async () => {
+    const { request, sent } = kgoose(
+      answer(200, { available: true }),
+      answer(200, {
+        community: {
+          id: "1",
+          normalized_host: "north-star.communities.buzz.xyz",
+        },
+      }),
+    );
+    const account = builderlabAccount(credential, request, untouched);
+    expect(await account.communityAvailable("north-star")).toBe(true);
+    expect(await account.createCommunity("north-star")).toBe(
+      "https://north-star.communities.buzz.xyz",
+    );
+    expect(sent.map(({ url, body }) => [url, body])).toEqual([
+      [
+        "https://t.example/api/goose/v1/buzz/communities/availability",
+        '{"name":"north-star"}',
+      ],
+      [
+        "https://t.example/api/goose/v1/buzz/communities",
+        '{"name":"north-star"}',
+      ],
+    ]);
+  });
+
+  it("refuses with the card's copy", async () => {
+    const account = builderlabAccount(
+      credential,
+      kgoose(
+        refusal(409, "taken"),
+        refusal(400, "missing_mapping"),
+        answer(200, { community: {} }),
+      ).request,
+      untouched,
+    );
+    await expect(account.createCommunity("north-star")).rejects.toThrow(
+      "That Buzz address is already taken.",
+    );
+    await expect(account.communityAvailable("north-star")).rejects.toThrow(
+      "Connect your Buzz identity before creating a community.",
+    );
+    await expect(account.createCommunity("north-star")).rejects.toThrow(
+      "Builderlab community create failed (HTTP 200: no community address).",
+    );
+  });
+
+  it("words a limit refusal with the list's quota, as the card does", async () => {
+    const account = builderlabAccount(
+      credential,
+      kgoose(refusal(409, "limit_reached"), refusal(409, "limit_reached"))
+        .request,
+      untouched,
+    );
+    await expect(account.createCommunity("north-star", 3)).rejects.toThrow(
+      "You've reached your limit of 3 communities.",
+    );
+    await expect(account.createCommunity("north-star")).rejects.toThrow(
+      "You've reached your community limit.",
     );
   });
 });
@@ -1246,5 +1342,158 @@ describe("backup", () => {
         });
       },
     );
+  });
+});
+
+describe("federatedBuilderlabAccount", () => {
+  const signedIn = async () => {
+    const fi = federatedFixture();
+    await fi.service.signIn();
+    return {
+      ...fi,
+      credential: { ...credential, value: fi.service.snapshot().revision },
+    };
+  };
+
+  it("sends the card's routes through the NIP-FI forwarder under the session's API base, with no session credential", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      id: "e".repeat(64),
+      pubkey,
+      kind: 24243,
+      sig: "s".repeat(128),
+    });
+    const fi = await signedIn();
+    fi.request
+      .mockResolvedValueOnce(answer(200, { identity: null }))
+      .mockResolvedValueOnce(
+        answer(200, {
+          challenge_id: "550e8400-e29b-41d4-a716-446655440000",
+          nonce: "n",
+          verification_code: "123456",
+          origin: "https://t.example",
+          expires_at: "2999-01-01T00:00:00Z",
+        }),
+      )
+      .mockResolvedValueOnce(answer(200, { identity: { pubkey_hex: pubkey } }));
+    await federatedBuilderlabAccount(fi.credential, fi.service, untouched).bind(
+      pubkey,
+    );
+    const headers = {
+      "Content-Type": "application/json",
+      Origin: "https://t.example",
+    };
+    expect(fi.request.mock.calls.map(([input]) => input)).toEqual([
+      {
+        path: "/api/goose/v1/buzz/nostr-identities/current",
+        method: "POST",
+        headers,
+        body: "{}",
+      },
+      {
+        path: "/api/goose/v1/buzz/nostr-identities/challenge",
+        method: "POST",
+        headers,
+        body: JSON.stringify({ origin: "https://t.example" }),
+      },
+      expect.objectContaining({
+        path: "/api/goose/v1/buzz/nostr-identities/verify",
+      }),
+    ]);
+  });
+
+  it("refuses without a request once the session it signed in with has changed", async () => {
+    const fi = await signedIn();
+    const account = federatedBuilderlabAccount(
+      fi.credential,
+      fi.service,
+      untouched,
+    );
+    await fi.service.signIn();
+    await expect(account.linkedKey()).rejects.toThrow(signedOut);
+    fi.publish({ status: "signed-out" });
+    await expect(account.communityList()).rejects.toThrow(signedOut);
+    expect(fi.request).not.toHaveBeenCalled();
+  });
+
+  it("refuses without a request while the session it signed in with is unavailable", async () => {
+    const fi = await signedIn();
+    const account = federatedBuilderlabAccount(
+      fi.credential,
+      fi.service,
+      untouched,
+    );
+    fi.publish({ status: "unavailable", failure: "storage-unavailable" });
+    expect(fi.service.snapshot().revision).toBe(fi.credential.value);
+    await expect(account.linkedKey()).rejects.toThrow(signedOut);
+    expect(fi.request).not.toHaveBeenCalled();
+  });
+
+  it("reads backup status through the forwarder and hands the uploader the session revision", async () => {
+    const fi = await signedIn();
+    const watchers: { onmessage: (status: BackupStatus) => void }[] = [];
+    const send = vi.fn(async (command: string, args?: unknown) => {
+      if (command === "nsec_backup_watch")
+        watchers.push((args as { onEvent: (typeof watchers)[number] }).onEvent);
+      else if (command === "nsec_backup_state")
+        return { seq: 1, pass: 0, builderlab: true, status: "idle" };
+    });
+    const account = federatedBuilderlabAccount(fi.credential, fi.service, {
+      ...noRecovery,
+      backup: createBackupStatus(send as never),
+      setBackupChoice: () =>
+        Promise.resolve({ available: true, pubkey, automatic: true } as never),
+    });
+    fi.request.mockResolvedValueOnce(
+      answer(200, {
+        current_nostr_pubkey: null,
+        backup_nostr_pubkeys: [pubkey],
+      }),
+    );
+    expect(await account.backupStatus()).toEqual([pubkey]);
+    expect(fi.request.mock.calls.map(([input]) => input)).toEqual([
+      {
+        path: "/api/goose/v1/buzz/nsec-backups/status",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://t.example",
+        },
+        body: "{}",
+      },
+    ]);
+    vi.mocked(invoke).mockImplementation(async (_command, args) =>
+      (args as { federated?: string | null }).federated ? 1 : null,
+    );
+    const done = account.backUp(pubkey);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    watchers[0]?.onmessage({
+      seq: 2,
+      pass: 1,
+      builderlab: true,
+      status: "complete",
+    });
+    await done;
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      [
+        "nsec_backup_session",
+        {
+          source: "builderlab",
+          credential: null,
+          federated: fi.credential.value,
+          generation: expect.any(Number),
+        },
+      ],
+      // The Builderlab plugin hands over the same session, so it stays.
+      [
+        "nsec_backup_session",
+        {
+          source: "builderlab",
+          credential: null,
+          federated: fi.credential.value,
+          generation: expect.any(Number),
+        },
+      ],
+    ]);
+    expect(fi.request).toHaveBeenCalledTimes(1);
   });
 });

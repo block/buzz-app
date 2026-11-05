@@ -1,8 +1,16 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
-import { anchor, expectAnchor, open, settle, wheel } from "./timeline.mjs";
+import {
+  anchor,
+  expectAnchor,
+  open,
+  settle,
+  upper,
+  wheel,
+} from "./timeline.mjs";
 
 test.use({
+  enabledPlugins: ["buzz.workflows"],
   productionBroker: true,
   historyCounts: { alpha: 640, beta: 20 },
 });
@@ -95,7 +103,17 @@ test("saved top resumes automatic history on an upward gesture after remount", a
     }),
   ).toHaveCount(0);
   await history(page).hover();
-  await page.mouse.wheel(0, -100000);
+  // Establish the saved top with real input; remeasurement can consume part
+  // of a gesture. Each settled gesture must make progress toward the top.
+  while (true) {
+    const before = await history(page).evaluate((e) => e.scrollTop);
+    if (before <= 0) break;
+    await wheel(page, -before);
+    expect(
+      await history(page).evaluate((e) => e.scrollTop),
+      "saved-top setup retains upward progress",
+    ).toBeLessThan(before);
+  }
   await expect.poll(() => app.pending.length).toBe(1);
   await settle(page);
   await expect.poll(() => history(page).evaluate((e) => e.scrollTop)).toBe(0);
@@ -299,33 +317,56 @@ test.describe("pages inside one second", () => {
     page,
     app,
   }) => {
+    // A shorter scroller lets the drag carry the held row out of view even
+    // when the randomized page leaves little loaded history above the reader.
+    await page.setViewportSize({ width: 1440, height: 600 });
     const pending = await reading(page, app, 1400);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     try {
+      // The press records the topmost whole paragraph as the reading anchor.
+      // The timeline holds that row in place while any part of it stays in
+      // view, even as rows above it measure and move.
+      let held = await anchor(page);
       const height = await history(page).evaluate((e) => e.scrollHeight);
       pending.release();
       await expect
         .poll(() => history(page).evaluate((e) => e.scrollHeight))
         .toBeGreaterThan(height);
       await settle(page);
+      await expectAnchor(page, held);
+      // Keep enough gesture samples even when the randomized page is short.
+      const distance = Math.min(
+        150,
+        Math.floor((await history(page).evaluate((e) => e.scrollTop)) / 12),
+      );
+      expect(distance).toBeGreaterThan(0);
       // A scrollbar drag moves the scroller with no further input events,
       // into older rows that measure as they mount, short of the loaded top.
+      // Once a step carries the held row out of view, the timeline holds the
+      // row it reads at that scroll instead. Reading after the step settles
+      // could pick another row once rows above it measure.
       let step = 0;
+      let handOvers = 0;
       for (
         ;
-        step < 10 && (await history(page).evaluate((e) => e.scrollTop)) >= 150;
+        step < 10 &&
+        (await history(page).evaluate((e) => e.scrollTop)) >= distance;
         step++
       ) {
-        const before = await anchor(page);
-        await history(page).evaluate((e) => {
-          e.scrollTop -= 150;
-        });
+        const read = await anchor(page, held.id, -distance);
+        if (read.id === held.id) held = { ...held, y: held.y + distance };
+        else {
+          held = read;
+          handOvers++;
+        }
         await settle(page);
-        await expectAnchor(page, { ...before, y: before.y + 150 });
+        await expectAnchor(page, held);
       }
-      expect(step).toBeGreaterThanOrEqual(3);
+      // The drag hands over at least once and keeps asserting after it.
+      expect(step).toBeGreaterThanOrEqual(6);
+      expect(handOvers).toBeGreaterThan(0);
     } finally {
       await page.mouse.up();
     }
@@ -335,7 +376,8 @@ test.describe("pages inside one second", () => {
     page,
     app,
   }) => {
-    const pending = await reading(page, app, 1400);
+    // Leave enough loaded history above the reader for an unclamped drag.
+    const pending = await reading(page, app, 250);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -349,59 +391,61 @@ test.describe("pages inside one second", () => {
         .toBeGreaterThan(height);
       await settle(page);
       await expectAnchor(page, held);
-      // Over a viewport at once, Virtua renders upward synchronously: the held
-      // row is gone from the scroll event until Virtua's idle timer buffers
-      // below again, too briefly for polling, so record its removal in page.
+      // Leave the old reader beyond even the idle buffer, so its absence does
+      // not depend on observing Virtua's brief directional scrolling range.
       const row = history(page).locator(`[data-message-id="${held.id}"]`);
-      const seen = await history(page).evaluateHandle((e, id) => {
-        const seen = { unmounted: false };
-        const heldRow = e.querySelector(`[data-message-id="${id}"]`);
-        const observer = new MutationObserver((records) => {
-          // Read the removals themselves: the row may already be remounted
-          // when the observer delivers a batch of mutations.
-          if (
-            records.some((record) =>
-              Array.from(record.removedNodes).some((node) =>
-                node.contains(heldRow),
-              ),
-            )
-          ) {
-            seen.unmounted = true;
-            observer.disconnect();
-          }
-        });
-        observer.observe(e, { childList: true, subtree: true });
-        e.scrollTop -= e.clientHeight + 150;
-        return seen;
-      }, held.id);
-      await expect.poll(() => seen.evaluate((s) => s.unmounted)).toBe(true);
-      // Once idle, Virtua remounts it.
-      await expect(row).toHaveCount(1);
+      await history(page).evaluate((e) => {
+        e.scrollTop = 0;
+      });
+      await expect(row).toHaveCount(0);
       await settle(page);
-      // It remounts below the viewport, where the reader no longer reads.
-      expect(
-        await history(page).evaluate(
-          (e, id) =>
-            e.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect()
-              .top > e.getBoundingClientRect().bottom,
-          held.id,
-        ),
-      ).toBe(true);
+      // Wait for idle overscan below the viewport and applied row measurements
+      // before taking an independent growth baseline.
+      await expect
+        .poll(() =>
+          history(page).evaluate((e) => {
+            const items = Array.from(e.querySelector("ol").children);
+            return (
+              items.some(
+                (item) =>
+                  item.getBoundingClientRect().top >
+                  e.getBoundingClientRect().bottom,
+              ) &&
+              items.every((item, index) => {
+                const next = items[index + 1];
+                return (
+                  !next ||
+                  Math.abs(
+                    next.getBoundingClientRect().top -
+                      item.getBoundingClientRect().bottom,
+                  ) < 1
+                );
+              })
+            );
+          }),
+        )
+        .toBe(true);
       const before = await anchor(page);
-      // The row above it finishes measuring taller (an image loading). Rows
-      // below the reader grow away from them; nothing in view moves.
-      // Re-resolve the virtualized row at mutation time: an idle render may
-      // have unmounted it again since the position assertion above.
-      await row.evaluate((element) => {
+      const measuredHeight = await history(page).evaluate(
+        (e) => e.scrollHeight,
+      );
+      // A buffered row below the viewport grows while the original held row is
+      // still absent. Growth below the current reader must not move them.
+      await history(page).evaluate((e) => {
         const extra = document.createElement("div");
         extra.style.height = "300px";
-        element
-          .closest("li")
-          .previousElementSibling.querySelector("[data-message-id] p")
-          .after(extra);
+        const row = [...e.querySelectorAll("[data-message-id]")].find(
+          (row) =>
+            row.getBoundingClientRect().top > e.getBoundingClientRect().bottom,
+        );
+        row.querySelector("p").after(extra);
       });
       await settle(page);
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(measuredHeight);
       await expectAnchor(page, before);
+      await expect(row).toHaveCount(0);
     } finally {
       await page.mouse.up();
     }
@@ -636,8 +680,9 @@ test.describe("pages inside one second", () => {
   }) => {
     await open(page, app);
     app.relay.quotaNextOlder("alpha");
-    await history(page).hover();
-    await page.mouse.wheel(0, -100000);
+    // The failed load starts within the first pixels of upward scroll, so the
+    // alert does not prove the reader left the bottom. upper() does.
+    await upper(page);
     await expect(history(page).getByRole("alert")).toContainText(
       "rate-limited",
     );

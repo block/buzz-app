@@ -83,28 +83,45 @@ export async function keyScroll(page, key, scroller = history(page)) {
   await gesture(page, scroller, "keydown", () => page.keyboard.press(key));
 }
 
-export async function anchor(page) {
-  return history(page).evaluate((element) => {
-    const bounds = element.getBoundingClientRect();
-    const rows = Array.from(element.querySelectorAll("[data-message-id]"));
-    // Prefer a whole paragraph, but tall messages can leave only clipped rows.
-    // Track the first intersecting row in that case, as the reader does. The
-    // same-ID/Y assertion below still detects displacement after a resize.
-    const row =
-      rows.find((row) => {
-        const rect = row.querySelector("p").getBoundingClientRect();
-        return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
-      }) ??
-      rows.find((row) => {
-        const rect = row.getBoundingClientRect();
-        return rect.bottom > bounds.top && rect.top < bounds.bottom;
-      });
-    if (!row) throw new Error("No visible message anchor");
-    return {
-      id: row.dataset.messageId,
-      y: row.querySelector("p").getBoundingClientRect().top - bounds.top,
-    };
-  });
+// With `scrollBy`, scroll by that many px and read at the resulting scroll
+// event, before rows measure: the timeline's held reader re-reads its row then.
+export async function anchor(page, held, scrollBy = 0) {
+  return history(page).evaluate(
+    (element, [held, scrollBy]) => {
+      const read = () => {
+        const bounds = element.getBoundingClientRect();
+        const rows = Array.from(element.querySelectorAll("[data-message-id]"));
+        const inView = (row) => {
+          const rect = row.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        };
+        // A held reader keeps its row while any part of it is in view, as the
+        // timeline does across a drag. Otherwise prefer a whole paragraph, but
+        // tall messages can leave only clipped rows. Track the first
+        // intersecting row in that case, as the reader does. The same-ID/Y
+        // assertion below still detects displacement after a resize.
+        const row =
+          rows.find((row) => row.dataset.messageId === held && inView(row)) ??
+          rows.find((row) => {
+            const rect = row.querySelector("p").getBoundingClientRect();
+            return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+          }) ??
+          rows.find(inView);
+        if (!row) throw new Error("No visible message anchor");
+        return {
+          id: row.dataset.messageId,
+          y: row.querySelector("p").getBoundingClientRect().top - bounds.top,
+        };
+      };
+      if (!scrollBy) return read();
+      const scrolled = new Promise((resolve) =>
+        element.addEventListener("scroll", resolve, { once: true }),
+      );
+      element.scrollTop += scrollBy;
+      return scrolled.then(read);
+    },
+    [held, scrollBy],
+  );
 }
 export async function expectAnchor(page, expected) {
   await expect
@@ -225,5 +242,22 @@ export async function hoverRow(page, locator, scroller = history(page)) {
   await expect(locator).toBeInViewport();
   const box = await locator.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+}
+// Click a control inside a timeline row once the timeline is at rest. Opening
+// a panel resizes the timeline, and its rows rewrap and move through scroll
+// events. Each scroll event restarts Virtua's pointer-event hold. On Linux
+// WebKit CI, a click sent during that movement reached the scroller, and the
+// control never saw it. A scroll event reaches Virtua in a later rendering
+// update, so wait for those updates, and check pointer events again after the
+// geometry settles. Then the control must be fully visible: locator.click()
+// scrolls a control into view, and that would hide a reading position the app
+// moved during the wait.
+export async function clickRow(page, locator, scroller = history(page)) {
+  await virtuaIdle(page, scroller);
+  await frames(page);
+  await virtuaIdle(page, scroller);
+  await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
+  await expect(locator).toBeInViewport({ ratio: 1 });
+  await locator.click();
 }
 export { activate } from "./navigation.mjs";

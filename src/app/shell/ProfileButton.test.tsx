@@ -582,6 +582,61 @@ it.each(["escape", "close button", "reopen", "scope switch"])(
   },
 );
 
+it("names the status emoji on hover in the menu's status row", async () => {
+  const { createRelaySession } = await import("../../features/relay/session");
+  const owner = createRelaySession(null);
+  const user = userEvent.setup();
+  const viewer = "a".repeat(64);
+  const statuses = new Map([
+    [viewer, { userId: viewer, text: "Buzzin'", emoji: "🏠", updatedAt: 1 }],
+  ]);
+  const connection = {
+    scope: "https://status.test",
+    session: {
+      ...owner.session,
+      statuses: { ...owner.session.statuses, snapshot: () => statuses },
+    },
+  };
+  const snapshot = { profile: { name: "Local", picture: "" }, viewer };
+  const presence = { status: "online", preference: "auto", error: null };
+  const subscribe = () => () => {};
+  const actions: readonly [] = [];
+  const view = render(
+    <ProfileButton
+      communities={
+        {
+          subscribe,
+          snapshot: () => snapshot,
+          presence: { subscribe, snapshot: () => presence },
+          relay: { subscribe, snapshot: () => connection },
+        } as unknown as Communities
+      }
+      accountActions={
+        {
+          subscribe,
+          snapshot: () => actions,
+        } as unknown as AccountActionsService
+      }
+      appearance={testAppearance}
+      settingsSelected={false}
+      onSettings={() => {}}
+    />,
+  );
+  try {
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    await screen.findByRole("menu", { name: "Local" });
+    const row = screen.getByRole("menuitem", {
+      name: "Set a status: 🏠 Buzzin'",
+    });
+    await user.hover(within(row).getByText("🏠"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^:house:$/);
+    expect(row).toHaveAttribute("data-highlighted");
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
 it.each(["online", "offline"] as const)(
   "shares %s presence between trigger and account menu",
   async (status) => {
@@ -1098,3 +1153,44 @@ it("cancels feedback on disconnected community switches even when both sessions 
     vi.useRealTimers();
   }
 });
+
+it.each([
+  [0, null],
+  [1, "1 recommended plugin"],
+  [3, "3 recommended plugins"],
+])(
+  "points to %s managed plugin recommendations beside Plugins",
+  async (count, text) => {
+    const user = userEvent.setup();
+    const subscribe = () => () => {};
+    const actions: readonly [] = [];
+    const state = { profile: { name: "Fixture", picture: "" }, viewer: null };
+    const presence = { status: "online", preference: "auto" };
+    const connection = { status: "unavailable", session: undefined, scope: "" };
+    const communities = {
+      subscribe,
+      snapshot: () => state,
+      presence: { subscribe, snapshot: () => presence },
+      relay: { subscribe, snapshot: () => connection },
+    } as unknown as Communities;
+    render(
+      <ProfileButton
+        communities={communities}
+        accountActions={
+          {
+            subscribe,
+            snapshot: () => actions,
+          } as unknown as AccountActionsService
+        }
+        appearance={testAppearance}
+        settingsSelected={false}
+        pluginRecommendations={count}
+        onSettings={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Your profile" }));
+    const item = await screen.findByRole("menuitem", { name: /Plugins/ });
+    if (text) expect(item).toHaveTextContent(text);
+    else expect(item).not.toHaveTextContent("recommended");
+  },
+);

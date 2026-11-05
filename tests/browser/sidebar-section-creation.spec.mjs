@@ -57,10 +57,13 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
         writerReads++;
         if (failWriterRead) {
           failWriterRead = false;
-          app.report.sidebarPreferenceFailures ??= [];
-          app.report.sidebarPreferenceFailures.push(route.request().url());
+          // Relay recovery retries a transient failure such as a 502 about a
+          // second later, which can remove Retry preferences while a slow
+          // click is still landing. A denial leaves the retry to the user.
+          app.report.relayFailures ??= [];
+          app.report.relayFailures.push(route.request().url());
           await route.fulfill({
-            status: 502,
+            status: 403,
             contentType: "application/json",
             body: JSON.stringify({ error: "Preference read unavailable" }),
           });
@@ -162,7 +165,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await expect(
     dialog.getByRole("button", { name: "Create", exact: true }),
   ).toBeDisabled();
-  await expect(dialog.getByRole("alert")).not.toContainText("502");
+  await expect(dialog.getByRole("alert")).not.toContainText("403");
   // Recover preferences without replaying creation, then Cancel/reopen.
   await dialog.getByRole("button", { name: "Retry preferences" }).click();
   await expect(field).toBeFocused();
@@ -203,9 +206,9 @@ async function startDrag(page, locator) {
   if (!box) throw new Error("Drag source missing");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 12, box.y + box.height / 2, {
-    steps: 3,
-  });
+  const pointer = { x: box.x + box.width / 2 + 12, y: box.y + box.height / 2 };
+  await page.mouse.move(pointer.x, pointer.y, { steps: 3 });
+  return pointer;
 }
 
 async function dropOnCreate(page) {
@@ -245,12 +248,17 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   const target = page.locator("[data-create-section-drop]");
   const row = page.locator('[data-channel-id="alpha"]');
   await expect(target).toHaveCount(0);
-  await startDrag(page, row);
-  await expect(page.locator("[data-section-creation-preview]")).toBeVisible();
-  await expect(page.locator("[data-section-creation-preview]")).not.toHaveCSS(
-    "translate",
-    "none",
-  );
+  const pointer = await startDrag(page, row);
+  // The preview stays where the row was grabbed, under the pointer.
+  const preview = page.locator('[class*="channelDragOverlay"]');
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveCSS("translate", "none");
+  await expect
+    .poll(async () => {
+      const box = await preview.boundingBox();
+      return !!box && box.y <= pointer.y && pointer.y <= box.y + box.height;
+    })
+    .toBe(true);
   await expect(target).toHaveCount(0);
   // Channels is not first when Work exists: its old gap is an ordinary move area.
   const channels = page.locator('[data-sidebar-section="channels"]');
@@ -311,7 +319,6 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
   // A lone saved section is not reorderable and cannot reveal creation.
   await startDrag(page, work);
-  await expect(page.locator("[data-section-creation-preview]")).toHaveCount(0);
   await expect(target).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.mouse.up();
@@ -403,8 +410,66 @@ test.describe("without saved sections", () => {
     await expect(page.locator('[data-sidebar-section^="group:"]')).toHaveCount(
       0,
     );
-    await startDrag(page, page.locator('[data-channel-id="alpha"]'));
-    await dropOnCreate(page);
+    // Coalesce the hit area's initial observer delivery with the immediate
+    // reveal. dnd-kit ignores that first delivery; the completed reveal must
+    // establish its expanded collision geometry independently.
+    const resizeGate = await page.evaluateHandle(() => {
+      const NativeResizeObserver = window.ResizeObserver;
+      const pending = new Map();
+      let released = false;
+      window.ResizeObserver = class extends NativeResizeObserver {
+        constructor(callback) {
+          super((entries, observer) => {
+            const create = entries.filter(({ target }) =>
+              target.hasAttribute("data-create-section-trigger"),
+            );
+            const rest = entries.filter(
+              ({ target }) =>
+                !target.hasAttribute("data-create-section-trigger"),
+            );
+            if (rest.length) callback(rest, observer);
+            if (create.length) {
+              if (released) callback(create, observer);
+              else
+                pending.set(observer, {
+                  entries: create,
+                  notify: () => callback(create, observer),
+                });
+            }
+          });
+        }
+      };
+      return {
+        ready: () =>
+          pending.size > 0 &&
+          [...pending.values()].every(({ entries }) =>
+            entries.every(
+              ({ target, contentRect }) =>
+                contentRect.height === target.clientHeight,
+            ),
+          ),
+        release: () => {
+          released = true;
+          for (const { notify } of pending.values()) notify();
+          pending.clear();
+          window.ResizeObserver = NativeResizeObserver;
+        },
+      };
+    });
+    try {
+      await startDrag(page, page.locator('[data-channel-id="alpha"]'));
+      await revealCreate(page);
+      await expect
+        .poll(() => resizeGate.evaluate((gate) => gate.ready()))
+        .toBe(true);
+    } finally {
+      await resizeGate.evaluate((gate) => gate.release());
+      await resizeGate.dispose();
+    }
+    const target = page.locator("[data-create-section-drop]");
+    await target.hover();
+    await expect(page.locator('[class*="channelDragOverlay"]')).toBeHidden();
+    await page.mouse.up();
     const dialog = page.getByRole("dialog", { name: "Move to new section" });
     await expect(
       dialog.getByRole("textbox", { name: "Section name" }),

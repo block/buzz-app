@@ -1,6 +1,7 @@
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
@@ -50,7 +51,7 @@ import {
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
-import { type ClaudeTranscript, TURN_LIMIT } from "./transcript";
+import type { ClaudeTranscript } from "./transcript";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -129,6 +130,34 @@ const effortsFor = (model: string, models: readonly ClaudeModel[]) => {
   return effortChoices(
     listed ? effortLevels(listed) : models.flatMap(effortLevels),
   );
+};
+/** New agents only offer levels Claude lists for the effective model. */
+const createEffortsFor = (model: string, models: readonly ClaudeModel[]) => {
+  const id = model || "default";
+  const listed = models.find(
+    (candidate) => candidate.value === id || candidate.resolvedModel === id,
+  );
+  return effortChoices(listed ? effortLevels(listed) : []);
+};
+const thinkingOptions = (
+  efforts: ReturnType<typeof effortChoices>,
+  models: readonly ClaudeModel[],
+  effort: string,
+) => {
+  return [
+    { value: "", label: "Automatic · Default" },
+    ...(effort && !efforts.some((level) => level.id === effort)
+      ? [
+          {
+            value: effort,
+            label: models.length
+              ? `${effortLabel(effort)} (unavailable)`
+              : effortLabel(effort),
+          },
+        ]
+      : []),
+    ...efforts.map(({ id, label }) => ({ value: id, label })),
+  ];
 };
 const SCOPES = options([
   ["thread", "One session per thread"],
@@ -288,6 +317,7 @@ function ClaudeSetupPanel({
                     description="If the browser shows a code to paste, enter it here."
                   >
                     <Input
+                      autoFocus
                       disabled={disabled}
                       value={code}
                       onValueChange={setCode}
@@ -385,7 +415,94 @@ export function createTabs({
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
-        onChange={(model) => onChange({ ...current, model })}
+        onChange={(model) => {
+          const efforts = createEffortsFor(
+            model || providerDefaults.model,
+            state.models,
+          );
+          onChange({
+            ...current,
+            model,
+            effort:
+              state.models.length === 0 ||
+              efforts.some((level) => level.id === current.effort)
+                ? current.effort
+                : "",
+          });
+        }}
+      />
+    );
+  }
+
+  function CreateThinking({
+    agent,
+    config,
+    onChange,
+    disabled,
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    const { effort, model } = current;
+    const state = useSetupCatalog();
+    const providerDefaults = useSyncExternalStore(
+      defaults.subscribe,
+      defaults.snapshot,
+    );
+    useEffect(() => {
+      if (
+        agent ||
+        disabled ||
+        state.checking ||
+        state.status?.state !== "ready" ||
+        state.running ||
+        state.modelsChecking ||
+        state.modelsError ||
+        !state.models.length ||
+        !effort
+      )
+        return;
+      const efforts = createEffortsFor(
+        model || providerDefaults.model,
+        state.models,
+      );
+      if (!efforts.some((level) => level.id === effort))
+        onChange(readConfig({ ...config, effort: "" }));
+    }, [
+      agent,
+      config,
+      disabled,
+      effort,
+      model,
+      onChange,
+      providerDefaults.model,
+      state.checking,
+      state.models,
+      state.modelsChecking,
+      state.modelsError,
+      state.running,
+      state.status?.state,
+    ]);
+    const effortOptions = thinkingOptions(
+      createEffortsFor(model || providerDefaults.model, state.models),
+      state.models,
+      current.effort,
+    );
+    return (
+      <Select
+        label="Thinking"
+        valueLabel={current.effort ? undefined : "Automatic"}
+        valueSuffix={current.effort ? undefined : " · Default"}
+        variant="compact"
+        value={current.effort}
+        groups={[{ label: "", options: effortOptions }]}
+        disabled={
+          disabled ||
+          state.status?.state !== "ready" ||
+          Boolean(state.running) ||
+          state.modelsChecking ||
+          Boolean(state.modelsError) ||
+          state.models.length === 0
+        }
+        onValueChange={(effort) => onChange({ ...current, effort })}
       />
     );
   }
@@ -470,6 +587,30 @@ export function createTabs({
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
     const state = useSetupCatalog();
     const [code, setCode] = useState("");
+    const [token, setToken] = useState("");
+    const [saving, setSaving] = useState<AbortController>();
+    // Kept until the dialog closes.
+    const [saved, setSaved] = useState<{ ok: boolean; text: string }>();
+    const saveToken = async () => {
+      const controller = new AbortController();
+      setSaving(controller);
+      setSaved(undefined);
+      try {
+        const text = await setup.saveReviewSignIn(
+          token.trim(),
+          controller.signal,
+        );
+        setToken("");
+        setSaved({ ok: true, text });
+      } catch (error) {
+        if (!controller.signal.aborted)
+          setSaved({ ok: false, text: message(error) });
+      } finally {
+        setSaving(undefined);
+      }
+    };
+    // Every dismissal cancels a save, as the footer Cancel does.
+    useEffect(() => () => saving?.abort(), [saving]);
     const status = state.status;
     const ready = status?.state === "ready" && !state.checking;
     const line =
@@ -580,13 +721,69 @@ export function createTabs({
         {ready && (
           <p className="m-0 text-body-sm text-subtle">Claude is signed in.</p>
         )}
+        {/* Kept through a routine check, so a paste or save goes on. */}
+        {status?.state === "ready" && (
+          <div className="grid gap-2" aria-busy={saving ? true : undefined}>
+            <Field
+              label="Sign in for reviews"
+              description={
+                <>
+                  Security reviews sign in apart from your agents. Run{" "}
+                  <code>claude setup-token</code> in Terminal, then paste the
+                  token it prints. It lasts a year.
+                </>
+              }
+            >
+              <Input
+                type="password"
+                autoComplete="off"
+                value={token}
+                readOnly={!!saving}
+                aria-disabled={saving ? true : undefined}
+                onValueChange={setToken}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.nativeEvent.isComposing)
+                    return;
+                  event.preventDefault();
+                  if (token.trim() && !saving) void saveToken();
+                }}
+              />
+            </Field>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                disabled={!token.trim()}
+                focusableWhenDisabled
+                loading={!!saving}
+                onClick={saveToken}
+              >
+                Save review sign-in
+              </Button>
+              {saved && (
+                <p
+                  role={saved.ok ? "status" : "alert"}
+                  className={
+                    saved.ok
+                      ? "m-0 text-body-sm text-subtle"
+                      : "buzz-field-error m-0"
+                  }
+                >
+                  {saved.text}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
         <ProviderDialogActions>
           <Button
             onClick={() =>
-              state.running && !ready ? void setup.cancel() : onClose()
+              saving
+                ? saving.abort()
+                : state.running && !ready
+                  ? void setup.cancel()
+                  : onClose()
             }
           >
-            {ready ? "Done" : "Cancel"}
+            {ready && !saving ? "Done" : "Cancel"}
           </Button>
           {!ready && action && !state.running && !state.checking && (
             <Button
@@ -608,10 +805,12 @@ export function createTabs({
     agent,
     conversation,
     working,
+    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation: SavedConversation;
     working: boolean;
+    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
     const workspace = readConfig(agent.config).workspace;
     const [read, setRead] = useState<Read>();
@@ -675,6 +874,7 @@ export function createTabs({
           <ActivityTranscript
             transcript={read.transcript}
             agentName={agent.name}
+            openConversation={openConversation}
             state={() => (working ? "working" : undefined)}
             before={
               <>
@@ -689,7 +889,9 @@ export function createTabs({
                 )}
                 {read.transcript.more && (
                   <p className="m-0 text-body-sm text-subtle">
-                    Showing the latest {TURN_LIMIT} turns.
+                    {read.transcript.turns.length
+                      ? `Showing the latest ${read.transcript.turns.length === 1 ? "turn" : `${read.transcript.turns.length} turns`}.`
+                      : "The latest turn is too large to show."}
                   </p>
                 )}
               </>
@@ -707,12 +909,15 @@ export function createTabs({
     conversation,
     initialTranscript,
     close,
+    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
     close?: AgentViewProps<Config>["close"];
+    openConversation?: AgentViewProps<Config>["openConversation"];
   }) {
+    useClockFormat();
     const sessions = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
@@ -732,8 +937,14 @@ export function createTabs({
       (place, signal) => runtime.find(agent.key, place, workspace, signal),
       (channelId) => runtime.channelLabel(agent.key, channelId),
     );
+    // Newest first, the opened conversation's channel above the rest.
     const recent = conversations
       .filter((item) => item.key !== here?.key)
+      .sort(
+        (a, b) =>
+          Number(b.channelId === conversation?.channelId) -
+          Number(a.channelId === conversation?.channelId),
+      )
       .slice(0, CONVERSATION_LIMIT);
     const activity = (key: string) => {
       const running = busy.get(key);
@@ -817,6 +1028,7 @@ export function createTabs({
               agent={agent}
               conversation={open}
               working={busy.get(open.key) ?? false}
+              openConversation={openConversation}
             />
           </PanelSubview>
         )}
@@ -863,25 +1075,11 @@ export function createTabs({
         setSaving(false);
       }
     };
-    const efforts = effortsFor(
-      draft.model || providerDefaults.model,
+    const effortOptions = thinkingOptions(
+      effortsFor(draft.model || providerDefaults.model, setupState.models),
       setupState.models,
+      draft.effort,
     );
-    const effortOptions = [
-      { value: "", label: "Automatic · Default" },
-      // A saved level the model does not list; without Claude's list, it may.
-      ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
-        ? [
-            {
-              value: draft.effort,
-              label: setupState.models.length
-                ? `${effortLabel(draft.effort)} (unavailable)`
-                : effortLabel(draft.effort),
-            },
-          ]
-        : []),
-      ...efforts.map(({ id, label }) => ({ value: id, label })),
-    ];
     const modelControl = (
       <>
         <ModelPicker
@@ -992,6 +1190,7 @@ export function createTabs({
 
   return {
     CreateModel,
+    CreateThinking,
     Create,
     ProviderDialogBody,
     DefaultControl,

@@ -1,6 +1,5 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
-  Children,
   createContext,
   isValidElement,
   memo,
@@ -17,6 +16,7 @@ import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts } from "./message-link-parts";
+import { labelText } from "./label-text";
 import {
   ReferenceText,
   channelForLink,
@@ -303,6 +303,44 @@ function remarkLiteralHtml() {
   };
 }
 
+type HtmlNode = {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HtmlNode[];
+};
+/** Lists and quotes the slot descends into, so their last line keeps it. */
+const editedSlotContainers = new Set(["ul", "ol", "li", "blockquote"]);
+/** Leave a slot after the body's last rendered line for the edited marker:
+ * inside a closing paragraph, list item or quote line, else after the last
+ * block, including generated footnotes. Parses are cached by content alone, so
+ * every body has the slot and rendering decides whether to fill it. */
+function rehypeEditedSlot() {
+  return (tree: HtmlNode) => {
+    let parent = tree;
+    for (;;) {
+      const last = parent.children
+        ?.filter((child) => child.type === "element")
+        .at(-1);
+      if (last?.tagName === "p") parent = last;
+      else if (last && editedSlotContainers.has(last.tagName ?? "")) {
+        parent = last;
+        continue;
+      }
+      break;
+    }
+    parent.children = [
+      ...(parent.children ?? []),
+      {
+        type: "element",
+        tagName: "span",
+        properties: { dataEditedSlot: "" },
+        children: [],
+      },
+    ];
+  };
+}
+
 /** Offer only Markdown prose to profile controls and inline plugins. */
 function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
@@ -375,14 +413,6 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
 
 const transformUrl: UrlTransform = (value) =>
   parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
-const labelText = (children: ReactNode): string =>
-  Children.toArray(children)
-    .map((child) =>
-      isValidElement<{ children?: ReactNode }>(child)
-        ? labelText(child.props.children)
-        : String(child),
-    )
-    .join("");
 
 type MessageComponents = {
   [Tag in "p" | "a" | "img" | "span" | "pre"]: (
@@ -448,6 +478,7 @@ export function MessageMarkdown({
   participantProfiles,
   largeEmoji = false,
   interactive = true,
+  edited = false,
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
@@ -460,6 +491,8 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
+  /** Mark the body as replaced by an edit, after its last line. */
+  edited?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(
@@ -467,7 +500,12 @@ export function MessageMarkdown({
     [row.content],
   );
   if (prepared.kind === "plain")
-    return <div className={styles.plainText}>{prepared.content}</div>;
+    return (
+      <div className={styles.plainText}>
+        {prepared.content}
+        {edited && <EditedMarker />}
+      </div>
+    );
   return (
     <PreparedMessageMarkdown
       row={row}
@@ -483,8 +521,14 @@ export function MessageMarkdown({
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
+      edited={edited}
     />
   );
+}
+
+/** Metadata, not prose: selection copy omits it like the byline's clock. */
+export function EditedMarker() {
+  return <span className={`${styles.edited} select-none`}> (edited)</span>;
 }
 
 function PreparedMessageMarkdown({
@@ -501,6 +545,7 @@ function PreparedMessageMarkdown({
   resolveName,
   largeEmoji = false,
   interactive = true,
+  edited = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
   prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
@@ -540,6 +585,8 @@ function PreparedMessageMarkdown({
   const renderText = (text: string) => {
     let offset = 0;
     return messageLinkParts(text).map((part) => {
+      // A trailing bare link yields two empty text parts at the same offset.
+      if (!part.url && !part.text) return null;
       const key = `${offset}:${part.text}`;
       offset += part.text.length;
       return part.url ? (
@@ -685,6 +732,7 @@ function PreparedMessageMarkdown({
     img: ({ node: _node, alt }) =>
       alt ? <span className={styles.imageAlt}>{alt}</span> : null,
     span: ({ node: _node, children, ...props }) => {
+      if ("data-edited-slot" in props) return edited ? <EditedMarker /> : null;
       if ((props as Record<string, unknown>)["data-spoiler"] === "true")
         return (
           <MessageSpoiler key={row.content} interactive={interactive}>
@@ -812,6 +860,7 @@ const MarkdownBody = memo(function MarkdownBody({
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,
         ],
+        rehypePlugins: [rehypeEditedSlot],
         components: markdownComponents,
         skipHtml: true,
         urlTransform: transformUrl,

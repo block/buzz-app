@@ -121,6 +121,8 @@ pub(crate) fn fixture(base: String) -> Fixture {
         deleting: false,
         home: None,
         joining: false,
+        protection: None,
+        protection_revision: 0,
     };
     Fixture {
         tokens: AgentTokens::with_store(identity, grants.clone()),
@@ -291,6 +293,82 @@ async fn an_agent_assertion_is_minted_with_the_grant_validated_and_reused() {
         serde_json::from_slice::<serde_json::Value>(&mint.body).unwrap(),
         serde_json::json!({ "nostr_pubkey": f.agent.pubkey, "relay_url": "wss://relay.example" })
     );
+}
+
+#[tokio::test]
+async fn evidence_needed_for_longer_replaces_a_cached_assertion_expiring_sooner() {
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let now = super::now().unwrap() as u64;
+    let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
+    let long = issued(&probe, serde_json::json!({}));
+    let (base, served) = issuer(vec![
+        (200, enrolled(&"b".repeat(64))),
+        (200, short),
+        (200, long),
+    ])
+    .await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+    let header = |admission: Admission| admission.header().unwrap().to_owned();
+
+    let first = header(
+        f.tokens
+            .authorize(&f.agent, &f.key, Stamp::default())
+            .await
+            .unwrap(),
+    );
+    // A minute left is enough for one request now, so it is reused for that.
+    let again = header(
+        f.tokens
+            .authorize(&f.agent, &f.key, Stamp::default())
+            .await
+            .unwrap(),
+    );
+    assert_eq!(first, again);
+    let lasting = header(
+        f.tokens
+            .authorize_for(&f.agent, &f.key, Stamp::default(), Duration::from_secs(70))
+            .await
+            .unwrap(),
+    );
+    assert_ne!(
+        first, lasting,
+        "a header that must outlast it is minted anew"
+    );
+    assert_eq!(settled(served).await.len(), 3);
+}
+
+#[tokio::test]
+async fn evidence_minted_shorter_than_needed_is_refused() {
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let now = super::now().unwrap() as u64;
+    let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
+    let (base, served) = issuer(vec![(200, enrolled(&"b".repeat(64))), (200, short)]).await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+
+    let error = f
+        .tokens
+        .authorize_for(&f.agent, &f.key, Stamp::default(), Duration::from_secs(70))
+        .await
+        .err()
+        .expect("a header that would expire mid-command is refused");
+    assert_eq!(error, super::SHORT_LIVED);
+    // The same assertion still serves a request made now.
+    assert!(f
+        .tokens
+        .authorize(&f.agent, &f.key, Stamp::default())
+        .await
+        .unwrap()
+        .header()
+        .is_some());
+    assert_eq!(settled(served).await.len(), 2);
 }
 
 #[test]
@@ -1129,6 +1207,8 @@ async fn retirement_survives_a_crash_after_session_persistence_before_the_watche
         let (release, released) = std::sync::mpsc::channel();
         *f.session_store.compare_gate.lock().unwrap() = Some((held, released));
         let identity = f.tokens.0.identity.clone();
+        // A fresh sign-in; one started while signed in replaces the session.
+        identity.retire(super::super::Status::SigningIn, None);
         let revision = identity.snapshot().revision;
         let cancel = identity.state().cancellation.clone();
         let login = tokio::spawn(async move {
@@ -1184,6 +1264,52 @@ async fn retirement_survives_a_crash_after_session_persistence_before_the_watche
                 .any(|(name, value)| name == "authorization" && value == "Bearer g")),
             "A's retired grant reached issuance"
         );
+    }
+}
+
+#[tokio::test]
+async fn an_abandoned_switch_withdraws_only_its_own_retirement() {
+    for already in [false, true] {
+        let (base, served) = issuer(vec![
+            (
+                200,
+                serde_json::json!({"session_token":"new-session", "expires_at":"2099-01-01T00:00:00Z"}),
+            ),
+            (
+                200,
+                serde_json::json!({"expires_at":"2099-01-01T00:00:00Z", "email":"b@example.com"}),
+            ),
+        ])
+        .await;
+        let f = fixture(base);
+        listing(&f);
+        stored(&f, "a@example.com");
+        if already {
+            f.grants
+                .set_pending(&f.tokens.retiring_key(), true)
+                .unwrap();
+        }
+        let identity = &f.tokens.0.identity;
+        let revision = identity.snapshot().revision;
+        let cancel = identity.state().cancellation.child_token();
+        // A is live but its record isn't the stored one, so B's save fails
+        // after preparation marked A's grants for retirement.
+        assert_eq!(
+            identity
+                .finish_login("code", "secret", &revision, &cancel)
+                .await
+                .unwrap_err()
+                .code,
+            "session-changed"
+        );
+        assert!(f.session_store.raw.lock().unwrap().is_none());
+        assert_eq!(f.grants.pending(&f.tokens.retiring_key()).unwrap(), already);
+        assert!(f
+            .grants
+            .read(&f.tokens.grant_key(&f.agent))
+            .unwrap()
+            .is_some());
+        assert_eq!(settled(served).await.len(), 2);
     }
 }
 

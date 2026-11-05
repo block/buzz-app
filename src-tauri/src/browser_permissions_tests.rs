@@ -76,6 +76,9 @@ fn native_command_permissions_isolate_webviews() {
         "federated_identity_sign_in",
         "federated_identity_cancel_sign_in",
         "federated_identity_sign_out",
+        "federated_identity_register",
+        "federated_identity_unregister",
+        "federated_identity_request",
         "relay_socket_connect",
         "relay_socket_start",
         "relay_socket_send",
@@ -104,6 +107,8 @@ fn native_command_permissions_isolate_webviews() {
         "relay_sign_read_state",
         "relay_publish_read_state",
         "relay_http",
+        "relay_http_cancel",
+        "relay_verify_signatures",
         "relay_workflow_runs",
         "relay_project_git",
         "relay_project_git_cancel",
@@ -134,6 +139,7 @@ fn native_command_permissions_isolate_webviews() {
         "clipboard_write_text",
         "media_stream_base",
         "get_os_idle_seconds",
+        "system_hour_cycle",
         "plugin_import_folder",
         "plugin_update_check",
         "plugin_update_preview",
@@ -152,6 +158,8 @@ fn native_command_permissions_isolate_webviews() {
         "plugin_host_process_write",
         "plugin_host_process_kill",
         "plugin_host_mcp_serve",
+        "plugin_host_mcp_authorize",
+        "plugin_host_mcp_pairing",
         "plugin_host_mcp_reply",
         "plugin_host_mcp_close",
         "plugin_host_read_file",
@@ -160,6 +168,9 @@ fn native_command_permissions_isolate_webviews() {
         "oauth_callback_wait",
         "oauth_callback_cancel",
         "app_agent_list",
+        "app_agent_set_protection",
+        "app_agent_protection_defaults",
+        "app_agent_set_protection_defaults",
         "app_agent_create",
         "app_agent_portable",
         "app_agent_port",
@@ -328,7 +339,15 @@ fn native_command_permissions_isolate_webviews() {
             "remote content must not use main grants: {command}"
         );
     }
-    assert!(invoke(main.as_ref(), "plugin:window|close", local_origin).is_ok());
+    for command in ["plugin:window|close", "plugin:window|is_focused"] {
+        assert!(
+            invoke(main.as_ref(), command, local_origin).is_ok(),
+            "main must receive {command}"
+        );
+        assert!(invoke(main.as_ref(), command, "https://example.org").is_err());
+        assert!(invoke(guest.as_ref(), command, local_origin).is_err());
+        assert!(invoke(huddle.as_ref(), command, local_origin).is_err());
+    }
 
     #[cfg(all(feature = "native-mcp", target_os = "macos"))]
     {

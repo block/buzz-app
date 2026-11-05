@@ -23,6 +23,20 @@ const input = (page) =>
 const composer = (page) =>
   page.getByRole("textbox", { name: "Message your agents", exact: true });
 
+async function settledError(page) {
+  const alert = sidebar(page).getByRole("alert");
+  await expect(alert).toBeVisible();
+  // The Field error grows above Reload. Visibility alone admits a click while
+  // its hit target is still moving; wait for the actual opening to finish.
+  await alert.evaluate((element) =>
+    Promise.all(
+      element.parentElement
+        .getAnimations({ subtree: true })
+        .map((animation) => animation.finished),
+    ),
+  );
+}
+
 // These exercise native focus loss, actual drawer hit targets and signed live
 // metadata. DOM-only tests cannot establish these browser/host contracts.
 async function holdDetails(page) {
@@ -131,7 +145,7 @@ test("failed Enter-save and explicit reload retain keyboard control", async ({
   });
   await input(page).fill("Keep this draft");
   await input(page).press("Enter");
-  await expect(sidebar(page).getByRole("alert")).toBeVisible();
+  await settledError(page);
   const recovery = await sidebar(page)
     .getByRole("button", { name: "Reload chat details" })
     .boundingBox();
@@ -160,15 +174,16 @@ test("failed Enter-save and explicit reload retain keyboard control", async ({
   await input(page).fill("Keep this draft");
   refused = false;
   await input(page).press("Enter");
-  await expect(sidebar(page).getByRole("alert")).toBeVisible();
+  await settledError(page);
   const held = await holdDetails(page);
   try {
     await sidebar(page)
       .getByRole("button", { name: "Reload chat details" })
       .click();
+    // Prove Reload activated before awaiting the held network operation.
+    await expect(input(page)).toHaveAttribute("readonly");
     await held.requested;
     await expect(input(page)).toBeFocused();
-    await expect(input(page)).toHaveAttribute("readonly");
     await input(page).press("Enter");
     await expect(input(page)).toHaveValue("Keep this draft");
     await composer(page).focus();
@@ -355,7 +370,13 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
   await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
   await page.getByRole("menuitem", { name: "New workspace" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
+  // Wait until the exiting menus are gone and the dialog's initial focus has
+  // settled on the field. The modal hides the menus from role queries.
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  const field = dialog.getByRole("textbox", { name: "Workspace name" });
+  await expect(field).toBeFocused();
+  await field.fill("Work");
+  await expect(field).toHaveValue("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
   await expect(dialog).not.toBeVisible();
   const work = sidebar(page).getByRole("button", { name: "Work", exact: true });
@@ -472,6 +493,7 @@ test("composable rows retain narrow rename and immediate keyboard/touch activati
   page,
   app,
 }) => {
+  await page.clock.install();
   await regionFixture(page, app, [alpha]);
   await page.setViewportSize({ width: 600, height: 950 });
   const show = page.getByRole("button", {
@@ -492,10 +514,11 @@ test("composable rows retain narrow rename and immediate keyboard/touch activati
     await expect(regionRow(page, alpha)).toBeFocused();
   }
   // The ordinary row and source row share the same pending mouse selection.
-  // Anchor both calls to one clock, as in the ordinary-row journey above.
-  const clockStart = Date.now();
-  await page.clock.install({ time: clockStart });
-  await page.clock.pauseAt(clockStart + 60_000);
+  // Freeze wall time before pausing timers so protocol latency cannot overtake it.
+  const pausedAt = await page.evaluate(() => Date.now());
+  await page.clock.setFixedTime(pausedAt);
+  await page.clock.pauseAt(pausedAt);
+  await page.clock.setSystemTime(pausedAt);
   await regionRow(page, alpha).click();
   await row(page, beta).click();
   await page.clock.runFor(500);

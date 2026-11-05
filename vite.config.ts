@@ -32,18 +32,44 @@ function sharedBuilderlabUrl() {
   );
 }
 
+/** An FI build signs in to Builderlab through its NIP-FI identity origin and
+ * API base, in the legacy URL's shape (`<url>/api/goose/`). Native builds
+ * read the descriptor from the process only, and so does this. */
+function federatedBuilderlabUrl() {
+  const raw = process.env.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG;
+  if (!raw) return undefined;
+  const { identityOrigin, apiBasePath } = JSON.parse(raw) as {
+    identityOrigin?: unknown;
+    apiBasePath?: unknown;
+  };
+  // Another API shape is not Builderlab's: its sign-in stays unconfigured.
+  if (
+    typeof identityOrigin !== "string" ||
+    typeof apiBasePath !== "string" ||
+    !apiBasePath.endsWith("/api/goose/")
+  )
+    return "";
+  return `${new URL(identityOrigin).origin}${apiBasePath.slice(0, -"/api/goose/".length)}`;
+}
+
 export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
   // Native builds consume only process values and repository-root .env.local.
   // Keep this frontend value on the same source so Vite mode files cannot
   // select a different same-origin deployment path.
-  const builderlabUrl = sharedBuilderlabUrl();
+  const federatedUrl = federatedBuilderlabUrl();
+  const builderlabUrl = federatedUrl ?? sharedBuilderlabUrl();
   // The development broker is the dev server's default: it runs whenever the
   // developer has pinned their public key. Production builds (`pnpm build`,
   // `pnpm tauri build`) never load it, regardless of .env.local contents.
   const live = command === "serve" && Boolean(env.BUZZ_DEV_VIEWER?.trim());
   const aliases = env.BUZZ_COMMUNITY_ALIASES ?? "";
   parseCommunityAliases(aliases);
+  const externalMcpCommunities = (env.BUZZ_EXTERNAL_MCP_COMMUNITIES ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(relayOrigin)
+    .join(" ");
   // Public routing configuration only; the viewer pin and credentials stay in Node.
   const defaultRelay = env.BUZZ_RELAY_URL?.trim();
   const defaultOrigin = defaultRelay ? relayOrigin(defaultRelay) : "";
@@ -97,6 +123,12 @@ export default defineConfig(async ({ command, mode }) => {
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,
+        builderlab: {
+          api: `${builderlabUrl.replace(/\/$/, "")}/api/goose`,
+          appsBase: (
+            await import("./src/bundled/builderlab/apps/environment.ts")
+          ).controlPlane(builderlabUrl),
+        },
       }),
     );
   const profileReadyToken = process.env.BUZZ_PROFILE_VITE_READY_TOKEN;
@@ -121,7 +153,13 @@ export default defineConfig(async ({ command, mode }) => {
         command === "serve" && env.BUZZ_DEV_NOTIFICATIONS === "0" ? "1" : "0",
       ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
+      "import.meta.env.VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES": JSON.stringify(
+        externalMcpCommunities,
+      ),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(builderlabUrl),
+      "import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY": JSON.stringify(
+        federatedUrl === undefined ? "0" : "1",
+      ),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_APPS_DOMAIN":
         JSON.stringify(env.BUZZ_BUILDERLAB_APPS_DOMAIN) ?? "undefined",
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),

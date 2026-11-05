@@ -404,7 +404,7 @@ function AvatarSpecimen() {
       <SpecimenGroup
         label="Status badge and rounded cutout"
         code={`<div className="flex flex-wrap items-center gap-4">
-  {(["compact", "small", "default", "large"] as const).map((size) => (
+  {(["tiny", "compact", "small", "default", "large"] as const).map((size) => (
 
       <Avatar
         src={avatarUrl}
@@ -437,17 +437,19 @@ function AvatarSpecimen() {
 </div>`}
       >
         <div className="component-specimen-row">
-          {(["compact", "small", "default", "large"] as const).map((size) => (
-            <Specimen key={size} prop={`${size} · online`}>
-              <Avatar
-                src={avatarUrl}
-                alt="Morgan Martin"
-                fallback="Morgan"
-                size={size}
-                statusBadge="online"
-              />
-            </Specimen>
-          ))}
+          {(["tiny", "compact", "small", "default", "large"] as const).map(
+            (size) => (
+              <Specimen key={size} prop={`${size} · online`}>
+                <Avatar
+                  src={avatarUrl}
+                  alt="Morgan Martin"
+                  fallback="Morgan"
+                  size={size}
+                  statusBadge="online"
+                />
+              </Specimen>
+            ),
+          )}
           {(["away", "offline"] as const).map((status) => (
             <Specimen key={status} prop={`large · ${status}`}>
               <Avatar
@@ -472,7 +474,7 @@ function AvatarSpecimen() {
       <SpecimenGroup
         label="Agent shape (proposed)"
         code={`<div className="flex flex-wrap items-center gap-4">
-  {(["compact", "small", "default", "large"] as const).map((size) => (
+  {(["tiny", "compact", "small", "default", "large"] as const).map((size) => (
 
       <Avatar
         src={avatarUrl}
@@ -510,18 +512,20 @@ function AvatarSpecimen() {
 </div>`}
       >
         <div className="component-specimen-row">
-          {(["compact", "small", "default", "large"] as const).map((size) => (
-            <Specimen key={size} prop={`squircle · ${size} · online`}>
-              <Avatar
-                src={avatarUrl}
-                alt="Agent artwork"
-                fallback="Agent"
-                shape="squircle"
-                size={size}
-                statusBadge="online"
-              />
-            </Specimen>
-          ))}
+          {(["tiny", "compact", "small", "default", "large"] as const).map(
+            (size) => (
+              <Specimen key={size} prop={`squircle · ${size} · online`}>
+                <Avatar
+                  src={avatarUrl}
+                  alt="Agent artwork"
+                  fallback="Agent"
+                  shape="squircle"
+                  size={size}
+                  statusBadge="online"
+                />
+              </Specimen>
+            ),
+          )}
           {(["away", "offline"] as const).map((status) => (
             <Specimen key={status} prop={`squircle · large · ${status}`}>
               <Avatar
@@ -715,6 +719,9 @@ function FullPageSurfaceSpecimen() {
 function PanelSpecimen() {
   return (
     <div className="component-specimen-stack">
+      <Panel as="div" shape="card" aria-label="Account card surface">
+        <div className="p-8">Standalone account card</div>
+      </Panel>
       <Panel as="div" shape="capsule" aria-label="Capsule surface">
         <div className="p-2">Shell control group</div>
       </Panel>
@@ -2432,6 +2439,24 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           },
         ]}
       />
+      <SettingsGroup>
+        <PreferenceRow title="Public key" subtitle="npub1…" />
+        <Accordion
+          variant="settings"
+          items={[
+            {
+              value: "Previous versions",
+              title: "Previous versions · 3 versions",
+              content: (
+                <p className="text-body-sm">
+                  Settings and instructions versions.
+                </p>
+              ),
+            },
+          ]}
+        />
+        <PreferenceRow title="Remove from this community" />
+      </SettingsGroup>
       <h3 className="text-label">
         Form disclosures · spacing owned by the form
       </h3>
@@ -2489,6 +2514,23 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           icon={<SquaresFourIcon />}
           title="No templates yet"
           description="Save a starting setup to reuse in new channels."
+        />
+      </SpecimenFrame>
+      <SpecimenFrame
+        code={`<EmptyState
+  frame="none"
+  level={4}
+  icon={<SmileyIcon />}
+  title="You're all caught up"
+  description="Inside a popover, the popover is the frame."
+/>`}
+      >
+        <EmptyState
+          frame="none"
+          level={4}
+          icon={<SmileyIcon />}
+          title="You're all caught up"
+          description="Inside a popover, the popover is the frame."
         />
       </SpecimenFrame>
     </div>

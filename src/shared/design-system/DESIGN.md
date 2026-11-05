@@ -131,7 +131,12 @@ the row's alignment. A row is not an extra click target around its input. Preser
 visible labels and connect help/error text; placeholders cannot replace labels.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
 Use `Accordion variant="settings"` for disclosures alongside preference rows.
-Its full-row trigger uses the settings container shape and spacing; the chevron
+Inside a row-layout `SettingsGroup`, it shares the group's frame and content inset,
+with square trigger corners so the hover fill follows the flat row dividers.
+The disclosure spans the group's inner width; its trigger and content retain the
+group's horizontal inset, so text has padding inside the hover fill. No divider
+separates the trigger from its expanded content.
+Standalone triggers use the settings container shape and spacing; the chevron
 is decorative, and the entire row expands the content. `Select variant="preference"` uses the same
 label and compact choice control without adding a group container.
 See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
@@ -292,6 +297,13 @@ For choices that must stay within a modal, pass its element to
 and the shared popup scrolls within the resulting available height; keep the portal.
 Use their supported `padding`/alignment props; do not add another padded card inside
 the popup or cancel its styles. Keep long lists scrollable and all actions reachable.
+For a short searchable identity picker, `Combobox.Popup size="compact"` caps the
+surface at 20rem or the available height, keeping search visible above scrollable
+results. It accommodates roughly four avatar-and-detail rows, not a fixed result
+count. Bestie opens below its field with `side="bottom"` and
+`collisionAvoidance={{ side: "none", align: "shift" }}`: the viewport may shorten
+its list rather than flip it over the introduction. Other comboboxes retain their
+existing viewport-sized, automatically flipping popup.
 
 Opening a dialog from a menu needs a deliberate focus handoff: dismiss the menu
 without stealing focus from the new dialog. On completion, return focus to the
@@ -599,7 +611,7 @@ Use the surface that matches the content and its position in the interface.
 
 - **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-panel-gap` (8px at default scale). The sidebar resize grip stays centered in that gutter. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (24px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
-- **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state.
+- **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state. The one exception to the solid shell is a backdrop a plugin explicitly registers ([shell backdrops](../../../docs/plugin-architecture.md#shell-backdrops)); the default shell has none. A backdrop may cover the dots and gutters only. Panes stay opaque, and the host keeps solid `bg-app` beneath each header control group and the sidebar grip so their ink, fills and focus rings keep this background's contrast. The host shows no backdrop under reduced motion, reduced transparency or forced colors.
 - **Reading surfaces:** documentation and dense prose sit on opaque `bg-panel`. Keep the dot grid outside reading panes. Do not add gradient backgrounds to the app shell.
 - **Borders:** use `border-standard` for quiet separators, `border-prominent` for controls, and `border-focus` for keyboard-focus recipes. Errors and warnings have their own boundary roles. Measure the actual pairing in both themes.
 - **Shadows:** use the shared elevation roles and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
@@ -870,8 +882,31 @@ A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
 a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
 whose light gray fill holds up over the list where glass would disappear.
 
-The message hover toolbar uses the 12px rounded-container radius
-with a 2px inset. Its independent icon actions retain their shared 10px corners.
+Arriving at a message, by link, search, the inbox or closing its thread,
+briefly marks it. A filled bubble takes `affordance-message-highlight` (your
+own, `affordance-message-own-highlight`) as a see-through layer: the regular
+overlay step, about twice hover, in the direction the bubble's chips already
+take, so chips stay readable on top. While the cue shows it replaces hover
+rather than stacking on it. A row without a filled bubble (membership lines,
+emoji-only, attachments, tables and diffs) is washed with
+`surface-message-highlight` instead. The cue is paint-only and
+belongs to the message reveal, so every route that lands on a message gets it;
+a reveal behind a covering panel, restored scroll and your own send do not.
+Each row type marks its paint surface with `data-highlight-surface`, which
+excludes the day divider. The cue waits until the message and the list around
+it have held still for 200ms (at most 1.5s), so it never flashes while a fresh
+channel is still loading, then holds about a second and fades over about a
+second. A repeat arrival restarts the cue. Reduced motion holds the tint the
+same time and removes it without fading.
+
+The horizontal message hover toolbar sits above the bubble, with reaction,
+reply, copy-link and overflow icon actions. It uses `popover-surface` with
+a 12px control radius and 2px inset. Its icon actions use `text-subtle` at rest
+and retain the shared hover, focus and disabled states and 10px corners.
+
+Message-author artwork uses Avatar `default` (32px) in channel/DM timelines,
+`small` (24px) in threads, and `tiny` (16px) in nested replies. Profile triggers
+retain a 32px target even when their artwork is smaller.
 
 Secondary actions on rows inside a compact inset container, currently queued
 follow-ups, use Button `subtle-muted` with `size="caption"`: a 32px control
@@ -898,7 +933,8 @@ extra-small capsule uses `text-caption`. For a caption-sized inline choice such 
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
 horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
 for an unframed label; shared hover, disabled, and keyboard focus still apply.
-Compact Selects use `appearance="link"` for a text-and-caret choice, such as channel access, without a capsule or horizontal
+Compact Select buttons with leading artwork use an 8px leading inset and a 12px
+trailing inset, giving the caret room at the edge. Compact Selects use `appearance="link"` for a text-and-caret choice, such as channel access, without a capsule or horizontal
 button inset. It uses regular body-small type and a 24px minimum target with
 the text at its bottom edge, so supporting copy follows without an extra gap;
 it retains the Select's keyboard behavior and focus treatment.
@@ -995,7 +1031,8 @@ hint. The caller owns its column width; in PreferenceRow a compact choice takes 
 most 60% of the row, beyond its min-content width, so a long value ellipsizes
 before the row title loses its words. Other trailing controls keep their width.
 `align="end"` anchors a trailing choice popup to the trigger’s right edge; the
-default remains `start`. Pass `disabled` explicitly when the choice is unavailable. An option may include one concise supporting
+default remains `start`. Set a group's `separator` to insert a divider before that
+group, keeping related choices together. Pass `disabled` explicitly when the choice is unavailable. An option may include one concise supporting
 description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
@@ -1046,7 +1083,8 @@ InputGroup shares the inline frame for SearchField and Combobox. Icons use an
 the input or action,
 while the frame owns the active perimeter stroke. Read-only values can be
 read and copied; disabled actions cannot change a value. Search clear restores
-input focus. Features still own filtering, custom values, and async recovery.
+input focus. SearchField `trailing` places auxiliary actions after Clear inside
+the shared frame. Features still own filtering, custom values, and async recovery.
 
 SearchField, Combobox.Control, and code Textarea default to no autocorrection,
 capitalization, or spellcheck. Callers can override these defaults explicitly.
@@ -1337,7 +1375,9 @@ feedback with the action owner. Pointer offsets clear the physical cursor silhou
 rather than following text-scale spacing. Real pointer geometry needs browser/native
 inspection; DOM tests do not establish placement.
 Overlay layers keep toasts, then menus and hints, above dialogs, so feedback a
-dialog raises stays visible.
+dialog raises stays visible. A hint inside a native top-layer surface, such as a
+hover preview or floating message actions, joins the top layer after it so the
+hint paints above that surface.
 Adding a hint must preserve the host's keyboard contract. A focus-opened tooltip
 can consume Escape before a panel's Back handler; the existing PanelSubview
 controls expose this conflict. Preserve their accessible names and current Back
@@ -1379,6 +1419,10 @@ blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recov
 keep it in the conversation flow immediately above the composer, with bounded
 overflow, so Send and companion-panel controls remain usable. Its retry policy
 and diagnostics belong to Channels; it does not enter the floating toast stack.
+
+A notice can make its body open a related destination with `navigation`. The
+body has a hover state and a keyboard action. Its explicit buttons and Dismiss
+keep their own hit areas and actions. The destination stays feature-owned.
 
 Use `useToastNotification` for completed-action feedback that must outlive its
 source row (such as copying profile metadata); the host stack owns its finite
@@ -1480,6 +1524,7 @@ The positioned portal owns its layer above dialogs. An optional content anchor
 keeps previews near compact identity content inside wider actionable rows. Identity
 previews prefer above that content (with Base UI collision handling), leaving
 the hovered row’s trailing action unobstructed.
+Message link previews open above the hovered message’s actions, not over them.
 
 ## Menu row corners
 
@@ -1561,8 +1606,8 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
-- Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
-  default), matching Berd’s relaxed reply rhythm for both sent and received
+- Message prose uses `text-message`: 14px with 22/14 leading (22px at
+  default), keeping a compact reading rhythm for both sent and received
   messages. The message renderer uses `space-4` between prose blocks, with
   `space-2` between an introductory paragraph and its following list. Labels,
   controls, code, tables and headings retain their existing type roles.
@@ -1587,6 +1632,8 @@ need their own values in each mode.
 Received message bubbles use `bubble-received`, slightly stronger than quiet
 control fills. Reply connectors and thread spines use `border-message-thread`
 to remain visible on conversation surfaces in both modes.
+Agent activity bubbles use a transparent fill with a 1px inset `border-standard`
+stroke, keeping their dimensions consistent with filled message bubbles.
 
 ### Accent color
 
@@ -1644,7 +1691,8 @@ that adds no useful information.
 
 ### Activity dots
 
-`TypingDots` owns the shared decorative activity motion. `state="waiting"`
+`TypingDots` owns the shared decorative activity motion. Use `size="message"`
+for 4px dots with 4px gaps inside a message line; compact indicators retain their existing sizes. `state="waiting"`
 breathes all three dots together over 2.4 seconds for a received request waiting
 to start. `state="working"` (the default) preserves the 1.4-second staggered fade.
 Switching state keeps the same footprint. These named component rhythms are
@@ -1683,8 +1731,9 @@ and paired text. Do not generate unused role families from every palette hue.
 Existing palette utilities and older role names are compatibility APIs while
 callers migrate, not the default for new UI. Tailwind's stock palette is removed.
 
-`ShimmerText` gives a short live-work label (an agent's current step) a slow
-sheen between the subtle and standard text roles. Use it only while that work is
+`ShimmerText` gives a short live-work label (an agent's current step) a defined
+sheen from metadata text to standard text, with a 1.2s sweep.
+Use it only while that work is
 live, never on finished, failed or waiting text. Reduced motion shows plain text.
 
 Activity indicators that appear while work is live (the message activity pill,
@@ -2063,3 +2112,32 @@ chevron. Unavailable chat cards retain a lock and unavailable accessible text;
 unknown access does not earn a chevron. Display chat cards as **Chat:**, while
 accepting legacy **Session:** and **Session ·** authored links without rewriting
 historical messages or their receipts.
+
+
+### Mobile-aligned onboarding
+
+The first-launch welcome uses mobile's fixed light chartreuse artwork (#d7d72e)
+with dark and pale-blue decorative bees. Use the existing light scope for readable
+shared controls even when the app is dark. The exact artwork hues are confined to
+IdentitySetup.module.css; controls keep shared prominent/subtle/ghost recipes.
+Subsequent setup screens use the current mode's opaque panel surface, a reading
+column, and bottom-stacked 52px capsule actions. Desktop-only key recovery, backup
+consent and migration choices retain their existing behavior.
+
+At the owner's direction to match mobile, the onboarding scope maps its complete
+heading role to Inter 30/36 regular with -1px tracking and body to 16/24 regular
+with -0.25px tracking, in rem units. This is local to the first-launch composition;
+it does not change the app-wide type ramp. Decorative motion stops for reduced
+motion and hidden documents; it never owns focus or blocks an action.
+
+### Standalone account cards
+
+First-run setup uses `Panel shape="card"`, matching Builderlab/Auth0: content-sized, `radius-card` corners and `shadow-card` lift. Compose a 490px reading column with space-8 insets, title/body-sm typography, shared Field/Input controls and large capsule actions. Keep welcome artwork separate from these opaque setup cards.
+
+### Compact control groups
+
+`buzz-compact-controls` is an opt-in wrapper recipe for compact adjacent Button
+and IconButton actions, currently used by message reaction capsules and their
+Add reaction control. It supplies a 1.625rem height, square icon geometry, and
+content-width labelled controls. Features retain placement and behavior; the
+shared recipe owns sizing. Do not infer this treatment from product data attributes.

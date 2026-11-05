@@ -1,13 +1,36 @@
 import { expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
-import { parseKitRecord } from "../channel-templates/model";
 import {
+  LIVE_CANVAS_BYTES,
+  LIVE_CANVAS_LIMIT,
+  parseKitRecord,
+} from "../channel-templates/model";
+import {
+  validateWorkspace,
   loadChatSetup,
   readWorkspace,
   projectTemplateId,
   workspaceCanvas,
   workspaceDirectories,
 } from "./workspace";
+
+it.each([{ folders: [] }, { folders: [" ", "\t"] }])(
+  "requires a nonempty folder only in worktree mode (%j)",
+  ({ folders }) => {
+    const workspace = { folders, canvas: "Keep this" };
+    expect(validateWorkspace(workspace)).toEqual({
+      folders: [],
+      canvas: "Keep this",
+    });
+    const worktree = { location: "~/worktrees", baseBranch: "main" };
+    expect(() => validateWorkspace({ ...workspace, worktree })).toThrow(
+      "Choose a workspace folder, worktree location, and base branch.",
+    );
+    expect(
+      validateWorkspace({ ...workspace, folders: [" ~/repo "], worktree }),
+    ).toEqual({ ...workspace, folders: ["~/repo"], worktree });
+  },
+);
 
 it("round trips folders, worktrees and Canvas through existing template records", async () => {
   const workspace = {
@@ -76,9 +99,15 @@ it("preserves ordinary Canvas and refuses malformed or manually changed workspac
   expect(() =>
     workspaceCanvas({ folders: ["/repo`\nunsafe"], canvas: "" }),
   ).toThrow("folders");
+  expect(
+    workspaceCanvas({ folders: [], canvas: "x".repeat(LIVE_CANVAS_BYTES) }),
+  ).toHaveLength(LIVE_CANVAS_BYTES);
   expect(() =>
-    workspaceCanvas({ folders: [], canvas: "x".repeat(24577) }),
-  ).toThrow("24 KiB");
+    workspaceCanvas({
+      folders: [],
+      canvas: "x".repeat(LIVE_CANVAS_BYTES + 1),
+    }),
+  ).toThrow(LIVE_CANVAS_LIMIT);
 });
 
 function fixture() {

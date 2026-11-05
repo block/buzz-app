@@ -89,7 +89,8 @@ export type ThreadActivitySnapshot = Readonly<{
   /** null means activity evidence is unknown or access is denied. */
   items: readonly ThreadActivityItem[] | null;
   /** Unread top-level messages that mention the viewer, newest first. A
-   * reply's mention is listed under its thread instead. */
+   * reply's mention is listed under its thread instead, and in neither while
+   * its thread root is unresolved. */
   mentions?: readonly MentionActivityItem[];
   coverage: "unknown" | "observed";
   freshness: "unknown" | "observed" | "stale";

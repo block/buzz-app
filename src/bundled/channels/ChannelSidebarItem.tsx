@@ -48,7 +48,7 @@ type ItemProps = {
   selected: string | undefined;
   onSelect: (id: string) => void;
   onOpenThread: (channelId: string, rootId: string) => void;
-  onOpenMessage?: (channelId: string, messageId: string) => void;
+  onOpenMessage: (channelId: string, messageId: string) => void;
   onOpenWorkingAgent?: (
     channelId: string,
     agent: string,
@@ -270,7 +270,7 @@ function ChannelSidebarItemCore({
             {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
             onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
             onOpenMention={(item) =>
-              onOpenMessage?.(item.channelId, item.messageId)
+              onOpenMessage(item.channelId, item.messageId)
             }
             trigger={trigger}
           />

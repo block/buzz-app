@@ -134,9 +134,12 @@ export function UnreadBadge({
   const unreadLabel = manual
     ? `Marked unread${snapshot.manual === "local-only" ? " on this device only" : ""}`
     : `${count} observed unread messages${snapshot.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`;
-  // Mentions share the thread dot; a mention alone keeps the priority dot.
   const mentionCount = activity.mentions?.length ?? 0;
-  const activityLabel = `${mentionCount ? `${mentionCount} unread ${mentionCount === 1 ? "mention" : "mentions"}, ` : ""}${threadCount} unread ${threadCount === 1 ? "thread" : "threads"}${activity.freshness === "stale" ? "; may be out of date" : ""}`;
+  const stale = activity.freshness === "stale" ? "; may be out of date" : "";
+  const mentionLabel = `${mentionCount} unread ${mentionCount === 1 ? "mention" : "mentions"}`;
+  // Mentions share the thread dot. Without a thread they have only the
+  // aria-hidden priority dot, or none when muted, so name them on their own.
+  const activityLabel = `${mentionCount ? `${mentionLabel}, ` : ""}${threadCount} unread ${threadCount === 1 ? "thread" : "threads"}${stale}`;
   return (
     <>
       {label !== undefined && (
@@ -165,6 +168,9 @@ export function UnreadBadge({
           data-indicator-layer="unread"
           aria-hidden="true"
         />
+      )}
+      {mentionCount > 0 && threadCount === 0 && (
+        <span className="sr-only">{`${mentionLabel}${stale}`}</span>
       )}
       {threadCount > 0 &&
         (hideUnreadDots ? (

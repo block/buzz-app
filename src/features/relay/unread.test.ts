@@ -887,6 +887,36 @@ it("lists unread top-level mentions apart from thread activity, never for a DM o
   ]);
 });
 
+it("lists a top-level mention that cites or quotes a message, and keeps the snapshot through an unrelated publish", () => {
+  const h = setup();
+  h.grant("room");
+  const tag = [["p", h.viewer.pubkey]];
+  const root = message(h.viewer, "room", "My thread", 20);
+  // Neither tag marks a reply, so both stay top-level.
+  const cited = message(h.alice, "room", "Cites it", 21, [
+    ["e", root.id],
+    ...tag,
+  ]);
+  const quoted = message(h.alice, "room", "Quotes it", 22, [
+    ["e", root.id, "", "mention"],
+    ...tag,
+  ]);
+  h.emit([root, cited, quoted]);
+  const activity = h.session.unread.activity("room");
+  expect(activity).toMatchObject({
+    items: [],
+    mentions: [{ messageId: quoted.id }, { messageId: cited.id }],
+  });
+
+  const changed = vi.fn();
+  h.session.unread.subscribeActivity("room", changed);
+  h.emit([message(h.alice, "room", "Unrelated", 23)]);
+  // The publish landed, and left Activity alone.
+  expect(h.snapshot().observedCount).toBe(3);
+  expect(changed).not.toHaveBeenCalled();
+  expect(h.session.unread.activity("room")).toBe(activity);
+});
+
 it("distinguishes unknown thread-activity evidence from observed evidence", () => {
   const h = setup();
   h.grant("room");
@@ -4393,6 +4423,7 @@ it("agent-audience messages never count, earn attention, list in Inbox or activi
     attentionCount: 0,
   });
   expect(unread.activity("room").items).toEqual([]);
+  expect(unread.activity("room").mentions).toEqual([]);
   expect(unread.inbox().items).toEqual([]);
   for (const [channelId, row] of [
     ["room", progress],

@@ -750,6 +750,8 @@ it("installs the pinned protected release only when the host refuses its copy", 
     "claude-protected-arm64 --version",
     "platform",
     `install ${PROTECTED_CLAUDE_VERSION} darwin-arm64 ${CHECKSUM}`,
+    // No key yet, so it is read again.
+    "key",
     "claude-protected-arm64 --version",
   ]);
 });

@@ -989,6 +989,32 @@ it("asks for an API key and is ready once one is saved", async () => {
   expect(screen.getByRole("button", { name: "Done" })).toBeVisible();
 });
 
+it("saves the key with Enter without submitting the form it sits in", async () => {
+  const { type, spawn } = installed({ keySaved: false });
+  const Setup = providerSetup(type);
+  const outer = vi.fn((event: { preventDefault(): void }) =>
+    event.preventDefault(),
+  );
+  // As agent creation and Settings hold it.
+  render(
+    <form onSubmit={outer}>
+      <Setup onClose={vi.fn()} />
+    </form>,
+  );
+  const user = userEvent.setup();
+  await user.type(
+    await screen.findByLabelText("Anthropic API key"),
+    "sk-ant-api03-pasted{Enter}",
+  );
+  expect(
+    await screen.findByText("Claude runs with your Anthropic API key."),
+  ).toBeVisible();
+  expect(
+    spawn.mock.calls.filter(([, options]) => options?.args?.[2] === "save-key"),
+  ).toHaveLength(1);
+  expect(outer).not.toHaveBeenCalled();
+});
+
 it("replaces generic installation copy with the latest installer state", async () => {
   const installedType = installed({ available: false }).type;
   const Setup = providerSetup(installedType);

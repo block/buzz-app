@@ -81,16 +81,19 @@ export class ClaudeAuth {
     };
   };
 
-  /** The saved key, read once until it is saved again or checked. */
+  /** The saved key, read once until it is saved again or checked; no key
+   * is read again each time. */
   private read() {
     const spawn = this.spawn;
     if (!spawn) return Promise.resolve("");
     if (this.key) return this.key;
     const reading = output(spawn, "key").then((text) => text.trim());
     this.key = reading;
-    reading.catch(() => {
+    // Only a key is kept: another Buzz on this computer may save one.
+    const forget = () => {
       if (this.key === reading) this.key = undefined;
-    });
+    };
+    reading.then((text) => text || forget(), forget);
     return reading;
   }
 
@@ -104,10 +107,19 @@ export class ClaudeAuth {
   async save(key: string, signal?: AbortSignal) {
     const spawn = this.spawn;
     if (!spawn) throw new Error("Claude runs only in the desktop app");
-    const saved = await output(spawn, "save-key", `${key}\n`, signal);
-    this.key = undefined;
-    for (const listener of this.listeners) listener();
-    return saved.trim();
+    const changed = () => {
+      this.key = undefined;
+      for (const listener of this.listeners) listener();
+    };
+    try {
+      const saved = await output(spawn, "save-key", `${key}\n`, signal);
+      changed();
+      return saved.trim();
+    } catch (error) {
+      // A stopped save may have replaced the key all the same.
+      if (signal?.aborted) changed();
+      throw error;
+    }
   }
 
   /** `spawn`, starting each `claude` with the saved key. `required` refuses
@@ -202,6 +214,7 @@ function KeyForm({
   // Closing the form cancels a save.
   useEffect(() => () => saving?.abort(), [saving]);
   const save = async () => {
+    if (!key.trim() || saving || disabled) return;
     const controller = new AbortController();
     setSaving(controller);
     setSaved(undefined);
@@ -218,14 +231,8 @@ function KeyForm({
     }
   };
   return (
-    <form
-      className="grid gap-2"
-      aria-busy={saving ? true : undefined}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (key.trim() && !saving && !disabled) void save();
-      }}
-    >
+    // Not a form: it sits inside agent creation's and Settings' own.
+    <div className="grid gap-2" aria-busy={saving ? true : undefined}>
       <Field
         label={replace ? "Replace API key" : "Anthropic API key"}
         description="Create a key at console.anthropic.com. Buzz keeps it on this computer and gives it only to Claude."
@@ -237,16 +244,22 @@ function KeyForm({
           readOnly={!!saving}
           aria-disabled={saving || disabled ? true : undefined}
           onValueChange={setKey}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            void save();
+          }}
         />
       </Field>
       <div className="flex flex-wrap items-center gap-3">
         <Button
-          type="submit"
+          type="button"
           {...(!replace && { variant: "prominent" as const })}
           size={compact ? "sm" : "md"}
           disabled={disabled || !key.trim()}
           focusableWhenDisabled
           loading={!!saving}
+          onClick={() => void save()}
         >
           Save key
         </Button>
@@ -261,6 +274,6 @@ function KeyForm({
           </p>
         )}
       </div>
-    </form>
+    </div>
   );
 }

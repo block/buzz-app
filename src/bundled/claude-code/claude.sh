@@ -14,13 +14,16 @@ set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
 # Security reviews keep their own Claude folder beside it (macOS only), which
-# Buzz Security hides from contained agents.
+# Buzz Security hides from contained agents. The API key lives there too:
+# protected agents can read the download folder.
 review=""
 if [ "$(uname)" = Darwin ]; then
   dir="$HOME/Library/Application Support/Buzz/claude-code"
   review="$HOME/Library/Application Support/Buzz/claude-code-review-home"
+  keys="$review"
 else
   dir="${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-code"
+  keys="$dir"
 fi
 
 # Refuses a review folder that is a link or not a folder.
@@ -29,6 +32,15 @@ review_folder() {
     echo "The Claude review folder is not a folder" >&2
     exit 1
   fi
+}
+
+# Makes the review folder, private, unless something else is in its place.
+make_review() {
+  review_folder
+  mkdir -p "${review%/*}"
+  [ -d "$review" ] || mkdir -m 700 "$review"
+  review_folder
+  chmod 700 "$review"
 }
 
 # Versions name folders, so only digits and dots: no `..` or `/` escapes.
@@ -143,34 +155,30 @@ save-key)
     exit 1
     ;;
   esac
-  mkdir -p "$dir"
+  if [ -n "$review" ]; then make_review; else mkdir -p "$keys"; fi
   umask 077
   # A new file only, then a rename over the old one, so no link is followed.
-  part="$dir/api-key.$$"
+  part="$keys/api-key.$$"
   trap 'rm -f "$part"' EXIT
   (set -C && printf '%s\n' "$key" >"$part")
   if [ "$(uname)" = Darwin ]; then
-    mv -f -h "$part" "$dir/api-key"
+    mv -f -h "$part" "$keys/api-key"
   else
-    mv -f -T "$part" "$dir/api-key"
+    mv -f -T "$part" "$keys/api-key"
   fi
   echo "Saved the Anthropic API key."
   ;;
 key)
   # Nothing until a key is saved, and never through a link.
-  if [ -f "$dir/api-key" ] && [ ! -h "$dir/api-key" ]; then
-    cat "$dir/api-key"
+  if [ -f "$keys/api-key" ] && [ ! -h "$keys/api-key" ]; then
+    cat "$keys/api-key"
   fi
   ;;
 review)
   # Reviews' own Claude folder, made on first use, which Buzz Security hides
   # from contained agents.
   [ -n "$review" ] || { echo "Claude security reviews need macOS" >&2; exit 2; }
-  review_folder
-  mkdir -p "${review%/*}"
-  [ -d "$review" ] || mkdir -m 700 "$review"
-  review_folder
-  chmod 700 "$review"
+  make_review
   printf '%s\n' "$review"
   ;;
 *)

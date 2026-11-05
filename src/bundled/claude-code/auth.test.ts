@@ -57,18 +57,47 @@ it("refuses a turn's claude without a key, but lets setup run its checks", async
   });
 });
 
-it("reads the key again once it is saved or checked", async () => {
+it("reads the key again until there is one, then once it is saved or checked", async () => {
   const saved = { key: "" };
   const { spawn, started } = host(saved);
   const auth = new ClaudeAuth(spawn);
+  const reads = () => started.filter(({ id }) => id === "key").length;
+  await expect(auth.check()).resolves.toBeUndefined();
+  // No key is not kept: another Buzz on this computer may save one.
+  saved.key = KEY;
+  await auth.authorize(spawn, true)("claude");
+  expect(reads()).toBe(2);
+  // A key is kept until it is checked or saved.
+  saved.key = "";
+  await auth.authorize(spawn, true)("claude");
+  expect(reads()).toBe(2);
   await expect(auth.check()).resolves.toBeUndefined();
   saved.key = KEY;
-  // Cached until then.
-  await expect(auth.authorize(spawn, true)("claude")).rejects.toThrow();
   await expect(auth.check()).resolves.toEqual({});
-  await auth.authorize(spawn, true)("claude");
-  expect(started.filter(({ id }) => id === "key")).toHaveLength(2);
   await auth.save(KEY);
   await auth.authorize(spawn, true)("claude");
-  expect(started.filter(({ id }) => id === "key")).toHaveLength(3);
+  expect(reads()).toBe(5);
+});
+
+it("tells listeners of a saved key, or a stopped save, but not a refused one", async () => {
+  const exits = [0, 1, 1];
+  const spawn: Spawn = async () => ({
+    write: async () => undefined,
+    end: async () => undefined,
+    kill: async () => undefined,
+    exited: Promise.resolve(exits.shift() ?? 0),
+  });
+  const auth = new ClaudeAuth(spawn);
+  let told = 0;
+  auth.subscribe(() => {
+    told += 1;
+  });
+  await auth.save(KEY);
+  expect(told).toBe(1);
+  await expect(auth.save("nope")).rejects.toThrow();
+  expect(told).toBe(1);
+  const stopped = new AbortController();
+  stopped.abort();
+  await expect(auth.save(KEY, stopped.signal)).rejects.toThrow();
+  expect(told).toBe(2);
 });

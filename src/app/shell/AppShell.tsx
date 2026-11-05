@@ -184,6 +184,7 @@ function AppShellContent({
   const navigation = useMemo(() => {
     const sidebarPages = orderPages(
       pages.filter((page) => pagePlacement(page) === "sidebar"),
+      pages,
     );
     const pageNavigation = sidebarPages.length ? (
       <nav aria-label="Pages" className="shell-pages">
@@ -236,6 +237,7 @@ function AppShellContent({
             pagePlacement(page) === "topbar" ||
             pagePlacement(page) === "toolbar",
         ),
+        pages,
       ),
     [pages],
   );

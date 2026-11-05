@@ -10,6 +10,310 @@ import type { LiveCallbacks } from "./live";
 import { byteSize } from "./budget";
 import { createInboxFeed } from "./inbox-feed";
 
+async function historyCall(h: ReturnType<typeof setup>) {
+  await vi.waitFor(() =>
+    expect(h.calls.some((call) => call.filters[0]?.kinds?.includes(9))).toBe(
+      true,
+    ),
+  );
+  const index = h.calls.findIndex((call) =>
+    call.filters[0]?.kinds?.includes(9),
+  );
+  const call = h.calls.splice(index, 1)[0];
+  if (!call) throw new Error("Missing history request");
+  return call;
+}
+
+it("paginates short addressed pages and joined thread history without treating short pages as exhausted", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const recent = addressed(h, "recent", 100);
+  const old = addressed(h, "older", 90);
+  const feed = h.session.inboxFeed;
+  const initial = feed.ensure();
+  (await historyCall(h)).pending.resolve([recent]);
+  await initial;
+  const first = feed.loadOlder();
+  const firstCall = await historyCall(h);
+  expect(firstCall.filters[0]).toMatchObject({
+    "#p": [h.viewer.pubkey],
+    until: 100,
+    before_id: recent.id,
+  });
+  firstCall.pending.resolve([old]);
+  await first;
+  expect(feed.snapshot().hasOlder).toBe(true);
+  const root = message(h.viewer, "room", "my thread", 70);
+  const reply = message(h.alice, "room", "older thread reply", 80, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+  ]);
+  const second = feed.loadOlder();
+  const secondCall = await historyCall(h);
+  expect(secondCall.filters[0]).toMatchObject({ "#h": ["room"], limit: 50 });
+  secondCall.pending.resolve([reply, root]);
+  await second;
+  expect(rows(h).some((row) => row.preview === "older thread reply")).toBe(
+    true,
+  );
+  const third = feed.loadOlder();
+  const thirdCall = await historyCall(h);
+  expect(thirdCall.filters[0]).toMatchObject({ until: 90, before_id: old.id });
+  thirdCall.pending.resolve([]);
+  await third;
+  expect(feed.snapshot().hasOlder).toBe(true);
+  const fourth = feed.loadOlder();
+  const fourthCall = await historyCall(h);
+  expect(fourthCall.filters[0]).toMatchObject({
+    until: 70,
+    before_id: root.id,
+  });
+  fourthCall.pending.resolve([]);
+  await fourth;
+  expect(feed.snapshot().hasOlder).toBe(false);
+  const count = h.query.mock.calls.length;
+  await feed.loadOlder();
+  expect(h.query.mock.calls.length).toBe(count);
+  expect(rows(h).map((row) => row.preview)).toContain("older");
+});
+
+it.each([true, false])(
+  "preserves both request intents when older history starts first: %s",
+  async (olderFirst) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const feed = h.session.inboxFeed;
+    const recent = addressed(h, "recent", 100);
+    const old = addressed(h, "older", 90);
+    const fresh = addressed(h, "fresh", 110);
+    const initial = feed.ensure();
+    (await historyCall(h)).pending.resolve([recent]);
+    await initial;
+
+    const first = olderFirst ? feed.loadOlder() : feed.refresh();
+    const active = await historyCall(h);
+    const second = olderFirst ? feed.refresh() : feed.loadOlder();
+    const duplicate = olderFirst ? feed.refresh() : feed.loadOlder();
+    expect(h.calls).toHaveLength(0);
+    let settled = false;
+    void second.then(() => {
+      settled = true;
+    });
+    active.pending.resolve([olderFirst ? old : fresh]);
+    await first;
+
+    const queued = await historyCall(h);
+    expect(settled).toBe(false);
+    expect(feed.snapshot()).toMatchObject({
+      status: "loading",
+      loadingOlder: !olderFirst,
+    });
+    if (olderFirst) {
+      expect(active.filters[0]).toMatchObject({
+        until: 100,
+        before_id: recent.id,
+      });
+      expect(queued.filters[0]?.until).toBeUndefined();
+      expect(queued.filters[0]?.before_id).toBeUndefined();
+    } else {
+      expect(active.filters[0]?.until).toBeUndefined();
+      expect(queued.filters[0]).toMatchObject({
+        until: 110,
+        before_id: fresh.id,
+      });
+    }
+    queued.pending.resolve([olderFirst ? fresh : old]);
+    await Promise.all([second, duplicate]);
+    expect(settled).toBe(true);
+    expect(h.calls).toHaveLength(0);
+    expect(
+      h.query.mock.calls.filter(([filters]) => filters[0]?.["#p"]),
+    ).toHaveLength(3);
+    expect(rows(h).map((row) => row.preview)).toEqual([
+      "fresh",
+      "recent",
+      "older",
+    ]);
+    expect(feed.snapshot()).toMatchObject({
+      status: "ready",
+      loadingOlder: false,
+    });
+  },
+);
+
+it.each([true, false])(
+  "retires queued intent on access changes when older history starts first: %s",
+  async (olderFirst) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const feed = h.session.inboxFeed;
+    const first = olderFirst ? feed.loadOlder() : feed.refresh();
+    const active = await historyCall(h);
+    const second = olderFirst ? feed.refresh() : feed.loadOlder();
+    h.admit([h.alice.pubkey], 30);
+    active.pending.resolve([addressed(h, "revoked", 20)]);
+    await Promise.all([first, second]);
+    expect(h.calls).toHaveLength(0);
+    expect(
+      h.query.mock.calls.filter(([filters]) => filters[0]?.["#p"]),
+    ).toHaveLength(1);
+    expect(feed.snapshot().status).toBe("idle");
+    expect(rows(h)).toEqual([]);
+  },
+);
+
+it("runs a queued refresh after older history fails", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const feed = h.session.inboxFeed;
+  const first = feed.loadOlder();
+  const active = await historyCall(h);
+  const second = feed.refresh();
+  active.pending.reject(new Error("older history unavailable"));
+  await first;
+  const queued = await historyCall(h);
+  expect(queued.filters[0]?.until).toBeUndefined();
+  queued.pending.resolve([addressed(h, "fresh", 110)]);
+  await Promise.all([first, second]);
+  expect(h.calls).toHaveLength(0);
+  expect(
+    h.query.mock.calls.filter(([filters]) => filters[0]?.["#p"]),
+  ).toHaveLength(2);
+  expect(feed.snapshot()).toMatchObject({ status: "ready", error: undefined });
+  expect(rows(h).map((row) => row.preview)).toEqual(["fresh"]);
+});
+
+it("retries the same page after a failed overlay and holds its preview incomplete", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const old = addressed(h, "stale body", 20);
+  let fail = true;
+  h.query.mockImplementation((filters) => {
+    if (filters[0]?.["#e"])
+      return fail
+        ? Promise.reject(new Error("updates unavailable"))
+        : Promise.resolve([]);
+    return Promise.resolve([old]);
+  });
+  const feed = h.session.inboxFeed;
+  await feed.loadOlder();
+  expect(feed.snapshot()).toMatchObject({
+    status: "error",
+    incomplete: [old.id],
+  });
+  fail = false;
+  await feed.loadOlder();
+  expect(feed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+    hasOlder: true,
+  });
+  const reads = h.query.mock.calls.filter(([filters]) => filters[0]?.["#p"]);
+  expect(reads).toHaveLength(2);
+  expect(reads[1]?.[0]).toEqual(reads[0]?.[0]);
+});
+
+it("rejects a repeated cursor and does not skip equal-timestamp events", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const chats = [addressed(h, "one", 20), addressed(h, "two", 20)].sort(
+    (a, b) => a.id.localeCompare(b.id),
+  );
+  const [first, second] = chats;
+  if (!first || !second) throw new Error("Missing same-time fixtures");
+  h.query.mockImplementation((filters) =>
+    Promise.resolve(filters[0]?.["#e"] ? [] : [first]),
+  );
+  const feed = h.session.inboxFeed;
+  await feed.ensure();
+  await feed.loadOlder();
+  expect(feed.snapshot()).toMatchObject({
+    status: "error",
+    error: expect.stringContaining("did not advance"),
+  });
+  h.query.mockImplementation((filters) =>
+    Promise.resolve(filters[0]?.["#e"] ? [] : [second]),
+  );
+  await feed.loadOlder();
+  expect(feed.snapshot().status).toBe("ready");
+  expect(rows(h)).toHaveLength(2);
+});
+
+it("cancels older history on access removal and cannot publish its late completion", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const feed = h.session.inboxFeed;
+  const work = feed.loadOlder();
+  const pending = await historyCall(h);
+  h.admit([h.alice.pubkey], 30);
+  pending.pending.resolve([addressed(h, "revoked", 20)]);
+  await work;
+  expect(rows(h)).toEqual([]);
+  expect(feed.snapshot()).toMatchObject({ status: "idle", hasOlder: true });
+});
+
+it("stops before a historical page would reset the retained unread byte budget", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  // This size exercises the existing 8 MiB retention contract, not a scale fixture.
+  const current = addressed(h, "x".repeat(6 * 1024 * 1024), 100);
+  h.live.receive([current]);
+  const old = addressed(h, "y".repeat(3 * 1024 * 1024), 20);
+  const work = h.session.inboxFeed.loadOlder();
+  (await historyCall(h)).pending.resolve([old]);
+  await work;
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "error",
+    error: expect.stringContaining("retention limit"),
+  });
+  expect(rows(h).map((row) => row.messageId)).toEqual([current.id]);
+  const fresh = addressed(h, "z".repeat(3 * 1024 * 1024), 110);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const refresh = h.session.inboxFeed.refresh();
+    (await historyCall(h)).pending.resolve([fresh]);
+    await refresh;
+  }
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    error: undefined,
+  });
+  expect(rows(h).map((row) => row.messageId)).toEqual([fresh.id]);
+});
+
+it("head refresh also recovers when an edit overflows retained evidence", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const current = addressed(h, "x".repeat(6 * 1024 * 1024), 100);
+  const fresh = addressed(h, "fresh mention", 110);
+  const update = signed(h.alice, {
+    kind: 40003,
+    created_at: 120,
+    tags: [
+      ["h", "room"],
+      ["e", fresh.id],
+    ],
+    content: "z".repeat(3 * 1024 * 1024),
+  });
+  h.live.receive([current]);
+  h.query.mockImplementation((filters) => {
+    const filter = filters[0];
+    return Promise.resolve(
+      filter?.["#e"]
+        ? filter.kinds?.includes(40003) && !filter.before_id
+          ? [update]
+          : []
+        : [fresh],
+    );
+  });
+  for (let attempt = 0; attempt < 2; attempt++)
+    await h.session.inboxFeed.refresh();
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    error: undefined,
+  });
+  expect(rows(h).map((row) => row.messageId)).toEqual([fresh.id]);
+});
+
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
 const owners: ReturnType<typeof createRelaySession>[] = [];

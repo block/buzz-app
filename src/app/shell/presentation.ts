@@ -27,20 +27,25 @@ const bundledOrder = [
   "buzz.reminders/reminders",
   "buzz.bestie/bestie",
 ];
-export function orderPages(pages: readonly RegisteredPage[]) {
+export function orderPages(pages: readonly RegisteredPage[], allPages = pages) {
+  const replaced = new Set(
+    allPages.flatMap((page) => (page.primary ? (page.replaces ?? []) : [])),
+  );
   const rank = (page: RegisteredPage) => {
     const slot = bundledOrder.indexOf(page.key);
     return slot === -1 ? bundledOrder.length : slot;
   };
-  return [...pages].sort(
-    (a, b) =>
-      rank(a) - rank(b) ||
-      pagePresentation(a).label.localeCompare(
-        pagePresentation(b).label,
-        "en",
-      ) ||
-      a.key.localeCompare(b.key, "en"),
-  );
+  return pages
+    .filter((page) => !replaced.has(page.key))
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        pagePresentation(a).label.localeCompare(
+          pagePresentation(b).label,
+          "en",
+        ) ||
+        a.key.localeCompare(b.key, "en"),
+    );
 }
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([

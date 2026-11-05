@@ -413,6 +413,44 @@ it.each([
   },
 );
 
+// A press with another button ends without a click, so focus the app later
+// returns to the pressed control, such as a context menu closing, is not the
+// person's.
+it.each([
+  [
+    "contextmenu",
+    (composer: HTMLElement) => {
+      fireEvent.pointerDown(composer, { button: 2 });
+      fireEvent.pointerUp(composer, { button: 2 });
+      fireEvent.contextMenu(composer, { button: 2 });
+    },
+  ],
+  [
+    "auxclick",
+    (composer: HTMLElement) => {
+      fireEvent.pointerDown(composer, { button: 1 });
+      fireEvent.pointerUp(composer, { button: 1 });
+      fireEvent(
+        composer,
+        new MouseEvent("auxclick", { bubbles: true, button: 1 }),
+      );
+    },
+  ],
+] as const)(
+  "does not count a press that ended at its %s as a later claim",
+  async (_, press) => {
+    const { row, outside, composer, complete } = mount();
+    await frame();
+    press(composer);
+    outside.focus(); // Such as the menu taking focus.
+    composer.focus(); // Its focus return as it closes.
+    await frame();
+    expect(document.activeElement).toBe(row);
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
 it.each(["Escape", "pointer"])(
   "takes focus moved to the surface around the scroller (%s)",
   async (input) => {

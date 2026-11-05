@@ -75,7 +75,8 @@ export function useMessageReveal({
       };
     const request = opener.current;
     // A press is pending until it ends. A tap focuses after pointerup, so a
-    // pointer press ends at its click.
+    // pointer press ends at its click, or, for another button, at its
+    // contextmenu or auxclick.
     let pointer: Node | null = null;
     let tab = false;
     const pressed = (event: Event) => {
@@ -105,6 +106,8 @@ export function useMessageReveal({
     const listeners = [
       ["pointerdown", pressed],
       ["click", released],
+      ["contextmenu", released],
+      ["auxclick", released],
       ["pointercancel", released],
       ["keydown", keyed],
       ["keyup", unkeyed],

@@ -1,7 +1,0 @@
-{
-  "id": "buzz.stickers",
-  "name": "Stickers",
-  "apiVersion": 1,
-  "description": "Turn images in messages into custom emoji, lifting the subject off the background on Mac.",
-  "discovery": { "category": "communication", "tags": ["messaging"] }
-}

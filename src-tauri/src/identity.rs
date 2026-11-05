@@ -1387,6 +1387,9 @@ impl IdentityHost {
     /// identity can name the pull request cards it publishes for that hook.
     pub(crate) async fn github_card_key(&self, community: String, hook: String) -> Result<String> {
         use hmac::{Hmac, Mac};
+        let community = crate::relay::origin(&community)?
+            .origin()
+            .ascii_serialization();
         with_identity(self.clone(), move |identity| {
             identity.restore()?;
             let State::Ready(key) = &identity.state else {

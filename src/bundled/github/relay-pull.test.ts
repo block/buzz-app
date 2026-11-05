@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
 import type { Hook } from "./hooks";
 import {
-  announcedUrl,
+  announcementUrl,
   isAnnouncement,
   parseRecord,
   pullStateOf,
@@ -196,13 +196,16 @@ it("settles checks only when every run is done and none is pending", () => {
   ).toMatchObject({ checks: undefined, settled: false });
 });
 
-it("finds the pull request URL an announcement links", () => {
-  expect(announcedUrl(`#7 · Add the card\n${url}`)).toBe(url);
-  expect(announcedUrl(`see ${url}?diff=split`)).toBe(url);
-  expect(announcedUrl("Merged by joah")).toBeUndefined();
-  expect(announcedUrl("https://github.com/block/buzz-app/issues/7")).toBe(
-    undefined,
-  );
+it("takes the pull request URL from an announcement's last line only", () => {
+  const other = "https://github.com/o/r/pull/99";
+  expect(announcementUrl(`#7 · Add the card\n${url}`)).toBe(url);
+  expect(announcementUrl(`#7 · see ${other}\n${url}`)).toBe(url);
+  expect(announcementUrl(`#99 · see ${url}\n${other}`)).toBe(other);
+  expect(announcementUrl(`see ${url}?diff=split`)).toBeUndefined();
+  expect(announcementUrl("Merged by joah")).toBeUndefined();
+  expect(
+    announcementUrl("#7 · x\nhttps://github.com/block/buzz-app/issues/7"),
+  ).toBeUndefined();
 });
 
 it("trusts a publisher's revision only for the live hook that names them, in its channel and repository", () => {

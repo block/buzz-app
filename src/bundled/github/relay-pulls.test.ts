@@ -46,26 +46,37 @@ const head = (
     ...extra,
   }) as VerifiedEvent;
 
-function fakeSession() {
+function fakeSession(
+  stored: (filter: Record<string, unknown>) => VerifiedEvent[] = () => [],
+) {
   const views: {
     filter: unknown;
+    status: string;
     events: VerifiedEvent[];
     listeners: Set<() => void>;
     disposed: boolean;
   }[] = [];
+  const reads: Record<string, unknown>[] = [];
   const session = {
     relayAuthor: relay,
+    snapshotRead: async (filters: Record<string, unknown>[]) => {
+      const [filter] = filters;
+      if (!filter) return [];
+      reads.push(filter);
+      return stored(filter);
+    },
     artifacts: {
       sync(filter: unknown) {
         const view = {
           filter,
+          status: "live",
           events: [] as VerifiedEvent[],
           listeners: new Set<() => void>(),
           disposed: false,
         };
         views.push(view);
         return {
-          snapshot: () => ({ status: "live", events: view.events }),
+          snapshot: () => ({ status: view.status, events: view.events }),
           subscribe(listener: () => void) {
             view.listeners.add(listener);
             return () => view.listeners.delete(listener);
@@ -77,11 +88,16 @@ function fakeSession() {
       },
     },
   } as unknown as RelaySession;
-  const publish = (view: (typeof views)[number], events: VerifiedEvent[]) => {
+  const publish = (
+    view: (typeof views)[number],
+    events: VerifiedEvent[],
+    status = "live",
+  ) => {
     view.events = events;
+    view.status = status;
     for (const listener of view.listeners) listener();
   };
-  return { session, views, publish };
+  return { session, views, reads, publish };
 }
 
 it("syncs a watched channel's pull requests and indexes the relay's own by URL and root", () => {
@@ -189,6 +205,36 @@ it("trusts a publisher's card only on its own announcement, never for the pull r
   expect(pulls.byUrl(url.toLowerCase())?.publisher).toBeUndefined();
   expect(pulls.byRoot(root, relay)?.publisher).toBeUndefined();
   expect(pulls.byRoot(root, mike)?.publisher).toBe(mike);
+});
+
+it("reads each shown announcement's cards once when the channel's sync fails for good", async () => {
+  const root = `${"f".repeat(63)}7`;
+  const { session, views, reads, publish } = fakeSession((filter) =>
+    (filter["#root"] as string[] | undefined)?.[0] === root ? [head(7)] : [],
+  );
+  const pulls = createRelayPulls(session);
+  pulls.watch(channel, root);
+  const view = views[0];
+  if (!view) throw new Error("no view");
+  expect(reads).toEqual([]);
+  publish(view, [], "error");
+  await vi.waitFor(() =>
+    expect(pulls.byRoot(root, relay)?.pull.number).toBe(7),
+  );
+  expect(reads).toEqual([
+    {
+      kinds: [45010],
+      "#h": [channel],
+      "#type": [PULL_TYPE],
+      "#root": [root],
+      artifact: "current",
+      limit: 100,
+    },
+  ]);
+  expect(pulls.byUrl(url.toLowerCase())?.pull.number).toBe(7);
+  publish(view, [], "error");
+  pulls.watch(channel, root);
+  expect(reads).toHaveLength(1);
 });
 
 it("keeps a channel's sync a while after its last reader, and one sync for all readers", () => {

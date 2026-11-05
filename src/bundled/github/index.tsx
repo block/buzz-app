@@ -63,7 +63,7 @@ import { GitHubSettings } from "./GitHubSettings";
 import { openGitHubLinksInBuzz } from "./link-preference";
 import { GitHubHooks } from "./GitHubHooks";
 import { PullCard } from "./PullCard";
-import { announcedUrl, isAnnouncement } from "./relay-pull";
+import { isAnnouncement } from "./relay-pull";
 import {
   createPublisherStatus,
   nativeCardKey,
@@ -170,17 +170,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerMessage({
     id: "pull-card",
     title: "Pull request card",
-    // A publisher's announcement is an ordinary member's message, so its
-    // exact shape claims it; the card shows that publisher's record only.
-    matches: (message) => {
-      const state = ctx.relay.snapshot();
-      if (state.status !== "ready") return false;
-      const relayAuthor = state.session.relayAuthor;
-      return relayAuthor &&
-        (message.signerId ?? message.authorId) === relayAuthor
-        ? !!announcedUrl(message.content)
-        : isAnnouncement(message.content);
-    },
+    // An announcement's exact shape claims it, whoever posted it; the card
+    // shows only a record its signer wrote.
+    matches: (message) =>
+      ctx.relay.snapshot().status === "ready" &&
+      isAnnouncement(message.content),
     component: ({ message, open, canOpen }) => (
       <PullCard
         message={message}

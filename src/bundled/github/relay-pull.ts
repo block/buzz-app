@@ -198,24 +198,20 @@ export function parseCard(event: EventData): PullRecord | undefined {
   };
 }
 
-const ANNOUNCEMENT = /^#([1-9]\d*) · [^\n]+\n(\S+)$/;
+const ANNOUNCEMENT = /^#([1-9]\d*) · [^\n]*\n(\S+)$/;
 
-/** Whether `content` is exactly an announcement: "#123 · title" and then the
- * pull request's URL, as the relay and publishers post one. */
-export function isAnnouncement(content: string) {
+/** The pull request URL on the last line of an announcement, which is
+ * exactly "#123 · title" and then that URL, as the relay and publishers post
+ * one; a URL anywhere else, as in a title, names nothing. */
+export function announcementUrl(content: string) {
   const [, number, link] = ANNOUNCEMENT.exec(content) ?? [];
   const reference = link ? parseGitHubReference(link) : undefined;
-  return reference?.kind === "pull" && reference.label === `#${number}`;
+  return reference?.kind === "pull" && reference.label === `#${number}`
+    ? reference.url
+    : undefined;
 }
 
-/** The pull request URL the relay's announcement links, when it does. */
-export function announcedUrl(content: string) {
-  for (const word of content.split(/\s+/)) {
-    const reference = parseGitHubReference(word);
-    if (reference?.kind === "pull") return reference.url;
-  }
-  return undefined;
-}
+export const isAnnouncement = (content: string) => !!announcementUrl(content);
 
 const finished = (conclusion: string) => conclusion !== "pending";
 

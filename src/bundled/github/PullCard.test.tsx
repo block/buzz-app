@@ -82,7 +82,7 @@ it("shows the announcement's own words until the relay has a record, then the pu
       canOpen={() => false}
     />,
   );
-  expect(watch).toHaveBeenCalledWith(channelId);
+  expect(watch).toHaveBeenCalledWith(channelId, message.id);
   expect(
     screen.getByRole("link", { name: "#7 · Add the card" }),
   ).toHaveAttribute("href", url);
@@ -178,5 +178,24 @@ it("ignores a record for a pull request other than the one the announcement link
   ).toHaveAttribute("href", url);
   expect(screen.queryByText("block/buzz-app")).not.toBeInTheDocument();
   update(pull({ url: "https://github.com/Block/Buzz-App/pull/7" }));
+  expect(screen.getByText("block/buzz-app")).toBeVisible();
+});
+
+it("takes the pull request from the announcement's last line, not a URL in its title", () => {
+  const { sources, update } = setup();
+  const other = "https://github.com/o/r/pull/99";
+  render(
+    <PullCard
+      message={{ ...message, content: `#7 · see ${other}\n${url}` }}
+      sources={sources}
+      nameOf={nameOf}
+      open={() => false}
+      canOpen={() => false}
+    />,
+  );
+  update(pull({ url: other, repo: "o/r", number: 99 }));
+  expect(screen.queryByText("o/r")).not.toBeInTheDocument();
+  expect(screen.getByRole("link")).toHaveAttribute("href", url);
+  update(pull());
   expect(screen.getByText("block/buzz-app")).toBeVisible();
 });

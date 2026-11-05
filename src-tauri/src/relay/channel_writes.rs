@@ -257,12 +257,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn github_card_keys_differ_by_community_and_hook() {
+    async fn github_card_keys_follow_the_community_origin_and_hook() {
         let host = IdentityHost::fixture();
         let key = |community: &str, hook: &str| host.github_card_key(community.into(), hook.into());
         let first = key("https://a.example", "hook").await.unwrap();
         assert_eq!(first.len(), 64);
         assert_eq!(key("https://a.example", "hook").await.unwrap(), first);
+        assert_eq!(key("https://A.example/", "hook").await.unwrap(), first);
+        assert_eq!(key("https://a.example:443", "hook").await.unwrap(), first);
+        assert!(key("http://a.example", "hook").await.is_err());
         assert_ne!(key("https://b.example", "hook").await.unwrap(), first);
         assert_ne!(key("https://a.example", "other").await.unwrap(), first);
     }

@@ -857,6 +857,7 @@ export function Settings({
   // installed revision. Each check reads its own clone and never touches Add's
   // preview; Update still opens the review.
   const checkedUpdates = useRef(new Set<string>());
+  const updateCheckQueue = useRef(Promise.resolve());
   const checkGitUpdate = useEffectEvent(async (plugin: PluginInfo) => {
     const id = plugin.manifest.id;
     const source = plugin.updateSource;
@@ -896,14 +897,15 @@ export function Settings({
         !checkedUpdates.current.has(key(plugin)),
     );
     let active = true;
-    void (async () => {
+    // A re-run waits for the previous run's check so only one clone runs.
+    updateCheckQueue.current = updateCheckQueue.current.then(async () => {
       for (const plugin of due) {
         if (!active) return;
         if (checkedUpdates.current.has(key(plugin))) continue;
         checkedUpdates.current.add(key(plugin));
         await checkGitUpdate(plugin);
       }
-    })();
+    });
     return () => {
       active = false;
     };

@@ -2495,7 +2495,11 @@ it("checks Git sources in the background, one at a time, and offers available up
     "release",
     undefined,
   );
-  act(fixture.publish);
+  // A catalog change mid-check waits for it instead of starting a second clone.
+  fixture.snapshot.configuration.catalog = {
+    ...fixture.snapshot.configuration.catalog,
+  };
+  await act(async () => fixture.publish());
   expect(checkGit).toHaveBeenCalledOnce();
   await act(async () => releaseFirst());
   await waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));

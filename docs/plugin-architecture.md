@@ -1823,9 +1823,14 @@ Update, which opens access review before explicit confirmation. A known update t
 the prominent action position in both the pane and its list row; Enable/Disable
 moves into their ellipsis menus while Update is available. The row retains the latest
 check result for the installed revision and opens the pane’s review, checking the
-saved source again when the pane reopens. Known Git results remain visible on reopen;
-Git is checked explicitly through a read-only acquisition that never locks or replaces the shared import preview. Choosing
-Update reacquires the Git source with fresh authorization. Only the open pane polls local folders.
+saved source again when the pane reopens. Known Git results remain visible on reopen.
+While the Plugins section is open, Settings checks each external, unmanaged plugin
+with a saved Git source in the background, one at a time and once per installed ID and
+revision for that Settings session, so a known update appears in its row without
+pressing Check for updates. Each check, like the pane's Check for updates, is a
+read-only acquisition with fresh authorization that never locks or replaces the shared
+import preview; background failures are not shown, and the pane's check reports them.
+Choosing Update reacquires the Git source with fresh authorization. Only the open pane polls local folders.
 The menus also offer Review access, reusing the import review’s disclosures
 for the installed manifest, and Delete with confirmation. These menus appear only for
 manual/external plugins; bundled plugins keep their Enable/Disable control.
@@ -1833,8 +1838,8 @@ The list row shows no freshness status label. Failed activation shows Retry besi
 unpaused plugin. Retry activates the installed revision after its previous cleanup
 finishes; it does not acquire source files, install a package, or change saved state.
 Package freshness and activation failures are displayed separately. Update uses the same source and candidate path; changing sources
-requires deleting the plugin and adding it again. Git checks remain explicit in the
-pane, using the remembered repository and branch/tag with fresh authorization;
+requires deleting the plugin and adding it again. Git checks use the remembered
+repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
 usernames. On macOS, sources at `ssh://org-49461806@github.com/squareup/…` on

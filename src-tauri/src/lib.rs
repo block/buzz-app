@@ -824,9 +824,6 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
     ]
 }
 
-/// WebKit only underlines misspellings when this app default is on. Register it
-/// as a fallback, so a choice WebKit saves from the composer's Spelling and
-/// Grammar menu still wins.
 #[cfg(target_os = "macos")]
 fn register_spellcheck_default() {
     use objc2::runtime::AnyObject;
@@ -843,7 +840,6 @@ fn register_spellcheck_default() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Before any webview reads it.
     #[cfg(target_os = "macos")]
     register_spellcheck_default();
     let context = app_context();
@@ -1233,7 +1229,6 @@ mod tests {
         use objc2_foundation::{ns_string, NSUserDefaults};
         let key = ns_string!("WebContinuousSpellCheckingEnabled");
         let defaults = NSUserDefaults::standardUserDefaults();
-        // Registered defaults are never saved, so this leaves no preference behind.
         super::register_spellcheck_default();
         assert!(defaults.boolForKey(key));
     }

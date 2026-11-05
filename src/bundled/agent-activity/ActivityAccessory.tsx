@@ -200,13 +200,9 @@ function MessageActivity(
     return true;
   };
   const shown: Entry[] = entries
-    .filter(
-      (entry) =>
-        visible(entry) &&
-        (entry.stoppable ||
-          entry.state === "error" ||
-          !props.representedAgents?.includes(entry.agent)),
-    )
+    // Published replies do not end work. Only a mounted history owner can
+    // replace this indicator (via recorded), including when Stop is unavailable.
+    .filter(visible)
     .map((entry) => {
       const choice = choices.identities.find(
         (row) => row.pubkey === entry.agent,
@@ -269,13 +265,7 @@ function MessageActivity(
   // entries) so the list never loses and regains its height mid-handoff.
   const bubble = (
     shown.length ? shown : (leaving ?? (ended ? retained.current : []))
-  ).filter(
-    (entry) =>
-      (!recorded.has(entry.agent) || entry.state === "error") &&
-      (entry.stoppable ||
-        entry.state === "error" ||
-        !props.representedAgents?.includes(entry.agent)),
-  );
+  ).filter((entry) => !recorded.has(entry.agent) || entry.state === "error");
   // Once its live bubble has left, a stopped request stays noted here. It sits
   // in the incoming message frame without a gutter, so it starts at the reply
   // avatars' edge.

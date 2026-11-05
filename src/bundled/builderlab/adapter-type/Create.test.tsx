@@ -13,9 +13,8 @@ import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
-import { createOAuthSession } from "../oauth/session";
-import type { Credential } from "../oauth/browser";
-import { deferred } from "../test-helpers";
+import type { Credential } from "../session";
+import { deferred, createTestSession } from "../test-helpers";
 import {
   createCreationAction,
   createCreationFields,
@@ -45,7 +44,7 @@ const catalog = [
 ];
 async function fixture(signedIn = true) {
   const acquire = vi.fn(async () => ({
-    value: "credential",
+    revision: "credential",
     account: {
       subject: "account",
       email: "a@example.com",
@@ -53,7 +52,7 @@ async function fixture(signedIn = true) {
       canUseBuilderlabDecisions: false,
     },
   }));
-  const session = createOAuthSession(acquire, undefined, {
+  const session = createTestSession(acquire, undefined, {
     request: (input) => request(input),
   });
   if (signedIn) await session.signIn();
@@ -258,7 +257,7 @@ it("requires new account choices while retaining the draft instructions", async 
   act(() => h.session.signOut());
   expect(h.ready).toHaveBeenLastCalledWith(false);
   h.acquire.mockResolvedValue({
-    value: "other-credential",
+    revision: "other-credential",
     account: {
       subject: "other",
       email: "b@example.com",
@@ -384,7 +383,7 @@ it("matches pane sign-in: spinner first, then browser guidance and cancellation 
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const login = deferred<Credential>();
   let aborted = false;
-  const session = createOAuthSession(
+  const session = createTestSession(
     (signal) => {
       signal.addEventListener("abort", () => (aborted = true));
       return login.promise;
@@ -457,7 +456,7 @@ it("matches pane sign-in: spinner first, then browser guidance and cancellation 
   expect(screen.queryByText(/Finish signing in/)).not.toBeInTheDocument();
   await act(async () => {
     login.resolve({
-      value: "late",
+      revision: "late",
       account: {
         subject: "late",
         email: "late@example.com",
@@ -472,7 +471,7 @@ it("matches pane sign-in: spinner first, then browser guidance and cancellation 
 
 it("keeps account verification non-cancellable beyond the browser deadline", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  const session = createOAuthSession(vi.fn());
+  const session = createTestSession(vi.fn());
   const checking = { status: "pending" as const, checking: true };
   const cancel = vi.fn();
   const Action = createCreationAction({

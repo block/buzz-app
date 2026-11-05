@@ -7,6 +7,7 @@ import {
   createCreationAction,
   createCreationFields,
   EMPTY_CREATION,
+  type CreationConfig,
 } from "./Create";
 import type { AgentType } from "../../../features/agents/service";
 import type { RelayData } from "../../../features/relay/service";
@@ -82,6 +83,19 @@ export function builderlabType(
     if (!agent) throw new Error("Agent not found in this Builderlab account.");
     return remember(pubkey, agent.id);
   }
+  /** The signed-in account's listing of the agent, with its instructions.
+   * It never starts browser login: only the pane's Sign in does, so a tab
+   * that reads instructions when it opens asks the owner to sign in first. */
+  async function listed(pubkey: string, signal: AbortSignal) {
+    const credential = session.credential();
+    const agent = (await client.list(signal)).find(
+      (row) => row.pubkey === pubkey,
+    );
+    if (session.credential() !== credential)
+      throw new DOMException("Builderlab session changed.", "AbortError");
+    if (!agent) throw new Error("Agent not found in this Builderlab account.");
+    return agent;
+  }
   async function validateCreation(config: unknown, signal: AbortSignal) {
     await session.ensureSignedIn(signal);
     const catalog = await client.modelCatalog(signal);
@@ -106,6 +120,12 @@ export function builderlabType(
     icon: BuilderlabLogoIcon,
     description: "Sign in to Builderlab when creating an agent.",
     defaults: () => ({ config: { ...EMPTY_CREATION } }),
+    // Instructions brought to a new agent, as from an agent card.
+    adopt: (carry, saved) => ({
+      ...(saved as CreationConfig),
+      instructions:
+        carry.instructions ?? (saved as CreationConfig).instructions,
+    }),
     ...createCreationFields(client, session),
     CreateAction: createCreationAction(session),
     PanelFooter: createSignInFooter(session),
@@ -160,6 +180,18 @@ export function builderlabType(
         // A stop is urgent: it never waits on an interactive sign-in.
         session.credential();
         return client.cancelTurn(await resolve(pubkey, signal), place, signal);
+      },
+      instructions: {
+        async get({ pubkey, signal }) {
+          return (await listed(pubkey, signal)).instructions ?? "";
+        },
+        async set({ pubkey, instructions, signal }) {
+          await client.updateInstructions(
+            await listed(pubkey, signal),
+            instructions,
+            signal,
+          );
+        },
       },
       async remove({ pubkey, signal }) {
         await session.ensureSignedIn(signal);

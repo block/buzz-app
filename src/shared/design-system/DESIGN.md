@@ -172,6 +172,10 @@ Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
 `ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
+Only the sticky footer's gradient gutter passes pointer input to the body.
+Its content row owns pointer input and horizontal overflow, including text,
+controls, gaps, and the bottom inset. When reduced transparency or forced colors
+make the gutter opaque, it also blocks input to the body beneath it.
 Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
 host surface when it differs from the default popover surface.
 `--scroll-edge-fill` can supply a stronger backing behind text within that fade.
@@ -611,7 +615,7 @@ Use the surface that matches the content and its position in the interface.
 
 - **Panels:** the shell uses an independent `Panel` for sidebar navigation and one `Panel joined` around the main content workspace, separated by `space-panel-gap` (8px at default scale). The sidebar resize grip stays centered in that gutter. Both retain opaque surfaces when navigation overlays at narrow widths. Nested Panels keep their opaque fill and clipping but lose independent borders, corners, and shadows. The layout owner separates adjacent regions with `border-standard` hairlines. Standalone Panels use `radius-container` (24px) corners and `shadow-panel` for a translucent contour and subtle lift, rather than an opaque depth border.
 - **Recessed regions:** use `bg-inset` for a region pushed into its surrounding surface. Use quiet fills where they communicate separation; reserve outlines for boundaries that need to be identified.
-- **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state.
+- **Shell:** `bg-app` is a solid color, neutral-quiet-hover in light mode and neutral 2 in dark. The shell owns one continuous `texture-dots` grid beneath its header, rail and panes. Dots derive from this background: darker in light mode, lighter in dark mode, never an unrelated gray. The app root owns the background and its texture together. Do not override a descendant background and expect inherited texture colors to recompute. The pattern is decorative; do not increase its contrast to communicate state. The one exception to the solid shell is a backdrop a plugin explicitly registers ([shell backdrops](../../../docs/plugin-architecture.md#shell-backdrops)); the default shell has none. A backdrop may cover the dots and gutters only. Panes stay opaque, and the host keeps solid `bg-app` beneath each header control group and the sidebar grip so their ink, fills and focus rings keep this background's contrast. The host shows no backdrop under reduced motion, reduced transparency or forced colors.
 - **Reading surfaces:** documentation and dense prose sit on opaque `bg-panel`. Keep the dot grid outside reading panes. Do not add gradient backgrounds to the app shell.
 - **Borders:** use `border-standard` for quiet separators, `border-prominent` for controls, and `border-focus` for keyboard-focus recipes. Errors and warnings have their own boundary roles. Measure the actual pairing in both themes.
 - **Shadows:** use the shared elevation roles and keep them subtle. Light mode relies on shadow; dark mode also raises the fill’s lightness. Do not strengthen a shadow to separate a dark floating surface.
@@ -901,7 +905,9 @@ same time and removes it without fading.
 
 The horizontal message hover toolbar sits above the bubble, with reaction,
 reply, copy-link and overflow icon actions. It uses `popover-surface` with
-a 12px control radius and 2px inset. Its icon actions use `text-subtle` at rest
+a 12px control radius and 2px inset. While closed it is invisible and drops the
+recipe's backdrop blur, so long timelines do not composite one blur per row;
+the open toolbar has the complete material. Its icon actions use `text-subtle` at rest
 and retain the shared hover, focus and disabled states and 10px corners.
 
 Message-author artwork uses Avatar `default` (32px) in channel/DM timelines,
@@ -1309,9 +1315,9 @@ or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
 on top of that body padding. Footers following body content also reserve a fixed
 `--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
 meets the buttons directly. Header-only confirmations retain their header-to-action
-gap. Create/Edit channel forms opt into
+gap. Create/Edit channel forms and plugin update reviews opt into
 `headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
-other dialog compositions retain their default spacing. Their privacy confirmation
+other dialog compositions retain their default spacing. Channel privacy confirmation
 steps also opt into `footerGap="compact"` for `0.5rem` of body-bottom padding
 before the fixed footer gutter; returning to the form restores the normal
 body-bottom padding.
@@ -1375,7 +1381,9 @@ feedback with the action owner. Pointer offsets clear the physical cursor silhou
 rather than following text-scale spacing. Real pointer geometry needs browser/native
 inspection; DOM tests do not establish placement.
 Overlay layers keep toasts, then menus and hints, above dialogs, so feedback a
-dialog raises stays visible.
+dialog raises stays visible. A hint inside a native top-layer surface, such as a
+hover preview or floating message actions, joins the top layer after it so the
+hint paints above that surface.
 Adding a hint must preserve the host's keyboard contract. A focus-opened tooltip
 can consume Escape before a panel's Back handler; the existing PanelSubview
 controls expose this conflict. Preserve their accessible names and current Back
@@ -1417,6 +1425,10 @@ blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recov
 keep it in the conversation flow immediately above the composer, with bounded
 overflow, so Send and companion-panel controls remain usable. Its retry policy
 and diagnostics belong to Channels; it does not enter the floating toast stack.
+
+A notice can make its body open a related destination with `navigation`. The
+body has a hover state and a keyboard action. Its explicit buttons and Dismiss
+keep their own hit areas and actions. The destination stays feature-owned.
 
 Use `useToastNotification` for completed-action feedback that must outlive its
 source row (such as copying profile metadata); the host stack owns its finite

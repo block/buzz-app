@@ -139,14 +139,14 @@ export function agentSections({
         </div>
       ),
     });
-  if (agent.place === "here")
-    for (const { key, title, component: Component, when } of agents.addedTabs())
-      if (!when || shows(when, agent, key))
-        tabs.push({
-          value: `agent:added:${key}`,
-          label: title,
-          render: () => <Component agent={agent} />,
-        });
+  // A tab for local agents only says so in its `when`.
+  for (const { key, title, component: Component, when } of agents.addedTabs())
+    if (!when || shows(when, agent, key))
+      tabs.push({
+        value: `agent:added:${key}`,
+        label: title,
+        render: () => <Component agent={agent} />,
+      });
   return [
     ...tabs,
     {

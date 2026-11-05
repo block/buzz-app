@@ -18,7 +18,8 @@ import { AgentSaveFooter } from "../../../features/agents/AgentSaveButton";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Header } from "../../../shared/design-system/ui/Header";
 import { browserLoginAvailable, oauthTarget } from "../oauth/browser";
-import { nativeBuilderlab, type BuilderlabSession } from "../session";
+import { brokerBuilderlab } from "../dev-session";
+import type { BuilderlabSession } from "../session";
 import { useSignInProgress } from "../login/use-sign-in-progress";
 
 /** Account status replaces profile actions; the pane footer owns sign-in. */
@@ -181,15 +182,15 @@ export function AccountRecoverySheet({
           : "This account can’t access Builderlab agents."
       }
       action={{
-        label: nativeBuilderlab()
-          ? "Identity → Organization sign-in"
-          : "Use another account",
-        disabled: nativeBuilderlab() && !openIdentity,
+        label: brokerBuilderlab()
+          ? "Use another account"
+          : "Identity → Organization sign-in",
+        disabled: !brokerBuilderlab() && !openIdentity,
         href:
-          active && !nativeBuilderlab()
+          active && brokerBuilderlab()
             ? new URL("/logout", oauthTarget()).href
             : undefined,
-        run: () => (nativeBuilderlab() ? openIdentity?.() : session.signOut()),
+        run: () => (brokerBuilderlab() ? session.signOut() : openIdentity?.()),
       }}
     />
   );

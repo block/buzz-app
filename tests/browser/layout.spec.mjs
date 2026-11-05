@@ -54,7 +54,11 @@ const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // The fixture's active plugin pages, in shell order, lead the channel sidebar.
 // Sidebar rows exclude header pages; Messages remains available through search.
-const destinationTitles = ["Inbox", "Bestie"];
+const destinationTitles = ["Activity", "Drafts & sent", "Bestie"];
+// Drafts & sent shows its draft count beside the label once a draft exists.
+const destinationText = destinationTitles.map((title) =>
+  title === "Drafts & sent" ? /^Drafts & sent(?:\d+)?$/ : title,
+);
 const sidebarDestinations = (page, options = {}) =>
   page
     .getByRole("complementary", { name: "Sidebar", exact: true, ...options })
@@ -147,7 +151,7 @@ async function shellFits(page, width) {
   // Settings is a modal with its own navigation; the shell is measured with
   // Settings closed.
   const destinations = sidebarDestinations(page);
-  await expect(destinations).toHaveText(destinationTitles);
+  await expect(destinations).toHaveText(destinationText);
   const sidebar = await box(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   );
@@ -461,7 +465,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   // The host focuses main when the independent page opens.
   await expect(page.getByRole("main")).toBeFocused();
   const hiddenDestinations = sidebarDestinations(page, { includeHidden: true });
-  await expect(hiddenDestinations).toHaveText(destinationTitles);
+  await expect(hiddenDestinations).toHaveText(destinationText);
   await expect(
     hiddenDestinations.and(page.locator("[aria-current]")),
   ).toHaveCount(0);
@@ -855,7 +859,7 @@ companionTest(
     await launch.click();
     // The companion keeps one default, minimum, saved width and reset as it
     // moves between PanelFrame and Messages' dock.
-    await openPage(page, "Inbox");
+    await openPage(page, "Activity");
     await expect(companion).toBeVisible();
     const resize = page.getByRole("separator", {
       name: "Resize main and secondary panels",
@@ -873,14 +877,14 @@ companionTest(
     };
     await visitMessages();
     await expect.poll(resizedWidth).toBe(defaultWidth);
-    await openPage(page, "Inbox");
+    await openPage(page, "Activity");
     await resize.focus();
     await resize.press("Home");
     await expect.poll(resizedWidth).toBeLessThan(defaultWidth);
     const minimumWidth = await resizedWidth();
     await visitMessages();
     await expect.poll(resizedWidth).toBe(minimumWidth);
-    await openPage(page, "Inbox");
+    await openPage(page, "Activity");
     await resize.focus();
     await resize.press("Shift+ArrowLeft");
     await expect.poll(resizedWidth).toBeGreaterThan(minimumWidth + 40);
@@ -889,7 +893,7 @@ companionTest(
     await expect.poll(resizedWidth).toBe(companionWidth);
     await resize.dblclick();
     await expect.poll(resizedWidth).toBe(defaultWidth);
-    await openPage(page, "Inbox");
+    await openPage(page, "Activity");
     await expect.poll(resizedWidth).toBe(defaultWidth);
     await visitMessages();
     await composer.fill("Companion draft");

@@ -465,7 +465,7 @@ export function ShortcutSettings({
           <SettingsGroup>
             <SwitchPreferenceRow
               label="Edit last message with Up Arrow"
-              description="When the composer is empty, Up Arrow edits your most recent editable message."
+              description="When the composer is empty, Up Arrow edits your most recent editable message instead of selecting messages."
               checked={editWithUpArrow}
               onCheckedChange={changeEditKey}
             />

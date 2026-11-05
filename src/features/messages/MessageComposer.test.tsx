@@ -9048,18 +9048,23 @@ it("does not replace a nonempty draft and confines channel/thread targets to the
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
 
-it.each(["code_block", "bullet_list", "blockquote"] as const)(
-  "preserves an empty-looking rich %s draft on Up Arrow",
-  (format) => {
-    setEditWithUpArrowPreference(true);
-    const h = mount({}, undefined, first.pubkey);
-    h.setRows([editableMessage()]);
-    act(() => h.input().toggleFormat(format));
-    expect(h.input()).toHaveValue("");
-    for (const metaKey of [false, true]) {
-      fireEvent.keyDown(h.input(), { key: "ArrowUp", metaKey });
-      expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
-    }
+describe.each([false, true])(
+  "empty rich drafts with Up Arrow editing enabled: %s",
+  (enabled) => {
+    it.each(["code_block", "bullet_list", "blockquote"] as const)(
+      "preserves an empty-looking rich %s draft on Up Arrow",
+      (format) => {
+        setEditWithUpArrowPreference(enabled);
+        const h = mount({}, undefined, first.pubkey);
+        h.setRows([editableMessage()]);
+        act(() => h.input().toggleFormat(format));
+        expect(h.input()).toHaveValue("");
+        for (const metaKey of [false, true]) {
+          fireEvent.keyDown(h.input(), { key: "ArrowUp", metaKey });
+          expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+        }
+      },
+    );
   },
 );
 

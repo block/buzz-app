@@ -76,7 +76,8 @@ the interface unless an available tool actually supports that action.
   identity alone does not grant membership. The same identity can be used in
   more than one community.
 - Set or clear your status from the profile menu, or with **Update status** /
-  **Set a status** on your own profile.
+  **Set a status** on your own profile. On a profile or in the profile menu,
+  hover the status emoji to see its `:name:`.
 - Where a community verifies names, the profile check appears beside the verified
   full name, or the verified username when no full name is supplied. The profile
   shows the issuer and verification time; cached verification has no check.
@@ -121,8 +122,13 @@ that agent in Buzz; they do not notify the external app through this connection.
 - Long message bubbles use the available conversation width, stopping 32px
   before the opposite speaker’s avatar column. Short messages hug their text.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
-  copy its link, or open More. **Copy message** is in More. Keyboard focus also
-  reveals these actions; touch layouts keep actions inline.
+  copy its link, forward it, or open More. **Copy message** is in More. Keyboard
+  focus also reveals these actions; touch layouts keep actions inline.
+- **Forward message** in a message's hover actions or message menu sends its link
+  to one person in the current community, with an optional note. Buzz opens or
+  creates the direct message for you. The link previews the original message;
+  the recipient still needs access to its conversation. Forwarding is unavailable
+  when the connection cannot start DMs or the message has no link yet.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -277,12 +283,20 @@ that agent in Buzz; they do not notify the external app through this connection.
   replies in thread, U marks it unread, and Delete deletes your own message.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
-  by"; change one of them to choose which fires.
+  by"; change one of them to choose which fires. In the Mac app, **Buzz →
+  Settings…** in the menu bar also opens Settings.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
+- **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
+  24-hour times. System, the default, follows the desktop app's operating
+  system: the 24-hour time setting on macOS, the short time format on Windows,
+  and on Linux GNOME's time format or else the `LC_TIME` locale. In a browser it
+  follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
+  time beside each message everywhere or only in Solo chats; day dividers and
+  screen-reader dates remain.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe

@@ -351,19 +351,22 @@ test.describe("captioned attachment actions", () => {
         { steps: 30 },
       );
       await shown(actions);
-      await target.click();
-      await expect(page.getByRole("menu")).toBeVisible();
-      await actions.evaluate((bar) =>
-        Promise.all(bar.getAnimations().map((animation) => animation.finished)),
-      );
       const anchored = await actions.evaluate((bar) =>
         bar.getBoundingClientRect().toJSON(),
       );
+      await target.click();
+      await expect(page.getByRole("menu")).toBeVisible();
+      await expect
+        .poll(() =>
+          actions.evaluate((bar) => bar.getBoundingClientRect().toJSON()),
+        )
+        .toEqual(anchored);
       const coveredAttachment = await attachment.boundingBox();
       await page.mouse.move(
         coveredAttachment.x + coveredAttachment.width / 2,
         coveredAttachment.y + coveredAttachment.height / 2,
       );
+      await shown(actions);
       expect(
         await actions.evaluate((bar) => bar.getBoundingClientRect().toJSON()),
       ).toEqual(anchored);
@@ -381,7 +384,7 @@ test.describe("captioned attachment actions", () => {
       const reference = row.getByRole("link", { name: "Caption reference" });
       expect(
         await reference.evaluate((node) => {
-          const rect = node.getBoundingClientRect();
+          const rect = node.getClientRects()[0];
           return node.contains(
             document.elementFromPoint(
               rect.x + rect.width / 2,

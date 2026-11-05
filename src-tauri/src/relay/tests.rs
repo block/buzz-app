@@ -4203,17 +4203,26 @@ mod federated_header {
     }
     async fn download(required: bool) {
         let community = community(required).await;
-        let server = community.serve(vec![media_reply()]);
-        let response = fetch_media(
-            &community.host,
-            Some(&community.fi),
-            media_url(&community),
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(response.status(), 200);
-        community.assert_carried(&server.heads().await[0]);
+        let server = community.serve(vec![media_reply(), media_reply()]);
+        for preview in [false, true] {
+            let response = if preview {
+                fetch_preview_media(&community.host, Some(&community.fi), media_url(&community))
+                    .await
+            } else {
+                fetch_media(
+                    &community.host,
+                    Some(&community.fi),
+                    media_url(&community),
+                    None,
+                )
+                .await
+            }
+            .unwrap();
+            assert_eq!(response.status(), 200);
+        }
+        for head in server.heads().await {
+            community.assert_carried(&head);
+        }
     }
     #[tokio::test]
     async fn media_download_attaches_for_required_discovery() {

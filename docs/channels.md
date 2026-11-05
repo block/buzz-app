@@ -616,8 +616,11 @@ confirmation has an uncertain outcome, the failure toast warns that the command 
 have taken effect and disables blind resubmission. That toast, and the "no longer
 permitted" toast shown when signed channel state no longer allows the action, offer
 **Refresh channels**: a writer-consistent channel list read that closes the toast.
-Settings' channel actions follow the refreshed channel state; confirmation rechecks
-permissions against fresh relay state.
+The permission check behind "no longer permitted", before signing and again before
+publishing, reads the writer, so a lagging replica cannot refuse an action Settings
+offers after a refresh. Settings' channel actions follow the refreshed channel state.
+After a failed Hide, Refresh channels also rereads DM visibility from the writer:
+whether a conversation is hidden is not part of the channel list.
 Other failures offer only Dismiss. Cancellation/cache clear/session replacement
 fence late results but cannot retract a request already sent. Cancellation returns focus to the originating row;
 confirmed Delete, Leave or Hide moves an active conversation to another available destination

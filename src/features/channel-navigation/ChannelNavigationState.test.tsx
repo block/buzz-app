@@ -16,7 +16,10 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ApiPaused } from "../relay/http-admission";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import { ChannelLifecycleStale } from "../relay/channel-lifecycle";
+import {
+  ChannelLifecycleStale,
+  ChannelLifecycleUnconfirmed,
+} from "../relay/channel-lifecycle";
 import { PanelWorkspace } from "../panels/PanelWorkspace";
 import {
   ChannelNavigationProvider,
@@ -37,6 +40,7 @@ function fixture(
 ) {
   let ids = ["existing"];
   const refreshList = vi.fn();
+  const refreshVisibility = vi.fn(async () => {});
   const session = () =>
     ({
       channels: {
@@ -44,7 +48,7 @@ function fixture(
         refreshList,
       },
       sidebarPreferences: { setMute: async () => [] },
-      channelLifecycle: { run },
+      channelLifecycle: { run, refreshVisibility },
     }) as unknown as RelaySession;
   let snapshot: RelaySnapshot = {
     status: "ready",
@@ -66,6 +70,7 @@ function fixture(
   return {
     relay,
     refreshList,
+    refreshVisibility,
     roster: (next: string[]) => {
       ids = next;
     },
@@ -75,6 +80,10 @@ function fixture(
         generation: snapshot.generation + 1,
         session: session(),
       };
+      for (const listener of listeners) listener();
+    },
+    switchScope(scope: string) {
+      snapshot = { ...snapshot, scope };
       for (const listener of listeners) listener();
     },
   };
@@ -449,11 +458,74 @@ it("offers Refresh channels when a lifecycle action failed on stale state", asyn
   });
   // Settings reads its channel actions again on each one.
   expect(view.result.current.lifecycleRefreshes).toBe(1);
+  expect(h.refreshVisibility).not.toHaveBeenCalled();
   await waitFor(() =>
     expect(
       screen.queryByRole("dialog", { name: "Archive channel failed" }),
     ).toBeNull(),
   );
+});
+
+it("also rereads DM visibility from the writer after an unconfirmed Hide", async () => {
+  const unconfirmed = new ChannelLifecycleUnconfirmed(
+    new Error("Relay connection lost"),
+  );
+  const h = fixture(async () => {
+    throw unconfirmed;
+  });
+  const view = mount(h.relay, true);
+  act(() =>
+    view.result.current.openLifecycle({ id: "dm", name: "Alice" }, "hide"),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Hide conversation" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Hide conversation failed",
+  });
+  expect(toast).toHaveAccessibleDescription(unconfirmed.message);
+  fireEvent.click(
+    within(toast).getByRole("button", { name: "Refresh channels" }),
+  );
+  expect(h.refreshList).toHaveBeenCalledExactlyOnceWith({
+    consistency: "strong",
+  });
+  // Whether the DM was hidden is in its visibility, not the channel list.
+  expect(h.refreshVisibility).toHaveBeenCalledExactlyOnceWith(undefined, {
+    consistency: "strong",
+  });
+});
+
+it("resets lifecycle refreshes on session replacement and community switch", async () => {
+  const h = fixture(async () => {
+    throw new ChannelLifecycleStale("This action is no longer permitted.");
+  });
+  const view = mount(h.relay, true);
+  const refresh = async () => {
+    act(() =>
+      view.result.current.openLifecycle(
+        { id: "channel", name: "Channel" },
+        "archive",
+      ),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Archive channel" }),
+    );
+    const toast = await screen.findByRole("dialog", {
+      name: "Archive channel failed",
+    });
+    fireEvent.click(
+      within(toast).getByRole("button", { name: "Refresh channels" }),
+    );
+  };
+  await refresh();
+  expect(view.result.current.lifecycleRefreshes).toBe(1);
+  act(() => h.replace());
+  expect(view.result.current.lifecycleRefreshes).toBe(0);
+  await refresh();
+  expect(view.result.current.lifecycleRefreshes).toBe(1);
+  act(() => h.switchScope("community:other"));
+  expect(view.result.current.lifecycleRefreshes).toBe(0);
 });
 
 it("keeps other lifecycle failures' toasts to Dismiss", async () => {

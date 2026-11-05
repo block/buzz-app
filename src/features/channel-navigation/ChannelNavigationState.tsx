@@ -162,6 +162,7 @@ export function ChannelNavigationProvider({
     title: string;
     message: string;
     refresh: boolean;
+    action: ChannelLifecycleAction | undefined;
   }>();
   const activityThread = useRef<ActivityThread | undefined>(undefined);
   const activityAgent = useRef<ActivityAgent | undefined>(undefined);
@@ -417,6 +418,7 @@ export function ChannelNavigationProvider({
                   ? `${state.lifecycleDialog?.channel.name}: ${message}`
                   : message,
                 refresh,
+                action: state.lifecycleDialog?.action,
               });
               value.closeLifecycle();
             }}
@@ -437,6 +439,12 @@ export function ChannelNavigationProvider({
                 connection.session.channels.refreshList?.({
                   consistency: "strong",
                 });
+                // Hide's effect is DM visibility, which the list does not read.
+                if (failure.action === "hide")
+                  void connection.session.channelLifecycle.refreshVisibility(
+                    undefined,
+                    { consistency: "strong" },
+                  );
                 update((previous) => ({
                   ...previous,
                   lifecycleRefreshes: previous.lifecycleRefreshes + 1,

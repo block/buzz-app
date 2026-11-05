@@ -681,6 +681,67 @@ it("a refreshed roster that demotes the viewer retires Archive and Delete in Cha
   expect(publish).not.toHaveBeenCalled();
 });
 
+it("Refresh channels after an unconfirmed Hide rereads DM visibility from the writer", async () => {
+  const viewer = keypair(),
+    authority = keypair(),
+    alice = keypair();
+  const id = "22222222-2222-4222-8222-222222222222";
+  const events = [
+    signed(authority, {
+      kind: 39000,
+      content: "",
+      tags: [["d", id], ["t", "dm"], ["hidden"]],
+    }),
+    signed(authority, { kind: 39001, content: "", tags: [["d", id]] }),
+    roster(authority, id, [viewer.pubkey, alice.pubkey]),
+  ];
+  const replica = [...events];
+  // The relay hides the DM, but its reply is lost: the outcome is uncertain.
+  const publish = vi.fn(async () => {
+    events.push(
+      signed(authority, {
+        kind: 30622,
+        content: "",
+        tags: [
+          ["d", viewer.pubkey],
+          ["p", viewer.pubkey],
+          ["h", id],
+        ],
+      }),
+    );
+    throw new Error("Relay connection lost");
+  });
+  const { owner } = workspace(events, viewer, authority, {
+    lifecycle: publish,
+    handoff: true,
+    replica,
+  });
+  await screen.findByRole("textbox", { name: /^Message / });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Hide conversation" }),
+  );
+  const confirm = await screen.findByRole("dialog", {
+    name: /^Hide conversation: /,
+  });
+  await user.click(
+    within(confirm).getByRole("button", { name: "Hide conversation" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Hide conversation failed",
+  });
+  expect(owner.session.channelLifecycle.snapshot().hidden).toEqual([]);
+  fireEvent.click(
+    within(toast).getByRole("button", { name: "Refresh channels" }),
+  );
+  // Only the writer has the hide; the replica still predates it.
+  await vi.waitFor(() =>
+    expect(owner.session.channelLifecycle.snapshot().hidden).toEqual([id]),
+  );
+  expect(publish).toHaveBeenCalledOnce();
+});
+
 it("selects a default channel the relay adds after the page opened", async () => {
   const events: RelayEvent[] = [];
   const { owner, viewer, authority } = workspace(events);

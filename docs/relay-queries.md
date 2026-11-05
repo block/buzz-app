@@ -70,11 +70,11 @@ must not let them manufacture relay-authored authority.
 
 `fresh: true` prevents sharing an older in-flight request; it does not select
 the writer. Channel creation/admission and recovery, DM opening, channel edits,
-member administration, lifecycle confirmations, and mention preflights request
-`consistency: "strong"` on their authoritative filters. Signed evidence remains
-required; an accepted command is not membership, and writer routing does not
-wait for asynchronous relay side effects. Existing cancellation and bounded
-confirmation retries are unchanged.
+member administration, lifecycle permission preflights and confirmations, and
+mention preflights request `consistency: "strong"` on their authoritative
+filters. Signed evidence remains required; an accepted command is not
+membership, and writer routing does not wait for asynchronous relay side
+effects. Existing cancellation and bounded confirmation retries are unchanged.
 
 Channel discovery accepts an explicit consistency option for post-write exact
 reads and the full-roster fallback. A queued writer-backed refresh survives an
@@ -87,8 +87,16 @@ confirmations queues a writer-backed pass to settle those grants. If list failur
 disconnect or cache clear retires queued or in-flight hint confirmations, the store
 retains their writer requirement for the next deliberate refresh, Retry or
 establishment, without starting an automatic recovery pass or bypassing cooldown.
-Ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
-eligible. The details editor and member-administration capability use writer-backed
+A lifecycle failure toast's Refresh channels requests a writer-backed discovery
+pass. From a session's first such refresh, Channel settings reads its lifecycle
+actions (`39000`/`39001`/`39002` and owner-agent kind-0 profiles) from the writer,
+as the Archive/Unarchive/Delete/Leave/Hide preflight always does. After a failed
+Hide, the same control also rereads DM visibility (`30622`) from the writer; that
+read never joins a replica-backed visibility refresh in flight, though an
+ordinary refresh started during it joins it. Ordinary startup, browsing,
+reconnect, the row and header Channel actions menus, and ordinary DM visibility
+refreshes stay replica-eligible.
+The details editor and member-administration capability use writer-backed
 state for their shared load/preflight/confirmation reads; the member dialog's
 separate display-roster load remains replica-eligible. Channel-write membership
 preflights (including session sends and canvas saves) also use the writer, so a

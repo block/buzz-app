@@ -46,6 +46,11 @@ export type DmVisibility = Readonly<{
   hidden: readonly string[];
   error?: string;
 }>;
+export type RefreshVisibilityOptions = Readonly<{
+  ifStale?: boolean;
+  trailing?: boolean;
+  consistency?: ReadFilter["consistency"];
+}>;
 export interface ChannelLifecycleCapability {
   readonly available: boolean;
   load(
@@ -69,10 +74,11 @@ export interface ChannelLifecycleCapability {
   /** `ifStale` lets a read that succeeded within `FRESH_FOR` answer, for
    * triggers that only suggest visibility may have changed. `trailing` needs
    * a read that starts after this call: repeated calls during a pending read
-   * share one more read after it. */
+   * share one more read after it. `consistency: "strong"` reads the writer
+   * and does not join a replica-backed refresh. */
   refreshVisibility(
     signal?: AbortSignal,
-    options?: { ifStale?: boolean; trailing?: boolean },
+    options?: RefreshVisibilityOptions,
   ): Promise<void>;
   observeRemoval(listener: (channelId: string) => void): () => void;
 }
@@ -117,6 +123,7 @@ export function createChannelLifecycle({
   let trailing: Promise<void> | undefined;
   // When this epoch's last visibility refresh succeeded.
   let refreshedAt: number | undefined;
+  let refreshStrong = false;
   const available = !!reader && !!writer;
   const emit = (next: DmVisibility) => {
     snapshot = Object.freeze(next);
@@ -341,21 +348,28 @@ export function createChannelLifecycle({
     },
     refreshVisibility(
       caller?: AbortSignal,
-      options?: { ifStale?: boolean; trailing?: boolean },
+      options?: RefreshVisibilityOptions,
     ) {
       if (!reader || closed || caller?.aborted) return Promise.resolve();
+      const strong = options?.consistency === "strong";
       if (refresh && !refreshSignal?.aborted) {
-        if (!options?.trailing) return refresh;
-        // The pending read may predate this call.
-        if (!trailing) {
-          const started = epoch;
-          const next: Promise<void> = refresh.then(() => {
-            if (trailing === next) trailing = undefined;
-            if (started === epoch) return capability.refreshVisibility(caller);
-          });
-          trailing = next;
+        // A replica-backed refresh can predate the write a strong one
+        // checks; retire it instead of joining it.
+        if (strong && !refreshStrong) refreshController?.abort();
+        else {
+          if (!options?.trailing) return refresh;
+          // The pending read may predate this call.
+          if (!trailing) {
+            const started = epoch;
+            const next: Promise<void> = refresh.then(() => {
+              if (trailing === next) trailing = undefined;
+              if (started === epoch)
+                return capability.refreshVisibility(caller);
+            });
+            trailing = next;
+          }
+          return trailing;
         }
-        return trailing;
       }
       if (
         options?.ifStale &&
@@ -372,13 +386,16 @@ export function createChannelLifecycle({
         ...(caller ? [caller] : []),
       ]);
       refreshSignal = signal;
+      refreshStrong = strong;
       emit({ status: "loading", hidden: snapshot.hidden });
       // Exhausted errors omit `transient`, so session recovery cannot restart
       // them. A read retired by another channel's access change (`cancelled`)
       // retries within the same budget.
       const operation = retryRead(
         async () => {
-          await owned({ caller: signal }, readVisibility);
+          await owned({ caller: signal }, (signal) =>
+            readVisibility(signal, strong),
+          );
           if (started === epoch) refreshedAt = Date.now();
         },
         signal,
@@ -420,8 +437,7 @@ export function createChannelLifecycle({
       const strong = options?.consistency === "strong";
       return owned({ id, caller }, (signal) =>
         retryRead(
-          () =>
-            reread(signal, () => load(id, signal, "any", records, strong)),
+          () => reread(signal, () => load(id, signal, "any", records, strong)),
           signal,
         ),
       );
@@ -485,6 +501,8 @@ export function createChannelLifecycle({
             if (action === "join") return joined();
             if (action === "auto-join-on" || action === "auto-join-off")
               return flaggable();
+            // Read the writer: a refusal that sends the viewer to Refresh
+            // channels must not come from a replica older than that refresh.
             const settings = await load(
               id,
               signal,
@@ -493,6 +511,8 @@ export function createChannelLifecycle({
                 action === "delete"
                 ? action
                 : false,
+              undefined,
+              true,
             );
             if (settings.deleteUnavailable)
               throw new Error(

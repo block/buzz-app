@@ -387,6 +387,12 @@ it("hides muted channels outside Starred and DMs unless open or asking for atten
     attention.set("grouped", "manual");
     for (const listener of listeners) listener();
   });
+  expect(view()).toEqual([
+    ["starred", ["pinned"], [], []],
+    ["group:work", ["grouped"], [], []],
+    ["channels", ["loud", "quiet"], [], ["stale"]],
+    ["dms", ["person"], [], []],
+  ]);
   rerender({ current: "stale", hidden: muted });
   expect(view()).toEqual([
     ["starred", ["pinned"], [], []],
@@ -394,7 +400,16 @@ it("hides muted channels outside Starred and DMs unless open or asking for atten
     ["channels", ["loud", "quiet", "stale"], [], []],
     ["dms", ["person"], [], []],
   ]);
-  attention.clear();
+  act(() => {
+    attention.clear();
+    for (const listener of listeners) listener();
+  });
+  expect(view()).toEqual([
+    ["starred", ["pinned"], [], []],
+    ["group:work", [], [], ["grouped"]],
+    ["channels", ["loud", "stale"], [], ["quiet"]],
+    ["dms", ["person"], [], []],
+  ]);
   rerender({ current: undefined, hidden: undefined });
   expect(view()).toEqual([
     ["starred", ["pinned"], [], []],

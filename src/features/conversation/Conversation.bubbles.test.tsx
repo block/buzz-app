@@ -358,3 +358,10 @@ it("lists threads with people in them unless bubbles are everywhere or kept in t
   act(() => setDmBubblesPreference(false));
   expect(threads()).toHaveTextContent("unboxed-own-color");
 });
+
+it("lists a chat of agents the viewer isn't a member of", () => {
+  setMessageStylePreference("agents");
+  const other = "d".repeat(64);
+  render(page(fixture([agent, other], { library: [agent, other] }).session));
+  expect(screen.getByLabelText("Bubbles")).toHaveTextContent(/^unboxed$/);
+});

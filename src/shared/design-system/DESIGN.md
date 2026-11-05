@@ -1865,13 +1865,13 @@ has written in it: if they are all agents it shows bubbles. The thread pane keep
 the first layout it settles on, either way, until it closes or shows another
 thread, so no reply reflows it under the reader; a thread with only the
 viewer's messages switches when someone else replies.
-Only members already known as agents (profile or the viewer's agents) count,
-and a chat with anyone not yet known as an agent waits while the viewer's own
-agents load; an unknown member is a person. A chat keeps its first layout for the visit until its
-members change, so an agent learned later applies on the next open. A chat is
-decided by its members, not by who wrote its messages: a person who has left a
-chat of agents still shows in bubbles in its timeline, though a thread they
-wrote in is a list.
+Only members already known as agents (profile or the viewer's agents) count, and
+a chat with anyone not yet known as an agent waits while the viewer's own agents
+load; an unknown member is a person. A chat keeps its first layout for the visit
+until its members change, so an agent learned later applies on the next open. A
+chat is decided by its members, not by who wrote its messages: a person who has
+left a chat of agents still shows in bubbles in its timeline, though a thread
+they wrote in is a list.
 Tables and diffs start at the text column. While message actions show, the row
 takes `affordance-row-hover` (proposed; pending design sign-off for message
 rows) in the arrival cue's row geometry, quieter than the

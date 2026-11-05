@@ -2622,6 +2622,7 @@ export const test = base.extend({
           };
         },
         presenceThread,
+        threadReplies,
         inboxWindow,
         inboxDmAnchor,
         deleteInboxAnchor(event) {

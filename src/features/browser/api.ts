@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 /** One signed-in Builderlab lifetime; never passed to website JavaScript.
  * `federated` is the public NIP-FI session revision; native holds its token. */
@@ -26,6 +26,9 @@ export type BrowserViewProps = Readonly<{
   /** Names the view's tab until the website has a title, and while a hidden
    * tab has not opened it yet. */
   label?: string | undefined;
+  /** Controls the caller owns, at the trailing end of the view's toolbar,
+   * for the page the view shows now, which can differ from `url`. */
+  actions?: ((url: string) => ReactNode) | undefined;
 }>;
 
 export interface Browser {

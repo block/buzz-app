@@ -17,6 +17,9 @@ import {
 } from "./environment";
 
 import { Login } from "../login/Login";
+import { relayAddress } from "../../../features/communities/destination";
+import { joinedCommunities } from "./communities";
+import { ShareApp } from "./ShareApp";
 
 type Ctx = Parameters<PluginModule["apply"]>[0];
 /** How long `apps_deploy` waits for the new version to serve. */
@@ -54,6 +57,12 @@ export function applyApps(
   legacy?: OAuthSession,
   dev?: Pick<Host, "request" | "upload">,
 ) {
+  const base = controlPlane();
+  const apps =
+    base && (legacy || dev)
+      ? () => createAppsClient(ctx.host, legacy ?? session, base, dev)
+      : undefined;
+  const joined = () => joinedCommunities(session);
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
   const AppView = ({ target }: PanelProps) => {
@@ -86,6 +95,22 @@ export function applyApps(
       builderlab: session.viewerSession(),
       canResumeUrl: viewerAppDomain() ? isViewerTarget : undefined,
       label: appName(target),
+      actions: apps
+        ? (current: string) => {
+            if (!isAppUrl(current)) return false;
+            // Sharing follows the app the panel shows now, identified by its
+            // origin: another sign-in or app starts over, dropping any answer
+            // for the previous one, while moving within an app keeps it.
+            const app = new URL(current).origin;
+            return createElement(ShareApp, {
+              key: `${state.account?.subject}\n${app}`,
+              url: app,
+              apps,
+              communities: joined,
+              relay: ctx.relay,
+            });
+          }
+        : undefined,
     });
   };
   ctx.panels.register({
@@ -95,9 +120,7 @@ export function applyApps(
     matches: (target) => ctx.browser.available && isAppUrl(target),
     component: AppView,
   });
-  const base = controlPlane();
-  if (!base || (!legacy && !dev)) return;
-  const apps = () => createAppsClient(ctx.host, legacy ?? session, base, dev);
+  if (!apps) return;
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",
@@ -341,16 +364,27 @@ export function applyApps(
     },
   });
   ctx.agents.addTool({
+    name: "apps_communities",
+    description:
+      "List the Buzz communities your owner has joined that an app can be shared with: each one's id (apps_community's community_id), its name and its relay address.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    call: async () => reply(await joined()),
+  });
+  ctx.agents.addTool({
     name: "apps_community",
     description:
-      "Share an app with a Buzz community your owner belongs to, or stop sharing it. Its members can then open the app whatever its visibility. Only when asked.",
+      "Share an app with a Buzz community your owner belongs to, or stop sharing it. Its members can then open the app whatever its visibility. Only when asked, including a yes to the question after a deploy.",
     inputSchema: {
       type: "object",
       properties: {
         app_id: { type: "string" },
         community_id: {
           type: "string",
-          description: "The Buzz community's Builderlab ID.",
+          description: "The community's id from apps_communities.",
         },
         action: { type: "string", enum: ["grant", "revoke"] },
       },
@@ -375,7 +409,7 @@ export function applyApps(
   ctx.agents.addTool({
     name: "apps_open",
     description:
-      "Open a deployed app beside this conversation in your owner's Buzz, when they are viewing it. Use it after a deploy is ready, and still post the URL in your reply.",
+      "Open a deployed app beside this conversation in your owner's Buzz, when they are viewing it. Use it after a deploy is ready, and still post the URL in your reply. When it names this conversation's community after a new app's first ready deploy, end that reply with the one question it gives; on yes, share the app with apps_community.",
     inputSchema: {
       type: "object",
       properties: {
@@ -394,9 +428,19 @@ export function applyApps(
         channelId: context.channel,
         ...(context.root ? { rootId: context.root } : {}),
       });
-      return opened
-        ? "Opened beside the conversation."
-        : "Not opened: your owner is not viewing this conversation in the desktop app now. Post the URL; clicking it opens the app beside the conversation.";
+      if (!opened)
+        return "Not opened: your owner is not viewing this conversation in the desktop app now. Post the URL; clicking it opens the app beside the conversation.";
+      // Opened means your owner is viewing this conversation, so the
+      // community Buzz shows is this conversation's.
+      const here = ctx.relay.snapshot().origin;
+      const community =
+        here &&
+        (await joined().catch(() => [])).find(
+          (joined) => joined.address === relayAddress(here),
+        );
+      return community
+        ? `Opened beside the conversation, in ${community.name} (community_id ${community.id}). If this is a new app, ask your owner only: "Share with ${community.name}?" They can pick other communities from Share beside the app.`
+        : "Opened beside the conversation.";
     },
   });
 }

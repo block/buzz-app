@@ -22,15 +22,19 @@ async function setup(
   canUseRemoteAgents = true,
 ) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
-  const session = createOAuthSession(async () => ({
-    value: "session",
-    account: {
-      subject: "auth0|owner",
-      email: "",
-      canUseRemoteAgents,
-      canUseBuilderlabDecisions: false,
-    },
-  }));
+  const session = createOAuthSession(
+    async () => ({
+      value: "session",
+      account: {
+        subject: "auth0|owner",
+        email: "",
+        canUseRemoteAgents,
+        canUseBuilderlabDecisions: false,
+      },
+    }),
+    undefined,
+    { request: (request) => respond(request) },
+  );
   await session.signIn();
   const tools = new Map<string, AddedTool>();
   const responses: HostResponse[] = [];
@@ -59,6 +63,7 @@ async function setup(
     browser: { available: true, View: () => null },
     host: { request: respond, upload: respond },
     agents: { addTool: (tool: AddedTool) => tools.set(tool.name, tool) },
+    relay: { snapshot: (): { origin?: string } => ({}) },
   };
   applyApps(ctx as never, session, true, session);
   const call = (name: string, args: Record<string, unknown>, context = {}) => {
@@ -114,6 +119,7 @@ it("adds the app tools only for a tenant with an Apps control plane", async () =
     "apps_status",
     "apps_list",
     "apps_visibility",
+    "apps_communities",
     "apps_community",
     "apps_open",
   ]);
@@ -296,6 +302,29 @@ it.each([
   ).rejects.toThrow(/not a Builderlab app URL/);
 });
 
+it("names the viewed community to ask about after opening an app", async () => {
+  const { call, ctx, responses } = await setup();
+  ctx.relay.snapshot = () => ({ origin: "wss://Alpha.example.com/" });
+  responses.push(
+    json({
+      communities: [
+        { id: "c2", name: "beta", normalized_host: "beta.example.com" },
+        { id: "c1", name: "alpha", normalized_host: "alpha.example.com" },
+      ],
+    }),
+  );
+  await expect(
+    call("apps_open", { url: APP }, { channel: "c1" }),
+  ).resolves.toBe(
+    'Opened beside the conversation, in alpha (community_id c1). If this is a new app, ask your owner only: "Share with alpha?" They can pick other communities from Share beside the app.',
+  );
+  // A community Builderlab can't share with, or no list, just opens it.
+  responses.push(json({ error: "unavailable" }));
+  await expect(
+    call("apps_open", { url: APP }, { channel: "c1" }),
+  ).resolves.toBe("Opened beside the conversation.");
+});
+
 it("says who can open an app after a visibility switch", async () => {
   const { call, responses } = await setup();
   responses.push(
@@ -324,6 +353,25 @@ it("says who can open an app after a visibility switch", async () => {
   await expect(
     call("apps_visibility", { app_id: "demo", audience: "private" }),
   ).rejects.toThrow(/workspace or only_you/);
+});
+
+it("lists the communities an app can be shared with", async () => {
+  const { call, responses, respond } = await setup();
+  responses.push(
+    json({
+      communities: [
+        { id: "c1", name: "alpha", normalized_host: "alpha.example.com" },
+      ],
+    }),
+  );
+  expect(JSON.parse(String(await call("apps_communities", {})))).toEqual([
+    { id: "c1", name: "alpha", address: "wss://alpha.example.com" },
+  ]);
+  expect(respond).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      url: expect.stringMatching(/\/v1\/buzz\/joined-communities\/list$/),
+    }),
+  );
 });
 
 it("reports whether the community now shares the app", async () => {

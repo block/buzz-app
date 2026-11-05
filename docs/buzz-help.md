@@ -345,6 +345,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
   **Open in browser**.
+- **Share a Builderlab app**: on desktop, when an app you own is open beside a
+  conversation, **Share** in its toolbar lists the communities you've joined.
+  Turn on **Share with [community]** for the one you're in, or any other, so its
+  members can open the app. Agents ask "Share with [community]?" after
+  publishing a new app.
 - **Inbox preview**: with a mouse or trackpad, rest the pointer on **Inbox** in
   the sidebar to see recent mentions, DMs, and thread replies without opening
   the Inbox page. Archived conversations are not shown. Clicking a conversation

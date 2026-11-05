@@ -433,6 +433,40 @@ it("passes a conflicting community change through unchanged", async () => {
   );
 });
 
+it("finds an owned app by its public URL's host", async () => {
+  const apps = {
+    apps: [
+      { app_id: "no-url", host: "demo--bpsites.apps.builderlabstaging.xyz" },
+      { app_id: "other", external_url: "https://other.example/" },
+      { app_id: "demo", external_url: "https://demo.example/path" },
+    ],
+  };
+  const { client, requests } = await setup([json(200, apps), json(200, apps)]);
+  await expect(client.find("https://demo.example/page?x=1")).resolves.toBe(
+    "demo",
+  );
+  expect(requests[0]).toMatchObject({
+    method: "GET",
+    url: `${BASE}/v1/agent/apps?scope=owned`,
+  });
+  await expect(client.find("https://unowned.example/")).resolves.toBe(
+    undefined,
+  );
+});
+
+it("reads the communities an app is shared with, none when omitted", async () => {
+  const { client, requests } = await setup([
+    json(200, { app_id: "demo", shared_community_ids: ["c1", 2, "c2"] }),
+    json(200, { app_id: "demo" }),
+  ]);
+  await expect(client.shared("demo")).resolves.toEqual(["c1", "c2"]);
+  expect(requests[0]).toMatchObject({
+    method: "GET",
+    url: `${BASE}/v1/agent/apps/demo/access`,
+  });
+  await expect(client.shared("demo")).resolves.toEqual([]);
+});
+
 it("deploys to the sign-in's own tenant", () => {
   expect(controlPlane("https://app.builderlabstaging.xyz")).toBe(BASE);
   expect(controlPlane("https://block.builderlab.xyz/")).toBe(

@@ -125,9 +125,38 @@ export function createAppsClient(
     return result;
   };
 
+  const list = () => call("GET", "/v1/agent/apps?scope=owned", "Listing apps");
+
   return {
     contract,
-    list: () => call("GET", "/v1/agent/apps?scope=owned", "Listing apps"),
+    list,
+    /** The ID of the owned app whose public URL has `url`'s host, if any. */
+    async find(url: string) {
+      const host = new URL(url).hostname;
+      const { apps } = await list();
+      for (const row of Array.isArray(apps) ? apps : []) {
+        const { app_id, external_url } = object(row);
+        const id = text(app_id);
+        try {
+          if (id && new URL(String(external_url)).hostname === host) return id;
+        } catch {
+          // A row without a usable public URL can't be the app at `url`.
+        }
+      }
+      return undefined;
+    },
+    /** The communities the app is shared with. An unshared app's access
+     * omits the list. */
+    async shared(id: string): Promise<string[]> {
+      const { shared_community_ids: ids } = await call(
+        "GET",
+        app(id, "access"),
+        "Reading who can open the app",
+      );
+      return Array.isArray(ids)
+        ? ids.filter((value) => typeof value === "string")
+        : [];
+    },
     /** Plans and reserves the exact runtime advertised by this tenant. */
     async create(name: string, profile: RuntimeProfile = "static") {
       const secret = credential();

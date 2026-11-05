@@ -192,3 +192,55 @@ it("opens the app for its own browser login when Settings login is unavailable",
   expect(acquire).not.toHaveBeenCalled();
   session.dispose();
 });
+
+it("binds Share to the app the panel shows now, not the one it opened", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "apps.builderlab.xyz");
+  const session = createOAuthSession(async () => ({
+    value: "token",
+    account: {
+      subject: "owner",
+      email: "",
+      canUseRemoteAgents: false,
+      canUseBuilderlabDecisions: false,
+    },
+  }));
+  const viewed = vi.fn((_props: BrowserViewProps) => null);
+  const register = vi.fn();
+  applyApps(
+    {
+      browser: { available: true, View: viewed },
+      panels: { register, requestOpen: vi.fn() },
+      agents: { addTool: vi.fn() },
+      host: {},
+      relay: {},
+    } as never,
+    session,
+    true,
+    session,
+  );
+  await session.signIn();
+  const panel = register.mock.calls[0]?.[0] as {
+    component: ComponentType<PanelProps>;
+  };
+  const alpha = "https://alpha--team.apps.builderlab.xyz/";
+  const beta = "https://beta--team.apps.builderlab.xyz/page";
+  render(createElement(panel.component, { target: alpha } as PanelProps));
+  const actions = viewed.mock.lastCall?.[0].actions;
+  if (!actions) throw new Error("No toolbar actions");
+  const share = actions(beta) as {
+    key: string;
+    props: { url: string };
+  };
+  expect(share.props.url).toBe("https://beta--team.apps.builderlab.xyz");
+  // Moving within an app keeps the same Share, so nothing reloads.
+  const moved = actions(`${beta.replace("/page", "/route")}#changed`) as {
+    key: string;
+    props: { url: string };
+  };
+  expect(moved.key).toBe(share.key);
+  expect(moved.props.url).toBe(share.props.url);
+  // Another app's host remounts Share, so nothing from the first carries over.
+  expect(share.key).not.toBe((actions(alpha) as { key: string }).key);
+  expect(actions("https://example.com/")).toBe(false);
+});

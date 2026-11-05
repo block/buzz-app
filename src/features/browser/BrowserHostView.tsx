@@ -95,6 +95,7 @@ export function BrowserHostView({
   builderlab,
   canResumeUrl,
   label,
+  actions,
   platform,
   sessions,
   pollInterval = 300,
@@ -467,6 +468,7 @@ export function BrowserHostView({
             {status.title}
           </span>
         ) : null}
+        {actions?.(status.url || url)}
       </div>
       {error ? (
         <div className={styles.error} role="alert">

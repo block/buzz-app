@@ -184,6 +184,28 @@ it("hides with the last valid bounds when the viewport leaves the window", async
   );
 });
 
+it("gives the caller's toolbar actions the page shown now", async () => {
+  const platform = fakePlatform();
+  const actions = vi.fn((url: string) => <span>{`Actions for ${url}`}</span>);
+  render(
+    <BrowserHostView
+      url="https://alpha.example/"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={10}
+      actions={actions}
+    />,
+  );
+  const toolbar = screen.getByRole("toolbar", { name: "Browser controls" });
+  expect(
+    within(toolbar).getByText("Actions for https://alpha.example/"),
+  ).toBeInTheDocument();
+  // The guest navigates elsewhere: the actions follow it.
+  expect(
+    await within(toolbar).findByText("Actions for https://example.com/"),
+  ).toBeInTheDocument();
+});
+
 it("waits for positive viewport bounds before attaching", async () => {
   const platform = fakePlatform();
   vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValueOnce({

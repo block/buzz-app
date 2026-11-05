@@ -2,7 +2,7 @@ import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
-import type { ChannelQueries } from "./contracts";
+import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import {
   effectiveFrontier,
@@ -119,6 +119,14 @@ export interface UnreadCapability {
   markThrough(
     target: ReadTarget,
     messageId: string,
+  ): Promise<ReadMutationResult>;
+  /** Explicit read of these verified top-level messages in one save, as the
+   * reader's catch-up reads a channel bottom: the channel catch-up mark reads
+   * ordinary messages through the newest, and still-unread mentions,
+   * broadcasts and marked messages are read individually. Replies stay unread. */
+  markTimelineRead(
+    channelId: string,
+    messageIds: readonly string[],
   ): Promise<ReadMutationResult>;
   /** One immediate menu action over the selected verified message and loaded reply subtree. */
   markMessageUnread(
@@ -352,6 +360,20 @@ export function createUnread({
     quiet: boolean;
   };
   let indexed = false;
+  // Rows folded from the indexed events, so read marks reuse them.
+  const foldedRows = new Map<string, readonly ChannelMessage[]>();
+  function folded(channelId: string) {
+    let rows = foldedRows.get(channelId);
+    if (!rows) {
+      rows = foldMessages(channelId, "", [...events.values()], {
+        includeReplies: true,
+        signingAuthority,
+        agentOwner: profiles?.owner && agentOwner,
+      });
+      foldedRows.set(channelId, rows);
+    }
+    return rows;
+  }
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
@@ -445,6 +467,7 @@ export function createUnread({
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
+    foldedRows.clear();
     byChannel.clear();
     byId.clear();
     tombstones.clear();
@@ -554,7 +577,7 @@ export function createUnread({
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
    * conversations, or when it is a DM, mentions the viewer, or is broadcast.
-   * Quiet agent messages never count; explicit unread intent still can. */
+   * Quiet agent messages never count. */
   const relevant = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
     (!entry.parentId ||
@@ -571,7 +594,9 @@ export function createUnread({
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
     const { event, channelId } = entry;
-    if (event.pubkey === viewer) return false;
+    // Coordination between agents is never unread for people, whatever
+    // read state or unread intent says.
+    if (event.pubkey === viewer || entry.quiet) return false;
     // Explicit per-message unread intent wins; otherwise replies outside the
     // viewer's conversations are not unread.
     if (
@@ -722,11 +747,13 @@ export function createUnread({
     const entry = byChannel
       .get(channelId)
       ?.find((row) => row.event.id === messageId);
-    if (!entry || event.pubkey === viewer)
+    if (!entry || event.pubkey === viewer || entry.quiet)
       return Object.freeze({
         status: "ineligible",
         unread: false,
-        forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
+        forced:
+          !entry?.quiet &&
+          (forcedMessages.get(channelId)?.has(messageId) ?? false),
         viewing: false,
       });
     const dm = isDm(channelId);
@@ -844,8 +871,13 @@ export function createUnread({
   // Folds read profiles only through agent owners. Keep the answers they got:
   // a profile change that leaves them all alone cannot change a projection.
   const ownersRead = new Map<string, string | undefined>();
+  // A lookup that changed a recorded answer leaves earlier projections behind,
+  // even once every recorded answer matches the directory again.
+  let ownersMixed = false;
   const agentOwner = (pubkey: string) => {
     const owner = profiles?.owner?.(pubkey);
+    if (ownersRead.has(pubkey) && ownersRead.get(pubkey) !== owner)
+      ownersMixed = true;
     ownersRead.set(pubkey, owner);
     return owner;
   };
@@ -874,11 +906,7 @@ export function createUnread({
         continue;
       const current = grouped.get(rootId);
       presented ??= new Map(
-        foldMessages(channelId, "", [...events.values()], {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner: profiles?.owner && agentOwner,
-        }).map((message) => [message.id, message.content]),
+        folded(channelId).map((message) => [message.id, message.content]),
       );
       const preview = presented.get(event.id) ?? event.content;
       if (!current) {
@@ -1000,7 +1028,11 @@ export function createUnread({
         const session = channel.channelType === "solo";
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
-          return entry.event.pubkey !== viewer && !!category(entry, dm);
+          return (
+            entry.event.pubkey !== viewer &&
+            (!!category(entry, dm) ||
+              (session && !entry.parentId && !entry.quiet))
+          );
         });
         // A session's top-level timeline is one conversation; its threads,
         // roots included, stay separate.
@@ -1018,15 +1050,12 @@ export function createUnread({
           groups.set(id, group);
         }
         if (!groups.size) continue;
-        const rows = foldMessages(channel.id, "", [...events.values()], {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner: profiles?.owner && agentOwner,
-        });
+        const rows = folded(channel.id);
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone
-        // else to everyone, even one that is not Inbox evidence, unless that
-        // message is the root of its own thread row.
+        // else, unless that message is the root of its own thread row. This
+        // mostly matches its newest evidence, but follows a relay-signed row's
+        // author rather than its signer.
         const newest = session
           ? rows.reduce<RelayEvent | undefined>((best, row) => {
               const event = events.get(row.id);
@@ -1078,22 +1107,25 @@ export function createUnread({
                     channelId: channel.id,
                     messageId: latest.event.id,
                   };
-            const readThrough: { target: ReadTarget; messageId: string }[] = dm
-              ? []
-              : entries
-                  .filter(
-                    (entry) =>
-                      !entry.rootId ||
-                      !!reads.localUnread(`msg:${entry.event.id}`),
-                  )
-                  .map((entry) => ({
-                    target: {
-                      kind: "message" as const,
-                      channelId: channel.id,
+            // A DM reads its channel, and a session's top-level timeline reads
+            // with one catch-up (`markTimelineRead`), not a step per message.
+            const readThrough: { target: ReadTarget; messageId: string }[] =
+              dm || timeline
+                ? []
+                : entries
+                    .filter(
+                      (entry) =>
+                        !entry.rootId ||
+                        !!reads.localUnread(`msg:${entry.event.id}`),
+                    )
+                    .map((entry) => ({
+                      target: {
+                        kind: "message" as const,
+                        channelId: channel.id,
+                        messageId: entry.event.id,
+                      },
                       messageId: entry.event.id,
-                    },
-                    messageId: entry.event.id,
-                  }));
+                    }));
             if (!dm && lastReply?.rootId)
               readThrough.push({
                 target: {
@@ -1134,7 +1166,12 @@ export function createUnread({
                 !!reads.localUnread(targetKey(target)) ||
                 readThrough.some(
                   ({ target }) => !!reads.localUnread(targetKey(target)),
-                ),
+                ) ||
+                (timeline &&
+                  entries.some(
+                    (entry) => !!reads.localUnread(`msg:${entry.event.id}`),
+                  )),
+              ...(timeline ? { timeline: true as const } : {}),
               readThrough: Object.freeze(
                 readThrough.map((step) =>
                   Object.freeze({
@@ -1231,9 +1268,17 @@ export function createUnread({
   }
   const stopRead = reads.subscribe(publish);
   const stopProfiles = profiles?.subscribe(() => {
+    // Owners resolve one at a time, so a fold since the last notification can
+    // already hold a newer answer than another channel's cached fold.
+    foldedRows.clear();
     const owner = profiles.owner;
-    if (!owner || [...ownersRead].every(([key, value]) => owner(key) === value))
+    if (
+      !owner ||
+      (!ownersMixed &&
+        [...ownersRead].every(([key, value]) => owner(key) === value))
+    )
       return;
+    ownersMixed = false;
     ownersRead.clear();
     publish();
   });
@@ -1936,6 +1981,13 @@ export function createUnread({
       throw new Error("A thread reply cannot advance the channel frontier");
     return event;
   }
+  /** Coordination between agents has no unread state, so no unread intent
+   * may be saved for it. */
+  function refuseAgentCoordination(messageId: string) {
+    const event = events.get(messageId);
+    if (event && agentAudience(event))
+      throw new Error("Messages between agents cannot be marked unread");
+  }
   function messageSubtree(channelId: string, messageId: string) {
     const selected = requireMessage(
       { kind: "message", channelId, messageId },
@@ -2342,9 +2394,69 @@ export function createUnread({
         ),
       );
     },
+    async markTimelineRead(channelId, messageIds) {
+      const target = { kind: "channel" as const, channelId };
+      const shown = messageIds.map((id) => requireMessage(target, id));
+      // A DM's catch-up is its channel read, never `activity:`; until the
+      // channel's type is known, it might be a DM.
+      const type = channels
+        .list()
+        .channels.find((channel) => channel.id === channelId)?.channelType;
+      if (type === undefined || type === "dm")
+        throw new Error("Read target unavailable");
+      if (!shown.length || shown.some(threadReference))
+        throw new Error("A thread reply cannot advance the channel frontier");
+      const generation = epoch;
+      const valid = () =>
+        !closed &&
+        generation === epoch &&
+        shown.every((event, index) => {
+          const id = messageIds[index];
+          return id !== undefined && requireMessage(target, id) === event;
+        });
+      return serialize(channelId, () => {
+        indexEvidence();
+        const state = reads.state();
+        const entries = shown.flatMap((event) => byId.get(event.id) ?? []);
+        const cut = Math.max(
+          ...entries
+            .filter((entry) => timeline(entry, false))
+            .map((entry) => entry.event.created_at),
+          -1,
+        );
+        const marks = entries
+          .filter(
+            (entry) =>
+              (!timeline(entry, false) ||
+                !!reads.localUnread(`msg:${entry.event.id}`)) &&
+              isUnread(entry, state, false),
+          )
+          .map((entry) => ({
+            key: `msg:${entry.event.id}`,
+            timestamp: entry.event.created_at,
+            channelId,
+          }));
+        const covered =
+          Math.max(
+            state.frontiers[`activity:${channelId}`] ?? -1,
+            state.frontiers[channelId] ?? -1,
+          ) >= cut;
+        return reads.readMessages(
+          covered
+            ? marks
+            : [
+                { key: `activity:${channelId}`, timestamp: cut, channelId },
+                ...marks,
+              ],
+          undefined,
+          valid,
+        );
+      });
+    },
     async markMessageUnread(channelId, messageId) {
       const visit = visits.get(channelId) ?? 0;
       const rows = messageSubtree(channelId, messageId);
+      refuseAgentCoordination(messageId);
       const generation = epoch;
       return serialize(channelId, async () => {
         const valid = () =>
@@ -2505,6 +2617,7 @@ export function createUnread({
         return true;
       };
       if (!valid()) throw new Error("Unread target unavailable");
+      if (target.kind === "message") refuseAgentCoordination(target.messageId);
       return serialize(target.channelId, () =>
         reads.markLocalUnread(key, valid),
       );

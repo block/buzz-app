@@ -37,6 +37,7 @@ test("coordination keeps its first line visible throughout expansion and collaps
     undefined,
     [["audience", "agents"]],
   );
+  await thread.getByRole("button", { name: /^Show activity history:/ }).click();
   const row = thread.locator(`[data-message-id="${event.id}"]`);
   const toggle = row.getByRole("button", { name: /Three café names:/ });
   await expect(toggle).toBeVisible();
@@ -50,6 +51,16 @@ test("coordination keeps its first line visible throughout expansion and collaps
       preview.getBoundingClientRect().left - row.getBoundingClientRect().left;
     const failures = [];
     let animated = false;
+    // A busy frame can miss the entire transition. Observe its start before
+    // clicking; frame samples still check clipping and settlement below.
+    const onTransitionStart = (event) => {
+      if (
+        event.target.matches('[class*="audiencePanel"]') &&
+        event.propertyName === "height"
+      )
+        animated = true;
+    };
+    row.addEventListener("transitionstart", onTransitionStart);
     const sample = (opening) => {
       const panel = row.querySelector('[class*="audiencePanel"]');
       const preview = row.querySelector('[class*="audiencePreview"]');
@@ -77,30 +88,35 @@ test("coordination keeps its first line visible throughout expansion and collaps
       const running = panel
         ?.getAnimations()
         .some((animation) => animation.playState === "running");
-      animated ||= !!running;
       return { panel, running };
     };
-    for (const opening of [true, false]) {
-      const start = performance.now();
-      button.click();
-      await new Promise((resolve, reject) => {
-        let settled = 0;
-        const tick = () => {
-          const { panel, running } = sample(opening);
-          settled = (
-            opening
-              ? panel && !panel.hasAttribute("data-starting-style") && !running
-              : !panel
-          )
-            ? settled + 1
-            : 0;
-          if (settled >= 2) resolve();
-          else if (performance.now() - start > 5000)
-            reject(new Error("Coordination transition did not settle"));
-          else requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-      });
+    try {
+      for (const opening of [true, false]) {
+        const start = performance.now();
+        button.click();
+        await new Promise((resolve, reject) => {
+          let settled = 0;
+          const tick = () => {
+            const { panel, running } = sample(opening);
+            settled = (
+              opening
+                ? panel &&
+                  !panel.hasAttribute("data-starting-style") &&
+                  !running
+                : !panel
+            )
+              ? settled + 1
+              : 0;
+            if (settled >= 2) resolve();
+            else if (performance.now() - start > 5000)
+              reject(new Error("Coordination transition did not settle"));
+            else requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        });
+      }
+    } finally {
+      row.removeEventListener("transitionstart", onTransitionStart);
     }
     return { failures, animated };
   });

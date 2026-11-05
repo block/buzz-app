@@ -101,6 +101,7 @@ export function ChannelGeneralAccess({
       recovery={recovery}
       channelId={channelId}
       mayHaveGuestMembers={mayHaveGuestMembers}
+      autoJoin={channel?.autoJoin ?? false}
     />
   );
 }
@@ -110,11 +111,13 @@ function ChannelGeneralAccessEditor({
   recovery,
   channelId,
   mayHaveGuestMembers,
+  autoJoin,
 }: {
   capability: ChannelDetailsCapability;
   recovery: RelayRecovery | undefined;
   channelId: string;
   mayHaveGuestMembers: boolean;
+  autoJoin: boolean;
 }) {
   const attempt = useSyncExternalStore(capability.subscribe, () =>
     capability.snapshot(channelId),
@@ -141,7 +144,10 @@ function ChannelGeneralAccessEditor({
       setError("");
       try {
         const details = await capability.load(channelId, signal);
-        if (!signal.aborted) setBase(details);
+        if (!signal.aborted) {
+          setBase(details);
+          return details;
+        }
       } catch (reason) {
         if (!signal.aborted) {
           setBase(undefined);
@@ -175,7 +181,7 @@ function ChannelGeneralAccessEditor({
       : access === "view-only"
         ? EyeIcon
         : LockIcon;
-  function choose(value: string) {
+  async function choose(value: string) {
     if (locked || !base) return;
     const option = Object.values(generalAccessOptions).find(
       (option) => option.value === value,
@@ -184,9 +190,21 @@ function ChannelGeneralAccessEditor({
     origin.current =
       section.current?.querySelector<HTMLElement>('[role="combobox"]') ?? null;
     setError("");
+    const signal = lifetime.current?.signal;
+    if (!signal || signal.aborted) return;
+    // The title or access may have changed since this dialog opened. Consent
+    // starts from a fresh signed snapshot; save still verifies its version.
+    const current = await load(signal);
+    if (
+      signal.aborted ||
+      !current?.canEdit ||
+      generalAccessValue(current) === value ||
+      (soloLabels(current.labels) && value === "public")
+    )
+      return;
     setChoice({
-      ...base,
-      ...generalAccessPolicy(option.value, base.joinRole),
+      ...current,
+      ...generalAccessPolicy(option.value, current.joinRole),
     });
   }
   async function apply(check = false) {
@@ -336,6 +354,10 @@ function ChannelGeneralAccessEditor({
               choice.visibility === "public" &&
               choice.joinRole === "guest"
                 ? "People already in the chat keep their access."
+                : "",
+              // The relay keeps the flag but refuses changing it on a private channel.
+              choice.visibility === "private" && autoJoin
+                ? "It’s a starter channel, so new members will be added to it again if it’s made public. To stop that, turn off Starter channel for new members in Settings first."
                 : "",
               !solo && choice.visibility === "public"
                 ? `New people will ${choice.joinRole === "guest" ? "only be able to view" : "be able to participate"}. People already in the ${place} keep their access.`

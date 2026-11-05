@@ -10,6 +10,14 @@ required, including when older preferences saved it disabled. Navigation removes
 disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
+A page or Settings section already on screen is not replaced when a later
+attempt on the same visit (a retry, a same-target open, a reopen after sign-in)
+reaches the host's own deadline without an answer: it stays, and may still
+update its address and answer late. A failure the page reports itself (a timeout
+included), lost access, a removed page and a rejected incoming link
+still show the host's failure, as does that timeout when it passes while the
+host shows its loading state in place of the page. Loading that starts later over
+a kept page shows the loading state, not the failure.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
 Settings sections are destinations presented as a modal over the last workspace.
 The host retains that workspace presentation while Settings is current, without
@@ -490,9 +498,14 @@ immediately; the shared navigation selection background identifies the active ta
 Joined header separators meet the vertical dividers. The sidebar resize grip stays
 visible throughout a drag while its tooltip stays hidden. Desktop main/secondary
 dividers share that grip and support dragging, arrow keys (Shift for larger
-steps), Home/End, and double-click to reset. Each page retains its chosen split
-while the panel closes and reopens; widths clamp to the available space. Narrow
-overlay layouts hide this divider and keep their normal responsive sizing.
+steps), Home/End, and double-click to reset. Each page saves its chosen split on
+this device, per community and viewer workspace like the sidebar width, so it
+survives the panel closing, page switches, and restarts. While a companion is
+open, the right column keeps the companion's one width, default, and minimum on
+every page, including Messages; otherwise Messages keeps its own thread-panel
+width. Reset clears the saved width. Widths clamp to the
+available space. Narrow overlay layouts hide this divider and keep their normal
+responsive sizing.
 
 Pointer-opened secondary panels fade and slide in over 180ms with the shared
 strong ease-out curve. Desktop panels travel 12px on entry and close immediately,

@@ -5,6 +5,7 @@ import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
 
 test.use({
+  enabledPlugins: ["buzz.workflows"],
   productionBroker: true,
   savedSidebar: true,
   developmentReact: true,
@@ -670,6 +671,13 @@ test("dismissing a failed move restores keyboard focus to its placement or a sur
       .getByRole("menuitemradio", { name: "Starred", exact: true })
       .click();
     await expect(error).toContainText("Relay request failed (502)");
+    // The alert arrives with the rollback, but the optimistic Starred copy of
+    // the row stays laid out while it fades out, and its removal moves every
+    // section below it. Wait for the exit, or a press on Work's header can
+    // finish on the row that slid under it, which is no click.
+    await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
+      1,
+    );
     await expect(beta).toBeVisible();
   };
   const dismiss = async () => {
@@ -763,7 +771,7 @@ test("Create new supports cancel, moves before publication, and retries the same
     await started.promise;
     await expect(dialog).toHaveCount(0);
     const createdGroup = sidebar(page)
-      .locator("[data-sidebar-section]")
+      .locator('[data-sidebar-section^="group:"]')
       .filter({ has: page.locator("summary", { hasText: /^Launch$/ }) });
     await expect(
       createdGroup.locator('[data-channel-id="beta"]'),
@@ -820,7 +828,7 @@ test("Create new supports cancel, moves before publication, and retries the same
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await nextStarted.promise;
     const nextGroup = sidebar(page)
-      .locator("[data-sidebar-section]")
+      .locator('[data-sidebar-section^="group:"]')
       .filter({
         has: page.locator("summary", { hasText: /^Follow-up$/ }),
       });
@@ -949,7 +957,7 @@ test("Create new retains its draft when preferences fail before submission and r
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).toHaveCount(0);
     const destination = sidebar(page)
-      .locator("[data-sidebar-section]")
+      .locator('[data-sidebar-section^="group:"]')
       .filter({
         has: page.locator("summary", { hasText: /^Retained launch$/ }),
       })

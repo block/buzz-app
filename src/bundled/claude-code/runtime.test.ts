@@ -19,6 +19,7 @@ import type {
   Delivery,
 } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
+import type { AgentProtection } from "../../features/agent-protection/service";
 import type {
   EventData,
   RelayEvent,
@@ -28,11 +29,12 @@ import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
-import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
+import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { AgentSessions, localSessions } from "./sessions";
+import { quoted } from "../../features/agent-harness/turn-records";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 
@@ -77,11 +79,21 @@ function setup(
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
     repositories?: (scope: string | undefined) => string;
+    nativeHistory?: readonly unknown[];
+    /** Raw text after the history, as a line Claude is still writing. */
+    nativeTail?: string;
   }> = {},
 ) {
   const fake = fakeSpawn();
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
+    if (options.nativeHistory && id === "read-protected")
+      spawnOptions?.onStdout?.(
+        Buffer.from(
+          options.nativeHistory.map((row) => JSON.stringify(row)).join("\n") +
+            (options.nativeTail ?? ""),
+        ).toString("base64"),
+      );
     if (options.title && (id === "workspace" || id === "read")) {
       spawnOptions?.onStdout?.(
         id === "workspace"
@@ -280,7 +292,7 @@ function setup(
     );
   };
   const claudes = () =>
-    fake.processes.filter((process) => process.id === "claude");
+    fake.processes.filter((process) => CLAUDES.has(process.id));
   return {
     runtime,
     added,
@@ -351,10 +363,16 @@ it("hands a mention to its thread's session", async () => {
   const claude = claudes().find((process) => process.prompts.length);
   const prompt = claude?.prompts[0] ?? "";
   expect(prompt).toContain(`Thread root: ${root.id}`);
-  expect(prompt).toContain('<thread-context included="1" total="2"');
-  expect(JSON.parse(promptSections(prompt)[1]?.body ?? "")).toMatchObject([
-    { pubkey: alice, author: "Alice", content: "Build is red" },
-  ]);
+  expect(prompt).toMatch(/^<thread-context>\n\{.*"total":2,/);
+  expect(prompt).toContain(
+    quoted({
+      id: root.id,
+      pubkey: root.pubkey,
+      created_at: root.created_at,
+      content: "Build is red",
+    }),
+  );
+  expect(prompt).toContain(`Request: ${quoted("@Claude can you look?")}`);
   expect(promptContent(prompt)).toBe("@Claude can you look?");
   expect(prompt).not.toContain(RESUMED_PROMPT);
   // The process holds no key: it acts through the tools.
@@ -362,6 +380,193 @@ it("hands a mention to its thread's session", async () => {
   expect(claude?.options.args).toContain("--mcp-config");
   expect(claude?.options.cwd).toBe("~/.buzz");
   expect(published).toEqual([]);
+});
+
+it("shares projected native history with incoming and combined action reviews", async () => {
+  const catalogue = [{ description: "schema".repeat(30000) }];
+  const nativeHistory = [
+    {
+      type: "attachment",
+      attachment: {
+        type: "prompt_snapshot",
+        systemPrompt: ["dynamic system text"],
+        tools: catalogue,
+      },
+    },
+    {
+      type: "api-request-shape",
+      shape: { system: ["dynamic request text"], tools: catalogue },
+    },
+    { type: "user", message: { role: "user", content: "Howzit" } },
+  ];
+  const expected = [
+    {
+      type: "attachment",
+      attachment: {
+        type: "prompt_snapshot",
+        systemPrompt: ["dynamic system text"],
+      },
+    },
+    { type: "api-request-shape", shape: { system: ["dynamic request text"] } },
+    nativeHistory[2],
+  ];
+  const f = setup([], { hold: true, nativeHistory });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
+    },
+  };
+  await f.deliver(
+    { type: "mention", event: message("1", "Howzit") },
+    {
+      agent: { ...f.agent, protection } as unknown as Delivery["agent"],
+    },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((worker) => worker.prompts.length)).toBe(true),
+  );
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  if (!worker) throw new Error("Claude did not start");
+  const hook = (id: string, tool: boolean) =>
+    worker.emit({
+      type: "control_request",
+      request_id: id,
+      request: {
+        subtype: "hook_callback",
+        callback_id: tool ? "security-tool" : "security-incoming",
+        input: {
+          transcript_path: "/native/transcript",
+          hook_event_name: tool ? "PreToolUse" : "UserPromptSubmit",
+          ...(tool
+            ? {
+                tool_name: "mcp__buzz__send",
+                tool_input: { text: "Howzit!", final: true },
+              }
+            : { prompt: "Howzit" }),
+        },
+      },
+    });
+  const acknowledged = (id: string) =>
+    vi.waitFor(() =>
+      expect(worker.received).toContainEqual(
+        expect.objectContaining({
+          type: "control_response",
+          response: expect.objectContaining({
+            request_id: id,
+            subtype: "success",
+          }),
+        }),
+      ),
+    );
+  try {
+    hook("incoming-review", false);
+    await acknowledged("incoming-review");
+    const sources = check.mock.calls.map(
+      ([action]) => action.content as { source?: string; value?: unknown },
+    );
+    expect(
+      sources
+        .filter((source) => source.source === "message")
+        .slice(0, 3)
+        .map((source) => source.value),
+    ).toEqual([...expected.slice(0, 2), { role: "user", content: "Howzit" }]);
+    hook("tool-review", true);
+    await acknowledged("tool-review");
+    expect(check.mock.lastCall?.[0]).toMatchObject({
+      kind: "tool",
+      content: { conversation: expected },
+    });
+    expect(
+      Buffer.byteLength(JSON.stringify(check.mock.lastCall?.[0])),
+    ).toBeLessThan(256 * 1024);
+    const readers = f.fake.processes.filter(
+      (process) => process.id === "read-protected",
+    );
+    expect(readers.length).toBeGreaterThan(0);
+    for (const reader of readers)
+      expect(reader.options).toMatchObject({
+        args: ["/native/transcript"],
+        protection: protection.processProtection,
+      });
+    expect(f.fake.processes.some((process) => process.id === "read")).toBe(
+      false,
+    );
+  } finally {
+    worker.finish();
+    await f.runtime.retire(self);
+  }
+});
+
+it("reviews a protected transcript whose last line Claude is still writing", async () => {
+  const nativeHistory = [
+    { type: "user", message: { role: "user", content: "Howzit" } },
+  ];
+  const f = setup([], {
+    hold: true,
+    nativeHistory,
+    nativeTail: '\n{"type":"assistant","message":{"content":"Hal',
+  });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
+    },
+  };
+  await f.deliver(
+    { type: "mention", event: message("1", "Howzit") },
+    { agent: { ...f.agent, protection } as unknown as Delivery["agent"] },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((worker) => worker.prompts.length)).toBe(true),
+  );
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  if (!worker) throw new Error("Claude did not start");
+  try {
+    worker.emit({
+      type: "control_request",
+      request_id: "incoming-review",
+      request: {
+        subtype: "hook_callback",
+        callback_id: "security-incoming",
+        input: {
+          transcript_path: "/native/transcript",
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Howzit",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(worker.received).toContainEqual(
+        expect.objectContaining({
+          type: "control_response",
+          response: expect.objectContaining({
+            request_id: "incoming-review",
+            subtype: "success",
+          }),
+        }),
+      ),
+    );
+    expect(check).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: { source: "message", value: nativeHistory[0]?.message },
+      }),
+      expect.anything(),
+    );
+  } finally {
+    worker.finish();
+    await f.runtime.retire(self);
+  }
 });
 
 it("tells a subscriber when a new conversation's first turn starts working", async () => {
@@ -377,6 +582,120 @@ it("tells a subscriber when a new conversation's first turn starts working", asy
   claude?.finish();
   await flush(10);
   expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
+});
+
+it("leaves a protected Buzz tool call to Claude's own tool review", async () => {
+  const f = setup([], { hold: true, nativeHistory: [] });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
+    },
+  };
+  await f.deliver(
+    { type: "mention", event: message("1", "Howzit") },
+    { agent: { ...f.agent, protection } as unknown as Delivery["agent"] },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((worker) => worker.prompts.length)).toBe(true),
+  );
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  try {
+    await mcp(worker, 1, "tools/call", {
+      name: "send",
+      arguments: { text: "Howzit!" },
+    });
+    expect(check.mock.calls.map(([action]) => action.kind)).toEqual([
+      "tool-result",
+    ]);
+  } finally {
+    worker?.finish();
+    await f.runtime.retire(self);
+  }
+});
+
+it("launches unprotected once an agent's protection is cleared", async () => {
+  const { runtime, deliver, claudes } = setup([], { hold: true });
+  const binding = { provider: "test", policy: {} };
+  runtime.sync([
+    { key: self, pubkey: self, config: DEFAULT_CONFIG, protection: binding },
+  ] as Agent[]);
+  runtime.sync([
+    { key: self, pubkey: self, config: DEFAULT_CONFIG },
+  ] as Agent[]);
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await vi.waitFor(() =>
+    expect(claudes().flatMap((process) => process.prompts)).toHaveLength(1),
+  );
+});
+
+it("keeps the protection backstop for an entry a control makes before sync", async () => {
+  const f = setup();
+  const root = message("1", "Howzit");
+  const place = { channelId: channel, root: root.id };
+  await f.deliver({ type: "mention", event: root });
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(1),
+  );
+  await f.runtime.retire(self);
+  // Now bound to a policy, without the live gate its deliveries bring.
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: DEFAULT_CONFIG,
+    protection: { provider: "test", policy: {} },
+  } as unknown as Agent;
+  await expect(f.runtime.session(agent, place, "compact")).rejects.toThrow();
+  expect(f.claudes()).toHaveLength(1);
+});
+
+it("lets an agent run again after its retirement failed", async () => {
+  const f = setup();
+  await f.deliver({ type: "mention", event: message("1", "Howzit") });
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(1),
+  );
+  const shutdown = vi
+    .spyOn(AgentSessions.prototype, "shutdown")
+    .mockRejectedValueOnce(new Error("stuck"));
+  try {
+    await expect(f.runtime.retire(self)).rejects.toThrow("stuck");
+  } finally {
+    shutdown.mockRestore();
+  }
+  await f.deliver({ type: "mention", event: message("2", "Again") });
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(2),
+  );
+});
+
+it("stops an agent's processes on retirement when a subscriber throws", async () => {
+  const f = setup();
+  await f.deliver({ type: "mention", event: message("1", "Howzit") });
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(1),
+  );
+  const worker = f.claudes().find((process) => process.prompts.length);
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  const off = f.runtime.subscribe(() => {
+    throw new Error("listener");
+  });
+  try {
+    await f.runtime.retire(self);
+    expect(worker?.killed).toBe(true);
+    expect(logged).toHaveBeenCalledWith(
+      "A Claude session subscriber failed",
+      expect.objectContaining({ message: "listener" }),
+    );
+  } finally {
+    off();
+    logged.mockRestore();
+  }
 });
 
 it("keeps one agent's memberships in two communities apart", async () => {
@@ -730,7 +1049,7 @@ it("refuses a synced effort it can't confirm, keeping the saved session for the 
   const settled: Promise<unknown>[] = [];
   const run = (id: string, model: string, synced?: string) => {
     const config = { ...DEFAULT_CONFIG, model, effort: synced ?? "" };
-    runtime.sync([{ pubkey: self, config } as Agent]);
+    runtime.sync([{ key: self, pubkey: self, config } as Agent]);
     return runtime.run({
       trigger: { type: "mention", event: event(id) },
       channelId: channel,
@@ -1506,9 +1825,7 @@ it.each(["thread", "channel"] as const)(
     const fresh = claudes().find((process) => process.prompts.length);
     expect(lost?.options.args).toContain("lost");
     expect(lost?.prompts).toEqual([]);
-    expect(fresh?.prompts[0]).toContain(
-      '<thread-context included="1" total="2"',
-    );
+    expect(fresh?.prompts[0]).toMatch(/^<thread-context>\n\{.*"total":2,/);
   },
 );
 
@@ -2148,7 +2465,7 @@ it("continues an owner's Solo chat as one channel session posted at the top leve
     [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
     expect.anything(),
   );
-  expect(prompt).toContain('<conversation-context included="1"');
+  expect(prompt).toMatch(/^<conversation-context>\n\{/);
   expect(prompt).toContain("Earlier in the chat");
   await send(claude, "call-1", { text: "Looking now" });
   expect(await send(claude, "call-2", { text: "x", reply: first.id })).toEqual({
@@ -2361,7 +2678,7 @@ it("dates a recreated memory entry after the tombstone the native read reports",
   expect(remember).toHaveBeenCalledWith("mem/gone", "back", 4_000_000_001);
 });
 
-it("method calls: a session launch makes no config call on the relay session; only the conversation name lookup (launch-boundary.test.ts runs the real service path)", async () => {
+it("method calls: a session launch makes no call on the relay session (launch-boundary.test.ts runs the real service path)", async () => {
   const f = setup();
   // Every relay-facing call the runtime can make, by name.
   const requests = {
@@ -2394,17 +2711,13 @@ it("method calls: a session launch makes no config call on the relay session; on
   expect(f.claudes()).toHaveLength(1);
   expect(systemPromptOf(f.claudes()[0])).toContain("I am Claude.");
   // The start makes no config requests. The only calls are the agent's
-  // recent notes, by slug, and the conversation's name lookup for the sender
-  // and mentioned agent, which requests only profiles missing from the cache
-  // (none when both are cached).
+  // recent notes, by slug; a prompt names no one, so it reads no profiles.
   const { "agentMemories.read": notes, ...rest } = made();
   expect(notes?.map(([pubkey, , slug]) => [pubkey, slug])).toEqual([
     [self, expect.stringMatching(/^mem\/notes\/\d{4}-\d{2}-\d{2}$/)],
     [self, expect.stringMatching(/^mem\/notes\/\d{4}-\d{2}-\d{2}$/)],
   ]);
-  expect(rest).toEqual({
-    "profiles.ensure": [[[alice, self], "foreground"]],
-  });
+  expect(rest).toEqual({});
 });
 
 it("a failed first Solo chat turn releases naming so a successful retry can offer Claude's title", async () => {

@@ -22,6 +22,10 @@ import {
   generateSecretKey,
 } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
+import {
+  CANVAS_MAX_EVENT_BYTES,
+  LIVE_CANVAS_BYTES,
+} from "../src/features/channel-templates/canvas-limits.ts";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 import { createRelaySession } from "../src/features/relay/session.ts";
@@ -1423,6 +1427,58 @@ test("query keeps relay 403 refusals but turns an edge 403 page into a gateway f
   }
 });
 
+test("Canvas sign and publish bound content and the complete signed event", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const template = {
+      kind: 40100,
+      created_at: 1700000000,
+      tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+    };
+    const sign = (content) => h.post("sign", { ...template, content });
+    const size = (event) => Buffer.byteLength(JSON.stringify(event));
+    const largest = await sign("x".repeat(LIVE_CANVAS_BYTES));
+    expect(largest.status).toBe(200);
+    const event = await largest.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toHaveLength(1);
+    expect((await sign("x".repeat(LIVE_CANVAS_BYTES + 1))).status).toBe(400);
+
+    // Quotes escape to two bytes, so in-limit content can make a complete
+    // event exactly at, then one byte over, the relay's bound.
+    const overhead = size(await (await sign("")).json());
+    const quotes = CANVAS_MAX_EVENT_BYTES - overhead - LIVE_CANVAS_BYTES;
+    const escaped = (extra) =>
+      `${'"'.repeat(quotes + extra)}${"x".repeat(LIVE_CANVAS_BYTES - quotes - extra)}`;
+    const atBound = await sign(escaped(0));
+    expect(atBound.status).toBe(200);
+    const boundary = await atBound.json();
+    expect(size(boundary)).toBe(CANVAS_MAX_EVENT_BYTES);
+    expect((await h.post("publish", boundary)).status).toBe(200);
+    const over = await sign(escaped(1));
+    expect(over.status).toBe(400);
+    expect(await over.json()).toEqual({
+      error: "Relay event is too large",
+      sent: false,
+    });
+    // An event signed elsewhere is held to the same bound before publication;
+    // its request body is the event, so the body bound refuses it first.
+    const outside = finalizeEvent(
+      { ...template, content: escaped(1) },
+      generateSecretKey(),
+    );
+    expect(size(outside)).toBe(CANVAS_MAX_EVENT_BYTES + 1);
+    expect((await h.post("publish", outside)).status).toBe(413);
+    expect(h.publications).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
 test("reaction sign and publish preserve kind 7 and reject malformed targets before upstream I/O", async () => {
   const h = await harness((call) =>
     Response.json({ accepted: true, event_id: call.body.id }),
@@ -1806,14 +1862,40 @@ test("member and guest additions work without channel creation, while role eleva
     expect(h.publications[2].tags).toEqual(
       expect.arrayContaining([["role", "guest"]]),
     );
-    for (const role of ["owner", "admin"]) {
-      const denied = await h.post("sign", {
+    // block/buzz#8575: one addition may name several people.
+    const people = [
+      ["p", "b".repeat(64)],
+      ["p", "c".repeat(64)],
+    ];
+    for (const role of [
+      [],
+      [["role", "member"]],
+      [["role", "guest"]],
+      [["role", "bot"]],
+    ]) {
+      const batchId = owner.outbox.send({
         kind: 9000,
         content: "",
-        created_at: 1700000000,
-        tags: [...tags, ["role", role]],
+        tags: [...tags, ...people, ...role],
       });
-      expect(denied.status).toBe(400);
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === batchId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+    }
+    expect(h.publications).toHaveLength(7);
+    for (const role of ["owner", "admin"]) {
+      for (const named of [tags, [...tags, ...people]]) {
+        const denied = await h.post("sign", {
+          kind: 9000,
+          content: "",
+          created_at: 1700000000,
+          tags: [...named, ["role", role]],
+        });
+        expect(denied.status).toBe(400);
+      }
     }
   } finally {
     owner?.dispose();
@@ -3209,6 +3291,24 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
           ["name", "rename"],
         ],
       },
+      { ...template, kind: 9002, tags: [["h", id], ["auto_join"]] },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["auto_join", "maybe"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["archived", "true"],
+          ["auto_join", "true"],
+        ],
+      },
       {
         ...template,
         kind: 9022,
@@ -3267,7 +3367,23 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
     expect(restore).toMatchObject(unarchive);
     expect((await h.post("publish", restore)).status).toBe(400);
     await transport.channelLifecycle.publish(restore, signal);
-    expect(h.publications).toHaveLength(2);
+    for (const value of ["true", "false"]) {
+      const flag = {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["auto_join", value],
+        ],
+      };
+      expect((await h.post("sign", flag)).status).toBe(400);
+      expect((await h.post("channel-details-sign", flag)).status).toBe(400);
+      const flagged = await transport.channelLifecycle.sign(flag, signal);
+      expect(verifyEvent(flagged)).toBe(true);
+      expect(flagged).toMatchObject(flag);
+      await transport.channelLifecycle.publish(flagged, signal);
+    }
+    expect(h.publications).toHaveLength(4);
   } finally {
     live?.dispose();
     await h.close();

@@ -451,6 +451,13 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     if (command === "nsec_backup_session" || command === "nsec_backup_retry")
       return;
     if (command === "identity_restore") return viewer;
+    if (command === "decide")
+      return {
+        outcome: "answered",
+        backend: "builderlab",
+        model: "test",
+        answers: { a: { type: "yes_no", probability: 0.7 } },
+      };
     throw new Error(`Unexpected command ${command}`);
   });
   const identity = federatedFixture();
@@ -517,8 +524,24 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     expect(identity.request).toHaveBeenCalledWith(
       expect.objectContaining({ path: "/api/goose/v1/auth/me" }),
     );
-    // Native `decide` has no FI credential to send, so none is offered.
-    expect(decisions.providers()).toEqual([]);
+    // Decisions name the native session; its token stays in native.
+    const [provider] = decisions.providers();
+    if (!provider) throw new Error("Missing FI Decisions provider");
+    expect(decisions.backend()).toBe("block.builderlab/builderlab");
+    const question = {
+      timeoutMs: 30_000,
+      state: "test",
+      community: "wss://buzz.example.com",
+      questions: { a: { type: "yes_no" as const, instructions: "test" } },
+    };
+    await expect(
+      provider.decide(question, { signal: new AbortController().signal }),
+    ).resolves.toMatchObject({ outcome: "answered" });
+    expect(native.invoke).toHaveBeenCalledWith("decide", {
+      backend: "builderlab",
+      request: question,
+      federated: "user:1",
+    });
     await waitFor(() =>
       expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
         source: "builderlab",
@@ -937,7 +960,7 @@ it.each([
         });
       });
     }
-    // Creating while signed out starts the same browser login. A failed login
+    // Creation uses the same user-started browser login. A failed login
     // preserves the draft and sends no provisioning request; retry completes it.
     render(<AgentsPage agents={agents} relay={community.relay} />);
     if (
@@ -960,12 +983,18 @@ it.each([
       const create = within(createDialog).getByRole("button", {
         name: "Create agent",
       });
+      expect(create).toBeDisabled();
       await user.type(name, "Browser");
+      expect(create).toBeDisabled();
+      const signIn = () =>
+        within(createDialog).getByRole("button", {
+          name: "Sign in with Builderlab",
+        });
       if (flow === "creation sign-in recovery") {
         const beforeCreateLogin = loginWaits().length;
         loginCallback = deferred();
         try {
-          await user.click(create);
+          await user.click(signIn());
           await waitFor(() =>
             expect(loginWaits()).toHaveLength(beforeCreateLogin + 1),
           );
@@ -975,20 +1004,21 @@ it.each([
           expect(
             await within(createDialog).findByRole("alert"),
           ).toHaveTextContent("Browser could not open.");
-          expect(create).toBeEnabled();
+          expect(create).toBeDisabled();
           expect(name).toHaveValue("Browser");
           // The wait itself can be abandoned from the dialog.
           loginCallback = deferred();
-          await user.click(create);
+          await user.click(signIn());
           await user.click(
             await within(createDialog).findByRole("button", {
               name: "Cancel sign-in",
             }),
           );
-          expect(
-            await within(createDialog).findByRole("alert"),
-          ).toHaveTextContent("Sign-in canceled.");
-          expect(create).toBeEnabled();
+          expect(within(createDialog).getByRole("status")).toHaveTextContent(
+            "Sign in to choose a model and thinking level.",
+          );
+          expect(within(createDialog).queryByRole("alert")).toBeNull();
+          expect(create).toBeDisabled();
           expect(
             within(createDialog).queryByRole("button", {
               name: "Cancel sign-in",
@@ -1004,20 +1034,41 @@ it.each([
           loginCallback.resolve({ parameters: [["code", "one-time"]] });
           loginCallback = undefined;
         }
-        await user.click(create);
+        await user.click(signIn());
         expect(
-          await within(createDialog).findByRole("combobox", { name: "Model" }),
+          await within(createDialog).findByRole("button", {
+            name: "Model: Choose a model",
+          }),
         ).toBeEnabled();
         expect(name).toHaveValue("Browser");
         return;
       }
-      await user.click(create);
-      const model = await within(createDialog).findByRole("combobox", {
-        name: "Model",
+      await user.click(signIn());
+      const model = await within(createDialog).findByRole("button", {
+        name: "Model: Choose a model",
       });
+      const createAgent = vi.spyOn(agents, "create");
+      await user.click(create);
+      expect(createAgent).not.toHaveBeenCalled();
+      expect(create).toBeDisabled();
+      createAgent.mockRestore();
+      const group = model.closest(".buzz-settings-group");
+      expect(group).toContainElement(
+        within(createDialog).getByRole("combobox", { name: "Harness" }),
+      );
+      expect(group).toContainElement(
+        within(createDialog).getByRole("combobox", { name: "Thinking" }),
+      );
+      expect(group).not.toContainElement(
+        within(createDialog).getByRole("textbox", {
+          name: "Instructions Optional",
+        }),
+      );
       await user.click(model);
+      (await screen.findByRole("menuitem", { name: "Other" })).focus();
+      await user.keyboard("{ArrowRight}");
       await user.click(
-        await screen.findByRole("option", { name: "Model One" }),
+        await screen.findByRole("menuitemradio", { name: "Model One" }),
       );
       await user.click(
         within(createDialog).getByRole("combobox", {
@@ -1034,6 +1085,15 @@ it.each([
       const beforeListing = community.events.filter(
         (event) => event.kind === 30177,
       ).length;
+      const thinking = within(createDialog).getByRole("combobox", {
+        name: "Thinking",
+      });
+      const instructions = within(createDialog).getByRole("textbox", {
+        name: "Instructions Optional",
+      });
+      const controls = [model, thinking, instructions];
+      for (const control of controls) expect(control).toBeEnabled();
+      expect(create).toBeEnabled();
       instructionsSave = deferred();
       try {
         await user.click(create);
@@ -1046,10 +1106,13 @@ it.each([
           ).toHaveLength(1),
         );
         expect(create).toBeDisabled();
+        for (const control of controls) expect(control).toBeDisabled();
         instructionsSave.reject(new Error("offline"));
         expect(
           await within(createDialog).findByRole("alert"),
         ).toHaveTextContent("Could not reach Builderlab");
+        for (const control of controls) expect(control).toBeEnabled();
+        expect(create).toBeEnabled();
         expect(agents.find(browserKey)?.unfinished).toBe(true);
         expect(
           community.events.filter((event) => event.kind === 30177),

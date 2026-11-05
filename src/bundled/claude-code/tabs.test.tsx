@@ -241,6 +241,7 @@ function applied({
   });
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
+    agentProtection: { registerModels: vi.fn() },
     host: {
       spawn,
       // Offer the installed release unless the test requests an update.
@@ -563,6 +564,33 @@ it("sets the conversation the profile was opened from apart from recent conversa
   ).toBeNull();
 });
 
+it("lists the opened conversation's channel above newer conversations", () => {
+  const [one, two] = ["e".repeat(64), "f".repeat(64)];
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().key]: {
+        newest: { id: "newest-session", seen: 0, at: 3 },
+        [`here/${one}`]: { id: "here-session", seen: 0, at: 1 },
+        older: { id: "older-session", seen: 0, at: 2 },
+      },
+    }),
+  );
+  const Activity = tab(installed().type, 1);
+  render(
+    <Activity
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "here", rootId: two }}
+    />,
+  );
+  expect(
+    screen
+      .getAllByRole("listitem")
+      .map((item) => within(item).getByTitle(/ · /).getAttribute("title")),
+  ).toEqual(["here · thread eeeeeeee", "newest · channel", "older · channel"]);
+});
+
 it("finds the thread's Claude session another build started", async () => {
   const root = "f".repeat(64);
   const started = JSON.stringify({
@@ -652,7 +680,7 @@ it("shows the channel's current kind for a session another build started", async
 });
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents", "host"]);
+  expect(inject).toEqual(["agents", "host", "agentProtection"]);
   const { type } = installed();
   expect(type).toMatchObject({
     id: "claude-code",
@@ -1540,4 +1568,202 @@ it("focuses the code only when its compact sign-in disclosure is expanded", asyn
     expect(screen.getByLabelText("Sign-in code")).toHaveFocus(),
   );
   expect(screen.getByLabelText("Sign-in code")).toHaveValue("retained-code");
+});
+
+it("clears unsupported saved effort when changing the creation model", async () => {
+  const Model = installed().type.CreateModel;
+  if (!Model) throw new Error("Missing model control");
+  const config = { ...DEFAULT_CONFIG, model: "sonnet", effort: "xhigh" };
+  const onChange = vi.fn();
+  render(<Model config={config} onChange={onChange} disabled={false} />);
+  const user = userEvent.setup();
+  const picker = await screen.findByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(picker).toBeEnabled());
+  await user.click(picker);
+  await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...config,
+    model: "haiku",
+    effort: "",
+  });
+});
+
+it("saves reviews' own sign-in through stdin, keeps its result, and cancels a save", async () => {
+  const { type, spawn } = installed();
+  const Setup = providerSetup(type);
+  const onClose = vi.fn();
+  render(<Setup onClose={onClose} />);
+  expect(await screen.findByText("Claude is signed in.")).toBeVisible();
+  const field = () => screen.getByLabelText("Sign in for reviews");
+  expect(field()).toHaveAttribute("type", "password");
+  const save = () =>
+    screen.getByRole("button", { name: "Save review sign-in" });
+  expect(save()).toHaveAttribute("aria-disabled", "true");
+  // Each save's step is held until the test ends it.
+  const steps: {
+    options: HostProcessOptions;
+    stdin: string[];
+    exit(code: number | null): void;
+    killed: boolean;
+  }[] = [];
+  const answer = spawn.getMockImplementation();
+  if (!answer) throw new Error("Expected the host spawn");
+  spawn.mockImplementation(async (id, options = {}) => {
+    if (options.args?.[2] !== "review-token") return answer(id, options);
+    let exit!: (code: number | null) => void;
+    const exited = new Promise<number | null>((resolve) => {
+      exit = resolve;
+    });
+    const step = { options, stdin: [] as string[], exit, killed: false };
+    steps.push(step);
+    return {
+      write: async (text: string) => void step.stdin.push(text),
+      end: async (text = "") => void step.stdin.push(text),
+      kill: async () => {
+        step.killed = true;
+        exit(null);
+      },
+      exited,
+    };
+  });
+  const user = userEvent.setup();
+  const token = "sk-ant-oat01-secret";
+  await user.type(field(), token);
+  await user.click(save());
+  await waitFor(() => expect(steps).toHaveLength(1));
+  const [first] = steps;
+  if (!first) throw new Error("Expected the save step");
+  expect(first.options.args?.slice(1)).toEqual(["claude.sh", "review-token"]);
+  await waitFor(() => expect(first.stdin).toEqual([`${token}\n`]));
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+  act(() => {
+    first.options.onStdout?.(
+      "Saved the sign-in for Claude security reviews.\n",
+    );
+    first.exit(0);
+  });
+  expect(
+    await screen.findByText("Saved the sign-in for Claude security reviews."),
+  ).toBeVisible();
+  expect(field()).toHaveValue("");
+  expect(await screen.findByRole("button", { name: "Done" })).toBeVisible();
+
+  // A refused token's fixed line stays, with the pasted value kept to fix.
+  await user.type(field(), "not-a-token");
+  await user.click(save());
+  await waitFor(() => expect(steps).toHaveLength(2));
+  act(() => {
+    steps[1]?.options.onStderr?.("That is not a Claude token.\n");
+    steps[1]?.exit(1);
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "That is not a Claude token.",
+  );
+  expect(field()).toHaveValue("not-a-token");
+
+  // Cancel stops the save, not the dialog.
+  await user.click(save());
+  await waitFor(() => expect(steps).toHaveLength(3));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(steps[2]?.killed).toBe(true));
+  expect(await screen.findByRole("button", { name: "Done" })).toBeVisible();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+// Holds each review-token step until the test ends it.
+async function heldReviewSaves() {
+  const { type, spawn } = installed();
+  const Setup = providerSetup(type);
+  const steps: {
+    options: HostProcessOptions;
+    exit(code: number | null): void;
+    killed: boolean;
+  }[] = [];
+  const answer = spawn.getMockImplementation();
+  if (!answer) throw new Error("Expected the host spawn");
+  spawn.mockImplementation(async (id, options = {}) => {
+    if (options.args?.[2] !== "review-token") return answer(id, options);
+    let exit!: (code: number | null) => void;
+    const exited = new Promise<number | null>((resolve) => {
+      exit = resolve;
+    });
+    const step = { options, exit, killed: false };
+    steps.push(step);
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => {
+        step.killed = true;
+        exit(null);
+      },
+      exited,
+    };
+  });
+  const view = render(<Setup onClose={vi.fn()} />);
+  expect(await screen.findByText("Claude is signed in.")).toBeVisible();
+  return {
+    view,
+    steps,
+    field: () => screen.getByLabelText("Sign in for reviews"),
+    save: () => screen.getByRole("button", { name: "Save review sign-in" }),
+  };
+}
+
+it("keeps focus in the field through a save started there", async () => {
+  const { steps, field } = await heldReviewSaves();
+  const user = userEvent.setup();
+  await user.type(field(), "not-a-token");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(steps).toHaveLength(1));
+  // Natively disabled, a browser would drop its focus; jsdom does not.
+  expect(field()).not.toBeDisabled();
+  expect(field()).toHaveAttribute("readonly");
+  expect(field()).toHaveAttribute("aria-disabled", "true");
+  // A second Enter while saving starts nothing.
+  await user.keyboard("{Enter}");
+  act(() => {
+    steps[0]?.options.onStderr?.("That is not a Claude token.\n");
+    steps[0]?.exit(1);
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "That is not a Claude token.",
+  );
+  expect(steps).toHaveLength(1);
+  expect(document.activeElement).toBe(field());
+});
+
+it("keeps focus on Save after a keyboard save clears the field", async () => {
+  const { steps, field, save } = await heldReviewSaves();
+  const user = userEvent.setup();
+  await user.type(field(), "sk-ant-oat01-secret");
+  await user.tab();
+  expect(document.activeElement).toBe(save());
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(steps).toHaveLength(1));
+  act(() => {
+    steps[0]?.options.onStdout?.(
+      "Saved the sign-in for Claude security reviews.\n",
+    );
+    steps[0]?.exit(0);
+  });
+  expect(
+    await screen.findByText("Saved the sign-in for Claude security reviews."),
+  ).toBeVisible();
+  expect(field()).toHaveValue("");
+  // Empty again, Save stays focusable: a browser drops a disabled one's focus.
+  expect(save()).not.toBeDisabled();
+  expect(save()).toHaveAttribute("aria-disabled", "true");
+  expect(document.activeElement).toBe(save());
+});
+
+it("cancels a pending save when the dialog closes", async () => {
+  const { view, steps, field, save } = await heldReviewSaves();
+  const user = userEvent.setup();
+  await user.type(field(), "sk-ant-oat01-secret");
+  await user.click(save());
+  await waitFor(() => expect(steps).toHaveLength(1));
+  expect(steps[0]?.killed).toBe(false);
+  view.unmount();
+  expect(steps[0]?.killed).toBe(true);
 });

@@ -1760,7 +1760,8 @@ thread retry independently of media loading. Verified removal or invalidated acc
 retires that fallback through retries until a fresh read re-admits the attachment.
 Links, mentions and avatars in review comments open as they do in the thread
 panel; following one closes the review, while a refused link or one opened in the
-browser leaves it open.
+browser leaves it open. Closing what it opened returns focus to the media that
+opened the review.
 Image and video previews share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
 media against a pure-black canvas. Large emoji retain their artwork size with the

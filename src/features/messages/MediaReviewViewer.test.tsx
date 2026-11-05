@@ -379,11 +379,15 @@ function linkedComment() {
 
 it("opens comment mentions, avatars and links through its host, then closes", async () => {
   const { link, rootId, sam, tyler, props } = linkedComment();
+  const opener = document.body.appendChild(document.createElement("button"));
+  // The comment leaves with the review; its opener is the return target.
+  const origin = { rootId, returnFocus: opener };
   const calls: unknown[][] = [];
   let accept = true;
   render(
     <MediaReviewViewer
       {...props}
+      restoreFocus={{ current: opener }}
       onOpenLink={(url: string, origin?: MessageLinkOrigin) => {
         calls.push(["open", url, origin]);
         return accept;
@@ -394,9 +398,9 @@ it("opens comment mentions, avatars and links through its host, then closes", as
   fireEvent.click(
     await screen.findByRole("button", { name: "View Tyler profile" }),
   );
-  expect(calls.splice(0)).toEqual([["open", tyler, { rootId }], ["close"]]);
+  expect(calls.splice(0)).toEqual([["open", tyler, origin], ["close"]]);
   fireEvent.click(screen.getByRole("button", { name: "View Sam profile" }));
-  expect(calls.splice(0)).toEqual([["open", sam, { rootId }], ["close"]]);
+  expect(calls.splice(0)).toEqual([["open", sam, origin], ["close"]]);
   // A refused link keeps the review and says so; an accepted one leaves it.
   accept = false;
   const anchor = within(
@@ -404,36 +408,40 @@ it("opens comment mentions, avatars and links through its host, then closes", as
   ).getByRole("link");
   expect(anchor).toHaveAttribute("href", link);
   fireEvent.click(anchor);
-  expect(calls.splice(0)).toEqual([["open", link, { rootId }]]);
+  expect(calls.splice(0)).toEqual([["open", link, origin]]);
   expect(
     screen.getByText("This Buzz link couldn’t be opened here."),
   ).toBeInTheDocument();
   accept = true;
   fireEvent.click(anchor);
-  expect(calls.splice(0)).toEqual([["open", link, { rootId }], ["close"]]);
+  expect(calls.splice(0)).toEqual([["open", link, origin], ["close"]]);
+  opener.remove();
 });
 
-it("leaves focus with a followed comment link's destination", async () => {
+it("leaves focus with a followed comment link's destination until it closes", async () => {
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     frames.push(callback);
     return frames.length;
   });
   const { props } = linkedComment();
-  // Like a profile tab, the destination takes focus when it mounts.
-  function Destination() {
+  // Like a profile tab, the destination takes focus when it mounts and
+  // returns it to its trigger when it closes.
+  function Destination({ close }: { close(): void }) {
     const button = useRef<HTMLButtonElement>(null);
     useEffect(() => {
       button.current?.focus();
     }, []);
     return (
-      <button ref={button} type="button">
-        Tyler profile
+      <button ref={button} type="button" onClick={close}>
+        Close Tyler profile
       </button>
     );
   }
   function Host() {
     const opener = useRef<HTMLButtonElement>(null);
+    // As Channels does: the link's named target, else what had focus.
+    const trigger = useRef<HTMLElement | null>(null);
     const [reviewing, setReviewing] = useState(false);
     const [destination, setDestination] = useState(false);
     return (
@@ -441,12 +449,22 @@ it("leaves focus with a followed comment link's destination", async () => {
         <button ref={opener} type="button" onClick={() => setReviewing(true)}>
           View image
         </button>
-        {destination && <Destination />}
+        {destination && (
+          <Destination
+            close={() => {
+              setDestination(false);
+              if (trigger.current?.isConnected) trigger.current.focus();
+            }}
+          />
+        )}
         {reviewing && (
           <MediaReviewViewer
             {...props}
             restoreFocus={opener}
-            onOpenLink={() => {
+            onOpenLink={(_url, origin) => {
+              trigger.current =
+                origin?.returnFocus ??
+                (document.activeElement as HTMLElement | null);
               setDestination(true);
               return true;
             }}
@@ -466,6 +484,7 @@ it("leaves focus with a followed comment link's destination", async () => {
   act(() => {
     for (const frame of frames.splice(0)) frame(0);
   });
+  mention.focus();
   fireEvent.click(mention);
   // The close's focus handoff is recorded in a microtask before its frame.
   await act(async () => {});
@@ -473,7 +492,10 @@ it("leaves focus with a followed comment link's destination", async () => {
     for (const frame of frames.splice(0)) frame(0);
   });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Tyler profile" })).toHaveFocus();
+  const close = screen.getByRole("button", { name: "Close Tyler profile" });
+  expect(close).toHaveFocus();
+  fireEvent.click(close);
+  expect(opener).toHaveFocus();
 });
 
 it("wires image review links to the viewer host opener", async () => {

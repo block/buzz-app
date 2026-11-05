@@ -2202,7 +2202,8 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   expect(rowOpeners.get(`${roots.r1}:reply`)?.("https://example.com/")).toBe(
     true,
   );
-  expect(latest).toHaveBeenCalledWith("https://example.com/");
+  // No return target: the row's own control survives.
+  expect(latest).toHaveBeenCalledWith("https://example.com/", undefined);
   expect(first).not.toHaveBeenCalled();
   // Rows decide which links are openable while rendering, so new panels reach them.
   available = [{ key: "app", title: "App" } as RegisteredPanel];

@@ -1453,8 +1453,13 @@ export function WorkflowLanding({
   onSelect: (key: string | undefined, name?: string) => void;
   /** The reader selects a workflow, or closes the selected one. */
   onChoose?: (workflow: WorkflowReference | undefined) => void;
-  /** The visit's route, applied once its channel's workflows are read. */
-  route?: (WorkflowsRoute & { visit: string }) | undefined;
+  /**
+   * The visit's route, applied once its channel's workflows are read. A
+   * pending route also waits for the host to list its channel.
+   */
+  route?:
+    | (WorkflowsRoute & { visit: string; pending?: boolean | undefined })
+    | undefined;
   onOpenConversation?: OpenConversation | undefined;
   /** Channel IDs to show; every channel is still read. Empty shows all. */
   filter: readonly string[];
@@ -1655,10 +1660,11 @@ export function WorkflowLanding({
   // choice, and its workflows are unknown. A failed read is retried from the
   // page, which then applies the route. An unlisted channel is never read.
   const routeReady =
-    !route?.channel ||
-    (routeChannel
-      ? routeChannel.status !== "loading" && routeChannel.status !== "error"
-      : !channels.some((channel) => channel.id === route.channel));
+    !route?.pending &&
+    (!route?.channel ||
+      (routeChannel
+        ? routeChannel.status !== "loading" && routeChannel.status !== "error"
+        : !channels.some((channel) => channel.id === route.channel)));
   const applyRoute = useEffectEvent((route: WorkflowsRoute, first: boolean) => {
     const workflow = routedWorkflow(route);
     if (workflow) {
@@ -1696,15 +1702,25 @@ export function WorkflowLanding({
   const seenVisit = useRef<string>(undefined);
   const appliedVisits = useRef(new Set<string>());
   useEffect(() => {
-    if (!route || seenVisit.current === route.visit || !routeReady) return;
-    seenVisit.current = route.visit;
+    if (!route || seenVisit.current === route.visit) return;
     // A visit this page pushed already shows its workflow.
     const routed = routedWorkflow(route);
-    if (routed && workflowKey(routed) === selected) return;
+    const shown = !!routed && workflowKey(routed) === selected;
+    if (!routeReady) {
+      // Entering a waiting visit ends the last visit's selection without
+      // retiring either, and forgets the last visit so returning reapplies it.
+      // The reader's own selection while it waits stands.
+      if (seenVisit.current === undefined) return;
+      seenVisit.current = undefined;
+      if (!shown) onSelect(undefined);
+      return;
+    }
+    seenVisit.current = route.visit;
+    if (shown) return;
     const first = !appliedVisits.current.has(route.visit);
     appliedVisits.current.add(route.visit);
     applyRoute(route, first);
-  }, [route, routeReady, selected]);
+  }, [onSelect, route, routeReady, selected]);
   const cleared = visible.some(
     (channel) =>
       snapshots[channel.id]?.status === "idle" ||

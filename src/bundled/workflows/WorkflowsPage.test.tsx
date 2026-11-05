@@ -2297,6 +2297,73 @@ it("holds a routed workflow whose channel a partial roster has not listed yet", 
   }
 });
 
+it("clears another visit's workflow when Back reaches a link still waiting for its channel", async () => {
+  const other = { id: "other-channel", name: "Other channel" };
+  const page = navigatedPage({ channel: fixtureChannel }, fixtureViewer, {
+    status: "ready",
+    coverage: "partial",
+    channels: [other],
+  });
+  const closed = () =>
+    waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Workflow details" }),
+      ).toBeNull(),
+    );
+  try {
+    act(() =>
+      page.definitions.update({
+        status: "ready",
+        data: {
+          partial: false,
+          items: [
+            fixtureDefinition,
+            {
+              ...fixtureDefinition,
+              id: "22222222-2222-4222-8222-222222222222",
+              channelId: other.id,
+              yaml: fixtureYaml.replace("Message helper", "Other helper"),
+            },
+          ],
+        },
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Open Other helper:/ }),
+    );
+    await waitFor(() => expect(page.routed()?.channel).toBe(other.id));
+    // Back leaves the workflow's visit for the waiting link, retiring neither.
+    act(() => page.navigator.back());
+    await closed();
+    expect(page.routed()).toEqual({ channel: fixtureChannel });
+    expect(
+      screen.getByRole("button", { name: /^Open Other helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    act(() => page.navigator.forward());
+    expect(
+      await screen.findByRole("tab", { name: "Other helper" }),
+    ).toBeVisible();
+    act(() => page.navigator.back());
+    await closed();
+    // The link still applies once its channel is listed.
+    act(() =>
+      page.setChannels({
+        status: "ready",
+        coverage: "partial",
+        channels: [other, { id: fixtureChannel, name: "Fixture channel" }],
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+      ).toHaveAccessibleName("Channels: Fixture channel"),
+    );
+    expect(page.navigator.snapshot().canGoForward).toBe(true);
+  } finally {
+    page.dispose();
+  }
+});
+
 it("opens the channel and a posted message from the detail pane and reports refusals", async () => {
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
   mount(fixtureYaml, fixtureViewer, true, {}, (session) => (

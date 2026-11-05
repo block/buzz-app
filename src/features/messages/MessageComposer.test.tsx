@@ -11792,7 +11792,7 @@ it.each(["saved", "recovered", "typed before the default"])(
       pasteRichDraft(h.input(), "<p><strong>Keep this brief</strong></p>");
       expect(
         screen.getByRole("button", { name: "Send message" }),
-      ).toBeDisabled();
+      ).toHaveAttribute("aria-disabled", "true");
       h.retarget({ defaultMention: first });
     }
     expect(h.input()).toHaveValue("@Honey Keep this brief");

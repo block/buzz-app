@@ -36,7 +36,15 @@ test("reaction history opens the original message from Activity", async ({
   await expect(
     types.getByRole("tab", { name: "Reactions", exact: true }),
   ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    types.getByRole("tab", { name: "Reactions", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    types.getByRole("tab", { name: "Reactions", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
   await expect(
     types.getByRole("tab", { name: "All", exact: true }),
   ).toBeFocused();

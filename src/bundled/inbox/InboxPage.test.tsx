@@ -4524,10 +4524,12 @@ it("moves through the Activity type tabs with arrows, Home and End, then tabs ou
   expect(all).toHaveFocus();
   await user.keyboard("{End}");
   expect(tab().at(-1)).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(tab().at(-1)).toHaveFocus();
   expect(activityType()).toBe("Reactions");
   expect(fromTrigger()).toBeDisabled();
   expect(unreadToggle()).toHaveAttribute("aria-disabled", "true");
-  await user.keyboard("{Home}");
+  await user.keyboard("{Home}{Enter}");
   expect(all).toHaveFocus();
   expect(focusable()).toEqual([all]);
   await user.tab();

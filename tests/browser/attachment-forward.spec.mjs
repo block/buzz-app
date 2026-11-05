@@ -40,7 +40,7 @@ test("drags a thread reply attachment into another channel", async ({
   const destination = page.locator('[data-channel-id="beta"]').first();
   await source.dragTo(destination);
   await expect(
-    page.getByText("Attachment sent to Beta", { exact: true }),
+    page.getByText("Sending attachment to Beta", { exact: true }),
   ).toBeVisible();
   await expect
     .poll(

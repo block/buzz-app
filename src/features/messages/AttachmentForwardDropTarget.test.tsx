@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
@@ -96,7 +102,7 @@ it("resends the dragged attachment to the dropped channel", async () => {
   });
   expect(send).toHaveBeenCalledWith("destination", source, [attachment]);
   expect(
-    await screen.findByText("Attachment sent to Design"),
+    await screen.findByText("Sending attachment to Design"),
   ).toBeInTheDocument();
 });
 
@@ -128,7 +134,7 @@ it("resends a reconciled thread reply when it is absent from the channel", async
     dataTransfer,
   });
   expect(
-    await screen.findByText("Attachment sent to Design"),
+    await screen.findByText("Sending attachment to Design"),
   ).toBeInTheDocument();
   expect(session.thread).toHaveBeenCalledWith("origin", "source", {
     exact: true,
@@ -163,7 +169,7 @@ it("keeps feedback after the sidebar row unmounts", async () => {
     </ToastProvider>,
   );
   expect(
-    await screen.findByText("Attachment sent to Design"),
+    await screen.findByText("Sending attachment to Design"),
   ).toBeInTheDocument();
 });
 
@@ -178,6 +184,69 @@ it("matches normalized attachment URLs from rendered rows", async () => {
     dataTransfer,
   });
   expect(send).toHaveBeenCalledWith("destination", rawSource, [attachment]);
+});
+
+it("does not report delivery when the outbox later rejects the send", async () => {
+  const { createMessages } = await import("../relay/messages");
+  const { createOutbox, PublishRejected } = await import("../relay/outbox");
+  const { keypair, message, signed } = await import("../relay/testing");
+  const author = keypair();
+  const original = message(author, "origin", "Photo", 1, [
+    ["imeta", `url ${attachment.url}`, "m image/png"],
+  ]);
+  const row = { ...source, id: original.id };
+  let rejectPublish: ((error: Error) => void) | undefined;
+  const publish = vi.fn(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectPublish = reject;
+      }),
+  );
+  const { outbox } = createOutbox(
+    author.pubkey,
+    { kinds: [9], sign: async (template) => signed(author, template), publish },
+    { load: () => [], save: () => {} },
+  );
+  await outbox.ready();
+  const messages = createMessages(
+    outbox,
+    author.pubkey,
+    (id) => (id === original.id ? original : undefined),
+    () => [],
+    () => {},
+    () => true,
+  );
+  const session = {
+    channels: { window: () => ({ rows: [row] }) },
+    messages,
+  } as unknown as RelaySession;
+  render(
+    <ToastProvider>
+      <AttachmentForwardDropTarget channel={channel} session={session}>
+        <button type="button">Design</button>
+      </AttachmentForwardDropTarget>
+    </ToastProvider>,
+  );
+  try {
+    fireEvent.drop(screen.getByRole("button", { name: "Design" }), {
+      dataTransfer: {
+        types: [ATTACHMENT_FORWARD_MIME],
+        getData: () => attachmentForwardPayload(row, [attachment]),
+      },
+    });
+    expect(
+      await screen.findByText("Sending attachment to Design"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    expect(outbox.snapshot()[0]?.delivery).toBe("sending");
+    rejectPublish?.(new PublishRejected("Not allowed"));
+    await waitFor(() => expect(outbox.snapshot()[0]?.delivery).toBe("failed"));
+    expect(
+      screen.queryByText("Attachment sent to Design"),
+    ).not.toBeInTheDocument();
+  } finally {
+    rejectPublish?.(new Error("Test cleanup"));
+  }
 });
 
 it("forwards an edited thread reply through the real thread fold and message outbox", async () => {
@@ -263,7 +332,7 @@ it("forwards an edited thread reply through the real thread fold and message out
       dataTransfer,
     });
     expect(
-      await screen.findByText("Attachment sent to Design"),
+      await screen.findByText("Sending attachment to Design"),
     ).toBeInTheDocument();
     const sent = outbox.snapshot()[0]?.event;
     expect(sent?.tags).toContainEqual(edit.tags[2]);

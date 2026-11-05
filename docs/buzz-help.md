@@ -227,12 +227,13 @@ that agent in Buzz; they do not notify the external app through this connection.
   uploads are available. Files and media are shared with the conversation's
   members. Drag an existing message attachment onto a writable channel or DM in
   the sidebar to send that attachment there without uploading it again. This
-  sends immediately, including from private conversations to open channels.
-  Thread replies can be sent too if their source is available. If an upload
+  starts sending immediately, including from private conversations to open
+  channels. Check the destination for delivery or retry if it fails. Thread
+  replies can be sent too if their source is available. If an upload
   fails, its attachment shows the reason, **Retry**, and **Remove**. Follow the
   error's guidance before retrying, or remove the attachment to unblock Send;
-  your typed message stays
-  in the composer. Do not promise support for every file type or size.
+  your typed message stays in the composer. Do not promise support for every
+  file type or size.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

@@ -83,7 +83,7 @@ export function useAttachmentForwardDropTarget(
               source.source,
               source.attachments,
             );
-            notify(`Attachment sent to ${channel.name}`, "success");
+            notify(`Sending attachment to ${channel.name}`, "info");
           } catch (error) {
             notify(
               error instanceof Error

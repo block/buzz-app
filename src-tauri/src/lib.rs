@@ -825,6 +825,17 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKit only underlines misspellings when this app default is on. Leave a
+    // choice made in the composer's Spelling and Grammar menu unchanged.
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{ns_string, NSUserDefaults};
+        let defaults = NSUserDefaults::standardUserDefaults();
+        let key = ns_string!("WebContinuousSpellCheckingEnabled");
+        if defaults.objectForKey(key).is_none() {
+            defaults.setBool_forKey(true, key);
+        }
+    }
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(

@@ -571,6 +571,8 @@ confirmation.
   When helping someone explore a community, use only your available access and
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
+- On macOS, Buzz checks spelling while you type by default. Turning it off from
+  the right-click **Spelling and Grammar** menu is remembered across restarts.
 
 On macOS, debug builds can use a trusted local credential helper for human restore
 and agent creation, restore, and deletion. See [local helper setup](identity.md#local-restore-helper-on-macos).

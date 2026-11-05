@@ -55,6 +55,10 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { useMemberCounts } from "../../features/channels/useChannelDirectory";
+import {
+  channelIcon,
+  channelIconLabel,
+} from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -1134,15 +1138,17 @@ export function SearchResults({
         (channel) =>
           channel.channelType === "dm" &&
           !channel.archived &&
-          !channel.hidden &&
           channel.participants?.length === 1 &&
           channel.participants[0] === pubkey,
       );
     // Opening a DM hidden on this device goes through the confirmed open,
-    // which restores its sidebar row. A visible DM just opens.
+    // which restores its sidebar row. So does any DM opened while the relay's
+    // hidden set is not ready, since it may be hidden: before the first load,
+    // during every refresh and after a failed one. A visible DM just opens.
     if (
       existing &&
-      (!sidebarHidden(existing) || !session.directMessages.available)
+      (!session.directMessages.available ||
+        (dmVisibility.status === "ready" && !sidebarHidden(existing)))
     )
       return openConversation(existing.id);
     if (
@@ -1273,6 +1279,8 @@ export function SearchResults({
         ]
       : [];
   const messages: SearchDestination[] = search.messages.map((message) => {
+    // Every listed hit's channel is readable here, with settled metadata.
+    const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
     const name = resolveName(
       displayId,
@@ -1283,7 +1291,9 @@ export function SearchResults({
     return {
       key: message.id,
       label: message.preview,
-      detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      detailIcon: channel && channelIcon(channel),
+      detailIconLabel: channel && channelIconLabel(channel),
       icon: ChatCircleIcon,
       run: () => {
         cancelPersonOpen();

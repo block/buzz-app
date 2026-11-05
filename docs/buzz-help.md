@@ -159,7 +159,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   until you add one or turn worktree mode off.
 - **Inbox** collects DMs, ordinary responses in Solo chats, mentions of you, and replies in threads you started,
   replied in, or follow. Solo chats appear under All, not DMs; their nested threads stay separate. Agent-only
-  coordination stays out.
+  coordination stays out. If loading fails, use **Retry inbox** on the page or
+  preview to retry; recovered activity clears the loading error.
 - **New messages** marks the first known unread incoming channel message when
   you enter. Once established, the divider stays in place for that visit as you
   read, reveal another message, or receive new messages. It is absent for a visit
@@ -186,6 +187,15 @@ that agent in Buzz; they do not notify the external app through this connection.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
+- **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
+  of the sidebar without leaving it. To find one again, start a **New message**
+  to exactly the same people. Its earlier messages appear before you send,
+  without being marked read. Sending a message reopens the DM and brings it
+  back to the sidebar. For a one-to-one DM, choosing the person in search is
+  quicker and brings it back the same way. After **Hide conversation**, the row
+  can take until the channel list next refreshes to return. If this connection
+  can't start DMs, New message still shows the earlier messages but Send is
+  disabled, and search opens a one-to-one DM without bringing it back.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
@@ -216,7 +226,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
   one to make it a chip. Click a chip to remove it, or press Backspace at the
   start of the text to edit the last one. With a filter, search shows only
-  messages.
+  messages. Each message result's conversation name starts with the icon its
+  channel header shows: a hash for a public channel, a lock for a private
+  channel, or a chat bubble for a direct message or chat. Screen readers
+  announce the type before the name.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
@@ -227,6 +240,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
+- In a channel, typing `/leave` by itself opens the same **Leave channel**
+  confirmation. The command is not posted as a message.
 - **Quote** appears next to text selected inside one message in a channel or
   thread. It adds that text to the same conversation's composer as a quote,
   with the cursor on the line below it. Mentions inside the quote notify no

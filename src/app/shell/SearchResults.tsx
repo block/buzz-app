@@ -117,6 +117,8 @@ const confirmedMutes = (
 
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
+/** The most unread conversations an empty search leads with. */
+const UNREAD_ROWS = 6;
 const noMembers: readonly string[] = [];
 
 /** "Search in this conversation" narrows the search and "Show more messages"
@@ -1293,7 +1295,8 @@ export function SearchResults({
     ...conversationDestination(channel),
     ...(channel.preview ? { detail: channel.preview } : {}),
   });
-  const unread = suggestions.filter(isUnread).map(suggestion);
+  const unreadChannels = suggestions.filter(isUnread);
+  const unread = unreadChannels.slice(0, UNREAD_ROWS).map(suggestion);
   const recent = suggestions
     .filter((channel) => !isUnread(channel))
     .slice(0, 4)
@@ -1450,7 +1453,13 @@ export function SearchResults({
           : !query.trim()
             ? [
                 ...(unread.length
-                  ? [{ label: "Unread", destinations: unread }]
+                  ? [
+                      {
+                        label: "Unread",
+                        destinations: unread,
+                        total: unreadChannels.length,
+                      },
+                    ]
                   : []),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]

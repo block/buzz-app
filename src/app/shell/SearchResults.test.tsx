@@ -292,6 +292,82 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
   }
 });
 
+it("shows the first six unread conversations, counting them all, ahead of the rest", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  let journal: ReadJournal | undefined;
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const ids = [
+    ...Array.from({ length: 8 }, (_, index) => `unread-${index}`),
+    "read",
+  ];
+  const discovery = ids.flatMap((id) => [
+    metadata(relay, id, id),
+    roster(relay, id, [viewer.pubkey]),
+  ]);
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      query(filters) {
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          ),
+        );
+      },
+    },
+    {
+      readStateFloor: () => 0,
+      readPublisherLock: async (_signal, work) => work(),
+      readStateStorage: {
+        close() {},
+        async update(change) {
+          journal = readJournal(change(journal), viewer.pubkey);
+          return journal;
+        },
+      },
+    },
+  );
+  const rowsOf = (group: string) =>
+    within(screen.getByRole("group", { name: group })).getAllByRole("option");
+  try {
+    owner.session.channels.ensureList();
+    await waitFor(() =>
+      expect(owner.session.channels.list().channels).toHaveLength(9),
+    );
+    for (const id of ids.slice(0, 8))
+      await owner.session.unread.markUnreadLocal({
+        kind: "channel",
+        channelId: id,
+      });
+    render(
+      <SearchResults
+        session={owner.session}
+        query=""
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(6));
+    const rows = rowsOf("Unread");
+    expect(rows[0]).toHaveTextContent(/^unread-0/);
+    expect(rows[0]).toHaveAttribute("aria-setsize", "8");
+    expect(rows[5]).toHaveAttribute("aria-posinset", "6");
+    expect(
+      screen.getByRole("combobox", { name: "Search Buzz" }),
+    ).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    // Unread rows past the first six are not repeated as recent activity.
+    expect(rowsOf("Recent activity").map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^read/),
+    ]);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("ranks typed channel names and selects the best one for Enter", async () => {
   const relay = keypair();
   const viewer = keypair();

@@ -491,8 +491,8 @@ export class AgentSessions {
   ): Promise<Live | Settled> {
     const opened = this.start(resume, key).then(
       async (live): Promise<Live | Settled> => {
-        if (this.opening.get(key) === opened) this.opening.delete(key);
         if (this.disposed) {
+          if (this.opening.get(key) === opened) this.opening.delete(key);
           void live.process.kill();
           return { ok: false, error: "Claude was stopped", undelivered: true };
         }
@@ -500,8 +500,10 @@ export class AgentSessions {
           await this.adopt(key, live, seen, contextRoot);
         } catch (error) {
           this.drop(key, live);
+          if (this.opening.get(key) === opened) this.opening.delete(key);
           throw error;
         }
+        if (this.opening.get(key) === opened) this.opening.delete(key);
         return live;
       },
       (error): Settled => {

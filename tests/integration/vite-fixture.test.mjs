@@ -134,7 +134,7 @@ test("app builds, previews and fixture servers in one worker do not change each 
   }
 });
 
-test("port 0 servers and previews bind where the OS assigns, not a probed port", async () => {
+test("port 0 servers, restarts and previews bind where the OS assigns, not a probed port", async () => {
   // Vite probes for a free port, closes the probe and binds that number later.
   // Take each such port just before its bind, as a concurrent process can.
   const listen = Server.prototype.listen;
@@ -166,6 +166,9 @@ test("port 0 servers and previews bind where the OS assigns, not a probed port",
       },
     });
     await server.listen();
+    bound(server);
+    // A restart binds a new HTTP server to the port Vite recorded at start.
+    await server.restart();
     bound(server);
     previewServer = await preview({
       root,

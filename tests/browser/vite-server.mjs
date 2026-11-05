@@ -67,6 +67,10 @@ function fixturePlugin(plugins) {
   return {
     name: "buzz-fixture-server",
     async configureServer(server) {
+      // Here rather than after creation: server.restart() builds a new HTTP
+      // server and binds it to the number Vite probed for the first one.
+      if (server.httpServer && server.config.server.port === 0)
+        bindAssignedPort(server.httpServer);
       const after = [];
       for (const plugin of plugins) {
         const result = await plugin.configureServer?.(server);
@@ -181,8 +185,6 @@ export async function createServer(config) {
     const server = await keepNodeEnv(() =>
       createViteServer({ ...fixture, cacheDir }),
     );
-    if (server.httpServer && server.config.server.port === 0)
-      bindAssignedPort(server.httpServer);
     const close = server.close.bind(server);
     server.close = async () => {
       try {

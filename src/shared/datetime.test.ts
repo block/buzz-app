@@ -247,6 +247,7 @@ test("drops memoized calendar days when the time zone changes", async () => {
     process.env.TZ = "Asia/Tokyo";
     expect(calendarDay(createdAt)).toBe("Wed Nov 04 2026");
   } finally {
-    process.env.TZ = zone;
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
   }
 });

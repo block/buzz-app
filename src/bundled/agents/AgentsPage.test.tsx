@@ -5,6 +5,7 @@ import {
   profileTarget,
 } from "../../features/profiles/target";
 // @vitest-environment jsdom
+import "../../../tests/popover-dom";
 import "@testing-library/jest-dom/vitest";
 import closeRequest from "../../../src-tauri/src/close-request.js?raw";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";

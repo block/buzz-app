@@ -404,7 +404,7 @@ export function MentionCompletion({
               teams.retry();
               model.directory.retry();
               void session.agentChoices.refresh(
-                !!inviteAgents || teams.includeLegacy,
+                model.includeLegacy || teams.includeLegacy,
               );
               void session.archives?.refresh();
               retry((value) => value + 1);

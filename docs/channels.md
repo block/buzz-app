@@ -225,8 +225,9 @@ Read-only hosts disable the filter choices while keeping hidden-channel navigati
 (`buzz-hide-muted-channels.v1`). It removes muted channels from saved groups,
 **Channels** and **Forums** before the section filter applies; **Starred** and DMs are
 unaffected. Saved and cached mutes hide at startup, and a pending Mute hides at once so
-the row menu returns focus to its section header; a failed Mute brings the row back. The open channel and a muted channel with a mention or manual unread mark stay
-visible. Hidden muted channels appear under **Muted** in the section's **Filter** submenu,
+the row menu returns focus to its section header; a failed Mute brings the row back. The open channel stays visible, and so does a muted channel with unread attention
+(the badge `attentionCount`: mentions, replies in the viewer's threads, broadcasts) or a
+manual unread mark. Hidden muted channels appear under **Muted** in the section's **Filter** submenu,
 after any filter-hidden channels, whatever the filter. It is not an account preference:
 older clients reject unknown `channel-filter` values and fail the whole preference read. The saved-groups
 browser regression records every visible return frame and holds the redundant

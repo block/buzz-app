@@ -5,6 +5,8 @@
 // them as the agent. Both give a type the same answers, so the type runs the
 // same code in either.
 import type { Memories } from "../../buzz-mcp/client";
+import type { Profile } from "../relay/contracts";
+import { validVerifiedName } from "../relay/verified-profile";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { ownerCanvas } from "../agent-harness/project";
@@ -42,6 +44,10 @@ export type AgentReads = Readonly<{
   /** A person's name, as the channel with these members shows it when
    * given; if known yet. */
   name(pubkey: string, members?: readonly string[]): string | undefined;
+  /** The name to write after `@` to tag a person, once `profiles` read them:
+   * their verified display name, else their own profile's. Unlike `name`, it
+   * carries no namesake qualifier, so the Buzz tools can resolve it. */
+  author?(pubkey: string): string | undefined;
   /** A person's signature-verified profile event, once `profiles` read it. */
   profile(pubkey: string): RelayEvent | undefined;
   /** The community's name and kind for a channel, if it lists the channel now. */
@@ -104,6 +110,8 @@ export function ownerReads(
       session.names.resolve(person, undefined, members) ??
       session.profiles.snapshot().get(person)?.name ??
       undefined,
+    author: (person: string) =>
+      authorName(session.profiles.snapshot().get(person), person),
     profile: (person: string) => session.profiles.event?.(person),
     channelLabel: (id: string) => {
       const summary = session.channels
@@ -133,4 +141,16 @@ export function ownerReads(
     memoryListing: (signal: AbortSignal, slug?: string) =>
       session.agentMemories.read(pubkey, signal, slug),
   });
+}
+
+/** The name that tags `pubkey`: their verified display name, else their own
+ * profile's. None when it is only a key fragment, or when the directory had to
+ * qualify it because someone else holds it too, since `@` and that name would
+ * not reach this person alone. */
+export function authorName(profile: Profile | undefined, pubkey: string) {
+  if (!profile || profile.nameIsFallback) return undefined;
+  const name = profile.verified?.displayName ?? profile.name.trim();
+  if (profile.verified && profile.name !== name) return undefined;
+  if (name.endsWith(` (${pubkey.slice(0, 10)})`)) return undefined;
+  return validVerifiedName(name) ? name : undefined;
 }

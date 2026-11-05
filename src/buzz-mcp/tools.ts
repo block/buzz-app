@@ -28,6 +28,10 @@ import {
   referencedEmoji,
 } from "../features/relay/emoji";
 import { newer } from "../features/relay/events";
+import {
+  VERIFIED_PROFILE_BATCH,
+  VERIFIED_PROFILE_KIND,
+} from "../features/relay/verified-profile";
 import { imageType } from "../features/relay/attachment-limits";
 import { LIVE_CANVAS_BYTES } from "../features/channel-templates/model";
 import { threadReference } from "../features/relay/thread-reference";
@@ -1946,6 +1950,93 @@ class Tools {
     return names;
   }
 
+  /** Every name `send` accepts after `@` for each of `pubkeys`, with its
+   * weight: lower wins when people share a name. A relay-verified name
+   * outranks a name someone gave their own profile, so a profile cannot take
+   * a verified person's name. */
+  async aliases(pubkeys: readonly string[]) {
+    const wanted = [...new Set(pubkeys)];
+    const aliases = new Map<string, Map<string, number>>();
+    const add = (pubkey: string, name: unknown, weight: number) => {
+      if (typeof name !== "string" || !name.trim()) return;
+      const lower = name.trim().toLowerCase();
+      const names = aliases.get(lower) ?? new Map<string, number>();
+      names.set(pubkey, Math.min(names.get(pubkey) ?? weight, weight));
+      aliases.set(lower, names);
+    };
+    if (!wanted.length) return aliases;
+    const profiles = await this.client.query([
+      { kinds: [0], authors: wanted, limit: wanted.length },
+    ]);
+    for (const event of newest(profiles)) {
+      const profile = parse(event.content);
+      add(event.pubkey, profile.display_name, NAME_WEIGHT.displayName);
+      add(event.pubkey, profile.name, NAME_WEIGHT.name);
+    }
+    for (const [pubkey, verified] of await this.verifiedNames(wanted)) {
+      add(pubkey, verified.displayName, NAME_WEIGHT.verifiedDisplayName);
+      add(pubkey, verified.username, NAME_WEIGHT.verifiedUsername);
+      add(pubkey, verified.fullName, NAME_WEIGHT.verifiedFullName);
+    }
+    return aliases;
+  }
+
+  /** The relay's verified names (kind 30382) for `pubkeys`. Only events the
+   * connection's relay signed count; none without that key. */
+  async verifiedNames(pubkeys: readonly string[]) {
+    const names = new Map<
+      string,
+      {
+        displayName: string | undefined;
+        username: string | undefined;
+        fullName: string | undefined;
+      }
+    >();
+    const relay = this.client.relayAuthor;
+    if (!relay) return names;
+    const batches: string[][] = [];
+    for (let at = 0; at < pubkeys.length; at += VERIFIED_PROFILE_BATCH)
+      batches.push(pubkeys.slice(at, at + VERIFIED_PROFILE_BATCH));
+    const found = (
+      await Promise.all(
+        batches.map((batch) =>
+          this.client
+            .query([
+              {
+                kinds: [VERIFIED_PROFILE_KIND],
+                authors: [relay],
+                "#d": batch,
+                limit: batch.length,
+              },
+            ])
+            .catch(() => []),
+        ),
+      )
+    ).flat();
+    const latest = new Map<string, BuzzEvent>();
+    for (const event of found) {
+      if (event.pubkey !== relay || event.kind !== VERIFIED_PROFILE_KIND)
+        continue;
+      const subject = event.tags.find((t) => t[0] === "d")?.[1];
+      if (!subject || !pubkeys.includes(subject)) continue;
+      const seen = latest.get(subject);
+      if (!seen || seen.created_at < event.created_at)
+        latest.set(subject, event);
+    }
+    for (const [subject, event] of latest) {
+      const value = (name: string) =>
+        event.tags.find((t) => t[0] === name)?.[1];
+      // A retracted name stays at its address with the names removed.
+      if (value("active") !== "true" || value("p") !== subject) continue;
+      names.set(subject, {
+        displayName: value("display_name"),
+        username: value("username"),
+        fullName: value("full_name"),
+      });
+    }
+    return names;
+  }
+
   /** Messages oldest first with their latest edits, a line each: its ID,
    * author and its claimed (unverified) agent owner, channel and thread,
    * omitting what `scope` names. Other agent read surfaces trim the same
@@ -2013,13 +2104,7 @@ class Tools {
     if (!prose.includes("@") && !keys.size) return [];
     const members = await this.members(channel);
     if (prose.includes("@")) {
-      const byName = new Map<string, string[]>();
-      for (const [key, name] of await this.names(
-        members.map((member) => member.pubkey),
-      )) {
-        const lower = name.toLowerCase();
-        byName.set(lower, [...(byName.get(lower) ?? []), key]);
-      }
+      const byName = await this.aliases(members.map((member) => member.pubkey));
       const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
       const unknown: string[] = [];
       for (const match of prose.matchAll(/(^|\s)@/g)) {
@@ -2031,7 +2116,7 @@ class Tools {
             rest.startsWith(candidate) &&
             /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
         );
-        const found = name ? (byName.get(name) ?? []) : [];
+        const found = name ? bestNamed(byName.get(name)) : [];
         if (found.length === 1) keys.add(found[0] as string);
         else {
           const token = name ?? rest.match(/^[a-z0-9._-]+/)?.[0];
@@ -2270,6 +2355,25 @@ function pubkey(value: string) {
     if (decoded.type === "npub") return decoded.data;
   } catch {}
   throw new Error(`Not a pubkey: ${value}`);
+}
+
+/** How strongly each kind of name claims a person for `@`: lower wins. Every
+ * name the relay verified outranks every name a person gave themselves. */
+const NAME_WEIGHT = {
+  verifiedDisplayName: 0,
+  verifiedUsername: 1,
+  verifiedFullName: 2,
+  displayName: 3,
+  name: 4,
+} as const;
+
+/** Who a name tags: everyone holding it in its strongest form. */
+function bestNamed(holders: ReadonlyMap<string, number> | undefined) {
+  if (!holders?.size) return [];
+  const best = Math.min(...holders.values());
+  return [...holders]
+    .filter(([, weight]) => weight === best)
+    .map(([key]) => key);
 }
 
 const profileName = (profile: Record<string, unknown>) =>

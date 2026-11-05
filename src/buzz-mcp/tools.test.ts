@@ -473,6 +473,69 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
   expect(published[0]?.tags).toContainEqual(["p", bob]);
 });
 
+it("tags a member by the names the relay verified, ahead of names people gave themselves", async () => {
+  const relay = "d".repeat(64);
+  const verified = (
+    subject: string,
+    tags: readonly string[][],
+    fields: Partial<BuzzEvent> = {},
+  ) =>
+    event({
+      kind: 30382,
+      pubkey: relay,
+      tags: [["d", subject], ["p", subject], ["active", "true"], ...tags],
+      ...fields,
+    });
+  const { client, published } = fake([
+    ...community,
+    verified(alice, [
+      ["display_name", "Alice S"],
+      ["username", "asmith"],
+      ["full_name", "Alice Smith-Jones"],
+    ]),
+    // Bob's own profile claims Alice's verified name, and her username.
+    profile(bob, "Alice S"),
+    event({
+      kind: 0,
+      pubkey: bob,
+      created_at: 101,
+      content: JSON.stringify({ display_name: "Alice S", name: "asmith" }),
+    }),
+    // A name the relay did not sign, and one it retracted, give nobody.
+    verified(bob, [["username", "forged"]], { pubkey: me }),
+    verified(bob, [["username", "bobby"]], { created_at: 90 }),
+    verified(bob, [["active", "false"]], { created_at: 95 }),
+  ]);
+  const tagged = { ...client, relayAuthor: relay };
+  const context = { channel: "chan", root };
+  for (const text of [
+    "@Alice S see this",
+    "@asmith see this",
+    "@alice smith-jones see this",
+  ]) {
+    await callTool(tagged, context, "send", { audience: "everyone", text });
+    expect(published.at(-1)?.tags).toEqual([
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+      ["p", alice],
+    ]);
+  }
+  for (const name of ["forged", "bobby"])
+    await expect(
+      callTool(tagged, context, "send", {
+        audience: "everyone",
+        text: `@${name} hi`,
+      }),
+    ).rejects.toThrow(`No single channel member is @${name}`);
+  // Without the relay's key, verified names are not read at all, so only
+  // the names people gave themselves are left.
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: "@asmith hi",
+  });
+  expect(published.at(-1)?.tags).toContainEqual(["p", bob]);
+});
+
 it("replies to a message inside a thread at the thread's root, and posts a file's text and attachments", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {

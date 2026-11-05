@@ -97,11 +97,13 @@ export function turnInput(
   note?: string,
   /** A plugin's wake, whose section takes the place of `event`'s. */
   wake?: ConversationWake,
+  /** The name shown beside the event author's pubkey, when known. */
+  author?: string,
 ) {
   const section = steering
     ? "new-message-arrived-while-you-were-working"
     : "buzz-event";
-  const body = wake ? wakeSection(wake) : eventBody(event, text);
+  const body = wake ? wakeSection(wake) : eventBody(event, text, author);
   const routing = conversation.topLevel
     ? { posting: "top-level" }
     : { session_thread: conversation.root, reply_to: rootOf(event) };

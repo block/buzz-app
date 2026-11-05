@@ -7,9 +7,21 @@ import type { EventData } from "../relay/events";
 export const quoted = (value: unknown) =>
   JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 
+/** A message with its author's name beside its pubkey, so an agent can read
+ * who wrote it and write the same name to tag them. A protection plugin checks
+ * the name with the rest of the text; it is not part of the signed event. */
+export function withAuthor<T extends { id: string; pubkey: string }>(
+  message: T,
+  author: string | undefined,
+) {
+  if (!author) return message;
+  const { id, pubkey, ...rest } = message;
+  return { id, pubkey, author, ...rest };
+}
+
 /** The event a turn is for, then what it asks of the agent. */
-export const eventBody = (event: EventData, request: string) =>
-  `${quoted(event)}\nRequest: ${quoted(request)}`;
+export const eventBody = (event: EventData, request: string, author?: string) =>
+  `${quoted(withAuthor(event, author))}\nRequest: ${quoted(request)}`;
 
 /** Who sent the event in an `eventBody`, and its request; undefined for any
  * other text. */

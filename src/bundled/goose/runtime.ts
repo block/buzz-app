@@ -55,6 +55,7 @@ import {
   systemPrompt,
   turnPrompt,
 } from "../claude-code/prompt";
+import { authorNames } from "../../features/agent-harness/author-names";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
 import { REQUEST_TIMEOUT_MS, type ServeMcp, type ToolServer } from "./goose";
 import { AgentSessions, localSessions, SharedProcess } from "./sessions";
@@ -758,7 +759,13 @@ export class GooseRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const project = (await reading)?.section;
+    const [author, project] = await Promise.all([
+      authorNames(ownerReads(this.relay(agent.key), agent.pubkey), [
+        event,
+        ...unseen.slice(-CONTEXT_LIMIT),
+      ]),
+      reading.then((read) => read?.section),
+    ]);
     return {
       key,
       event,
@@ -781,6 +788,7 @@ export class GooseRuntime {
               ...unseen.map((item) => item.created_at),
             ),
       total: earlier.length + 1,
+      author,
       ...(project ? { project } : {}),
     };
   }

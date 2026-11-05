@@ -91,6 +91,36 @@ it.each([false, true])(
   },
 );
 
+it("names each message's author beside their pubkey", () => {
+  const names: Record<string, string> = { [alice]: "Alice Smith" };
+  const sections = promptSections(
+    turnPrompt({
+      agent,
+      event: event("3", "@Agent look"),
+      channel: { id: "chan", name: "general" },
+      scope: "thread" as const,
+      context: [event("1", "first"), event("2", "second", { pubkey: bob })],
+      total: 2,
+      author: (pubkey) => names[pubkey],
+    }),
+  );
+  const history = JSON.parse(sections[0]?.body ?? "").messages;
+  expect(history.map(Object.keys)).toEqual([
+    ["id", "pubkey", "author", "created_at", "content"],
+    ["id", "pubkey", "created_at", "content"],
+  ]);
+  expect(history[0].author).toBe("Alice Smith");
+  const current = sections.find((section) => section.tag === "buzz-event");
+  expect(JSON.parse(current?.body.split("\n")[0] ?? "")).toMatchObject({
+    pubkey: alice,
+    author: "Alice Smith",
+  });
+  expect(promptMessage(sections)).toEqual({
+    author: undefined,
+    text: "@Agent look",
+  });
+});
+
 it("builds the harness system prompt with instructions and core memory", () => {
   const prompt = systemPrompt({
     scope: "thread",

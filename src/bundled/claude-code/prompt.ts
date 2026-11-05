@@ -12,7 +12,11 @@ import {
   type ConversationWake,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
-import { eventBody, quoted } from "../../features/agent-harness/turn-records";
+import {
+  eventBody,
+  quoted,
+  withAuthor,
+} from "../../features/agent-harness/turn-records";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
 
@@ -92,6 +96,9 @@ export type TurnInput = Readonly<{
   project?: string;
   /** A plugin's wake, whose turn has its section in place of the event's. */
   wake?: ConversationWake;
+  /** The name each message's record shows beside its author's pubkey, when
+   * known: the name the agent writes after `@` to tag them. */
+  author?: (pubkey: string) => string | undefined;
 }>;
 
 /** One turn: unseen thread context, routing context, then the event. Each
@@ -161,12 +168,17 @@ export function turnPrompt(input: TurnInput) {
           note: `Messages not yet shown in this session, not new requests: the latest ${CONTEXT_LIMIT} at most, ${CONTENT_LIMIT} characters each.`,
           total: input.total,
           truncated: context.length < input.context.length,
-          messages: context.map((message) => ({
-            id: message.id,
-            pubkey: message.pubkey,
-            created_at: message.created_at,
-            content: message.content.slice(0, CONTENT_LIMIT),
-          })),
+          messages: context.map((message) =>
+            withAuthor(
+              {
+                id: message.id,
+                pubkey: message.pubkey,
+                created_at: message.created_at,
+                content: message.content.slice(0, CONTENT_LIMIT),
+              },
+              input.author?.(message.pubkey),
+            ),
+          ),
         }),
       ),
     );
@@ -180,7 +192,10 @@ export function turnPrompt(input: TurnInput) {
   parts.push(
     input.wake
       ? wakeSection(input.wake)
-      : section(EVENT, eventBody(event, event.content)),
+      : section(
+          EVENT,
+          eventBody(event, event.content, input.author?.(event.pubkey)),
+        ),
   );
   return parts.join("\n\n");
 }

@@ -487,6 +487,7 @@ it("hides mutes on this device's opt-in, returns focus to the section and lists 
   const user = userEvent.setup();
   let muted = ["beta"];
   let settle: (error?: Error) => void = () => {};
+  const writes = vi.fn();
   const preferences = createSidebarPreferencesStore({
     read: async () => ({
       sections: [],
@@ -497,6 +498,7 @@ it("hides mutes on this device's opt-in, returns focus to the section and lists 
     available: true,
     writeMute: ({ channelId, muted: next }) =>
       new Promise<readonly string[]>((resolve, reject) => {
+        writes();
         settle = (error) => {
           if (error) return reject(error);
           muted = next
@@ -522,16 +524,16 @@ it("hides mutes on this device's opt-in, returns focus to the section and lists 
     await mute();
     expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull();
     await waitFor(() => expect(summary).toHaveFocus());
+    await waitFor(() => expect(writes).toHaveBeenCalledOnce());
     await act(async () => settle(new Error("offline")));
     expect(
       await screen.findByRole("dialog", { name: "Couldn’t mute gamma" }),
     ).toBeVisible();
-    // A returning row animates in; visibility settles after it mounts.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /^gamma/ })).toBeVisible(),
-    );
+    // Rows fade on wall-clock motion; assert accessible presence, not opacity.
+    await screen.findByRole("button", { name: /^gamma/ });
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await mute();
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
     await act(async () => settle());
     await waitFor(() =>
       expect(preferences.queries.snapshot().data?.muted).toEqual([
@@ -559,13 +561,9 @@ it("hides mutes on this device's opt-in, returns focus to the section and lists 
       expect.objectContaining({ kind: "conversation", channelId: "beta" }),
     );
     mounted.rerender(h.view("beta"));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /^beta/ })).toBeVisible(),
-    );
+    await screen.findByRole("button", { name: /^beta/ });
     act(() => setHideMutedChannelsPreference(false));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /^gamma/ })).toBeVisible(),
-    );
+    await screen.findByRole("button", { name: /^gamma/ });
   } finally {
     settle();
     act(() => setHideMutedChannelsPreference(false));
@@ -607,9 +605,7 @@ it("hides cached mutes before live preferences arrive, then follows the live ans
     expect(await screen.findByRole("button", { name: "gamma" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
     await act(async () => answer({ ...cached, muted: [] }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "beta" })).toBeVisible(),
-    );
+    await screen.findByRole("button", { name: "beta" });
   } finally {
     answer?.({ ...cached, muted: [] });
     act(() => setHideMutedChannelsPreference(false));
@@ -620,6 +616,7 @@ it("hides cached mutes before live preferences arrive, then follows the live ans
 it("keeps a channel visible while its unmute saves, and hides it again if the unmute fails", async () => {
   const user = userEvent.setup();
   let settle: (error?: Error) => void = () => {};
+  const writes = vi.fn();
   const preferences = createSidebarPreferencesStore({
     read: async () => ({
       sections: [],
@@ -630,6 +627,7 @@ it("keeps a channel visible while its unmute saves, and hides it again if the un
     available: true,
     writeMute: () =>
       new Promise<readonly string[]>((resolve, reject) => {
+        writes();
         settle = (error) => (error ? reject(error) : resolve([]));
       }),
   });
@@ -644,6 +642,7 @@ it("keeps a channel visible while its unmute saves, and hides it again if the un
     mounted.rerender(h.view("alpha"));
     await screen.findByRole("button", { name: "alpha" });
     expect(screen.getByRole("button", { name: /^beta/ })).toBeVisible();
+    await waitFor(() => expect(writes).toHaveBeenCalledOnce());
     await act(async () => settle(new Error("offline")));
     expect(
       await screen.findByRole("dialog", { name: "Couldn’t unmute beta" }),

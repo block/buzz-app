@@ -509,8 +509,8 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
-- Each Claude agent runs its own `claude` process for each active conversation
-  on this computer. While an unprotected Claude agent runs here, Buzz also keeps
+- Each Claude agent running on this computer keeps its own `claude` process for
+  each active conversation. While an unprotected one runs here, Buzz also keeps
   one shared process ready for the next new conversation. Each of these starts
   its own copies of the local MCP servers in your Claude Code configuration, so
   memory use grows with active conversations times those servers. A

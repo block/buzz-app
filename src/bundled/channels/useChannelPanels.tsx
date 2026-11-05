@@ -19,6 +19,8 @@ type Opening = {
   target: string;
   trigger: HTMLElement | null;
 };
+const channelKey = (context: ChannelPanelContext) =>
+  JSON.stringify([context.scope, context.channelId]);
 /** The page's tab workspace, which owns `channelPlacement: "tab"` panels. */
 export type ChannelPanelTabs = {
   pressed(panel: RegisteredPanel, context: ChannelPanelContext): boolean;
@@ -46,7 +48,21 @@ export function useChannelPanels(
     panels.snapshot,
     panels.snapshot,
   );
-  const [opened, setOpened] = useState<Opening>();
+  // Each channel keeps its own opening, so returning to a channel shows the
+  // drawer the viewer left open there until they close it.
+  const [openings, setOpenings] = useState<Readonly<Record<string, Opening>>>(
+    {},
+  );
+  const setOpened = (
+    channel: ChannelPanelContext,
+    change: (current: Opening | undefined) => Opening | undefined,
+  ) =>
+    setOpenings((current) => {
+      const { [channelKey(channel)]: previous, ...rest } = current;
+      const next = change(previous);
+      if (next === previous) return current;
+      return next ? { ...rest, [channelKey(channel)]: next } : rest;
+    });
   const mounted = useRef<ChannelPanelContext>(undefined);
   useLayoutEffect(() => {
     mounted.current = context;
@@ -54,17 +70,20 @@ export function useChannelPanels(
       mounted.current = undefined;
     };
   }, [context]);
+  const opened = context && openings[channelKey(context)];
   const selected =
-    opened &&
-    context &&
-    opened.context.scope === context.scope &&
-    opened.context.channelId === context.channelId &&
-    available.includes(opened.panel)
-      ? opened
-      : undefined;
+    opened && available.includes(opened.panel) ? opened : undefined;
   useLayoutEffect(() => {
-    if (opened && !selected) setOpened(undefined);
-  }, [opened, selected]);
+    // A disabled or replaced contribution closes everywhere; re-enabling starts closed.
+    setOpenings((current) => {
+      const kept = Object.entries(current).filter(([, opening]) =>
+        available.includes(opening.panel),
+      );
+      return kept.length === Object.keys(current).length
+        ? current
+        : Object.fromEntries(kept);
+    });
+  }, [available]);
   const activeOpening = useRef<Opening>(undefined);
   useLayoutEffect(() => {
     activeOpening.current = selected;
@@ -74,7 +93,9 @@ export function useChannelPanels(
   }, [selected]);
   const hide = (opening: Opening) => {
     if (activeOpening.current !== opening) return;
-    setOpened((current) => (current === opening ? undefined : current));
+    setOpened(opening.context, (current) =>
+      current === opening ? undefined : current,
+    );
     if (opening.trigger?.isConnected) opening.trigger.focus();
   };
   const openingContext = (opening: Opening): PanelContext => ({
@@ -86,7 +107,9 @@ export function useChannelPanels(
   const bound = (binding: ChannelPanelContext, panel: RegisteredPanel) =>
     mounted.current === binding && panels.snapshot().includes(panel);
   return {
-    close: () => setOpened(undefined),
+    close: () => {
+      if (context) setOpened(context, () => undefined);
+    },
     launchers: context && (
       <div className={styles.channelLaunchers}>
         {available
@@ -128,7 +151,7 @@ export function useChannelPanels(
                   else if (selected?.panel === panel) hide(selected);
                   else {
                     onOpen?.();
-                    setOpened({
+                    setOpened(context, () => ({
                       panel,
                       context,
                       target,
@@ -136,7 +159,7 @@ export function useChannelPanels(
                         document.activeElement instanceof HTMLElement
                           ? document.activeElement
                           : null,
-                    });
+                    }));
                   }
                 }}
               />

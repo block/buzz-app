@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -112,6 +118,98 @@ it.each(["bottom", "side"] as const)(
     expect(region).toBeInTheDocument();
     fireEvent.keyDown(region, { key: "Escape" });
     expect(region).not.toBeInTheDocument();
+  },
+);
+
+it.each(["bottom", "side"] as const)(
+  "keeps a %s launcher open for its channel until closed or disabled",
+  async (placement) => {
+    const user = userEvent.setup();
+    const contextOf = (channelId: string): ChannelPanelContext => ({
+      scope: "scope",
+      viewer: "viewer",
+      channelId,
+      channelName: channelId,
+      relayUrl: "wss://example.com",
+    });
+    const panel: RegisteredPanel = {
+      id: "huddles",
+      key: "fixture:huddles",
+      pluginId: "fixture",
+      revision: "1",
+      title: "Huddle",
+      channelPlacement: placement,
+      matches: () => true,
+      channelLauncher: ({ toggle, pressed }) => (
+        <button
+          type="button"
+          aria-pressed={pressed}
+          onClick={() => toggle("huddle")}
+        >
+          Huddle
+        </button>
+      ),
+      component: () => <p>Huddle contents</p>,
+    };
+    let available = [panel];
+    const listeners = new Set<() => void>();
+    const panels: Panels = {
+      snapshot: () => available,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      register: () => {},
+      resolve: () => panel,
+      requestOpen: () => false,
+      handleOpenRequests: () => () => {},
+    };
+    function Harness({ context }: { context: ChannelPanelContext }) {
+      const drawer = useChannelPanels(panels, context);
+      return (
+        <>
+          {drawer.launchers}
+          {drawer.content}
+          {drawer.side}
+        </>
+      );
+    }
+    const label = placement === "side" ? "Huddle panel" : "Huddle drawer";
+    const region = () => screen.queryByRole("region", { name: label });
+    const launcher = () => screen.getByRole("button", { name: "Huddle" });
+    const alpha = contextOf("alpha");
+    const beta = contextOf("beta");
+    const view = render(<Harness context={alpha} />);
+    await user.click(launcher());
+    expect(region()).toBeVisible();
+    view.rerender(<Harness context={beta} />);
+    expect(region()).not.toBeInTheDocument();
+    expect(launcher()).toHaveAttribute("aria-pressed", "false");
+    view.rerender(<Harness context={alpha} />);
+    expect(region()).toBeVisible();
+    expect(launcher()).toHaveAttribute("aria-pressed", "true");
+    // Closing in one channel leaves it closed on return.
+    await user.click(launcher());
+    expect(region()).not.toBeInTheDocument();
+    view.rerender(<Harness context={beta} />);
+    view.rerender(<Harness context={alpha} />);
+    expect(region()).not.toBeInTheDocument();
+    // Disabling the plugin closes it in every channel; re-enabling starts closed.
+    await user.click(launcher());
+    view.rerender(<Harness context={beta} />);
+    await user.click(launcher());
+    expect(region()).toBeVisible();
+    act(() => {
+      available = [];
+      for (const listener of listeners) listener();
+    });
+    act(() => {
+      available = [panel];
+      for (const listener of listeners) listener();
+    });
+    expect(region()).not.toBeInTheDocument();
+    view.rerender(<Harness context={alpha} />);
+    expect(region()).not.toBeInTheDocument();
   },
 );
 

@@ -465,8 +465,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
-- **Side panels stay with their conversation**: a tab you open beside a
-  conversation, such as a thread or **Canvas**, stays open for that conversation
+- **Side panels stay with their conversation**: a tab or panel you open beside a
+  conversation, such as a thread, **Canvas**, a huddle, Todos, or the Terminal
+  drawer, stays open for that conversation
   when you switch to another one and come back, until you close it. Reloading
   Buzz does not restore it.
 - **Panel dividers**: the divider between a page and its side panel (such as

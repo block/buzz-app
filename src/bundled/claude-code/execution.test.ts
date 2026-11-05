@@ -8,6 +8,7 @@ import { ClaudeProcess } from "./claude";
 import { executionSpawn } from "./execution";
 import { ClaudeRuntime, DEFAULT_CONFIG } from "./runtime";
 import { localStore } from "../../features/agents/store";
+import { fileStore } from "../../features/agents/state";
 import type {
   Agent,
   AgentHandle,
@@ -227,7 +228,13 @@ it("resumes the same remote Claude session after restart and gives New a fresh t
       { spawn: local },
       () => reads,
       async () => null,
-      storage,
+      fileStore(
+        new Map(),
+        storage.set,
+        storage.add,
+        storage.read,
+        storage.scan,
+      ),
       undefined,
       undefined,
       undefined,

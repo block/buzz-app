@@ -151,6 +151,11 @@ export function SidebarSection({
   const [menuOpen, setMenuOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [activeOpen, setActiveOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState("");
+  const canRemove = !!onRemove && sectionKey.startsWith("group:");
+  const canRename = !!onRename && sectionKey.startsWith("group:");
   const hiddenGroup = (label: string, rows: readonly ChannelSummary[]) =>
     channels &&
     rows.length > 0 && (
@@ -187,11 +192,6 @@ export function SidebarSection({
         </MenuGroup>
       </>
     );
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [removeError, setRemoveError] = useState("");
-  const canRemove = !!onRemove && sectionKey.startsWith("group:");
-  const canRename = !!onRename && sectionKey.startsWith("group:");
   const remove = async () => {
     if (!onRemove || removing) return;
     setRemoving(true);

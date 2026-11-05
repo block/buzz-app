@@ -570,6 +570,50 @@ it("hides mutes on this device's opt-in, returns focus to the section and lists 
   }
 });
 
+it("hides cached mutes before live preferences arrive, then follows the live answer", async () => {
+  const cached: SidebarPreferences = {
+    sections: [],
+    assignments: {},
+    starred: [],
+    muted: ["beta"],
+  };
+  let answer!: (data: SidebarPreferences) => void;
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read: () =>
+      new Promise<SidebarPreferences>((resolve) => {
+        answer = resolve;
+      }),
+    persistence: {
+      read: async () => [],
+      readStartup: async () => ({
+        preferences: { savedAt: Date.now(), data: cached },
+      }),
+      write: async () => {},
+      remove: async () => {},
+      retain: async () => {},
+      clear: async () => {},
+      close() {},
+    },
+  });
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    await preferences.ready;
+    expect(preferences.queries.snapshot().cached).toBe(true);
+    render(fixture(preferences.queries).view("alpha"));
+    expect(await screen.findByRole("button", { name: "gamma" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
+    await act(async () => answer({ ...cached, muted: [] }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "beta" })).toBeVisible(),
+    );
+  } finally {
+    answer?.({ ...cached, muted: [] });
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
+
 it("keeps a channel visible while its unmute saves, and hides it again if the unmute fails", async () => {
   const user = userEvent.setup();
   let settle: (error?: Error) => void = () => {};

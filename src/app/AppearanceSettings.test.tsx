@@ -538,13 +538,16 @@ it("saves the hide-muted sidebar choice on this device and retries a failed save
     .mockImplementation(() => {
       throw new Error("unavailable");
     });
-  await user.click(toggle());
-  expect(hideMutedChannelsPreference()).toBe(true);
-  expect(toggle()).toBeChecked();
-  expect(await screen.findByRole("dialog")).toHaveTextContent(
-    "Sidebar preference wasn’t saved",
-  );
-  write.mockRestore();
+  try {
+    await user.click(toggle());
+    expect(hideMutedChannelsPreference()).toBe(true);
+    expect(toggle()).toBeChecked();
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Sidebar preference wasn’t saved",
+    );
+  } finally {
+    write.mockRestore();
+  }
   await user.click(
     screen.getByRole("button", {
       name: "Retry saving muted channel visibility",

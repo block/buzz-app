@@ -473,16 +473,25 @@ export function createChannelStore(
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
-      const own = (local?.snapshot() ?? []).filter((item) => {
-        // An unconfirmed send's row is the only place that offers Retry.
-        if (item.delivery !== "seen") state.sent.add(item.event.id);
-        // Until a page sets the floor, history's extent is unknown, not
-        // unbounded: a confirmed send waits for the page that holds it.
-        return (
-          state.sent.has(item.event.id) ||
-          shown(more ? (state.floor ?? Infinity) : undefined)(item.event)
-        );
-      });
+      const outbox = local?.snapshot() ?? [];
+      // An unconfirmed send's row is the only place that offers Retry. Only
+      // rows the outbox still holds need the exemption.
+      state.sent = new Set(
+        outbox
+          .filter(
+            ({ event, delivery }) =>
+              state.sent.has(event.id) ||
+              (delivery !== "seen" && channelRowKind(event.kind)),
+          )
+          .map(({ event }) => event.id),
+      );
+      // Until a page sets the floor, history's extent is unknown, not
+      // unbounded: a confirmed send waits for the page that holds it.
+      const own = outbox.filter(
+        ({ event }) =>
+          state.sent.has(event.id) ||
+          shown(more ? (state.floor ?? Infinity) : undefined)(event),
+      );
       for (const item of own)
         if (
           [9, 40002, 40008].includes(item.event.kind) &&

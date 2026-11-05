@@ -228,7 +228,11 @@ it("keeps terminal evidence monotonic across clock rollback, eviction and delaye
 });
 it("bounds records, UTF-8 bytes, turn state and immutable snapshots; dedups IDs, not process-local sequence", () => {
   const f = fixture();
-  const first = f.make(f.item("acp_read"));
+  const first = f.make(
+    f.item("turn_started", "one", {
+      payload: { triggeringEventIds: ["1".repeat(64)] },
+    }),
+  );
   f.activity.receive(first, f.generation());
   const old = f.snapshot();
   f.activity.receive(first, f.generation());

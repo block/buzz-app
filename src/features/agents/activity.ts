@@ -32,6 +32,8 @@ export type ActivityTurn = Readonly<{
   /** Retained independently of the bounded raw activity buffer. */
   outcome?: ReturnType<typeof terminalOutcome>;
   triggeringEventIds?: readonly string[];
+  /** Multiple distinct starts reused this turn ID; request identity is ambiguous. */
+  ambiguous?: boolean;
   /** Roots established from retained signed triggering messages, not typing. */
   requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
@@ -187,6 +189,7 @@ export function createAgentActivity(
           turnId: turn.turnId,
           ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
           ...(turn.threadRootId ? { threadRootId: turn.threadRootId } : {}),
+          ...(turn.ambiguous ? { ambiguous: true } : {}),
           channelId: turn.channelId,
           timestamp: turn.timestamp,
           ...(turn.outcome ? { outcome: turn.outcome } : {}),
@@ -325,6 +328,11 @@ export function createAgentActivity(
         : {}),
       agent,
       turnId: item.turnId,
+      ...(previous?.ambiguous ||
+      (item.kind === "turn_started" &&
+        previous?.triggeringEventIds !== undefined)
+        ? { ambiguous: true }
+        : {}),
       ...(typeof root === "string" && /^[0-9a-f]{64}$/.test(root)
         ? { threadRootId: root }
         : previous?.threadRootId
@@ -392,12 +400,12 @@ export function createAgentActivity(
     const items = Array.isArray(children) ? children : [raw];
     // A denied child cannot leak through an otherwise visible raw batch.
     if (!channelsAllowed(raw, canAccess)) return;
-    liveAgents.add(frame.agent);
-    for (const item of items) fold(frame.agent, item);
     if (records.some((record) => record.id === frame.id)) {
       publish();
       return;
     }
+    liveAgents.add(frame.agent);
+    for (const item of items) fold(frame.agent, item);
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,

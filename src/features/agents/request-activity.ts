@@ -100,6 +100,16 @@ export function requestActivity(
     ),
   );
   if (!triggersWanted.size) return result();
+  const ambiguous = new Set(
+    turns
+      .filter(
+        (turn) =>
+          turn.agent === agent &&
+          turn.channelId === channelId &&
+          turn.ambiguous,
+      )
+      .map((turn) => turn.turnId),
+  );
   for (const start of parsed.filter(
     ({ value }) => value.kind === "turn_started",
   )) {
@@ -109,6 +119,10 @@ export function requestActivity(
       !triggers.some((id) => triggersWanted.has(id))
     )
       continue;
+    if (ambiguous.has(start.value.turnId)) {
+      uncertain = true;
+      continue;
+    }
     const turn = parsed.filter(
       ({ value }) => value.turnId === start.value.turnId,
     );
@@ -161,6 +175,7 @@ export function requestActivity(
   for (const turn of turns) {
     if (
       turn.agent !== agent ||
+      turn.ambiguous ||
       turn.channelId !== channelId ||
       !turn.triggeringEventIds?.some((id) => triggersWanted.has(id))
     )

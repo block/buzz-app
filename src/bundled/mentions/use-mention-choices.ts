@@ -22,6 +22,7 @@ import { archivedMention } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
 import {
   directoryChanges,
+  elsewhereHeld,
   managedByDetail,
   mentionCandidates,
   offeredElsewhere,
@@ -36,6 +37,7 @@ import {
 import {
   exactMention,
   matchingMentions,
+  namesQuery,
   rankMentions,
   type MentionChoice,
 } from "./mention-ranking";
@@ -224,8 +226,8 @@ export type SpaceEvidence = {
  * Space (README section 5): once every member is named, an exact local name
  * selects at once. Any other exact name needs the full choice set: while the
  * directory search runs, failed, or has more pages, a namesake may be missing.
- * The owner's agents from other communities never make a name here ambiguous:
- * one is the exact name only when nothing here has that name.
+ * For one name, a local choice here outranks the owner's agents from other
+ * communities, and they outrank directory results.
  */
 export function spaceMention(
   all: readonly MentionChoice[],
@@ -235,18 +237,20 @@ export function spaceMention(
 ) {
   if (pending) return undefined;
   const choices = matchingMentions(all, query);
-  const here = (c: MentionChoice) => !c.elsewhere;
+  const isLocal = (c: MentionChoice) => local.has(c.recipient.pubkey);
+  const named = choices.filter((c) => namesQuery(c, query));
+  const among: (c: MentionChoice) => boolean = named.some(
+    (c) => isLocal(c) && !c.elsewhere,
+  )
+    ? (c) => !c.elsewhere
+    : named.some((c) => c.elsewhere)
+      ? (c) => !!c.elsewhere
+      : () => true;
   return (
     (missingNames
       ? undefined
-      : exactMention(
-          choices,
-          query,
-          (c) => here(c) && local.has(c.recipient.pubkey),
-        )) ??
-    (complete
-      ? (exactMention(choices, query, here) ?? exactMention(choices, query))
-      : undefined)
+      : exactMention(choices, query, (c) => isLocal(c) && among(c))) ??
+    (complete ? exactMention(choices, query, among) : undefined)
   );
 }
 /**
@@ -267,10 +271,14 @@ export function useMentionChoices(
   const draft = useContext(DraftMentionRoster);
   const roster = draft?.recipients;
   const selected = useContext(SelectedMentionContext);
-  const agents = useAgentChoices(session, !!invite && open);
   // The owner's agents in their other communities; the snapshot is the revision.
   const community = useContext(AgentsContext);
   const revision = useAgentsSnapshot(community);
+  // Holding them loads the owner's agents here, as inviting agents does.
+  const held =
+    open &&
+    elsewhereHeld(session, channelId, invite, roster, community?.joinable());
+  const agents = useAgentChoices(session, (!!invite || held) && open);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -408,7 +416,8 @@ export function useMentionChoices(
   const pending =
     membersPending ||
     !!draft?.pending ||
-    (!roster && !!invite && agents.pending && agents.status !== "ready");
+    (!roster && !!invite && agents.pending && agents.status !== "ready") ||
+    held;
   let rows = same ? installed.rows : undefined;
   if (!same && installed) install(undefined);
   // Only choices the query can match; ranking reads no others.
@@ -476,11 +485,15 @@ export function useMentionChoices(
           ),
         ].slice(0, MENTION_ROWS)
       : normalRank(choices);
-  // Ranked only when read: a full set of installed rows never needs outside choices.
+  // Rows that may arrive after the list installs: directory people, and the
+  // owner's agents from other communities once no longer held. Ranked only
+  // when read: a full set of installed rows never needs outside choices.
   let outsideRows: readonly MentionChoice[] | undefined;
   const outside = () =>
     (outsideRows ??= open
-      ? rank(matches.filter((c) => !local.has(c.recipient.pubkey)))
+      ? rank(
+          matches.filter((c) => !local.has(c.recipient.pubkey) || c.elsewhere),
+        )
       : []);
   // A member a completed read found no profile for has no name to be a namesake.
   // While the member list loads, no member's name is known.
@@ -507,7 +520,7 @@ export function useMentionChoices(
     }
   }
   if (rows && rows.length < MENTION_ROWS) {
-    // Append-only: late invited agents and directory pages never move shown rows.
+    // Append-only: late invited agents and `outside` rows never move shown rows.
     // Member-list changes keep their installed set until the query changes.
     const shown = new Set(rows.map((row) => row.recipient.pubkey));
     const added = (invite ? rank(matches.filter((c) => c.agent)) : outside())

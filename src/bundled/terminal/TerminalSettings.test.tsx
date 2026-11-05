@@ -17,7 +17,10 @@ import {
   TERMINAL_FONT_KEY,
   type TerminalFontPreference,
 } from "./font-preference";
-import { TerminalSettings } from "./TerminalSettings";
+import {
+  createTerminalSettingsDraft,
+  TerminalSettings,
+} from "./TerminalSettings";
 
 const stores: TerminalFontPreference[] = [];
 const loadFont = vi.fn<(font: string) => Promise<FontFace[]>>();
@@ -49,11 +52,12 @@ beforeEach(() => {
 });
 function setup() {
   const font = createTerminalFontPreference();
+  const drafts = createTerminalSettingsDraft();
   stores.push(font);
   const content = (active = true) => (
     <StrictMode>
       <ToastProvider>
-        <TerminalSettings font={font} active={() => active} />
+        <TerminalSettings font={font} drafts={drafts} active={() => active} />
       </ToastProvider>
     </StrictMode>
   );

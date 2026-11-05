@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -15,21 +15,48 @@ import {
   type TerminalFontPreference,
 } from "./font-preference";
 
+/** Unsaved form state belongs to the plugin, across Settings card mounts. */
+export function createTerminalSettingsDraft() {
+  let state = {
+    family: null as string | null,
+    size: null as string | null,
+    blurredValue: null as string | null,
+  };
+  const listeners = new Set<() => void>();
+  return {
+    snapshot: () => state,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    update(next: Partial<typeof state>) {
+      state = { ...state, ...next };
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
 export function TerminalSettings({
   font,
+  drafts,
   active,
 }: {
   font: TerminalFontPreference;
+  drafts: ReturnType<typeof createTerminalSettingsDraft>;
   active(): boolean;
 }) {
   const { family, size, error } = useSyncExternalStore(
     font.subscribe,
     font.snapshot,
   );
-  const [draft, setDraft] = useState<string | null>(null);
-  const [blurredValue, setBlurredValue] = useState<string | null>(null);
+  const {
+    family: draft,
+    size: sizeDraft,
+    blurredValue,
+  } = useSyncExternalStore(drafts.subscribe, drafts.snapshot);
   const familyInput = useRef<HTMLInputElement>(null);
-  const [sizeDraft, setSizeDraft] = useState<string | null>(null);
   const value = draft ?? family ?? "";
   const parsed = parseFontFamily(value);
   const invalid = draft !== null && parsed === null;
@@ -60,11 +87,10 @@ export function TerminalSettings({
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
-            setBlurredValue(value);
+            drafts.update({ blurredValue: value });
             if (!canApply || parsedSize === null) return;
             font.set(parsed, parsedSize);
-            setDraft(null);
-            setSizeDraft(null);
+            drafts.update({ family: null, size: null, blurredValue: null });
           }}
         >
           <div className="flex flex-col gap-4">
@@ -83,10 +109,9 @@ export function TerminalSettings({
                 ref={familyInput}
                 value={value}
                 onValueChange={(next) => {
-                  setDraft(next);
-                  setBlurredValue(null);
+                  drafts.update({ family: next, blurredValue: null });
                 }}
-                onBlur={() => setBlurredValue(value)}
+                onBlur={() => drafts.update({ blurredValue: value })}
                 aria-busy={availability.status === "checking"}
                 placeholder="JetBrains Mono"
                 spellCheck={false}
@@ -128,7 +153,7 @@ export function TerminalSettings({
                 max={MAX_FONT_SIZE}
                 step="any"
                 value={sizeValue}
-                onValueChange={setSizeDraft}
+                onValueChange={(next) => drafts.update({ size: next })}
               />
             </Field>
           </div>
@@ -150,8 +175,7 @@ export function TerminalSettings({
               variant="subtle"
               onClick={() => {
                 font.reset();
-                setDraft(null);
-                setSizeDraft(null);
+                drafts.update({ family: null, size: null, blurredValue: null });
               }}
             >
               Use default

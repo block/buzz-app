@@ -11,7 +11,10 @@ import { nativeBridge } from "./bridge";
 import { createSessions } from "./sessions";
 import { TerminalPanel } from "./TerminalPanel";
 import { createTerminalFontPreference } from "./font-preference";
-import { TerminalSettings } from "./TerminalSettings";
+import {
+  createTerminalSettingsDraft,
+  TerminalSettings,
+} from "./TerminalSettings";
 
 export const inject = ["panels", "shortcuts", "relay", "settingsCards"];
 const TOGGLE_BINDING = { key: "j", mod: true } as const;
@@ -19,6 +22,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // No unusable launcher or reserved shortcut in a browser-only host.
   if (!nativeBridge.available) return;
   const font = createTerminalFontPreference();
+  const drafts = createTerminalSettingsDraft();
   const sessions = createSessions(
     nativeBridge,
     async () => {
@@ -38,7 +42,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Terminal",
     icon: TerminalWindowIcon,
     group: "Plugins",
-    component: (props) => <TerminalSettings {...props} font={font} />,
+    component: (props) => (
+      <TerminalSettings {...props} font={font} drafts={drafts} />
+    ),
   });
   ctx.shortcuts.register({
     id: "toggle",

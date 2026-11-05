@@ -372,6 +372,9 @@ test("real xterm parses a large hidden output completely and in order", async ({
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal.html`,
     );
     await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+    await expect(
+      page.getByLabel("Dimensions", { exact: true }),
+    ).not.toBeEmpty();
     await page
       .getByRole("button", { name: "Toggle mount", exact: true })
       .click();

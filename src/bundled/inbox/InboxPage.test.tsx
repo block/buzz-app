@@ -52,6 +52,88 @@ import {
 } from "../../../browser-host/read-state.mjs";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
+
+it("recovers focused reaction history after channel discovery fails", async () => {
+  const h = fixture({ failRoster: true });
+  render(h.view);
+  await chooseFilter("Reactions");
+  expect(await screen.findByRole("alert")).toHaveTextContent("roster offline");
+  expect(
+    screen.getByRole("button", { name: "Refresh reactions" }),
+  ).toBeEnabled();
+  const release = h.recoverRoster();
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Retry reactions" }));
+    await waitFor(() => expect(h.rosterStarted()).toBe(true));
+  } finally {
+    await act(async () => release());
+  }
+  await screen.findByText("No reactions yet");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("mixes reactions into All by time, respects filters, and opens the original without retaining an archive selection", async () => {
+  const h = fixture();
+  const original = message(h.viewer, "room", "My reacted-to message", 10);
+  const reaction = signed(h.alice, {
+    kind: 7,
+    content: "✅",
+    created_at: 23,
+    tags: [
+      ["h", "room"],
+      ["e", original.id],
+    ],
+  });
+  h.addEvent(original);
+  h.addEvent(reaction);
+  render(h.view);
+  const reactionButton = () =>
+    screen.queryByRole("button", { name: "Open message reacted to by Alice" });
+  await screen.findByRole("button", {
+    name: "Open message reacted to by Alice",
+  });
+  const list = screen.getByRole("list", { name: "Inbox conversations" });
+  await waitFor(() =>
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3),
+  );
+  expect(within(list).getAllByRole("listitem")[0]).toHaveTextContent(
+    "My reacted-to message",
+  );
+  await chooseFilter("Unread only", "Attention");
+  expect(reactionButton()).toBeNull();
+  await chooseFilter("All", "Attention");
+  await screen.findByRole("button", {
+    name: "Open message reacted to by Alice",
+  });
+  await chooseFilter("Archived", "Show");
+  expect(reactionButton()).toBeNull();
+  await chooseFilter("Inbox", "Show");
+  await screen.findByRole("button", {
+    name: "Open message reacted to by Alice",
+  });
+  await chooseFilter("Agents", "Sender");
+  expect(reactionButton()).toBeNull();
+  await chooseFilter("Humans", "Sender");
+  await screen.findByRole("button", {
+    name: "Open message reacted to by Alice",
+  });
+  const conversation = within(list)
+    .getAllByRole("button", { name: /^Open / })
+    .find((button) => button.textContent?.includes("A thread update"));
+  if (!conversation) throw new Error("Missing conversation");
+  fireEvent.click(conversation);
+  await waitFor(() => expect(h.archive.current).toBeDefined());
+  await waitFor(() => expect(list).toHaveAttribute("aria-busy", "false"));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open message reacted to by Alice" }),
+  );
+  await waitFor(() => expect(h.archive.current).toBeUndefined());
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${original.id}"]`),
+    ).toBeInTheDocument(),
+  );
+});
 composerDOMFixture();
 beforeEach(() => localStorage.clear());
 stubAvatarBrowserApis();

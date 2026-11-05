@@ -23,6 +23,13 @@ test("reaction history opens the original message from Inbox", async ({
   await page.goto(app.origin);
   await openPage(page, "Inbox");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  await expect(
+    inbox.getByRole("button", { name: /^Open message reacted to by / }),
+  ).toHaveCount(1);
+  await inbox
+    .getByRole("button", { name: /^Open message reacted to by / })
+    .click();
+  await expect(inbox.locator(`[data-message-id="${target.id}"]`)).toBeVisible();
   await inbox
     .getByRole("button", { name: "Inbox filters", exact: true })
     .click();

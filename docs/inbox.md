@@ -298,7 +298,7 @@ checks do not attest native/live acceptance.
 
 ## Reactions history
 
-The Reactions filter opens a separate, newest-first history of reactions to the viewer's own messages. It reuses NavigationItem, Avatar, ReactionGlyph and the existing conversation tab target. Choosing a row opens the exact original message, including replies. Own reactions are excluded. Sender, archive and unread controls do not apply; reaction history has no read-state or notification side effects.
+All interleaves reactions to the viewer's own messages with conversation activity, newest first. Its People/Agents filter applies to reaction authors; Unread only and Archived exclude reactions because they have no read or archive state. The Reactions filter retains a focused, newest-first history. It reuses NavigationItem, Avatar, ReactionGlyph and the existing conversation tab target. Choosing a row opens the exact original message, including replies. Own reactions are excluded. In the focused Reactions view, sender, archive and unread controls do not apply; reaction history has no read-state or notification side effects.
 
 `session.reactionHistory` owns verified remote discovery and original-message hydration. Ordinary reads deliberately hide auxiliary events whose originals are not loaded. The session keeps that raw evidence private, checks original ownership and access, applies edits and deletions, and fences the result against access changes and disposal. Older clients omit recipient tags, so each page scans up to 100 reactions across admitted channels. A page can have no matching reactions while still offering older history. Reference-only deletion events are supported.
 

@@ -14,7 +14,12 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import { ReactionHistory } from "./ReactionHistory";
+import {
+  ReactionHistory,
+  ReactionRow,
+  ReactionHistoryControls,
+  useReactionHistory,
+} from "./ReactionHistory";
 import { DraftsView } from "./DraftsView";
 import type {
   ConversationExtensions,
@@ -357,6 +362,9 @@ function InboxList({
     writeView(archiveScope, filtersKey, next);
   }
   const [drafts, setDrafts] = useState(false);
+  const showReactions =
+    !drafts && activity === "all" && show === "inbox" && !unreadOnly;
+  const reactionHistory = useReactionHistory(session, showReactions);
   // A shortcut's open carries filters; a plain open carries none and changes nothing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Only a new presentation applies its route; later filter edits are the user's.
   useEffect(() => {
@@ -577,7 +585,10 @@ function InboxList({
   // Enrich bounded activity candidates before applying Sender: unknown authors
   // must be able to appear after their profiles arrive, even in an empty view.
   // Keep main's bounded optional profile demand, independent of presentation.
-  const candidateIds = activityItems.slice(0, 50).map((item) => item.authorId);
+  const candidateIds = [
+    ...activityItems.slice(0, 50),
+    ...reactionHistory.rows,
+  ].map((item) => item.authorId);
   const matchingAuthors = [...new Set(candidateIds)].sort().join(":");
   const authorIds = useMemo(
     () => (matchingAuthors ? matchingAuthors.split(":") : []),
@@ -591,7 +602,7 @@ function InboxList({
   // Classification covers every evaluated author, independently of bounded demand.
   // Winning events can change without changing folded display values.
   useSyncExternalStore(session.profiles.subscribe, () =>
-    activityItems
+    [...activityItems, ...reactionHistory.rows]
       .map(({ authorId }) => session.profiles.event?.(authorId)?.id ?? "")
       .join(":"),
   );
@@ -624,6 +635,26 @@ function InboxList({
           item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const visible = matching;
+  const reactions = reactionHistory.rows.filter(
+    (row) =>
+      senderFilter === "everyone" ||
+      senderKind(row.authorId) ===
+        (senderFilter === "agents" ? "agent" : "human"),
+  );
+  const entries = [
+    ...visible.map((item) => ({ kind: "conversation" as const, item })),
+    ...reactions.map((item) => ({ kind: "reaction" as const, item })),
+  ].sort(
+    (a, b) =>
+      b.item.createdAt - a.item.createdAt || a.item.id.localeCompare(b.item.id),
+  );
+  const openReaction = (target: PageTabTarget) => {
+    if (busy.current) return false;
+    cancelRetry();
+    setSelectedTarget(undefined);
+    setOpened(undefined);
+    return openTab(target);
+  };
   const archiveView = useRef({ show, visible, selected, opened });
   useLayoutEffect(() => {
     archiveView.current = { show, visible, selected, opened };
@@ -986,7 +1017,7 @@ function InboxList({
       {!drafts && activity === "reactions" ? (
         <>
           {toolbar}
-          <ReactionHistory session={session} open={openTab} />
+          <ReactionHistory session={session} open={openReaction} />
         </>
       ) : drafts ? (
         <DraftsView
@@ -1003,6 +1034,12 @@ function InboxList({
         <div ref={workspace} className={styles.workspace}>
           <div className={styles.listPane}>
             {toolbar}
+            {showReactions && (
+              <ReactionHistoryControls
+                history={reactionHistory}
+                showError={reactionHistory.error !== failure}
+              />
+            )}
             <div className={styles.scroll}>
               {inbox.freshness === "stale" && !failure && (
                 <div className={styles.notice} role="status">
@@ -1036,7 +1073,9 @@ function InboxList({
                     </Button>
                   </div>
                 )}
-              {!visible.length &&
+              {!entries.length &&
+                !reactionHistory.loading &&
+                !reactionHistory.error &&
                 (inbox.status === "ready" || feed.status === "ready") &&
                 !loading &&
                 !failure && (
@@ -1090,7 +1129,28 @@ function InboxList({
                 aria-label="Inbox conversations"
                 aria-busy={pending}
               >
-                {visible.map((item) => {
+                {entries.map((entry) => {
+                  if (entry.kind === "reaction") {
+                    const row = entry.item;
+                    return (
+                      <li
+                        key={`reaction:${row.id}`}
+                        className={styles.row}
+                        data-reaction-row={row.id}
+                      >
+                        <ReactionRow
+                          row={row}
+                          session={session}
+                          channel={list.channels.find(
+                            (channel) => channel.id === row.channelId,
+                          )}
+                          open={openReaction}
+                          onError={reactionHistory.setError}
+                        />
+                      </li>
+                    );
+                  }
+                  const item = entry.item;
                   const channel = list.channels.find(
                     (candidate) => candidate.id === item.channelId,
                   );

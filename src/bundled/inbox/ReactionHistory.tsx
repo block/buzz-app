@@ -1,7 +1,6 @@
 import {
   useEffect,
   useEffectEvent,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -9,7 +8,6 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import type { PageTabTarget } from "../../features/conversation/contracts";
 import { useChannelList } from "../../features/relay/react";
-import { selectProfiles } from "../../features/relay/profile-selection";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { messagePreview } from "../../features/notifications/content";
 import { channelText } from "../../features/channels/channel-icon";
@@ -28,14 +26,10 @@ import type {
 } from "../../features/relay/reaction-history";
 import styles from "./Inbox.module.css";
 
-export function ReactionHistory({
-  session,
-  open,
-}: {
-  session: RelaySession;
-  open(target: PageTabTarget): boolean;
-}) {
+/** One history reader shared by All and the focused Reactions view. */
+export function useReactionHistory(session: RelaySession, enabled = true) {
   const list = useChannelList(session.channels);
+  const ready = enabled && list.status === "ready";
   const channels = list.channels.filter(
     (channel) =>
       !channel.cached &&
@@ -48,33 +42,19 @@ export function ReactionHistory({
     .map((channel) => channel.id)
     .sort()
     .join(":");
-  // Changing access remounts the owned read, cancelling work and retiring its rows.
-  return (
-    <ReactionHistoryList
-      key={key}
-      session={session}
-      channels={channels}
-      open={open}
-    />
-  );
-}
-
-function ReactionHistoryList({
-  session,
-  channels,
-  open,
-}: {
-  session: RelaySession;
-  channels: ReturnType<typeof useChannelList>["channels"];
-  open(target: PageTabTarget): boolean;
-}) {
   const [rows, setRows] = useState<ReactionEntry[]>([]);
+  const [loadedKey, setLoadedKey] = useState<string>();
   const [cursor, setCursor] = useState<ReactionCursor>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const controller = useRef<AbortController | undefined>(undefined);
   const load = async (older = false) => {
-    if (controller.current) return;
+    if (!enabled || controller.current) return;
+    if (!ready) {
+      session.channels.ensureList();
+      return;
+    }
+    setLoadedKey(key);
     const owned = new AbortController();
     controller.current = owned;
     setLoading(true);
@@ -124,39 +104,131 @@ function ReactionHistoryList({
     void load();
   });
   useEffect(() => {
-    initialize();
+    // Restart the owned read after roster discovery or the admitted set changes.
+    void key;
+    void list.asOf;
+    if (ready) initialize();
     return () => {
       controller.current?.abort();
       controller.current = undefined;
     };
-    // The parent keys this owner by the admitted channel set.
-  }, []);
+  }, [key, ready, list.asOf]);
   const profileIds = [...new Set(rows.map((row) => row.authorId))]
     .sort()
     .join(":");
-  const selection = useMemo(
-    () =>
-      selectProfiles(session.profiles, profileIds ? profileIds.split(":") : []),
-    [session, profileIds],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  const name = useIdentityNames(session.names);
   useEffect(() => {
     if (profileIds)
       void session.profiles
         .ensure(profileIds.split(":"), "background")
         .catch(() => {});
   }, [session, profileIds]);
+  return {
+    rows: enabled && loadedKey === key ? rows : [],
+    cursor: enabled && loadedKey === key ? cursor : undefined,
+    loading:
+      enabled && list.status !== "error" && (loadedKey !== key || loading),
+    error: enabled
+      ? (list.error ?? (loadedKey === key ? error : undefined))
+      : undefined,
+    load,
+    setError,
+    channels,
+  };
+}
+
+export function ReactionRow({
+  row,
+  session,
+  channel,
+  open,
+  onError,
+}: {
+  row: ReactionEntry;
+  session: RelaySession;
+  channel: ReturnType<typeof useChannelList>["channels"][number] | undefined;
+  open(target: PageTabTarget): boolean;
+  onError(error: string): void;
+}) {
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const name = useIdentityNames(session.names);
+  const profile = profiles.get(row.authorId);
+  const sender = name(
+    row.authorId,
+    profile?.name ?? formatPublicKey(row.authorId) ?? "Unknown sender",
+  );
+  return (
+    <NavigationItem
+      aria-label={`Open message reacted to by ${sender}`}
+      onClick={() => {
+        if (
+          !open({
+            channelId: row.channelId,
+            threadId: row.rootId ?? row.messageId,
+            messageId: row.messageId,
+          })
+        )
+          onError("Could not open the conversation. Try again.");
+      }}
+      icon={
+        <Avatar
+          size="default"
+          alt=""
+          fallback={sender}
+          src={avatarMedia(profile?.picture, session.media)}
+          shape={profile?.isAgent ? "squircle" : "circle"}
+        />
+      }
+      label={
+        <span className={styles.content}>
+          <span className={styles.heading}>
+            <span className={styles.identity}>
+              <strong className="text-label-sm text-standard">{sender}</strong>
+              <span className="text-caption text-subtle">
+                {channel ? channelText(channel) : "Conversation"}
+              </span>
+            </span>
+            <time
+              className="text-caption text-subtle"
+              dateTime={new Date(row.createdAt * 1000).toISOString()}
+            >
+              {relativeTimestamp(row.createdAt)}
+            </time>
+          </span>
+          <span className="text-body">
+            Reacted{" "}
+            <ReactionGlyph
+              reaction={{
+                content: row.content === "+" ? "👍" : row.content,
+                ...(row.emoji ? { emoji: row.emoji } : {}),
+                events: [],
+              }}
+              session={session}
+            />
+          </span>
+          <span className={`text-body text-subtle ${styles.preview}`}>
+            {messagePreview(row.preview) || "Your message"}
+          </span>
+        </span>
+      }
+    />
+  );
+}
+
+export function ReactionHistoryControls({
+  history,
+  showError = true,
+}: {
+  history: ReturnType<typeof useReactionHistory>;
+  showError?: boolean;
+}) {
+  const { loading, error, cursor, load } = history;
   return (
     <>
       <div className={styles.notice}>
-        <span className="text-body-sm text-subtle">
-          Reactions to your messages, newest first.
-        </span>
         <Button
           size="sm"
           variant="ghost"
@@ -165,89 +237,56 @@ function ReactionHistoryList({
         >
           Refresh reactions
         </Button>
+        {cursor && (
+          <Button size="sm" disabled={loading} onClick={() => void load(true)}>
+            Load older reactions
+          </Button>
+        )}
       </div>
+      {showError && error && (
+        <div className={styles.notice} role="alert">
+          {error}
+          <Button size="sm" onClick={() => void load(!!cursor)}>
+            Retry reactions
+          </Button>
+        </div>
+      )}
+      {loading && (
+        <div className={styles.notice} role="status">
+          Loading reactions…
+        </div>
+      )}
+    </>
+  );
+}
+
+export function ReactionHistory({
+  session,
+  open,
+}: {
+  session: RelaySession;
+  open(target: PageTabTarget): boolean;
+}) {
+  const history = useReactionHistory(session);
+  const { rows, cursor, loading, error, channels, setError } = history;
+  return (
+    <>
+      <ReactionHistoryControls history={history} />
       <section
         className={styles.scroll}
         aria-label="Reaction history"
         aria-busy={loading}
       >
-        {error && (
-          <div className={styles.notice} role="alert">
-            {error}
-            <Button size="sm" onClick={() => void load(!!cursor)}>
-              Retry reactions
-            </Button>
-          </div>
-        )}
-        {rows.map((row) => {
-          const profile = profiles.get(row.authorId);
-          const sender = name(
-            row.authorId,
-            profile?.name ?? formatPublicKey(row.authorId) ?? "Unknown sender",
-          );
-          const channel = channels.find(
-            (channel) => channel.id === row.channelId,
-          );
-          return (
-            <NavigationItem
-              key={row.id}
-              aria-label={`Open message reacted to by ${sender}`}
-              onClick={() => {
-                if (
-                  !open({
-                    channelId: row.channelId,
-                    threadId: row.rootId ?? row.messageId,
-                    messageId: row.messageId,
-                  })
-                )
-                  setError("Could not open the conversation. Try again.");
-              }}
-              icon={
-                <Avatar
-                  size="default"
-                  alt=""
-                  fallback={sender}
-                  src={avatarMedia(profile?.picture, session.media)}
-                  shape={profile?.isAgent ? "squircle" : "circle"}
-                />
-              }
-              label={
-                <span className={styles.content}>
-                  <span className={styles.heading}>
-                    <span className={styles.identity}>
-                      <strong className="text-label-sm text-standard">
-                        {sender}
-                      </strong>
-                      <span className="text-caption text-subtle">
-                        {channel ? channelText(channel) : "Conversation"}
-                      </span>
-                    </span>
-                    <time
-                      className="text-caption text-subtle"
-                      dateTime={new Date(row.createdAt * 1000).toISOString()}
-                    >
-                      {relativeTimestamp(row.createdAt)}
-                    </time>
-                  </span>
-                  <span className="text-body">
-                    Reacted{" "}
-                    <ReactionGlyph
-                      reaction={{
-                        content: row.content === "+" ? "👍" : row.content,
-                        ...(row.emoji ? { emoji: row.emoji } : {}),
-                        events: [],
-                      }}
-                      session={session}
-                    />
-                  </span>
-                  <span className={`text-body text-subtle ${styles.preview}`}>
-                    {messagePreview(row.preview) || "Your message"}
-                  </span>
-                </span>
-              }
-            />
-          );
-        })}
+        {rows.map((row) => (
+          <ReactionRow
+            key={row.id}
+            row={row}
+            session={session}
+            channel={channels.find((channel) => channel.id === row.channelId)}
+            open={open}
+            onError={setError}
+          />
+        ))}
         {!rows.length && !loading && !error && (
           <EmptyState
             icon={<BellIcon />}
@@ -262,22 +301,6 @@ function ReactionHistoryList({
                 : "Other people's reactions to your messages appear here."
             }
           />
-        )}
-        {loading && (
-          <div className={styles.notice} role="status">
-            Loading reactions…
-          </div>
-        )}
-        {cursor && !error && (
-          <div className={styles.notice}>
-            <Button
-              size="sm"
-              disabled={loading}
-              onClick={() => void load(true)}
-            >
-              Load older reactions
-            </Button>
-          </div>
         )}
       </section>
     </>

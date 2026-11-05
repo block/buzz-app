@@ -343,6 +343,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
   Settings…** in the menu bar also opens Settings.
+- **Message width**: choose **Narrow** or **Wide** in **Settings → Appearance →
+  Interface**. Narrow is the default; Wide gives messages and the composer
+  50% more room when the pane is wide enough. The choice is saved on this device.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling
@@ -470,11 +473,14 @@ available rather than silently discarding it.
   its type. Where offered, **Create agent** also lets people choose Thinking
   before the first config is saved; **Default** follows the provider's setting.
   Do not assume someone can edit another person's agent.
-- A desktop plugin can run native Codex on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
+- A desktop plugin can run native Codex or Claude on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
   remote choice stays remote after an app restart. If the target cannot be
   restored, Buzz shows an error and requires a new session.
-  The model control on a remote Codex card opens that agent's Settings. In update
+  The model control on a remote agent card opens that agent's Settings. In update
   reviews, its Thinking choice is read-only rather than using this computer's options.
+  Remote Claude uses the Claude sign-in on the target. It keeps each saved
+  conversation in that target's workspace. Stop ends its active turn.
+  Remote Claude usage totals and transcripts are unavailable.
 - When creating a Builderlab agent, sign in, choose a model from its family menu,
   then choose a supported **Thinking** level. Both choices are required; changing
   the model clears the thinking choice. Instructions are optional. **Create agent**
@@ -687,3 +693,14 @@ even when no session is connected. Added access requires new approval.
 ### Reconnecting an old agent in a DM
 
 On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose a harness if the old type is unavailable; settings that were not saved use the selected type’s defaults. Review the inline controls, complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you mention an eligible agent you own. Only you see it, once per agent in the loaded conversation. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
+
+## Deleting an agent’s workflow
+
+In **Workflows → Owner → All channel workflows**, open the workflow’s actions
+menu and choose **Delete workflow**. You can delete workflows you authored or
+workflows authored by an agent whose ownership Buzz has verified belongs to you.
+This also works when your channel role is Guest.
+Confirm the deletion; pending or uncertain results remain in the workflow notices.
+If permission changes during confirmation, Buzz explains why deletion could not
+start and keeps any editor draft.
+Owning the agent does not grant permission to edit or run its workflow.

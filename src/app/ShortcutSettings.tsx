@@ -37,6 +37,10 @@ import {
   useSendWithModEnterPreference,
 } from "../features/messages/send-key-preference";
 import type { PluginManager } from "../plugins/manager";
+import {
+  setEditWithUpArrowPreference,
+  useEditWithUpArrowPreference,
+} from "../features/messages/edit-key-preference";
 
 type Row = Readonly<{
   key: string;
@@ -335,6 +339,10 @@ export function ShortcutSettings({
   const [notice, setNotice] = useState<Notice | null>(null);
   const sendWithModEnter = useSendWithModEnterPreference();
   const [sendKeyError, setSendKeyError] = useState<string | null>(null);
+  const editWithUpArrow = useEditWithUpArrowPreference();
+  const [editKeyError, setEditKeyError] = useState<string | null>(null);
+  const changeEditKey = (enabled: boolean) =>
+    setEditKeyError(setEditWithUpArrowPreference(enabled));
   const changeSendKey = (enabled: boolean) =>
     setSendKeyError(setSendWithModEnterPreference(enabled));
   const sendChord = apple ? "⌘ Enter" : "Ctrl+Enter";
@@ -445,6 +453,30 @@ export function ShortcutSettings({
                 <Button
                   type="button"
                   onClick={() => changeSendKey(sendWithModEnter)}
+                >
+                  Retry saving
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+        <section>
+          <InlineHeader title="Editing messages" />
+          <SettingsGroup>
+            <SwitchPreferenceRow
+              label="Edit last message with Up Arrow"
+              description="When the composer is empty, Up Arrow edits your most recent editable message."
+              checked={editWithUpArrow}
+              onCheckedChange={changeEditKey}
+            />
+          </SettingsGroup>
+          {editKeyError && (
+            <div role="alert" className="grid gap-3 text-body-sm text-standard">
+              <p className="m-0">{editKeyError}</p>
+              <div>
+                <Button
+                  type="button"
+                  onClick={() => changeEditKey(editWithUpArrow)}
                 >
                   Retry saving
                 </Button>

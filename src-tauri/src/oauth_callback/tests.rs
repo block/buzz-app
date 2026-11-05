@@ -200,7 +200,7 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.contains("role=\"img\" aria-label=\"Builderlab\""));
         assert!(response.contains(include_str!("../../../public/builderlab-mark.svg")));
         assert!(response.contains("<h1 id=\"heading\">Signing you in…</h1>"));
-        assert!(!response.contains("Sign-in received. Return to the app to finish verification."));
+        assert!(!response.contains("Return to the app to finish verification."));
         assert!(response.contains("data-complete=\"true\""));
         assert!(response.contains("data-close-delay=\"3\""));
         assert!(response.contains("Closing this window automatically</span>"));
@@ -597,10 +597,7 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
     )
     .await;
     assert!(html.starts_with("HTTP/1.1 200"));
-    assert_federated_callback(
-        &html,
-        "Sign-in received. Return to the app to finish verification.",
-    );
+    assert_federated_callback(&html, "Return to the app to finish verification.");
     assert!(html.contains("<h1 id=\"heading\">Sign-in received</h1>"));
     assert!(html.contains("data-complete=\"true\""));
     assert!(!html.contains("fixture-code"));

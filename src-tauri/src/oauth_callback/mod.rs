@@ -402,7 +402,7 @@ fn parse_callback(
     }
     (
         200,
-        "Sign-in received. Return to the app to finish verification.",
+        "Return to the app to finish verification.",
         Some(OAuthCallback { parameters: fields }),
     )
 }

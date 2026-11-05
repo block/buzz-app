@@ -1210,7 +1210,7 @@ it("keeps the Up Arrow choice active on a storage failure and retries saving", a
     storage.mockRestore();
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Retry saving", exact: true }));
+      .click(screen.getByRole("button", { name: /^Retry saving$/ }));
     expect(localStorage.getItem("buzz-edit-with-up-arrow.v1")).toBe("on");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   } finally {

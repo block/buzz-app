@@ -131,6 +131,26 @@ it("echo plus lost receipt remains seen but settles command result as unavailabl
     undefined,
   );
 });
+it("echo plus a relay refusal remains seen and forwards no refusal", async () => {
+  const h = setup();
+  h.send();
+  await flush();
+  h.observe([h.published()]);
+  h.reject(
+    new PublishRejected(
+      "Workflow is disabled or inactive",
+      "forbidden: workflow is disabled or inactive",
+    ),
+  );
+  await flush();
+  // The relay has the event, so its result stays unknown, not refused.
+  expect(h.local.snapshot()[0]?.delivery).toBe("seen");
+  expect(h.onReceipt).toHaveBeenCalledExactlyOnceWith(
+    h.published(),
+    undefined,
+    undefined,
+  );
+});
 it("receipt waits are bounded and late results after disposal never publish", async () => {
   vi.useFakeTimers();
   const h = setup(100);
@@ -215,7 +235,7 @@ it.each([30620, 46020, 5])(
     const h = setup();
     const id = h.send(kind);
     await flush();
-    h.reject(new PublishRejected("PRIVATE"));
+    h.reject(new PublishRejected("PRIVATE", "blocked: PRIVATE"));
     await flush();
     expect(h.outbox.snapshot()[0]?.delivery).toBe("failed");
     expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");

@@ -9,7 +9,7 @@ import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
-import { PublishRejected } from "./outbox";
+import { isRelayRefusal, PublishRejected } from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
@@ -246,6 +246,46 @@ it("carries the relay's refusal text through both publish transports", async () 
     reason: error,
   });
 });
+it("keeps a forbidden: refusal as relay text through acceptPublish and the signed writer", async () => {
+  const error =
+    "forbidden: workflows with call_webhook actions require the owner or admin role";
+  const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
+  const transport = await connectSignedTransport(
+    hostSigner(key),
+    "https://relay.test",
+    "relay",
+  );
+  assert.exists(transport.writer);
+  vi.stubGlobal("fetch", async () => Response.json({ error }, { status: 400 }));
+  for (const result of [
+    await refusal(400, { error }),
+    await transport.writer
+      .publish(event, new AbortController().signal)
+      .catch((reason: unknown) => reason),
+  ]) {
+    expect(result).toBeInstanceOf(PublishRejected);
+    expect(result).toMatchObject({
+      message:
+        "Workflows with call_webhook actions require the owner or admin role",
+      reason: error,
+    });
+    expect(isRelayRefusal(result)).toBe(true);
+  }
+});
+it.each([
+  ["forbidden: not a member of this DM", true],
+  // Empty text leaves the status summary.
+  ["invalid:  ", false],
+  // Text writers match on stays machine text, not display words.
+  ["auth-required: sign in", false],
+  // Without a NIP-01 prefix the text is not the relay's.
+  ["Forbidden by proxy", false],
+])(
+  "counts only the relay's own words as its refusal: %j",
+  async (error, words) => {
+    expect(isRelayRefusal(await refusal(403, { error }))).toBe(words);
+  },
+);
 it("keeps the conflict refusal and the raw reason for classifying writers", async () => {
   const conflict = await refusal(409, { error: "invalid: whatever" });
   expect(conflict).toHaveProperty(

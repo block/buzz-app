@@ -405,6 +405,19 @@ it.each([
     new PublishNotSent("Relay unreachable"),
     "Workflow command rejected; retain the draft and refresh the saved configuration.",
   ],
+  [
+    "fixed copy for a status summary",
+    new PublishRejected(
+      "Relay rejected the message (403)",
+      "Forbidden by proxy",
+    ),
+    "Workflow command rejected; retain the draft and refresh the saved configuration.",
+  ],
+  [
+    "fixed copy for a refusal without a relay reason",
+    new PublishRejected("Relay rejected the message"),
+    "Workflow command rejected; retain the draft and refresh the saved configuration.",
+  ],
 ])(
   "a rejected run shows %s; the journal never holds relay text",
   async (_, error, shown) => {
@@ -827,9 +840,20 @@ it.each(["clear", "interrupt"] as const)(
   },
 );
 
-it.each([true, false])(
-  "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s)",
-  async (echo) => {
+it.each([
+  [false, new Error("lost receipt")],
+  [true, new Error("lost receipt")],
+  // The relay already has an echoed save, so its refusal leaves it unknown.
+  [
+    true,
+    new PublishRejected(
+      "Workflow is disabled or inactive",
+      "forbidden: workflow is disabled or inactive",
+    ),
+  ],
+])(
+  "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s, %s)",
+  async (echo, error) => {
     const h = setup();
     const operation = h.capability.save({
       channelId,
@@ -840,7 +864,7 @@ it.each([true, false])(
     const event = h.publish.mock.calls[0]?.[0];
     if (!event) throw new Error("missing publication");
     if (echo) h.outbox.observe([event]);
-    h.reject(new Error("lost receipt"));
+    h.reject(error);
     await flush();
     expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
     h.read.mockResolvedValue([event]);

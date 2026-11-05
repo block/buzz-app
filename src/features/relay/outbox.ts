@@ -125,6 +125,25 @@ export class PublishRejected extends Error {
  * device, or the relay asked it to wait. Retrying may succeed. */
 export class PublishNotSent extends PublishRejected {}
 
+/** NIP-01 machine-readable prefixes: the shape of a relay's own refusal. */
+export const NIP01_PREFIX =
+  /^(invalid|blocked|restricted|forbidden|error|pow|duplicate|rate-limited|conflict|auth-required):\s*/;
+
+/** Whether `message` is the relay's own words for a refusal: the write was
+ * sent and its `reason` is relay-shaped text. Status summaries, client-side
+ * rejections and prefixed text kept for writers to match on are not, so
+ * writers show their fixed copy for those. */
+export function isRelayRefusal(error: unknown): error is PublishRejected {
+  if (!(error instanceof PublishRejected) || error instanceof PublishNotSent)
+    return false;
+  const prefix = NIP01_PREFIX.exec(error.reason ?? "");
+  return (
+    !!prefix &&
+    !!error.reason?.slice(prefix[0].length).trim() &&
+    !NIP01_PREFIX.test(error.message)
+  );
+}
+
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
@@ -653,14 +672,6 @@ export function createOutbox(
       // A verified observation ends the attempt even if its HTTP ACK never arrives.
       total(!closed && !latest ? "ok" : "error");
       if (closed) return;
-      if (latest && awaitsReceipt(latest.event))
-        onReceipt(
-          latest.signed ?? latest.event,
-          undefined,
-          error instanceof PublishRejected && !(error instanceof PublishNotSent)
-            ? clip(error.message)
-            : undefined,
-        );
       const delivery: Delivery | undefined =
         latest &&
         (latest.delivery === "seen" || attempt.previousDelivery === "seen"
@@ -670,6 +681,15 @@ export function createOutbox(
             : publishing && !(error instanceof PublishRejected)
               ? "unknown"
               : failedDelivery(attempt));
+      // Only a failed attempt was refused; an echoed command stays unknown.
+      if (latest && awaitsReceipt(latest.event))
+        onReceipt(
+          latest.signed ?? latest.event,
+          undefined,
+          delivery === "failed" && isRelayRefusal(error)
+            ? clip(error.message)
+            : undefined,
+        );
       if (latest && delivery)
         saveStatus({
           ...latest,

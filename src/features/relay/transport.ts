@@ -67,7 +67,7 @@ import {
   type LiveSubscription,
 } from "./live";
 import { subscribeBrokerTraffic } from "./broker-live";
-import { PublishNotSent, PublishRejected } from "./outbox";
+import { NIP01_PREFIX, PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
@@ -1616,9 +1616,6 @@ export async function acceptReadStatePublish(response: Response, id: string) {
 }
 
 const REFUSAL_STATUSES = [400, 401, 403, 404, 413, 422];
-/** NIP-01 machine-readable prefixes: the shape of a relay's own refusal. */
-const NIP01_PREFIX =
-  /^(invalid|blocked|restricted|forbidden|error|pow|duplicate|rate-limited|conflict|auth-required):\s*/;
 /** Prefixes writers match on, so the text is shown as sent. */
 const KEPT_PREFIXES = new Set(["rate-limited", "conflict", "auth-required"]);
 /** The relay's own `{error}` text for a refused write. Admission otherwise

@@ -119,10 +119,12 @@ See the [capability contract](../src/features/workflows/types.ts).
 
 The outbox journals intent/signature before publication. A verified echo does
 not replace the result-bearing receipt. Restored commands never run automatically;
-result text stays ephemeral, outside the journal. A refused command shows the
-relay's reason in this session only; the journal keeps fixed copy, because relay
-text can quote event content. Workflow intents cannot be replayed
-through generic Outbox Retry either; inspection and dismissal remain available.
+result text stays ephemeral, outside the journal. A command the relay refuses
+with its own reason shows that reason in this session only; the journal keeps
+fixed copy, because relay text can quote event content. Other failures keep the
+fixed copy, and a refusal after a verified echo leaves the result unknown.
+Workflow intents cannot be replayed through generic Outbox Retry either;
+inspection and dismissal remain available.
 
 **Check saved configuration** resolves an unknown save only when a fresh verified
 head matches its owner, channel, UUID and exact signed revision. Missing/different

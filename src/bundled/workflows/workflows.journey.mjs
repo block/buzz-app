@@ -1960,9 +1960,11 @@ test("generic Outbox offers message retry but no workflow replay", async ({
   await expect(
     page.getByText("Failed to trigger workflow", { exact: true }),
   ).toBeVisible();
-  // The relay's refusal text replaces the journal's fixed copy in this session.
   await expect(
-    page.getByText("Fixture non-delivery", { exact: true }),
+    page.getByText(
+      "Workflow command rejected; retain the draft and refresh the saved configuration.",
+      { exact: true },
+    ),
   ).toBeVisible();
   // The Outbox is page chrome beneath the modal editor.
   await button("Close editor").click();

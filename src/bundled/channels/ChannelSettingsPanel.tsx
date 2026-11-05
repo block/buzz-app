@@ -14,7 +14,11 @@ import {
   ChannelLifecycleUnconfirmed,
   type ChannelLifecycleCapability,
 } from "../../features/relay/channel-lifecycle";
-import { PublishNotSent, PublishRejected } from "../../features/relay/outbox";
+import {
+  isRelayRefusal,
+  PublishNotSent,
+  PublishRejected,
+} from "../../features/relay/outbox";
 import { managesCommunity } from "../../features/communities/roster";
 import type { CommunityMembership } from "../moderation/membership";
 import type { RelaySession } from "../../features/relay/session";
@@ -323,12 +327,13 @@ function AutoJoinSetting({
               : // A rate limit or a write that never left this device, not a refusal.
                 error instanceof PublishNotSent
                 ? "Not sent. Try again."
-                : error instanceof PublishRejected
-                  ? (error.reason ??
-                    "Only community owners and admins can change this.")
-                  : error instanceof Error
-                    ? error.message
-                    : String(error),
+                : isRelayRefusal(error)
+                  ? error.message
+                  : error instanceof PublishRejected
+                    ? "Only community owners and admins can change this."
+                    : error instanceof Error
+                      ? error.message
+                      : String(error),
         });
     } finally {
       operation.current = undefined;

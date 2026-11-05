@@ -13,7 +13,7 @@ import {
   type CustomEmoji,
 } from "./emoji";
 import { eventDto, newer, type RelayEvent } from "./events";
-import { PublishNotSent, PublishRejected } from "./outbox";
+import { isRelayRefusal } from "./outbox";
 import type { Priority, RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
@@ -251,8 +251,7 @@ export function createEmojiDirectory(
           ? url === undefined
             ? "Timed out while removing emoji."
             : "Timed out while adding emoji."
-          : error instanceof PublishRejected &&
-              !(error instanceof PublishNotSent)
+          : isRelayRefusal(error)
             ? `${failure} ${error.message}`
             : failure,
       );

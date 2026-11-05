@@ -741,17 +741,27 @@ it("rejects invalid names before any read and maps publish failure to reference 
     /^Failed to add emoji\. You are banned$/,
   );
   expect(h.emoji.snapshot().mine).toEqual([]);
-  // A write that never reached the relay has no reason to show.
-  h.publish.mockRejectedValueOnce(new PublishNotSent("Relay unreachable"));
-  const notSent = h.emoji.add?.("party", url);
-  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
-  h.ownRead().respond([]);
-  await expect(notSent).rejects.toThrow(/^Failed to add emoji\.$/);
+  // A write that never reached the relay, or a refusal without the relay's
+  // own words, has no reason to show.
+  for (const error of [
+    new PublishNotSent("Relay unreachable"),
+    new PublishRejected(
+      "Relay rejected the message (403)",
+      "Forbidden by proxy",
+    ),
+    new PublishRejected("Relay rejected the message"),
+  ]) {
+    h.publish.mockRejectedValueOnce(error);
+    const unexplained = h.emoji.add?.("party", url);
+    await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+    h.ownRead().respond([]);
+    await expect(unexplained).rejects.toThrow(/^Failed to add emoji\.$/);
+  }
   const failedRead = h.emoji.add?.("party", url);
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().fail(new Error("offline"));
   await expect(failedRead).rejects.toThrow(/^Failed to add emoji\.$/);
-  expect(h.publish).toHaveBeenCalledTimes(2);
+  expect(h.publish).toHaveBeenCalledTimes(4);
 });
 it("removes only from the fresh own set and preserves another member's colliding emoji", async () => {
   const h = authoring();

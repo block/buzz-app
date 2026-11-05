@@ -54,11 +54,23 @@ vi.mock("../messages/MessageComposer", () => ({
   MessageComposer: () => <section aria-label="Composer" />,
 }));
 vi.mock("../messages/MediaReviewViewer", () => ({
-  MediaReviewViewer: (props: { onOpenLink(url: string): boolean }) => (
+  MediaReviewViewer: (props: {
+    canOpenLink?: (target: string) => boolean;
+    onOpenLink(url: string): boolean;
+    close(): void;
+  }) => (
     <section aria-label="Media review">
-      <button type="button" onClick={() => props.onOpenLink("fixture:one")}>
-        Open panel from review
-      </button>
+      {props.canOpenLink?.("fixture:one") && (
+        <button
+          type="button"
+          // A followed comment link closes the review, as the real viewer does.
+          onClick={() => {
+            if (props.onOpenLink("fixture:one")) props.close();
+          }}
+        >
+          Open panel from review
+        </button>
+      )}
     </section>
   ),
 }));

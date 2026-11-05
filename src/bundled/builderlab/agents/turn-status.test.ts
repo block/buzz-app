@@ -4,8 +4,7 @@ import { requestWork } from "../../../features/agents/request-work";
 import type { RelayData } from "../../../features/relay/service";
 import type { RelaySession } from "../../../features/relay/session";
 import type { HostResponse } from "../../../features/host/service";
-import { createOAuthSession } from "../oauth/session";
-import { deferred } from "../test-helpers";
+import { deferred, createTestSession } from "../test-helpers";
 import { createAgentClient } from "./client";
 import { startTurnStatusRecovery } from "./turn-status";
 
@@ -54,9 +53,9 @@ async function fixture(
     return result.promise;
   });
   let subject = "owner";
-  const session = createOAuthSession(
+  const session = createTestSession(
     async () => ({
-      value: subject,
+      revision: subject,
       account: {
         subject,
         email: "fixture@example.com",

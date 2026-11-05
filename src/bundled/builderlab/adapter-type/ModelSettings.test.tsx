@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { StrictMode, useLayoutEffect, useRef, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host } from "../../../features/host/service";
 import {
@@ -52,6 +52,25 @@ it.each(["deadline", "cancel"] as const)(
     }));
     identity.publish({ status: "signed-in", revision: "user:1" });
     const session = createNativeSession(identity.service);
+    const signedOutCommits: { action: string | null; hint: boolean }[] = [];
+    function ObserveCommit({ children }: { children: ReactNode }) {
+      const control = useRef<HTMLDivElement>(null);
+      // Observe the committed DOM before ModelSettings' passive effect runs.
+      useLayoutEffect(() => {
+        if (session.snapshot().status !== "signed-out") return;
+        signedOutCommits.push({
+          action:
+            control.current
+              ?.querySelector("button")
+              ?.getAttribute("aria-label") ?? null,
+          hint:
+            control.current?.parentElement?.textContent?.includes(
+              "Sign in to edit settings. You can still message this agent.",
+            ) ?? false,
+        });
+      });
+      return <div ref={control}>{children}</div>;
+    }
     const signedOut = deferred<void>();
     const signOut = vi.mocked(identity.service.signOut).getMockImplementation();
     if (!signOut) throw new Error("Missing native sign-out fixture");
@@ -64,6 +83,7 @@ it.each(["deadline", "cancel"] as const)(
         <ModelSettings
           client={createAgentClient(session, null)}
           session={session}
+          harnessControl={(action) => <ObserveCommit>{action}</ObserveCommit>}
           settings={{
             subject: "user",
             agent: {
@@ -87,6 +107,10 @@ it.each(["deadline", "cancel"] as const)(
       expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
       await act(async () => signedOut.resolve());
       expect(session.snapshot().status).toBe("signed-out");
+      expect(signedOutCommits[0]).toEqual({
+        action: "Cancel sign-in",
+        hint: false,
+      });
       const spinner = screen.getByRole("button", { name: "Cancel sign-in" });
       expect(spinner).toHaveAttribute("aria-busy", "true");
       await act(() => vi.advanceTimersByTimeAsync(2999));

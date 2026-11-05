@@ -26,6 +26,22 @@ import type {
 } from "../../features/relay/reaction-history";
 import styles from "./Inbox.module.css";
 
+export type ReactionGroup = ReactionEntry & { reactions: ReactionEntry[] };
+
+/** Group loaded history by its original post, newest activity first. */
+export function groupReactions(rows: ReactionEntry[]): ReactionGroup[] {
+  const groups = new Map<string, ReactionGroup>();
+  for (const row of [...rows].sort(
+    (a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id),
+  )) {
+    const key = JSON.stringify([row.channelId, row.messageId]);
+    const group = groups.get(key);
+    if (group) group.reactions.push(row);
+    else groups.set(key, { ...row, reactions: [row] });
+  }
+  return [...groups.values()];
+}
+
 /** One history reader shared by All and the focused Reactions view. */
 export function useReactionHistory(session: RelaySession, enabled = true) {
   const list = useChannelList(session.channels);
@@ -64,8 +80,20 @@ export function useReactionHistory(session: RelaySession, enabled = true) {
       setCursor(undefined);
     }
     try {
-      const page = await session.reactionHistory(older ? cursor : undefined, {
-        signal: owned.signal,
+      const read = () =>
+        session.reactionHistory(older ? cursor : undefined, {
+          signal: owned.signal,
+        });
+      const page = await read().catch((failure: unknown) => {
+        // Access discovery can retire a read without changing the admitted IDs
+        // or timestamp. Retry once against the session's fresh access guards.
+        if (
+          !owned.signal.aborted &&
+          failure instanceof DOMException &&
+          failure.name === "AbortError"
+        )
+          return read();
+        throw failure;
       });
       if (owned.signal.aborted) return;
       setRows((previous) => {
@@ -143,7 +171,7 @@ export function ReactionRow({
   open,
   onError,
 }: {
-  row: ReactionEntry;
+  row: ReactionGroup;
   session: RelaySession;
   channel: ReturnType<typeof useChannelList>["channels"][number] | undefined;
   open(target: PageTabTarget): boolean;
@@ -160,9 +188,29 @@ export function ReactionRow({
     row.authorId,
     profile?.name ?? formatPublicKey(row.authorId) ?? "Unknown sender",
   );
+  const authors = [
+    ...new Set(row.reactions.map((reaction) => reaction.authorId)),
+  ];
+  const senderLabel =
+    authors.length > 1 ? `${sender} +${authors.length - 1}` : sender;
+  const emojiCounts = new Map<
+    string,
+    { reaction: ReactionEntry; authors: Set<string> }
+  >();
+  for (const reaction of row.reactions) {
+    const content = reaction.content === "+" ? "👍" : reaction.content;
+    const key = JSON.stringify([content, reaction.emoji]);
+    const count = emojiCounts.get(key);
+    if (count) count.authors.add(reaction.authorId);
+    else
+      emojiCounts.set(key, {
+        reaction: { ...reaction, content },
+        authors: new Set([reaction.authorId]),
+      });
+  }
   return (
     <NavigationItem
-      aria-label={`Open message reacted to by ${sender}`}
+      aria-label={`Open message reacted to by ${senderLabel}`}
       onClick={() => {
         if (
           !open({
@@ -186,7 +234,9 @@ export function ReactionRow({
         <span className={styles.content}>
           <span className={styles.heading}>
             <span className={styles.identity}>
-              <strong className="text-label-sm text-standard">{sender}</strong>
+              <strong className="text-label-sm text-standard">
+                {senderLabel}
+              </strong>
               <span className="text-caption text-subtle">
                 {channel ? channelText(channel) : "Conversation"}
               </span>
@@ -200,14 +250,19 @@ export function ReactionRow({
           </span>
           <span className="text-body">
             Reacted{" "}
-            <ReactionGlyph
-              reaction={{
-                content: row.content === "+" ? "👍" : row.content,
-                ...(row.emoji ? { emoji: row.emoji } : {}),
-                events: [],
-              }}
-              session={session}
-            />
+            {[...emojiCounts].map(([key, { reaction, authors }]) => (
+              <span key={key}>
+                <ReactionGlyph
+                  reaction={{
+                    content: reaction.content,
+                    ...(reaction.emoji ? { emoji: reaction.emoji } : {}),
+                    events: [],
+                  }}
+                  session={session}
+                />{" "}
+                {authors.size}{" "}
+              </span>
+            ))}
           </span>
           <span className={`text-body text-subtle ${styles.preview}`}>
             {messagePreview(row.preview) || "Your message"}
@@ -277,7 +332,7 @@ export function ReactionHistory({
         aria-label="Reaction history"
         aria-busy={loading}
       >
-        {rows.map((row) => (
+        {groupReactions(rows).map((row) => (
           <ReactionRow
             key={row.id}
             row={row}

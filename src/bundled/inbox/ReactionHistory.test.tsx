@@ -140,3 +140,42 @@ it("keeps the newest reaction when an older page repeats the same person's emoji
     screen.getAllByRole("button", { name: "Open message reacted to by Alice" }),
   ).toHaveLength(1);
 });
+it("groups people and emoji counts by post across older pages", async () => {
+  const h = setup();
+  vi.mocked(readReactionPage)
+    .mockResolvedValueOnce({
+      rows: [reaction],
+      cursor: { until: 100, before_id: "reaction" },
+    })
+    .mockResolvedValueOnce({
+      rows: [
+        { ...reaction, id: "bob", authorId: "bob", createdAt: 90 },
+        { ...reaction, id: "other-emoji", content: "🎉", createdAt: 80 },
+        {
+          ...reaction,
+          id: "other-post",
+          messageId: "other",
+          preview: "Another post",
+          createdAt: 70,
+        },
+      ],
+      cursor: undefined,
+    });
+  const open = vi.fn(() => true);
+  render(<ReactionHistory session={h.session} open={open} />);
+  await screen.findByText("Ready for review");
+  fireEvent.click(screen.getByRole("button", { name: "Load older reactions" }));
+  const grouped = await screen.findByRole("button", {
+    name: "Open message reacted to by Alice +1",
+  });
+  expect(screen.getAllByText("Ready for review")).toHaveLength(1);
+  expect(grouped.textContent).toContain("✅ 2");
+  expect(grouped.textContent).toContain("🎉 1");
+  expect(screen.getByText("Another post")).toBeTruthy();
+  fireEvent.click(grouped);
+  expect(open).toHaveBeenCalledWith({
+    channelId: "room",
+    threadId: "root",
+    messageId: "message",
+  });
+});

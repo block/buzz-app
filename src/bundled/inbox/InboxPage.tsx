@@ -17,6 +17,7 @@ import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import {
   ReactionHistory,
   ReactionRow,
+  groupReactions,
   ReactionHistoryControls,
   useReactionHistory,
 } from "./ReactionHistory";
@@ -643,7 +644,10 @@ function InboxList({
   );
   const entries = [
     ...visible.map((item) => ({ kind: "conversation" as const, item })),
-    ...reactions.map((item) => ({ kind: "reaction" as const, item })),
+    ...groupReactions(reactions).map((item) => ({
+      kind: "reaction" as const,
+      item,
+    })),
   ].sort(
     (a, b) =>
       b.item.createdAt - a.item.createdAt || a.item.id.localeCompare(b.item.id),

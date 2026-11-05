@@ -244,16 +244,16 @@ export async function hoverRow(page, locator, scroller = history(page)) {
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
 }
 // Click a control inside a timeline row once the timeline is at rest. Opening
-// a panel resizes the timeline: rows rewrap and the reading position moves
-// through scroll events, each restarting Virtua's pointer-event hold. A click
-// can pass Playwright's checks and still land in a hold that starts after them
-// (seen on Linux WebKit CI after Playwright scrolled the row into view); it
-// reaches the scroller and the control never sees it. Scroll first, then wait.
-// A scroll event reaches Virtua in a later rendering update, so wait for those
-// updates, and check pointer events again after the geometry settles.
+// a panel resizes the timeline, and its rows rewrap and move through scroll
+// events. Each scroll event restarts Virtua's pointer-event hold. On Linux
+// WebKit CI, a click sent during that movement reached the scroller, and the
+// control never saw it. The control must already be fully visible: this helper
+// does not scroll, so a reading position the app moved is not hidden. A scroll
+// event reaches Virtua in a later rendering update, so wait for those updates,
+// and check pointer events again after the geometry settles.
 export async function clickRow(page, locator, scroller = history(page)) {
   await virtuaIdle(page, scroller);
-  await locator.scrollIntoViewIfNeeded();
+  await expect(locator).toBeInViewport({ ratio: 1 });
   await frames(page);
   await virtuaIdle(page, scroller);
   await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");

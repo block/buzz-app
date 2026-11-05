@@ -19,7 +19,7 @@ import {
   useActivityPresentation,
   useStableRowActivity,
 } from "./activity-presentation";
-import { DayDivider } from "./MessageTimestamp";
+import { DayDivider, PinnedDay } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
@@ -58,6 +58,10 @@ import { JumpToLatestButton } from "./JumpToLatestButton";
 import { moveMessageSelection } from "./message-selection";
 import { useMessageSelection } from "./use-message-selection";
 import { useMessageVisit } from "./MessageManagement";
+import { DateJumpContext } from "./DateJumpMenu";
+import { dayStart } from "./date-jump";
+import { useDateJump } from "./use-date-jump";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -193,6 +197,8 @@ export type ChannelTimelineProps = {
   transient?: boolean | undefined;
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
+  /** Day dividers open "Jump to…"; a jump may detach the window from its head. */
+  dateJump?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -241,8 +247,21 @@ function Timeline({
   onOpenMediaReview,
   chatPresentation = false,
   startsThreads = true,
+  dateJump = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
+  const notify = useToastNotification();
+  const dates = useDateJump(queries.channels, channelId, () =>
+    notify("Couldn't jump to that date.", "error"),
+  );
+  // A detached window holds a segment of history below rows not yet loaded:
+  // its bottom is not the conversation's latest, so it never follows.
+  const detached = !!window.hasNewer;
+  const detachedNow = useRef(detached);
+  detachedNow.current = detached;
+  // Set by Jump to latest or a send while detached, until the head lands.
+  const attaching = useRef(false);
+  if (!detached) attaching.current = false;
   const [initialPosition] = useState(() =>
     transient
       ? null
@@ -567,11 +586,29 @@ function Timeline({
     undefined,
     false,
   );
-  const targetId =
+  const externalId =
     inlineTarget?.messageId ??
     (navigation?.target.kind === "conversation"
       ? navigation.target.messageId
       : undefined);
+  const externalSignal = inlineTarget?.signal ?? navigation?.signal;
+  // A date jump supersedes the visit it started over; a newer visit cancels it.
+  const [jumpedOver, setJumpedOver] = useState<AbortSignal>();
+  const cancelDate = dates.cancel;
+  useLayoutEffect(() => {
+    if (externalSignal && externalSignal !== jumpedOver) cancelDate();
+  }, [externalSignal, jumpedOver, cancelDate]);
+  const startJump = dates.jump;
+  const jumpTo = useCallback(
+    (from: number) => {
+      setJumpedOver(externalSignal);
+      startJump(from);
+    },
+    [externalSignal, startJump],
+  );
+  const dateTarget = dates.target;
+  const external = externalSignal !== jumpedOver;
+  const targetId = dateTarget?.messageId ?? (external ? externalId : undefined);
   // Activity updates rebuild the hidden-row filter without changing its
   // result; keep the same rows so positioning effects keyed on them stay idle.
   const displayedRows = useRef(chronologicalRows);
@@ -733,12 +770,14 @@ function Timeline({
     ids: ReadonlySet<string>;
     floor: number;
     paging: boolean;
+    detached: boolean;
   }>({
     order: [],
     containedOwners: new Map(),
     ids: new Set(),
     floor: 0,
     paging: false,
+    detached: false,
   });
   // The reader's anchor row and its offset before this render's rows.
   const reader = useRef<{ id: string | undefined; top: number; y: number }>({
@@ -841,6 +880,7 @@ function Timeline({
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
       if (restoredAnchor.current) position.bottom = false;
+      if (detachedNow.current && !attaching.current) position.bottom = false;
       if (pendingRestore.current !== intent.current)
         savedPosition.current = position;
       follow.current = position.bottom;
@@ -859,8 +899,66 @@ function Timeline({
     setShowJumpToLatest(!bottom);
     if (bottom) setNewMessageCount(0);
   }, []);
+  const dateJumps = dateJump && !!queries.channels.seek;
+  // The top visible message's day (its local midnight), pinned while that
+  // day's own divider is out of view.
+  const [pinnedDay, setPinnedDay] = useState<number>();
+  const createdAtById = useMemo(
+    () => new Map(rows.map((row) => [row.id, row.createdAt])),
+    [rows],
+  );
+  const updatePinnedDay = useCallback(
+    (element: HTMLElement) => {
+      const top = element.getBoundingClientRect().top;
+      const row = Array.from(
+        element.querySelectorAll<HTMLElement>("[data-message-id]"),
+      ).find((row) => row.getBoundingClientRect().bottom > top);
+      // The divider can sit beside the id element, within the virtual item.
+      const divider = (row?.closest("li") ?? row)?.querySelector("[data-day]");
+      const createdAt =
+        divider && divider.getBoundingClientRect().top >= top
+          ? undefined
+          : createdAtById.get(row?.dataset.messageId ?? "");
+      setPinnedDay(
+        createdAt === undefined
+          ? undefined
+          : dayStart(new Date(createdAt * 1000)),
+      );
+    },
+    [createdAtById],
+  );
+  // Virtual rows mount after the commit that adds them, and after the scroll
+  // event that brings them into range: read them a frame later.
+  const pinnedFrame = useRef<number | undefined>(undefined);
+  const schedulePinnedDay = useCallback(
+    (element: HTMLElement) => {
+      if (pinnedFrame.current !== undefined)
+        cancelAnimationFrame(pinnedFrame.current);
+      pinnedFrame.current = requestAnimationFrame(() => {
+        pinnedFrame.current = undefined;
+        updatePinnedDay(element);
+      });
+    },
+    [updatePinnedDay],
+  );
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!dateJumps || !element) return;
+    schedulePinnedDay(element);
+    return () => {
+      if (pinnedFrame.current !== undefined)
+        cancelAnimationFrame(pinnedFrame.current);
+      pinnedFrame.current = undefined;
+    };
+  }, [dateJumps, schedulePinnedDay]);
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
+    // Latest supersedes a pending date jump, silently.
+    cancelDate();
+    if (detachedNow.current) {
+      attaching.current = true;
+      queries.channels.attach?.(channelId);
+    }
     intent.current++;
     follow.current = true;
     restoredAnchor.current = undefined;
@@ -876,8 +974,7 @@ function Timeline({
       align: "end",
       ...(tailHeight ? { offset: tailHeight } : {}),
     });
-  }, [rows.length]);
-  const inlineSignal = inlineTarget?.signal;
+  }, [rows.length, queries, channelId, cancelDate]);
   const targetIndex = rows.findIndex(
     (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
   );
@@ -911,7 +1008,8 @@ function Timeline({
         list.getItemOffset(targetIndex),
     });
   }, [targetIndex]);
-  const targetSignal = inlineSignal ?? navigation?.signal;
+  const targetSignal =
+    dateTarget?.signal ?? (external ? externalSignal : undefined);
   const activityReveal = useRef<AbortSignal | string | undefined>(undefined);
   useLayoutEffect(() => {
     const id = targetId ?? revealMessageId;
@@ -926,18 +1024,21 @@ function Timeline({
   // Positioning waits for the exact reveal, then must run again: a reveal that
   // leaves the reader at the bottom keeps following late row measurement.
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
+  const revealedDate = dates.revealed;
   const completeTarget = useCallback(() => {
     const element = scroller.current;
     // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
     // keeps its row where it placed it instead of re-aligning to the end.
     if (
-      element &&
-      element.scrollHeight - element.clientHeight - element.scrollTop > 1
+      detachedNow.current ||
+      (element &&
+        element.scrollHeight - element.clientHeight - element.scrollTop > 1)
     )
       follow.current = false;
-    navigation?.complete({ status: "opened" });
+    if (dateTarget && dateTarget.signal === targetSignal) revealedDate();
+    else navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetSignal]);
+  }, [navigation, targetSignal, dateTarget, revealedDate]);
   useMessageReveal({
     scroller,
     focus: !(
@@ -948,6 +1049,7 @@ function Timeline({
     messageId: targetId,
     signal: targetSignal,
     ready: !!size.width && !!size.height && targetIndex >= 0,
+    block: dateTarget ? "center" : "start",
     prepare: prepareTarget,
     placed: targetPlaced,
     complete: completeTarget,
@@ -968,7 +1070,8 @@ function Timeline({
     latestMessageId: window.rows
       .filter((row) => !row.membership && !row.huddle)
       .at(-1)?.id,
-    enabled: marksRead,
+    // A detached segment's newest row is not the conversation's latest.
+    enabled: marksRead && !detached,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
@@ -1190,6 +1293,17 @@ function Timeline({
     element.ownerDocument.addEventListener("pointercancel", done);
     return () => release(true);
   }, [rows, prepend, containedOwners, newMessageBoundaryId]);
+  // Leaving a detached segment returns the channel to its head, at the bottom.
+  const attachOnLeave = useRef(() => queries.channels.attach?.(channelId));
+  attachOnLeave.current = () => queries.channels.attach?.(channelId);
+  useLayoutEffect(
+    () => () => {
+      if (!detachedNow.current) return;
+      savedPosition.current = { bottom: true };
+      attachOnLeave.current();
+    },
+    [],
+  );
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -1291,7 +1405,7 @@ function Timeline({
     // Rows before the loaded first row's second are history. A page also
     // returns rows of that second, and can land after a retained first row:
     // when one lands, only rows after the previous last row are new.
-    const { floor, order } = edges.current;
+    const { floor, order, detached: wasDetached } = edges.current;
     const paged = edges.current.paging && !loadingOlder.current;
     const tail = rows.findIndex((row) => row.id === order.at(-1));
     const arrivals = rows.filter(
@@ -1306,11 +1420,16 @@ function Timeline({
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
       paging: loadingOlder.current,
+      detached: detachedNow.current,
     };
+    // Rows a newer page appends, including the page that reattaches, are
+    // history the reader asked for, not new messages.
     if (
       arrivals > 0 &&
       previousIds.size > 0 &&
       !follow.current &&
+      !wasDetached &&
+      !detachedNow.current &&
       (!targetId || revealedSignal === targetSignal)
     ) {
       setNewMessageCount((count) => count + arrivals);
@@ -1539,6 +1658,32 @@ function Timeline({
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
+  const loadNearBottom = useCallback(
+    (element: HTMLElement) => {
+      if (
+        !window.hasNewer ||
+        window.loadingNewer ||
+        window.status !== "ready" ||
+        window.error ||
+        attaching.current ||
+        element.scrollHeight - element.clientHeight - element.scrollTop >=
+          Math.max(3000, element.clientHeight * 4)
+      )
+        return;
+      queries.channels.loadNewer?.(channelId);
+    },
+    [window, queries, channelId],
+  );
+  // A send while detached lands at the head, so return there first.
+  const sent = useRef(revealMessageId);
+  useLayoutEffect(() => {
+    if (revealMessageId === sent.current) return;
+    sent.current = revealMessageId;
+    if (!revealMessageId || !detachedNow.current) return;
+    cancelDate();
+    attaching.current = true;
+    queries.channels.attach?.(channelId);
+  }, [revealMessageId, queries, channelId, cancelDate]);
   const gesture = (upward = false) => {
     const restoring = pendingRestore.current === intent.current;
     restoredAnchor.current = undefined;
@@ -1568,6 +1713,8 @@ function Timeline({
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
+    // Likewise at a detached bottom edge.
+    if (scroller.current) loadNearBottom(scroller.current);
   };
   return (
     <section
@@ -1666,6 +1813,8 @@ function Timeline({
           updateJumpToLatest(element);
         }
         loadNearTop(element);
+        loadNearBottom(element);
+        if (dateJumps) schedulePinnedDay(element);
       }}
     >
       <div
@@ -1697,201 +1846,222 @@ function Timeline({
           <span role="status">Loading older…</span>
         ) : null}
       </div>
+      {dates.pending ? (
+        <div className={styles.jumpStatus} role="status">
+          <span>Loading older…</span>
+        </div>
+      ) : (
+        dateJumps &&
+        pinnedDay !== undefined && (
+          <PinnedDay
+            createdAt={pinnedDay}
+            jump={jumpTo}
+            returnFocus={scroller}
+          />
+        )
+      )}
       <JumpToLatestButton
-        visible={showJumpToLatest}
+        visible={showJumpToLatest || detached}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
       />
       {width > 0 && (
-        <Virtualizer
-          ref={handle}
-          scrollRef={scroller}
-          // Before Virtua measures its viewport there is no reading position
-          // to preserve; shifting then can freeze its initial empty range.
-          shift={prepend && !!handle.current?.viewportSize}
-          bufferSize={1600}
-          // Reflow must not evict the focused control or a row's open report.
-          keepMounted={keptIndices}
-          onResize={() => {
-            const element = scroller.current;
-            // Rows can measure after native scrollend without moving the
-            // scroll offset. Do not carry their estimated Y into the next hold.
-            if (
-              element &&
-              settled.current &&
-              element.clientWidth === size.width &&
-              element.clientHeight === size.height &&
-              !follow.current &&
-              !restoredAnchor.current &&
-              pendingRestore.current !== intent.current &&
-              heldReader.current?.intent !== intent.current
-            )
-              // A size change refreshes geometry, never bottom-follow intent.
-              savedPosition.current = { ...positionAt(element), bottom: false };
-          }}
-          as="ol"
-          item="li"
-          startMargin={size.edgeHeight}
-          {...(initialCache.current ? { cache: initialCache.current } : {})}
-        >
-          {rows.map((row, index) => {
-            const disclosure = disclosures.get(row.id);
-            const hidden = foldedActivity.has(row.id);
-            const previousRow =
-              row.audience === "agents"
-                ? rows[index - 1]
-                : publicMessageNeighbor(rows, index, -1);
-            const nextRow =
-              row.audience === "agents"
-                ? rows[index + 1]
-                : publicMessageNeighbor(rows, index, 1);
-            const day =
-              index === 0
-                ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
-            const renderMessage = (row: ChannelMessage, inside = false) => {
+        <DateJumpContext value={dateJumps ? jumpTo : undefined}>
+          <Virtualizer
+            ref={handle}
+            scrollRef={scroller}
+            // Before Virtua measures its viewport there is no reading position
+            // to preserve; shifting then can freeze its initial empty range.
+            shift={prepend && !!handle.current?.viewportSize}
+            bufferSize={1600}
+            // Reflow must not evict the focused control or a row's open report.
+            keepMounted={keptIndices}
+            onResize={() => {
+              const element = scroller.current;
+              // Rows can measure after native scrollend without moving the
+              // scroll offset. Do not carry their estimated Y into the next hold.
+              if (
+                element &&
+                settled.current &&
+                element.clientWidth === size.width &&
+                element.clientHeight === size.height &&
+                !follow.current &&
+                !restoredAnchor.current &&
+                pendingRestore.current !== intent.current &&
+                heldReader.current?.intent !== intent.current
+              )
+                // A size change refreshes geometry, never bottom-follow intent.
+                savedPosition.current = {
+                  ...positionAt(element),
+                  bottom: false,
+                };
+            }}
+            as="ol"
+            item="li"
+            startMargin={size.edgeHeight}
+            {...(initialCache.current ? { cache: initialCache.current } : {})}
+          >
+            {rows.map((row, index) => {
+              const disclosure = disclosures.get(row.id);
+              const hidden = foldedActivity.has(row.id);
+              const previousRow =
+                row.audience === "agents"
+                  ? rows[index - 1]
+                  : publicMessageNeighbor(rows, index, -1);
+              const nextRow =
+                row.audience === "agents"
+                  ? rows[index + 1]
+                  : publicMessageNeighbor(rows, index, 1);
+              const day =
+                index === 0
+                  ? true
+                  : new Date(
+                      (rows[index - 1]?.createdAt ?? 0) * 1000,
+                    ).toDateString() !==
+                    new Date(row.createdAt * 1000).toDateString();
+              const renderMessage = (row: ChannelMessage, inside = false) => {
+                return (
+                  <MessageRow
+                    representedAgents={stableActivity.agents(
+                      row.id,
+                      presentation.representedAgents.get(row.id),
+                    )}
+                    repliedAgents={stableActivity.agents(
+                      `replied:${row.id}`,
+                      presentation.repliedAgents.get(row.id),
+                    )}
+                    stoppedRequest={stoppedRequest(row.id)}
+                    recordedActivity={stableActivity.activity(
+                      row.id,
+                      presentation.byRow.get(row.id),
+                      "history",
+                    )}
+                    stackPrevious={
+                      inside ||
+                      (!!previousRow &&
+                        !foldedActivity.has(previousRow.id) &&
+                        continuesMessageGroup(previousRow, row))
+                    }
+                    stackNext={
+                      inside ||
+                      presentation.bubbleAnchors.has(row.id) ||
+                      (row.id === lastPublicMessage?.id &&
+                        row.audience !== "agents" &&
+                        !row.membership &&
+                        row.authorId === liveAgents[0]) ||
+                      (!!nextRow &&
+                        !foldedActivity.has(nextRow.id) &&
+                        continuesMessageGroup(row, nextRow))
+                    }
+                    session={queries}
+                    scope={scope}
+                    row={row}
+                    unread={queries.unread}
+                    extensions={extensions}
+                    profile={profiles.get(row.authorId)}
+                    participantProfiles={profiles}
+                    agentPubkeys={agentPubkeys}
+                    media={queries.media}
+                    onOpenLink={onOpenLink}
+                    canOpenLink={canOpenLink}
+                    onOpenThread={onOpenThread}
+                    startsThreads={startsThreads}
+                    {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                    retry={queries.outbox?.retry}
+                    keepMounted={keepRowMounted}
+                    day={!inside && day && !disclosure}
+                  />
+                );
+              };
               return (
-                <MessageRow
-                  representedAgents={stableActivity.agents(
-                    row.id,
-                    presentation.representedAgents.get(row.id),
-                  )}
-                  repliedAgents={stableActivity.agents(
-                    `replied:${row.id}`,
-                    presentation.repliedAgents.get(row.id),
-                  )}
-                  stoppedRequest={stoppedRequest(row.id)}
-                  recordedActivity={stableActivity.activity(
-                    row.id,
-                    presentation.byRow.get(row.id),
-                    "history",
-                  )}
-                  stackPrevious={
-                    inside ||
-                    (!!previousRow &&
-                      !foldedActivity.has(previousRow.id) &&
-                      continuesMessageGroup(previousRow, row))
-                  }
-                  stackNext={
-                    inside ||
-                    presentation.bubbleAnchors.has(row.id) ||
-                    (row.id === lastPublicMessage?.id &&
-                      row.audience !== "agents" &&
-                      !row.membership &&
-                      row.authorId === liveAgents[0]) ||
-                    (!!nextRow &&
-                      !foldedActivity.has(nextRow.id) &&
-                      continuesMessageGroup(row, nextRow))
-                  }
-                  session={queries}
-                  scope={scope}
-                  row={row}
-                  unread={queries.unread}
-                  extensions={extensions}
-                  profile={profiles.get(row.authorId)}
-                  participantProfiles={profiles}
-                  agentPubkeys={agentPubkeys}
-                  media={queries.media}
-                  onOpenLink={onOpenLink}
-                  canOpenLink={canOpenLink}
-                  onOpenThread={onOpenThread}
-                  startsThreads={startsThreads}
-                  {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                  retry={queries.outbox?.retry}
-                  keepMounted={keepRowMounted}
-                  day={!inside && day && !disclosure}
-                />
-              );
-            };
-            return (
-              <Fragment key={row.id}>
-                {disclosure && (
-                  <div
-                    className={styles.activityDisclosure}
-                    data-activity-group-id={disclosure.ids[0]}
-                  >
-                    {!disclosure.expanded &&
-                      (() => {
-                        const first = rows.findIndex(
-                          (item) => item.id === disclosure.ids[0],
-                        );
-                        const before = rows[first - 1];
-                        return (
-                          (!before ||
-                            new Date(before.createdAt * 1000).toDateString() !==
+                <Fragment key={row.id}>
+                  {disclosure && (
+                    <div
+                      className={styles.activityDisclosure}
+                      data-activity-group-id={disclosure.ids[0]}
+                    >
+                      {!disclosure.expanded &&
+                        (() => {
+                          const first = rows.findIndex(
+                            (item) => item.id === disclosure.ids[0],
+                          );
+                          const before = rows[first - 1];
+                          return (
+                            (!before ||
                               new Date(
-                                row.createdAt * 1000,
-                              ).toDateString()) && (
-                            <DayDivider createdAt={row.createdAt} />
-                          )
-                        );
-                      })()}
-                    <ActivityGroupPreview
-                      session={queries}
-                      group={disclosure}
-                      openActivity={onOpenLink}
-                      canOpenActivity={canOpenLink}
-                      renderHistory={(entry) => renderMessage(entry, true)}
-                      profiles={profiles}
-                      media={queries.media}
-                      expanded={disclosure.expanded}
-                      onToggle={() => {
-                        intent.current++;
-                        follow.current = false;
-                        userScrolled.current = true;
-                        restoredAnchor.current = undefined;
-                        const next = new Set(expandedActivity);
-                        for (const id of disclosure.ids) {
-                          if (disclosure.expanded) next.delete(id);
-                          else next.add(id);
-                        }
-                        setExpandedActivity(next);
-                      }}
-                    />
-                  </div>
-                )}
-                {row.id === newMessageBoundaryId && (
-                  <div
-                    className={styles.newMessages}
-                    data-new-messages-boundary
-                  >
-                    <hr
-                      className="sr-only select-none"
-                      aria-label="New messages"
-                    />
-                    <span className="select-none" aria-hidden="true">
-                      New messages
-                    </span>
-                  </div>
-                )}
-                <ActivityExpansion
-                  open={!hidden && !containedOwners.has(row.id)}
-                  enabled={row.audience === "agents"}
-                >
-                  {row.membership ? (
-                    <MembershipRow
-                      resolveName={resolveName}
-                      names={queries.names}
-                      row={row}
-                      profiles={profiles}
-                      viewer={viewer}
-                      media={queries.media}
-                      agentPubkeys={agentPubkeys}
-                      day={day}
-                      onOpenLink={onOpenLink}
-                      canOpenLink={canOpenLink}
-                    />
-                  ) : (
-                    renderMessage(row)
+                                before.createdAt * 1000,
+                              ).toDateString() !==
+                                new Date(
+                                  row.createdAt * 1000,
+                                ).toDateString()) && (
+                              <DayDivider createdAt={row.createdAt} />
+                            )
+                          );
+                        })()}
+                      <ActivityGroupPreview
+                        session={queries}
+                        group={disclosure}
+                        openActivity={onOpenLink}
+                        canOpenActivity={canOpenLink}
+                        renderHistory={(entry) => renderMessage(entry, true)}
+                        profiles={profiles}
+                        media={queries.media}
+                        expanded={disclosure.expanded}
+                        onToggle={() => {
+                          intent.current++;
+                          follow.current = false;
+                          userScrolled.current = true;
+                          restoredAnchor.current = undefined;
+                          const next = new Set(expandedActivity);
+                          for (const id of disclosure.ids) {
+                            if (disclosure.expanded) next.delete(id);
+                            else next.add(id);
+                          }
+                          setExpandedActivity(next);
+                        }}
+                      />
+                    </div>
                   )}
-                </ActivityExpansion>
-              </Fragment>
-            );
-          })}
-        </Virtualizer>
+                  {row.id === newMessageBoundaryId && (
+                    <div
+                      className={styles.newMessages}
+                      data-new-messages-boundary
+                    >
+                      <hr
+                        className="sr-only select-none"
+                        aria-label="New messages"
+                      />
+                      <span className="select-none" aria-hidden="true">
+                        New messages
+                      </span>
+                    </div>
+                  )}
+                  <ActivityExpansion
+                    open={!hidden && !containedOwners.has(row.id)}
+                    enabled={row.audience === "agents"}
+                  >
+                    {row.membership ? (
+                      <MembershipRow
+                        resolveName={resolveName}
+                        names={queries.names}
+                        row={row}
+                        profiles={profiles}
+                        viewer={viewer}
+                        media={queries.media}
+                        agentPubkeys={agentPubkeys}
+                        day={day}
+                        onOpenLink={onOpenLink}
+                        canOpenLink={canOpenLink}
+                      />
+                    ) : (
+                      renderMessage(row)
+                    )}
+                  </ActivityExpansion>
+                </Fragment>
+              );
+            })}
+          </Virtualizer>
+        </DateJumpContext>
       )}
       <div ref={activityTail}>
         <AgentConnectionSetup

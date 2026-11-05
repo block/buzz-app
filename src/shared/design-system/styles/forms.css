@@ -641,4 +641,18 @@
     color: var(--text-unavailable);
     cursor: not-allowed;
   }
+  /* The dialog body already pads the calendar; spend that width on the days. */
+  .buzz-calendar.buzz-calendar-fill {
+    width: 100%;
+    padding: 0;
+  }
+  .buzz-calendar.buzz-calendar-fill .rdp-month_grid {
+    width: 100%;
+    table-layout: fixed;
+  }
+  .buzz-calendar.buzz-calendar-fill .rdp-day_button {
+    width: var(--size-control);
+    height: var(--size-control);
+    margin-inline: auto;
+  }
 }

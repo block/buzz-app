@@ -691,14 +691,19 @@ test("compact timeline actions slide under the top edge, track scrolling and pre
   await expect(actions).toHaveCSS("opacity", "0");
   await scroller.hover();
   await wheel(page, -300, scroller);
-  await row.getByText("Floating timeline target", { exact: true }).hover();
+  // The line can sit under the pinned day pill at the top center; hover its start.
+  await row
+    .getByText("Floating timeline target", { exact: true })
+    .hover({ position: { x: 4, y: 4 } });
   await shown(actions);
   // RTL follows the bubble's leading edge while retaining the pane gutter.
   await row.evaluate((node) => {
     node.dir = "rtl";
   });
   await page.setViewportSize({ width: 1000, height: 850 });
-  await row.getByText("Floating timeline target", { exact: true }).hover();
+  await row
+    .getByText("Floating timeline target", { exact: true })
+    .hover({ position: { x: 4, y: 4 } });
   await expect
     .poll(() =>
       actions.evaluate((bar) => {

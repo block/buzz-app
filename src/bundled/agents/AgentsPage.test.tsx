@@ -6,6 +6,7 @@ import {
 } from "../../features/profiles/target";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import closeRequest from "../../../src-tauri/src/close-request.js?raw";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
@@ -3954,6 +3955,111 @@ it("leaves focus in the grid when changing agents after keeping a draft over Clo
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
   expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus();
+});
+
+/** Runs the script native Close Tab evaluates; jsdom gives the pane no geometry. */
+const closeTab = () => {
+  const rects = vi
+    .spyOn(HTMLElement.prototype, "getClientRects")
+    .mockReturnValue([{ width: 500, height: 500 }] as unknown as DOMRectList);
+  let status: unknown;
+  try {
+    act(() => {
+      status = new Function(
+        "window",
+        "document",
+        "Event",
+        "tabEvent",
+        `return eval(${JSON.stringify(closeRequest)})`,
+      )(window, document, Event, "buzz:close-active-tab");
+    });
+  } finally {
+    rects.mockRestore();
+  }
+  return status;
+};
+
+it("focuses the closed agent's card after discarding a draft over ×, panel Escape or native Close Tab", async () => {
+  const user = userEvent.setup();
+  const [ada, bo] = [agent("Ada", 1), agent("Bo", 2)];
+  const { show } = setup([ada, bo], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  const cell = (name: string) => screen.getByRole("gridcell", { name });
+  const edit = async (name: string) => {
+    await user.click(within(grid).getByText(name));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+  };
+  const prompt = () =>
+    screen.findByRole("alertdialog", { name: "Discard changes?" });
+  const discard = async () =>
+    user.click(
+      within(await prompt()).getByRole("button", { name: "Discard changes" }),
+    );
+
+  // The card is found by key, so a reorder behind the prompt cannot misplace it.
+  await edit("Bo");
+  await user.click(screen.getByRole("button", { name: "Close Bo tab" }));
+  await prompt();
+  act(() => show([bo, ada]));
+  await discard();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+
+  await edit("Ada");
+  await user.keyboard("{Escape}");
+  await discard();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Ada")).toHaveFocus());
+
+  await edit("Bo");
+  expect(closeTab()).toBe("handled");
+  await discard();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+});
+
+it("focuses a cleanly closed panel's card, and leaves focus held outside the panel", async () => {
+  const user = userEvent.setup();
+  const sky: Agent = {
+    ...agent("Sky", 4),
+    place: "hosted",
+    unfinished: true,
+    attention: {},
+  };
+  setup([agent("Ada", 1), sky]);
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  const cell = (name: string) => screen.getByRole("gridcell", { name });
+
+  await user.click(within(grid).getByText("Ada"));
+  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(cell("Ada")).toHaveFocus();
+
+  // An unfinished agent's peek closes from its own button the same way.
+  await user.click(within(grid).getByText("Sky"));
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(cell("Sky")).toHaveFocus();
+
+  // Native Close Tab still closes the panel from outside it, leaving focus.
+  await user.click(within(grid).getByText("Ada"));
+  const yours = screen.getByRole("tab", { name: "Your agents" });
+  yours.focus();
+  expect(closeTab()).toBe("handled");
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(yours).toHaveFocus();
 });
 
 it("keeps grid focus on the card a prompt leaves selected, after a click, a second click or Escape", async () => {

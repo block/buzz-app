@@ -427,7 +427,8 @@ asks the same way, including for an unsaved name or a staged harness change.
 While a save is pending, the selection stays: the agents grid is marked busy,
 and its other cards grey as the panel's other section tabs do. Focus in the
 grid follows the answer: it returns to the kept card, or goes to the card
-chosen or closed. Import opens as a dialog over the page, so the open agent and
+chosen or closed. Closing the panel while focus is inside it, with or without a
+prompt, moves focus to the closed agent's card. Import opens as a dialog over the page, so the open agent and
 its draft stay. Deleting an agent closes only its own panel, without asking.
 
 A reviewed provider choice remains a host-owned draft until the form's Save

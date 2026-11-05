@@ -307,6 +307,21 @@ export function AgentsPage({
   // Removing an agent closes only its own panel, without asking.
   const removed = (pubkey: string) =>
     setSelectedKey((key) => (key === pubkey ? undefined : key));
+  // Focus inside the panel goes with it, so the closed agent's card takes it
+  // once the close goes ahead. Focus elsewhere stays.
+  const profileSide = useRef<HTMLElement>(null);
+  const closePanel = () => {
+    const pubkey = selectedKey;
+    const focus = document.activeElement;
+    const inside =
+      focus === document.body || profileSide.current?.contains(focus);
+    return browse(
+      undefined,
+      inside
+        ? () => focusCard(document.getElementById("agents-yours"), pubkey)
+        : undefined,
+    );
+  };
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   // Teams are shared by every community; this one shows each with a member
@@ -533,7 +548,7 @@ export function AgentsPage({
         agent={selected}
         type={typeOf(selected)}
         channels={channels}
-        onClose={() => browse()}
+        onClose={closePanel}
         onRemoved={() => removed(selected.pubkey)}
         openSettings={openSettings}
       />
@@ -706,7 +721,11 @@ export function AgentsPage({
           </aside>
         )}
         {panel && selected && (
-          <aside className={styles.side} hidden={tab !== "yours"}>
+          <aside
+            ref={profileSide}
+            className={styles.side}
+            hidden={tab !== "yours"}
+          >
             {split.handle}
             <Panel aria-label="Agent profile">
               <PanelWorkspace
@@ -723,7 +742,7 @@ export function AgentsPage({
                         {panel}
                       </AgentSaveState>
                     ),
-                    close: () => browse(),
+                    close: closePanel,
                   },
                 ]}
               />
@@ -903,6 +922,13 @@ function CardContextMenu({
   );
 }
 
+/** By key: the list can change while a discard prompt is open. */
+function focusCard(root: ParentNode | null, pubkey: string | undefined) {
+  root
+    ?.querySelector<HTMLElement>(`[role="gridcell"][data-agent="${pubkey}"]`)
+    ?.focus();
+}
+
 /** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
 function Inventory({
@@ -923,11 +949,6 @@ function Inventory({
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
-  // By key: the list can change while a discard prompt is open.
-  const focusCard = (pubkey: string | undefined) =>
-    grid.current
-      ?.querySelector<HTMLElement>(`[role="gridcell"][data-agent="${pubkey}"]`)
-      ?.focus();
   const columns = () =>
     grid.current
       ? getComputedStyle(grid.current).gridTemplateColumns.split(" ").length
@@ -960,14 +981,14 @@ function Inventory({
       return;
     } else if (event.key === "Escape" && selected) {
       event.preventDefault();
-      onSelect(undefined, () => focusCard(selected));
+      onSelect(undefined, () => focusCard(grid.current, selected));
       return;
     }
     if (next === undefined) return;
     event.preventDefault();
     // Focus follows the selection, including after a discard is confirmed.
     const target = agents[next]?.pubkey;
-    onSelect(target, () => focusCard(target));
+    onSelect(target, () => focusCard(grid.current, target));
   };
   return (
     <div ref={grid} className={cardStyles.grid}>
@@ -1023,9 +1044,9 @@ function Inventory({
                       // A kept agent keeps focus, as the arrow keys leave it.
                       const chose = onSelect(
                         active ? undefined : agent.pubkey,
-                        () => focusCard(agent.pubkey),
+                        () => focusCard(grid.current, agent.pubkey),
                       );
-                      if (!chose) focusCard(selected);
+                      if (!chose) focusCard(grid.current, selected);
                     }
                   }}
                   onDoubleClick={(event) => {

@@ -4452,3 +4452,35 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     cleanup();
   }
 });
+
+it("keeps the viewer's agent-audience rows unaligned when bubbles are off", () => {
+  const viewer = "ab".repeat(32);
+  const props = {
+    row: { ...row, authorId: viewer, audience: "agents" as const },
+    viewer,
+    profile: { name: "author" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const { container, rerender } = renderDom(
+      <BubblePresentation.Provider value="bubbles">
+        <MessageRow {...props} />
+      </BubblePresentation.Provider>,
+    );
+    expect(
+      container.querySelector('[data-audience="agents"][data-viewer-message]'),
+    ).not.toBeNull();
+    rerender(
+      <BubblePresentation.Provider value="unboxed">
+        <MessageRow {...props} />
+      </BubblePresentation.Provider>,
+    );
+    expect(container.querySelector('[data-audience="agents"]')).not.toBeNull();
+    expect(container.querySelector("[data-viewer-message]")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});

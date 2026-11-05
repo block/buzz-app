@@ -110,22 +110,6 @@ export function useDmBubblesPreference() {
  * larger roster is not treated as one, so it never loads every member. */
 export const AGENTS_ONLY_LIMIT = 20;
 
-/** Whether `keys` are the viewer and at least one other, every other a known
- * agent. Unknown keys count as people until proven agents. */
-export function onlyAgentsBesides(
-  keys: readonly string[] | undefined,
-  viewer: string | undefined,
-  isAgent: (key: string) => boolean,
-): boolean {
-  if (!viewer || !keys?.includes(viewer)) return false;
-  const others = keys.filter((key) => key !== viewer);
-  return (
-    others.length > 0 &&
-    others.length <= AGENTS_ONLY_LIMIT &&
-    others.every(isAgent)
-  );
-}
-
 /** A thread's own authors, whoever else belongs to its channel. */
 export function threadAuthors(
   rows: readonly Readonly<{
@@ -168,18 +152,17 @@ export function useAgentsOnlyChat(
     if (!others) return "people";
     const profiles = session.profiles.snapshot();
     const library = session.agentChoices.snapshot()?.identities ?? [];
-    const isAgent = (key: string) =>
-      !!profiles.get(key)?.isAgent ||
-      library.some((identity) => identity.pubkey === key);
-    if (
-      onlyAgentsBesides(
-        [session.viewer as string, ...others.split(",")],
-        session.viewer,
-        isAgent,
+    // Per member rather than knownAgentPubkeys: this runs on every profile
+    // change, and the profile cache is far larger than a capped roster.
+    return others
+      .split(",")
+      .every(
+        (key) =>
+          !!profiles.get(key)?.isAgent ||
+          library.some((identity) => identity.pubkey === key),
       )
-    )
-      return "agents";
-    return "people";
+      ? "agents"
+      : "people";
   };
   const subscribe = useCallback(
     (listener: () => void) => {

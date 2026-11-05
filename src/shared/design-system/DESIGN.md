@@ -1866,8 +1866,8 @@ the first layout it settles on, either way, until it closes or shows another
 thread, so no reply reflows it under the reader; a thread with only the
 viewer's messages switches when someone else replies.
 Only members already known as agents (profile or the viewer's agents) count,
-and nothing is decided while the viewer's own agents are loading; an unknown
-member is a person. A chat keeps its first layout for the visit until its
+and a chat with anyone not yet known as an agent waits while the viewer's own
+agents load; an unknown member is a person. A chat keeps its first layout for the visit until its
 members change, so an agent learned later applies on the next open. A chat is
 decided by its members, not by who wrote its messages: a person who has left a
 chat of agents still shows in bubbles in its timeline, though a thread they

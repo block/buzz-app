@@ -2621,6 +2621,7 @@ it(
     h.snapshot.replies = [reply("1", agent)];
     expect(h.presentation()).toEqual(["bubbles", "bubbles"]);
     h.snapshot.replies = [reply("1", agent), reply("2", person)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles", "bubbles"]);
     h.props.messageId = reply("1", agent).id;
     h.rerenderProps();
     expect(h.thread).toHaveBeenCalledTimes(2);
@@ -2667,5 +2668,20 @@ it(
       id: key,
     }));
     expect(new Set(h.presentation())).toEqual(new Set(["bubbles"]));
+  }),
+);
+
+it(
+  "decides a thread again after the style is turned off and on",
+  withListStyle(() => {
+    const h = bubbleHarness();
+    h.snapshot.root = { ...row, authorId: viewer };
+    h.snapshot.replies = [reply("1", agent)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles"]);
+    h.snapshot.replies = [reply("1", agent), reply("2", person)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles", "bubbles"]);
+    act(() => setMessageStylePreference("bubbles"));
+    act(() => setMessageStylePreference("agents"));
+    expect(h.presentation()).toEqual(["unboxed", "unboxed", "unboxed"]);
   }),
 );

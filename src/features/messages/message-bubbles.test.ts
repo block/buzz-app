@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import {
-  AGENTS_ONLY_LIMIT,
   messageStylePreference,
-  onlyAgentsBesides,
   dmBubblesPreference,
   ownColorPreference,
   setDmBubblesPreference,
@@ -16,8 +14,6 @@ const viewer = "a".repeat(64);
 const person = "b".repeat(64);
 const agent = "c".repeat(64);
 const other = "d".repeat(64);
-const agents = new Set([agent, other]);
-const isAgent = (key: string) => agents.has(key);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -64,22 +60,6 @@ it("retains the active choice when storage fails and can retry saving it", () =>
   storage.mockRestore();
   setMessageStylePreference("agents");
   expect(localStorage.getItem("buzz-message-style.v1")).toBe("agents");
-});
-
-it("recognizes the viewer with one or more agents and no other people", () => {
-  expect(onlyAgentsBesides([viewer, agent], viewer, isAgent)).toBe(true);
-  expect(onlyAgentsBesides([agent, viewer, other], viewer, isAgent)).toBe(true);
-  expect(onlyAgentsBesides([viewer, agent, person], viewer, isAgent)).toBe(
-    false,
-  );
-  expect(onlyAgentsBesides([viewer], viewer, isAgent)).toBe(false);
-  expect(onlyAgentsBesides([agent, other], viewer, isAgent)).toBe(false);
-  expect(onlyAgentsBesides([viewer, agent], undefined, isAgent)).toBe(false);
-  expect(onlyAgentsBesides(undefined, viewer, isAgent)).toBe(false);
-  const many = Array.from({ length: AGENTS_ONLY_LIMIT + 1 }, (_, i) =>
-    String(i).padStart(64, "0"),
-  );
-  expect(onlyAgentsBesides([viewer, ...many], viewer, () => true)).toBe(false);
 });
 
 it("lists a thread's own authors", () => {

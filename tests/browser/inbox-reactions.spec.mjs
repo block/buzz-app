@@ -1,5 +1,11 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  openPage,
+  openSettings,
+  selectSettingsSection,
+  chooseColorMode,
+  closeSettings,
+} from "./navigation.mjs";
 
 // Proves the real Inbox menu, remote history owner and conversation tab wiring.
 // Ownership, deletion and access race matrices stay in colocated Vitest tests.
@@ -28,13 +34,16 @@ test("reaction history opens the original message from Inbox", async ({
   });
   await expect(row).toHaveCount(1);
   await expect(row).toContainText("✅");
-  for (const theme of ["light", "dark"]) {
+  for (const theme of ["Light", "Dark"]) {
+    await openSettings(page);
+    await selectSettingsSection(page, "Appearance");
+    await chooseColorMode(page, theme);
+    await closeSettings(page);
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 950 });
-      await page.evaluate((theme) => {
-        document.documentElement.dataset.colorMode = theme;
+      await page.evaluate(() => {
         document.documentElement.style.fontSize = "20px";
-      }, theme);
+      });
       await expect(row).toBeInViewport();
     }
   }

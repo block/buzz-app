@@ -315,6 +315,11 @@ export function createHuddleComposerClient(token: string) {
   post({ kind: "hello", client });
   return {
     models: (pubkeys: readonly string[]) => request("models", pubkeys),
+    /** Pop-out reactions: admitted in main against the messages it shows. */
+    react: (args: ComposerOperations["react"]["args"]) =>
+      request("react", args),
+    removeReactions: (args: ComposerOperations["removeReactions"]["args"]) =>
+      request("removeReactions", args),
     gifs: {
       supports: (_community, signal?: AbortSignal) =>
         request("gifSupport", undefined, signal),

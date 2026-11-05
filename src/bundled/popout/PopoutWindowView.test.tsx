@@ -31,6 +31,7 @@ const row = (id: string, text: string) => ({
 });
 const view = (patch: Partial<PopoutView> = {}): PopoutView => ({
   title: "Design",
+  scope: "https://relay.test:viewer",
   dark: false,
   status: "ready",
   writable: false,
@@ -129,4 +130,25 @@ it("offers the action only for delivered messages that have a thread", () => {
   expect(
     popoutThreadRoot({ ...base, replyCount: 2, delivery: "failed" }),
   ).toBeUndefined();
+});
+
+it("shows projected reactions even before the bridge connects", () => {
+  render(
+    <PopoutWindowView
+      view={view({
+        root: {
+          ...row("1".repeat(64), "Root message"),
+          reactions: [
+            {
+              content: "👍",
+              events: [{ id: "9".repeat(64), authorId: "a".repeat(64) }],
+            },
+          ],
+        },
+        replies: [],
+      })}
+      act={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("👍")).toBeTruthy();
 });

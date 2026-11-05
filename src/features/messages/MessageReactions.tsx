@@ -25,14 +25,21 @@ import type {
 } from "../relay/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { selectProfiles } from "../relay/profile-selection";
 import styles from "./Messages.module.css";
 import { isUnicodeEmojiOnly } from "./emoji-size";
 
+/** What reacting needs of a session. A pop-out window supplies one whose
+ * operations run in the main window; `RelaySession` satisfies it directly. */
+export type ReactionSession = ComposerSession & {
+  messages: ComposerSession["messages"] &
+    Pick<RelaySession["messages"], "react" | "remove" | "reactionTarget">;
+};
 type Props = {
   row: ChannelMessage;
-  session: RelaySession;
+  session: ReactionSession;
   scope: string;
   disabled: boolean;
   tools: ContributionReader<ComposerTool>;
@@ -140,7 +147,7 @@ function ReactionGlyph({
   session,
 }: {
   reaction: MessageReaction;
-  session: RelaySession;
+  session: ReactionSession;
 }) {
   const source = reaction.emoji ? session.media(reaction.emoji.url) : undefined;
   const [failed, setFailed] = useState<string>();
@@ -305,7 +312,7 @@ function ReactionEmoji({
   reaction: MessageReaction;
   authorIds: string[];
   mine: boolean;
-  session: RelaySession;
+  session: ReactionSession;
   profiles?: ReadonlyMap<string, Profile> | undefined;
   disabled: boolean;
   busy: boolean;

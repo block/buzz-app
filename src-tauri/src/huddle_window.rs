@@ -82,6 +82,46 @@ pub(crate) struct DiscussionRow {
     mention_references: Vec<String>,
     time: u64,
     delivery: String,
+    /// Reaction groups, bounded; a pop-out shows and toggles them. Huddle
+    /// rows omit them.
+    #[serde(default)]
+    pub(crate) reactions: Vec<ReactionGroup>,
+    #[serde(default)]
+    reactions_limited: bool,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionGroup {
+    content: String,
+    #[serde(default)]
+    emoji: Option<ReactionEmoji>,
+    events: Vec<ReactionEvent>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionEmoji {
+    shortcode: String,
+    url: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ReactionEvent {
+    id: String,
+    author_id: String,
+}
+impl ReactionGroup {
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        // 64 code points of text, or a `:shortcode:` token; bytes bound both.
+        (self.content.chars().count() <= 66 && self.content.len() <= 512)
+            && self
+                .emoji
+                .as_ref()
+                .is_none_or(|e| e.shortcode.len() <= 64 && e.url.len() <= 8192)
+            && !self.events.is_empty()
+            && self.events.len() <= 128
+            && self.events.iter().all(|e| hex(&e.id) && hex(&e.author_id))
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -120,6 +160,8 @@ impl DiscussionRow {
             && self.text.len() <= 65536
             && self.picture.as_ref().is_none_or(|p| p.len() <= 8192)
             && self.picture_url.as_ref().is_none_or(|p| p.len() <= 8192)
+            && self.reactions.len() <= 64
+            && self.reactions.iter().all(|r| r.valid())
     }
 }
 impl DiscussionAttachment {
@@ -633,6 +675,8 @@ mod tests {
                 mention_references: vec!["ef".repeat(32)],
                 time: 1,
                 delivery: "unknown".into(),
+                reactions: vec![],
+                reactions_limited: false,
             }],
         });
         let encoded = serde_json::to_value(&presentation).unwrap();

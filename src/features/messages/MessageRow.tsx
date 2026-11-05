@@ -149,6 +149,9 @@ export type MessageRowProps = {
   startsThreads?: boolean;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
+  /** Replaces the row's own reaction chips: a companion window renders
+   * `MessageReactions` over a session whose operations run in main. */
+  reactionSlot?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
   viewer?: string | undefined;
@@ -243,6 +246,7 @@ function MessageRowContent({
   startsThreads = true,
   quickControls,
   overflowItems,
+  reactionSlot,
   participantProfiles,
   layout = "timeline",
   compactAvatar = false,
@@ -1030,7 +1034,9 @@ function MessageRowContent({
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
   const editedInBubble = !editedInBody && reactionsInBubble;
   const reactionContent =
-    session && scope && extensions ? (
+    reactionSlot !== undefined ? (
+      reactionSlot
+    ) : session && scope && extensions ? (
       <MessageReactions
         onFocusedRemoval={() =>
           menuTrigger.current?.focus({ preventScroll: true })

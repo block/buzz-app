@@ -51,6 +51,9 @@ impl Binding {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct View {
     title: String,
+    /// The owner's persistence scope, for message links the companion copies.
+    #[serde(default)]
+    scope: String,
     dark: bool,
     status: String,
     #[serde(default)]
@@ -151,6 +154,7 @@ fn require_popout<R: tauri::Runtime>(window: &WebviewWindow<R>) -> Result<String
 }
 fn validate(view: &View) -> Result<()> {
     if view.title.len() > 4096
+        || view.scope.len() > 4096
         || view.error.as_ref().is_some_and(|e| e.len() > 8192)
         || !matches!(view.status.as_str(), "loading" | "ready" | "error")
         || [&view.composer, &view.reading].iter().any(|t| {
@@ -600,6 +604,7 @@ mod tests {
     fn view() -> View {
         View {
             title: "Design".into(),
+            scope: String::new(),
             dark: false,
             status: "ready".into(),
             error: None,
@@ -653,6 +658,30 @@ mod tests {
         assert!(validate(&v).is_err());
         let decoded: View = serde_json::from_value(serde_json::to_value(view()).unwrap()).unwrap();
         assert_eq!(decoded.title, "Design");
+    }
+    #[test]
+    fn reactions_are_bounded_per_row() {
+        let mut r = row("r1", "https://media/a", "a.pdf");
+        assert!(r.valid());
+        let group = |content: &str, n: usize| {
+            serde_json::from_value::<crate::huddle_window::ReactionGroup>(serde_json::json!({
+                "content": content, "emoji": null,
+                "events": (0..n).map(|i| serde_json::json!({
+                    "id": format!("{:0>64x}", i), "authorId": "a".repeat(64)
+                })).collect::<Vec<_>>()
+            }))
+            .unwrap()
+        };
+        r.reactions = vec![group("👍", 128), group(":party_blob:", 1)];
+        assert!(r.valid());
+        r.reactions = vec![group("👍", 129)];
+        assert!(!r.valid());
+        r.reactions = vec![group(&"x".repeat(67), 1)];
+        assert!(!r.valid());
+        r.reactions = (0..65).map(|_| group("👍", 1)).collect();
+        assert!(!r.valid());
+        r.reactions = vec![group("👍", 0)];
+        assert!(!r.valid());
     }
     #[test]
     fn labels_are_recognized_by_prefix() {

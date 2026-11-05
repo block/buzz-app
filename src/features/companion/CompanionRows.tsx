@@ -3,7 +3,34 @@ import type { CompanionRow } from "./row";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { ImageReviewStage } from "../messages/ImageReviewStage";
 import { MessageRow } from "../messages/MessageRow";
+import {
+  MessageReactionControls,
+  MessageReactions,
+  type ReactionSession,
+} from "../messages/MessageReactions";
+import type {
+  ComposerTool,
+  ContributionReader,
+  InlineRenderer,
+} from "../conversation/contracts";
 import { Button } from "../../shared/design-system/ui/Button";
+
+/** Interactive capabilities a companion may add to its rows; without them the
+ * rows show reactions read-only and offer only copy actions. */
+export type CompanionRowCapabilities = {
+  /** Reactions through a session whose operations run in main. */
+  reactions?:
+    | {
+        session: ReactionSession;
+        tools: ContributionReader<ComposerTool>;
+        inline: ContributionReader<InlineRenderer>;
+      }
+    | undefined;
+  /** The owner's persistence scope, for message links. */
+  scope?: string | undefined;
+  /** Reply to one message within the thread. */
+  onReply?: ((messageId: string) => void) | undefined;
+};
 
 /** Projected rows in a companion window: the shared message renderer over
  * owner-supplied media sources, with failed-delivery recovery and an image
@@ -16,9 +43,11 @@ export function CompanionRows({
   focusConversation,
   allowImageCopy = true,
   children,
+  capabilities,
 }: {
   rows: readonly CompanionRow[];
   writable: boolean;
+  capabilities?: CompanionRowCapabilities | undefined;
   openLink?: ((target: string) => boolean) | undefined;
   recover(id: string, dismiss?: boolean): void;
   focusConversation(): void;
@@ -33,95 +62,133 @@ export function CompanionRows({
   );
   return (
     <>
-      {rows.map((row) => (
-        <div key={row.id}>
-          <MessageRow
-            row={{
-              id: row.id,
-              channelId: row.channelId,
-              authorId: row.authorId,
-              createdAt: row.time,
-              content: row.text,
-              attachments: row.attachments,
-              mentions: row.mentions ?? [],
-              ...(row.edited ? { edited: true as const } : {}),
-              attachmentSeams: row.attachmentSeams ?? [],
-              mentionReferences: row.mentionReferences ?? [],
-              reactions: [],
-              replyCount: 0,
-              participants: [],
-            }}
-            participantProfiles={
-              new Map(
-                Object.entries(row.mentionNames ?? {}).map(([key, name]) => [
-                  key,
-                  { name },
-                ]),
-              )
-            }
-            profile={{
-              name: row.author,
-              ...(row.pictureUrl ? { picture: row.pictureUrl } : {}),
-            }}
-            media={(url) => {
-              if (url === row.pictureUrl) return row.picture ?? undefined;
-              for (const attachment of row.attachments) {
-                if (url === attachment.url)
-                  return attachment.source ?? undefined;
-                if (url === attachment.previewUrl)
-                  return attachment.previewSource ?? undefined;
+      {rows.map((row) => {
+        const message = {
+          id: row.id,
+          channelId: row.channelId,
+          authorId: row.authorId,
+          createdAt: row.time,
+          content: row.text,
+          attachments: row.attachments,
+          mentions: row.mentions ?? [],
+          ...(row.edited ? { edited: true as const } : {}),
+          attachmentSeams: row.attachmentSeams ?? [],
+          mentionReferences: row.mentionReferences ?? [],
+          reactions: row.reactions ?? [],
+          replyCount: 0,
+          participants: [],
+        };
+        const reactions = capabilities?.reactions;
+        const scope = capabilities?.scope;
+        const interactive =
+          reactions && scope && writable && row.delivery === "seen";
+        return (
+          <div key={row.id}>
+            <MessageRow
+              row={message}
+              scope={scope}
+              viewer={reactions?.session.viewer}
+              onReply={
+                capabilities?.onReply && writable
+                  ? capabilities.onReply
+                  : undefined
               }
-              return undefined;
-            }}
-            canOpenLink={(url) =>
-              row.attachments.some(
-                (attachment) =>
-                  attachment.kind === "image" && attachment.url === url,
-              )
-            }
-            onOpenLink={(url) => {
-              if (
-                !row.attachments.some(
+              quickControls={
+                interactive ? (
+                  <MessageReactionControls
+                    row={message}
+                    session={reactions.session}
+                    scope={scope}
+                    tools={reactions.tools}
+                    inline={reactions.inline}
+                    disabled={false}
+                  />
+                ) : undefined
+              }
+              reactionSlot={
+                reactions && scope ? (
+                  <MessageReactions
+                    row={message}
+                    session={reactions.session}
+                    scope={scope}
+                    tools={reactions.tools}
+                    inline={reactions.inline}
+                    disabled={!interactive}
+                  />
+                ) : undefined
+              }
+              participantProfiles={
+                new Map(
+                  Object.entries(row.mentionNames ?? {}).map(([key, name]) => [
+                    key,
+                    { name },
+                  ]),
+                )
+              }
+              profile={{
+                name: row.author,
+                ...(row.pictureUrl ? { picture: row.pictureUrl } : {}),
+              }}
+              media={(url) => {
+                if (url === row.pictureUrl) return row.picture ?? undefined;
+                for (const attachment of row.attachments) {
+                  if (url === attachment.url)
+                    return attachment.source ?? undefined;
+                  if (url === attachment.previewUrl)
+                    return attachment.previewSource ?? undefined;
+                }
+                return undefined;
+              }}
+              canOpenLink={(url) =>
+                row.attachments.some(
                   (attachment) =>
                     attachment.kind === "image" && attachment.url === url,
                 )
-              )
-                return openLink?.(url) ?? false;
-              setImage({ rowId: row.id, url });
-              return true;
-            }}
-            day={false}
-            retry={undefined}
-            layout="thread"
-          />
-          {["failed", "unknown"].includes(row.delivery) && (
-            <p role="status" className="text-secondary">
-              {row.delivery === "unknown"
-                ? "Delivery hasn’t been confirmed. Retry sends the same message."
-                : "Message wasn’t delivered."}{" "}
-              <Button
-                size="sm"
-                disabled={!writable}
-                onClick={() => {
-                  focusConversation();
-                  recover(row.id);
-                }}
-              >
-                Retry
-              </Button>{" "}
-              <Button
-                size="sm"
-                onClick={() => {
-                  focusConversation();
-                  recover(row.id, true);
-                }}
-              >
-                Discard
-              </Button>
-            </p>
-          )}
-        </div>
-      ))}
+              }
+              onOpenLink={(url) => {
+                if (
+                  !row.attachments.some(
+                    (attachment) =>
+                      attachment.kind === "image" && attachment.url === url,
+                  )
+                )
+                  return openLink?.(url) ?? false;
+                setImage({ rowId: row.id, url });
+                return true;
+              }}
+              day={false}
+              retry={undefined}
+              layout="thread"
+            />
+            {["failed", "unknown"].includes(row.delivery) && (
+              <p role="status" className="text-secondary">
+                {row.delivery === "unknown"
+                  ? "Delivery hasn’t been confirmed. Retry sends the same message."
+                  : "Message wasn’t delivered."}{" "}
+                <Button
+                  size="sm"
+                  disabled={!writable}
+                  onClick={() => {
+                    focusConversation();
+                    recover(row.id);
+                  }}
+                >
+                  Retry
+                </Button>{" "}
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    focusConversation();
+                    recover(row.id, true);
+                  }}
+                >
+                  Discard
+                </Button>
+              </p>
+            )}
+          </div>
+        );
+      })}
       {children}
       <Dialog
         open={!!selectedImage}

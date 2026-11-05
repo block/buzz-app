@@ -56,6 +56,20 @@ export type ComposerOperations = {
     };
     result: string;
   };
+  /** Pop-out windows: add a reaction to a message this window shows. */
+  react: {
+    args: {
+      messageId: string;
+      content: string;
+      emoji?: import("../relay/emoji").CustomEmoji | undefined;
+    };
+    result: string;
+  };
+  /** Pop-out windows: remove the viewer's own reactions on a shown message. */
+  removeReactions: {
+    args: { messageId: string; ids: readonly string[] };
+    result: undefined;
+  };
   release: { args: UploadedAttachment; result: undefined };
   agents: {
     args: { refresh: boolean; legacy: boolean | "templates" };

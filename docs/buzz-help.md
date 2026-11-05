@@ -922,8 +922,12 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   work asks first, and so does switching community or signing out while one
   does (the prompt names the window; Keep working leaves everything as it
   was). Losing access to the channel closes its pop-out at once. Pop-outs are
-  not restored after a restart. They show messages and attachments, not
-  reactions or message actions; use the main window for those. Not available
+  not restored after a restart. They show messages, attachments and
+  reactions; you can react, reply to a specific message, and copy a message's
+  text or link there. Editing or deleting messages, marking read/unread,
+  reporting, and plugin-added message actions are not available in a pop-out
+  yet; use the main window for those. A thread pop-out cannot open another
+  pop-out. Not available
   in the browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows

@@ -88,9 +88,8 @@ disconnect or cache clear retires queued or in-flight hint confirmations, the st
 retains their writer requirement for the next deliberate refresh, Retry or
 establishment, without starting an automatic recovery pass or bypassing cooldown.
 A lifecycle failure toast's Refresh channels requests a writer-backed discovery
-pass. From a session's first such refresh, Channel settings reads its lifecycle
-actions (`39000`/`39001`/`39002` and owner-agent kind-0 profiles) from the writer,
-as the Archive/Unarchive/Delete/Leave/Hide preflight always does. After a failed
+pass. The Archive/Unarchive/Delete/Leave/Hide preflight always reads
+`39000`/`39001`/`39002` and owner-agent kind-0 profiles from the writer. After a failed
 Hide, the same control also rereads DM visibility (`30622`) from the writer; that
 read never joins a replica-backed visibility refresh in flight, though an
 ordinary refresh started during it joins it. Ordinary startup, browsing,

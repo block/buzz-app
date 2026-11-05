@@ -22,6 +22,7 @@ import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { useNamePreference } from "../../features/identity-names/name-preference";
 import { usePresenceStatus } from "../../features/presence/react";
 import {
   useEffect,
@@ -439,6 +440,12 @@ function ProfileDetails({
   const communityOrigin = community?.communityOrigin;
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
   const identityName = useChannelIdentityNames(session, context?.channelId);
+  const { preference: namePreference } = useNamePreference();
+  // The verified line shows the name the heading does not.
+  const verifiedAlias =
+    namePreference === "full" && profile?.verified?.fullName
+      ? profile.verified.displayName
+      : profile?.verified?.fullName;
   const name = identityName(
     pubkey,
     profile?.name ??
@@ -529,9 +536,7 @@ function ProfileDetails({
               <p
                 className={`${styles.verifiedName} text-body-sm text-secondary`}
               >
-                <span>
-                  {profile.verified.fullName ?? `@${profile.verified.username}`}
-                </span>
+                <span>{verifiedAlias ?? `@${profile.verified.username}`}</span>
                 {profile.verified.status === "checked" && (
                   <CheckCircleIcon
                     aria-hidden="true"
@@ -545,7 +550,7 @@ function ProfileDetails({
                 {profile.verified.status === "checked"
                   ? `Name verified by ${profile.verified.issuerLabel}`
                   : `Cached verification from ${profile.verified.issuerLabel}`}{" "}
-                {profile.verified.fullName && `· @${profile.verified.username}`}
+                {verifiedAlias && `· @${profile.verified.username}`}
               </p>
             )}
             {presence !== "unknown" && (

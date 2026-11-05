@@ -84,6 +84,10 @@ the interface unless an available tool actually supports that action.
   verified person shows their verified name with the full name beside it.
   Search finds people by their profile names; once found, a verified full name
   also matches as you refine.
+- Choose **Settings → Appearance → Show people as → Display names** or
+  **Full names** to change how verified people appear on this device. Display
+  names are the default; people without a verified full name keep their display
+  name. This does not edit anyone’s profile or existing message text.
 
 ## Connect an external app
 

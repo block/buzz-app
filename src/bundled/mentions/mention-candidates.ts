@@ -280,6 +280,8 @@ function buildCandidates(
               ...(agentNames.get(recipient.pubkey) ?? []),
               hosts.has(recipient.pubkey) ? recipient.name : undefined,
               fullName,
+              profiles.get(recipient.pubkey)?.verified?.displayName,
+              profiles.get(recipient.pubkey)?.verified?.username,
               ...(verified.get(recipient.pubkey)?.profileNames ?? []),
             ].filter((name): name is string => !!name),
           ),

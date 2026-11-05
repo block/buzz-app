@@ -16,6 +16,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
+import { setNamePreference } from "../../features/identity-names/name-preference";
 import {
   openProfileTranscript,
   profileTarget,
@@ -948,6 +949,17 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     expect(
       screen.getByText("Alice Example").closest("p")?.querySelector("svg"),
     ).not.toBeNull();
+    // Full names swap the heading and the verified line; neither repeats.
+    act(() => setNamePreference("full"));
+    expect(
+      await screen.findByRole("heading", { name: "Alice Example" }),
+    ).toBeVisible();
+    expect(screen.getAllByText("Alice Example")).toHaveLength(1);
+    expect(
+      screen.getByText("Alice").closest("p")?.querySelector("svg"),
+    ).not.toBeNull();
+    act(() => setNamePreference("display"));
+    expect(await screen.findByRole("heading", { name: "Alice" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: "Info" }));
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -996,6 +1008,7 @@ it("shows historical verification time and issuer, discloses cache, and hides di
   } finally {
     for (const read of profileReads) read.resolve();
     cleanup();
+    setNamePreference("display");
     owner.dispose();
   }
 });

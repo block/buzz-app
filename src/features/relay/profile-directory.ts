@@ -1,4 +1,9 @@
 import { createVerifiedProfileDirectory } from "./verified-profile-directory";
+import {
+  namePreference,
+  preferredVerifiedName,
+  subscribeNamePreference,
+} from "../identity-names/name-preference";
 import type {
   VerifiedProfileAuthority,
   VerifiedProfileFilter,
@@ -85,6 +90,7 @@ export function createProfileDirectory(
     ): (() => void) | undefined;
   },
 ) {
+  let preference = verification ? namePreference() : "display";
   let limit = PROFILE_CACHE_BASE;
   const events = new ByteLru<RelayEvent>(limit, limit * PROFILE_ENTRY_BYTES);
   // One entry per open view; the largest sets the limit.
@@ -230,7 +236,7 @@ export function createProfileDirectory(
         id,
         Object.freeze({
           ...base,
-          name: value.displayName,
+          name: preferredVerifiedName(value, preference),
           username: value.username,
           verified: value,
         }),
@@ -241,9 +247,8 @@ export function createProfileDirectory(
     // Counted once per publish: a pairwise scan is quadratic in a large roster.
     const verifiedNames = new Map<string, number>();
     const verifiedUsernames = new Map<string | undefined, number>();
-    for (const [, { verified, username }] of next)
+    for (const [, { verified, name, username }] of next)
       if (verified) {
-        const name = verified.displayName;
         verifiedNames.set(name, (verifiedNames.get(name) ?? 0) + 1);
         verifiedUsernames.set(
           username,
@@ -253,8 +258,7 @@ export function createProfileDirectory(
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
       const duplicate =
-        (verifiedNames.get(profile.verified?.displayName ?? profile.name) ??
-          0) > own ||
+        (verifiedNames.get(profile.name) ?? 0) > own ||
         (!!profile.verified &&
           (verifiedUsernames.get(profile.username) ?? 0) > own);
       if (duplicate)
@@ -538,6 +542,12 @@ export function createProfileDirectory(
     localProfiles = signature;
     publish();
   });
+  const unsubscribeNamePreference =
+    verification &&
+    subscribeNamePreference(() => {
+      preference = namePreference();
+      publish();
+    });
   publish();
   return {
     queries,
@@ -564,6 +574,7 @@ export function createProfileDirectory(
       closed = true;
       verified?.dispose();
       unsubscribeLocal?.();
+      unsubscribeNamePreference?.();
       clear();
       // After clear(): disposing the verified directory schedules a flush.
       clearTimeout(verifiedFlush);

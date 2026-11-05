@@ -179,6 +179,31 @@ it("names people by shared, then searched, verified names and keeps what found t
   ]);
   // Nobody verified: the same array.
   expect(withVerifiedNames(people, new Map(), new Map())).toBe(people);
+  expect(withVerifiedNames(people, page, shared, "full")).toEqual([
+    {
+      pubkey: key(1),
+      name: "Fake Name",
+      username: "fname",
+      fullName: "Fake Name",
+      profileNames: ["Fake", "fak", "fname"],
+    },
+    {
+      pubkey: key(2),
+      name: "Bea Name",
+      username: "bname",
+      fullName: "Bea Name",
+      profileNames: ["Bea", "bname"],
+    },
+    people[2],
+  ]);
+  expect(
+    withVerifiedNames(
+      people,
+      new Map([[key(1), name("page")]]),
+      new Map(),
+      "full",
+    )[0]?.name,
+  ).toBe("page");
 });
 
 it("asks every page of a longer list, and asks again once a lookup is stale", async () => {

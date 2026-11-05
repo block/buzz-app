@@ -35,6 +35,10 @@ import {
 } from "../features/messages/autocorrect-preference";
 import { macWebKit } from "../features/messages/mac-webkit";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+import {
+  setNamePreference,
+  useNamePreference,
+} from "../features/identity-names/name-preference";
 
 export function AppearanceSettings({
   appearance,
@@ -47,6 +51,7 @@ export function AppearanceSettings({
   autocorrectAvailable?: boolean;
 }) {
   const followUp = useFollowUpBehaviorPreference();
+  const names = useNamePreference();
   const autocorrect = useMessageAutocorrectPreference();
   const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
@@ -82,6 +87,30 @@ export function AppearanceSettings({
       <div>
         <InlineHeader title="Interface" />
         <SettingsGroup>
+          <PreferenceRow
+            title="Show people as"
+            subtitle="Choose how verified people’s names appear on this device. If a full name is unavailable, their display name is used."
+            trailing={
+              <Select
+                variant="compact"
+                label="Show people as"
+                value={names.preference}
+                groups={[
+                  {
+                    label: "Names",
+                    options: [
+                      { value: "display", label: "Display names" },
+                      { value: "full", label: "Full names" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "display" || value === "full")
+                    setNamePreference(value);
+                }}
+              />
+            }
+          />
           <PreferenceRow
             id="setting-mode"
             title="Mode"
@@ -296,6 +325,19 @@ export function AppearanceSettings({
             />
           )}
         </SettingsGroup>
+        {active && names.unsaved && (
+          <ToastNotice
+            title="Name preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              size="sm"
+              onClick={() => setNamePreference(names.preference)}
+            >
+              Retry saving name preference
+            </Button>
+          </ToastNotice>
+        )}
         {active && followUp.unsaved && (
           <ToastNotice
             title="Follow-up preference wasn’t saved"

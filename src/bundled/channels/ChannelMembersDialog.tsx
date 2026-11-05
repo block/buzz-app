@@ -1,4 +1,8 @@
 import {
+  preferredVerifiedName,
+  useNamePreference,
+} from "../../features/identity-names/name-preference";
+import {
   useVerifiedNames,
   withVerifiedNames,
 } from "../../features/profiles/useVerifiedNames";
@@ -869,36 +873,48 @@ export function ChannelMembersDialog({
     key: query,
     settled: !search.loading,
   });
+  const { preference: namePreference } = useNamePreference();
   const searchPeople = useMemo(
-    () => withVerifiedNames(search.people, searchVerified, profiles),
-    [search.people, searchVerified, profiles],
+    () =>
+      withVerifiedNames(
+        search.people,
+        searchVerified,
+        profiles,
+        namePreference,
+      ),
+    [search.people, searchVerified, profiles, namePreference],
   );
   const searchProfiles = new Map(
     searchPeople.map((person) => [person.pubkey, person]),
   );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
-  const label = (key: string, fallback?: string) =>
-    // A name verified for this search is the label where the shared profiles
-    // show another, so the row reads as Command-K and mentions do.
-    (profiles.get(key)?.verified
-      ? undefined
-      : searchVerified.get(key)?.displayName) ??
-    resolveName(
-      key,
-      profiles.get(key)?.name ??
-        searchProfiles.get(key)?.name ??
-        fallback ??
-        known.get(key)?.name ??
-        formatPublicKey(key) ??
-        "Unknown member",
+  const label = (key: string, fallback?: string) => {
+    const verified = searchVerified.get(key);
+    // A name verified for this search outranks an unverified shared profile.
+    return (
+      (!profiles.get(key)?.verified && verified
+        ? preferredVerifiedName(verified, namePreference)
+        : undefined) ??
+      resolveName(
+        key,
+        profiles.get(key)?.name ??
+          searchProfiles.get(key)?.name ??
+          fallback ??
+          known.get(key)?.name ??
+          formatPublicKey(key) ??
+          "Unknown member",
+      )
     );
+  };
   // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
     !text ||
     [
       searchProfiles.get(key)?.name,
       searchProfiles.get(key)?.username,
+      profiles.get(key)?.verified?.displayName,
+      profiles.get(key)?.username,
       searchProfiles.get(key)?.fullName ??
         profiles.get(key)?.verified?.fullName,
       ...(searchProfiles.get(key)?.profileNames ?? []),

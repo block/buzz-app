@@ -13,6 +13,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { createAppearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
+import {
+  namePreference,
+  setNamePreference,
+} from "../features/identity-names/name-preference";
 
 import {
   setThreadPlacementPreference,
@@ -43,8 +47,50 @@ afterEach(() => {
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
+  setNamePreference("display");
   localStorage.clear();
   vi.unstubAllGlobals();
+});
+
+it("selects, saves, and restores how people are named", async () => {
+  const user = userEvent.setup();
+  const view = render(preferencesPage());
+  const choice = () => screen.getByRole("combobox", { name: "Show people as" });
+  expect(choice()).toHaveTextContent("Display names");
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Full names" }));
+  expect(namePreference()).toBe("full");
+  expect(localStorage.getItem("buzz-name-preference.v1")).toBe("full");
+  view.unmount();
+  render(preferencesPage());
+  expect(choice()).toHaveTextContent("Full names");
+});
+
+it("keeps an unsaved name choice active and retries saving after remount", async () => {
+  const user = userEvent.setup();
+  const content = () => <ToastProvider>{preferencesPage()}</ToastProvider>;
+  const view = render(content());
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(screen.getByRole("combobox", { name: "Show people as" }));
+  await user.click(await screen.findByRole("option", { name: "Full names" }));
+  expect(namePreference()).toBe("full");
+  view.unmount();
+  render(content());
+  expect(
+    screen.getByRole("combobox", { name: "Show people as" }),
+  ).toHaveTextContent("Full names");
+  write.mockRestore();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Retry saving name preference" }),
+  );
+  expect(localStorage.getItem("buzz-name-preference.v1")).toBe("full");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
 });
 
 it("hidden settings do not portal errors; returning retains both save recovery actions", async () => {

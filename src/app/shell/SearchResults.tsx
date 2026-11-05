@@ -1,3 +1,7 @@
+import {
+  preferredVerifiedName,
+  useNamePreference,
+} from "../../features/identity-names/name-preference";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import {
   useIdentityNames,
@@ -571,6 +575,7 @@ export function SearchResults({
     key: peopleNeedle,
     settled: !personDirectory.loading,
   });
+  const { preference: namePreference } = useNamePreference();
   useMentionArchives(session, showAuthorPicker || peopleActive);
   // People labels come from one names scope built each render.
   useNamesRevision(session.names, peopleActive);
@@ -814,12 +819,20 @@ export function SearchResults({
       // The relay matched these names; a verified name must not lose the row.
       searched.set(
         person.pubkey,
-        [person.name, person.username].filter((name) => name !== undefined),
+        [
+          person.name,
+          person.username,
+          verifiedOf(person.pubkey)?.displayName,
+        ].filter((name) => name !== undefined),
       );
       sources.set(
         person.pubkey,
         found
-          ? { ...source, name: found.displayName, username: found.username }
+          ? {
+              ...source,
+              name: preferredVerifiedName(found, namePreference),
+              username: found.username,
+            }
           : source,
       );
     }
@@ -879,7 +892,8 @@ export function SearchResults({
         (found?.source === "public-profile" && pageVerified(pubkey)
           ? undefined
           : found?.name) ?? source.name;
-      const fullName = verifiedOf(pubkey)?.fullName;
+      const verified = verifiedOf(pubkey);
+      const fullName = verified?.fullName;
       people.push({
         pubkey,
         label,
@@ -887,7 +901,11 @@ export function SearchResults({
         username: source.username !== source.name ? source.username : undefined,
         fullName: fullName !== label ? fullName : undefined,
         agentName: agentName !== source.name ? agentName : undefined,
-        profileNames: searched.get(pubkey),
+        // A cached person the directory did not return still matches by the
+        // verified display name a full-name label hides.
+        profileNames:
+          searched.get(pubkey) ??
+          (verified ? [verified.displayName] : undefined),
         agent,
         relationship: relationships.rank(pubkey),
         usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],

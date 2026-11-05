@@ -101,7 +101,13 @@ it("carries verified full names and the profile names a verified person was foun
   const session = fresh();
   const verifiedProfiles = new Map<string, unknown>([
     ...profiles,
-    [key(4), { name: "cy", verified: { fullName: "Cy Test" } }],
+    [
+      key(4),
+      {
+        name: "Cy Test",
+        verified: { displayName: "cy", username: "ctest", fullName: "Cy Test" },
+      },
+    ],
   ]);
   Object.assign(session, { profiles: { snapshot: () => verifiedProfiles } });
   const found = rows(
@@ -123,5 +129,6 @@ it("carries verified full names and the profile names a verified person was foun
   });
   // A member's full name comes from the shared verified profile.
   expect(byKey.get(key(4))?.fullName).toBe("Cy Test");
+  expect(byKey.get(key(4))?.aliases).toEqual(["Cy Test", "cy", "ctest"]);
   expect(byKey.get(key(1))).not.toHaveProperty("fullName");
 });

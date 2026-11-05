@@ -94,10 +94,16 @@ function key() {
 }
 const pending = () => unsaved;
 
-/** Re-renders the caller when a clock setting or the macOS 24-hour setting
- * changes; the latter is re-read when the window regains focus. */
-export function useClockPreference() {
+/** Re-renders the caller when a clock setting or the system's 24-hour setting
+ * changes, so times from `shared/datetime` stay current; the system setting is
+ * re-read when the window regains focus. */
+export function useClockFormat(): void {
   useSyncExternalStore(subscribe, key, key);
+}
+
+/** The clock settings, re-rendering the caller as `useClockFormat` does. */
+export function useClockPreference() {
+  useClockFormat();
   return {
     ...clockPreference(),
     unsaved: useSyncExternalStore(subscribe, pending, pending),

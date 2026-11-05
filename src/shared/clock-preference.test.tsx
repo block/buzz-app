@@ -1,7 +1,17 @@
 // @vitest-environment jsdom
-import { act, renderHook, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { setClockPreference, useClockPreference } from "./clock-preference";
+import {
+  setClockPreference,
+  useClockFormat,
+  useClockPreference,
+} from "./clock-preference";
 import { formatFullTimestamp, formatTime } from "./datetime";
 
 const native = vi.hoisted(() => ({ cycle: "h23" as string | null }));
@@ -57,4 +67,15 @@ it("an explicit clock overrides the system and can show seconds", async () => {
     messageTimestamps: "show",
   });
   hook.unmount();
+});
+
+it("re-renders a formatted time when the clock changes", async () => {
+  function Stamp() {
+    useClockFormat();
+    return <time>{formatTime(afternoon)}</time>;
+  }
+  render(<Stamp />);
+  await waitFor(() => expect(screen.getByText("14:05")).toBeTruthy());
+  act(() => setClockPreference({ hourCycle: "h12" }));
+  expect(screen.getByText(/^2:05\sPM$/)).toBeTruthy();
 });

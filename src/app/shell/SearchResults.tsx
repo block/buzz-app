@@ -1295,8 +1295,10 @@ export function SearchResults({
     ...conversationDestination(channel),
     ...(channel.preview ? { detail: channel.preview } : {}),
   });
-  const unreadChannels = suggestions.filter(isUnread);
-  const unread = unreadChannels.slice(0, UNREAD_ROWS).map(suggestion);
+  const unread = suggestions
+    .filter(isUnread)
+    .slice(0, UNREAD_ROWS)
+    .map(suggestion);
   const recent = suggestions
     .filter((channel) => !isUnread(channel))
     .slice(0, 4)
@@ -1453,25 +1455,23 @@ export function SearchResults({
           : !query.trim()
             ? [
                 ...(unread.length
-                  ? [
-                      {
-                        label: "Unread",
-                        destinations: unread,
-                        total: unreadChannels.length,
-                      },
-                    ]
+                  ? [{ label: "Unread", destinations: unread }]
                   : []),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),
-                {
-                  label: "Recent activity",
-                  destinations: recent,
-                  empty:
-                    list.status === "loading"
-                      ? "Loading recent conversations…"
-                      : "No recent activity yet.",
-                },
+                ...(recent.length || !unread.length
+                  ? [
+                      {
+                        label: "Recent activity",
+                        destinations: recent,
+                        empty:
+                          list.status === "loading"
+                            ? "Loading recent conversations…"
+                            : "No recent activity yet.",
+                      },
+                    ]
+                  : []),
               ]
             : [
                 // Named destinations lead, so typed text selects one first.

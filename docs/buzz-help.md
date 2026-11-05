@@ -183,8 +183,9 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
-  channels appear only once someone adds you. Search reopens where you left it
-  for a few minutes; Escape starts fresh next time.
+  channels appear only once someone adds you. After you've typed something,
+  search reopens where you left it for a few minutes; Escape starts fresh next
+  time.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
   nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it. Muted

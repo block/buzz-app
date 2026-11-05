@@ -292,7 +292,7 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
   }
 });
 
-it("shows the first six unread conversations, counting them all, ahead of the rest", async () => {
+it("shows the first six unread conversations ahead of the rest", async () => {
   const relay = keypair();
   const viewer = keypair();
   let journal: ReadJournal | undefined;
@@ -353,8 +353,8 @@ it("shows the first six unread conversations, counting them all, ahead of the re
     await waitFor(() => expect(rowsOf("Unread")).toHaveLength(6));
     const rows = rowsOf("Unread");
     expect(rows[0]).toHaveTextContent(/^unread-0/);
-    expect(rows[0]).toHaveAttribute("aria-setsize", "8");
-    expect(rows[5]).toHaveAttribute("aria-posinset", "6");
+    // Only six rows exist, so the group does not announce a larger set.
+    expect(rows[0]).not.toHaveAttribute("aria-setsize");
     expect(
       screen.getByRole("combobox", { name: "Search Buzz" }),
     ).toHaveAttribute("aria-activedescendant", rows[0]?.id);
@@ -362,6 +362,17 @@ it("shows the first six unread conversations, counting them all, ahead of the re
     expect(rowsOf("Recent activity").map((row) => row.textContent)).toEqual([
       expect.stringMatching(/^read/),
     ]);
+    // With every conversation unread, Recent activity does not claim none.
+    await owner.session.unread.markUnreadLocal({
+      kind: "channel",
+      channelId: "read",
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("group", { name: "Recent activity" }),
+      ).toBeNull(),
+    );
+    expect(screen.queryByText("No recent activity yet.")).toBeNull();
   } finally {
     cleanup();
     owner.dispose();

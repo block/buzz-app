@@ -23,7 +23,7 @@ import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
-import { AttachmentForwardDropTarget } from "../../features/messages/AttachmentForwardDropTarget";
+import { useAttachmentForwardDropTarget } from "../../features/messages/AttachmentForwardDropTarget";
 import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge, ordinaryUnread, useConfirmedMute } from "./UnreadBadge";
 import { useWorkingAgents } from "./useWorkingAgents";
@@ -164,9 +164,11 @@ function ChannelSidebarItemCore({
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
   const Icon = channelIcon(channel);
+  const attachmentDrop = useAttachmentForwardDropTarget(channel, session);
   const row = (
     <ChannelSidebarRow
       channel={channel}
+      attachmentDrop={attachmentDrop}
       working={agents.length > 0}
       ordinary={ordinary}
       muted={muted}
@@ -275,18 +277,12 @@ function ChannelSidebarItemCore({
         ) : (
           activity
         );
-        const wrapped =
-          SelectFrame && sectionKey ? (
-            <SelectFrame channelId={channel.id} sectionKey={sectionKey}>
-              {select}
-            </SelectFrame>
-          ) : (
-            select
-          );
-        return (
-          <AttachmentForwardDropTarget channel={channel} session={session}>
-            {wrapped}
-          </AttachmentForwardDropTarget>
+        return SelectFrame && sectionKey ? (
+          <SelectFrame channelId={channel.id} sectionKey={sectionKey}>
+            {select}
+          </SelectFrame>
+        ) : (
+          select
         );
       }}
       selected={selected}

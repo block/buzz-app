@@ -10,6 +10,7 @@ import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
+import { safeMessageUrl } from "./message-content";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
@@ -329,9 +330,11 @@ export function createMessages(
       const tagsByUrl = new Map<string, string[]>();
       for (const tag of original.tags) {
         if (tag[0] !== "imeta") continue;
-        const url = tag
-          .find((field) => field.startsWith("url "))
+        const rawUrl = tag
+          .filter((field) => field.startsWith("url "))
+          .at(-1)
           ?.slice("url ".length);
+        const url = rawUrl && safeMessageUrl(rawUrl);
         if (url && urls.has(url) && !tagsByUrl.has(url))
           tagsByUrl.set(url, tag);
       }
@@ -352,7 +355,7 @@ export function createMessages(
       return writer(9, channelId).send({
         kind: 9,
         content: text(content),
-        tags: [["h", channelId], ["buzz:copy-of", source.id], ...tags],
+        tags: [["h", channelId], ...tags],
       });
     },
     /** Copy an authored reply as a fresh top-level event, preserving its displayed semantics. */

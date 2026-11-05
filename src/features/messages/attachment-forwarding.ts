@@ -1,4 +1,5 @@
 import type { Attachment, ChannelMessage } from "../relay/contracts";
+import { safeMessageUrl } from "../relay/message-content";
 
 export const ATTACHMENT_FORWARD_MIME = "application/x-buzz-attachment-forward";
 
@@ -75,8 +76,9 @@ export function attachmentsFromForwardPayload(
   );
   if (!source) return undefined;
   const urls = new Set(payload.attachmentUrls);
-  const attachments = source.attachments.filter((attachment) =>
-    urls.has(attachment.url),
-  );
+  const attachments = source.attachments.flatMap((attachment) => {
+    const url = safeMessageUrl(attachment.url);
+    return url && urls.has(url) ? [{ ...attachment, url }] : [];
+  });
   return attachments.length === urls.size ? { source, attachments } : undefined;
 }

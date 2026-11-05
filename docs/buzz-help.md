@@ -80,10 +80,11 @@ the interface unless an available tool actually supports that action.
 - Where a community verifies names, the profile check appears beside the verified
   full name, or the verified username when no full name is supplied. The profile
   shows the issuer and verification time; cached verification has no check.
-  When you search for people (search, @mentions and adding channel members), a
-  verified person shows their verified name with the full name beside it.
-  Search finds people by their profile names; once found, a verified full name
-  also matches as you refine.
+  When you search for people (search, @mentions, adding channel members and new
+  direct messages), a verified person shows their verified name with the full
+  name beside it. Search finds people by their profile names; once found, a
+  verified full name also matches as you refine. Search and new direct messages
+  also find people already verified by a matching verified name or username.
 
 ## Connect an external app
 
@@ -279,12 +280,20 @@ that agent in Buzz; they do not notify the external app through this connection.
   replies in thread, U marks it unread, and Delete deletes your own message.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
-  by"; change one of them to choose which fires.
+  by"; change one of them to choose which fires. In the Mac app, **Buzz →
+  Settings…** in the menu bar also opens Settings.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
+- **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
+  24-hour times. System, the default, follows the desktop app's operating
+  system: the 24-hour time setting on macOS, the short time format on Windows,
+  and on Linux GNOME's time format or else the `LC_TIME` locale. In a browser it
+  follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
+  time beside each message everywhere or only in Solo chats; day dividers and
+  screen-reader dates remain.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe
@@ -564,6 +573,15 @@ Release builds ignore this optional helper.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+### Saved External apps approval
+
+External apps can request saved approval. The app can renew valid approval
+for another 30 days. Approval expires after 30 days without renewal. Buzz shows
+this policy before you authorize access. Expired or revoked approval requires
+new owner consent. The app can restore the same access after Buzz or the app
+restarts. Keep Buzz open in the approved community. Keys stay in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
+even when no session is connected. Added access requires new approval.
 
 ### Reconnecting an old agent in a DM
 

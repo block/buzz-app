@@ -40,7 +40,6 @@ export function AttachmentImage({
   attachment: Attachment;
   session?: RelaySession | undefined;
   source: string | undefined;
-  /** Relay-derived small preview; undefined when the source has none. */
   thumbnail?: string | undefined;
   cached?: boolean;
   /** Square thumbnail geometry for a condensed image group. */

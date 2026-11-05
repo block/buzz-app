@@ -232,7 +232,6 @@ it("shows the thumbnail once it loads and drops it when the original decodes", a
   expect(thumbnail).toHaveStyle({ visibility: "hidden" });
   fireEvent.load(thumbnail as HTMLImageElement);
   expect(thumbnailOf(view)).toHaveStyle({ visibility: "visible" });
-  // The review entrance reads the first image's aspect, so it must be the original.
   const original = view.container.querySelector("img");
   expect(original).toHaveAttribute("src", relaySource);
   expect(original).toHaveStyle({ visibility: "hidden" });

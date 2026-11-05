@@ -1794,7 +1794,6 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
 
 it.each([
   ["jpg", "small:.jpg"],
-  // JPEG drops alpha; formats that can be transparent use the WebP variant.
   ["png", ".thumb.webp"],
   ["gif", ".thumb.webp"],
 ])("passes a %s image attachment its relay thumbnail", (extension, suffix) => {

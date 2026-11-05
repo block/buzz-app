@@ -563,7 +563,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 .attachmentImage video {
   object-fit: contain;
 }
-/* A 320px preview is soft by design; the scale hides the blur's faded edge. */
+/* The scale hides the blur's faded edge. */
 .attachmentImage img[data-thumbnail] {
   filter: blur(12px);
   transform: scale(1.1);

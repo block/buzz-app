@@ -301,9 +301,9 @@ function applied({
   return { type, spawn, home, execution: ctx.agents.execution };
 }
 function installed(options?: Parameters<typeof applied>[0]) {
-  const { type, spawn, home } = applied(options);
-  if (!type) throw new Error("no type registered");
-  return { type, spawn, home };
+  const result = applied(options);
+  if (!result.type) throw new Error("no type registered");
+  return { ...result, type: result.type };
 }
 function tab(type: AgentType<Config>, index: number) {
   const component = type.tabs?.[index]?.component;
@@ -1524,7 +1524,9 @@ it("keeps settings editable while a provider change waits for Save", async () =>
     />,
   );
   const user = userEvent.setup();
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
+  );
   expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled();
   expect(screen.getByRole("textbox", { name: "Workspace" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Save" }));

@@ -128,6 +128,12 @@ export class PublishNotSent extends PublishRejected {}
 /** NIP-01 machine-readable prefixes: the shape of a relay's own refusal. */
 export const NIP01_PREFIX =
   /^(invalid|blocked|restricted|forbidden|error|pow|duplicate|rate-limited|conflict|auth-required):\s*/;
+/** Prefixes writers match on, so the text is shown as sent. */
+export const KEPT_PREFIXES = new Set([
+  "rate-limited",
+  "conflict",
+  "auth-required",
+]);
 
 /** Whether `message` is the relay's own words for a refusal: the write was
  * sent and its `reason` is relay-shaped text. Status summaries, client-side
@@ -139,9 +145,15 @@ export function isRelayRefusal(error: unknown): error is PublishRejected {
   const prefix = NIP01_PREFIX.exec(error.reason ?? "");
   return (
     !!prefix &&
-    !!error.reason?.slice(prefix[0].length).trim() &&
-    !NIP01_PREFIX.test(error.message)
+    !KEPT_PREFIXES.has(prefix[1] ?? "") &&
+    !!error.reason?.slice(prefix[0].length).trim()
   );
+}
+
+/** The relay's refusal words to show, clipped like stored diagnostics, or
+ * undefined when `error` is not the relay's own refusal. */
+export function relayRefusal(error: unknown): string | undefined {
+  return isRelayRefusal(error) ? clip(error.message) : undefined;
 }
 
 export { browserOutboxStorage } from "./outbox-storage";
@@ -686,9 +698,7 @@ export function createOutbox(
         onReceipt(
           latest.signed ?? latest.event,
           undefined,
-          delivery === "failed" && isRelayRefusal(error)
-            ? clip(error.message)
-            : undefined,
+          delivery === "failed" ? relayRefusal(error) : undefined,
         );
       if (latest && delivery)
         saveStatus({

@@ -252,6 +252,20 @@ it.each([30620, 46020, 5])(
   },
 );
 
+it("forwards a long relay refusal clipped for display", async () => {
+  const h = setup();
+  h.send();
+  await flush();
+  const words = `Disabled ${"x".repeat(1000)}`;
+  h.reject(new PublishRejected(words, `forbidden: ${words}`));
+  await flush();
+  expect(h.onReceipt).toHaveBeenCalledWith(
+    expect.anything(),
+    undefined,
+    words.slice(0, 256),
+  );
+});
+
 it.each([30620, 46020, 5])(
   "unknown kind %s is inspect-only while dismissal remains available",
   async (kind) => {

@@ -122,7 +122,11 @@ not replace the result-bearing receipt. Restored commands never run automaticall
 result text stays ephemeral, outside the journal. A command the relay refuses
 with its own reason shows that reason in this session only; the journal keeps
 fixed copy, because relay text can quote event content. Other failures keep the
-fixed copy, and a refusal after a verified echo leaves the result unknown.
+fixed copy, and a refusal after a verified echo leaves the result unknown. On the
+browser host, the broker reports a socket `forbidden:`, `blocked:` or
+`restricted:` refusal as not sent, so those keep the fixed copy there, including
+the owner-or-admin refusal for a Call Webhook step; this host difference is
+unresolved.
 Workflow intents cannot be replayed through generic Outbox Retry either;
 inspection and dismissal remain available.
 

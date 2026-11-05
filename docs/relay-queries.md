@@ -151,10 +151,14 @@ shortcode, and republishes the whole set with a strictly newer `created_at`.
 Adds within a session run one at a time, so a stale read cannot drop an earlier
 add. The signed echo must match the template before publishing, the accepted set
 joins the palette immediately, and failures surface as the reference
-`Failed to add emoji.` / `Timed out while adding emoji.` copy. A relay refusal
-appends the relay's reason, such as `Failed to add emoji. You are banned from
-this community`. The development broker admits kind 30030 only for the
-canonical own-set template (`validEmojiSetTemplate`).
+`Failed to add emoji.` / `Timed out while adding emoji.` copy. On the native
+host, a relay refusal appends the relay's reason, clipped to 256 characters,
+such as `Failed to add emoji. You are banned from this community`. The browser
+host's broker reports a socket `forbidden:`, `blocked:` or `restricted:` refusal
+as not sent, so that host shows `Failed to add emoji.` for those and appends
+only `invalid:` reasons; this host difference is unresolved. The development
+broker admits kind 30030 only for the canonical own-set template
+(`validEmojiSetTemplate`).
 
 Live kind-30030 updates share the existing profile route, not another socket or
 subscription slot. Global establishment repairs an already requested catalog;

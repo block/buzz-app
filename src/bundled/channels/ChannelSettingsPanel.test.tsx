@@ -535,6 +535,14 @@ it.each([
     "Only owners and admins can change auto-join",
   ],
   [
+    "a long relay reason, clipped,",
+    new PublishRejected(
+      `Actor not authorized ${"x".repeat(1000)}`,
+      `invalid: actor not authorized ${"x".repeat(1000)}`,
+    ),
+    `Actor not authorized ${"x".repeat(1000)}`.slice(0, 256),
+  ],
+  [
     "the default reason",
     new PublishRejected("rejected"),
     "Only community owners and admins can change this.",

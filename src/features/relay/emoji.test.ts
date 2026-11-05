@@ -741,6 +741,17 @@ it("rejects invalid names before any read and maps publish failure to reference 
     /^Failed to add emoji\. You are banned$/,
   );
   expect(h.emoji.snapshot().mine).toEqual([]);
+  // A long reason is clipped as the outbox clips it.
+  const words = `You are banned ${"x".repeat(1000)}`;
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected(words, `blocked: ${words}`),
+  );
+  const long = h.emoji.add?.("party", url);
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([]);
+  await expect(long).rejects.toThrow(
+    new Error(`Failed to add emoji. ${words.slice(0, 256)}`),
+  );
   // A write that never reached the relay, or a refusal without the relay's
   // own words, has no reason to show.
   for (const error of [
@@ -761,7 +772,7 @@ it("rejects invalid names before any read and maps publish failure to reference 
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().fail(new Error("offline"));
   await expect(failedRead).rejects.toThrow(/^Failed to add emoji\.$/);
-  expect(h.publish).toHaveBeenCalledTimes(4);
+  expect(h.publish).toHaveBeenCalledTimes(5);
 });
 it("removes only from the fresh own set and preserves another member's colliding emoji", async () => {
   const h = authoring();

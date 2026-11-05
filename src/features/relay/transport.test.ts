@@ -9,7 +9,7 @@ import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
-import { isRelayRefusal, PublishRejected } from "./outbox";
+import { isRelayRefusal, PublishRejected, relayRefusal } from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
@@ -286,6 +286,13 @@ it.each([
     expect(isRelayRefusal(await refusal(403, { error }))).toBe(words);
   },
 );
+it("keeps a long refusal's whole reason but clips its display words", async () => {
+  // Admission keeps up to 4 KB of `{error}` text, so the bound is the display's.
+  const error = `invalid: ${"x".repeat(1000)}`;
+  const result = await refusal(400, { error });
+  expect(result).toMatchObject({ reason: error });
+  expect(relayRefusal(result)).toBe(`X${"x".repeat(255)}`);
+});
 it("keeps the conflict refusal and the raw reason for classifying writers", async () => {
   const conflict = await refusal(409, { error: "invalid: whatever" });
   expect(conflict).toHaveProperty(

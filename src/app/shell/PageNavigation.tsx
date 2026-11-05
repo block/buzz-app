@@ -73,7 +73,7 @@ export function PageNavigation({
                 size="small"
               />
             ) : page.key === ACTIVITY_PAGE ? (
-              <ActivityNavigationIcon size="dock">
+              <ActivityNavigationIcon>
                 <PageIcon
                   icon={icon}
                   image={image}
@@ -128,7 +128,7 @@ export function PageNavigation({
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
     };
-    const baseIcon = avatar ? (
+    const pageIcon = avatar ? (
       <Avatar
         key={page.key}
         src={avatar.src}
@@ -146,14 +146,6 @@ export function PageNavigation({
         strokeWidth={2.5}
       />
     );
-    const pageIcon =
-      page.key === ACTIVITY_PAGE ? (
-        <ActivityNavigationIcon key={page.key}>
-          {baseIcon}
-        </ActivityNavigationIcon>
-      ) : (
-        baseIcon
-      );
     const item = (
       <NavigationItem
         key={page.key}
@@ -261,9 +253,11 @@ function PagePreview({
       {dockHint ? (
         <Tooltip
           content={label}
-          hint="instant"
+          hint="dock"
           side="right"
-          {...(enabled ? { open: false } : {})}
+          // Keyboard focus opens only the label; the preview replaces it once
+          // a resting pointer opens it.
+          {...(enabled && open ? { open: false } : {})}
         >
           {trigger}
         </Tooltip>

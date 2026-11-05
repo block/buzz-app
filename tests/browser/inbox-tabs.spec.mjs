@@ -404,7 +404,8 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   app.relay.publish("primary", liveReaction);
   const icon = page
     .getByRole("navigation", { name: "Apps dock", exact: true })
-    .locator('[data-size="dock"][data-active]');
+    .getByRole("tab", { name: "Activity", exact: true })
+    .locator("[data-active]");
   await expect(icon).toHaveText("✅");
   await expect(icon).toHaveAttribute("aria-hidden", "true");
   await page.screenshot({ path: testInfo.outputPath("reaction-bell.png") });

@@ -290,7 +290,7 @@ export function Tabs<Value extends string>({
               ) : variant === "dock" ? (
                 <Tooltip
                   content={item.label}
-                  hint="instant"
+                  hint="dock"
                   side={orientation === "vertical" ? "right" : "bottom"}
                 >
                   {tab}

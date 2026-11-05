@@ -1,4 +1,3 @@
-import { writeView } from "../../shared/view-state";
 import { createPortal } from "react-dom";
 import {
   MenuRoot,
@@ -402,91 +401,81 @@ it.each([
   },
 );
 
-it.each(["v1", "v2"])(
-  "keeps only the side dock despite a saved %s preference",
-  async (saved) => {
-    writeView("shell", "navigation-variation", saved);
-    const current = createServices();
-    services = current;
-    const onSelect = vi.fn();
-    const mounted = vi.fn();
-    const unmounted = vi.fn();
-    function Conversation() {
-      useEffect(() => {
-        mounted();
-        return unmounted;
-      }, []);
-      return <textarea aria-label="Message draft" />;
-    }
-    const pages = [
-      { id: "channels", pluginId: "buzz.channels", title: "Channels" },
-      { id: "inbox", pluginId: "buzz.inbox", title: "Inbox" },
-      { id: "bestie", pluginId: "buzz.bestie", title: "Bestie" },
-    ].map((page) => ({
-      ...page,
-      key: `${page.pluginId}/${page.id}`,
-      revision: "one",
-      primary: true,
-      component: () => null,
-    }));
-    const tree = () => (
-      <ToastProvider>
-        <AppShell
-          pages={pages}
-          selected="buzz.channels/channels"
-          navigationAttempt="same-conversation"
-          onSelect={onSelect}
-          tone="default"
-          communities={current.communities}
-          accountActions={current.accountActions}
-          appearance={testAppearance}
-        >
-          <Conversation />
-        </AppShell>
-      </ToastProvider>
-    );
-    const view = render(tree());
-    const user = userEvent.setup();
-    const draft = screen.getByRole("textbox", { name: "Message draft" });
-    await user.type(draft, "Keep this draft");
-    expect(
-      screen.queryByRole("navigation", { name: "Main navigation" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /Switch to variation/ }),
-    ).toBeNull();
-    const dock = screen.getByRole("navigation", { name: "Apps dock" });
-    const tabs = within(dock).getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual([
-      "Bestie",
-      "Inbox",
-      "Messages",
-    ]);
-    expect(screen.getByRole("tablist")).toHaveAttribute(
-      "aria-orientation",
-      "vertical",
-    );
-    expect(screen.getByRole("tabpanel", { name: "Messages" })).toContainElement(
-      draft,
-    );
-    expect(
-      screen.getByRole("button", { name: "Search Buzz" }),
-    ).toHaveTextContent("Search");
-    tabs[0]?.focus();
-    await user.keyboard("{ArrowDown}");
-    expect(tabs[1]).toHaveFocus();
-    expect(onSelect).not.toHaveBeenCalled();
-    await user.keyboard("{Enter}");
-    expect(onSelect).toHaveBeenLastCalledWith("buzz.inbox/inbox", {
-      focus: "preserve",
-    });
-    view.rerender(tree());
-    expect(screen.getByRole("textbox", { name: "Message draft" })).toBe(draft);
-    expect(draft).toHaveValue("Keep this draft");
-    expect(mounted).toHaveBeenCalledOnce();
-    expect(unmounted).not.toHaveBeenCalled();
-  },
-);
+it("shows global pages in the side dock and keeps the conversation mounted across selection", async () => {
+  const current = createServices();
+  services = current;
+  const onSelect = vi.fn();
+  const mounted = vi.fn();
+  const unmounted = vi.fn();
+  function Conversation() {
+    useEffect(() => {
+      mounted();
+      return unmounted;
+    }, []);
+    return <textarea aria-label="Message draft" />;
+  }
+  const pages = [
+    { id: "channels", pluginId: "buzz.channels", title: "Channels" },
+    { id: "inbox", pluginId: "buzz.inbox", title: "Inbox" },
+    { id: "bestie", pluginId: "buzz.bestie", title: "Bestie" },
+  ].map((page) => ({
+    ...page,
+    key: `${page.pluginId}/${page.id}`,
+    revision: "one",
+    primary: true,
+    component: () => null,
+  }));
+  const tree = () => (
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="buzz.channels/channels"
+        navigationAttempt="same-conversation"
+        onSelect={onSelect}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        <Conversation />
+      </AppShell>
+    </ToastProvider>
+  );
+  const view = render(tree());
+  const user = userEvent.setup();
+  const draft = screen.getByRole("textbox", { name: "Message draft" });
+  await user.type(draft, "Keep this draft");
+  const dock = screen.getByRole("navigation", { name: "Apps dock" });
+  const tabs = within(dock).getAllByRole("tab");
+  expect(tabs.map((tab) => tab.textContent)).toEqual([
+    "Bestie",
+    "Inbox",
+    "Messages",
+  ]);
+  expect(screen.getByRole("tablist")).toHaveAttribute(
+    "aria-orientation",
+    "vertical",
+  );
+  expect(screen.getByRole("tabpanel", { name: "Messages" })).toContainElement(
+    draft,
+  );
+  expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveTextContent(
+    "Search",
+  );
+  tabs[0]?.focus();
+  await user.keyboard("{ArrowDown}");
+  expect(tabs[1]).toHaveFocus();
+  expect(onSelect).not.toHaveBeenCalled();
+  await user.keyboard("{Enter}");
+  expect(onSelect).toHaveBeenLastCalledWith("buzz.inbox/inbox", {
+    focus: "preserve",
+  });
+  view.rerender(tree());
+  expect(screen.getByRole("textbox", { name: "Message draft" })).toBe(draft);
+  expect(draft).toHaveValue("Keep this draft");
+  expect(mounted).toHaveBeenCalledOnce();
+  expect(unmounted).not.toHaveBeenCalled();
+});
 
 it.each(["sidebar", "topbar", "toolbar"] as const)(
   "keeps %s plugin icons, badge failures, selection and removal at the navigation boundary",
@@ -650,10 +639,27 @@ it.each(["sidebar", "topbar"] as const)(
       expect(screen.getByRole("tab", { name: "Notes" })).not.toHaveAttribute(
         "aria-haspopup",
       );
+      if (placement === "topbar") {
+        // Keyboard focus names the icon-only tile without opening its preview.
+        await user.click(within(nav).getByRole(role, { name: "Home" }));
+        await user.keyboard("{ArrowDown}");
+        expect(inbox).toHaveFocus();
+        expect(
+          await screen.findByRole("tooltip", { name: "Inbox" }),
+        ).toBeVisible();
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        await user.keyboard("{ArrowUp}");
+        await waitFor(() =>
+          expect(screen.queryByRole("tooltip", { name: "Inbox" })).toBeNull(),
+        );
+        onSelect.mockClear();
+      }
       await user.hover(inbox);
       const card = await screen.findByRole("dialog", { name: "Inbox" });
       expect(inbox).toHaveAttribute("data-popup-preview");
-      expect(screen.queryByRole("tooltip", { name: "Inbox" })).toBeNull();
+      await waitFor(() =>
+        expect(screen.queryByRole("tooltip", { name: "Inbox" })).toBeNull(),
+      );
       // Content closes the card, for example after opening a conversation, and
       // focus is not pulled back to the row.
       await user.click(

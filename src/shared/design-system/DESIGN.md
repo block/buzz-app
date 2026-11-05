@@ -318,7 +318,8 @@ appropriate surviving trigger unless the person has moved elsewhere. See
 ### Hover timing
 
 Hover content opens only once the pointer rests on its trigger, never while it
-crosses on the way to something else; any movement restarts the wait. Keyboard
+crosses on the way to something else; any movement restarts the wait. The one
+exception is the dock label bucket below. Keyboard
 focus is deliberate, so it opens hints and previews at once, and anything that
 opens on hover also opens with Enter; Escape dismisses them all. Every hover
 surface belongs to exactly one bucket, and the timings live in
@@ -333,6 +334,7 @@ each disabled choice keyboard reachable and connected to the shared description.
 | --- | --- | --- | --- |
 | Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 0.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
 | Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled (use Hover control for side explanations of grouped unavailable choices in an open menu), an error, a truncated value | Rests 0.25s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Dock label | Naming an app on the icon-only app dock, where the label is the tile's only visible name | Opens at once, without an entrance animation | `Tooltip hint="dock"`; `Tabs variant="dock"` applies it |
 | Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.3s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
 | Hover control | A control that expands in place under the pointer: video volume, playback speed; side explanations for grouped unavailable choices in an open menu | Rests 0.05s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
 | No hover | A control whose visible text already says what it does | None | Omit `title` |
@@ -2056,8 +2058,9 @@ state, and an inactive hover fill. The active tile uses the theme-accent
 accessible selected state.
 Dock artwork stays still on hover and press. Bestie uses its configured avatar
 from the shared page presentation, at the standard avatar size.
-Dock labels remain accessible and use instant tooltips to the right of each vertical dock
-button (beneath horizontal docks), without an entrance animation; badges overlay the tile.
+Dock labels remain accessible and use the dock label hover bucket to the right of each vertical dock
+button (beneath horizontal docks); badges overlay the tile. A tile with a page
+preview shows its label on keyboard focus and while its preview is closed.
 Up/Down arrow keys move focus in the side dock without selecting; Enter, Space or
 pointer selection changes the page while focus stays on its tab. Horizontal dock
 compositions use Left/Right. The host passes per-opening focus intent so page

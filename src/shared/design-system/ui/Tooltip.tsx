@@ -9,10 +9,14 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { FAMILIAR_HINT_REST_MS, HELPFUL_HINT_REST_MS } from "./hoverIntent";
+import {
+  DOCK_LABEL_REST_MS,
+  FAMILIAR_HINT_REST_MS,
+  HELPFUL_HINT_REST_MS,
+} from "./hoverIntent";
 
 /** DESIGN.md "Hover timing": how long a hint waits for a resting pointer. */
-export type HintTiming = "helpful" | "familiar" | "instant";
+export type HintTiming = "helpful" | "familiar" | "dock";
 
 const promote = (positioner: HTMLDivElement | null) => {
   positioner?.showPopover?.();
@@ -106,8 +110,8 @@ export function Tooltip({
       <BaseTooltip.Trigger
         ref={setTrigger}
         delay={
-          hint === "instant"
-            ? 0
+          hint === "dock"
+            ? DOCK_LABEL_REST_MS
             : hint === "familiar"
               ? FAMILIAR_HINT_REST_MS
               : HELPFUL_HINT_REST_MS

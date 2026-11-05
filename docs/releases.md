@@ -187,12 +187,13 @@ Setup, by a repository admin:
 
 ### Builderlab URL
 
-The **Desktop previews** workflow sets `BUZZ_BUILDERLAB_URL` for all platform
-builds, including candidate-only runs. It defaults to `https://app.builderlab.xyz`.
-To override it, set the repository's non-secret Actions variable
-`BUZZ_BUILDERLAB_URL`; an unset or empty variable uses the production default.
-When `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` is set, the workflow supplies an
-empty `BUZZ_BUILDERLAB_URL` instead, because FI builds reject the legacy origin.
+The **Desktop previews** workflow leaves `BUZZ_BUILDERLAB_URL` unset, so every
+platform build, including candidate-only runs, signs in to the built-in
+Builderlab server (`https://app.builderlab.xyz`) with the native session. When
+the repository's non-secret Actions variable
+`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` is nonempty, the workflow adds its
+servers to the built-in one; see
+[federated identity build input](configuration.md#federated-identity-build-input).
 
 ### Signing
 
@@ -249,8 +250,11 @@ gh attestation verify <archive> --repo aaif-goose/goose \
 ```
 
 Then update version, source revision, versioned asset URLs and SHA-256 values
-together, and review upstream license/notice changes. This release is mutable;
-committed hashes bind the downloaded bytes. Never resolve `latest` at build time.
+together, and review upstream license/notice changes. Move the
+[Buzz Security plugin](https://github.com/squareup/buzz-plugin-security)'s
+protected Goose pin to the same revision before that Buzz release ships. This
+release is mutable; committed hashes bind the downloaded bytes. Never resolve
+`latest` at build time.
 The obsolete `target/goose-acp-src` and `target/goose-acp-build` caches are unused
 and can be removed locally when no old source build is running.
 Version 1.57.0 also advances Goose 26 commits from the previous source pin;

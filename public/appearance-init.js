@@ -66,6 +66,14 @@
     "--buzz-message-width",
     messageWidth,
   );
+  let density = "default";
+  try {
+    if (localStorage.getItem("buzz-message-density.v1") === "compact")
+      density = "compact";
+  } catch {
+    /* Default spacing remains usable without storage. */
+  }
+  document.documentElement.dataset.messageDensity = density;
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

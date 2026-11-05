@@ -1807,10 +1807,36 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
     const links = screen.getAllByRole("link", {
       name: "Open image attachment",
     });
-    expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
+    expect(media.mock.calls).toEqual([
+      ["https://safe.test/a.png"],
+      ["https://safe.test/a.png", "small"],
+    ]);
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
     expect(view.container.innerHTML).not.toContain("unsafe.test");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([
+  ["jpg", "small:.jpg"],
+  ["png", ".thumb.webp"],
+  ["gif", ".thumb.webp"],
+])("passes a %s image attachment its relay thumbnail", (extension, suffix) => {
+  const hash = "a".repeat(64);
+  const url = `https://relay.test/media/${hash}.${extension}`;
+  const view = renderMessage({
+    row: { ...row, attachments: [{ url, kind: "image" }] },
+    media: (value, size) => (size ? `small:${value}` : value),
+  });
+  try {
+    expect(view.container.querySelector("img[data-thumbnail]")).toHaveAttribute(
+      "src",
+      suffix.startsWith("small:")
+        ? `small:${url}`
+        : `https://relay.test/media/${hash}${suffix}`,
+    );
   } finally {
     view.unmount();
   }
@@ -2742,48 +2768,57 @@ it("contains a throwing plugin action icon and opened component", async () => {
   }
 });
 
-it("keeps a plugin action dialog closed when its plugin is reinstalled with the same key", async () => {
-  const listeners = new Set<() => void>();
-  const entry = () => ({
-    id: "remind",
-    title: "Remind",
-    key: "test.plugin/remind",
-    pluginId: "test.plugin",
-    revision: "one",
-    matches: () => true,
-    component: () => <span>action dialog</span>,
-  });
-  let actions = [entry()];
-  const swap = (next: typeof actions) => {
-    actions = next;
-    act(() => {
-      for (const listener of listeners) listener();
+it.each(["menu", "toolbar", "coordination"] as const)(
+  "retires a %s action when its contribution or session ends",
+  async (variant) => {
+    const placement = variant === "menu" ? undefined : "toolbar";
+    const listeners = new Set<() => void>();
+    const entry = () => ({
+      id: "remind",
+      title: "Remind",
+      key: "test.plugin/remind",
+      pluginId: "test.plugin",
+      revision: "one",
+      ...(placement ? { placement: "toolbar" as const } : {}),
+      matches: () => true,
+      component: () => <span>action dialog</span>,
     });
-  };
-  const none: never[] = [];
-  const empty = { snapshot: () => none, subscribe: () => () => {} };
-  const channelList = { channels: [], status: "ready" };
-  const session = {
-    viewer: "viewer",
-    presence: {
-      subscribe: () => () => {},
-      status: () => "unknown",
-      limited: () => false,
-    },
-    unread: {
-      subscribe: () => () => {},
-      subscribeSync: () => () => {},
-      snapshot: () => undefined,
-      following: () => false,
-    },
-    messages: { report: undefined },
-    channels: { subscribeList: () => () => {}, list: () => channelList },
-  } as unknown as RelaySession;
-  try {
-    renderDom(
+    let actions = [entry()];
+    const swap = (next: typeof actions) => {
+      actions = next;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    };
+    const none: never[] = [];
+    const empty = { snapshot: () => none, subscribe: () => () => {} };
+    const channelList = { channels: [], status: "ready" };
+    const session = {
+      viewer: "viewer",
+      presence: {
+        subscribe: () => () => {},
+        status: () => "unknown",
+        limited: () => false,
+      },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        following: () => false,
+      },
+      messages: { report: undefined },
+      channels: { subscribeList: () => () => {}, list: () => channelList },
+    } as unknown as RelaySession;
+    const draw = (currentSession = session) => (
       <MessageRow
-        row={{ ...row, replyCount: 0 }}
-        session={session}
+        row={{
+          ...row,
+          replyCount: 0,
+          ...(variant === "coordination"
+            ? { audience: "agents" as const }
+            : {}),
+        }}
+        session={currentSession}
         profile={undefined}
         media={() => undefined}
         onOpenLink={() => false}
@@ -2800,21 +2835,44 @@ it("keeps a plugin action dialog closed when its plugin is reinstalled with the 
             },
           },
         }}
-      />,
+      />
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "More message actions" }),
-    );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Remind" }));
-    expect(await screen.findByText("action dialog")).toBeInTheDocument();
-    swap([]);
-    expect(screen.queryByText("action dialog")).toBeNull();
-    swap([entry()]);
-    expect(screen.queryByText("action dialog")).toBeNull();
-  } finally {
-    cleanup();
-  }
-});
+    const activate = async () => {
+      if (variant === "coordination") {
+        fireEvent.contextMenu(screen.getByRole("button", { name: /Root/ }));
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: "Remind" }),
+        );
+      } else if (placement === "toolbar") {
+        const button = screen.getByRole("button", { name: "Remind" });
+        button.focus();
+        await userEvent.setup().keyboard("{Enter}");
+      } else {
+        fireEvent.click(
+          screen.getByRole("button", { name: "More message actions" }),
+        );
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: "Remind" }),
+        );
+      }
+    };
+    try {
+      const view = renderDom(draw());
+      await activate();
+      expect(await screen.findByText("action dialog")).toBeInTheDocument();
+      swap([]);
+      expect(screen.queryByText("action dialog")).toBeNull();
+      swap([entry()]);
+      expect(screen.queryByText("action dialog")).toBeNull();
+      await activate();
+      expect(await screen.findByText("action dialog")).toBeInTheDocument();
+      view.rerender(draw({ ...session }));
+      expect(screen.queryByText("action dialog")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  },
+);
 
 it.each(["timeline", "thread", "continuation"] as const)(
   "right-aligns own %s rows and keeps only the last grouped avatar",
@@ -2854,6 +2912,57 @@ it.each(["timeline", "thread", "continuation"] as const)(
       rerender(<MessageRow {...props} viewer={undefined} />);
       expect(container.querySelector("[data-viewer-message]")).toBeNull();
     } finally {
+      cleanup();
+    }
+  },
+);
+
+it.each(["timeline", "thread", "continuation"] as const)(
+  "lists own %s rows unaligned in compact density, with the first grouped avatar",
+  async (layout) => {
+    const props = {
+      layout,
+      row: { ...row, authorId: "ab".repeat(32) },
+      viewer: "ab".repeat(32),
+      profile: { name: "author" },
+      media: () => undefined,
+      onOpenLink: () => true,
+      canOpenLink: () => true,
+      day: false,
+      retry: undefined,
+    };
+    const root = document.documentElement;
+    root.dataset.messageDensity = "compact";
+    try {
+      // The first row of a group, which is the one a flat list gives an avatar.
+      const { container, rerender } = renderDom(
+        <MessageRow {...props} stackPrevious={false} stackNext />,
+      );
+      expect(container.querySelector("[data-own]")).toBeNull();
+      expect(container.querySelector("[data-viewer-message]")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "View author profile" }),
+      ).toBeInTheDocument();
+      rerender(<MessageRow {...props} stackPrevious />);
+      expect(
+        screen.queryByRole("button", { name: "View author profile" }),
+      ).toBeNull();
+      // Choosing Default while mounted restores bubbles without a remount.
+      rerender(<MessageRow {...props} stackPrevious={false} />);
+      act(() => {
+        root.dataset.messageDensity = "default";
+      });
+      await waitFor(() =>
+        expect(
+          container.querySelector("[data-viewer-message]"),
+        ).toHaveTextContent("Root"),
+      );
+      expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+      expect(
+        screen.getByRole("button", { name: "View author profile" }),
+      ).toBeInTheDocument();
+    } finally {
+      delete root.dataset.messageDensity;
       cleanup();
     }
   },

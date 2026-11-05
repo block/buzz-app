@@ -120,6 +120,9 @@ pub struct HostCommand {
         skip_serializing_if = "Option::is_none"
     )]
     pub max_output_bytes: Option<u64>,
+    /// Run these verified bytes, never a program found on PATH.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ProcessArtifact>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -298,6 +301,10 @@ impl Manifest {
                     || command
                         .max_output_bytes
                         .is_some_and(|limit| !(1..=MAX_HOST_COMMAND_OUTPUT_BYTES).contains(&limit))
+                    || command
+                        .artifact
+                        .as_ref()
+                        .is_some_and(|artifact| !valid_artifact(artifact))
                 {
                     return Err("Invalid host command declaration".into());
                 }
@@ -350,13 +357,17 @@ pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
 /// Exact Apps domain paired with the build's login origin, or empty when native SSO is unconfigured.
 pub const BUILDERLAB_APPS_DOMAIN: &str = env!("BUZZ_BUILDERLAB_APPS_DOMAIN");
 /// The Apps Platform control plane of the tenant whose Builderlab sign-in
-/// `origin` is, which the bundled Builderlab plugin deploys apps to. Kept in
-/// step with `src/bundled/builderlab/apps/environment.ts`.
+/// `origin` is, which the bundled Builderlab plugin deploys apps to through
+/// the native FI session. Kept in step with
+/// `src/bundled/builderlab/apps/environment.ts`.
 pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
     match origin {
         "https://app.builderlab.xyz" => Some("https://compose-ctrl.builderlab.xyz"),
         "https://app.builderlabstaging.xyz" => Some("https://compose-ctrl.builderlabstaging.xyz"),
         "https://block.builderlab.xyz" => Some("https://compose-ctrl.block.builderlab.xyz"),
+        "https://block.builderlabstaging.xyz" => {
+            Some("https://compose-ctrl.block.builderlabstaging.xyz")
+        }
         _ => None,
     }
 }
@@ -394,24 +405,11 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         "../../../src/bundled/builderlab/manifest.json"
     ))
     .expect("builderlab manifest");
-    let origin = BUILDERLAB_ORIGIN;
+    // Builderlab is reached only through the native FI session forwarder: no
+    // renderer network or file access. A development broker build reaches it
+    // through the broker, and a build with neither has no Builderlab.
     let descriptor = env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG");
-    builderlab.host = Some(if descriptor.is_empty() {
-        HostGrants {
-            files: apps_control_plane(origin).is_some(),
-            network_origins: if origin.is_empty() {
-                vec![]
-            } else {
-                std::iter::once(origin)
-                    .chain(apps_control_plane(origin))
-                    .map(Into::into)
-                    .collect()
-            },
-            ..HostGrants::default()
-        }
-    } else {
-        // An FI build reaches Builderlab only through the native session
-        // forwarder: no renderer network or file access.
+    builderlab.host = (!descriptor.is_empty()).then(|| {
         let config: serde_json::Value =
             serde_json::from_str(descriptor).expect("validated FI descriptor");
         let base = config["apiBasePath"].as_str().expect("API base");
@@ -469,6 +467,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("github manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/drafts-sent/manifest.json"
+        ))
+        .expect("drafts-sent manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
             .expect("reminders manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
@@ -536,6 +538,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
+            | "buzz.drafts-sent"
             | "buzz.repos"
             | "buzz.agents"
             | "buzz.claude-code"
@@ -2271,6 +2274,18 @@ mod tests {
             .unwrap()
             .push(manifest["host"]["commands"][0].clone());
         assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        let mut pinned = manifest.clone();
+        pinned["host"]["commands"][0]["artifact"] =
+            serde_json::json!({"path": "~/example/cli", "sha256": "a".repeat(64)});
+        assert!(artifact_from_text(&pinned.to_string(), "export const x = 1".into()).is_ok());
+        for (field, value) in [
+            ("path", serde_json::json!("relative/cli")),
+            ("sha256", serde_json::json!("A".repeat(64))),
+        ] {
+            let mut invalid = pinned.clone();
+            invalid["host"]["commands"][0]["artifact"][field] = value;
+            assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
 
         let mut processes = manifest.clone();
         processes["host"]["processes"] = serde_json::json!([
@@ -2456,6 +2471,10 @@ mod tests {
             Some("https://compose-ctrl.block.builderlab.xyz")
         );
         assert_eq!(
+            super::apps_control_plane("https://block.builderlabstaging.xyz"),
+            Some("https://compose-ctrl.block.builderlabstaging.xyz")
+        );
+        assert_eq!(
             super::apps_control_plane("https://builderlab.example"),
             None
         );
@@ -2466,25 +2485,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
+        // Only the native session's Builderlab routes are granted, and only in
+        // an FI build.
         if env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG").is_empty() {
-            assert_eq!(
-                grants.files,
-                super::apps_control_plane(super::BUILDERLAB_ORIGIN).is_some()
-            );
-            assert_eq!(
-                grants.network_origins,
-                if env!("BUZZ_BUILDERLAB_ORIGIN").is_empty() {
-                    vec![]
-                } else {
-                    std::iter::once(env!("BUZZ_BUILDERLAB_ORIGIN"))
-                        .chain(super::apps_control_plane(env!("BUZZ_BUILDERLAB_ORIGIN")))
-                        .map(str::to_owned)
-                        .collect()
-                }
-            );
-            assert_eq!(grants.federated_identity, None);
+            assert_eq!(grants, super::HostGrants::default());
         } else {
-            // An FI build grants only the native session's Builderlab routes.
             assert!(!grants.files);
             assert!(grants.network_origins.is_empty());
             let grant = grants.federated_identity.clone().unwrap();

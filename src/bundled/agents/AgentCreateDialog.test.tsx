@@ -20,6 +20,7 @@ import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import type {
   Agent,
+  AgentCreateProps,
   Agents,
   NewAgent,
   RegisteredAgentType,
@@ -33,6 +34,7 @@ import {
   BuilderlabLogoIcon,
   CodexLogoIcon,
 } from "../../shared/design-system/icons";
+import { Select } from "../../shared/design-system/ui/Select";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -190,6 +192,9 @@ const submitForm = (dialog: HTMLElement) =>
 
 it("creates with the name, a pack picture and the config from the type's view", async () => {
   const { agents, onCreated, dialog, user } = setup([echo]);
+  expect(
+    within(dialog).queryByRole("combobox", { name: "Thinking" }),
+  ).toBeNull();
   await user.type(within(dialog).getByLabelText("Name"), "  Nova ");
 
   const grid = within(dialog).getByRole("group", { name: "Agent avatars" });
@@ -917,6 +922,127 @@ const withModels = (type: RegisteredAgentType): RegisteredAgentType => ({
   },
 });
 
+const withThinking = (type: RegisteredAgentType): RegisteredAgentType =>
+  ({
+    ...type,
+    defaults: () => ({
+      config: { notes: "start", instructions: "Be brief.", effort: "" },
+    }),
+    CreateThinking: ({ config, disabled, onChange }: AgentCreateProps) => {
+      const current = config as Record<string, unknown>;
+      return (
+        <Select
+          label="Thinking"
+          value={String(current.effort ?? "")}
+          variant="compact"
+          disabled={disabled}
+          groups={[
+            {
+              label: "",
+              options: [
+                { value: "", label: "Automatic · Default" },
+                { value: "low", label: "Low" },
+                { value: "high", label: "High" },
+              ],
+            },
+          ]}
+          onValueChange={(effort) => onChange({ ...current, effort })}
+        />
+      );
+    },
+  }) as unknown as RegisteredAgentType;
+
+it("saves the create-time Thinking choice in the initial agent config", async () => {
+  const { agents, dialog, user } = setup([withThinking(notes)]);
+  const thinking = within(dialog).getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("Automatic · Default");
+
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(thinking);
+  const inherited = await screen.findByRole("option", {
+    name: "Automatic · Default",
+  });
+  await waitFor(() => expect(inherited).toHaveFocus());
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Low" })).toHaveFocus(),
+  );
+  await user.keyboard("{ArrowDown}");
+  const high = screen.getByRole("option", { name: "High" });
+  await waitFor(() => expect(high).toHaveFocus());
+  await user.keyboard("{Enter}");
+  await user.click(createButton());
+
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/notes",
+      config: { notes: "start", instructions: "Be brief.", effort: "high" },
+    }),
+  );
+});
+
+it("restores inherited Thinking when Default is chosen before creation", async () => {
+  const { agents, dialog, user } = setup([withThinking(notes)]);
+  const thinking = within(dialog).getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("Automatic · Default");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+
+  await user.click(thinking);
+  await user.click(await screen.findByRole("option", { name: "High" }));
+  expect(thinking).toHaveTextContent("High");
+  await user.click(thinking);
+  await user.click(
+    await screen.findByRole("option", { name: "Automatic · Default" }),
+  );
+  expect(thinking).toHaveTextContent("Automatic · Default");
+
+  await user.click(createButton());
+
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/notes",
+      config: { notes: "start", instructions: "Be brief.", effort: "" },
+    }),
+  );
+});
+
+it("drops the provider-specific Thinking choice when changing harnesses", async () => {
+  const { agents, dialog, user } = setup([withThinking(notes), echo]);
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(within(dialog).getByRole("combobox", { name: "Thinking" }));
+  await user.click(await screen.findByRole("option", { name: "High" }));
+
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Echo" }));
+  expect(
+    within(dialog).queryByRole("combobox", { name: "Thinking" }),
+  ).toBeNull();
+
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "test/echo", config: { reply: "" } }),
+  );
+});
+
+it("disables the Thinking control while creation is pending", async () => {
+  let finish: (agent: Agent) => void = () => {};
+  const { agents, dialog, user } = setup(
+    [withThinking(notes)],
+    () => new Promise<Agent>((resolve) => (finish = resolve)),
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+
+  try {
+    await user.click(createButton());
+    await waitFor(() => expect(agents.create).toHaveBeenCalledOnce());
+    expect(
+      within(dialog).getByRole("combobox", { name: "Thinking" }),
+    ).toBeDisabled();
+  } finally {
+    finish(made);
+  }
+});
+
 it("keeps typed instructions when choosing a harness or model", async () => {
   // Both types carry instructions, as the bundled harnesses do.
   const carrying = (key: string, title: string): RegisteredAgentType => ({
@@ -1056,4 +1182,120 @@ it("preserves the existing avatar and requested name when saving a proposed upda
   );
   expect(agents.create).not.toHaveBeenCalled();
   expect(onCreated).not.toHaveBeenCalled();
+});
+
+it("starts from an agent card's name, picture and instructions, in each harness that takes them", async () => {
+  const adopting = (key: string, title: string): RegisteredAgentType => ({
+    ...notes,
+    key,
+    title,
+    adopt: (carry, config) => ({
+      ...(config as Notes),
+      instructions: carry.instructions ?? (config as Notes).instructions,
+    }),
+  });
+  const agents = { create: vi.fn(async () => made) } as unknown as Agents & {
+    create: ReturnType<typeof vi.fn>;
+  };
+  render(
+    <AgentCreateDialog
+      agents={agents}
+      types={[echo, adopting("test/card", "Card")]}
+      draft={{
+        name: "Tinker",
+        picture: "https://cdn.example/tinker/avatar.png",
+        instructions: "You are Tinker.",
+      }}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  expect(dialog).toHaveAccessibleDescription(
+    "From an agent card. Review its settings before creating it.",
+  );
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Tinker");
+  // Echo has no instructions to take; the card's follow to one that does.
+  expect(within(dialog).queryByLabelText("Instructions")).toBeNull();
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Card" }));
+  expect(within(dialog).getByLabelText("Instructions")).toHaveValue(
+    "You are Tinker.",
+  );
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith({
+    type: "test/card",
+    name: "Tinker",
+    picture: "https://cdn.example/tinker/avatar.png",
+    config: { notes: "start", instructions: "You are Tinker." },
+  });
+});
+
+it("keeps an agent card's instructions cleared when choosing another harness", async () => {
+  // Like the bundled harnesses, empty instructions are not carried.
+  const carrying = (key: string, title: string): RegisteredAgentType => ({
+    ...notes,
+    key,
+    title,
+    carry: (config) => {
+      const { instructions } = config as Notes;
+      return instructions.trim() ? { instructions } : {};
+    },
+    adopt: (carry, config) => ({
+      ...(config as Notes),
+      instructions: carry.instructions ?? (config as Notes).instructions,
+    }),
+  });
+  const agents = { create: vi.fn(async () => made) } as unknown as Agents & {
+    create: ReturnType<typeof vi.fn>;
+  };
+  render(
+    <AgentCreateDialog
+      agents={agents}
+      types={[carrying("test/notes", "Notes"), carrying("test/other", "Other")]}
+      draft={{
+        name: "Tinker",
+        picture: "https://cdn.example/tinker/avatar.png",
+        instructions: "You are Tinker.",
+      }}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.clear(within(dialog).getByLabelText("Instructions"));
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Other" }));
+  expect(within(dialog).getByLabelText("Instructions")).toHaveValue("");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/other",
+      config: { notes: "start", instructions: "" },
+    }),
+  );
+});
+
+it("shows an agent card's pack avatar as that Gloopie", () => {
+  const pack = agentAvatars.find((avatar) => avatar.id === "gloopies-13");
+  if (!pack) throw new Error("gloopies-13 is missing from the catalog");
+  render(
+    <AgentCreateDialog
+      agents={{ create: vi.fn() } as unknown as Agents}
+      types={[echo]}
+      draft={{ name: "Tinker", picture: pack.url, instructions: "" }}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  const tabs = within(
+    within(dialog).getByRole("tablist", { name: "Avatar type" }),
+  );
+  expect(tabs.getByRole("tab", { name: "Gloopies" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });

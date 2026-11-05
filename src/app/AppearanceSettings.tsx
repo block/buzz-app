@@ -33,6 +33,10 @@ import {
   setMessageAutocorrectPreference,
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
+import {
+  setUnreadFirstPreference,
+  useUnreadFirstPreference,
+} from "../features/search/unread-first-preference";
 import { macWebKit } from "../features/messages/mac-webkit";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
@@ -52,6 +56,7 @@ export function AppearanceSettings({
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
+  const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
   const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
@@ -81,6 +86,8 @@ export function AppearanceSettings({
     accentError,
     contrast,
     contrastError,
+    density,
+    densityError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
@@ -299,6 +306,30 @@ export function AppearanceSettings({
         <InlineHeader title="Conversations" />
         <SettingsGroup>
           <PreferenceRow
+            title="Message density"
+            subtitle="Compact shows conversations as a flat list that fits more messages on screen."
+            trailing={
+              <Select
+                variant="compact"
+                label="Message density"
+                value={density}
+                groups={[
+                  {
+                    label: "Density",
+                    options: [
+                      { value: "default", label: "Default" },
+                      { value: "compact", label: "Compact" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "default" || value === "compact")
+                    appearance.setDensity(value);
+                }}
+              />
+            }
+          />
+          <PreferenceRow
             title="Follow-up behavior"
             subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
             trailing={
@@ -384,6 +415,12 @@ export function AppearanceSettings({
               onCheckedChange={setMessageAutocorrectPreference}
             />
           )}
+          <SwitchPreferenceRow
+            label="Show unread first in search"
+            description="With nothing typed, search leads with unread channels and DMs and selects the newest."
+            checked={unreadFirst.enabled}
+            onCheckedChange={setUnreadFirstPreference}
+          />
         </SettingsGroup>
         {active && messageWidthError && (
           <ToastNotice
@@ -441,6 +478,20 @@ export function AppearanceSettings({
             </Button>
           </ToastNotice>
         )}
+        {active && unreadFirst.unsaved && (
+          <ToastNotice
+            title="Search preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
+            >
+              Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
         {active && unsaved && (
           <ToastNotice
             title="Thread preference wasn’t saved"
@@ -462,6 +513,16 @@ export function AppearanceSettings({
           >
             <Button size="sm" onClick={() => appearance.setContrast(contrast)}>
               Retry saving vibe level
+            </Button>
+          </ToastNotice>
+        )}
+        {active && densityError && (
+          <ToastNotice
+            title="Message density wasn’t saved"
+            description={densityError}
+          >
+            <Button size="sm" onClick={() => appearance.setDensity(density)}>
+              Retry saving message density
             </Button>
           </ToastNotice>
         )}

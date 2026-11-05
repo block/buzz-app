@@ -301,7 +301,7 @@ pub(crate) async fn relay_direct_message(
     let tags = direct_message_tags(&viewer, pubkeys, channel, include_history)?;
     let adding = tags[0][0] == "h";
     let failed = if adding {
-        "These people could not be added. Try again."
+        "Couldn’t add them. A DM holds up to 9 people, not counting agents."
     } else {
         "The direct message could not be opened. Try again."
     };

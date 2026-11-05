@@ -721,7 +721,7 @@ export async function connectBrokerTransport(
             if (!result.ok)
               throw new Error(
                 into
-                  ? "These people could not be added. Try again."
+                  ? "Couldn’t add them. A DM holds up to 9 people, not counting agents."
                   : "Could not open the direct message. Try again.",
               );
             const value = await result.json();

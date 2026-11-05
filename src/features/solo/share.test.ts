@@ -54,8 +54,20 @@ function fixture(
   const checkSave = vi.fn(async () => {
     attempt = undefined;
   });
-  const channels = [
-    { id, channelType: "solo", creator: viewer, members: [viewer] },
+  const channels: {
+    id: string;
+    channelType: string;
+    creator?: string;
+    viewerRole?: string;
+    members: string[];
+  }[] = [
+    {
+      id,
+      channelType: "solo",
+      creator: viewer,
+      viewerRole: "owner",
+      members: [viewer],
+    },
     { id: destination, channelType: "stream", members: [viewer] },
   ];
   const refreshRoster = vi.fn(async () => true);
@@ -194,7 +206,7 @@ it.each(["authority", "owner", "label"])(
     if (change === "authority") f.setBase({ canEdit: false });
     else if (change === "owner") {
       const channel = f.channels[0];
-      if (channel) channel.creator = "b".repeat(64);
+      if (channel) channel.viewerRole = "member";
     } else f.setBase({ labels: [] });
     await expect(shareSoloChatAccess(f.session, id, f)).rejects.toThrow(
       "general access",

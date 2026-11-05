@@ -1,6 +1,6 @@
 import type { Contribution } from "../../plugins/contributions";
 import { effectiveRegionLabel, REGION_PREFIX } from "../solo/region-labels";
-import { eligibleSolo } from "../solo/labels";
+import { ownSolo } from "../solo/labels";
 import type { ChannelSummary } from "../relay/contracts";
 import type {
   SoloRegionSnapshot,
@@ -28,7 +28,6 @@ export type SoloPlacement = Readonly<{
 /** One projection of the authorized roster, also consumed by every filing guard. */
 export function projectSoloRegions(
   channels: readonly ChannelSummary[],
-  viewer: string,
   sources: readonly Readonly<{
     source: RegisteredSoloSource;
     snapshot?: SoloRegionSnapshot;
@@ -40,7 +39,9 @@ export function projectSoloRegions(
   for (const source of sources)
     groups.set(soloRegionLabelOf(source.source), []);
   for (const channel of channels) {
-    if (!eligibleSolo(channel, viewer)) continue;
+    // Regions file the viewer's own chats; a joined chat carries its owner's
+    // labels, so it lists in the ordinary Solo list instead.
+    if (channel.archived || !ownSolo(channel)) continue;
     const label = effectiveRegionLabel(channel.labels);
     if (!label) continue;
     if (!groups.has(label)) groups.set(label, []);

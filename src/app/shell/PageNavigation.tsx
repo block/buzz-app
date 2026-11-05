@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useId,
   useRef,
@@ -20,6 +21,7 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PageIcon } from "./PageIcon";
+import { pagePlacement } from "./presentation";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   PopoverPopup,
@@ -93,6 +95,7 @@ export function PageNavigation({
         <Badge />
       </ContributionBoundary>
     );
+    const Rows = pagePlacement(page) === "sidebar" ? page.rows : undefined;
     const select = () => {
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
@@ -167,17 +170,28 @@ export function PageNavigation({
         }
       />
     );
-    return page.preview && previewed(page) ? (
-      <PagePreview
-        key={page.key}
-        page={page}
-        preview={page.preview}
-        label={label}
-      >
-        {item}
-      </PagePreview>
+    const entry =
+      page.preview && previewed(page) ? (
+        <PagePreview
+          key={page.key}
+          page={page}
+          preview={page.preview}
+          label={label}
+        >
+          {item}
+        </PagePreview>
+      ) : (
+        item
+      );
+    return Rows ? (
+      <Fragment key={page.key}>
+        {entry}
+        <ContributionBoundary key={contributionKey(page)} fallback={null}>
+          <Rows />
+        </ContributionBoundary>
+      </Fragment>
     ) : (
-      item
+      entry
     );
   });
 }

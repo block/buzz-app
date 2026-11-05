@@ -9,6 +9,7 @@ import {
 import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
+import { chosenSolo } from "../../features/solo/labels";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import {
   ChannelInventory,
@@ -478,11 +479,14 @@ function LiveSignIn({
   );
 }
 
-/** Unknown until the channel list can say; a channel outside it is Team's. */
+/** Unknown until the channel list can say; a channel outside it is Team's.
+ * Someone else's Solo chat the viewer didn't join has no inventory, so the
+ * viewer's place holds. */
 function conversationDestination(list: ChannelList | undefined, id: string) {
   const channel = list?.channels.find((item) => item.id === id);
   if (!channel && list?.status !== "ready") return undefined;
-  return channel?.channelType === "solo" ? "solo" : "team";
+  if (channel?.channelType !== "solo") return "team";
+  return chosenSolo(channel) ? "solo" : undefined;
 }
 
 /** A plugin's banner, isolated so its failure keeps the sidebar working. */

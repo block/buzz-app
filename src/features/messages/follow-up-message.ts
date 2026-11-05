@@ -35,7 +35,7 @@ export function followUpMessage(
       if (!channel || channel.archived || channel.readOnly)
         throw new Error("This chat is no longer available for sending.");
       if (
-        !ownSolo(channel, session.viewer) ||
+        !ownSolo(channel) ||
         message.recipients.some(
           (key) =>
             archivedMention(session, key) ||

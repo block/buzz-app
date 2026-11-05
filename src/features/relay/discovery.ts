@@ -305,7 +305,11 @@ export class DiscoveryState {
   // scanned for the (fixed) viewer again on every `get`.
   private readonly parsed = new WeakMap<
     RelayEvent,
-    { members: readonly string[]; viewerRole: ChannelSummary["viewerRole"] }
+    {
+      members: readonly string[];
+      owners: readonly string[] | undefined;
+      viewerRole: ChannelSummary["viewerRole"];
+    }
   >();
   private parse(roster: RelayEvent) {
     let parsed = this.parsed.get(roster);
@@ -314,6 +318,18 @@ export class DiscoveryState {
         ([key, value]) => key === "p" && value === this.viewer,
       );
       const role = entries.length === 1 ? entries[0]?.[3] : undefined;
+      const owners = [
+        ...new Set(
+          roster.tags.flatMap(([name, value, , tagged]) =>
+            name === "p" &&
+            tagged === "owner" &&
+            value &&
+            /^[0-9a-f]{64}$/.test(value)
+              ? [value]
+              : [],
+          ),
+        ),
+      ].sort();
       parsed = {
         members: Object.freeze(
           [
@@ -326,6 +342,7 @@ export class DiscoveryState {
             ),
           ].sort(),
         ),
+        owners: owners.length ? Object.freeze(owners) : undefined,
         // A contradictory guest entry cannot restore writing through another role.
         viewerRole: entries.some((entry) => entry[3] === "guest")
           ? "guest"
@@ -386,6 +403,7 @@ export class DiscoveryState {
     // metadata (the full pass reads names later) never lists as a channel.
     const roster = this.rosters.get(id);
     const viewerRole = this.authorized(id) ? this.viewerRole(id) : undefined;
+    const owners = roster && this.parse(roster).owners;
     const type = this.isSolo(id)
       ? "solo"
       : event
@@ -434,6 +452,7 @@ export class DiscoveryState {
           }
         : {}),
       members: roster ? this.parse(roster).members : noMembers,
+      ...(owners ? { owners } : {}),
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(this.autoJoin(id) ? { autoJoin: true } : {}),

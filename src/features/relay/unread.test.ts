@@ -118,9 +118,16 @@ function setup(
   );
   owners.push(owner);
   const emit = (events: readonly RelayEvent[]) => incoming(events);
-  const grant = (id: string, time = 10) =>
+  /** A role such as "owner" marks the viewer's own Solo chat. */
+  const grant = (id: string, time = 10, role?: string) =>
     emit([
-      roster(relay, id, [viewer.pubkey], time),
+      roster(
+        relay,
+        id,
+        [viewer.pubkey],
+        time,
+        role ? { [viewer.pubkey]: role } : {},
+      ),
       metadata(relay, id, id, time),
     ]);
   const target = { kind: "channel" as const, channelId: "room" };
@@ -2693,12 +2700,13 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
 it("inbox groups a Solo chat's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
   const h = setup();
   h.grant("room");
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const mention = (channel: string, content: string, at: number) =>
@@ -2756,12 +2764,13 @@ it("inbox groups a Solo chat's top-level timeline into one conversation, keeping
 
 it("reading a Solo chat's timeline row takes one save however many responses it retains", async () => {
   const h = setup();
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const responses = Array.from({ length: 150 }, (_, index) =>
@@ -2809,12 +2818,13 @@ it("reading a Solo chat's timeline row takes one save however many responses it 
 
 it("inbox describes a Solo chat row by its newest top-level message, not only its Inbox evidence", () => {
   const h = setup();
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const ping = message(h.alice, "chat", "Ping", 20, [["p", h.viewer.pubkey]]);
@@ -2842,13 +2852,14 @@ it("inbox describes a Solo chat row by its newest top-level message, not only it
 
 it("inbox describes a row by its newest message within the same second", () => {
   const h = setup();
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.grant("dm");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
     metadata(h.relay, "dm", "DM", 11, [["t", "dm"]]),
   ]);
@@ -2879,12 +2890,13 @@ it("inbox describes a row by its newest message within the same second", () => {
 
 it("inbox leaves a Solo chat message its attributed author deleted out of the row's preview", () => {
   const h = setup({}, true, undefined, true);
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const agent = keypair();
@@ -2919,12 +2931,13 @@ it.each([true, false])(
   "inbox leaves a Solo chat root that has its own thread row out of the timeline row's preview (mentioned root: %s)",
   (mentioned) => {
     const h = setup();
-    h.grant("chat");
+    h.grant("chat", 10, "owner");
     h.emit([
       metadata(h.relay, "chat", "Solo chat", 11, [
         ["t", "stream"],
         ["private"],
         ["t", SOLO_LABEL],
+        ["P", h.viewer.pubkey],
       ]),
     ]);
     const root = message(
@@ -2953,12 +2966,13 @@ it.each([true, false])(
 
 it("inbox keeps a mentioned Solo chat root with its thread so reading the thread clears it", async () => {
   const h = setup();
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const root = message(h.alice, "chat", "Question", 20, [
@@ -4099,4 +4113,157 @@ it("catch-up applies to agent-audience rows, and unread intent cannot make them 
   ).toMatchObject({ observedCount: 0, attentionCount: 0 });
   expect(unread.activity("room").items).toHaveLength(0);
   expect(unread.inbox().items).toHaveLength(0);
+});
+
+it("someone else's Solo chat the viewer joined tracks unread normally", () => {
+  const h = setup();
+  h.grant("chat", 10, "guest");
+  h.emit([
+    metadata(h.relay, "chat", "Alice's chat", 11, [
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+      ["P", h.alice.pubkey],
+    ]),
+  ]);
+  const update = message(h.alice, "chat", "Progress update", 21);
+  h.emit([update]);
+  const unread = h.session.unread;
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(1);
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({ channelId: "chat", messageIds: [update.id] }),
+  ]);
+});
+
+it("someone else's Solo chat earns attention only from mentions", async () => {
+  const h = setup();
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Alice's chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+      ["P", h.alice.pubkey],
+    ]),
+  ]);
+  const mine = message(h.viewer, "chat", "My question", 20);
+  const update = message(h.alice, "chat", "Progress update", 21);
+  const everyone = message(h.alice, "chat", "Heads up", 22, [
+    ["broadcast", "1"],
+  ]);
+  const reply = message(h.alice, "chat", "Answering you", 23, [
+    ["e", mine.id, "", "reply"],
+  ]);
+  const ping = message(h.alice, "chat", "@you is this right?", 24, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mine, update, everyone, reply]);
+  const unread = h.session.unread;
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(0);
+  for (const quiet of [update, everyone, reply])
+    expect(unread.attention("chat", quiet.id).category).toBeUndefined();
+  expect(unread.inbox().items).toEqual([]);
+  expect(unread.activity("chat").items).toEqual([]);
+
+  // Explicit unread intent still applies in someone else's chat.
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "chat",
+    messageId: update.id,
+  });
+  expect(unread.attention("chat", update.id).unread).toBe(true);
+  await unread.markMessageRead("chat", update.id);
+  expect(unread.attention("chat", update.id).unread).toBe(false);
+
+  h.emit([ping]);
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(1);
+  expect(unread.attention("chat", ping.id).category).toBe("mention");
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({
+      id: "chat:chat",
+      channelId: "chat",
+      messageIds: [ping.id],
+      preview: "@you is this right?",
+      unreadCount: 1,
+    }),
+  ]);
+
+  // A second tag, even in a thread, joins the chat's one row.
+  const again = message(h.alice, "chat", "@you and this?", 25, [
+    ["e", update.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([again]);
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({
+      id: "chat:chat",
+      messageIds: [ping.id, again.id],
+      preview: "@you and this?",
+      target: { kind: "thread", channelId: "chat", rootId: update.id },
+      // Opening the row shows the tag it previews, not the oldest unread one.
+      messageId: again.id,
+      rootId: update.id,
+      unreadCount: 2,
+    }),
+  ]);
+
+  // Archiving reads every tag in the row, across threads.
+  const elsewhere = message(h.alice, "chat", "@you one more", 26, [
+    ["e", everyone.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([elsewhere]);
+  // A newer top-level tag moves the row's target to it, not the older thread.
+  const top = message(h.alice, "chat", "@you last one", 27, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([top]);
+  const [item] = unread.inbox().items;
+  assert(item);
+  expect(item.unreadCount).toBe(4);
+  expect(item.target).toEqual({
+    kind: "message",
+    channelId: "chat",
+    messageId: top.id,
+  });
+  expect(item.messageId).toBe(top.id);
+  expect(item.rootId).toBeUndefined();
+  for (const step of item.readThrough)
+    await unread.markThrough(step.target, step.messageId);
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({ id: "chat:chat", unreadCount: 0 }),
+  ]);
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(0);
+});
+
+it("a Solo chat whose owner is unknown stays quiet until the roster says it is the viewer's", () => {
+  const h = setup();
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const update = message(h.alice, "chat", "Progress update", 20);
+  h.emit([update]);
+  const count = () =>
+    h.session.unread.snapshot({ kind: "channel", channelId: "chat" })
+      .observedCount;
+  expect(count()).toBe(0);
+  // An older chat without a recorded creator is still the owner's.
+  h.emit([
+    roster(h.relay, "chat", [h.viewer.pubkey], 12, {
+      [h.viewer.pubkey]: "owner",
+    }),
+  ]);
+  expect(count()).toBe(1);
 });

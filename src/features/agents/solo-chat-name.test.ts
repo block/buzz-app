@@ -23,7 +23,9 @@ const event = {
 const soloChannels = {
   list: () => ({
     status: "ready",
-    channels: [{ id: "chat", channelType: "solo", creator: owner }],
+    channels: [
+      { id: "chat", channelType: "solo", creator: owner, viewerRole: "owner" },
+    ],
   }),
 };
 

@@ -1,4 +1,5 @@
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import { quietSolo } from "../../features/solo/labels";
 import {
   type ReactNode,
   useCallback,
@@ -164,19 +165,49 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
-/** DMs and a Solo chat's own messages open whole; others open at their message. */
+/** How reading a row clears it, with the targets that read clears: a later
+ * Mark as unread on any of them is newer intent that a Retry must keep. */
+const rowRead = (
+  item: InboxItem,
+): {
+  kind: "channel" | "timeline" | "steps";
+  targets: readonly InboxItem["target"][];
+} =>
+  item.target.kind === "channel"
+    ? { kind: "channel", targets: [item.target] }
+    : item.timeline
+      ? {
+          kind: "timeline",
+          targets: item.messageIds.map((messageId) => ({
+            kind: "message" as const,
+            channelId: item.channelId,
+            messageId,
+          })),
+        }
+      : { kind: "steps", targets: item.readThrough.map((step) => step.target) };
+
+/** DMs and a Solo chat's own messages open whole; others open at their
+ * message. Someone else's chat the viewer didn't join opens at the tag its
+ * row previews: in its thread, or the whole chat at a top-level tag. */
 const tabTarget = (
   item: InboxItem,
-  channel: { channelType?: string } | undefined,
-): PageTabTarget =>
-  item.target.kind === "channel" ||
-  (channel?.channelType === "solo" && !item.thread)
-    ? { channelId: item.channelId }
-    : {
-        channelId: item.channelId,
-        threadId: item.rootId ?? item.messageId,
-        messageId: item.messageId,
-      };
+  channel: Parameters<typeof quietSolo>[0],
+): PageTabTarget => {
+  const shared = quietSolo(channel);
+  if (
+    item.target.kind === "channel" ||
+    (shared ? !item.rootId : channel?.channelType === "solo" && !item.thread)
+  )
+    return {
+      channelId: item.channelId,
+      ...(shared && { messageId: item.messageId }),
+    };
+  return {
+    channelId: item.channelId,
+    threadId: item.rootId ?? item.messageId,
+    messageId: item.messageId,
+  };
+};
 
 type Selection = { channelId: string; messageId: string; rootId?: string };
 // The row a tab opened, kept as long as the session's tabs so returning to
@@ -276,6 +307,13 @@ type InboxViewProps = {
 };
 
 const never = () => false;
+/** Waits for every save, then rethrows the first failure. */
+async function settled(saves: readonly (Promise<unknown> | undefined)[]) {
+  const failed = (await Promise.allSettled(saves)).find(
+    (result) => result.status === "rejected",
+  );
+  if (failed) throw failed.reason;
+}
 
 /** The conversation list is Inbox's first tab; conversations open beside it. */
 export function InboxView({ tabs: Tabs, ...props }: InboxViewProps) {
@@ -452,7 +490,6 @@ function InboxList({
     | {
         work: () => Promise<unknown>;
         valid: () => boolean;
-        onSuccess: (() => void) | undefined;
       }
     | undefined
   >(undefined);
@@ -672,27 +709,21 @@ function InboxList({
       row?.querySelector<HTMLElement>("button") ?? fallbackControl.current
     )?.focus({ preventScroll: true });
   });
-  async function run(
-    work: () => Promise<unknown>,
-    valid?: () => boolean,
-    onSuccess?: () => void,
-  ) {
+  async function run(work: () => Promise<unknown>, valid?: () => boolean) {
     if (!active.current || busy.current) return;
     busy.current = true;
     setPending(true);
     failedMutation.current = undefined;
-    let succeeded = false;
     try {
       if (valid && !valid())
         throw new Error(
           "Inbox action expired. Close and reopen the conversation.",
         );
       await work();
-      succeeded = true;
       if (active.current) setError(undefined);
     } catch (cause) {
       if (active.current) {
-        if (valid?.()) failedMutation.current = { work, valid, onSuccess };
+        if (valid?.()) failedMutation.current = { work, valid };
         setError(
           cause instanceof Error
             ? cause.message
@@ -703,8 +734,6 @@ function InboxList({
       busy.current = false;
       if (active.current) setPending(false);
     }
-    // Follow-up reads must run after the mutation releases the busy guard, on Retry too.
-    if (succeeded && active.current) onSuccess?.();
   }
   function refresh(retrySync = false) {
     void run(async () => {
@@ -756,54 +785,124 @@ function InboxList({
           )
       );
     };
-    let advanced: InboxItem | undefined;
-    void run(
-      async () => {
-        // Retry retains the cutoff, but navigation follows the currently rendered view.
-        const current = archiveView.current;
-        const leaves =
-          current.show === "inbox"
-            ? value
-            : current.show === "archived" && !value;
-        const index = current.visible.findIndex(
-          (row) =>
-            row.channelId === item.channelId &&
-            (row.id === item.id || row.messageIds.includes(item.messageId)),
-        );
-        const next =
-          leaves && index >= 0
-            ? (current.visible[index + 1] ?? current.visible[index - 1])
-            : undefined;
-        updateArchive(archiveScope, conversation, value, at);
-        setMenu(undefined);
-        if (!leaves) return;
-        const channelOf = (row: InboxItem) =>
-          session.channels
-            .list()
-            .channels.find((entry) => entry.id === row.channelId);
-        // Archiving the open conversation closes its tab and opens the next;
-        // restoring it keeps its tab.
-        if (
-          value &&
-          current.selected?.channelId === item.channelId &&
-          current.selected.messageIds.includes(item.messageId) &&
-          current.opened &&
-          closeTab(current.opened)
-        ) {
-          if (next && openRow(next, channelOf(next))) {
-            advanced = next;
-            setSelectedTarget(targetOf(next));
-            return;
-          }
-          setSelectedTarget(undefined);
+    // The next conversation's read starts as it opens, so a later arrival or
+    // a later Mark as unread is never overridden by it.
+    let readNext: (() => Promise<unknown>) | undefined;
+    let reading: Promise<unknown> | undefined;
+    let readTargets: readonly InboxItem["target"][] = [];
+    let readSince = 0;
+    // Archiving the open conversation closes its tab and opens the next;
+    // restoring it keeps its tab.
+    const navigate = () => {
+      // Retry retains the cutoff, but navigation follows the currently rendered view.
+      const current = archiveView.current;
+      const leaves =
+        current.show === "inbox"
+          ? value
+          : current.show === "archived" && !value;
+      const index = current.visible.findIndex(
+        (row) =>
+          row.channelId === item.channelId &&
+          (row.id === item.id || row.messageIds.includes(item.messageId)),
+      );
+      const next =
+        leaves && index >= 0
+          ? (current.visible[index + 1] ?? current.visible[index - 1])
+          : undefined;
+      updateArchive(archiveScope, conversation, value, at);
+      setMenu(undefined);
+      if (!leaves) return;
+      const channelOf = (row: InboxItem) =>
+        session.channels
+          .list()
+          .channels.find((entry) => entry.id === row.channelId);
+      if (
+        value &&
+        current.selected?.channelId === item.channelId &&
+        current.selected.messageIds.includes(item.messageId) &&
+        current.opened &&
+        closeTab(current.opened)
+      ) {
+        if (next && openRow(next, channelOf(next))) {
+          if (canRead && hasUnread(next))
+            try {
+              // Read it as selecting it would, through what this row shows.
+              const plan = rowRead(next);
+              readNext =
+                plan.kind === "channel"
+                  ? session.unread.prepareChannelRead(next.channelId)
+                  : plan.kind === "timeline"
+                    ? () =>
+                        session.unread.markTimelineRead(
+                          next.channelId,
+                          next.messageIds,
+                        )
+                    : () =>
+                        settled(
+                          next.readThrough.map((step) =>
+                            session.unread.markThrough(
+                              step.target,
+                              step.messageId,
+                            ),
+                          ),
+                        );
+              readTargets = plan.targets;
+              readSince = session.unread.revision();
+              reading = readNext();
+            } catch {
+              // A conversation that can no longer be read stays as it is.
+              readNext = undefined;
+            }
+          setSelectedTarget(targetOf(next));
+          return;
         }
-        focusRow.current = next?.id ?? "";
-      },
-      valid,
-      () => {
-        if (advanced && hasUnread(advanced) && canRead) mutate(advanced, false);
-      },
-    );
+        setSelectedTarget(undefined);
+      }
+      focusRow.current = next?.id ?? "";
+    };
+    const readShared = async () => {
+      // Someone else's chat has no sidebar row to carry its dot, so archiving
+      // its tags also reads them. The reads follow navigation, so a tab chosen
+      // while they save is never replaced.
+      const shared = session.channels
+        .list()
+        .channels.find((entry) => entry.id === item.channelId);
+      if (!value || !canRead || !hasUnread(conversation) || !quietSolo(shared))
+        return;
+      try {
+        for (const step of conversation.readThrough)
+          await session.unread.markThrough(step.target, step.messageId);
+      } catch (cause) {
+        // Unsaved reads bring the row back, so its unread tags stay visible.
+        try {
+          updateArchive(archiveScope, conversation, false);
+        } catch {
+          // The read failure is the error to show.
+        }
+        throw cause;
+      }
+    };
+    void run(async () => {
+      navigate();
+      // A failed read retries only until something it would clear is marked
+      // unread again: that newer choice is the one to keep.
+      if (
+        readNext &&
+        readTargets.some((target) =>
+          session.unread.markedSince(target, readSince),
+        )
+      )
+        readNext = undefined;
+      const following = reading ?? readNext?.();
+      reading = undefined;
+      // Every save settles first, so a Retry never overlaps this attempt's.
+      await settled([
+        readShared(),
+        following?.then(() => {
+          readNext = undefined;
+        }),
+      ]);
+    }, valid);
   }
   function mutate(item: InboxItem, unread: boolean) {
     // An open menu is not authority: recheck the current session at action entry.
@@ -855,11 +954,12 @@ function InboxList({
     // Prepare once per click, not once per Retry: later arrivals are a new intent.
     let readChannel: (() => Promise<unknown>) | undefined;
     const work = async () => {
+      const plan = rowRead(item).kind;
       if (unread) await session.unread.markUnreadLocal(item.target);
-      else if (item.target.kind === "channel") {
+      else if (plan === "channel") {
         readChannel ??= session.unread.prepareChannelRead(item.channelId);
         await readChannel();
-      } else if (item.timeline)
+      } else if (plan === "timeline")
         await session.unread.markTimelineRead(item.channelId, item.messageIds);
       else
         while (remaining.length) {
@@ -884,7 +984,7 @@ function InboxList({
     setError(failure);
     const mutation = failedMutation.current;
     if (mutation) {
-      void run(mutation.work, mutation.valid, mutation.onSuccess);
+      void run(mutation.work, mutation.valid);
       return;
     }
     refresh(true);

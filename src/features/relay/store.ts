@@ -385,6 +385,7 @@ export function createChannelStore(
         old.visibility === channel.visibility &&
         old.joinRole === channel.joinRole &&
         old.viewerRole === channel.viewerRole &&
+        old.owners?.join(":") === channel.owners?.join(":") &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
@@ -3203,6 +3204,8 @@ export function createChannelStore(
         ),
         labels: channel.labels,
         creator: transport.viewer,
+        owners: Object.freeze([transport.viewer]),
+        viewerRole: "owner",
         createdAt,
         updatedAt: createdAt,
         ...(channel.ttlSeconds !== undefined

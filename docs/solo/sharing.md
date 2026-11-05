@@ -29,6 +29,10 @@ The access dialog has two ways to share:
 The Solo chat header's **Access** button and the conversation-row **Share…** action
 open the one access dialog every conversation uses (`ChannelMembersDialog`). In a
 Solo chat it is titled **Chat access**, with the chat name as its description.
+The button previews the chat's people like a channel's members button: up to three
+avatars and a count, agents left out, the owner first. Someone else's chat names its
+owner on hover (**Owner's chat**). The viewer's own chat keeps the people icon until
+it is shared with another person.
 Share stays in the same conversation: no promotion to a channel,
 Solo removal or automatic navigation to Messages. **Convert to channel** lives only
 in the chat's actions menu. **Copy link** sits at the footer's leading edge and
@@ -108,7 +112,10 @@ or the replacement receipt. Failed reads or storage, active delivery, and an ech
 contradicting negative readback keep recovery. This uses the existing Outbox/member/share actions, with no
 background retry or new control. If signed roles confirm that the earlier invite
 admitted a Guest, remove that person in People and invite them again. Recovery
-never silently promotes an existing Guest. A definitively failed invitation can
+never silently promotes an existing Guest. Because the sidebar treats a Solo Guest as a viewer
+who chose to Join, such a legacy invitee lists the chat under Solo with ordinary
+unread attention until they leave it; the app accepts this rare case rather
+than inferring join intent from membership history. A definitively failed invitation can
 also be replaced after explicitly dismissing it in Outbox.
 
 ### General access
@@ -181,6 +188,26 @@ Changing the draft or leaving stops further access writes and message sending;
 an already-dispatched access change may finish. Ordinary Outbox delivery owns
 recovery after the message is queued. Future destination membership is never
 synchronized into the chat.
+
+## What shared people see
+
+Sharing gives access, not attention. Someone else's chat the viewer didn't
+join never lists in the viewer's sidebar, bolds, sets the Dock indicator, adds an Inbox row or alerts
+just because the viewer can open it; they reach it from the card, a link or
+search. Only a tag pulls them in: it alerts like any mention and adds one Inbox
+row per chat, however many tags it holds. While that chat has an unread tag, it
+also shows as a row under Inbox in the sidebar, with the same accent dot a
+mention gives any channel; opened from there, it stays until
+the viewer reads it and moves on, and returns with the next tag. Opening a shared
+chat from its card adds no row: it opens beside the current conversation, which
+stays selected. Replies, ordinary messages and marking a message unread there
+never add a row. See [Relevant replies](../unread.md#relevant-replies).
+
+Pressing **Join** in a View only chat is the viewer's own choice, so that chat
+lists under Solo with ordinary unread tracking. Solo chats add people only as
+members, so a viewer role is treated as having joined. The exception is a
+legacy invitation that admitted a Guest (see above): that invitee is treated
+the same way, so code must not take Guest role as proof of Join.
 
 ## Explicit conversion, separate from Share
 

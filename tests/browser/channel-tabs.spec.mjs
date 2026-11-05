@@ -10,7 +10,8 @@ import {
   settlePanelMotion,
 } from "./navigation.mjs";
 
-// Another person in shared Beta, so it is a conversation, not a chat with agents.
+// The viewer's Beta chat, shared with another person, so it is a conversation,
+// not a chat with agents, and lists in the viewer's sidebar.
 // A fixed key keeps the roster static; its profile confirms it is a person.
 const teammateKey = new Uint8Array(32);
 teammateKey[31] = 1;
@@ -21,6 +22,7 @@ test.use({
   companionFixture: true,
   readState: true,
   soloChannels: ["beta"],
+  ownSoloChannels: ["beta"],
   sessionMembers: { beta: [teammate] },
   historyCounts: { alpha: 2, beta: 1 },
 });
@@ -257,7 +259,6 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   });
   await expect(reply).toBeFocused();
   await reply.fill("Alpha reply draft");
-  // Shared Beta lists with the viewer's chats.
   await page.locator('button[data-solo-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
@@ -340,6 +341,7 @@ test.describe("crowded content tabs", () => {
   test.use({
     channelIds: ids,
     soloChannels: ids.slice(1),
+    ownSoloChannels: [],
     historyCounts: Object.fromEntries(ids.map((id) => [id, 1])),
   });
   test("tab overflow stays horizontal and keyboard navigation reveals its destination", async ({

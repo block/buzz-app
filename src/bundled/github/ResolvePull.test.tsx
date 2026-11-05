@@ -34,6 +34,7 @@ function harness({
     name: "Work",
     channelType: type,
     creator: "viewer",
+    viewerRole: "owner",
     members,
   };
   const channels = { status: "ready", channels: [channel] };

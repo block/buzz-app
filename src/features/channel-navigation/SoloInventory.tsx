@@ -153,12 +153,9 @@ export function SoloInventory({
     });
   };
   const conversations = list.channels
-    // Solo chats the viewer belongs to: their own and those shared with them.
-    // Opening one from a link without membership adds nothing here.
-    .filter(
-      (item) =>
-        eligibleSolo(item, session.viewer) && !regions.excluded.has(item.id),
-    )
+    // The Solo chats the viewer chose. One someone else added them to stays
+    // out of the sidebar; a mention surfaces it under Inbox instead.
+    .filter((item) => eligibleSolo(item) && !regions.excluded.has(item.id))
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -

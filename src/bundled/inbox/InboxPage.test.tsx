@@ -14,7 +14,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { PageTabs } from "../channels/PageTabs";
+import { PageTabs, type PageTabTarget } from "../channels/PageTabs";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
 import { InboxPreview } from "./InboxPreview";
 import { huddleDescription } from "../../features/huddle/lifecycle";
@@ -50,6 +50,12 @@ import {
   signReadState,
   // @ts-expect-error Node host codec, with disposable test identities only.
 } from "../../../browser-host/read-state.mjs";
+
+// The viewer's own Solo chat keeps model picks in IndexedDB.
+vi.mock(
+  "../../features/messages/solo-model-picks-storage",
+  () => import("../../features/messages/solo-model-picks-storage-testing"),
+);
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();
@@ -1839,6 +1845,8 @@ function fixture(
     holdProfiles?: boolean;
     withWriter?: boolean;
     soloChannel?: boolean;
+    /** Alice's Solo chat, shared with the viewer. */
+    sharedSolo?: boolean;
     memberAgents?: 1 | 2;
     readCapability?: "read-only" | "unsupported";
     guest?: boolean;
@@ -1922,7 +1930,7 @@ function fixture(
     return result.slice(0, filter.limit);
   };
   let journal: ReadJournal | undefined;
-  let saveFailure = false;
+  let saveFailures = 0;
   let failThreadSave = false;
   let hold: Promise<void> | undefined;
   let saveStarted = false;
@@ -1945,10 +1953,20 @@ function fixture(
         ...(options.memberAgents === 2 ? [profileAgent.pubkey] : []),
       ],
       10,
+      options.soloChannel
+        ? { [viewer.pubkey]: "owner" }
+        : options.sharedSolo
+          ? { [alice.pubkey]: "owner" }
+          : {},
     ),
     metadata(relayKey, "room", "Design", 10, [
-      ...(options.soloChannel
-        ? [["t", "stream"], ["private"], ["t", "buzz.solo"]]
+      ...(options.soloChannel || options.sharedSolo
+        ? [
+            ["t", "stream"],
+            ["private"],
+            ["t", "buzz.solo"],
+            ["P", options.sharedSolo ? alice.pubkey : viewer.pubkey],
+          ]
         : [
             ["t", "stream"],
             ...(options.archivedChannel ? [["archived", "true"]] : []),
@@ -2014,6 +2032,8 @@ function fixture(
       acceptedRevision: 1,
     };
   }
+  // Every tab the page asks for, and where it asked it to open.
+  const tabOpens: PageTabTarget[] = [];
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -2128,8 +2148,8 @@ function fixture(
             hold = undefined;
             await wait;
           }
-          if (saveFailure) {
-            saveFailure = false;
+          if (saveFailures) {
+            saveFailures--;
             throw new Error("disk full");
           }
           const next = readJournal(change(journal), viewer.pubkey);
@@ -2381,13 +2401,27 @@ function fixture(
     mention,
     reply,
     open,
+    tabOpens,
     archive,
     journal: () => journal,
     view: (
       <StrictMode>
         <InboxPage
           host={host}
-          tabs={(props) => <PageTabs {...props} host={host} />}
+          tabs={(props) => (
+            <PageTabs {...props} host={host}>
+              {(open, close, isOpen) =>
+                props.children(
+                  (target, options) => {
+                    tabOpens.push(target);
+                    return open(target, options);
+                  },
+                  close,
+                  isOpen,
+                )
+              }
+            </PageTabs>
+          )}
           relay={relay}
           navigator={{ open } as unknown as Navigation}
           archive={archive}
@@ -2422,8 +2456,8 @@ function fixture(
       events.push(renamed);
       emit([renamed]);
     },
-    failSave() {
-      saveFailure = true;
+    failSave(times = 1) {
+      saveFailures = times;
     },
     failThreadSave() {
       failThreadSave = true;
@@ -4196,6 +4230,510 @@ it.each([true, false])(
     );
   },
 );
+it("opens someone else's chat at the tag its row previews", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  fireEvent.click(
+    within(rows()[0] as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  // The whole chat opens, revealing the tag rather than focusing the composer.
+  await waitFor(() =>
+    expect(h.tabOpens.at(-1)).toEqual({
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+});
+
+it("opens someone else's chat at a newer top-level tag after an older threaded one", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true });
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  h.events.push(
+    message(h.alice, "room", "Older threaded tag", 20, [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  fireEvent.click(
+    within(rows()[0] as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  await waitFor(() =>
+    expect(h.tabOpens.at(-1)).toEqual({
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+});
+
+it("archiving the open shared chat moves on before its reads finish saving", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const shared = rows().find((row) => row.textContent?.includes("Design"));
+  if (!shared) throw new Error("Missing shared chat row");
+  fireEvent.click(within(shared).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  // Marked unread again, so archiving it has reads to save.
+  await act(() =>
+    h.owner.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread.snapshot({ kind: "channel", channelId: "room" })
+        .observedCount,
+    ).toBeGreaterThan(0),
+  );
+  const release = h.holdSave();
+  try {
+    await archiveOpened(h);
+    // The next conversation opens while the archived chat's reads still save,
+    // so a tab chosen meanwhile is never replaced by a late advance.
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("A direct reply");
+    expect(rows()[0]).toHaveAttribute("data-selected");
+  } finally {
+    await act(async () => release());
+  }
+});
+
+it("archiving the open shared chat reads the next conversation only as it was shown, before a later Mark as unread", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const shared = rows().find((row) => row.textContent?.includes("Design"));
+  if (!shared) throw new Error("Missing shared chat row");
+  fireEvent.click(within(shared).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  await act(() =>
+    h.owner.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+  const release = h.holdSave();
+  try {
+    await archiveOpened(h);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    // A direct message arrives after the next conversation opened; reads cut
+    // at the clock, so it is stamped after it.
+    const later = Math.floor(Date.now() / 1000) + 60;
+    act(() => h.emit([message(h.alice, "dm-room", "Arrived later", later)]));
+    // Marking it unread from the sidebar meanwhile also outlasts that read.
+    void h.owner.session.unread.markUnreadLocal({
+      kind: "channel",
+      channelId: "dm-room",
+    });
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers["dm-room"]).toBeDefined(),
+  );
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread.snapshot({
+        kind: "channel",
+        channelId: "dm-room",
+      }),
+    ).toMatchObject({ observedCount: 1, manual: "local-only" }),
+  );
+});
+
+it("Retry gives up the next conversation's failed read once it is marked unread again", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const shared = rows().find((row) => row.textContent?.includes("Design"));
+  if (!shared) throw new Error("Missing shared chat row");
+  fireEvent.click(within(shared).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  h.failSave();
+  await archiveOpened(h);
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  const dm = { kind: "channel", channelId: "dm-room" } as const;
+  await act(() => h.owner.session.unread.markUnreadLocal(dm));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(h.owner.session.unread.snapshot(dm).manual).toBe("local-only");
+});
+
+it("Retry keeps a message marked unread in an already-unread next conversation", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const dm = { kind: "channel", channelId: "dm-room" } as const;
+  await act(() => h.owner.session.unread.markUnreadLocal(dm));
+  const shared = rows().find((row) => row.textContent?.includes("Design"));
+  if (!shared) throw new Error("Missing shared chat row");
+  fireEvent.click(within(shared).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  h.failSave();
+  await archiveOpened(h);
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  // Still unread as a whole, so only the newer message mark records the choice.
+  const reply = h.events.find((event) => event.content === "A direct reply");
+  if (!reply) throw new Error("Missing direct reply");
+  await act(() =>
+    h.owner.session.unread.markMessageUnread("dm-room", reply.id),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(h.owner.session.unread.snapshot(dm).manual).toBe("local-only");
+});
+
+it("Retry keeps a response marked unread in the next Solo chat timeline", async () => {
+  const h = fixture({ withWriter: true, soloChannel: true, memberAgents: 1 });
+  const progress = message(h.agent, "room", "Agent progress", 30);
+  h.addEvent(progress);
+  render(h.view);
+  act(() => h.emit([progress]));
+  await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
+  const thread = rows()[1] as HTMLElement;
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  h.failSave();
+  await archiveOpened(h);
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  // Marking a response unread is a newer choice that reading it would clear.
+  const response = {
+    kind: "message",
+    channelId: "room",
+    messageId: progress.id,
+  } as const;
+  await act(() => h.owner.session.unread.markUnreadLocal(response));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(h.owner.session.unread.snapshot(response).manual).toBe("local-only");
+});
+
+it("Retry still reads the next conversation after an unrelated save", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const shared = rows().find((row) => row.textContent?.includes("Design"));
+  if (!shared) throw new Error("Missing shared chat row");
+  fireEvent.click(within(shared).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  h.failSave();
+  await archiveOpened(h);
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  // Another conversation saves its own read state meanwhile.
+  await act(() =>
+    h.owner.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread.snapshot({ kind: "channel", channelId: "dm-room" })
+        .observedCount,
+    ).toBe(0),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+});
+
+it("Retry repeats a failed step of the next conversation after its other steps clear its mark", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  h.events.push(
+    message(h.alice, "room", "Newer threaded tag", 40, [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const sharedRow = () =>
+    h.owner.session.unread
+      .inbox()
+      .items.find((item) => item.channelId === "room");
+  await waitFor(() => expect(sharedRow()?.readThrough.length).toBe(2));
+  const target = sharedRow()?.target;
+  if (!target) throw new Error("Missing shared chat row");
+  await act(() => h.owner.session.unread.markUnreadLocal(target));
+  const dm = rows().find((row) => row.textContent?.includes("A direct reply"));
+  fireEvent.click(
+    within(dm as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  // The first step's save fails while the newest tag's step, which clears
+  // the mark, is still queued behind it.
+  const first = h.holdSave();
+  h.failSave();
+  await archiveOpened(h);
+  await waitFor(() => expect(h.saveStarted()).toBe(true));
+  const second = h.holdSave();
+  await act(async () => first());
+  await waitFor(() => expect(h.saveStarted()).toBe(true));
+  await act(async () => second());
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread.snapshot({ kind: "channel", channelId: "room" })
+        .observedCount,
+    ).toBe(0),
+  );
+});
+
+it("Retry still reads the next conversation's tags after an unrelated mark in its channel", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  const unrelated = message(h.alice, "room", "Untagged aside", 35);
+  h.events.push(unrelated);
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const steps = h.owner.session.unread
+    .inbox()
+    .items.find((item) => item.channelId === "room")
+    ?.readThrough.map((step) => step.target);
+  if (!steps?.length) throw new Error("Missing shared chat tags");
+  const dm = rows().find((row) => row.textContent?.includes("A direct reply"));
+  fireEvent.click(
+    within(dm as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  h.failSave();
+  await archiveOpened(h);
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  // A mark the tags' reads would not clear leaves their Retry in place.
+  await act(() =>
+    h.owner.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: unrelated.id,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  for (const target of steps)
+    expect(h.owner.session.unread.snapshot(target).observedCount).toBe(0);
+});
+
+it("Retry keeps a tag of the next conversation marked unread after its read fails", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true, withDm: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const step = h.owner.session.unread
+    .inbox()
+    .items.find((item) => item.channelId === "room")?.readThrough[0]?.target;
+  if (!step) throw new Error("Missing shared chat tag");
+  const dm = rows().find((row) => row.textContent?.includes("A direct reply"));
+  fireEvent.click(
+    within(dm as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  h.failSave();
+  await archiveOpened(h);
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  await act(() => h.owner.session.unread.markUnreadLocal(step));
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(h.owner.session.unread.snapshot(step).manual).toBe("local-only");
+});
+
+it("Retry repeats the next shared chat's failed step after both chats' saves fail", async () => {
+  const h = fixture({ withWriter: true, sharedSolo: true });
+  // A second shared chat, marked unread, with a top-level tag and a newer
+  // threaded one: two saves, the second of which clears its mark.
+  const top = message(h.alice, "room2", "Top-level tag", 30, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const root = message(h.alice, "room2", "Thread root", 31);
+  h.events.push(
+    roster(h.relayKey, "room2", [h.viewer.pubkey, h.alice.pubkey], 10, {
+      [h.alice.pubkey]: "owner",
+    }),
+    metadata(h.relayKey, "room2", "Research", 10, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+      ["P", h.alice.pubkey],
+    ]),
+    top,
+    root,
+    message(h.alice, "room2", "Threaded tag", 40, [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]),
+  );
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const next = () =>
+    h.owner.session.unread
+      .inbox()
+      .items.find((item) => item.channelId === "room2");
+  await waitFor(() => expect(next()?.readThrough.length).toBe(2));
+  const target = next()?.target;
+  if (!target) throw new Error("Missing second shared chat");
+  await act(() => h.owner.session.unread.markUnreadLocal(target));
+  const source = rows().find((row) => row.textContent?.includes("Design"));
+  fireEvent.click(
+    within(source as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  await act(() =>
+    h.owner.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: h.mention.id,
+    }),
+  );
+  // Saves run in order: the next chat's first step, the archived chat's read,
+  // then the next chat's second step. The first two fail; the third waits.
+  h.failSave(2);
+  const first = h.holdSave();
+  await archiveOpened(h);
+  await waitFor(() => expect(h.saveStarted()).toBe(true));
+  const second = h.holdSave();
+  await act(async () => first());
+  await waitFor(() => expect(h.saveStarted()).toBe(true));
+  const third = h.holdSave();
+  await act(async () => second());
+  await waitFor(() => expect(h.saveStarted()).toBe(true));
+  await act(async () => third());
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread.snapshot({ kind: "channel", channelId: "room2" })
+        .observedCount,
+    ).toBe(0),
+  );
+});
+
+it("a failed read brings an archived shared chat back, through Retry cancellation and reload", async () => {
+  const h = fixture({ sharedSolo: true, withDm: true });
+  const view = render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const shared = () =>
+    rows().find((row) => row.textContent?.includes("Design")) ?? null;
+  h.failSave();
+  fireEvent.click(
+    within(shared() as HTMLElement).getByRole("button", { name: /^Archive / }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  await waitFor(() => expect(shared()).not.toBeNull());
+  const unread = () =>
+    h.owner.session.unread.snapshot({ kind: "channel", channelId: "room" })
+      .observedCount;
+  expect(unread()).toBe(1);
+  // Moving on cancels Retry; the chat stays listed with its unread tag.
+  const dm = rows().find((row) => row.textContent?.includes("A direct reply"));
+  fireEvent.click(
+    within(dm as HTMLElement).getByRole("button", { name: /^Open / }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(shared()).not.toBeNull();
+  view.unmount();
+  render(h.view);
+  await waitFor(() => expect(shared()).not.toBeNull());
+  expect(unread()).toBe(1);
+});
+
+it("archiving someone else's chat from Inbox also reads its tags", async () => {
+  const h = fixture({ sharedSolo: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(
+    h.owner.session.unread.snapshot({ kind: "channel", channelId: "room" })
+      .observedCount,
+  ).toBe(1);
+  fireEvent.click(
+    within(rows()[0] as HTMLElement).getByRole("button", {
+      name: /^Archive /,
+    }),
+  );
+  await waitFor(() => expect(rows()).toHaveLength(0));
+  await waitFor(() =>
+    expect(
+      h.owner.session.unread.snapshot({ kind: "channel", channelId: "room" })
+        .observedCount,
+    ).toBe(0),
+  );
+});
+
 it("Inbox Solo chat activity shared with a person sends without a tag", async () => {
   const h = fixture({
     withWriter: true,
@@ -4249,6 +4787,32 @@ it("a Solo chat row includes ordinary agent responses under All, not DMs, keepin
   // The sidebar keeps Solo chats apart from direct messages; so does Inbox.
   await chooseFilter("DMs");
   expect(screen.queryByText("Agent progress")).not.toBeInTheDocument();
+});
+
+it("archiving into an owned Solo chat's timeline row reads its responses", async () => {
+  const h = fixture({ soloChannel: true, memberAgents: 1 });
+  const progress = message(h.agent, "room", "Agent progress", 30);
+  h.addEvent(progress);
+  render(h.view);
+  act(() => h.emit([progress]));
+  await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
+  const thread = rows()[1] as HTMLElement;
+  expect(thread).toHaveTextContent("A thread update");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(sideTabs()).toHaveLength(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("list", { name: "Inbox conversations" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  expect(h.journal()?.state.frontiers["activity:room"]).toBeUndefined();
+  fireEvent.click(within(thread).getByRole("button", { name: /^Archive / }));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  // Advancing reads the successor as selecting it would: one catch-up mark.
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers["activity:room"]).toBe(30),
+  );
 });
 
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {

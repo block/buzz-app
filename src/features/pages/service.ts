@@ -62,6 +62,11 @@ export type Page = Readonly<{
    * compact corner badge; prefer a short count or dot there.
    */
   badge?: ComponentType;
+  /** Plugin-owned rows nested beneath a sidebar page's navigation entry, such
+   * as conversations that need attention. Render inset NavigationItems; other
+   * placements do not show them.
+   */
+  rows?: ComponentType;
   /**
    * Supplemental content the shell shows while a pointer rests on this page's
    * sidebar entry. It is never shown without hover, in header placements, or
@@ -106,6 +111,7 @@ export class PagesService extends Service implements Pages {
       (page.companion !== undefined && typeof page.companion !== "boolean") ||
       (page.primary !== undefined && typeof page.primary !== "boolean") ||
       (page.badge !== undefined && typeof page.badge !== "function") ||
+      (page.rows !== undefined && typeof page.rows !== "function") ||
       (page.preview !== undefined && typeof page.preview !== "function")
     ) {
       throw new Error(

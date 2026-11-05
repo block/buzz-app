@@ -139,6 +139,7 @@ function fixture(
     id: "chat",
     channelType: "solo",
     creator: viewer,
+    viewerRole: "owner",
     members: [viewer, agent],
     archived: false,
   };

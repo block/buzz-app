@@ -719,6 +719,13 @@ nothing and leaves navigation usable. Toolbar badges are clipped to a compact
 content. The overflow popover uses ordinary labelled rows with trailing badges.
 Pages without `primary` have no navigation entry, so their badge is not shown.
 
+A sidebar page may also supply `rows`, a component the shell renders directly
+beneath its navigation entry, such as conversations that need attention. Render
+inset `NavigationItem`s and own the data, selection and opening; the shell owns
+placement. Rows are not shown for topbar or toolbar pages, and rows that throw
+render nothing. Inbox uses this for someone else's Solo chats that tagged the
+viewer.
+
 A primary page may also supply `preview`, supplemental content the shell shows
 in a popover while a pointer rests on the page's sidebar row, after the design
 system's Preview hover delay. The shell owns the trigger, timing, placement and

@@ -114,11 +114,7 @@ export async function shareSoloChatAccess(
   const source = session.channels
     .list()
     .channels.find((item) => item.id === id);
-  if (
-    !base.canEdit ||
-    !soloLabels(base.labels) ||
-    !ownSolo(source, session.viewer)
-  )
+  if (!base.canEdit || !soloLabels(base.labels) || !ownSolo(source))
     throw new Error("You can no longer change this chat’s general access.");
   if (!confirmed) return base;
   if (confirmed.visibility !== "private")

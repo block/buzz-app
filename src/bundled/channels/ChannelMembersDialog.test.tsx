@@ -44,6 +44,24 @@ import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { profileTarget } from "../../features/profiles/target";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
+import { UsersIcon } from "../../shared/design-system/icons";
+import {
+  IconButton,
+  type IconButtonProps,
+} from "../../shared/design-system/ui/IconButton";
+
+// The trigger's avatar preview loads names for the whole roster on its own;
+// ChannelMemberAvatars.test covers it. These tests measure the dialog's loads.
+vi.mock("./ChannelMemberAvatars", () => ({
+  ChannelMembersTrigger: ({
+    session: _session,
+    channelId: _channelId,
+    ...props
+  }: Omit<IconButtonProps, "icon"> & {
+    session: unknown;
+    channelId: string;
+  }) => <IconButton {...props} size="sm" icon={<UsersIcon size="1rem" />} />,
+}));
 import { Context } from "@deepseek-ai/cordis";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { createNavigationController } from "../../features/navigation/controller";
@@ -208,9 +226,18 @@ async function setup(
       await options.pendingMemberNames;
     if (filters.some((filter) => filter.kinds?.includes(39002)))
       await rosterRead;
-    return [roster(relay, id, members, clock), ...stableEvents].filter(
-      (event) => filters.some((filter) => matchesEvent(event, filter)),
-    );
+    // A Solo chat's roster names its owner: the viewer, or the person sharing.
+    const owner = type === "solo" ? viewer.pubkey : person.pubkey;
+    return [
+      roster(
+        relay,
+        id,
+        members,
+        clock,
+        type.includes("solo") ? { [owner]: "owner" } : {},
+      ),
+      ...stableEvents,
+    ].filter((event) => filters.some((filter) => matchesEvent(event, filter)));
   });
   const readAgentLibrary = vi.fn(
     async (): Promise<AgentLibrary> => ({

@@ -32,20 +32,36 @@ export function soloLabels(labels: readonly string[] | undefined): boolean {
   return !!labels?.includes(SOLO_LABEL);
 }
 
-/** The viewer's own Solo chat: one they created. Anyone else in a shared
- * Solo chat sees its flat treatment and finds it with their own chats. */
+/** The viewer's own Solo chat: the relay-signed roster makes them its owner.
+ * Anyone else in a shared Solo chat sees its flat treatment and finds it where
+ * it was shared. An unknown role is not ownership. */
 export function ownSolo(
   channel:
     | Readonly<{
         channelType?: string | undefined;
+        viewerRole?: ChannelSummary["viewerRole"];
+      }>
+    | undefined,
+): boolean {
+  return channel?.channelType === "solo" && channel.viewerRole === "owner";
+}
+
+/** Who owns a Solo chat, for presentation: its creator while still an owner,
+ * else the roster's first owner, or the creator for an older chat whose roster
+ * names none. Never access. */
+export function soloOwner(
+  channel:
+    | Readonly<{
+        channelType?: string | undefined;
+        owners?: readonly string[] | undefined;
         creator?: string | undefined;
       }>
     | undefined,
-  viewer: string | undefined,
-): boolean {
-  return (
-    channel?.channelType === "solo" && !!viewer && channel.creator === viewer
-  );
+): string | undefined {
+  if (channel?.channelType !== "solo") return undefined;
+  const { owners, creator } = channel;
+  if (!owners?.length) return creator;
+  return creator && owners.includes(creator) ? creator : owners[0];
 }
 
 export function soloChatLinkName(channel: { id: string; name: string }) {
@@ -53,18 +69,33 @@ export function soloChatLinkName(channel: { id: string; name: string }) {
   return channel.name.trim() || channel.id.slice(0, 8);
 }
 
-/** The authorized Solo inventory; unknown metadata never implies Solo. */
-export function eligibleSolo(
-  channel: ChannelSummary,
-  viewer: string | undefined,
-) {
+/** A Solo chat the viewer chose: their own, or one they joined as a viewer.
+ * Solo chats add people only as members, so a viewer role is treated as
+ * joined. It is not proof: a legacy invitation could admit a Guest, and that
+ * invitee is accepted as chosen too (docs/solo/sharing.md). Someone else adding
+ * the viewer as a member is not their choice, and an unknown role is neither. */
+export function chosenSolo(
+  channel:
+    | Readonly<{
+        channelType?: string | undefined;
+        viewerRole?: ChannelSummary["viewerRole"];
+      }>
+    | undefined,
+): boolean {
   return (
-    !channel.archived &&
-    channel.channelType === "solo" &&
-    (!channel.readOnly ||
-      ownSolo(channel, viewer) ||
-      (!!viewer &&
-        channel.viewerRole === "guest" &&
-        !!channel.members?.includes(viewer)))
+    ownSolo(channel) ||
+    (channel?.channelType === "solo" && channel.viewerRole === "guest")
   );
+}
+
+/** Someone else's Solo chat the viewer didn't choose: reachable from where it
+ * was shared, never listed, and only a mention earns attention. */
+export function quietSolo(channel: Parameters<typeof chosenSolo>[0]): boolean {
+  return channel?.channelType === "solo" && !chosenSolo(channel);
+}
+
+/** The sidebar's Solo inventory: the unarchived chats the viewer chose;
+ * unknown metadata never implies Solo or a choice. */
+export function eligibleSolo(channel: ChannelSummary) {
+  return !channel.archived && chosenSolo(channel);
 }

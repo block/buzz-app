@@ -54,6 +54,9 @@ checks, not that an OS banner was displayed or read.
   [workflow mention classifier](unread.md#workflow-mentions) preserves explicit
   template mentions and other recipients; DM and relevant-reply policies still
   apply. This does not change notification settings or suppress all workflows.
+- In someone else's Solo chat the viewer didn't join, only mentions alert; the unread engine decides this
+  ([someone else's Solo chat](unread.md#relevant-replies)), so replies and
+  ordinary messages there stay quiet everywhere.
 - Local agent completions alert only for relay-verified Solo chats. Their agent
   replies do not also produce a mention alert. When Buzz is focused elsewhere,
   the existing app toast says the agent is done, names the Solo chat, and offers

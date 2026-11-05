@@ -23,6 +23,7 @@ import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
+import { quietSolo } from "../solo/labels";
 import {
   memoryThreadFollows,
   THREAD_FOLLOW_LIMIT,
@@ -106,6 +107,9 @@ export interface UnreadCapability {
   retrySync(): Promise<void>;
   /** Durable local intent revision, not sync-health changes. */
   revision(): number;
+  /** Whether a manual unread that reading this target clears was saved
+   * after `revision`: anywhere in a channel, or the thread or message itself. */
+  markedSince(target: ReadTarget, revision: number): boolean;
   /** Access/cache/connection retirement fence. */
   generation(): number;
   reading(channelId: string): ReadingHandle;
@@ -308,6 +312,16 @@ export function createUnread({
   }
 
   let bytes = 0;
+  /** Someone else's Solo chats the viewer didn't join: reachable, but only
+   * mentions earn attention. An unknown role is not a choice, so a chat stays
+   * quiet while its roster loads. */
+  const guestSolos = (list: ReturnType<ChannelQueries["list"]>) =>
+    new Set(
+      list.channels
+        .filter((channel) => quietSolo(channel))
+        .map((channel) => channel.id),
+    );
+  let guests = new Set<string>();
   // Per member list: a large channel would otherwise be scanned for the
   // viewer on every event.
   const viewerIn = new WeakMap<readonly string[], boolean>();
@@ -565,7 +579,7 @@ export function createUnread({
    * effect read one set even if replies to one parent disagree on its root. */
   const conversation = (entry: Evidence) => {
     const { parentId, channelId, threadRootId } = entry;
-    if (!parentId) return false;
+    if (!parentId || guests.has(channelId)) return false;
     const explicit = chosen(entry);
     if (explicit !== undefined) return explicit;
     return (
@@ -577,18 +591,25 @@ export function createUnread({
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
    * conversations, or when it is a DM, mentions the viewer, or is broadcast.
-   * Quiet agent messages never count. */
+   * In someone else's Solo chat only a mention counts: access is not
+   * attention. Quiet agent messages never count. */
   const relevant = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
-    (!entry.parentId ||
-      dm ||
-      entry.mentioned ||
-      entry.broadcast ||
-      conversation(entry));
+    (guests.has(entry.channelId)
+      ? entry.mentioned
+      : !entry.parentId ||
+        dm ||
+        entry.mentioned ||
+        entry.broadcast ||
+        conversation(entry));
+  /** A broadcast that earns attention: never in someone else's Solo chat. */
+  const loud = (entry: Evidence) =>
+    entry.broadcast && !guests.has(entry.channelId);
   /** Retained evidence cannot decide this reply's conversation yet. */
   const undecided = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
     !!entry.parentId &&
+    !guests.has(entry.channelId) &&
     !relevant(entry, dm) &&
     chosen(entry) === undefined &&
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
@@ -730,7 +751,7 @@ export function createUnread({
           : undefined;
   }
   function priority(entry: Evidence, dm: boolean) {
-    return !!category(entry, dm) || entry.broadcast;
+    return !!category(entry, dm) || loud(entry);
   }
   function attention(channelId: string, messageId: string): MessageAttention {
     const unknown = Object.freeze({
@@ -896,11 +917,11 @@ export function createUnread({
     // Only unread thread activity is presented; most publishes have none.
     let presented: Map<string, string> | undefined;
     for (const evidence of byChannel.get(channelId) ?? []) {
-      const { event, rootId, mentioned, broadcast } = evidence;
+      const { event, rootId, mentioned } = evidence;
       want(evidence, dm);
       if (
         !rootId ||
-        (!mentioned && !broadcast && !conversation(evidence)) ||
+        (!mentioned && !loud(evidence) && !conversation(evidence)) ||
         !isUnread(evidence, state, dm)
       )
         continue;
@@ -1026,12 +1047,16 @@ export function createUnread({
           continue;
         const dm = channel.channelType === "dm";
         const session = channel.channelType === "solo";
+        // Someone else's Solo chat contributes only its mentions, all in one
+        // row for the chat, previewing the newest mention.
+        const guest = guests.has(channel.id);
+        // Only the viewer's own chat keeps a flat timeline of its responses.
+        const flat = session && !guest;
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return (
             entry.event.pubkey !== viewer &&
-            (!!category(entry, dm) ||
-              (session && !entry.parentId && !entry.quiet))
+            (!!category(entry, dm) || (flat && !entry.parentId && !entry.quiet))
           );
         });
         // A session's top-level timeline is one conversation; its threads,
@@ -1041,7 +1066,9 @@ export function createUnread({
         const elsewhere = new Set<string>();
         for (const entry of evidence) {
           const id =
-            dm || (session && !entry.parentId && !roots.has(entry.event.id))
+            dm ||
+            guest ||
+            (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
               : (entry.rootId ?? entry.event.id);
           if (id !== channel.id) elsewhere.add(id);
@@ -1056,7 +1083,7 @@ export function createUnread({
         // else, unless that message is the root of its own thread row. This
         // mostly matches its newest evidence, but follows a relay-signed row's
         // author rather than its signer.
-        const newest = session
+        const newest = flat
           ? rows.reduce<RelayEvent | undefined>((best, row) => {
               const event = events.get(row.id);
               return event &&
@@ -1087,20 +1114,22 @@ export function createUnread({
             const unread = entries.filter((entry) =>
               isUnread(entry, state, dm),
             );
-            const representative = unread[0] ?? latest;
+            // A shared chat's row opens at its newest tag, which it previews.
+            const representative = guest ? latest : (unread[0] ?? latest);
             const replies = entries.filter(
               (entry) => entry.rootId !== undefined,
             );
             const lastReply = replies[replies.length - 1];
+            const pointer = guest ? latest : lastReply;
             const target: ReadTarget = dm
               ? { kind: "channel", channelId: channel.id }
-              : lastReply?.rootId &&
-                  events.has(lastReply.rootId) &&
-                  !tombstones.has(lastReply.rootId)
+              : pointer?.rootId &&
+                  events.has(pointer.rootId) &&
+                  !tombstones.has(pointer.rootId)
                 ? {
                     kind: "thread",
                     channelId: channel.id,
-                    rootId: lastReply.rootId,
+                    rootId: pointer.rootId,
                   }
                 : {
                     kind: "message",
@@ -1126,15 +1155,16 @@ export function createUnread({
                       },
                       messageId: entry.event.id,
                     }));
-            if (!dm && lastReply?.rootId)
-              readThrough.push({
-                target: {
-                  kind: "thread",
-                  channelId: channel.id,
-                  rootId: lastReply.rootId,
-                },
-                messageId: lastReply.event.id,
-              });
+            // Through each thread's latest reply: a shared chat's row can
+            // gather mentions from several threads.
+            if (!dm)
+              for (const [rootId, reply] of new Map(
+                replies.map((entry) => [entry.rootId as string, entry]),
+              ))
+                readThrough.push({
+                  target: { kind: "thread", channelId: channel.id, rootId },
+                  messageId: reply.event.id,
+                });
             return Object.freeze({
               id: `${channel.id}:${id}`,
               channelId: channel.id,
@@ -1182,7 +1212,7 @@ export function createUnread({
               ),
             });
           };
-          const item = project(entries, id === channel.id && session);
+          const item = project(entries, id === channel.id && flat);
           if (item)
             items.push(
               Object.freeze({
@@ -1341,7 +1371,7 @@ export function createUnread({
         )
         .map((channel) => [
           channel.id,
-          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}`,
+          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}:${quietSolo(channel)}`,
         ]),
     );
   const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>
@@ -1365,6 +1395,7 @@ export function createUnread({
   let archivedKey = inboxArchiveKey(initialList);
   let cachedChannels = cachedIds(initialList);
   let channelTypes = types(initialList);
+  guests = guestSolos(initialList);
   let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
     const list = channels.list();
@@ -1381,6 +1412,7 @@ export function createUnread({
     const gained = [...nextTypes.keys()].some((id) => !channelTypes.has(id));
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
+    guests = guestSolos(list);
     // Channel archive changes Inbox eligibility, not membership or read intent.
     const nextArchived = inboxArchiveKey(list);
     const archiveChanged = nextArchived !== archivedKey;
@@ -1416,7 +1448,7 @@ export function createUnread({
     const structuralRootId =
       !entry.rootId &&
       (chosen(entry) === true ||
-        ((entry.mentioned || entry.broadcast || conversation(entry)) &&
+        ((entry.mentioned || loud(entry) || conversation(entry)) &&
           isUnread(entry, reads.state(), dm)))
         ? threadRootId
         : undefined;
@@ -2027,6 +2059,19 @@ export function createUnread({
       channelReadGenerations.get(channelId) === generation &&
       allowed(channelId);
   }
+  /** Every key that can hold manual intent for this channel's retained evidence. */
+  function channelIntentKeys(channelId: string) {
+    indexEvidence();
+    const keys = new Set([channelId, messageForceKey(channelId)]);
+    for (const { event, rootId } of byChannel.get(channelId) ?? []) {
+      keys.add(`msg:${event.id}`);
+      if (rootId) keys.add(`thread:${rootId}`);
+      // A retained top-level message establishes its thread's channel even
+      // when that thread's replies are outside our bounded evidence window.
+      if (!threadReference(event)) keys.add(`thread:${event.id}`);
+    }
+    return keys;
+  }
   // Capture evidence and time once per click, including every channel in a sweep.
   function channelReadIntent(channelId: string, clickedAt: number) {
     if (closed || !allowed(channelId))
@@ -2043,14 +2088,7 @@ export function createUnread({
       (newest, { event }) => Math.max(newest, event.created_at),
       clickedAt,
     );
-    const keys = new Set([channelId, messageForceKey(channelId)]);
-    for (const { event, rootId } of rows) {
-      keys.add(`msg:${event.id}`);
-      if (rootId) keys.add(`thread:${rootId}`);
-      // A retained top-level message establishes its thread's channel even
-      // when that thread's replies are outside our bounded evidence window.
-      if (!threadReference(event)) keys.add(`thread:${event.id}`);
-    }
+    const keys = channelIntentKeys(channelId);
     const valid = channelIntentValid(channelId);
     return async () => {
       const result =
@@ -2104,6 +2142,13 @@ export function createUnread({
       await repair();
     },
     revision: reads.revision,
+    markedSince(target, revision) {
+      const keys =
+        target.kind === "channel"
+          ? [...channelIntentKeys(target.channelId)]
+          : [targetKey(target)];
+      return keys.some((key) => (reads.localUnread(key) ?? 0) > revision);
+    },
     generation: () => epoch,
     retrySync: async () => {
       await reads.refresh();

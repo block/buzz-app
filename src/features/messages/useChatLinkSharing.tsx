@@ -129,13 +129,7 @@ export function useChatLinkSharing(
       const attempts = new Map<string, ChannelDetailsDraft>();
       const confirmingChats: ChannelDetails[] = [];
       for (const id of new Set(sources)) {
-        if (
-          !ownSolo(
-            list.find((channel) => channel.id === id),
-            session.viewer,
-          )
-        )
-          continue;
+        if (!ownSolo(list.find((channel) => channel.id === id))) continue;
         const base = await shareSoloChatAccess(session, id, {
           signal,
           attempts,

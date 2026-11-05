@@ -120,7 +120,11 @@ test("registered backdrops paint in order between the shell and its controls, an
   ]) {
     await page.emulateMedia(preference);
     await expect(layer).toHaveCount(0);
-    await page.emulateMedia({ reducedMotion: null, forcedColors: null });
+    // Clear the preference explicitly; null restores the runner's OS setting.
+    await page.emulateMedia({
+      reducedMotion: "no-preference",
+      forcedColors: "none",
+    });
     await expect(layer.locator(".shell-backdrop-layer")).toHaveCount(2);
   }
 });

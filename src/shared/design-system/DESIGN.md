@@ -172,6 +172,10 @@ Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
 `ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
+Only the sticky footer's gradient gutter passes pointer input to the body.
+Its content row owns pointer input and horizontal overflow, including text,
+controls, gaps, and the bottom inset. When reduced transparency or forced colors
+make the gutter opaque, it also blocks input to the body beneath it.
 Its host supplies overlap and isolation; `--scroll-edge-surface` selects the
 host surface when it differs from the default popover surface.
 `--scroll-edge-fill` can supply a stronger backing behind text within that fade.
@@ -904,7 +908,9 @@ same time and removes it without fading.
 
 The horizontal message hover toolbar sits above the bubble, with reaction,
 reply, copy-link and overflow icon actions. It uses `popover-surface` with
-a 12px control radius and 2px inset. Its icon actions use `text-subtle` at rest
+a 12px control radius and 2px inset. While closed it is invisible and drops the
+recipe's backdrop blur, so long timelines do not composite one blur per row;
+the open toolbar has the complete material. Its icon actions use `text-subtle` at rest
 and retain the shared hover, focus and disabled states and 10px corners.
 
 Message-author artwork uses Avatar `default` (32px) in channel/DM timelines,

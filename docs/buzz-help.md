@@ -302,6 +302,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
   outside Apple platforms) swaps that on this device: Enter adds a line and
   ⌘/Ctrl+Enter sends. It starts off.
+- A plugin can require a recipient for a new conversation. Its default recipient
+  also applies to a saved draft with no recipients. Your text and formatting stay.
+  A recipient you select takes priority.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. If an upload fails, its attachment shows the reason, **Retry**, and
@@ -335,6 +338,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
+- **Message density**: **Settings → Appearance → Message density → Compact**
+  shows conversations as a flat, left-aligned list without bubbles, across the
+  window's full width, to fit more on screen. Text size stays with **Interface
+  size**. The choice applies on this device only.
 - **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
   24-hour times. System, the default, follows the desktop app's operating
   system: the 24-hour time setting on macOS, the short time format on Windows,
@@ -437,6 +444,10 @@ account and community. Saved text, recipients, uploaded attachments, references,
 and model choices survive a reload or restart; uploads still in progress are not
 queued yet.
 
+Use the pencil button to edit queued text in the message composer. Save changes
+or cancel to return to your previous draft; attachments and recipients stay with
+the queued message. The X button removes it, and the up-arrow sends it.
+
 After restart, saved messages stay paused. **Send** sends a selected row, and
 **Remove** discards an unsent row. **Resume** restarts supported interrupted turns
 and unpauses saved follow-ups in those chats, sending them in order as turns finish.
@@ -471,6 +482,11 @@ available rather than silently discarding it.
   the model clears the thinking choice. Instructions are optional. **Create agent**
   stays disabled until its name and required choices are complete; Builderlab
   also waits for sign-in and its model catalog.
+- An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
+  **Add to Buzz**), opens **Create agent** filled in with the card's name,
+  picture and instructions, on desktop and mobile. Nothing is created until you
+  review it and choose **Create agent**. Choose the harness and model yourself;
+  instructions go to harnesses that keep them.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
@@ -480,7 +496,11 @@ available rather than silently discarding it.
   existing chat or an edited draft. People can choose a different agent for a
   particular conversation. When the optional **Bestie** plugin is on, that saved
   choice also opens the agent's DM from the left Apps dock. The Messages
-  sidebar omits the duplicate Bestie row. A verified existing DM stays available if
+  sidebar omits the duplicate Bestie row. Bestie uses the same conversation tabs as
+  Messages: threads open beside the chat (or in the main pane, following your
+  thread placement setting), and can be moved, renamed, or closed. Collapsing
+  the side pane keeps its open threads and reply drafts.
+  A verified existing DM stays available if
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
   does not prove an agent is ready or running.
@@ -523,7 +543,10 @@ available rather than silently discarding it.
   still shows when an agent is working there. Expand recorded work to
   open its transcript or **Stop** the running request; before any work updates
   arrive, those controls appear on the live indicator. Stop availability depends
-  on the agent type.
+  on the agent type. A reply does not hide ongoing work. If more updates arrive
+  after a reply, the newest update group carries that agent's live activity and
+  Stop control; earlier groups remain readable history. In Codex DMs, an accepted
+  follow-up takes over the live indicator; separate threads keep their own.
 - A Goose agent's Activity lists the sessions Buzz recorded on this device for
   each conversation. A conversation with no recorded session, such as one from
   an earlier version of Buzz or another computer, offers **Search older

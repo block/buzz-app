@@ -321,3 +321,32 @@ it("still clears shown entries when the read is denied or the session clears", a
   expect(view.snapshot()).toEqual({ status: "idle" });
   view.dispose();
 });
+
+it("drops the kept listing on denial, and a read still in flight can't keep it again", async () => {
+  const { read, reads } = settled();
+  const owner = createAgentMemories(read, viewer, () => true);
+  const first = owner.capability.open(agent);
+  let done = first.refresh();
+  reads[0]?.resolve(listing("kept"));
+  await done;
+  first.dispose();
+  const older = owner.capability.open(agent);
+  const olderDone = older.refresh();
+  const view = owner.capability.open(agent);
+  done = view.refresh();
+  expect(slugs(view.snapshot())).toEqual(["kept"]);
+  const denied = new Error("Memory read failed");
+  denied.name = "MemoryDenied";
+  reads[2]?.reject(denied);
+  await done;
+  expect(view.snapshot()).toEqual({ status: "denied" });
+  view.dispose();
+  // The older read was admitted before the denial: it may not cache.
+  reads[1]?.resolve(listing("late"));
+  await olderDone;
+  older.dispose();
+  const reopened = owner.capability.open(agent);
+  void reopened.refresh();
+  expect(reopened.snapshot()).toEqual({ status: "loading" });
+  reopened.dispose();
+});

@@ -324,10 +324,18 @@ export function createAgentMemories(
             );
         } catch (error) {
           // A failed refresh keeps what it showed, beside Retry; denial
-          // clears it. Invalidation and retirement abort, publishing nothing.
+          // clears it and its kept listing, fencing reads still in flight.
+          // Invalidation and retirement abort, publishing nothing.
+          const denied =
+            error instanceof Error && error.name === "MemoryDenied";
+          if (denied) {
+            keeping++;
+            clearTimeout(kept.get(agent)?.release);
+            kept.delete(agent);
+          }
           if (!owned.signal.aborted)
             publish(
-              error instanceof Error && error.name === "MemoryDenied"
+              denied
                 ? { status: "denied" }
                 : snapshot.listing && available()
                   ? { status: "error", listing: snapshot.listing }

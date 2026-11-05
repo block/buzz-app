@@ -42,15 +42,35 @@ const VISIBILITY = [
   "open",
 ];
 
+/** The highlight registered under `name`, registering it the first time. */
+function registered(highlights: HighlightRegistry, name: string) {
+  let highlight = highlights.get(name);
+  if (!highlight) {
+    highlight = new Highlight();
+    highlights.set(name, highlight);
+  }
+  return highlight;
+}
+/**
+ * Older WebKit, including the system web view on macOS, repaints nothing when
+ * `CSS.highlights.set()` replaces a registered highlight, so earlier matches
+ * stay painted. It also never paints a range object that another highlight
+ * already placed. So keep one registered highlight per name, change it in place
+ * (which repaints the old ranges and the new), and give it fresh copies.
+ */
 function paint(ranges: readonly Range[], active: number) {
   // Without the Custom Highlight API the bar still counts and scrolls.
   const highlights = globalThis.CSS?.highlights;
   if (!highlights) return;
-  highlights.set(
-    MATCHES,
-    new Highlight(...ranges.filter((_, index) => index !== active)),
-  );
-  highlights.set(ACTIVE, new Highlight(...ranges.slice(active, active + 1)));
+  const matches = registered(highlights, MATCHES);
+  const current = registered(highlights, ACTIVE);
+  matches.clear();
+  current.clear();
+  ranges.forEach((range, index) => {
+    // A range whose text was removed has collapsed; there's nothing to paint.
+    if (!range.collapsed)
+      (index === active ? current : matches).add(range.cloneRange());
+  });
 }
 function unpaint() {
   globalThis.CSS?.highlights?.delete(MATCHES);

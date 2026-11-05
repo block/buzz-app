@@ -295,3 +295,49 @@ it("recounts at least once a second while content keeps changing", async () => {
     });
   expect(findBar()).not.toHaveTextContent("1 of 1");
 });
+
+it("repaints through one registered highlight per name as the query and match change", async () => {
+  // Older WebKit doesn't repaint when CSS.highlights.set() replaces a
+  // registered highlight, and never paints a range another highlight placed.
+  const set = vi.spyOn(highlights, "set");
+  const { user } = setup(
+    <main>
+      <p id="one">No channels yet.</p>
+      <p id="two">No messages yet. Join channel to send messages</p>
+    </main>,
+  );
+  await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+  const steps: [string, string, number][] = [
+    ["n", "1 of 8", 7],
+    ["o", "1 of 2", 1],
+    [" messageskkkk", "No results", 0],
+  ];
+  for (const [text, status, others] of steps) {
+    await user.paste(text);
+    expect(await screen.findByText(status)).toBeInTheDocument();
+    expect(highlights.get("buzz-find")?.size).toBe(others);
+    expect(highlights.get("buzz-find-active")?.size).toBe(others ? 1 : 0);
+  }
+  await user.clear(field());
+  await waitFor(() => expect(highlights.get("buzz-find")?.size).toBe(0));
+  expect(highlights.get("buzz-find-active")?.size).toBe(0);
+
+  await user.paste("no");
+  expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+  const before = painted("buzz-find-active");
+  await user.keyboard("{Enter}");
+  expect(screen.getByText("2 of 2")).toBeInTheDocument();
+  expect(painted("buzz-find-active")).not.toEqual(before);
+  expect(painted("buzz-find")).toEqual(before);
+  // Every change above went through the two highlights registered first.
+  expect(set.mock.calls.map(([name]) => name)).toEqual([
+    "buzz-find",
+    "buzz-find-active",
+  ]);
+  const active = [...(highlights.get("buzz-find-active") ?? [])];
+  const others = [...(highlights.get("buzz-find") ?? [])];
+  expect(active.some((range) => others.includes(range))).toBe(false);
+
+  await user.keyboard("{Escape}");
+  expect(highlights.size).toBe(0);
+});

@@ -11789,7 +11789,11 @@ it.each(["saved", "recovered", "typed before the default"])(
       },
     });
     if (source === "typed before the default") {
-      pasteRichDraft(h.input(), "<p><strong>Keep this brief</strong></p>");
+      h.fill("Keep this brief");
+      act(() => {
+        h.input().setSelectionRange(0, draft.text.length);
+        h.input().toggleFormat("bold");
+      });
       expect(
         screen.getByRole("button", { name: "Send message" }),
       ).toHaveAttribute("aria-disabled", "true");

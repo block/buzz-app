@@ -326,7 +326,7 @@ export class ClaudeRuntime {
           saved.key,
         );
         runtime.subscribe(() => this.notify());
-        this.remote.set(key, { agent, runtime, execution });
+        this.remote.set(key, { agent, conversation, runtime, execution });
         execution.signal.addEventListener(
           "abort",
           () => {
@@ -342,7 +342,7 @@ export class ClaudeRuntime {
         throw error;
       }
     })();
-    this.opening.set(key, { agent, abort, ready });
+    this.opening.set(key, { agent, conversation, abort, ready });
     this.notify();
     try {
       return await ready;
@@ -636,10 +636,18 @@ export class ClaudeRuntime {
     if (this.controls.compacting(`${agent.key}/${key}`)) return "compacting";
     if (this.controls.active(`${agent.key}/${key}`)) return "active";
     if (this.bound(agent.key)) {
-      const remoteKey = this.executionKey(agent.key, key);
-      if (this.opening.has(remoteKey)) return "active";
+      if (
+        [...this.opening.values()].some(
+          (entry) => entry.agent === agent.key && entry.conversation === key,
+        )
+      )
+        return "active";
       return (
-        this.remote.get(remoteKey)?.runtime.sessionState(agent, place) ?? "idle"
+        [...this.remote.values()]
+          .find(
+            (entry) => entry.agent === agent.key && entry.conversation === key,
+          )
+          ?.runtime.sessionState(agent, place) ?? "idle"
       );
     }
     if (this.controls.compacting(`${agent.key}/${key}`)) return "compacting";
@@ -657,16 +665,18 @@ export class ClaudeRuntime {
   ): Promise<void> {
     const key = this.controlKey(agent, place);
     if (await this.inspect?.(agent.key)) {
-      const remoteKey = this.executionKey(agent.key, key);
       if (action === "interrupt") {
         if (this.controls.interrupt(`${agent.key}/${key}`)) return;
-        this.opening
-          .get(remoteKey)
-          ?.abort.abort(new Error("Claude was stopped"));
-        return this.remote
-          .get(remoteKey)
-          ?.runtime.session(agent, place, action);
+        for (const pending of this.opening.values())
+          if (pending.agent === agent.key && pending.conversation === key)
+            pending.abort.abort(new Error("Claude was stopped"));
+        const remote = [...this.remote.values()].find(
+          (entry) => entry.agent === agent.key && entry.conversation === key,
+        );
+        await remote?.runtime.session(agent, place, action);
+        return;
       }
+      const remoteKey = this.executionKey(agent.key, key);
       if (this.sessionState(agent, place) !== "idle")
         throw new Error("Wait for the active turn to finish first.");
       return this.controls.run(

@@ -100,7 +100,7 @@ createInterface({input:process.stdin}).on('line', (line) => {
     if (resume && !existsSync(session+'.saved')) { process.stderr.write('No conversation found'); process.exit(1); }
     writeFileSync(session+'.saved','saved');
     send({type:'system',subtype:'init',session_id:'session-1',model:'haiku'});
-    if (wire.message.content === 'hold') return;
+    if (wire.message.content === 'hold' || wire.message.content.includes('hold-request')) return;
     send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'read',arguments:{path:'proof.bin'}}}}});
   } else if (wire.type === 'control_response') {
     if (wire.response.request_id === 'tool') {
@@ -223,10 +223,11 @@ it("resumes the same remote Claude session after restart and gives New a fresh t
   const local = vi.fn(async () => {
     throw new Error("Local Claude must stay unused");
   });
+  let connected = true;
   const create = () =>
     new ClaudeRuntime(
       { spawn: local },
-      () => reads,
+      () => (connected ? reads : undefined),
       async () => null,
       fileStore(
         new Map(),
@@ -280,6 +281,22 @@ it("resumes the same remote Claude session after restart and gives New a fresh t
     const saved = runtime.conversations(agent.key)[0];
     expect(saved?.sessionId).toBeTruthy();
     expect(handle.publish).not.toHaveBeenCalled();
+    event.content = "hold-request";
+    const pending = deliver();
+    await vi.waitFor(() =>
+      expect(runtime.sessions(agent.key)).toEqual([
+        { key: "room", busy: true },
+      ]),
+    );
+    connected = false;
+    try {
+      expect(runtime.sessionState(agent, { channelId: "room" })).toBe("active");
+      await runtime.session(agent, { channelId: "room" }, "interrupt");
+      await pending;
+    } finally {
+      connected = true;
+      event.content = "hello";
+    }
     await runtime.retire(agent.key);
     runtime.dispose();
     runtime = create();

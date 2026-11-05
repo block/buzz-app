@@ -243,4 +243,16 @@ export async function hoverRow(page, locator, scroller = history(page)) {
   const box = await locator.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
 }
+// Click a control inside a timeline row once the timeline is at rest. Opening
+// a panel resizes the timeline: rows rewrap and the reading position moves
+// through scroll events, each restarting Virtua's pointer-event hold. A click
+// can pass Playwright's checks and still land in a hold that starts after them
+// (seen on Linux WebKit CI after Playwright scrolled the row into view); it
+// reaches the scroller and the control never sees it. Scroll first, then wait.
+export async function clickRow(page, locator, scroller = history(page)) {
+  await virtuaIdle(page, scroller);
+  await locator.scrollIntoViewIfNeeded();
+  await virtuaIdle(page, scroller);
+  await locator.click();
+}
 export { activate } from "./navigation.mjs";

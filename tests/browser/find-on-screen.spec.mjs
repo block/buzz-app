@@ -49,6 +49,27 @@ const box = (locator) =>
     const { x, y, width, height } = element.getBoundingClientRect();
     return { x, y, width, height };
   });
+// The active match's box, and whether it lies inside every clipping ancestor.
+const activeMatch = (page) =>
+  page.evaluate(() => {
+    const [range] = CSS.highlights.get("buzz-find-active");
+    const match = range.getBoundingClientRect();
+    let shown = match.width > 0;
+    for (let element = range.startContainer.parentElement; element; ) {
+      const style = getComputedStyle(element);
+      if (`${style.overflowX}${style.overflowY}` !== "visiblevisible") {
+        const clip = element.getBoundingClientRect();
+        shown &&=
+          match.top >= clip.top &&
+          match.bottom <= clip.bottom &&
+          match.left >= clip.left &&
+          match.right <= clip.right;
+      }
+      element = element.parentElement;
+    }
+    return { text: range.toString(), shown };
+  });
+
 // Layout: inside a dialog, the dialog's floating material becomes the
 // containing block for fixed descendants and clips them; jsdom has no layout.
 test("the bar keeps the window's top-right corner inside a dialog", async ({
@@ -75,5 +96,28 @@ test("the bar keeps the window's top-right corner inside a dialog", async ({
   await input.click();
   await expect(input).toBeFocused();
   await expect(dialog).toBeVisible();
+  expect(errors.unexplained()).toEqual([]);
+});
+
+// Geometry: a code block taller and wider than its scroller holds matches
+// that centering the block can't reveal; jsdom has no range geometry.
+test("stepping reveals each match in a long code block", async ({ page }) => {
+  const errors = watchPageErrors(page);
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.goto(url);
+  await page.evaluate(() => window.openFind());
+  await field(page).fill("needle");
+  const status = page.locator("search [role=status]");
+  await expect(status).toHaveText("1 of 2");
+  expect(await activeMatch(page)).toEqual({ text: "needle", shown: true });
+  await field(page).press("Enter");
+  await expect(status).toHaveText("2 of 2");
+  expect(await activeMatch(page)).toEqual({ text: "needle", shown: true });
+
+  await field(page).fill("farright");
+  await expect(status).toHaveText("1 of 1");
+  await expect
+    .poll(() => activeMatch(page))
+    .toEqual({ text: "farright", shown: true });
   expect(errors.unexplained()).toEqual([]);
 });

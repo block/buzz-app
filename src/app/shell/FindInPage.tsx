@@ -56,6 +56,43 @@ function unpaint() {
   globalThis.CSS?.highlights?.delete(MATCHES);
   globalThis.CSS?.highlights?.delete(ACTIVE);
 }
+/** The distance to move a span so it is centered, when it isn't fully inside. */
+const offset = (start: number, end: number, low: number, high: number) =>
+  start >= low && end <= high ? 0 : (start + end - low - high) / 2;
+/**
+ * Scroll each container from the match outward so the match itself is in
+ * view. Centering its element instead can leave a match in a long code block
+ * offscreen.
+ */
+function reveal(range: Range) {
+  const parent = range.startContainer.parentElement;
+  // jsdom lays out nothing and has no range geometry.
+  if (!range.getBoundingClientRect)
+    return parent?.scrollIntoView({ block: "center", inline: "nearest" });
+  for (let element = parent; element; element = element.parentElement) {
+    const box =
+      element === document.scrollingElement
+        ? { top: 0, left: 0 }
+        : element.getBoundingClientRect();
+    const top = box.top + element.clientTop;
+    const left = box.left + element.clientLeft;
+    const match = range.getBoundingClientRect();
+    // Elements that don't scroll ignore these.
+    element.scrollTop += offset(
+      match.top,
+      match.bottom,
+      top,
+      top + element.clientHeight,
+    );
+    element.scrollLeft += offset(
+      match.left,
+      match.right,
+      left,
+      left + element.clientWidth,
+    );
+  }
+}
+
 /**
  * Find on screen: Chrome's find bar over the rendered window. It paints with
  * the Custom Highlight API, so the DOM React and the composer own is never
@@ -89,11 +126,8 @@ export function FindInPage({
       total: list.length,
       query: latest.current.query.trim(),
     });
-    if (scroll)
-      list[active.current]?.startContainer.parentElement?.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-      });
+    const range = list[active.current];
+    if (scroll && range) reveal(range);
   }, []);
   const close = useCallback(() => {
     const scope = latest.current.root;

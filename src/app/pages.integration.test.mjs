@@ -169,7 +169,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "buzz.channels",
         "buzz.emoji",
         "buzz.github",
-        "buzz.github",
         "buzz.pairing",
       ],
     );
@@ -190,7 +189,13 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       "https://github.com/block/buzz-app/issues/7",
       "https://github.com/block/buzz-app/commit/abcdef1",
     ];
-    assert.equal(services.settingsCards.has("buzz.github/links"), true);
+    assert.equal(services.settingsCards.has("buzz.github/links"), false);
+    const githubSettings = services.settingsCards
+      .snapshot()
+      .filter((card) => card.pluginId === "buzz.github");
+    assert.equal(githubSettings.length, 1);
+    assert.equal(githubSettings[0].key, "buzz.github/authors");
+    assert.equal(githubSettings[0].title, "GitHub");
     for (const target of githubTargets)
       assert.equal(services.panels.resolve(target)?.pluginId, "buzz.github");
     const githubLinks = services.conversation.links.snapshot();
@@ -262,7 +267,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "block.builderlab",
         "buzz.channels",
         "buzz.emoji",
-        "buzz.github",
         "buzz.github",
         "buzz.pairing",
       ],

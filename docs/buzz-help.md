@@ -506,7 +506,7 @@ confirmation.
   macOS (inside the app's installed name, such as `Buzz Foundation.app`), with
   no setup or token. Without such a plugin there are no tools to
   offer; do not promise them.
-- **Settings → Plugins → GitHub links → Open GitHub links in Buzz** controls
+- **Settings → Plugins → GitHub → Links → Open GitHub links in Buzz** controls
   whether supported GitHub links and the linked-PR shortcut open in a side
   panel or your browser. It starts on and is saved on this device across all
   communities. Turning it off keeps pull request indicators and agent tools enabled.

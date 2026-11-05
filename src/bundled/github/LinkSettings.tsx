@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Header } from "../../shared/design-system/ui/Header";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import {
@@ -12,7 +12,7 @@ export function LinkSettings({ active }: { active(): boolean }) {
   const [error, setError] = useState(false);
   return (
     <section aria-label="GitHub link settings">
-      <Header title="GitHub links" />
+      <InlineHeader title="Links" />
       <SettingsGroup>
         <SwitchPreferenceRow
           label="Open GitHub links in Buzz"

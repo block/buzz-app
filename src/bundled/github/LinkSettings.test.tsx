@@ -4,6 +4,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { LinkSettings } from "./LinkSettings";
+import { GitHubSettings } from "./GitHubSettings";
 import {
   openGitHubLinksInBuzz,
   setOpenGitHubLinksInBuzz,
@@ -94,4 +95,21 @@ it("preserves the default when storage cannot be read or has an unknown value", 
     throw new Error("Storage unavailable");
   });
   expect(openGitHubLinksInBuzz()).toBe(true);
+});
+
+it("groups links and comment authors under a single GitHub heading", async () => {
+  render(<GitHubSettings active={() => true} />);
+  expect(
+    screen.getByRole("heading", { level: 2, name: "GitHub" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 3, name: "Links" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 3, name: "Comment authors" }),
+  ).toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("switch", { name: "Open GitHub links in Buzz" }),
+  );
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 });

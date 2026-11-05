@@ -217,6 +217,13 @@ that agent in Buzz; they do not notify the external app through this connection.
   one to make it a chip. Click a chip to remove it, or press Backspace at the
   start of the text to edit the last one. With a filter, search shows only
   messages.
+- **Find on screen**: press ⌘⇧F (Ctrl+Shift+F on Windows and Linux) to find
+  text already shown in the window, like a browser's find bar. Matches are
+  highlighted, with the current one in orange, and the bar shows "n of total".
+  Enter goes to the next match, Shift+Enter to the previous, and Escape closes
+  it. With a dialog open, it searches that dialog. It doesn't find messages
+  that haven't loaded or text in the message box; use ⌘F (**Search this
+  conversation**) to search a conversation's full history.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.

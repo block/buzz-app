@@ -27,6 +27,7 @@ import { CommunityShortcuts } from "./CommunityShortcuts";
 import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
 import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
+import { FindInPage } from "./FindInPage";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
 import { BestieNavigationProvider } from "./BestieNavigation";
@@ -462,6 +463,7 @@ function AppShellContent({
               onSelect={onSelect}
               services={searchServices}
             />
+            <FindInPage shortcuts={searchServices?.shortcuts} />
           </div>
         </div>
         <div

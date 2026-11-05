@@ -175,11 +175,21 @@ export class ClaudeRuntime {
   private disposed = false;
   private readonly remote = new Map<
     string,
-    { agent: AgentKey; runtime: ClaudeRuntime; execution: AgentExecution }
+    {
+      agent: AgentKey;
+      conversation: string;
+      runtime: ClaudeRuntime;
+      execution: AgentExecution;
+    }
   >();
   private readonly opening = new Map<
     string,
-    { agent: AgentKey; abort: AbortController; ready: Promise<ClaudeRuntime> }
+    {
+      agent: AgentKey;
+      conversation: string;
+      abort: AbortController;
+      ready: Promise<ClaudeRuntime>;
+    }
   >();
   private readonly agents = new Map<AgentKey, Entry>();
   private readonly memoryReads = new MemoryReads();

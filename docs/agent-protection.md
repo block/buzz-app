@@ -33,6 +33,21 @@ protection `stateKey` with each saved thread and resumes it only under the same
 key, so a policy change, or moving between unprotected and protected, starts a
 new thread.
 
+Codex records a turn's input before it is checked, so a refused input stays in
+that thread and is checked again on each later turn there. If the protection
+plugin saved the denial, each of those turns is refused at once. To continue,
+start a new session in that conversation, or have the plugin forget its saved
+denials (the security plugin's **Forget denied messages**, which clears them for
+every agent) so the input is checked again. An input too large to check is
+refused the same way, and forgetting does not help. Codex refuses it on each
+later turn in that thread. Claude resumes its saved session and is refused
+again. When that refusal comes before Claude reports its start, as it does in
+the Claude versions checked, Buzz retries the turn in a new session, as starting
+one yourself would. Either way, a new session recovers only once the oversized
+text is no longer in what it is shown. Claude is shown the last 12 messages,
+each cut to 4,000 characters, and any Canvas, so an oversized Canvas is refused
+until it shrinks.
+
 Protected Codex runs in Buzz's Codex home, like unprotected Codex. Its security
 reviews run in a separate Buzz review home, which the security plugin keeps
 read-only to contained workers. That home holds only links to the sign-in and to
@@ -71,6 +86,15 @@ An installed plugin injects `agentProtection`, then registers
 plugin ID; replacing or unloading it revokes the old registration and pending
 checks. Only the exact boolean `true` permits an action. Exceptions, cancellation,
 missing providers, invalid/oversized requests and the bounded deadline deny it.
+A provider may instead deny with exactly `{allowed: false, reason}` to explain
+the denial to people. Buzz reduces the reason to one line of at most 300
+characters and uses it only when denying what a protected Codex agent reads (a
+`context` check) ends its turn. The reason is the provider's text, often written
+by a reviewer model that may quote or follow the denied input, so no agent
+receives it: the denial returned to the agent stays generic, and the thread says
+only that Codex could not finish. The reason shows as plain text with that
+session's "Needs attention" status on the agent's Activity tab on this device;
+it stays in memory and is never published to the relay.
 
 `runtimeProcesses` maps runtime owner IDs, such as `buzz.codex`, to processes in
 the protecting plugin's manifest. A bound `AgentProtection.spawn(options)` selects

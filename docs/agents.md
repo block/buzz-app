@@ -129,6 +129,38 @@ the linked message's channel and thread; it cannot combine with `channel` or
 Unknown fields are rejected. File access, commands, Git credentials, and plugin
 tools are unavailable. Connection credentials must stay out of logs and messages.
 
+## Managing plugins from a conversation
+
+An agent in the desktop app can read and request changes to this device's
+plugins with the `plugin_*` tools, which load on search. `plugin_list` reports
+each plugin's state and source, and `plugin_discover` lists the built plugins in
+a Git repository without taking the install preview. `plugin_disable` applies at
+once: it only stops code, and an enable request reverses it.
+
+`plugin_request` asks the person using Buzz to install, update, enable or remove a
+plugin and returns a request ID with `applied: false`. Install and update read the
+repository when the agent asks and pin the commit it saw, so the code reviewed is
+the code requested. The tool also posts a message, signed as the agent, in the
+conversation the agent is working in, such as "Requested: install Browser — Open the
+staging site", and that message draws as a card with the plugin, the agent's name and
+reason, and **Review** and **Decline**. Review opens the same access review as a
+[managed recommendation](managed-plugins.md) at that commit; enable shows the
+plugin's access; remove confirms like Delete. Decline refuses it, and closing a review
+leaves it pending. Once decided, the card shows the outcome (such as Installed or
+Declined) without buttons. Only the device that holds the request shows the buttons;
+on another device, or after a restart, the card is the message alone. The request
+also stays under **Requested by agents** in **Settings → Plugins → Manage plugins**,
+for an agent with no conversation or a message that did not post.
+`plugin_request_status` tells only the requesting agent whether the request is
+pending, approved, declined or expired. Requests are local, at most 16 and one per plugin, and do not survive a
+restart. Agents cannot read Buzz-hosted repositories, since the desktop signs those
+reads as the owner; the owner adds them in Settings. A plugin listed in the
+[managed plugin file](managed-plugins.md) installs and updates only from its
+recommendation, and plugins Settings gates on admin access are not enabled by
+request. Only an agent's own runs get these tools, not a plugin's `Agents.handle`.
+The standalone tool server and the browser build have no plugins to manage, so the
+tools refuse there.
+
 ## Product help for agents
 
 The read-only `buzz_help` tool returns [the Buzz quick guide](buzz-help.md), bundled
@@ -157,6 +189,8 @@ behavior for its agents. Plugins can add a tab to every local agent with
 `ctx.agents.registerTab`, or to some of them with its optional `when(agent)`;
 the Attention plugin's Attention tab holds the device Attention switch, and the
 Bestie plugin's Bestie tab shows only on your Bestie.
+
+Attention command processes on macOS and Linux stop when their app process exits, including an abrupt exit. A shared lease allows one running command per agent, provider, watch and declared process across Buzz builds on the same computer. A new owner waits for the previous command to stop before starting its copy. Removing a watch or turning Attention off stops its command through the existing process host.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
@@ -745,10 +779,11 @@ turning it back on does not restore old recipients. Solo chat auto-recipient rul
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
-Team records in the channel kit (see [Channels](channels.md); groups, Canvas and
-`buzz-channel-kit-v2` team manifests) appear in both mention choosers as shortcuts.
-No bundled plugin writes team records now, so they appear only for records already
-in the community. A team is a shortcut, not a group identity: explicit selection
+Saved teams from **Your teams**, both local and confirmed synced copies, appear
+in both mention choosers under the same community visibility rules. Legacy
+channel-kit teams (see [Channels](channels.md)) remain available independently;
+a legacy catalog failure does not block current teams. A team is a shortcut, not
+a group identity: explicit selection
 inserts its saved agent keys as individual mentions in one undoable edit through
 `insertMentions`. Names never resolve membership. Typing a team name or Space
 alone does not select it. Team names also prevent Space from accidentally selecting
@@ -1041,10 +1076,11 @@ direction. Agent-elided strings and payloads are labeled, not hidden. Turns whos
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
 
-The shared Claude, Goose, and Pi turn formatter encodes conversation history and
-the triggering event as JSON with escaped markup delimiters. Message text,
-display names, and tags therefore cannot create extra request sections. The
-transcript reads that JSON directly and retains support for older line-based
+The shared Claude, Goose, and Pi turn formatter sends conversation history and
+the triggering event as exact JSON records with escaped markup delimiters, the
+same records Codex sends. Message text and tags therefore cannot create extra
+request sections. The transcript reads those records directly and retains
+support for the earlier single-object JSON event and older line-based
 `buzz-event` and `buzz-events` records; it never parses decoded message content
 as another prompt.
 

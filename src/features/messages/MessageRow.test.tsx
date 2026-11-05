@@ -1366,7 +1366,11 @@ it.each(["peer", "own"] as const)(
     const operations: never[] = [];
     const session = {
       viewer: author === "own" ? row.authorId : "viewer",
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      channels: {
+        list: () => snapshot,
+        subscribeList: () => () => {},
+        window: () => ({ rows: [row] }),
+      },
       messages: { report: vi.fn(async () => {}) },
       profiles: { subscribe: () => () => {}, event: () => undefined },
       outbox: {
@@ -1376,6 +1380,8 @@ it.each(["peer", "own"] as const)(
         snapshot: () => operations,
       },
       unread: {
+        revision: () => 0,
+        sync: () => ({ capability: "unsupported" }),
         subscribe: () => () => {},
         subscribeSync: () => () => {},
         snapshot: () => undefined,
@@ -1633,6 +1639,63 @@ it.each(
     }
   },
 );
+
+it("forwards replied agents and the stopped request to response accessories", () => {
+  const subscribe = () => () => {};
+  const channels = { channels: [], status: "ready" };
+  const noTyping: never[] = [];
+  const catalog = { entries: [] };
+  const profiles = new Map();
+  const library = { identities: [] };
+  const session = {
+    channels: { list: () => channels, subscribeList: subscribe },
+    messages: {},
+    emoji: { snapshot: () => catalog, subscribe },
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
+    typing: { snapshot: () => noTyping, subscribe },
+  } as unknown as RelaySession;
+  const seen = vi.fn();
+  const noEntries: never[] = [];
+  const empty = { snapshot: () => noEntries, subscribe };
+  const entries = [
+    {
+      id: "activity",
+      key: "test:activity",
+      pluginId: "test",
+      revision: "1",
+      title: "Agent activity",
+      placement: "response" as const,
+      component: (
+        props: import("../conversation/contracts").ComposerAccessoryProps,
+      ) => {
+        seen(props.repliedAgents, props.stoppedRequest);
+        return null;
+      },
+    },
+  ];
+  const agent = "a".repeat(64);
+  const repliedAgents = [agent];
+  const request = { ...row, id: "request" };
+  const view = renderMessage({
+    session,
+    scope: "test",
+    repliedAgents,
+    stoppedRequest: request,
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => entries, subscribe },
+    },
+  });
+  try {
+    expect(seen).toHaveBeenLastCalledWith(repliedAgents, request);
+  } finally {
+    view.unmount();
+  }
+});
 
 it.each(
   (["message", "response"] as const).flatMap((placement) => [

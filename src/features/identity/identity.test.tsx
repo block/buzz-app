@@ -43,7 +43,7 @@ import {
   type OwnedCommunity,
 } from "./builderlab-account";
 import type { JoinPolicy } from "../communities/join-policy";
-import { createCommunities } from "../communities/service";
+import { type ClientSnapshot, createCommunities } from "../communities/service";
 import { connectNativeTransport } from "../relay/native";
 import {
   keypair,
@@ -98,6 +98,9 @@ const noJoin: ComponentProps<typeof Welcome>["communities"] = {
   snapshot() {
     throw new Error("Welcome consulted communities before a join");
   },
+  subscribe() {
+    throw new Error("Welcome consulted communities before a join");
+  },
   joined() {
     throw new Error("Welcome joined without a join");
   },
@@ -132,6 +135,18 @@ const backupAnswers = {
     cancelRecovery: unexpectedRecovery,
   },
 } satisfies BackupAnswers;
+/** The account's community list, owning `owned`; only Create a community's own tests let it create. */
+const owning =
+  (owned: readonly OwnedCommunity[] = []) =>
+  () =>
+    Promise.resolve({ owned, canCreate: false });
+/** Create a community is never reached. */
+const noCreation = {
+  communityAvailable: () =>
+    Promise.reject(new Error("Welcome checked an address it never offered")),
+  createCommunity: () =>
+    Promise.reject(new Error("Welcome created a community it never offered")),
+} satisfies Partial<FirstRunAccount>;
 /** Only Start over unlinks; no other lane may reach kgoose's delete. */
 const noUnlink = () =>
   Promise.reject(new Error("Welcome unlinked a key it did not replace"));
@@ -143,12 +158,13 @@ const unlinkedWith =
   ): NonNullable<ComponentProps<typeof Welcome>["account"]> =>
   () => ({
     linkedKey: () => Promise.resolve(null),
-    ownedCommunities: () => Promise.resolve([]),
+    communityList: owning(),
     knownCommunities: () => Promise.resolve([]),
     saveCommunity,
     bind,
     unbind: noUnlink,
     ...backupAnswers,
+    ...noCreation,
     ...backup,
   });
 /** Today's every user: nothing bound or owned, and binding the new key succeeds. */
@@ -823,8 +839,25 @@ it("first launch prioritizes email and preserves community entry behind Other op
 });
 
 /**
+ * The uploader the opened app watches, idle so no backup choice is decided;
+ * any other command throws.
+ */
+function idleUploader(command: string) {
+  if (command === "nsec_backup_watch") return Promise.resolve();
+  if (command === "nsec_backup_state")
+    return Promise.resolve({
+      seq: 1,
+      pass: 0,
+      builderlab: false,
+      status: "idle",
+    });
+  throw new Error(`Unexpected command ${command}`);
+}
+
+/**
  * A first launch where installed old Buzz's data folder check answers
- * `legacy` and its import answers `imported`; any other command throws.
+ * `legacy` and its import answers `imported`; once the app opens it watches
+ * an idle uploader, and any other command throws.
  */
 function legacyLaunch(
   legacy: Promise<boolean>,
@@ -842,7 +875,7 @@ function legacyLaunch(
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_legacy_available") return legacy;
     if (command === "identity_import_legacy") return imported();
-    throw new Error(`Unexpected command ${command}`);
+    return idleUploader(command);
   });
   const account = vi.fn(unlinked);
   const identity = createIdentity();
@@ -877,7 +910,12 @@ const focusInside = (dialog: HTMLElement) =>
   waitFor(() =>
     expect(dialog).toContainElement(document.activeElement as HTMLElement),
   );
-const commands = () => vi.mocked(invoke).mock.calls.map(([command]) => command);
+/** Commands sent, less the uploader watch the opened app starts. */
+const commands = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.map(([command]) => command)
+    .filter((command) => !/^nsec_backup_(watch|state)$/.test(command));
 
 it.each([
   [
@@ -1506,7 +1544,9 @@ it("Use an existing key from the choice imports the key with no sign-in, no link
     viewer: owned.pubkey,
   });
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", {
+      name: "Sync your identity with Builderlab?",
+    }),
   ).toBeNull();
   expect(
     screen.queryByRole("heading", { name: "Connect to a community" }),
@@ -1905,12 +1945,13 @@ it("Sign in with Builderlab runs sign-in, creates the key mid-setup, and lands o
   );
   const account = vi.fn(() => ({
     linkedKey: () => linked.promise,
-    ownedCommunities: () => Promise.resolve([]),
+    communityList: owning(),
     knownCommunities,
     saveCommunity,
     bind,
     unbind: noUnlink,
     ...backupAnswers,
+    ...noCreation,
     backUp,
     backupStatus,
   }));
@@ -2060,13 +2101,14 @@ it("Use a different account on Get started with Buzz signs the session out, retu
     if (!linkedKey) throw new Error("A third sign-in");
     return {
       linkedKey,
-      ownedCommunities: () => Promise.resolve([]),
+      communityList: owning(),
       knownCommunities: () => Promise.resolve([]),
       saveCommunity,
       bind: () =>
         Promise.reject(new Error("Welcome bound a key it never created")),
       unbind: noUnlink,
       ...backupAnswers,
+      ...noCreation,
     };
   });
   const identity = createIdentity();
@@ -2423,6 +2465,337 @@ it("Connect to a community checks the typed URL, opens Finding community, and Ca
     screen.getByRole("heading", { name: "Finding community" }),
   ).toBeVisible();
   expect(relayCalls).toHaveLength(4);
+  identity.dispose();
+});
+
+/**
+ * `unlinked`, whose bind links the key as kgoose's verify does and whose list
+ * lets it create, with Create a community's `answers` in place of `noCreation`'s.
+ */
+const creatingWith =
+  (
+    answers: Partial<FirstRunAccount>,
+  ): NonNullable<ComponentProps<typeof Welcome>["account"]> =>
+  (credential, identity) => {
+    let bound: string | null = null;
+    return {
+      ...unlinked(credential, identity),
+      linkedKey: () => Promise.resolve(bound),
+      bind: (pubkey) => {
+        bound = pubkey;
+        return Promise.resolve();
+      },
+      communityList: () => Promise.resolve({ owned: [], canCreate: true }),
+      ...answers,
+    };
+  };
+/** Setup through Create my key at `build`'s Builderlab, resting on Connect to a community. */
+async function connectPage(
+  account: NonNullable<ComponentProps<typeof Welcome>["account"]>,
+  build = "https://app.builderlab.xyz",
+) {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", build);
+  const relayCalls: unknown[] = [];
+  vi.mocked(invoke).mockImplementation((command, args) => {
+    if (command === "nsec_backup_choice")
+      return Promise.resolve({
+        available: false,
+        pubkey: viewer,
+        automatic: null,
+      });
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    if (command === "relay_http") {
+      relayCalls.push(args);
+      return new Promise(() => {});
+    }
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={account}
+      connect={vi.fn().mockResolvedValue(credential)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await createMyKey(user);
+  await screen.findByRole("heading", { name: "Connect to a community" });
+  return { identity, user, relayCalls };
+}
+
+it("Connect to a community offers Create a community for an account the public Builderlab lets create, and the new community is looked up as an entered address", async () => {
+  const communityList = vi.fn(() =>
+    Promise.resolve({ owned: [], canCreate: true, quotaLimit: 2 }),
+  );
+  const communityAvailable = vi.fn(() => Promise.resolve(true));
+  const created = deferred<string>();
+  const createCommunity = vi.fn(() => created.promise);
+  const { identity, user, relayCalls } = await connectPage(
+    creatingWith({ communityList, communityAvailable, createCommunity }),
+  );
+  expect(communityList).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Create a community" }));
+  expect(
+    screen.getByRole("heading", { name: "Create a community" }),
+  ).toHaveFocus();
+  const create = screen.getByRole("button", { name: "Create community" });
+  expect(create).toBeDisabled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Community address" }),
+    "north-star",
+  );
+  // Settings' debounced availability check, unchanged.
+  await screen.findByText("That address is available.", {}, { timeout: 3_000 });
+  expect(communityAvailable).toHaveBeenLastCalledWith("north-star");
+  await user.click(create);
+  // The list's quota words a limit refusal, as Settings does.
+  expect(createCommunity).toHaveBeenCalledWith("north-star", 2);
+  expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+  expect(relayCalls).toEqual([]);
+  created.resolve("https://north-star.communities.buzz.xyz");
+  await screen.findByRole("heading", { name: "Finding community" });
+  // The same unauthenticated lookup a typed address takes, then the join.
+  expect(relayCalls).toEqual([
+    {
+      community: "https://north-star.communities.buzz.xyz",
+      path: "/",
+      method: "GET",
+      body: null,
+    },
+    {
+      community: "https://north-star.communities.buzz.xyz",
+      path: "/api/join-policy",
+      method: "GET",
+      body: null,
+    },
+  ]);
+  expect(createCommunity).toHaveBeenCalledTimes(1);
+  identity.dispose();
+});
+
+it("Cancel on Finding community after a create returns to Connect to a community with the new community's address in the field", async () => {
+  const { identity, user } = await connectPage(
+    creatingWith({
+      communityAvailable: () => Promise.resolve(true),
+      createCommunity: () =>
+        Promise.resolve("https://north-star.communities.buzz.xyz"),
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Create a community" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Community address" }),
+    "north-star",
+  );
+  await screen.findByText("That address is available.", {}, { timeout: 3_000 });
+  await user.click(screen.getByRole("button", { name: "Create community" }));
+  await screen.findByRole("heading", { name: "Finding community" });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(urlField()).toHaveValue("north-star.communities.buzz.xyz");
+  identity.dispose();
+});
+
+it("a created community is joined once found, without Join Community, and continues to the profile step", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  const member = keypair();
+  const relay = nativeRelay(member);
+  const gate = deferred<void>();
+  relay.query = gate.promise;
+  const identity = createIdentity();
+  const communities = communitiesFor(identity);
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={communities}
+      invites={invites}
+      account={creatingWith({
+        communityAvailable: () => Promise.resolve(true),
+        createCommunity: () => Promise.resolve(relay.origin),
+      })}
+      connect={vi.fn().mockResolvedValue(credential)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await createMyKey(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Create a community" }),
+  );
+  await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+  await user.type(
+    screen.getByRole("textbox", { name: "Community address" }),
+    "relay",
+  );
+  await screen.findByText("That address is available.", {}, { timeout: 3_000 });
+  await user.click(screen.getByRole("button", { name: "Create community" }));
+  // The lookup, then the join's signed profile read, held: no Join Community
+  // between them, and the page holds still.
+  expect(
+    await screen.findByRole("heading", { name: "Joining community" }),
+  ).toBeVisible();
+  await waitFor(() => expect(relay.calls).toHaveLength(4));
+  expect(relay.calls.map(({ path }) => path)).toEqual([
+    "/",
+    "/api/join-policy",
+    "/",
+    "/query",
+  ]);
+  expect(screen.queryByRole("heading", { name: "Join Community" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await act(async () => gate.resolve());
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Signed in")).toBeNull();
+  identity.dispose();
+});
+
+it("after a created community's automatic join fails, Back looks it up again through Join Community, whose Cancel keeps the address", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  const member = keypair();
+  const relay = nativeRelay(member);
+  const identity = createIdentity();
+  const communities = communitiesFor(identity);
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={communities}
+      invites={invites}
+      account={creatingWith({
+        communityAvailable: () => Promise.resolve(true),
+        createCommunity: () => Promise.resolve(relay.origin),
+      })}
+      connect={vi.fn().mockResolvedValue(credential)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await createMyKey(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Create a community" }),
+  );
+  await waitFor(() => expect(communities.snapshot().status).toBe("ready"));
+  await user.type(
+    screen.getByRole("textbox", { name: "Community address" }),
+    "relay",
+  );
+  await screen.findByText("That address is available.", {}, { timeout: 3_000 });
+  // The device will not keep the join's record, so the automatic join fails.
+  const storage = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+  await user.click(screen.getByRole("button", { name: "Create community" }));
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t join community" }),
+  ).toBeVisible();
+  storage.mockRestore();
+  expect(relay.calls.map(({ path }) => path)).toEqual([
+    "/",
+    "/api/join-policy",
+  ]);
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { name: "Join Community" }),
+  ).toBeVisible();
+  // The retry waits for Join: only the lookup ran again.
+  expect(relay.calls.slice(2).map(({ path }) => path)).toEqual([
+    "/",
+    "/api/join-policy",
+  ]);
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(urlField()).toHaveValue("relay.example.com:8443");
+  identity.dispose();
+});
+
+it("a refused create stays on Create a community with the card's copy until the name changes, and Back returns focus to Create a community", async () => {
+  const { identity, user, relayCalls } = await connectPage(
+    creatingWith({
+      communityAvailable: () => Promise.resolve(true),
+      createCommunity: () =>
+        Promise.reject(new Error("That Buzz address is already taken.")),
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Create a community" }));
+  const field = screen.getByRole("textbox", { name: "Community address" });
+  await user.type(field, "north-star");
+  await screen.findByText("That address is available.", {}, { timeout: 3_000 });
+  await user.click(screen.getByRole("button", { name: "Create community" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "That Buzz address is already taken.",
+  );
+  // The refusal was for that name, not the next one.
+  await user.type(field, "s");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    screen.getByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Create a community" }),
+  ).toHaveFocus();
+  expect(relayCalls).toEqual([]);
+  identity.dispose();
+});
+
+it.each<[string, Partial<FirstRunAccount>]>([
+  [
+    "the list refuses",
+    {
+      communityList: () =>
+        Promise.resolve({ owned: [], canCreate: false, quotaLimit: 1 }),
+    },
+  ],
+  [
+    "the list fails",
+    { communityList: () => Promise.reject(new Error("HTTP 503")) },
+  ],
+  // The account holds another key, or none: the new one was never linked.
+  ["the key is not bound", { bind: () => Promise.resolve() }],
+])(
+  "Connect to a community offers no Create a community when %s",
+  async (_, answers) => {
+    const { identity } = await connectPage(creatingWith(answers));
+    expect(
+      screen.queryByRole("button", { name: "Create a community" }),
+    ).toBeNull();
+    identity.dispose();
+  },
+);
+
+it("a build at another Builderlab never asks whether its account may create, and offers no Create a community", async () => {
+  const communityList = vi.fn(() =>
+    Promise.resolve({ owned: [], canCreate: true }),
+  );
+  const { identity } = await connectPage(
+    creatingWith({ communityList }),
+    "https://builderlab.example",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Create a community" }),
+  ).toBeNull();
+  expect(communityList).not.toHaveBeenCalled();
   identity.dispose();
 });
 
@@ -3205,12 +3578,13 @@ const restoringAccount =
   ): NonNullable<ComponentProps<typeof Welcome>["account"]> =>
   () => ({
     linkedKey: () => Promise.resolve(null),
-    ownedCommunities: () => Promise.resolve([]),
+    communityList: owning(),
     knownCommunities: () => Promise.resolve(known),
     saveCommunity,
     bind: () => Promise.resolve(),
     unbind: noUnlink,
     ...backupAnswers,
+    ...noCreation,
   });
 const relayA = "https://relay-a.example";
 const relayB = "https://relay-b.example";
@@ -4225,7 +4599,9 @@ it("a link that keeps failing after a key is imported for a new account stays on
     screen.queryByRole("heading", { name: "Connect to a community" }),
   ).toBeNull();
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", {
+      name: "Sync your identity with Builderlab?",
+    }),
   ).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
   expect(screen.queryByText("Signed in")).toBeNull();
@@ -4413,13 +4789,14 @@ const linkedTo =
   ): NonNullable<ComponentProps<typeof Welcome>["account"]> =>
   () => ({
     linkedKey: () => Promise.resolve(pubkey),
-    ownedCommunities: () => Promise.resolve(communities),
+    communityList: owning(communities),
     knownCommunities: () => Promise.resolve([]),
     saveCommunity,
     // The import accepts only the linked key: there is nothing to bind.
     bind: () => Promise.reject(new Error("Welcome bound the linked key again")),
     unbind: noUnlink,
     ...backupAnswers,
+    ...noCreation,
     ...backup,
   });
 const linkedNpub = npubEncode(owned.pubkey);
@@ -4570,12 +4947,13 @@ it("Use a different account on Welcome back returns to the landing without touch
   const linkedKey = vi.fn(() => Promise.resolve(owned.pubkey));
   const account: ComponentProps<typeof Welcome>["account"] = () => ({
     linkedKey,
-    ownedCommunities: () => Promise.resolve([]),
+    communityList: owning(),
     knownCommunities: () => Promise.resolve([]),
     saveCommunity,
     bind: () => Promise.reject(new Error("Welcome bound the linked key again")),
     unbind: noUnlink,
     ...backupAnswers,
+    ...noCreation,
   });
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -4969,7 +5347,7 @@ it("a backup status lookup that fails hides Restore from backup, and Enter your 
   identity.dispose();
 });
 
-it("importing a linked key backup status already lists skips the backup offer", async () => {
+it("importing a linked key backup status already lists discloses automatic backup and keeps it backed up with no upload or backup offer", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "nsec_backup_choice")
       return Promise.resolve({
@@ -4985,6 +5363,20 @@ it("importing a linked key backup status already lists skips the backup offer", 
       return Promise.reject(RECOVERY_UNAVAILABLE);
     if (command === "nsec_restore_cancel") return Promise.resolve();
     if (command === "identity_import") return Promise.resolve(owned.pubkey);
+    if (command === "nsec_backup_watch") return Promise.resolve();
+    if (command === "nsec_backup_state")
+      return Promise.resolve({
+        seq: 1,
+        pass: 0,
+        builderlab: true,
+        status: "idle",
+      });
+    if (command === "nsec_backup_set_choice")
+      return Promise.resolve({
+        available: true,
+        pubkey: owned.pubkey,
+        automatic: true,
+      });
     throw new Error(`Unexpected command ${command}`);
   });
   const backUp = vi.fn((_pubkey: string) => Promise.resolve());
@@ -5005,15 +5397,29 @@ it("importing a linked key backup status already lists skips the backup offer", 
   await user.click(
     screen.getByRole("button", { name: "Enter my private key" }),
   );
+  // Saving consent turns automatic backup on, so it is disclosed first.
+  expect(
+    screen.getByText(
+      /^Buzz will automatically sync this key with your Builderlab account unless you chose to manage it yourself\./,
+    ),
+  ).toBeVisible();
   await user.paste(ownedNsec);
   await user.click(continueWithKey());
   expect(
     await screen.findByRole("heading", { name: "Connect to a community" }),
   ).toBeVisible();
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", {
+      name: "Sync your identity with Builderlab?",
+    }),
   ).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
+  // Saved as consented unless a choice is saved, so no later prompt asks about it.
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_set_choice", {
+    pubkey: owned.pubkey,
+    automatic: true,
+    unlessSaved: true,
+  });
   identity.dispose();
 });
 
@@ -5131,6 +5537,11 @@ it.each([
       nsec_restore_wait: () => Promise.reject(refusal),
       nsec_restore_cancel: () => undefined,
       identity_import: () => owned.pubkey,
+      nsec_backup_set_choice: () => ({
+        available: true,
+        pubkey: owned.pubkey,
+        automatic: true,
+      }),
     });
     const identity = createIdentity();
     const user = userEvent.setup();
@@ -5173,6 +5584,7 @@ it.each([
       "nsec_restore_wait",
       "nsec_restore_cancel",
       "identity_import",
+      "nsec_backup_set_choice",
     ]);
     identity.dispose();
   },
@@ -5297,6 +5709,11 @@ it("a restore whose backups do not hold the linked key offers Enter your private
     nsec_restore_wait: () => backupsOf(stranger.pubkey),
     nsec_restore_cancel: () => undefined,
     identity_import: () => owned.pubkey,
+    nsec_backup_set_choice: () => ({
+      available: true,
+      pubkey: owned.pubkey,
+      automatic: true,
+    }),
   });
   const identity = createIdentity();
   const user = userEvent.setup();
@@ -5329,6 +5746,7 @@ it("a restore whose backups do not hold the linked key offers Enter your private
     "nsec_restore_wait",
     "nsec_restore_cancel",
     "identity_import",
+    "nsec_backup_set_choice",
   ]);
   identity.dispose();
 });
@@ -5347,12 +5765,14 @@ const replacedBy =
   ): NonNullable<ComponentProps<typeof Welcome>["account"]> =>
   () => ({
     linkedKey: () => Promise.resolve(owned.pubkey),
-    ownedCommunities: communities,
+    communityList: () =>
+      communities().then((owned) => ({ owned, canCreate: false })),
     knownCommunities: () => Promise.resolve([]),
     saveCommunity,
     unbind,
     bind,
     ...backupAnswers,
+    ...noCreation,
     ...backup,
   });
 /** Welcome back → I lost my key → Start over, which creates the new key at once. */
@@ -5443,6 +5863,9 @@ it("I lost my key lists the communities the old key owns, Back returns to Welcom
     screen.getByText(
       /Starting over replaces the key linked to your Builderlab account/,
     ),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Starting over permanently unlinks your old key."),
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Go back" }));
   expect(
@@ -5693,6 +6116,33 @@ it("a linked account's owned communities are offered on Connect to a community, 
   identity.dispose();
 });
 
+it("a linked account at the public Builderlab is offered Create a community from the one list read that finds its communities", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  landingRelay();
+  const linkedKey = vi.fn(() => Promise.resolve(owned.pubkey));
+  const communityList = vi.fn(() =>
+    Promise.resolve({ owned: [], canCreate: true }),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(user, identity, (credential, id) => ({
+    ...linkedTo(owned.pubkey)(credential, id),
+    linkedKey,
+    communityList,
+  }));
+  await importLinkedKey(user);
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Create a community" }),
+  ).toBeVisible();
+  // The account check proved the binding; the lane's key is that one.
+  expect(linkedKey).toHaveBeenCalledTimes(1);
+  expect(communityList).toHaveBeenCalledTimes(1);
+  identity.dispose();
+});
+
 it("a linked account signed in from the connect choice is welcomed back and its imported key lands on Join Community for the landing URL", async () => {
   const relay = landingRelay("https://relay.example.com");
   relay.info.resolve();
@@ -5808,12 +6258,13 @@ it("an account check that fails stops setup, and Back returns to the first-launc
           Promise.reject(
             new Error("Builderlab account check failed (HTTP 503: not JSON)."),
           ),
-        ownedCommunities: () => Promise.resolve([]),
+        communityList: owning(),
         knownCommunities: () => Promise.resolve([]),
         saveCommunity,
         bind: () => Promise.resolve(),
         unbind: noUnlink,
         ...backupAnswers,
+        ...noCreation,
         backupStatus,
       })}
     >
@@ -6174,7 +6625,8 @@ it("restore denial does not become first run or generate a replacement", async (
   } as unknown as ReturnType<typeof getCurrentWindow>);
   vi.mocked(invoke)
     .mockRejectedValueOnce("Keychain access was denied")
-    .mockResolvedValueOnce(viewer);
+    .mockResolvedValueOnce(viewer)
+    .mockImplementation(idleUploader);
   const identity = createIdentity();
   const user = userEvent.setup();
   render(
@@ -6204,10 +6656,7 @@ it("restore denial does not become first run or generate a replacement", async (
     screen.getByRole("button", { name: "Retry secure storage access" }),
   );
   expect(await screen.findByText("Restored")).toBeVisible();
-  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-    "identity_restore",
-    "identity_restore",
-  ]);
+  expect(commands()).toEqual(["identity_restore", "identity_restore"]);
   identity.dispose();
 });
 
@@ -6553,7 +7002,7 @@ it.each(["ready", "error"] as const)(
         });
       if (command === "identity_restore") return restored.promise;
       if (command === "plugin:window|show") return Promise.resolve();
-      throw new Error(`Unexpected command ${command}`);
+      return idleUploader(command);
     });
     const identity = createIdentity();
     try {
@@ -6797,3 +7246,100 @@ it.each(["unavailable", "not_offered"] as const)(
     identity.dispose();
   },
 );
+
+/** Native backup for a signed-in key with no saved choice: the uploader waits for consent. */
+function awaitingConsent(command: string) {
+  if (command === "nsec_backup_choice")
+    return { available: true, pubkey: viewer, automatic: null };
+  if (command === "nsec_backup_watch") return undefined;
+  if (command === "nsec_backup_state")
+    return {
+      seq: 1,
+      pass: 1,
+      builderlab: true,
+      status: "waiting",
+      reason: "no_consent",
+    };
+  throw new Error(`Unexpected command ${command}`);
+}
+
+it("first-run onboarding never asks about backup, even while the uploader waits for consent", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  const backUp = vi.fn(async () => {
+    throw new BackupError("unavailable");
+  });
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return null;
+    if (command === "identity_legacy_available") return false;
+    if (command === "identity_create") return viewer;
+    return awaitingConsent(command);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinkedWith(async () => {}, { backUp })}
+      connect={async () => credential}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await createMyKey(user);
+  await user.click(
+    await screen.findByRole("button", { name: "Continue without backup" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  // The wait is published; an app-level decision would now read `noJoin`, which throws.
+  await act(() => identity.backup.ready());
+  expect(identity.backup.snapshot()).toMatchObject({ reason: "no_consent" });
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  identity.dispose();
+});
+
+it("once the app opens, a key with no backup choice and only independent communities is asked about over it", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlab.xyz");
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "identity_restore") return viewer;
+    if (command === "nsec_backup_set_choice")
+      return { available: true, pubkey: viewer, automatic: true };
+    return awaitingConsent(command);
+  });
+  const client = {
+    status: "ready",
+    memberships: [{ id: "https://relay.example.com", name: "Relay" }],
+  } as ClientSnapshot;
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={{
+        ...noJoin,
+        snapshot: () => client,
+        subscribe: () => () => {},
+      }}
+      invites={invites}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Sync your identity with Builderlab?",
+  });
+  expect(screen.getByText("Signed in")).toBeInTheDocument();
+  await user.click(
+    within(prompt).getByRole("button", { name: "Sync with Builderlab" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_set_choice", {
+    pubkey: viewer,
+    automatic: true,
+  });
+  identity.dispose();
+});

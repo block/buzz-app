@@ -36,6 +36,8 @@ function unreadEdges(list: HTMLElement): Edges {
   if (!list.clientHeight || !viewport.width) return edges;
   const rows = new Set<HTMLButtonElement>();
   for (const marker of list.querySelectorAll(UNREAD_MARKERS)) {
+    // Muting keeps unread evidence but excludes it from scroll notifications.
+    if (marker.hasAttribute("data-channel-muted")) continue;
     const row = marker.closest("button");
     if (row) rows.add(row);
   }
@@ -125,10 +127,12 @@ export function SidebarUnread({
       attributeFilter: [
         "open",
         "data-channel-unread",
+        "data-channel-muted",
         "data-channel-activity",
         "data-channel-type",
         "data-channel-id",
         "data-priority",
+        "data-moving",
       ],
     });
     viewport.addEventListener("scroll", schedule, { passive: true });

@@ -93,6 +93,7 @@ import {
   type Stream,
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
+import type { DeviceSettings } from "../../shared/device-settings";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -479,12 +480,16 @@ export type RunnerHost = {
     agent: Agent,
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** This device's plugins as the agent's handle offers them. */
+  plugins?(agent: Agent): AgentHandle["plugins"];
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
+  /** Buzz settings on this device, where there are any. */
+  settings?(): DeviceSettings | undefined;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2671,6 +2676,7 @@ export class AgentRunners {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
+    const settings = run ? this.host.settings?.() : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -2754,9 +2760,10 @@ export class AgentRunners {
           lifetime.throwIfAborted();
           return this.host.updateAgent(agent, input);
         },
-        // Only a run hands off: a plugin's wake through `Agents.handle` would
-        // read as the agent's own.
+        // Only a run hands off or manages plugins: through `Agents.handle` a
+        // plugin's call would read as the agent's own.
         ...(run && {
+          plugins: this.host.plugins?.(agent),
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
@@ -2764,6 +2771,8 @@ export class AgentRunners {
         }),
         templates: () => this.host.templates(agent),
         tabs: () => this.host.tabs(agent),
+        // Only a run's: a plugin acting through the agent doesn't get them.
+        ...(settings && { settings }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

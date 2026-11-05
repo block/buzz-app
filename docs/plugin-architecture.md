@@ -365,6 +365,114 @@ banner that throws renders nothing and leaves the sidebar usable. It changes
 only the sidebar: links, search and alert clicks still open any conversation.
 Focus is the first caller and registers its restriction only while Focus is on.
 
+### Decorating host sidebar rows and adding sort modes
+
+`ctx.reflect.get("sidebarRows")` is an optional version-1 capability for host
+Team channel and direct-message rows, including rows moved into custom groups.
+Solo conversations are not supported yet. Use the reflective lookup rather than
+required `inject` so the plugin still activates on older hosts.
+
+```tsx
+ctx.reflect.get("sidebarRows")?.register({
+  version: 1,
+  id: "row-details",
+  render(row, Default) {
+    return row.id === "chosen-channel-id"
+      ? <div title="Tracked by this plugin">{Default}</div>
+      : Default;
+  },
+});
+```
+
+`row` contains `id`, `kind` (`team` or `dm`), `label`, `sectionKey`, the current
+`channel` summary (including available labels, visibility and activity data), and
+its current `unread` snapshot. Unknown unread counts remain `null`; activity
+fields retain their existing units and unknown values. This is the host's
+currently authorized roster, not a channel discovery API.
+
+`Default` is a React element, not a component constructor: return it, wrap it,
+or return a replacement element. Returning `null` intentionally hides the row;
+the host skips hidden rows when choosing a neighbor after leaving or deleting
+the current conversation.
+Render callbacks must be pure; return a component element if it needs hooks.
+The live host element keeps selection, unread badges, keyboard focus, menus and
+channel dragging without copying their implementation. Replacements and wrappers
+that discard or interfere with that element own the interactions they remove.
+Keep the wrapper shape stable across live row updates; moving `Default` to a
+different tree position remounts it and can discard focus or open menus.
+
+Active contributions compose in lexical plugin-id/contribution-id order, with
+later callbacks receiving the preceding result (possibly `null`). Callback
+throws, invalid return values, and descendant render failures restore the
+original host element for that row only, not a partially decorated result.
+Repeated callback and invalid-result fallbacks retain the host row across live
+updates. Switching between a decoration and fallback, or recovering from a
+descendant error, can remount it and reset an open menu. If the host button had
+focus, the host restores it to the same channel's replacement button anywhere in
+the sidebar, including after a section move, only when the update leaves focus
+on the document body; it never overrides focus moved elsewhere.
+If the row is hidden instead, focus moves to a surviving neighbor in the same
+section, or its heading when no row remains.
+Disabling, replacing or disposing a plugin removes its contributions through its
+Cordis scope. With no active render contribution, the existing host row renders
+without an extra DOM wrapper.
+
+```ts
+ctx.reflect.get("sidebarRows")?.register({
+  version: 1,
+  id: "activity-order",
+  sortModes: [{
+    id: "oldest",
+    label: "Oldest activity first",
+    compare: (a, b) =>
+      (a.channel.lastActivityAt ?? 0) -
+      (b.channel.lastActivityAt ?? 0) || a.id.localeCompare(b.id),
+  }],
+});
+```
+
+Modes appear beside A–Z and Recent in each Team section's existing Sort menu.
+Their persisted values are `plugin:<plugin-id>/<contribution-id>/<mode-id>`;
+ids use lowercase ASCII letters, digits, dots, underscores and hyphens, starting
+with a letter or digit, with a combined value limit of 512 characters. A registration
+with invalid fields or incompatible sort ids is rejected as a whole, including
+its renderer; register render-only contributions separately if needed. Sorting
+only rearranges existing rows. Comparators must be pure and return finite
+numbers; ties preserve host order. A throw or non-finite result restores the
+section's host order. Live unread and channel updates recompute custom sorting.
+Selecting a plugin mode loads the same channel activity history as Recent,
+sharing its request lifetime and cancellation. Activity fields remain unknown
+until that read completes; comparators must handle unknown values.
+If a saved mode is unavailable, the section uses A–Z while retaining the saved
+choice for re-enabling the plugin. Cold sidebar startup includes a saved mode's
+registration in its existing 1.5-second reveal budget; built-in sorts and modes
+already registered do not wait for other plugins. Plugin choices use a separate `pluginSort`
+extension in the existing sort record, leaving built-in fields readable by older
+hosts. For example, the relevant register fields for one section are:
+
+```json
+{
+  "meta": { "v": 1, "g": { "channels": [1, "0123456789abcdef", "alpha"] } },
+  "pluginSort": {
+    "v": 1,
+    "g": { "channels": [1, "0123456789abcdef", "plugin:example/activity-order/oldest"] }
+  }
+}
+```
+
+Each tuple is `[clock, writer, value]`: a nonnegative safe-integer clock and a
+16-character lowercase hexadecimal writer id. A plugin choice applies only when
+its section's `meta.g` register has the same clock and writer and an `alpha`
+value (`null` is also accepted for legacy bindings). Plugin writers use `alpha`
+as the anchor; built-in A–Z writers must instead write the `null` reset with a
+new stamp, and Recent writes `recent`, so either edit supersedes the binding.
+Plugin-aware writers remove that section's extension choice on a built-in edit,
+prune missing or mismatched anchors, and preserve valid choices for other sections.
+The extension has its own 104-entry limit, separate from the 104 projected
+built-in sort groups. Writers must retain the extension when editing other
+sections. There is no automatic reorder-without-menu hook and no insertion hook
+in this version; use `sidebarSections` for new rows.
+
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
@@ -450,6 +558,24 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
+default) gives local agents three tools. `plugin_authoring_guide` returns
+[the authoring guide](plugin-authoring-guide.md), bundled with the app.
+`plugin_status` lists plugins with their activation state, and for one plugin
+its error, revision, folder, host access and what it registered.
+`plugin_reload` reloads an installed folder plugin the way Settings does: it
+disables the plugin, reloads it (refused when host access changed), enables it,
+waits for activation and rolls back to the revision that was running when the
+new one fails to start. It returns `application` (`applied`, `saved` or
+`failed`) with a `nextStep`. It never installs a new plugin or widens host
+access; those stay with the owner in Settings. The tools reach the plugin manager
+through the `pluginDevelopment` service, which throws for any other plugin, as
+`connectExternal` does for any plugin but Agents. While the plugin is on, every
+local agent gets these tools, so an agent that can write into an installed
+plugin's folder can replace that plugin's code, though not its host access,
+without a new review. Plugin code is trusted and unsandboxed, so only load folders
+that the agents you run may change.
+
 `ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
 the app runs in one of its conversations, as a mention there would, with no
 message. `root` is the thread's root event id (64 hex); leave it out for a Solo
@@ -472,6 +598,8 @@ Plugins can discover active Attention source registrations through `ctx.agents.a
 A source may also `present` its watches on the Agent Attention page. Given a watch and its display name, it returns the watch's kind and, optionally, an icon, a target with a subtitle, an external link, and a details component that replaces the name in the expanded row. When a provider has no `present`, or it throws, Buzz shows the watch by its name. The GitHub plugin presents pull request watches this way, linking to its comment author settings.
 
 Each Attention source `run` receives `spawn(processId, options)` for commands using that watch's owning agent. The host binds agent identity, watch destination and run lifetime; plugins cannot select another agent or obtain the raw authenticated connection. Declare the process in `host.processes` and request `host.mcp`, plus `host.files` for tools reading local paths. Options supply arguments, working directory, environment and output callbacks.
+
+On macOS and Linux, only one instance of a declared process may run for the same agent, provider and watch, including across Buzz builds. A concurrent instance waits for the existing instance to stop, then starts. Await the previous handle's `process.exited` before spawning a replacement, including after calling `kill()`. Different declared processes or watches can run concurrently. Windows does not enforce this singleton constraint.
 
 Buzz revokes command access on return, failure, cancellation, agent stop, provider unload or community reconnection, and closes the process and its descendants. Successfully emitted output remains queued after a producer returns. The key and MCP connection stay in Buzz; commands retain the app user's operating-system privileges and can use the agent's tools while their run remains active.
 
@@ -549,6 +677,16 @@ nothing and leaves navigation usable. Toolbar badges are clipped to a compact
 2rem × 1rem corner mark; authors should use short counts or dots there, not rich
 content. The overflow popover uses ordinary labelled rows with trailing badges.
 Pages without `primary` have no navigation entry, so their badge is not shown.
+
+A primary page may also supply `preview`, supplemental content the shell shows
+in a popover while a pointer rests on the page's sidebar row, after the design
+system's Preview hover delay. The shell owns the trigger, timing, placement and
+dismissal, and passes the content `close()` for actions that navigate. When the
+content has a `<header>`, the shell lifts the card so the line under it meets
+the row's top edge. It never
+shows a preview without a hover pointer, for header or overflow entries, or
+while that page is selected, so everything in it must stay reachable from the
+page itself. A preview that throws renders nothing and leaves navigation usable.
 
 `notifications.register({ id, label })` adds a category with its own switch in
 Settings and returns `submit({ sourceKey, target, title?, body? })`. Submissions
@@ -911,7 +1049,8 @@ its text when the save finishes. If the loaded Canvas was written in the current
 a single cancellable wait respects its timestamp ordering; there is no background
 retry loop. Failures and recovered drafts expose Retry rather than silently publishing
 on reopen. Save uses the existing session Canvas/outbox contract, including its
-24 KiB limit, fresh membership check, writer-backed Canvas head/editor-confirmation
+256 KiB content limit (the complete signed event must also fit the relay's
+512 KiB frame), fresh membership check, writer-backed Canvas head/editor-confirmation
 reads and exact signed-event recovery. Canvas reads default to strong consistency
 for editor/Todos bases and setup preconditions. Setup delivery and its separate
 exact-ID confirmation both use writer-backed reads; unknown seed outcomes are
@@ -941,13 +1080,31 @@ storage is unavailable they survive only while the editor stays open. Save never
 promotes local recovery storage to shared state. Already accepted outbox operations
 remain session-owned if the drawer closes or plugin is disabled.
 
+**Canvas view:** Channel actions → View canvas opens on View, which renders the
+saved head (never a local draft) as GitHub-flavored Markdown with its own loading,
+read-failure retry and empty states. Raw HTML shows as text, inline images show
+their alt text, and only credential-free HTTP(S) and validated Buzz links are
+active. Rendering has its own budget of 128 KiB of text, independent of the save
+limit: larger Canvases, and Canvases nested past the shared Markdown depth limit,
+show a labelled source view even when saving them is allowed. History compares
+versions against the same saved head (below); read-only viewers keep Edit so recovered drafts stay visible, with
+Save and Restore disabled. Restoring does not switch tabs.
+
 **Canvas history:** Channel actions → View canvas → History lazily reads retained
-kind-40100 revisions in pages of 25, ordered by `created_at DESC, id ASC` with
+kind-40100 revisions in pages of 16 (as many full-size signed revisions as one 8 MiB read holds), ordered by `created_at DESC, id ASC` with
 `until`/`before_id` keyset cursors. The first page is writer-backed so a just-restored
 revision is visible; older pages remain replica-eligible. The current marker uses
 the editor's strong-read head, not list position. Refresh history rechecks the
 head without replacing the editor draft. Author labels use the shared profile
-directory, with public-key fallbacks; previews are read-only Markdown source.
+directory, with public-key fallbacks. The selected revision shows a line diff
+(`diff` package `diffLines(current, revision)`) against the editor's strong-read
+head, as old Buzz did: added lines are the revision's lines the current Canvas
+lacks, removed lines are current lines the revision drops. Lines carry +/−
+markers alongside colour and unchanged runs collapse to 3 lines of context. The
+head, or a revision with identical content, shows "Same as current version".
+Comparisons over 5,000 lines or past the library's edit-length or time bound
+show the full content with a label, and "Show full content" switches to the
+read-only Markdown source at any time.
 
 Restore requires explicit confirmation and publishes the selected content as a
 new signed revision through the existing Canvas save/outbox owner. Its precondition
@@ -959,9 +1116,9 @@ which may automatically replay the exact signed event with its original
 `expected-revision`. It never creates a fresh event or substitutes a newer
 precondition to retry. If confirmation ultimately fails or remains uncertain,
 the dialog retains drafts and shows the error without starting another restore.
-Empty revisions can be restored; revisions exceeding the existing 24 KiB save
-limit remain previewable but cannot be restored here. No diff viewer or new
-delivery owner is introduced.
+Empty revisions can be restored; revisions exceeding the 256 KiB live Canvas
+limit remain previewable but cannot be restored here. No new delivery owner is
+introduced.
 
 ### Top-bar launchers and the companion slot
 
@@ -1642,6 +1799,17 @@ access and reports the previous and updated declarations. Rejected builds leave
 the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
+Agents reach management through the host's own tools: they read the catalog and
+disable directly, and every install, update, enable or removal waits for the person
+to confirm it on a card in the agent's conversation, or in Settings; see
+[managing plugins from a conversation](agents.md#managing-plugins-from-a-conversation).
+The request service is provided on the root context (`pluginRequests`) so agent
+runs can reach it, which also makes it reachable from plugin scopes; plugins remain
+trusted code. The card is a built-in feature (`buzz.plugin-requests`) that registers a
+message renderer for messages with a `plugin-request` tag. Two services,
+`pluginManagement` and `pluginReviewHold`, give the plugin manager and the open-review
+hold to that feature alone, so asking cannot install or delete another plugin's code
+without the review.
 
 Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
@@ -1671,7 +1839,9 @@ credentials/tokens are never saved with source metadata. SSH accepts explicit UR
 and `user@host:owner/repository.git` shorthand, including organization-specific
 usernames. On macOS, sources at `ssh://org-49461806@github.com/squareup/…` on
 port 22 use Block's agent when its socket exists at
-`~/Library/Application Support/block-ssh-agent/agent.sock`. Other SSH sources use
+`~/Library/Application Support/block-ssh-agent/agent.sock`. When that socket exists,
+`https://github.com/squareup/…` sources are read over that SSH URL instead; the saved
+source keeps the HTTPS URL. Public Square repositories then also need a working agent. Other SSH sources use
 the desktop process's inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with
 interactive prompts and SSH config disabled. For another agent selected by
 `IdentityAgent` in SSH config, launch the app with that socket in `SSH_AUTH_SOCK`.
@@ -2125,7 +2295,8 @@ still revokes unpublished work, without exposing ARIA controls for a missing lis
 
 Providers receive immutable observation/range evidence and `publish(result)`—not
 DOM, focus or replacement commands. Results contain stable IDs, labels, optional
-detail/decorative previews and either text, an exact `{ pubkey, name }` mention,
+detail/decorative previews, an optional `agent` flag (marked and announced only
+for the bundled mention and channel providers) and either text, an exact `{ pubkey, name }` mention,
 or a `mentions` array of up to 32 such recipients. Batch edit primitives are
 copied and frozen before display, and accepted as a single editor transaction.
 The host copies edit/query primitives and caps publications at 50 choices. A

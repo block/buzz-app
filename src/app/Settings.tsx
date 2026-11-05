@@ -35,7 +35,6 @@ import {
   type RefObject,
   useCallback,
   useEffect,
-  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -873,63 +872,6 @@ export function Settings({
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
   >({});
-  // While Plugins is open, Git sources are checked one at a time, once per
-  // installed revision. Each check reads its own clone and never touches Add's
-  // preview; Update still opens the review.
-  const checkedUpdates = useRef(new Set<string>());
-  const updateCheckQueue = useRef(Promise.resolve());
-  const checkGitUpdate = useEffectEvent(async (plugin: PluginInfo) => {
-    const id = plugin.manifest.id;
-    const source = plugin.updateSource;
-    if (!plugins.imports || !source || !("repository" in source)) return;
-    try {
-      const signed = await authorizePluginGit(source.repository);
-      const result = await plugins.imports.checkGit(
-        signed?.repository ?? source.repository,
-        source.reference,
-        signed?.token,
-      );
-      const candidate = result?.candidates.find(
-        (item) => item.manifest.id === id && item.path === source.path,
-      );
-      if (!candidate) return;
-      const available = candidate.revision !== plugin.revision;
-      setUpdateChecks((current) =>
-        current[id]?.revision === plugin.revision &&
-        current[id]?.available === available
-          ? current
-          : { ...current, [id]: { revision: plugin.revision, available } },
-      );
-    } catch {
-      // The pane's Check for updates reports an unavailable source.
-    }
-  });
-  useEffect(() => {
-    if (selected !== "plugins" || !plugins.imports || !catalog) return;
-    const key = (plugin: PluginInfo) =>
-      `${plugin.manifest.id}\n${plugin.revision}`;
-    const due = catalog.plugins.filter(
-      (plugin) =>
-        plugin.source === "external" &&
-        !!plugin.updateSource &&
-        "repository" in plugin.updateSource &&
-        !managedBy(managed, plugin.manifest.id) &&
-        !checkedUpdates.current.has(key(plugin)),
-    );
-    let active = true;
-    // A re-run waits for the previous run's check so only one clone runs.
-    updateCheckQueue.current = updateCheckQueue.current.then(async () => {
-      for (const plugin of due) {
-        if (!active) return;
-        if (checkedUpdates.current.has(key(plugin))) continue;
-        checkedUpdates.current.add(key(plugin));
-        await checkGitUpdate(plugin);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [selected, catalog, managed, plugins.imports]);
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);

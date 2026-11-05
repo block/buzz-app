@@ -505,9 +505,6 @@ confirmation.
   folder. After that the agent can reload it from that folder. A reload that
   fails to start restores the previous version. Changed host access still needs
   the person's review through the plugin's **Update**.
-- In the desktop app, **Manage plugins** checks plugins added from Git for
-  updates while it is open and shows **Update** when one is available, without
-  pressing **Check for updates**. Updating still opens a review first.
 - In the desktop app, agents can list this device's plugins and disable one.
   Installing, updating, enabling or removing a plugin is a request: the agent's
   message in the conversation shows a card with **Review** and **Decline**, and the

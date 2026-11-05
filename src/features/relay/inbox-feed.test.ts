@@ -161,6 +161,51 @@ it("stops before a historical page would reset the retained unread byte budget",
     error: expect.stringContaining("retention limit"),
   });
   expect(rows(h).map((row) => row.messageId)).toEqual([current.id]);
+  const fresh = addressed(h, "z".repeat(3 * 1024 * 1024), 110);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const refresh = h.session.inboxFeed.refresh();
+    (await historyCall(h)).pending.resolve([fresh]);
+    await refresh;
+  }
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    error: undefined,
+  });
+  expect(rows(h).map((row) => row.messageId)).toEqual([fresh.id]);
+});
+
+it("head refresh also recovers when an edit overflows retained evidence", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const current = addressed(h, "x".repeat(6 * 1024 * 1024), 100);
+  const fresh = addressed(h, "fresh mention", 110);
+  const update = signed(h.alice, {
+    kind: 40003,
+    created_at: 120,
+    tags: [
+      ["h", "room"],
+      ["e", fresh.id],
+    ],
+    content: "z".repeat(3 * 1024 * 1024),
+  });
+  h.live.receive([current]);
+  h.query.mockImplementation((filters) => {
+    const filter = filters[0];
+    return Promise.resolve(
+      filter?.["#e"]
+        ? filter.kinds?.includes(40003) && !filter.before_id
+          ? [update]
+          : []
+        : [fresh],
+    );
+  });
+  for (let attempt = 0; attempt < 2; attempt++)
+    await h.session.inboxFeed.refresh();
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    error: undefined,
+  });
+  expect(rows(h).map((row) => row.messageId)).toEqual([fresh.id]);
 });
 
 // General #e reads return an empty terminal page. The ordinary #p response is

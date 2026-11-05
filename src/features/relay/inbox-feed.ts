@@ -1,7 +1,7 @@
 import { byteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
-import type { RelayReader } from "./reader";
+import type { ReadOptions } from "./reader";
 
 const mentionKinds = [9, 40002];
 const cursorOf = (event: RelayEvent) => ({
@@ -39,7 +39,13 @@ export function createInboxFeed({
 }: {
   viewer: string;
   channels: ChannelQueries;
-  reader: RelayReader;
+  /** Only historical admission preserves the existing store instead of resetting at capacity. */
+  reader: {
+    read(
+      filters: readonly ReadFilter[],
+      options: ReadOptions & { historical: boolean },
+    ): Promise<readonly RelayEvent[]>;
+  };
   /** Private lookups in the existing bounded unread evidence owner. */
   retainedEvent: (id: string) => RelayEvent | undefined;
   retainedEditIds: (ids: readonly string[]) => readonly string[];
@@ -51,6 +57,7 @@ export function createInboxFeed({
       events: readonly RelayEvent[],
       raw?: readonly RelayEvent[],
     ) => void,
+    historical: boolean,
   ) => Promise<readonly RelayEvent[]>;
   notify?: (listener: () => void) => void;
 }) {
@@ -109,6 +116,7 @@ export function createInboxFeed({
     ids: readonly string[],
     kinds: readonly number[],
     signal: AbortSignal,
+    historical: boolean,
   ) {
     if (!ids.length) return [];
     const collected: RelayEvent[] = [];
@@ -124,7 +132,7 @@ export function createInboxFeed({
               ...(cursor ?? {}),
             },
           ],
-          { signal },
+          { signal, historical },
         )),
       ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
       const previous = cursor;
@@ -229,6 +237,7 @@ export function createInboxFeed({
                 ]),
               });
           },
+          loadOlder,
         );
         if (closed || generation !== epoch) return;
         // Retry older failed targets even when newer addressed rows pushed them
@@ -239,7 +248,12 @@ export function createInboxFeed({
             ...project(mentions, !loadOlder).map((event) => event.id),
           ]),
         ];
-        const updates = await overlays(targets, [40003, 5, 9005], owned.signal);
+        const updates = await overlays(
+          targets,
+          [40003, 5, 9005],
+          owned.signal,
+          loadOlder,
+        );
         const edits = updates.filter((event) => event.kind === 40003);
         await overlays(
           [
@@ -250,6 +264,7 @@ export function createInboxFeed({
           ],
           [5, 9005],
           owned.signal,
+          loadOlder,
         );
         if (closed || generation !== epoch) return;
         const last = rawPage.at(-1);

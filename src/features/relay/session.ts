@@ -1218,7 +1218,7 @@ export function createRelaySession(
             { ...settings, signal },
             true,
             (visible, raw) => {
-              if (!unread.canRetain(visible))
+              if (settings.historical && !unread.canRetain(visible))
                 throw new Error(
                   "Inbox history reached this device's retention limit. Existing entries remain available.",
                 );
@@ -1239,10 +1239,10 @@ export function createRelaySession(
     },
     retainedEvent: unread.event,
     retainedEditIds: unread.retainedEditIds,
-    addressedRead: (filter, signal, prepare) =>
+    addressedRead: (filter, signal, prepare, historical) =>
       finiteRead([filter], { signal }, (signal) =>
         readVerified([filter], { signal }, true, (visible, raw) => {
-          if (!unread.canRetain(visible))
+          if (historical && !unread.canRetain(visible))
             throw new Error(
               "Inbox history reached this device's retention limit. Existing entries remain available.",
             );

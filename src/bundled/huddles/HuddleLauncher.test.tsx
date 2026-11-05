@@ -162,6 +162,13 @@ it("moves idle Solo huddles to the menu while preserving Team's header action", 
     await userEvent.click(headphones);
     await userEvent.click(screen.getByRole("button", { name: "Start huddle" }));
     expect(start).toHaveBeenCalledWith(context);
+    // A pending confirmation never carries over to another conversation.
+    await userEvent.click(headphones);
+    const other = { ...context, channelId: "other", channelName: "Other" };
+    view.rerender(<HuddleLauncher {...props} context={other} />);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    view.rerender(<HuddleLauncher {...props} />);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     view.unmount();
   } finally {
     await huddles.dispose();

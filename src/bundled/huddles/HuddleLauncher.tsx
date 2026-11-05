@@ -101,7 +101,10 @@ export function HuddleLauncher(props: Props) {
   const parent = list.channels.find(
     (channel) => channel.id === context.channelId,
   );
-  const [confirming, setConfirming] = useState(false);
+  // Bind a pending confirmation to its conversation so it never starts another.
+  const target = [context.scope, context.viewer, context.channelId].join("\n");
+  const [confirming, setConfirming] = useState<string>();
+  if (confirming && confirming !== target) setConfirming(undefined);
   const cancel = useRef<HTMLButtonElement>(null);
   const active = ["connecting", "connected", "leaving"].includes(call.phase);
   const here =
@@ -148,7 +151,7 @@ export function HuddleLauncher(props: Props) {
   // Keep active/incoming calls visible; idle Solo calls live in Chat actions.
   if (parent?.channelType === "solo" && !active && !joinable) return null;
   // The header button is easy to hit by accident, so a new call asks first.
-  const close = () => setConfirming(false);
+  const close = () => setConfirming(undefined);
   return (
     <span className={joinable ? styles.activeLauncher : undefined}>
       <IconButton
@@ -158,9 +161,9 @@ export function HuddleLauncher(props: Props) {
         style={joinable ? { color: "var(--status-online)" } : undefined}
         aria-label={label}
         title={label}
-        onClick={active || joinable ? activate : () => setConfirming(true)}
+        onClick={active || joinable ? activate : () => setConfirming(target)}
       />
-      {confirming && (
+      {confirming === target && (
         <AlertDialog
           title="Start a huddle?"
           description="Your microphone will turn on, and others in this conversation can join."

@@ -155,7 +155,9 @@ export function ConversationHost({
           ? {
               ...overlay.media,
               restoreFocus: trigger,
-              close: () => setOverlay(undefined),
+              // A panel the review opened has already replaced it.
+              close: () =>
+                setOverlay((current) => (current?.media ? undefined : current)),
             }
           : undefined,
       )}

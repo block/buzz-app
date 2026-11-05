@@ -1758,6 +1758,9 @@ or Video when unnamed, and updates as gallery selection changes. While a thread
 read is pending or fails, the viewer preserves the opener's known media and offers
 thread retry independently of media loading. Verified removal or invalidated access
 retires that fallback through retries until a fresh read re-admits the attachment.
+Links, mentions and avatars in review comments open as they do in the thread
+panel; following one closes the review, while a refused link or one opened in the
+browser leaves it open.
 Image and video previews share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
 media against a pure-black canvas. Large emoji retain their artwork size with the

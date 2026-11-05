@@ -9,19 +9,23 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import userEvent from "@testing-library/user-event";
+import { npubEncode } from "nostr-tools/nip19";
 import { PanelWorkspace } from "../panels/PanelWorkspace";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, profile, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { profileTarget } from "../profiles/target";
+import type { MessageLinkOrigin } from "./MessageRow";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   for (const owner of owners.splice(0)) owner.dispose();
   localStorage.clear();
 });
@@ -142,7 +146,7 @@ it("keeps fullscreen comment avatar hints in sync without loading the agent libr
   expect(readAgentLibrary).toHaveBeenCalledTimes(2);
 });
 
-it("renders comment mentions as names even though comment links stay inert", async () => {
+it("renders comment mentions as names when the host cannot open profiles", async () => {
   const viewer = keypair(),
     tyler = keypair();
   const attachment = {
@@ -307,6 +311,169 @@ it("opens comments at the reply the reader was viewing behind the review", async
     vi.restoreAllMocks();
     thread.remove();
   }
+});
+
+/** Sam's comment mentions Tyler and links another message. */
+function linkedComment() {
+  const viewer = keypair(),
+    sam = keypair(),
+    tyler = keypair();
+  const attachment = {
+    url: "https://fixture.test/image.png",
+    kind: "image" as const,
+  };
+  const root = message(viewer, "one", "Image", 1, [
+    ["imeta", `url ${attachment.url}`, "m image/png"],
+  ]);
+  const link = `buzz://message?channel=one&id=${"a".repeat(64)}`;
+  const reply = message(sam, "one", `I think @Tyler wrote <${link}>`, 2, [
+    ["e", root.id, "", "reply"],
+    ["p", tyler.pubkey],
+  ]);
+  const profiles = [
+    profile(viewer, { name: "Human" }),
+    profile(sam, { name: "Sam" }),
+    profile(tyler, { name: "Tyler" }),
+  ];
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: keypair().pubkey,
+    media: (url) => url,
+    async query(filters) {
+      return filters.flatMap((filter) => {
+        if (filter.kinds?.includes(0))
+          return profiles.filter((event) =>
+            filter.authors?.includes(event.pubkey),
+          );
+        if (filter.ids)
+          return [root, reply].filter((event) =>
+            filter.ids?.includes(event.id),
+          );
+        if (filter.depth_limit)
+          return filter.thread_cursor === undefined ||
+            reply.created_at > filter.thread_cursor
+            ? [reply]
+            : [];
+        return [];
+      });
+    },
+  });
+  owners.push(owner);
+  return {
+    link,
+    rootId: root.id,
+    sam: `nostr:${npubEncode(sam.pubkey)}`,
+    tyler: `nostr:${npubEncode(tyler.pubkey)}`,
+    props: {
+      attachment,
+      session: owner.session,
+      scope: "comment-links",
+      channelId: "one",
+      channelName: "One",
+      messageId: root.id,
+      initialTime: 0,
+      canOpenLink: (target: string) => target.startsWith("nostr:"),
+    },
+  };
+}
+
+it("opens comment mentions, avatars and links through its host, then closes", async () => {
+  const { link, rootId, sam, tyler, props } = linkedComment();
+  const calls: unknown[][] = [];
+  let accept = true;
+  render(
+    <MediaReviewViewer
+      {...props}
+      onOpenLink={(url: string, origin?: MessageLinkOrigin) => {
+        calls.push(["open", url, origin]);
+        return accept;
+      }}
+      close={() => calls.push(["close"])}
+    />,
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "View Tyler profile" }),
+  );
+  expect(calls.splice(0)).toEqual([["open", tyler, { rootId }], ["close"]]);
+  fireEvent.click(screen.getByRole("button", { name: "View Sam profile" }));
+  expect(calls.splice(0)).toEqual([["open", sam, { rootId }], ["close"]]);
+  // A refused link keeps the review and says so; an accepted one leaves it.
+  accept = false;
+  const anchor = within(
+    screen.getByRole("region", { name: "Media comments" }),
+  ).getByRole("link");
+  expect(anchor).toHaveAttribute("href", link);
+  fireEvent.click(anchor);
+  expect(calls.splice(0)).toEqual([["open", link, { rootId }]]);
+  expect(
+    screen.getByText("This Buzz link couldn’t be opened here."),
+  ).toBeInTheDocument();
+  accept = true;
+  fireEvent.click(anchor);
+  expect(calls.splice(0)).toEqual([["open", link, { rootId }], ["close"]]);
+});
+
+it("leaves focus with a followed comment link's destination", async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  const { props } = linkedComment();
+  // Like a profile tab, the destination takes focus when it mounts.
+  function Destination() {
+    const button = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+      button.current?.focus();
+    }, []);
+    return (
+      <button ref={button} type="button">
+        Tyler profile
+      </button>
+    );
+  }
+  function Host() {
+    const opener = useRef<HTMLButtonElement>(null);
+    const [reviewing, setReviewing] = useState(false);
+    const [destination, setDestination] = useState(false);
+    return (
+      <>
+        <button ref={opener} type="button" onClick={() => setReviewing(true)}>
+          View image
+        </button>
+        {destination && <Destination />}
+        {reviewing && (
+          <MediaReviewViewer
+            {...props}
+            restoreFocus={opener}
+            onOpenLink={() => {
+              setDestination(true);
+              return true;
+            }}
+            close={() => setReviewing(false)}
+          />
+        )}
+      </>
+    );
+  }
+  render(<Host />);
+  const opener = screen.getByRole("button", { name: "View image" });
+  opener.focus();
+  fireEvent.click(opener);
+  const mention = await screen.findByRole("button", {
+    name: "View Tyler profile",
+  });
+  act(() => {
+    for (const frame of frames.splice(0)) frame(0);
+  });
+  fireEvent.click(mention);
+  // The close's focus handoff is recorded in a microtask before its frame.
+  await act(async () => {});
+  act(() => {
+    for (const frame of frames.splice(0)) frame(0);
+  });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Tyler profile" })).toHaveFocus();
 });
 
 it("wires image review links to the viewer host opener", async () => {

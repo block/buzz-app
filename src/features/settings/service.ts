@@ -18,7 +18,7 @@ export type SettingsCard = {
   /** Show this card under a labelled account-level group instead of the selected community. */
   group?: string;
   /** Separate permission-gated controls from ordinary settings for the selected community. */
-  section?: "administration";
+  section?: "administration" | "appearance";
   /** Also offer this community card in Personal space, where no community is selected. */
   personal?: boolean;
   /** Reactive verified authorization for permission-gated navigation. */
@@ -103,7 +103,9 @@ export class SettingsCardsService extends Service implements SettingsCards {
       typeof card.component !== "function" ||
       (card.group !== undefined &&
         (typeof card.group !== "string" || !card.group.trim())) ||
-      (card.section !== undefined && card.section !== "administration") ||
+      (card.section !== undefined &&
+        card.section !== "administration" &&
+        card.section !== "appearance") ||
       (card.group !== undefined && card.section !== undefined) ||
       // Personal space extends an ungrouped, non-administration community card.
       (card.personal !== undefined &&

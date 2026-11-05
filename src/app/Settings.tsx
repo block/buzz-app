@@ -1252,6 +1252,7 @@ export function Settings({
           <AppearanceSettings
             appearance={appearance}
             active={selected === "appearance"}
+            cards={cards}
           />
         </div>
         <div hidden={selected !== "shortcuts"}>
@@ -1291,7 +1292,8 @@ export function Settings({
         </div>
         {contributed.map(
           (card) =>
-            selected === card.key && (
+            selected === card.key &&
+            card.section !== "appearance" && (
               <OwnedContribution key={card.key} entry={card} registry={cards}>
                 {(entry, active) => {
                   const Card = entry.component;

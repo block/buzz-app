@@ -155,8 +155,9 @@ catch-up path:
 
 - State its relay reads per client, and reconnect from a cursor rather than
   rebuilding state. One replay filter per channel is ~306 filters per reconnect
-  for a 300-channel client (#2308). Re-reading channels whose replay already
-  completed wastes the same reads (#2206).
+  for a 300-channel client (#2308). Skip a repair read only when the replay
+  proves continuity and the client can reconcile every projection it touched;
+  otherwise keep the repair, bounded (#2206).
 - Jitter its start, and back off on failure with a cap.
 - Prefer an event-driven refresh with a long backstop over a short poll. A
   60-second full channel-list read became a 15-minute one (#2215).

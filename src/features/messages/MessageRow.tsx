@@ -102,6 +102,8 @@ export type MessageRowProps = {
   row: ChannelMessage;
   recordedActivity?: ActivityRowPresentation | undefined;
   representedAgents?: readonly string[] | undefined;
+  repliedAgents?: readonly string[] | undefined;
+  stoppedRequest?: ChannelMessage | undefined;
   staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
@@ -200,6 +202,8 @@ function MessageRowContent({
   stackPrevious = layout === "continuation",
   stackNext = false,
   representedAgents,
+  repliedAgents,
+  stoppedRequest,
   alignViewer = true,
 
   mediaMode = "inline",
@@ -1356,7 +1360,7 @@ function MessageRowContent({
                   : undefined
               }
               canOpen={canOpenLink ?? (() => false)}
-              open={onOpenLink}
+              open={openLink}
             />
           )}
           {!(active && session && scope && extensions?.accessories) &&
@@ -1368,6 +1372,8 @@ function MessageRowContent({
           registry={extensions.accessories}
           placement="response"
           representedAgents={representedAgents}
+          repliedAgents={repliedAgents}
+          stoppedRequest={stoppedRequest}
           messageLayout={layout}
           session={session}
           scope={scope}
@@ -1386,7 +1392,7 @@ function MessageRowContent({
               : undefined
           }
           canOpen={canOpenLink ?? (() => false)}
-          open={onOpenLink}
+          open={openLink}
         />
       )}
     </div>

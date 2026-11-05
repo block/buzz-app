@@ -34,6 +34,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  enabledPlugins: [[], { option: true }],
   builderlab: [{}, { option: true }],
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
@@ -66,6 +67,7 @@ export const test = base.extend({
   lifecycleRole: ["owner", { option: true }],
   lifecycleOwnerAgent: [false, { option: true }],
   lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
+  autoJoinChannels: [[], { option: true }],
   sidebarIcons: [false, { option: true }],
   channelNames: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -110,6 +112,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      enabledPlugins,
       builderlab,
       liveSetupTimeoutMs,
       actionProfile,
@@ -140,6 +143,7 @@ export const test = base.extend({
       lifecycleRole,
       lifecycleOwnerAgent,
       lifecycleVisibility,
+      autoJoinChannels,
       sidebarIcons,
       channelNames,
       expectedPageFailure,
@@ -339,6 +343,8 @@ export const test = base.extend({
     const archivedIds = new Set(lifecycleVisibility.archived);
     const hiddenDmIds = new Set(lifecycleVisibility.hidden);
     let lifecycleTime = 1700000001;
+    const joinedRoles = new Map();
+    const channelGuests = new Map();
     const rosterIds = [
       ...new Set([
         ...channels,
@@ -441,6 +447,7 @@ export const test = base.extend({
     }
     const hiddenChannels = new Set();
     const soloDetails = new Map();
+    const servedMembers = new Map(Object.entries(sessionMembers));
     const streams = new Map();
     const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
@@ -1045,6 +1052,7 @@ export const test = base.extend({
       );
       if (preview && rosterKind) {
         const owner = preview.tags.find(([key]) => key === "P")?.[1];
+        if (filter["#p"] && !filter["#p"].includes(owner)) return [];
         return [
           sign(
             rosterKind,
@@ -1168,60 +1176,99 @@ export const test = base.extend({
               lifecycleTime,
             ),
           );
+      // Search's member count reads rosters without the viewer filter, so
+      // the unjoined public channel answers with its members, not the viewer.
+      if (
+        filter.kinds?.includes(39002) &&
+        !filter["#p"] &&
+        openSearch &&
+        !rosterIds.includes(OPEN_CHANNEL) &&
+        filter["#d"]?.includes(OPEN_CHANNEL)
+      )
+        return [
+          sign(
+            39002,
+            [
+              ["d", OPEN_CHANNEL],
+              ...["a", "b", "c"].map((digit) => [
+                "p",
+                digit.repeat(64),
+                "",
+                "member",
+              ]),
+            ],
+            "",
+            relayKey,
+            lifecycleTime,
+          ),
+        ];
       if (filter.kinds?.includes(39002))
         return rosterIds
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
           .map((id) =>
-            sign(39002, [
-              ["d", id],
+            sign(
+              39002,
               [
-                "p",
-                viewer,
-                "",
-                lifecycleRows.some((row) => row.id === id) ||
-                ownSoloChannels.includes(id)
-                  ? lifecycleRole === "nonmember"
-                    ? "member"
-                    : lifecycleRole
-                  : "member",
+                ["d", id],
+                [
+                  "p",
+                  viewer,
+                  "",
+                  joinedRoles.get(id) ??
+                    (lifecycleRows.some((row) => row.id === id) ||
+                    ownSoloChannels.includes(id)
+                      ? lifecycleRole === "nonmember"
+                        ? "member"
+                        : lifecycleRole
+                      : "member"),
+                ],
+                ...(ownSoloChannels.includes(id)
+                  ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
+                  : []),
+                ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
+                  ? [["p", ownerAgent, "", "owner"]]
+                  : []),
+                ...(servedMembers.get(id) ?? []).map((pubkey) => [
+                  "p",
+                  pubkey,
+                  "",
+                  "member",
+                ]),
+                ...[...(channelGuests.get(id) ?? [])].map((pubkey) => [
+                  "p",
+                  pubkey,
+                  "",
+                  "guest",
+                ]),
+                ...(dmMembers[id]
+                  ? dmMembers[id].map((index) => [
+                      "p",
+                      participants[index],
+                      "",
+                      "member",
+                    ])
+                  : agentPeers && channels.includes(id)
+                    ? participants.map((pubkey) => ["p", pubkey, "", "member"])
+                    : dmLabels && id === "dm-peer"
+                      ? [["p", participants[0], "", "member"]]
+                      : dmLabels && id === "dm-group"
+                        ? participants.map((pubkey) => [
+                            "p",
+                            pubkey,
+                            "",
+                            "member",
+                          ])
+                        : participants
+                            .slice(
+                              dmIds.indexOf(id) * 8,
+                              (dmIds.indexOf(id) + 1) * 8,
+                            )
+                            .map((pubkey) => ["p", pubkey, "", "member"])),
               ],
-              ...(ownSoloChannels.includes(id)
-                ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])
-                : []),
-              ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
-                ? [["p", ownerAgent, "", "owner"]]
-                : []),
-              ...(sessionMembers[id] ?? []).map((pubkey) => [
-                "p",
-                pubkey,
-                "",
-                "member",
-              ]),
-              ...(dmMembers[id]
-                ? dmMembers[id].map((index) => [
-                    "p",
-                    participants[index],
-                    "",
-                    "member",
-                  ])
-                : agentPeers && channels.includes(id)
-                  ? participants.map((pubkey) => ["p", pubkey, "", "member"])
-                  : dmLabels && id === "dm-peer"
-                    ? [["p", participants[0], "", "member"]]
-                    : dmLabels && id === "dm-group"
-                      ? participants.map((pubkey) => [
-                          "p",
-                          pubkey,
-                          "",
-                          "member",
-                        ])
-                      : participants
-                          .slice(
-                            dmIds.indexOf(id) * 8,
-                            (dmIds.indexOf(id) + 1) * 8,
-                          )
-                          .map((pubkey) => ["p", pubkey, "", "member"])),
-            ]),
+              "",
+              relayKey,
+              lifecycleTime,
+            ),
           );
       if (filter.kinds?.includes(39000))
         return [
@@ -1259,6 +1306,7 @@ export const test = base.extend({
                   ],
                   ...(id === guestChannelId ? [["join_role", "guest"]] : []),
                   ...(archivedIds.has(id) ? [["archived", "true"]] : []),
+                  ...(autoJoinChannels.includes(id) ? [["auto_join"]] : []),
                   // Ordinary channels are explicitly public; do not add a public
                   // flag to private Solo chats or change the separate DM fixtures.
                   ...(!soloChannels.includes(id) &&
@@ -1833,6 +1881,22 @@ export const test = base.extend({
         deliverRoster(OPEN_CHANNEL, community);
         return heldJoin.promise;
       }
+      if (channelLifecycle && event.kind === 9021) {
+        const id = event.tags.find(([key]) => key === "h")?.[1];
+        expect(lifecycleRows.some((row) => row.id === id)).toBe(true);
+        const metadata = answer(community, { kinds: [39000], "#d": [id] })[0];
+        expect(metadata.tags).toContainEqual(["public"]);
+        expect(metadata.tags).not.toContainEqual(["private"]);
+        joinedRoles.set(
+          id,
+          metadata.tags.find(([key]) => key === "join_role")?.[1] ?? "member",
+        );
+        if (!rosterIds.includes(id)) rosterIds.push(id);
+        lifecycleTime++;
+        report.lifecyclePublications ??= [];
+        report.lifecyclePublications.push(event);
+        return;
+      }
       if (
         event.kind === 9002 &&
         ownSoloChannels.includes(event.tags.find(([key]) => key === "h")?.[1])
@@ -2035,7 +2099,7 @@ export const test = base.extend({
                   expect(event.pubkey).toBe(viewer);
                   if (
                     channelLifecycle &&
-                    [9002, 9008, 9022, 41012].includes(event.kind)
+                    [9002, 9008, 9021, 9022, 41012].includes(event.kind)
                   )
                     return acceptReadPublication(community, event);
                   if (event.kind === 30078 || event.kind === 20002)
@@ -2261,6 +2325,10 @@ export const test = base.extend({
             : 3,
         );
         const filter = body[0];
+        if (body.length === 1 && filter.read_state_snapshot === 1) {
+          report.queries.push({ community, filter });
+          return send(response, answer(community, filter));
+        }
         const result = [
           ...new Map(
             body
@@ -2447,7 +2515,21 @@ export const test = base.extend({
           observer.observe(document, { childList: true, subtree: true });
         });
       await page.addInitScript(
-        ({ viewer, profilePicture, iconCongestion }) => {
+        ({ viewer, profilePicture, iconCongestion, enabledPlugins }) => {
+          // Model fresh plugin choices before seeding an existing community.
+          // Feature journeys opt in once; reloads retain later user choices.
+          if (!localStorage.getItem("buzzodz.plugins.v1"))
+            localStorage.setItem(
+              "buzzodz.plugins.v1",
+              JSON.stringify({
+                version: 3,
+                enabled: {
+                  "buzz.reminders": false,
+                  "buzz.workflows": false,
+                  ...Object.fromEntries(enabledPlugins.map((id) => [id, true])),
+                },
+              }),
+            );
           const key = `buzz-client.v1:${viewer}`;
           if (!localStorage.getItem(key))
             localStorage.setItem(
@@ -2471,7 +2553,7 @@ export const test = base.extend({
               }),
             );
         },
-        { viewer, profilePicture, iconCongestion },
+        { viewer, profilePicture, iconCongestion, enabledPlugins },
       );
       await use({
         sign: (template) => finalizeEvent(template, userKey),
@@ -2641,8 +2723,21 @@ export const test = base.extend({
           servedProfiles.set(event.pubkey, event);
           return event;
         },
+        // Configure pre-existing members before opening the app. Reads stay at
+        // the modeled relay, without a second browser-owned HTTP request.
+        serveMembers(id, pubkeys) {
+          expect(rosterIds).toContain(id);
+          servedMembers.set(id, [...pubkeys]);
+        },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
+        addChannelGuest(id, pubkey) {
+          expect(rosterIds).toContain(id);
+          const guests = channelGuests.get(id) ?? new Set();
+          guests.add(pubkey);
+          channelGuests.set(id, guests);
+          lifecycleTime++;
+        },
         renameChannel(id, name) {
           expect(rosterIds).toContain(id);
           renamedChannels.set(id, name);
@@ -2783,6 +2878,7 @@ export const test = base.extend({
           root,
           parent,
           attachmentTags = [],
+          createdAt,
         ) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
@@ -2801,7 +2897,7 @@ export const test = base.extend({
             ],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
-            (history.at(-1)?.created_at ?? 1700000900) + 1,
+            createdAt ?? (history.at(-1)?.created_at ?? 1700000900) + 1,
           );
           history.push(event);
           if (relay && deliver) relay.publish(community, event);

@@ -131,7 +131,12 @@ the row's alignment. A row is not an extra click target around its input. Preser
 visible labels and connect help/error text; placeholders cannot replace labels.
 Use `Accordion` for optional details, retaining mounted draft input where needed.
 Use `Accordion variant="settings"` for disclosures alongside preference rows.
-Its full-row trigger uses the settings container shape and spacing; the chevron
+Inside a row-layout `SettingsGroup`, it shares the group's frame and content inset,
+with square trigger corners so the hover fill follows the flat row dividers.
+The disclosure spans the group's inner width; its trigger and content retain the
+group's horizontal inset, so text has padding inside the hover fill. No divider
+separates the trigger from its expanded content.
+Standalone triggers use the settings container shape and spacing; the chevron
 is decorative, and the entire row expands the content. `Select variant="preference"` uses the same
 label and compact choice control without adding a group container.
 See [settings fills and spacing](../../../docs/design-system.md#content-headers-and-settings-fills).
@@ -1720,8 +1725,8 @@ and paired text. Do not generate unused role families from every palette hue.
 Existing palette utilities and older role names are compatibility APIs while
 callers migrate, not the default for new UI. Tailwind's stock palette is removed.
 
-`ShimmerText` gives a short live-work label (an agent's current step) a slow
-sheen from metadata text to standard text, with a distinct 1.8s sweep.
+`ShimmerText` gives a short live-work label (an agent's current step) a defined
+sheen from metadata text to standard text, with a 1.2s sweep.
 Use it only while that work is
 live, never on finished, failed or waiting text. Reduced motion shows plain text.
 
@@ -2122,3 +2127,11 @@ motion and hidden documents; it never owns focus or blocks an action.
 ### Standalone account cards
 
 First-run setup uses `Panel shape="card"`, matching Builderlab/Auth0: content-sized, `radius-card` corners and `shadow-card` lift. Compose a 490px reading column with space-8 insets, title/body-sm typography, shared Field/Input controls and large capsule actions. Keep welcome artwork separate from these opaque setup cards.
+
+### Compact control groups
+
+`buzz-compact-controls` is an opt-in wrapper recipe for compact adjacent Button
+and IconButton actions, currently used by message reaction capsules and their
+Add reaction control. It supplies a 1.625rem height, square icon geometry, and
+content-width labelled controls. Features retain placement and behavior; the
+shared recipe owns sizing. Do not infer this treatment from product data attributes.

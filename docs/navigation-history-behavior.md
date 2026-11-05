@@ -2,7 +2,15 @@
 
 Dialogs and content tabs follow the [navigation history and dismissal contract](navigation-history.md).
 The integrated families are Members, Settings sections, provider controls opened
-within Settings or through Agents-page links, and thread, Profile and GitHub tabs.
+within Settings or through Agents-page links, agent config version inspectors,
+and thread, Profile and GitHub tabs.
+
+Plugin account-action dialogs in the profile menu are a documented exception.
+They live in the profile menu's own state and create no visit: Back/Forward
+leaves them as they are, and closing one adds or retires nothing. Moving them to
+the navigation owner would change every account action at once. Focus's dialog
+holds one short choice with no draft or pending work; other account actions,
+such as Send feedback, can hold drafts and uploads.
 
 Back/Forward revisits content and restores the selected thread while retaining
 open tabs. X (and the equivalent explicit tab
@@ -56,6 +64,17 @@ Settings open, Forward restores it, and provider Close retires only its nested
 visits. Closing Settings retires its sections and nested provider visits together.
 Restoration opens controls, never an install, sign-in or save operation. This does
 not add new history visits to every existing confirmation or editor.
+
+Agent config version dialogs retain an expanded Previous versions list and its
+scroll position underneath, in both the Agents page and owned-agent profiles.
+Back returns to that list;
+Forward restores the selected version using the current config store. Close,
+Escape, outside dismissal and a confirmed revert retire that version's visits
+within the same account/community scope. Restoring a dialog never submits a revert.
+The shared Dialog blocks explicit dismissal during a revert; passive traversal
+can hide it while the existing write continues. Completion retires its presentation
+even after Back. A cold or reloaded address reloads history; Load older remains
+available in the dialog if the selected revision is beyond the loaded page.
 
 ## History and lifetime boundaries
 

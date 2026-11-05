@@ -9620,7 +9620,9 @@ for (const channelType of ["stream", "forum"] as const)
       // block/buzz parity: without permission, Invite is absent, not disabled.
       expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
       await waitFor(() =>
-        expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+        expect(
+          screen.getByRole("button", { name: "Send anyway" }),
+        ).toHaveFocus(),
       );
       expect(screen.getByRole("dialog")).toHaveTextContent(
         "Honey is not in this channel. You cannot add people to this channel. You can still send without inviting them.",
@@ -9690,7 +9692,7 @@ it.each(["Do nothing", "Invite"])(
   },
 );
 
-it("Enter on a deliberately focused Invite adds a nonmember before sending", async () => {
+it("focuses Invite so Enter adds a nonmember before sending", async () => {
   const h = mount();
   const add = vi.fn(async () => {});
   const list = {
@@ -9706,11 +9708,9 @@ it("Enter on a deliberately focused Invite adds a nonmember before sending", asy
   });
   act(() => h.commands().insertMention(first));
   fireEvent.submit(screen.getByRole("form"));
-  const invite = screen.getByRole("button", { name: "Invite" });
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+    expect(screen.getByRole("button", { name: "Invite" })).toHaveFocus(),
   );
-  invite.focus();
   await userEvent.setup().keyboard("{Enter}");
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(add).toHaveBeenCalledWith("channel", first.pubkey);
@@ -9893,7 +9893,7 @@ it("brings several agents in, then adds them together", async () => {
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
 });
 
-it.each(["close", "escape", "enter"])(
+it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",
   async (action) => {
     const h = mount();
@@ -9919,15 +9919,13 @@ it.each(["close", "escape", "enter"])(
       "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
     );
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    // Enter answers the focused Invite action, so it is not a dismissal path.
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+      expect(screen.getByRole("button", { name: "Invite" })).toHaveFocus(),
     );
     if (action === "close")
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    else
-      await userEvent
-        .setup()
-        .keyboard(action === "enter" ? "{Enter}" : "{Escape}");
+    else await userEvent.setup().keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );

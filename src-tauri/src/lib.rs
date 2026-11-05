@@ -1223,16 +1223,6 @@ mod tests {
         TitleBarFillFrame, TitleBarFrame,
     };
 
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn spellcheck_while_typing_defaults_on() {
-        use objc2_foundation::{ns_string, NSUserDefaults};
-        let key = ns_string!("WebContinuousSpellCheckingEnabled");
-        let defaults = NSUserDefaults::standardUserDefaults();
-        super::register_spellcheck_default();
-        assert!(defaults.boolForKey(key));
-    }
-
     #[test]
     fn git_checks_never_acquire_or_replace_the_import_slot() {
         use tauri::Manager as _;

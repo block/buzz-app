@@ -78,14 +78,14 @@ it("restores the Reactions tab and keeps conversation filters inactive there", a
   await chooseFilter("Reactions");
   await screen.findByText("No reactions yet");
   expect(fromTrigger()).toBeDisabled();
-  expect(unreadToggle()).toBeDisabled();
+  expect(unreadToggle()).toHaveAttribute("aria-disabled", "true");
   view.unmount();
   render(h.view);
   await screen.findByText("No reactions yet");
   expect(activityType()).toBe("Reactions");
   await chooseFilter("All activity");
   expect(fromTrigger()).toBeEnabled();
-  expect(unreadToggle()).toBeEnabled();
+  expect(unreadToggle()).not.toHaveAttribute("aria-disabled", "true");
   expect(unreadToggle()).toBeChecked();
 });
 
@@ -4526,7 +4526,7 @@ it("moves through the Activity type tabs with arrows, Home and End, then tabs ou
   expect(tab().at(-1)).toHaveFocus();
   expect(activityType()).toBe("Reactions");
   expect(fromTrigger()).toBeDisabled();
-  expect(unreadToggle()).toBeDisabled();
+  expect(unreadToggle()).toHaveAttribute("aria-disabled", "true");
   await user.keyboard("{Home}");
   expect(all).toHaveFocus();
   expect(focusable()).toEqual([all]);

@@ -77,7 +77,11 @@ function fixture(
   let generation = 0;
   const session = {
     viewer,
-    channels: { list: list.snapshot, subscribeList: list.subscribe },
+    channels: {
+      list: list.snapshot,
+      subscribeList: list.subscribe,
+      window: () => undefined,
+    },
     profiles: {
       snapshot: profiles.snapshot,
       subscribe: profiles.subscribe,
@@ -98,6 +102,10 @@ function fixture(
     unread: {
       enterChannel: async () => {},
       leaveChannel: () => {},
+      attention: () => ({ unread: false }),
+      revision: () => 0,
+      subscribe: () => () => {},
+      snapshot: () => undefined,
     },
   } as unknown as RelaySession;
   const purge = () => {

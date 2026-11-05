@@ -1699,23 +1699,27 @@ export function WorkflowLanding({
         `#${channels.find((channel) => channel.id === route.channel)?.name ?? route.channel} has no workflows.`,
       );
   });
-  const seenVisit = useRef<string>(undefined);
+  // The visit shown, tracked apart from whether its route has applied so that
+  // leaving a visit is seen even when neither visit's route can apply yet.
+  const presented = useRef<{ visit: string; applied: boolean }>(undefined);
   const appliedVisits = useRef(new Set<string>());
   useEffect(() => {
-    if (!route || seenVisit.current === route.visit) return;
+    if (!route) return;
+    const previous = presented.current;
+    if (previous?.visit === route.visit && previous.applied) return;
     // A visit this page pushed already shows its workflow.
     const routed = routedWorkflow(route);
     const shown = !!routed && workflowKey(routed) === selected;
     if (!routeReady) {
+      presented.current = { visit: route.visit, applied: false };
       // Entering a waiting visit ends the last visit's selection without
-      // retiring either, and forgets the last visit so returning reapplies it.
-      // The reader's own selection while it waits stands.
-      if (seenVisit.current === undefined) return;
-      seenVisit.current = undefined;
-      if (!shown) onSelect(undefined);
+      // retiring either; returning to the last visit reapplies it. The
+      // reader's own selection while it waits stands.
+      if (previous && previous.visit !== route.visit && !shown)
+        onSelect(undefined);
       return;
     }
-    seenVisit.current = route.visit;
+    presented.current = { visit: route.visit, applied: true };
     if (shown) return;
     const first = !appliedVisits.current.has(route.visit);
     appliedVisits.current.add(route.visit);

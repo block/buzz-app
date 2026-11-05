@@ -2310,24 +2310,20 @@ it("clears another visit's workflow when Back reaches a link still waiting for i
         screen.queryByRole("region", { name: "Workflow details" }),
       ).toBeNull(),
     );
+  const data = {
+    partial: false,
+    items: [
+      fixtureDefinition,
+      {
+        ...fixtureDefinition,
+        id: "22222222-2222-4222-8222-222222222222",
+        channelId: other.id,
+        yaml: fixtureYaml.replace("Message helper", "Other helper"),
+      },
+    ],
+  };
   try {
-    act(() =>
-      page.definitions.update({
-        status: "ready",
-        data: {
-          partial: false,
-          items: [
-            fixtureDefinition,
-            {
-              ...fixtureDefinition,
-              id: "22222222-2222-4222-8222-222222222222",
-              channelId: other.id,
-              yaml: fixtureYaml.replace("Message helper", "Other helper"),
-            },
-          ],
-        },
-      }),
-    );
+    act(() => page.definitions.update({ status: "ready", data }));
     fireEvent.click(
       await screen.findByRole("button", { name: /^Open Other helper:/ }),
     );
@@ -2345,6 +2341,28 @@ it("clears another visit's workflow when Back reaches a link still waiting for i
     ).toBeVisible();
     act(() => page.navigator.back());
     await closed();
+    // After a failed read the channel's workflows stay selectable, but neither
+    // the visit of one selected from them nor the link can apply; Back still
+    // closes its workflow.
+    act(() =>
+      page.definitions.update({
+        status: "error",
+        error: "Read unavailable",
+        data,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Open Other helper:/ }),
+    );
+    expect(
+      await screen.findByRole("tab", { name: "Other helper" }),
+    ).toBeVisible();
+    await waitFor(() => expect(page.routed()?.channel).toBe(other.id));
+    act(() => page.navigator.back());
+    await closed();
+    expect(page.routed()).toEqual({ channel: fixtureChannel });
+    act(() => page.definitions.update({ status: "ready", data }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     // The link still applies once its channel is listed.
     act(() =>
       page.setChannels({

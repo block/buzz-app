@@ -258,13 +258,15 @@ function InboxPreviewCard({
     if (failure || document.activeElement !== document.body) return;
     unreadOnlyControl.current?.focus({ preventScroll: true });
   }, [failure]);
-  // Each conversation counts once, under its most specific kind.
+  // Each conversation counts once, under its most specific kind, as the
+  // page's filters with Unread only would list it. A Solo chat's own row has
+  // no kind, so the total leads.
   let dms = 0;
   let mentions = 0;
   let threads = 0;
   for (const item of unread) {
     if (channelOf(item.channelId)?.channelType === "dm") dms++;
-    else if (item.mentioned) mentions++;
+    else if (item.mention && hasUnread(item.mention)) mentions++;
     else if (item.thread) threads++;
   }
   const kinds = [
@@ -275,7 +277,7 @@ function InboxPreviewCard({
   const summary = loading
     ? "Checking recent activity…"
     : unread.length
-      ? `${kinds.length ? kinds.join(" · ") : unread.length} unread`
+      ? [`${unread.length} unread`, ...kinds].join(" · ")
       : checked
         ? "Nothing unread"
         : undefined;

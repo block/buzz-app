@@ -447,7 +447,13 @@ export function createChannelStore(
   }
   function moveCursor(state: WindowState, cursor: WindowCursor | null) {
     state.cursor = cursor;
-    state.floor = Math.min(state.floor ?? Infinity, cursor?.createdAt ?? 0);
+    // Nothing written after a page loads is older than it, even when its
+    // rows are dated ahead of this clock.
+    state.floor = Math.min(
+      state.floor ?? Infinity,
+      cursor?.createdAt ?? 0,
+      nowSeconds(),
+    );
   }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;

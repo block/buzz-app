@@ -300,3 +300,41 @@ it("fences reactions while main still has one in flight, and retries only main's
     "reaction-id",
   );
 });
+
+it("fences and retries from the whole operation collection, capping only the presentation", async () => {
+  const h = fixture();
+  const sendingOn = (messageId: string, n: number) => ({
+    event: {
+      id: n.toString(16).padStart(64, "0"),
+      pubkey: VIEWER,
+      created_at: 1,
+      kind: 7 as const,
+      content: "👍",
+      tags: [
+        ["h", "channel"],
+        ["e", messageId],
+      ],
+    },
+    delivery: "sending" as const,
+  });
+  // 64 replies, each with a sending reaction, then the root's as the 65th.
+  const replies = Array.from({ length: 64 }, (_, i) => ({
+    ...fixture().snapshot.current.root,
+    id: (i + 1).toString(16).padStart(64, "a"),
+    reactions: [],
+  }));
+  h.snapshot.current = {
+    ...h.snapshot.current,
+    replies: replies as typeof h.snapshot.current.replies,
+  };
+  h.outbox.items = [
+    ...replies.map((reply, i) => sendingOn(reply.id, 100 + i)),
+    sendingOn(ROOT, 999),
+  ];
+  expect(h.thread.snapshot().reactionOperations).toHaveLength(64);
+  expect(h.thread.reactionOperations()).toHaveLength(65);
+  expect(h.thread.reactionBusy(ROOT)).toBe(true);
+  expect(h.thread.retryReaction((999).toString(16).padStart(64, "0"))).toBe(
+    true,
+  );
+});

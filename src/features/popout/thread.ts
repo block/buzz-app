@@ -120,27 +120,26 @@ export function createPopoutThread(
         .slice(-MAX_REPLIES)
         .find((row) => row.id === id);
     },
-    /** Main's pending/failed/unknown reaction operations on shown messages. */
+    /** Main's pending/failed/unknown reaction operations on shown messages:
+     * the whole collection, for admission; the view serializes a capped copy. */
     reactionOperations(): ReactionOperation[] {
       const shown = this.known();
-      return (session.outbox?.snapshot() ?? [])
-        .flatMap((item) => {
-          if (!["sending", "failed", "unknown"].includes(item.delivery))
-            return [];
-          if (item.event.kind !== 7 && item.event.kind !== 5) return [];
-          const messageId = session.messages.reactionTarget(item.event);
-          if (!messageId || !shown.has(messageId)) return [];
-          return [
-            {
-              id: item.event.id,
-              messageId,
-              kind: item.event.kind as 7 | 5,
-              delivery: item.delivery as ReactionOperation["delivery"],
-              ...(item.error ? { error: item.error.slice(0, 2048) } : {}),
-            },
-          ];
-        })
-        .slice(0, MAX_REACTION_OPERATIONS);
+      return (session.outbox?.snapshot() ?? []).flatMap((item) => {
+        if (!["sending", "failed", "unknown"].includes(item.delivery))
+          return [];
+        if (item.event.kind !== 7 && item.event.kind !== 5) return [];
+        const messageId = session.messages.reactionTarget(item.event);
+        if (!messageId || !shown.has(messageId)) return [];
+        return [
+          {
+            id: item.event.id,
+            messageId,
+            kind: item.event.kind as 7 | 5,
+            delivery: item.delivery as ReactionOperation["delivery"],
+            ...(item.error ? { error: item.error.slice(0, 2048) } : {}),
+          },
+        ];
+      });
     },
     /** A reaction operation is still in flight or unresolved for this message. */
     reactionBusy(messageId: string) {
@@ -189,7 +188,10 @@ export function createPopoutThread(
         version,
         root: snap?.root && available() ? project(snap.root) : undefined,
         replies: available() ? replies.slice(-MAX_REPLIES).map(project) : [],
-        reactionOperations: this.reactionOperations(),
+        reactionOperations: this.reactionOperations().slice(
+          0,
+          MAX_REACTION_OPERATIONS,
+        ),
       };
     },
     retry() {

@@ -56,8 +56,10 @@ export function useMessageReveal({
   // Focus as each request arrives: the control that opened it, or none once
   // that control unmounted. Recorded before the target loads, however late,
   // with whether the person has since moved focus or typed into the focused
-  // control. A key or pointer press counts only once focus follows it, so a
-  // press that moves nothing (Shift, an arrow, Escape) is not a claim.
+  // control. Only a move the browser makes for a press counts: focus landing
+  // on or around the pointer's target before its click, or Tab. Focus an app
+  // handler moves in answer to another key or a click, such as a dialog
+  // closing on Escape, is not the person's.
   const opener = useRef<{
     signal: AbortSignal;
     element: Element | null;
@@ -72,19 +74,40 @@ export function useMessageReveal({
         input: false,
       };
     const request = opener.current;
-    let pressed = false;
-    const press = () => {
-      pressed = true;
+    // A press is pending until it ends. A tap focuses after pointerup, so a
+    // pointer press ends at its click.
+    let pointer: Node | null = null;
+    let tab = false;
+    const pressed = (event: Event) => {
+      pointer = event.target instanceof Node ? event.target : null;
     };
-    const moved = () => {
-      if (pressed) request.input = true;
+    const released = () => {
+      pointer = null;
+    };
+    const keyed = (event: Event) => {
+      const { key, altKey, ctrlKey, metaKey } = event as KeyboardEvent;
+      tab = key === "Tab" && !altKey && !ctrlKey && !metaKey;
+    };
+    const unkeyed = () => {
+      tab = false;
+    };
+    const moved = (event: Event) => {
+      const target = event.target;
+      if (
+        tab ||
+        (pointer && target instanceof Node && target.contains(pointer))
+      )
+        request.input = true;
     };
     const typed = (event: Event) => {
       if (event.target === document.activeElement) request.input = true;
     };
     const listeners = [
-      ["pointerdown", press],
-      ["keydown", press],
+      ["pointerdown", pressed],
+      ["click", released],
+      ["pointercancel", released],
+      ["keydown", keyed],
+      ["keyup", unkeyed],
       ["focusin", moved],
       ["beforeinput", typed],
     ] as const;
@@ -135,9 +158,9 @@ export function useMessageReveal({
       settled.current = true;
       // The first focus yields to a control the person moved to, or typed
       // into, after the request arrived, such as the composer of a
-      // still-loading conversation, so their typing stays there. Focus handed
-      // off by the app meanwhile, or left on the opener or the surface around
-      // the scroller, is still taken.
+      // still-loading conversation, so their typing stays there. Focus the
+      // app handed off without such input, or left on the opener or the
+      // surface around the scroller, is still taken.
       // A replacement may recover lost focus, but must not take it from
       // another control after this request already focused a row successfully.
       const active = document.activeElement;

@@ -104,11 +104,14 @@ export function createCreationFields(
             aria-hidden="true"
             onChange={() => {}}
             onFocus={() => {
+              const options: FocusOptions & { focusVisible: boolean } = {
+                focusVisible: true,
+              };
               controls.current
                 ?.querySelector<HTMLButtonElement>(
                   'button[aria-haspopup="menu"]',
                 )
-                ?.focus();
+                ?.focus(options);
             }}
           />
         )}

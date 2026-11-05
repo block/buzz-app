@@ -1,4 +1,4 @@
-import { matchPerson } from "./person-match";
+import { matchTier, normalizeName } from "./person-match";
 import { searchOrder, type SearchUsage } from "./usage";
 import { typedPublicKey } from "../../shared/identity/public-key";
 
@@ -33,8 +33,9 @@ export const personKey = (pubkey: string) => `person:${pubkey}`;
 export function personMatch(person: PersonCandidate, needle: string) {
   // Blank suggestions have no exact name; relationship and usage order them.
   if (!needle.trim()) return 1;
+  const folded = [...normalizeName(needle)];
   const tier = (name: string | undefined) =>
-    name === undefined ? undefined : matchPerson(name, needle)?.tier;
+    name === undefined ? undefined : matchTier(name, folded);
   const shown = [
     tier(person.label),
     tier(person.username),

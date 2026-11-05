@@ -30,7 +30,17 @@ test("reaction history opens the original message from Activity", async ({
     .getByRole("button", { name: /^Open message reacted to by / })
     .click();
   await expect(inbox.locator(`[data-message-id="${target.id}"]`)).toBeVisible();
-  await inbox.getByRole("tab", { name: "Reactions", exact: true }).click();
+  const types = inbox.getByRole("tablist", { name: "Activity type" });
+  await types.getByRole("tab", { name: "All", exact: true }).focus();
+  await page.keyboard.press("End");
+  await expect(
+    types.getByRole("tab", { name: "Reactions", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(
+    types.getByRole("tab", { name: "All", exact: true }),
+  ).toBeFocused();
+  await types.getByRole("tab", { name: "Reactions", exact: true }).click();
   const row = inbox.getByRole("button", {
     name: /^Open message reacted to by /,
   });

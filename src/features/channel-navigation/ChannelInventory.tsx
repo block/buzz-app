@@ -72,7 +72,7 @@ import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { useSidebarFilters } from "../../bundled/channels/useSidebarFilters";
-import { useHideMutedChannelsPreference } from "../../bundled/channels/hide-muted-preference";
+import { useHideMutedChannels } from "../../bundled/channels/hide-muted-preference";
 import type { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import {
   sidebarSections,
@@ -170,7 +170,7 @@ export function ChannelInventory({
     rosterRecovering(live.roster),
   );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
-  const hideMuted = useHideMutedChannelsPreference().enabled;
+  const hideMuted = useHideMutedChannels();
   const startup = useSidebarStartup(queries, list, preferences);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
   useEffect(() => {

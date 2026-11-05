@@ -26,8 +26,12 @@ function subscribe(listener: () => void) {
     window.removeEventListener("storage", storage);
   };
 }
+/** For sidebar rows, which read the choice but never recover a failed save. */
+export function useHideMutedChannels(): boolean {
+  return useSyncExternalStore(subscribe, hideMutedChannelsPreference);
+}
 export function useHideMutedChannelsPreference() {
-  const enabled = useSyncExternalStore(subscribe, hideMutedChannelsPreference);
+  const enabled = useHideMutedChannels();
   const unsaved = useSyncExternalStore(
     subscribe,
     () => unsavedPreference !== undefined,

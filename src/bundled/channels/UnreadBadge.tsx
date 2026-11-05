@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
-import { useHideMutedChannelsPreference } from "./hide-muted-preference";
+import { useHideMutedChannels } from "./hide-muted-preference";
 
 type UnreadSnapshot = ReturnType<RelaySession["unread"]["snapshot"]>;
 
@@ -114,7 +114,7 @@ export function UnreadBadge({
     threadCount,
     muted,
   } = useUnreadState(session, channelId, dm);
-  const hideMuted = useHideMutedChannelsPreference().enabled;
+  const hideMuted = useHideMutedChannels();
   const unread =
     labelUnread === "all" || preserveUnread
       ? manual || (count ?? 0) > 0

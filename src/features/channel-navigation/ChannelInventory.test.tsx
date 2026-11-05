@@ -526,7 +526,10 @@ it("hides mutes on this device's opt-in, returns focus to the section and lists 
     expect(
       await screen.findByRole("dialog", { name: "Couldn’t mute gamma" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: /^gamma/ })).toBeVisible();
+    // A returning row animates in; visibility settles after it mounts.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^gamma/ })).toBeVisible(),
+    );
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await mute();
     await act(async () => settle());

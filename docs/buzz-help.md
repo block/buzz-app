@@ -72,6 +72,24 @@ the interface unless an available tool actually supports that action.
   unavailable until you sign in. Sign-in, sign-out and when the current
   sign-in ends also live under
   **Settings → Buzz → Identity → Organization sign-in**.
+- Signed in to more than one organization server? **Organization sign-in**
+  lists each one you're signed in to, with the communities it's used by, and
+  each **Sign out** ends only that server's sign-in. Your organization's own
+  server stays listed with **Sign in** until you sign in to it. **Sign out of
+  Buzz** still ends them all.
+- Buzz apps on this computer that use the same organization server, such as
+  Buzz and Buzz Staging, share its sign-in, like the private key. After you sign
+  in in one, **Sign in** in the other finishes without the browser. Signing out
+  or switching account in one also applies to the other. Signing out also ends
+  that sign-in at the organization server, so an app that's already open asks
+  you to sign in again the next time it uses it. If the server couldn't be
+  reached, that app keeps its sign-in until it restarts.
+- If a community doesn't accept the account you signed in with, its prompt
+  names the server and offers **Switch account**: Buzz signs out of that server
+  only and opens its sign-in again, so other servers stay signed in. It also
+  lists the other communities that use the same server. If you cancel the
+  sign-in during a switch, you stay signed out of that server and the prompt
+  offers **Sign in**. **Not now** closes the prompt and changes nothing.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community.
@@ -274,6 +292,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   or are removed in People.
 - In a channel, typing `/leave` by itself opens the same **Leave channel**
   confirmation. The command is not posted as a message.
+- **Pasted web links** keep their labels when the clipboard's HTML and plain
+  text agree, including image alt text. Use ordinary paste; plain-text paste
+  uses only the clipboard's plain text.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
@@ -384,6 +405,14 @@ that agent in Buzz; they do not notify the external app through this connection.
   to their right. Bestie uses your configured avatar.
   The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
   the current app has a creation sidebar.
+- **Drafts & sent** lists the messages you started but did not send, newest
+  change first, with the number of drafts shown beside it in the Messages
+  sidebar, and your latest 100 sent messages in this community, grouped by
+  day. A sent message shows who replied after you ("2 after you") or that you
+  were last ("You're last"); a channel post shows its reply count. Select a
+  draft to continue it in its conversation, or a sent message to jump to it.
+  Search matches the conversation name and what you wrote. It reads only this
+  device's saved drafts and never changes them.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;

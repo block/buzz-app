@@ -3,6 +3,7 @@
 // session pays for them in context. Each tool answers in plain text.
 import { decode, npubEncode } from "nostr-tools/nip19";
 import buzzHelp from "../../docs/buzz-help.md?raw";
+import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -27,7 +28,8 @@ import {
   referencedEmoji,
 } from "../features/relay/emoji";
 import { newer } from "../features/relay/events";
-import { CANVAS_BYTES } from "../features/channel-templates/model";
+import { imageType } from "../features/relay/attachment-limits";
+import { LIVE_CANVAS_BYTES } from "../features/channel-templates/model";
 import { threadReference } from "../features/relay/thread-reference";
 import { parseBuzzLink } from "../features/navigation/buzz-links";
 import { soloChannelMetadata } from "../features/relay/discovery";
@@ -98,6 +100,11 @@ export async function captureToolBody(
   name: string,
   args: Record<string, unknown>,
 ) {
+  if (
+    (name === "agent_create" || name === "agent_update") &&
+    text(args.picture)
+  )
+    throw new Error("Protected picture uploads are not supported.");
   const message = name === "send" || name === "reply_in_subthread";
   if (
     !message &&
@@ -131,14 +138,14 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_create",
-    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types.",
-    { type: str, name: str },
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; picture is a local image file for its avatar.",
+    { type: str, name: str, picture: str },
     ["type", "name"],
   ),
   tool(
     "agent_update",
-    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types. Nothing changes until they save it.",
-    { agent: str, name: str, type: str, instructions: str },
+    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Nothing changes until they save it.",
+    { agent: str, name: str, type: str, instructions: str, picture: str },
     ["agent"],
   ),
   tool(
@@ -331,11 +338,15 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
   tool("canvas_get", "Read a channel's canvas.", { channel: str }),
-  tool("canvas_set", "Replace a channel's canvas.", {
-    channel: str,
-    content: str,
-    path: str,
-  }),
+  tool(
+    "canvas_set",
+    `Replace a channel's canvas (at most ${LIVE_CANVAS_BYTES / 1024} KiB).`,
+    {
+      channel: str,
+      content: str,
+      path: str,
+    },
+  ),
   tool(
     "canvas_history",
     "A channel's canvas revisions, newest first: each one's id, time, author, size and first line. The first page starts with the canvas's version.",
@@ -388,8 +399,6 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
-/** Canvas revisions per history page, as the app shows them. */
-const CANVAS_PAGE = 25;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
 /** A repository name the community accepts. */
@@ -454,7 +463,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type)?.trim();
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
-    return JSON.stringify(await client.createAgent({ type, name }));
+    const picture = proposedPicture(client, args.picture);
+    return JSON.stringify(
+      await client.createAgent({ type, name, ...(picture && { picture }) }),
+    );
   },
   async self_handoff(tools, args) {
     const { client, context } = tools;
@@ -503,12 +515,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type);
     // Empty instructions propose clearing them.
     const { instructions } = args;
+    const picture = proposedPicture(client, args.picture);
     return JSON.stringify(
       await client.updateAgent({
         agent,
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
+        ...(picture && { picture }),
       }),
     );
   },
@@ -820,6 +834,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
                 tag(event, "t") === "stream" ? "" : tag(event, "t"),
                 has(event, "private") ? "private" : "",
                 has(event, "archived") ? "archived" : "",
+                has(event, "auto_join") ? "auto-join" : "",
                 ids.has(id)
                   ? ""
                   : membershipsComplete
@@ -1247,6 +1262,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
     const content = (await tools.body(args, true, "content")) as string;
+    if (new TextEncoder().encode(content).length > LIVE_CANVAS_BYTES)
+      throw new Error(
+        `The canvas is over its limit of ${LIVE_CANVAS_BYTES} bytes.`,
+      );
     const head = await canvas(tools, channel);
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
@@ -1275,7 +1294,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       {
         kinds: [40100],
         "#h": [channel],
-        limit: CANVAS_PAGE,
+        limit: CANVAS_HISTORY_PAGE,
         ...(before === undefined
           ? { consistency: "strong" as const }
           : { until: before }),
@@ -1293,7 +1312,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       return `${row.id} ${time(row.created_at)} ${row.pubkey} ${bytes}B ${first.slice(0, 80)}`;
     });
     const last = rows.at(-1);
-    if (last && rows.length >= CANVAS_PAGE)
+    if (last && rows.length >= CANVAS_HISTORY_PAGE)
       lines.push(
         `Older revisions may remain; continue with ${JSON.stringify({ channel, before: last.created_at, before_id: last.id })}`,
       );
@@ -1323,9 +1342,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         `No canvas revision ${id} in ${channel}; canvas_history lists them.`,
       );
-    if (new TextEncoder().encode(revision.content).length > CANVAS_BYTES)
+    if (new TextEncoder().encode(revision.content).length > LIVE_CANVAS_BYTES)
       throw new Error(
-        `Revision ${id} is over the canvas limit of ${CANVAS_BYTES} bytes, so it cannot be restored.`,
+        `Revision ${id} is over the canvas limit of ${LIVE_CANVAS_BYTES} bytes, so it cannot be restored.`,
       );
     const current = await head();
     // Guard the version the agent saw, never one that replaced it since.
@@ -1602,6 +1621,7 @@ class Tools {
       soloChannelMetadata(metadata as RelayEvent) ? "solo" : "",
       has(metadata, "private") ? "private" : "open",
       has(metadata, "archived") ? "archived" : "",
+      has(metadata, "auto_join") ? "auto-join" : "",
       tag(metadata, "ttl")
         ? `archives after ${tag(metadata, "ttl")}s idle`
         : "",
@@ -2104,6 +2124,24 @@ function imeta(upload: Upload) {
       .filter((key) => upload[key] !== undefined)
       .map((key) => `${key} ${upload[key]}`),
   ];
+}
+
+/** A draft's picture: uploads the image at `path` as the agent once the
+ * draft is valid, giving its URL. */
+function proposedPicture(client: BuzzClient, path: unknown) {
+  const file = text(path)?.trim();
+  if (!file) return undefined;
+  const upload = client.uploadPicture?.bind(client);
+  if (!upload)
+    throw new Error("Picture proposals are unavailable on this host");
+  return async () => {
+    const data = await client.read(file);
+    // The preparer's own detector, so it never passes an image through.
+    const type = imageType(data);
+    if (!type)
+      throw new Error("picture must be a PNG, JPEG, GIF or WebP image");
+    return (await upload(data, type)).url;
+  };
 }
 
 /** An image or MP4's type, by the file's leading bytes. */

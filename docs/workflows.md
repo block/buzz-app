@@ -210,10 +210,11 @@ writes require separate consent; no backend work belongs to this plugin PR.
 
 Relay-attested workflow messages show an automation icon and **Workflow · owned
 by …**, not a message authored by the owner. The full message byline links the
-owner profile and discloses the separate relay signing key. Compact Search,
-Inbox/activity, link previews and notification titles retain the automation label;
-opening the message provides the full disclosure. Notifications use cached names
-only and do not add profile reads.
+owner profile. Its information icon opens a short card, on pointer rest or click,
+explaining that the owner set up the workflow but did not send the message
+personally; it shows no keys. Compact Search, Inbox/activity, link previews and
+notification titles retain the automation label; opening the message shows the
+full byline. Notifications use cached names only and do not add profile reads.
 
 Attribution requires a verified kind-9 event from the selected community's
 explicit NIP-11 `self`, exactly one canonical `buzz:workflow=true` marker and one
@@ -226,7 +227,8 @@ The owner tag identifies the identity that scheduled the workflow, not the autho
 of every rendered word. Templates can include trigger-controlled values; those
 values do not acquire the owner's prompt authority.
 
-Claude Code and Codex also use this proof to authorize delegated workflow mentions.
+Claude Code, Codex, Pi and Goose also use this proof to authorize delegated
+workflow mentions. Agent types that plugins bring do not.
 The receiving agent's ready community session must supply the explicit relay
 authority. The workflow owner must be that agent's owner, or an agent whose
 admitted kind-0 profile cryptographically proves the same owner through NIP-OA.
@@ -251,8 +253,8 @@ promoted to `self`, and no new trusted storage is introduced. Signer-based searc
 and Inbox sender filters and relay-reported participant
 summaries are unchanged by workflow presentation. Channel/thread rows retain the
 effective-author attribution and owner edit/delete behavior added separately in
-#661; when that author differs from the signer, the row carries a separate signing
-key so the disclosure still identifies the actual relay. Thread and media views
+#661; when that author differs from the signer, the row keeps the signing key
+for row identity only and does not display it. Thread and media views
 request workflow-owner profiles through the existing background profile directory.
 The workflow proof controls the automation label and the delegated-mention gate
 above; it does not control main's effective message-author policy. With explicit

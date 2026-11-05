@@ -26,17 +26,8 @@ import {
   keyScroll,
 } from "./timeline.mjs";
 
-// These layout/navigation journeys exercise the opt-in Bestie surface.
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    const key = "buzzodz.plugins.v1";
-    if (localStorage.getItem(key) === null)
-      localStorage.setItem(
-        key,
-        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
-      );
-  });
-});
+// These layout/navigation journeys exercise opt-in page surfaces.
+test.use({ enabledPlugins: ["buzz.bestie", "buzz.workflows"] });
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 const companionTest = test.extend({ companionFixture: true });
@@ -98,6 +89,14 @@ async function open(page, app) {
     .waitFor();
   await expect(page.locator("[data-message-id]").first()).toBeVisible();
 }
+// A pasted pull request link is named for it, with the title `link` reads.
+const opener = (page, target) => {
+  const [, , repo, , number] = new URL(target).pathname.split("/");
+  return page.getByRole("link", {
+    name: `${repo}#${number} · A useful change`,
+    exact: true,
+  });
+};
 async function link(page, app, target) {
   await page.route("https://api.github.com/repos/block/buzz/pulls/*", (route) =>
     route.fulfill({
@@ -112,7 +111,7 @@ async function link(page, app, target) {
   // A return from a compose route can still be restoring the timeline.
   await settle(page);
   app.append("primary", "alpha", `Please review ${target}`);
-  const trigger = page.getByRole("link", { name: target, exact: true });
+  const trigger = opener(page, target);
   await expect(trigger).toBeVisible();
   await settle(page);
   await trigger.scrollIntoViewIfNeeded();
@@ -702,40 +701,36 @@ readingTest(
     await wheel(page, -200);
     const saved = await anchor(page);
     await expectNonPaging(page, app);
-    await page
-      .getByRole("link", { name: target, exact: true })
-      .evaluate((el) => el.focus({ preventScroll: true }));
+    await opener(page, target).evaluate((el) =>
+      el.focus({ preventScroll: true }),
+    );
     await page.keyboard.press("Enter");
     await expect(panel(page)).toBeVisible();
     await settle(page);
     await expectAnchor(page, saved);
     // A panel can return focus to a mounted but offscreen link. Observe the
     // native focus call itself: eventual anchor recovery can hide a scroll jump.
-    await page
-      .getByRole("link", { name: target, exact: true })
-      .evaluate((el) => {
-        const focus = el.focus;
-        el.focus = function (options) {
-          const history = el.closest("[data-channel-timeline]");
-          const before = history.scrollTop;
-          focus.call(this, options);
-          window.panelFocusScrollDelta = history.scrollTop - before;
-        };
-      });
+    await opener(page, target).evaluate((el) => {
+      const focus = el.focus;
+      el.focus = function (options) {
+        const history = el.closest("[data-channel-timeline]");
+        const before = history.scrollTop;
+        focus.call(this, options);
+        window.panelFocusScrollDelta = history.scrollTop - before;
+      };
+    });
     await page
       .locator(
         '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
       )
       .focus();
-    await expect(
-      page.getByRole("link", { name: target, exact: true }),
-    ).not.toBeInViewport();
+    await expect(opener(page, target)).not.toBeInViewport();
     await page
       .locator(
         '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
       )
       .click();
-    const trigger = page.getByRole("link", { name: target, exact: true });
+    const trigger = opener(page, target);
     await settle(page);
     await expect(trigger).toBeFocused();
     expect(await page.evaluate(() => window.panelFocusScrollDelta)).toBe(0);
@@ -858,12 +853,45 @@ companionTest(
     await expect(launch).toBeVisible();
     await expect(companion).toHaveCount(0);
     await launch.click();
-    await openPage(page, "Messages");
+    // The companion keeps one default, minimum, saved width and reset as it
+    // moves between PanelFrame and Messages' dock.
+    await openPage(page, "Inbox");
+    await expect(companion).toBeVisible();
+    const resize = page.getByRole("separator", {
+      name: "Resize main and secondary panels",
+    });
+    const resizedWidth = async () =>
+      Number(await resize.getAttribute("aria-valuenow"));
+    const defaultWidth = await resizedWidth();
     const composer = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
     });
-    await expect(composer).toBeVisible();
+    const visitMessages = async () => {
+      await openPage(page, "Messages");
+      await expect(composer).toBeVisible();
+    };
+    await visitMessages();
+    await expect.poll(resizedWidth).toBe(defaultWidth);
+    await openPage(page, "Inbox");
+    await resize.focus();
+    await resize.press("Home");
+    await expect.poll(resizedWidth).toBeLessThan(defaultWidth);
+    const minimumWidth = await resizedWidth();
+    await visitMessages();
+    await expect.poll(resizedWidth).toBe(minimumWidth);
+    await openPage(page, "Inbox");
+    await resize.focus();
+    await resize.press("Shift+ArrowLeft");
+    await expect.poll(resizedWidth).toBeGreaterThan(minimumWidth + 40);
+    const companionWidth = await resizedWidth();
+    await visitMessages();
+    await expect.poll(resizedWidth).toBe(companionWidth);
+    await resize.dblclick();
+    await expect.poll(resizedWidth).toBe(defaultWidth);
+    await openPage(page, "Inbox");
+    await expect.poll(resizedWidth).toBe(defaultWidth);
+    await visitMessages();
     await composer.fill("Companion draft");
     const conversation = page.getByRole("article", {
       name: "Conversation",

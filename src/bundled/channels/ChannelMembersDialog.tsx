@@ -1,3 +1,7 @@
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+} from "../../features/profiles/useVerifiedNames";
 import { useProfileGeneration } from "../../features/relay/react";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { Button as BaseButton } from "@base-ui/react/button";
@@ -47,12 +51,13 @@ import {
   canAddMembers,
   canShareSoloChat,
 } from "../../features/channel-members/members";
-import { ownSolo } from "../../features/solo/labels";
+import { ownSolo, soloShareDisclosure } from "../../features/solo/labels";
 import { soloChatLink } from "../../features/solo/share";
 import {
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -71,7 +76,6 @@ import {
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   PopoverRoot,
@@ -84,7 +88,6 @@ import {
   Filter2Icon,
   InfoIcon,
   UsersIcon,
-  XIcon,
 } from "../../shared/design-system/icons";
 import {
   MemberRow,
@@ -97,11 +100,7 @@ import { useSoloShare } from "./useSoloShare";
 import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
-import {
-  type ChannelLabel,
-  channelIcon,
-  channelText,
-} from "../../features/channels/channel-icon";
+import { channelIcon, channelText } from "../../features/channels/channel-icon";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
@@ -169,6 +168,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   place,
   pubkey,
   name,
+  fullName,
   keyLabel,
   qualified,
   adding,
@@ -203,6 +203,8 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   place: "chat" | "channel";
   pubkey: string;
   name: string;
+  /** A community-verified full name, shown beside the name. */
+  fullName: string | undefined;
   keyLabel: string | undefined;
   /** Another shown row has the same name; show the key so Add picks the right one. */
   qualified: boolean;
@@ -290,6 +292,11 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
               {name}
               {pubkey === session.viewer ? " (you)" : ""}
             </span>
+            {fullName && fullName !== name && (
+              <span className="min-w-0 truncate text-caption text-subtle">
+                {fullName}
+              </span>
+            )}
             {qualified && keyLabel && (
               <span className="shrink-0 text-caption text-subtle">
                 {keyLabel}
@@ -624,16 +631,21 @@ export function ChannelMembersDialog({
     ...additions.filter((item) => item.pending).map((item) => item.pubkey),
     ...Object.keys(soloAdditions).filter((key) => soloAdditions[key]?.pending),
   ]);
-  const errors = Object.fromEntries<string | undefined>([
-    ...additions
-      .filter((item) => item.error)
-      .map((item) => [item.pubkey, item.error] as const),
-    ...Object.entries(soloAdditions)
-      .filter(([, item]) => item.error)
-      .map(([key, item]) => [key, item.error] as const),
-  ]);
+  // One alert per reason: a refused team add names its members together.
+  // Solo agents join directly, one at a time, so each keeps its own Retry.
+  const refusals = new Map<string, { error: string; keys: string[] }>();
+  const refuse = (group: string, error: string, key: string) => {
+    const item = refusals.get(group) ?? { error, keys: [] };
+    item.keys.push(key);
+    refusals.set(group, item);
+  };
+  for (const item of additions)
+    if (item.error) refuse(item.error, item.error, item.pubkey);
+  for (const [key, item] of Object.entries(soloAdditions))
+    if (item.error) refuse(key, item.error, key);
   const [notice, setNotice] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const copyFailure = copyStatus && copyStatus !== "Link copied";
   const [rosterReadError, setRosterReadError] = useState("");
   const [nameError, setNameError] = useState("");
   const [rosterReading, setRosterReading] = useState(true);
@@ -684,15 +696,17 @@ export function ChannelMembersDialog({
     session.channels.get?.(channelId);
   const solo = channel?.channelType === "solo";
   const place = solo ? "chat" : "channel";
+  const readOnlyAccess =
+    channel?.viewerRole === "guest" ||
+    (channel?.readOnly && channel.joinRole === "guest");
+  const soloSharing = solo && !channel?.readOnly && !readOnlyAccess;
   const share = useSoloShare({
     session,
     navigator,
     channelId,
-    enabled: solo,
+    enabled: soloSharing,
     signal,
     query,
-    setQuery,
-    input,
     close,
   });
   // A Solo owner adds agents directly; people join through sharing.
@@ -702,19 +716,19 @@ export function ChannelMembersDialog({
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
   const canAdd = canAddPeople || canAddSoloAgents;
-  const readOnlyAccess =
-    !solo &&
-    (channel?.viewerRole === "guest" ||
-      (channel?.readOnly && channel.joinRole === "guest"));
   const generalAccess =
     channel &&
-    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    (solo ||
+      channel.channelType === "stream" ||
+      channel.channelType === "forum") &&
     !channel.cached &&
     !channel.archived &&
     (channel.readOnly || session.channelDetails.available);
-  // Solo access is verified by the sharing roster read; channels read 39002.
-  const rosterBusy = solo ? share.rosterState === "loading" : rosterReading;
-  const rosterError = solo
+  // Sharing verifies joined Solo rosters; read-only previews use ordinary 39002 reads.
+  const rosterBusy = soloSharing
+    ? share.rosterState === "loading"
+    : rosterReading;
+  const rosterError = soloSharing
     ? share.rosterState === "error"
       ? share.rosterError
       : ""
@@ -758,7 +772,7 @@ export function ChannelMembersDialog({
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries the roster read.
   useEffect(() => {
     void session.archives.ensure();
-    if (solo) return;
+    if (soloSharing) return;
     let current = true;
     setRosterReading(true);
     setRosterReadError("");
@@ -793,7 +807,7 @@ export function ChannelMembersDialog({
     return () => {
       current = false;
     };
-  }, [session, channelId, refresh, solo]);
+  }, [session, channelId, refresh, soloSharing]);
   const memberKey = channel?.members?.join(":") ?? "";
   const largeRoster = (channel?.members?.length ?? 0) > MEMBER_PAGE_SIZE;
   const administration = useMemberAdministration(
@@ -850,12 +864,26 @@ export function ChannelMembersDialog({
     query,
     canAddPeople || (largeRoster && !solo && channel?.channelType !== "dm"),
   );
+  // Searched people the community verified carry their verified names.
+  const searchVerified = useVerifiedNames(session, search.people, {
+    key: query,
+    settled: !search.loading,
+  });
+  const searchPeople = useMemo(
+    () => withVerifiedNames(search.people, searchVerified, profiles),
+    [search.people, searchVerified, profiles],
+  );
   const searchProfiles = new Map(
-    search.people.map((person) => [person.pubkey, person]),
+    searchPeople.map((person) => [person.pubkey, person]),
   );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
   const label = (key: string, fallback?: string) =>
+    // A name verified for this search is the label where the shared profiles
+    // show another, so the row reads as Command-K and mentions do.
+    (profiles.get(key)?.verified
+      ? undefined
+      : searchVerified.get(key)?.displayName) ??
     resolveName(
       key,
       profiles.get(key)?.name ??
@@ -868,9 +896,13 @@ export function ChannelMembersDialog({
   // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
     !text ||
-    [searchProfiles.get(key)?.name, searchProfiles.get(key)?.username].some(
-      (name) => name && matchPerson(name, query),
-    ) ||
+    [
+      searchProfiles.get(key)?.name,
+      searchProfiles.get(key)?.username,
+      searchProfiles.get(key)?.fullName ??
+        profiles.get(key)?.verified?.fullName,
+      ...(searchProfiles.get(key)?.profileNames ?? []),
+    ].some((name) => name && matchPerson(name, query)) ||
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
@@ -1041,9 +1073,9 @@ export function ChannelMembersDialog({
       current = false;
     };
   }, [session, memberKey, profileKey, refresh, largeRoster, profileGeneration]);
-  const relayKeys = new Set(search.people.map((person) => person.pubkey));
+  const relayKeys = new Set(searchPeople.map((person) => person.pubkey));
   const candidates = new Map(
-    search.people.map((person) => [person.pubkey, person]),
+    searchPeople.map((person) => [person.pubkey, person]),
   );
   // Default suggestions use this client's agents; searches also include the
   // viewer's non-client inventory after people and other community agents.
@@ -1244,7 +1276,7 @@ export function ChannelMembersDialog({
   const refreshMembers = () => {
     if (refreshing || mutationPending) return;
     setChangeError(undefined);
-    if (solo) share.reloadRoster();
+    if (soloSharing) share.reloadRoster();
     else setRosterReading(true);
     setRefresh((value) => value + 1);
     setInvitationPage({
@@ -1275,6 +1307,17 @@ export function ChannelMembersDialog({
       ? [{ team, missing }]
       : [];
   });
+  // Names refused people in a stable order: up to three, then a count.
+  const listNames = (keys: readonly string[]) => {
+    const names = keys
+      .map((key) => label(key, teamNames.get(key)))
+      .sort((a, b) => a.localeCompare(b));
+    const shown = names.slice(0, 3);
+    const rest = names.length - shown.length;
+    return new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+      rest > 0 ? [...shown, `${rest} more`] : shown,
+    );
+  };
   // Suffix search scans the whole roster; redo it only when the keys change.
   const keyList = [...members, ...candidates.keys()].join(":");
   const keys = useMemo(
@@ -1366,17 +1409,18 @@ export function ChannelMembersDialog({
     [session, channelId, canAddSoloAgents, place],
   );
 
-  const addTeam = useCallback(
-    async (team: Team, missing: readonly string[]) => {
+  // Adds a team or retries a refused group; `done` is announced only once
+  // every addition lands. Failed members share one alert and Retry per reason.
+  const addAll = useCallback(
+    async (keys: readonly string[], done: string) => {
       const signal = lifetime.current?.signal;
       if (!signal) return;
       setNotice("");
       const added = await Promise.allSettled(
-        missing.map((key) => session.memberAdditions.add(channelId, key)),
+        keys.map((key) => session.memberAdditions.add(channelId, key)),
       );
-      // A failed member shows its own error and Retry below.
       if (!signal.aborted && added.every((item) => item.status === "fulfilled"))
-        setNotice(`${team.name} is in the channel.`);
+        setNotice(done);
     },
     [session, channelId],
   );
@@ -1507,6 +1551,10 @@ export function ChannelMembersDialog({
         place={place}
         pubkey={key}
         name={name}
+        fullName={
+          profiles.get(key)?.verified?.fullName ??
+          searchProfiles.get(key)?.fullName
+        }
         keyLabel={keys.get(key)}
         qualified={(shownNames.get(name) ?? 0) > 1}
         adding={adding}
@@ -1585,35 +1633,6 @@ export function ChannelMembersDialog({
     selection?.expectedRole === "absent"
       ? additionRoles.find((option) => option.role === selection.role)
       : undefined;
-  /** A name in a channel share's audience; access actions stay on member rows. */
-  const audienceRow = (key: string) => (
-    <li key={key} className={styles.stagedRow}>
-      <Avatar
-        alt=""
-        fallback={share.names(key)}
-        src={avatarMedia(profiles.get(key)?.picture, session.media)}
-        size="small"
-        shape={
-          known.has(key) || profiles.get(key)?.isAgent ? "squircle" : "circle"
-        }
-      />
-      <span className={styles.stagedName}>{share.names(key)}</span>
-    </li>
-  );
-  const channelTitle = (channel: ChannelLabel, detail: string) => {
-    const Icon = channelIcon(channel);
-    return (
-      <span className={styles.choice}>
-        <Icon size={24} aria-hidden="true" />
-        <span className={styles.stagedName}>
-          <span>{channelText(channel)}</span>
-          <span className="text-body-sm text-subtle">{detail}</span>
-        </span>
-      </span>
-    );
-  };
-  const memberCount = (count: number) =>
-    `${count} member${count === 1 ? "" : "s"}`;
   const chosen = share.chosen;
   const searchFeedback = (
     <>
@@ -1647,6 +1666,8 @@ export function ChannelMembersDialog({
       )}
     </>
   );
+  const shareAction = useRef<HTMLButtonElement>(null);
+  const cancelShare = useRef<HTMLButtonElement>(null);
   const copyAction = (
     <Tooltip
       content="Copying a link does not grant access."
@@ -1663,7 +1684,6 @@ export function ChannelMembersDialog({
     <div className={styles.memberSearch}>
       <SearchField
         inputRef={input}
-        aria-describedby={solo ? `${presenceId}-solo-help` : undefined}
         label={
           solo
             ? canAddSoloAgents
@@ -1745,6 +1765,10 @@ export function ChannelMembersDialog({
       recovery={session.recovery}
       channelId={channelId}
       channel={channel}
+      mayHaveGuestMembers={
+        administration.status !== "ready" ||
+        Object.values(administration.authority.roles).includes("guest")
+      }
     />
   ) : null;
   const dialog = (
@@ -1773,11 +1797,13 @@ export function ChannelMembersDialog({
               ? "Add member?"
               : `Change access to ${memberAccessLabel(selection.role)}?`
           : (title ??
-            (solo
-              ? "Share access"
-              : readOnlyAccess
-                ? "Channel access"
-                : "Manage members"))
+            (solo && readOnlyAccess
+              ? "Chat access"
+              : solo
+                ? "Share access"
+                : readOnlyAccess
+                  ? "Channel access"
+                  : "Manage members"))
       }
       height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
@@ -1844,26 +1870,8 @@ export function ChannelMembersDialog({
                     : `Set to ${memberAccessLabel(selection.role).toLowerCase()}`}
             </Button>
           </>
-        ) : solo ? (
-          <Button
-            variant="prominent"
-            title={
-              share.destination
-                ? "Sharing grants access and posts a link in the selected channel."
-                : undefined
-            }
-            loading={share.busy}
-            disabled={!share.eligible && !!share.destination}
-            onClick={() => void share.submit()}
-          >
-            {share.destination
-              ? share.failed
-                ? "Retry share"
-                : "Share"
-              : "Done"}
-          </Button>
         ) : (
-          <Button variant="prominent" onClick={close}>
+          <Button variant="prominent" disabled={share.busy} onClick={close}>
             Done
           </Button>
         )
@@ -1881,16 +1889,6 @@ export function ChannelMembersDialog({
       ) : (
         <div className={styles.layout}>
           <div className={styles.searchControls}>{searchField}</div>
-          {solo && (
-            <p
-              id={`${presenceId}-solo-help`}
-              className="shrink-0 text-body-sm text-subtle"
-            >
-              {canAddSoloAgents
-                ? "People and agents with access can read the full history and participate in new messages. Adding an agent won’t start a run."
-                : "People with access can read the full history and participate in new messages."}
-            </p>
-          )}
           {(administrationError ||
             rosterError ||
             nameError ||
@@ -1919,6 +1917,55 @@ export function ChannelMembersDialog({
               {administrationError}
             </p>
           )}
+          {(refusals.size > 0 ||
+            openingMessage ||
+            messageError ||
+            copyFailure) && (
+            <div className={styles.feedback}>
+              {[...refusals].map(([group, { error, keys }]) => {
+                const names = listNames(keys);
+                return (
+                  <p
+                    role="alert"
+                    key={group}
+                    className="text-body-sm text-danger"
+                  >
+                    {names}: {error}{" "}
+                    <Button
+                      variant="outline"
+                      aria-label={`Retry adding ${names}`}
+                      disabled={!canAdd}
+                      onClick={() => {
+                        // Land where Add does, so the next step is the search.
+                        input.current?.focus();
+                        const [only] = keys;
+                        void (only && keys.length === 1
+                          ? add(only)
+                          : addAll(keys, `${names} are in the ${place}.`));
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  </p>
+                );
+              })}
+              {openingMessage && (
+                <p role="status" className="text-body-sm text-subtle">
+                  Opening conversation…
+                </p>
+              )}
+              {messageError && (
+                <p role="alert" className="text-body-sm text-danger">
+                  {messageError}
+                </p>
+              )}
+              {copyFailure && (
+                <p role="alert" className="text-body-sm text-subtle">
+                  {copyStatus}
+                </p>
+              )}
+            </div>
+          )}
           <section
             ref={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
@@ -1946,60 +1993,6 @@ export function ChannelMembersDialog({
               >
                 {rosterError}
               </p>
-            )}
-            {chosen && (
-              <section
-                aria-label="Selected channel"
-                className={styles.stagedRow}
-              >
-                <div className={styles.stagedName}>
-                  <Accordion
-                    key={chosen.id}
-                    variant="form"
-                    onValueChange={(value) =>
-                      share.setExpandedChannel(value.length ? chosen.id : "")
-                    }
-                    items={[
-                      {
-                        value: "channel-participants",
-                        title: channelTitle(
-                          chosen,
-                          share.destinationMembers
-                            ? memberCount(share.destinationMembers.length)
-                            : share.destinationRoster?.id !== chosen.id ||
-                                share.destinationRoster.status === "loading"
-                              ? "Loading participants…"
-                              : "Participants unavailable",
-                        ),
-                        content: share.destinationMembers ? (
-                          <ul>{share.destinationMembers.map(audienceRow)}</ul>
-                        ) : (
-                          <div>
-                            <p role="status">
-                              {share.destinationRoster?.id !== chosen.id ||
-                              share.destinationRoster.status === "loading"
-                                ? "Loading participants…"
-                                : "Current participants are unavailable."}
-                            </p>
-                            {share.destinationRoster?.id === chosen.id &&
-                              share.destinationRoster.status === "error" && (
-                                <Button onClick={share.retryDestination}>
-                                  Retry participants
-                                </Button>
-                              )}
-                          </div>
-                        ),
-                      },
-                    ]}
-                  />
-                </div>
-                <IconButton
-                  aria-label={`Remove ${channelText(chosen)}`}
-                  disabled={share.busy}
-                  icon={<XIcon size={16} />}
-                  onClick={share.removeDestination}
-                />
-              </section>
             )}
             {initialLoading ? (
               !rosterError && (
@@ -2111,7 +2104,12 @@ export function ChannelMembersDialog({
                         )}
                         busy={missing.some((key) => busy.has(key))}
                         disabled={rosterBusy || !!rosterError}
-                        onAdd={() => void addTeam(team, missing)}
+                        onAdd={() =>
+                          void addAll(
+                            missing,
+                            `${team.name} is in the channel.`,
+                          )
+                        }
                       />
                     ))}
                   </ul>
@@ -2244,6 +2242,13 @@ export function ChannelMembersDialog({
                 <ul aria-busy={refreshing}>
                   {shareChannels.map((item) => {
                     const Icon = channelIcon(item);
+                    const active = share.destination === item.id;
+                    const action =
+                      active && share.checkRequired
+                        ? "Check access and share"
+                        : active && share.failed
+                          ? "Retry share"
+                          : "Share";
                     return (
                       <li key={item.id} className={styles.member}>
                         <div className={styles.profileContent}>
@@ -2258,11 +2263,15 @@ export function ChannelMembersDialog({
                           <Button
                             variant="prominent"
                             size="xs"
-                            aria-label={`Select ${channelText(item)}`}
-                            disabled={share.busy}
-                            onClick={() => share.choose(item)}
+                            aria-label={`${action} ${channelText(item)}`}
+                            loading={share.busy && active}
+                            disabled={share.busy || !share.eligible}
+                            onClick={(event) => {
+                              shareAction.current = event.currentTarget;
+                              void share.submit(item.id);
+                            }}
                           >
-                            Select
+                            {action}
                           </Button>
                         </span>
                       </li>
@@ -2291,36 +2300,9 @@ export function ChannelMembersDialog({
                 Archived identities could not be checked.
               </p>
             )}
-            {Object.entries(errors).map(([key, error]) => (
-              <p role="alert" key={key} className="text-body-sm text-danger">
-                {label(key)}: {error}{" "}
-                <Button
-                  variant="outline"
-                  disabled={busy.has(key) || !canAdd}
-                  onClick={() => void add(key)}
-                >
-                  {busy.has(key) ? "Retrying…" : "Retry"}
-                </Button>
-              </p>
-            ))}
-            {openingMessage && (
-              <p role="status" className="text-body-sm text-subtle">
-                Opening conversation…
-              </p>
-            )}
-            {messageError && (
-              <p role="alert" className="text-body-sm text-danger">
-                {messageError}
-              </p>
-            )}
             {notice && (
               <p role="status" className="sr-only">
                 {notice}
-              </p>
-            )}
-            {copyStatus && copyStatus !== "Link copied" && (
-              <p role="alert" className="text-body-sm text-subtle">
-                {copyStatus}
               </p>
             )}
             {solo &&
@@ -2338,6 +2320,45 @@ export function ChannelMembersDialog({
               ) : null)}
           </section>
         </div>
+      )}
+      {share.confirmation && chosen && (
+        <AlertDialog
+          title="Share this chat?"
+          description={
+            <>
+              {share.confirmation.visibility === "public"
+                ? `This chat is already View only. Its link will be posted in ${channelText(chosen)}. `
+                : `This changes the chat from Private to View only and posts its link in ${channelText(chosen)}. `}
+              <span className="mt-3 block">{soloShareDisclosure()}</span>
+            </>
+          }
+          pending={share.busy}
+          onClose={share.cancelConfirmation}
+          initialFocus={cancelShare}
+          finalFocus={() =>
+            shareAction.current?.isConnected
+              ? shareAction.current
+              : input.current
+          }
+          actions={
+            <>
+              <Button
+                ref={cancelShare}
+                disabled={share.busy}
+                onClick={share.cancelConfirmation}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="prominent"
+                loading={share.busy}
+                onClick={() => void share.confirm()}
+              >
+                Share
+              </Button>
+            </>
+          }
+        />
       )}
     </Dialog>
   );

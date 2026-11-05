@@ -1,8 +1,12 @@
 import { pauseClock } from "./clock.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, virtuaIdle } from "./timeline.mjs";
-import { holdReadingFocus, releaseReadingFocus } from "./reading.mjs";
+import { clickRow, open, virtuaIdle } from "./timeline.mjs";
+import {
+  holdReadingFocus,
+  readJournal,
+  releaseReadingFocus,
+} from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -205,10 +209,12 @@ test.describe("mentioned reply priority", () => {
       rows.find((row) => row.content === content),
     );
     for (const root of [x, t]) {
-      await page
-        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ })
-        .click();
+      await clickRow(
+        page,
+        page
+          .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+          .getByRole("button", { name: /^View thread:/ }),
+      );
       await expect(
         page.getByRole("complementary", { name: "Thread", exact: true }),
       ).toBeVisible();
@@ -539,15 +545,22 @@ test("thread buttons show observed unread independently, clear only after readin
   await replyComposer.focus();
   await page.clock.runFor(300);
   await expect(replyComposer).toBeFocused();
+  // The isolated message read is durable on this device and never published.
   await expect
     .poll(
-      () =>
-        app.report.readPublications.some(({ blob }) =>
-          Object.hasOwn(blob.contexts, `msg:${directId}`),
+      async () =>
+        Object.hasOwn(
+          (await readJournal(page)).state.frontiers,
+          `msg:${directId}`,
         ),
       { timeout: 12000 },
     )
     .toBe(true);
+  expect(
+    app.report.readPublications.some(({ blob }) =>
+      Object.hasOwn(blob.contexts, `msg:${directId}`),
+    ),
+  ).toBe(false);
   await expect(replyComposer).toBeFocused();
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
   await expect(
@@ -1003,10 +1016,12 @@ test("a live reply in a main-pane thread stays unread while focus is in the side
     .get("primary/alpha")
     .filter((row) => row.content.startsWith("Thread root"));
   for (const root of roots.slice(0, 2)) {
-    await page
-      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ })
-      .click();
+    await clickRow(
+      page,
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ }),
+    );
     await expect(
       page.getByRole("complementary", { name: "Thread", exact: true }),
     ).toBeVisible();

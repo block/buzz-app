@@ -8,7 +8,10 @@ import {
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
-import { profileActivityViewTarget } from "../../features/profiles/target";
+import {
+  openProfileTranscript,
+  profileActivityViewTarget,
+} from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -35,6 +38,7 @@ import {
 } from "../../features/channel-navigation/routes";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
+import type { CommunityMembership } from "../moderation/membership";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -94,7 +98,7 @@ import {
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { PanelDock } from "../../features/panels/PanelDock";
-import { PanelFrame } from "../../features/panels/PanelFrame";
+import { COMPANION_SPLIT, PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
@@ -139,12 +143,15 @@ export function ChannelsPage({
   communities,
   archive,
   read,
+  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
   agents?: Agents | undefined;
   communities?: CommunityReader | undefined;
+  /** The viewer's community role, for the auto-join switch in Channel settings. */
+  membership?: CommunityMembership | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -212,7 +219,7 @@ export function ChannelsPage({
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" && !session.cached ? (
-        <PanelFrame companion={companion}>
+        <PanelFrame scope={session.scope} companion={companion}>
           {session.status === "disconnected" ? (
             <div className={styles.connect}>
               <div className={styles.connectIcon}>
@@ -300,6 +307,7 @@ export function ChannelsPage({
           companion={companion}
           agents={agents}
           communities={communities}
+          membership={membership}
         />
       )}
     </section>
@@ -330,10 +338,12 @@ function ChannelWorkspace({
   communities,
   archive,
   read,
+  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
   agents?: Agents | undefined;
+  membership?: CommunityMembership | undefined;
   companion?: ReactNode;
   communities?: CommunityReader | undefined;
   scope: string;
@@ -520,6 +530,8 @@ function ChannelWorkspace({
     channelId: string;
     queries: RelaySession;
   }>(undefined);
+  // The last resolved channel, saved or computed; see `requestedDestination`.
+  const chosen = useRef<string>(undefined);
   const previewAvailable =
     resolved?.request === navigation
       ? resolved?.available
@@ -545,6 +557,13 @@ function ChannelWorkspace({
           ? queries.channels.get?.(visiblePreview.current.channelId)
           : undefined) ??
         channels.find((channel) => channel.id === selected) ??
+        // A computed choice stays put while its channel is listed, so a channel
+        // flagged or added later never swaps the one being read.
+        channels.find((channel) => channel.id === chosen.current) ??
+        // A new member lands in the community's default channel when it has one.
+        channels.find(
+          (channel) => channel.autoJoin && channel.channelType !== "solo",
+        ) ??
         channels.find((item) => item.channelType !== "solo"));
   // Exact links and saved selections must respect the same Huddle-only entry point.
   const resolving =
@@ -555,6 +574,8 @@ function ChannelWorkspace({
       ? undefined
       : requestedDestination;
   useLayoutEffect(() => {
+    // An open draft resolves nothing; keep the choice for when it closes.
+    if (requestedDestination) chosen.current = requestedDestination.id;
     visiblePreview.current =
       current?.readOnly && !current.cached && !cached
         ? { channelId: current.id, queries }
@@ -1360,11 +1381,26 @@ function ChannelWorkspace({
     }
     const activityAgent = handoff?.activityAgent.current;
     if (activityAgent && activityAgent.channelId === currentId) {
+      const { transcript } = activityAgent;
       const target = profileActivityViewTarget(activityAgent.agent);
       const panel = target && panels.resolve(target);
       if (target && panel) {
         panelTrigger.current = activityAgent.trigger;
-        open({ channelId: activityAgent.channelId, panel, target }, true);
+        const show = (next: string) => {
+          open(
+            {
+              channelId: activityAgent.channelId,
+              ...(transcript?.rootId && { rootId: transcript.rootId }),
+              panel,
+              target: next,
+            },
+            true,
+          );
+          return true;
+        };
+        // Only a known conversation asks for its transcript.
+        if (transcript) openProfileTranscript(target, show);
+        else show(target);
       }
       handoff.activityAgent.current = undefined;
     }
@@ -1698,7 +1734,14 @@ function ChannelWorkspace({
         tab.id === selectedTab &&
         tab.channelId === currentId,
     );
-  const split = usePanelSplit();
+  // While the companion is in the dock it keeps its width and bounds from
+  // other pages; threads alone keep their own split.
+  const split = usePanelSplit(
+    scope,
+    companion ? COMPANION_SPLIT.name : "channels",
+    companion ? COMPANION_SPLIT.defaultWidth : undefined,
+    companion ? COMPANION_SPLIT.min : undefined,
+  );
   // A routed thread can mount behind a collapsed pane, where it cannot take
   // focus, or already be selected, so its pane does not move focus. Once its
   // tab shows, hand it focus nothing else took.
@@ -1758,6 +1801,8 @@ function ChannelWorkspace({
       }
       channel={current}
       details={queries.channelDetails}
+      lifecycle={queries.channelLifecycle}
+      membership={membership}
       close={closeSettings}
     >
       <UnreadOptions session={queries} channelId={current?.id} />
@@ -1850,9 +1895,6 @@ function ChannelWorkspace({
             key={current.id}
             cached={cached}
             // The composer below mounts TypingIndicator for members of a live channel.
-            activityLane={
-              !current.archived && !current.readOnly && !current.cached
-            }
             navigation={
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
@@ -1886,7 +1928,9 @@ function ChannelWorkspace({
             joinable={
               !current.archived &&
               (current.channelType === "stream" ||
-                current.channelType === "forum")
+                current.channelType === "forum" ||
+                (current.channelType === "solo" &&
+                  current.joinRole === "guest"))
             }
             onJoin={() => setJoiningChannel(current.id)}
             onHeightChange={setJoinNoticeHeight}
@@ -1959,6 +2003,7 @@ function ChannelWorkspace({
     <div
       data-channel-workspace={currentId ?? ""}
       data-reading-thread={readingThread ? "" : undefined}
+      data-companion={companion ? "" : undefined}
       ref={split.ref}
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}
@@ -2055,8 +2100,18 @@ function ChannelWorkspace({
                     signal: navigation?.signal,
                   }));
               }}
-              onFailed={(channelId, message) => {
-                notify(message, "error");
+              onFailed={(channelId, message, retry) => {
+                notify(
+                  message,
+                  "error",
+                  retry
+                    ? {
+                        label: "Retry restoring message",
+                        onClick: () => void retry(),
+                        timeout: Infinity,
+                      }
+                    : undefined,
+                );
                 // A failure behind Settings must not navigate away from it.
                 if (
                   showing.current === channelId &&

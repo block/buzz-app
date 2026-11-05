@@ -43,10 +43,12 @@ export type ChannelSummary = Readonly<{
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
   /** `system` (NIP-CL): access control for app data; never in list().
-   * `session`: a private stream with the Solo label (`SOLO_LABEL`). */
+   * `solo`: a stream with the Solo label (`SOLO_LABEL`), regardless of visibility. */
   channelType?: "stream" | "forum" | "dm" | "solo" | "system";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
+  /** Relay-advertised default: the relay joins new community members here. */
+  autoJoin?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
   parentChannelId?: string | undefined;
   /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
@@ -138,6 +140,9 @@ export type ChannelMessage = Readonly<{
     truncated: boolean;
   }>;
   membership?: MembershipChange;
+  /** Signed `plugin-request` tag: an agent's plugin change request, by id.
+   * Untrusted display metadata; the device that holds the request decides. */
+  pluginRequest?: Readonly<{ id: string }>;
   huddle?: Readonly<{
     room: string;
     state: "started" | "ended";
@@ -203,6 +208,9 @@ export type ChannelWindow = Readonly<{
   historyLimited?: boolean;
   /** A head read is in flight for these rows; older pages wait for it. */
   refreshing?: boolean | undefined;
+  /** Detached: the rows are a seek segment and newer history is not loaded. */
+  hasNewer?: boolean | undefined;
+  loadingNewer?: boolean | undefined;
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default. */
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
@@ -212,11 +220,14 @@ export type PublicChannelSearch = Readonly<{
   partial: boolean;
 }>;
 /** What a channel-only link may show about a channel the reader may not have
- * joined. `withheld` means a completed lookup found nothing it may show: the
- * relay withholds a private channel's metadata from non-members, so private,
- * deleted and never-valid channels look the same. */
+ * joined. `looking` means a lookup is queued or in flight; `unknown` means
+ * none is, as before the list is ready, during a failure's backoff or in a
+ * cached-only store. `withheld` means a completed lookup found nothing it may
+ * show: the relay withholds a private channel's metadata from non-members, so
+ * private, deleted and never-valid channels look the same. */
 export type ChannelReference =
   | Readonly<{ state: "unknown" }>
+  | Readonly<{ state: "looking" }>
   | Readonly<{ state: "withheld" }>
   | Readonly<{
       state: "found";
@@ -229,6 +240,11 @@ export type ChannelReference =
       joined: boolean;
       /** Only when the viewer may see the roster. */
       members?: number;
+      /** A public channel the viewer left is named by its open metadata, but
+       * its messages stay unreadable until a lookup confirms it is still
+       * open; `looking` while that lookup is queued or in flight. */
+      readable?: false;
+      looking?: true;
     }>;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
@@ -272,15 +288,43 @@ export interface ChannelQueries {
    * resolves through `refer`. Empty while the directory is cold or in flight. */
   openDirectory?(): readonly Pick<
     ChannelSummary,
-    "id" | "name" | "channelType" | "archived"
+    "id" | "name" | "description" | "channelType" | "archived"
   >[];
+  /** The open channels to browse: a first read's pages so far as they land,
+   * otherwise `openDirectory`'s. Display only, like `openDirectory`. */
+  browseDirectory?(): ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
+  /** Hears each `browseDirectory` page and finished read. List subscribers
+   * hear only a finished read, so pages never wake the rest of the app. */
+  subscribeDirectory?(listener: () => void): () => void;
+  /** Whether `browseDirectory` names a finished read's channels, rather than
+   * the first read's pages so far or none. */
+  directoryComplete?(): boolean;
+  /** Read the whole open-channel directory for browsing, sharing the
+   * `searchPublic` read; `browseDirectory` names its channels as pages land.
+   * Never grants access: opening a channel resolves it. */
+  readDirectory?(options?: {
+    signal?: AbortSignal | undefined;
+  }): Promise<{ partial: boolean }>;
+  /** Member counts for browsing, from a joined channel's roster or an open
+   * channel's relay-signed one, kept a few minutes. A channel without a
+   * roster is left out of `counts`; `failed` names the ids whose read
+   * failed, while the rest still answer. Display only: never grants access. */
+  readMemberCounts?(
+    channelIds: readonly string[],
+    options?: { signal?: AbortSignal | undefined },
+  ): Promise<{
+    counts: ReadonlyMap<string, number>;
+    failed: readonly string[];
+  }>;
   /** Current reference state from local evidence; never reads. */
   describe?(channelId: string): ChannelReference;
-  /** Demand a background lookup for a reference that isn't `found`, until the
-   * returned release. The store coalesces requests into bounded reads, keeps
+  /** Demand a background lookup for a reference that isn't `found`, or is
+   * found but not `readable`, until the returned release. The store coalesces requests into bounded reads, keeps
    * a `withheld` answer for a few minutes, backs off after failures,
    * rechecks demanded references when either ends, and notifies list
-   * subscribers. */
+   * subscribers once per batch as a lookup starts (unless it only rechecks
+   * withheld answers) and when it ends. Absent when no lookup can run, as in
+   * a cached-only store. */
   refer?(channelId: string): () => void;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
@@ -310,6 +354,17 @@ export interface ChannelQueries {
   ensureList(): void;
   ensure(channelId: string): void;
   loadOlder(channelId: string): void;
+  /** Detach the window to history at `from` (unix seconds; 0 is the channel
+   * start). Resolves the first message at or after `from`, else the newest. */
+  seek?(
+    channelId: string,
+    from: number,
+    signal: AbortSignal,
+  ): Promise<string | undefined>;
+  /** Read the rows above a detached window; reattaches on reaching the head. */
+  loadNewer?(channelId: string): void;
+  /** Return a detached window to the newest messages. */
+  attach?(channelId: string): void;
   /** Explicit same-scope head revalidation; replaces the bounded head, not a realtime tail. */
   refresh?(channelId: string): void;
   /** Intent warming is optional for fixture-only query implementations. */

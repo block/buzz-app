@@ -1,3 +1,11 @@
+import { visibleTeams } from "../../features/agents/visible-teams";
+import type { OpenTarget } from "../../features/navigation/targets";
+import {
+  agentHistoryActive,
+  agentHistoryRoute,
+  agentHistoryTarget,
+} from "./routes";
+import { historyPresentation } from "../../features/agents/history-presentation";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
 import { communityDestination } from "../../features/communities/destination";
@@ -169,9 +177,9 @@ export function AgentsPage({
   navigation?: PageNavigation;
   navigator?: Navigation;
 }) {
-  const split = usePanelSplit(448, 320);
   const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
+  const split = usePanelSplit(connection.scope, "agents", 448, 320);
   const channels = useChannelChoices(
     connection.status === "ready" ? connection.session.channels : undefined,
   );
@@ -277,14 +285,7 @@ export function AgentsPage({
   // Teams are shared by every community; this one shows each with a member
   // here, or with none in any community. A synced team always shows in its
   // home, and elsewhere only with a member there or while it has none.
-  const members = new Set(snapshot.agents.map((agent) => agent.pubkey));
-  const teams = snapshot.teams.filter(
-    (team) =>
-      team.members.some((pubkey) => members.has(pubkey)) ||
-      (team.revision
-        ? !team.members.length || agents.teamHere({ id: team.id })
-        : !team.members.some((pubkey) => agents.memberships(pubkey).length)),
-  );
+  const teams = visibleTeams(agents);
   // Only a team still saved, or one being made, keeps its editor open.
   const editing =
     editingTeam === "new" || teams.some((team) => team.id === editingTeam)
@@ -300,6 +301,10 @@ export function AgentsPage({
   const routedAgent =
     routed && navigation.target.kind === "page"
       ? agentRoute(navigation.target.route?.params)
+      : undefined;
+  const historyParams =
+    navigation?.target.kind === "page" && routedAgent === selected?.pubkey
+      ? navigation.target.route?.params
       : undefined;
   const routedEntry = navigation?.entryId;
   useEffect(() => {
@@ -499,6 +504,25 @@ export function AgentsPage({
       />
     ) : (
       <AgentDetails
+        historyPresentation={
+          navigation &&
+          navigator &&
+          !navigation.signal.aborted &&
+          navigator.snapshot().entry.id === navigation.entryId &&
+          navigation.target.kind === "page"
+            ? historyPresentation(
+                navigator,
+                agentHistoryRoute(historyParams),
+                (selection) =>
+                  agentHistoryTarget(
+                    navigation.target as Extract<OpenTarget, { kind: "page" }>,
+                    selected.pubkey,
+                    selection,
+                  ),
+                agentHistoryActive(historyParams),
+              )
+            : undefined
+        }
         communities={communities}
         messageAction={(variant) => (
           <AgentMessageButton
@@ -759,7 +783,12 @@ function DefaultAgentInventory({
   // Keep Morgan's automatic fallback/adoption behavior active even though the
   // Bestie pill names only the explicit account-saved choice.
   useDefaultAgent(session, scope);
-  const bestie = useBestieChoice(session, scope);
+  // A remote agent is asked about before it is made Bestie.
+  const bestie = useBestieChoice(
+    session,
+    scope,
+    (pubkey) => props.agents.find((agent) => agent.pubkey === pubkey)?.place,
+  );
   return (
     <>
       <Inventory
@@ -1073,6 +1102,8 @@ function InventoryCard({
             >
               {Model && (
                 <Model
+                  agent={agent}
+                  openSettings={onBuild}
                   config={agent.config}
                   modelAppearance="glass-ghost"
                   disabled={saving}

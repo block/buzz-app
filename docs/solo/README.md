@@ -1,14 +1,15 @@
 # Solo
 
-Solo is a private channel whose only human member is its owner, talking with
-their agents. It is not a separate page, message store or relay-enforced privacy
-mode: a Solo chat is a channel, opened in Messages like any other, and signed
-channel membership remains access authority.
+Solo starts as a private channel whose only human member is its owner, talking with
+their agents. Its owner can invite members or open it for community viewing.
+It is not a separate page, message store or relay-enforced privacy
+mode: a Solo chat is a channel, opened in Messages like any other. Ordinary
+channel visibility and signed membership determine access.
 
 ## Model
 
 - **The `buzz.solo` channel label is the one Solo fact.** It is a NIP-CL label
-  on the private channel's relay metadata, so every member and agent, including
+  on the channel's relay metadata, so every member and agent, including
   remote agents without the owner's encrypted state, reads the same answer.
   Discovery derives `channelType: "solo"` from it alone. A Solo channel gets
   the chat treatment for everyone: a timeline that loads history on scroll and
@@ -20,7 +21,7 @@ channel membership remains access authority.
   Other channels are threaded. Conversion to a channel clears the label.
 - **The label decides the sidebar.** Every Solo chat the viewer is a member of
   lists under Solo: their own and any shared with them, whether added directly or
-  through a shared link's access grant. A shared chat starts in Chats and the
+  through an explicit membership grant. A shared chat starts in Chats and the
   viewer may file it in one of their own workspaces; it never lists under Team.
   Ordinary channels list under Team. Opening a chat without membership adds
   nothing to the sidebar.
@@ -93,18 +94,23 @@ behavior on the label, so a rename touches copy only.
   chat's actions menu and opens the explicit visibility confirmation.
   Name and lifetime are not sharing controls.
 - **Chat access** adds a person immediately, without a DM or link delivery;
-  the owner can also add agents there (below). Choosing one existing channel and Share gives its
-  current members access and posts a link without notifications, the same share as
-  sending a chat link in that channel. Current access is grouped
-  into **People** and **Agents** like a channel, with Owner and Admin tags. Future
+  the owner can also add agents there (below). Search for a channel and click
+  **Share** beside its result to make the
+  Private chat View only and post a link, after confirming full-history and
+  Canvas disclosure. View only chats confirm link delivery and keep their access;
+  Public chats post directly. Pasting an owned Private or View only chat link
+  uses the same confirmation before sending the original message. Opening the
+  link creates no sidebar entry.
+  Current access is grouped into **People** and **Agents** like a channel, with Owner and Admin tags. Future
   joins/departures are not synchronized. Copy link grants no access; Done with no
   channel closes without writes. Shared uses verified membership and cached human
   evidence, not privacy inference or a required role refresh. See
   [sharing](sharing.md).
 - Naming and lifetime belong to [Chat settings](#chat-lifetime),
-  not Share. Backend read-only roles,
-  dynamic inheritance/revocation and synced grant provenance remain deferred or
-  blocked in this checkpoint. Sharing does not expose owner-private detailed agent
+  not Share. Solo's View only / Private choices reuse channel policy;
+  View only uses the relay-enforced Guest default;
+  individual invitation role choices, dynamic inheritance/revocation and synced
+  grant provenance remain deferred. Sharing does not expose owner-private detailed agent
   activity or start an agent. Proposal documents remain design history, not
   implemented behavior.
 - Solo chats and drafts use the full conversation pane. Right-click,
@@ -136,10 +142,13 @@ behavior on the label, so a rename touches copy only.
   the default agent for this account/community. **Agents → right-click or "..." →
   Make my bestie** explicitly saves that agent as the bestie; its card then shows
   **Bestie**. That choice is saved to the account as a private `main-agent` record,
-  so every install adopts it once per session. Explicit choices write the
-  record. A finished deletion writes no Bestie when a fresh account read still
-  names the deleted agent. A different choice visible to that read stays; the
-  read/replace cannot protect a concurrent choice on another device before publish.
+  so every install adopts it once per session. Explicit choices and **Remove as
+  Bestie** write the record. Removing saves a record of none, which is not the
+  same as no record: a saved none means the account chose to have no Bestie, and
+  no record means it never chose. A finished deletion writes no Bestie when a
+  fresh account read still names the deleted agent. A different choice visible
+  to that read stays; the read/replace cannot protect a concurrent choice on
+  another device before publish.
   The choice stays until it is changed or the agent is deleted, and it is still
   tagged when its runtime is signed out or broken. Without a choice, or after the
   chosen agent is deleted, the first managed agent, then the first selectable
@@ -227,11 +236,13 @@ Solo workspaces use one bounded 16 KiB recipe record. Only workspace assignments
 occupy it, so unfiled chats cost nothing; a full record refuses the filing and
 keeps the chat. **Convert to channel** is a
 separate, owner/admin-confirmed action for Solo chats, available from
-Share and the existing menus. Its Private/Public choice defaults to Private and
-warns that Public exposes the full existing history to the community. It appears
-in Messages with the same ID, history, Canvas, membership, labels and lifetime.
+Share and the existing menus. Its Private / View only / Public choice starts from
+the chat's current access, with the same descriptions as channel general access.
+It appears in Messages with the same ID, history, Canvas, membership, labels and
+lifetime.
 Conversion is one signed details edit that clears `buzz.solo` (keeping any other
-labels) and applies the chosen visibility; the chat moves to Team for everyone.
+labels) and applies the chosen visibility and admission policy; the chat moves to
+Team for everyone.
 It then removes the chat's workspace assignment, if any, and opens the channel in
 Messages. Share alone never does this. If unfiling fails, Finish conversion
 retries only that step. The existing preference owner preserves other workspaces

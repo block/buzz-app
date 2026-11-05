@@ -26,12 +26,10 @@ export function metadataName(event: RelayEvent): string | undefined {
 
 const noMembers: readonly string[] = Object.freeze([]);
 
-/** A Solo chat: a private stream carrying the Solo label. Never access. */
+/** A Solo chat: a stream carrying the Solo label. Never access. */
 export function soloChannelMetadata(event: RelayEvent): boolean {
   return (
-    tag(event, "t") === "stream" &&
-    event.tags.some(([name]) => name === "private") &&
-    soloLabels(channelIdentity(event).labels)
+    tag(event, "t") === "stream" && soloLabels(channelIdentity(event).labels)
   );
 }
 
@@ -369,6 +367,11 @@ export class DiscoveryState {
     const event = this.metadata.get(id);
     return !!event && event.tags.some(([name]) => name === "private");
   }
+  /** Bare `auto_join` flag: present only while the relay actually auto-adds (open, unarchived). */
+  autoJoin(id: string): boolean {
+    const event = this.metadata.get(id);
+    return !!event && event.tags.some(([name]) => name === "auto_join");
+  }
   isSolo(id: string): boolean {
     if (this.starting.has(id)) return true;
     const event = this.metadata.get(id);
@@ -433,6 +436,7 @@ export class DiscoveryState {
       members: roster ? this.parse(roster).members : noMembers,
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
+      ...(this.autoJoin(id) ? { autoJoin: true } : {}),
       ...(channelType ? { channelType } : {}),
       ...(channelType === "solo" && event
         ? { updatedAt: event.created_at }

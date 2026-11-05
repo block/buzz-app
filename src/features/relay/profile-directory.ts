@@ -45,10 +45,24 @@ export interface ProfileQueries {
   reserve?(members: number): () => void;
   /** Profiles the cache can hold now; one ensure may ask for at most this many. */
   limit?(): number;
-  /** Moves when the budget drops loaded profiles or a shrink cancels pending
-   * background reads. A view that requested names once and skips repeats must
-   * request again after it moves. */
+  /** Moves when the budget drops loaded profiles or a shrink cancels
+   * background reads asked for before the release. A view that requested names
+   * once and skips repeats must request again after it moves. */
   evictions?(): number;
+  /** The community's current verified-profile authority, or undefined while
+   * it advertises none. Subscribers are notified when it changes. */
+  verifiedAuthority?(): VerifiedProfileAuthority | undefined;
+  /** Whether the shared verified directory holds a head for `pubkey`. Its
+   * profile's `verified`, present or not, then outranks a search's answer:
+   * a newer inactive or malformed head revokes an older name. */
+  verifiedHeld?(pubkey: string): boolean;
+  /** Moves with every change to the shared verified heads, including one that
+   * leaves every profile as it was (a first inactive head), and notifies. */
+  verifiedRevision?(): number;
+  /** Whether a `verifiedRevision()` after `revision` accepted a head for
+   * `pubkey`, even one the cache evicted before publishing it. Past what it
+   * remembers it answers yes, never no for a head it accepted. */
+  verifiedSince?(pubkey: string, revision: number): boolean;
 }
 
 /** Authors per profile read, the reader's largest page. A page that fills it
@@ -84,6 +98,9 @@ export function createProfileDirectory(
     reading: boolean;
     refresh: boolean;
     cancel: AbortController;
+    // The release count when it was asked for; a shrink cancels a background
+    // read once a release follows.
+    readonly releases: number;
   };
   const pending = new Map<string, Batch>();
   // The batch each read attempt's signal belongs to, so the session's accept
@@ -91,6 +108,17 @@ export function createProfileDirectory(
   const attempts = new WeakMap<AbortSignal, Batch>();
   // Background reads a shrink cancelled; counted with evictions.
   let cancelled = 0;
+  // Reservations released so far.
+  let releases = 0;
+  // Whether a shrink cancels this read: a background read, not a reconnect
+  // refresh, asked for before the latest release.
+  function shrinkCancels(batch: Batch) {
+    return (
+      batch.priority === "background" &&
+      !batch.refresh &&
+      batch.releases !== releases
+    );
+  }
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
   // Replaced, never mutated, so stores can compare it like `snapshot`.
@@ -108,6 +136,11 @@ export function createProfileDirectory(
   // every profile. Coalesce them to one publish per macrotask so socket frames,
   // input and paint run between refolds instead of behind a burst.
   let verifiedFlush: ReturnType<typeof setTimeout> | undefined;
+  let verifiedRevision = 0;
+  // The revision that published each subject's latest accepted head, oldest
+  // first, so a search can tell a head the cache has already dropped.
+  const acceptedAt = new Map<string, number>();
+  let forgottenAt = 0;
   const verified =
     verification &&
     createVerifiedProfileDirectory(
@@ -116,6 +149,16 @@ export function createProfileDirectory(
       () => {
         verifiedFlush ??= setTimeout(() => {
           verifiedFlush = undefined;
+          verifiedRevision++;
+          for (const subject of verified?.takeAccepted() ?? []) {
+            acceptedAt.delete(subject);
+            acceptedAt.set(subject, verifiedRevision);
+          }
+          for (const [subject, revision] of acceptedAt) {
+            if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
+            acceptedAt.delete(subject);
+            forgottenAt = revision;
+          }
           if (!closed) publish();
         });
       },
@@ -163,7 +206,11 @@ export function createProfileDirectory(
         if (!closed && settled.some(Boolean)) publish(true);
       });
   }
-  /** Notifies on display changes, and on winning-event changes for `event()` readers. */
+  let publishedAuthority: VerifiedProfileAuthority | undefined;
+  let publishedRevision = 0;
+  /** Notifies on display changes, on winning-event changes for `event()`
+   * readers, and on verified-authority and head changes for
+   * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
     folded = false;
     const next = foldProfiles([
@@ -242,7 +289,14 @@ export function createProfileDirectory(
       snapshot = next;
       if ([...unnamed].some((id) => next.has(id)))
         unnamed = new Set([...unnamed].filter((id) => !next.has(id)));
-    } else if (!headChanged) return;
+    } else if (
+      !headChanged &&
+      publishedAuthority === verified?.authority() &&
+      publishedRevision === verifiedRevision
+    )
+      return;
+    publishedAuthority = verified?.authority();
+    publishedRevision = verifiedRevision;
     for (const listener of listeners) notify(listener);
   }
   /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
@@ -291,7 +345,11 @@ export function createProfileDirectory(
     const signal = controller.signal;
     const waiting = new Set<Promise<void>>();
     const missing = unique.filter((id) => {
-      const batch = pending.get(id);
+      let batch = pending.get(id);
+      // Don't join a read a waiting shrink would cancel: this name gets its own
+      // read, and the rest of that page is still cancelled.
+      if (batch && shrinking !== undefined && shrinkCancels(batch))
+        batch = undefined;
       if (batch) {
         // Rejoin the equal read so the reader promotes it if still queued;
         // waiting on the old promise alone would leave it behind background work.
@@ -329,6 +387,7 @@ export function createProfileDirectory(
         reading: false,
         refresh,
         cancel: new AbortController(),
+        releases,
         work: Promise.resolve(),
       };
       batch.work = retryRead(
@@ -410,12 +469,12 @@ export function createProfileDirectory(
     limit = next;
     verified?.resize(limit);
     let dropped = events.resize(limit, limit * PROFILE_ENTRY_BYTES) > 0;
-    // A read still in flight from the larger limit would land as the newest
-    // entries and push out names the next view just loaded. Foreground reads
-    // and reconnect refreshes keep going.
+    // A read asked for before the release would land as the newest entries
+    // and push out names the next view just loaded. The next view's own reads,
+    // foreground reads and reconnect refreshes keep going.
     if (shrink)
       for (const batch of new Set(pending.values())) {
-        if (batch.priority !== "background" || batch.refresh) continue;
+        if (!shrinkCancels(batch)) continue;
         batch.cancel.abort();
         for (const id of batch.authors)
           if (pending.get(id) === batch) pending.delete(id);
@@ -436,6 +495,7 @@ export function createProfileDirectory(
     resize();
     return () => {
       if (!reservations.delete(reservation) || closed) return;
+      releases++;
       // Shrink after the current task: a view that releases and reserves again
       // in one commit (a roster count change, a remount) keeps its profiles.
       shrinking ??= setTimeout(resize);
@@ -456,6 +516,12 @@ export function createProfileDirectory(
     reserve,
     limit: () => limit,
     evictions: () => events.evictions + cancelled,
+    verifiedAuthority: () => verified?.authority(),
+    verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),
+    verifiedRevision: () => verifiedRevision,
+    verifiedSince: (pubkey: string, revision: number) =>
+      (acceptedAt.get(pubkey) ?? (revision < forgottenAt ? Infinity : 0)) >
+      revision,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

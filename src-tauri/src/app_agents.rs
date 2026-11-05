@@ -100,6 +100,7 @@ impl AppAgentHost {
                 dir: hosts,
                 packaged,
                 held: Mutex::default(),
+                here: Mutex::default(),
             }),
             tokens,
             protection_upgrade: Arc::default(),
@@ -358,11 +359,17 @@ fn protection_upgrade_dialog() -> bool {
 /// Dev builds step aside while that is held, and
 /// otherwise run each agent from whichever holds `<pubkey>.lock`. The OS lets go
 /// of both when a copy exits, however it exits.
+///
+/// A dev build asked to run agents here names itself in `here` and holds
+/// `<id>.copy` while it lives. Other dev builds let go of their agents while that
+/// copy lives; once it exits, whichever asks first runs each agent again.
 struct Hosting {
     dir: Result<PathBuf, String>,
     packaged: bool,
     /// The lock file this copy holds per agent: `.packaged` or `.lock`.
     held: Mutex<HashMap<String, File>>,
+    /// This copy's id and its held `<id>.copy`, once it was asked to run agents.
+    here: Mutex<Option<(String, File)>>,
 }
 impl Hosting {
     fn held(&self) -> std::sync::MutexGuard<'_, HashMap<String, File>> {
@@ -396,7 +403,8 @@ impl Hosting {
         std::fs::create_dir_all(dir).map_err(|_| "Could not open agent hosting")?;
         let packaged = dir.join(format!("{pubkey}.packaged"));
         let mut held = self.held();
-        if !self.packaged && !lock(open_lock(&packaged)?.try_lock_shared())? {
+        let packaged_runs = !self.packaged && !lock(open_lock(&packaged)?.try_lock_shared())?;
+        if packaged_runs || (!self.packaged && self.wanted_elsewhere(dir)) {
             held.remove(pubkey);
             return Ok(false);
         }
@@ -416,6 +424,72 @@ impl Hosting {
         validate()?;
         held.insert(pubkey.into(), file);
         Ok(true)
+    }
+    /// Whether another live dev build was asked to run agents. Anything
+    /// unreadable counts as no one asked, so agents keep running somewhere.
+    #[allow(clippy::incompatible_msrv)]
+    fn wanted_elsewhere(&self, dir: &Path) -> bool {
+        let Ok(id) = std::fs::read_to_string(dir.join("here")) else {
+            return false;
+        };
+        let own = self
+            .here
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|(own, _)| *own == id);
+        // A copy that exited holds nothing, so its lock can be taken.
+        !own && valid_copy_id(&id)
+            && File::open(dir.join(format!("{id}.copy")))
+                .is_ok_and(|copy| matches!(copy.try_lock_shared(), Err(TryLockError::WouldBlock)))
+    }
+    /// Asks every other dev build to let go of its agents while this one lives.
+    #[allow(clippy::incompatible_msrv)]
+    fn run_here(&self) -> Result<(), String> {
+        if self.packaged {
+            return Err("The installed Buzz app already runs its agents".into());
+        }
+        let dir = self.dir.as_ref().map_err(Clone::clone)?;
+        std::fs::create_dir_all(dir).map_err(|_| "Could not open agent hosting")?;
+        let entries: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map_err(|_| "Could not read agent hosting")?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .collect();
+        let held = |path: &PathBuf| {
+            File::open(path)
+                .is_ok_and(|file| matches!(file.try_lock_shared(), Err(TryLockError::WouldBlock)))
+        };
+        if entries
+            .iter()
+            .any(|path| path.extension().is_some_and(|ext| ext == "packaged") && held(path))
+        {
+            return Err("Quit the installed Buzz app first; it runs your agents".into());
+        }
+        let mut here = self
+            .here
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if here.is_none() {
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            let copy = open_lock(&dir.join(format!("{id}.copy")))?;
+            if !lock(copy.try_lock())? {
+                return Err("Could not read agent hosting".into());
+            }
+            *here = Some((id, copy));
+        }
+        let (id, _) = here.as_ref().expect("set above");
+        // Copies that exited leave nothing to keep; a live one holds its file.
+        for path in &entries {
+            if path.extension().is_some_and(|ext| ext == "copy")
+                && File::open(path).is_ok_and(|copy| matches!(copy.try_lock(), Ok(())))
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        let staged = dir.join(format!("{id}.here"));
+        std::fs::write(&staged, id)
+            .and_then(|()| std::fs::rename(&staged, dir.join("here")))
+            .map_err(|_| "Could not save agent hosting".into())
     }
     /// Policy writes require this copy's custody and no overlapping dev/packaged host.
     #[allow(clippy::incompatible_msrv)]
@@ -439,6 +513,9 @@ impl Hosting {
         // Both hosting locks stay held across the native CAS write.
         change()
     }
+}
+fn valid_copy_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 /// Whether a try at a lock took it; closing the file lets go.
 #[allow(clippy::incompatible_msrv)]
@@ -859,6 +936,15 @@ pub(crate) async fn app_agent_claim(
         })
     })
     .await
+}
+
+/// Runs every agent in this dev build while it lives; others let go within a tick.
+#[tauri::command]
+pub(crate) async fn app_agents_run_here(
+    state: tauri::State<'_, AppAgentHost>,
+) -> Result<(), String> {
+    let hosting = state.hosting.clone();
+    blocking(move || hosting.run_here()).await
 }
 
 /// Lets another copy of the app run the agent, as when this one cannot.
@@ -2183,6 +2269,7 @@ mod tests {
             dir,
             packaged,
             held: Mutex::default(),
+            here: Mutex::default(),
         }
     }
 
@@ -2237,6 +2324,62 @@ mod tests {
         drop(one);
         assert!(other.claim(&first).unwrap());
         assert!(other.claim("../x").is_err());
+    }
+
+    #[test]
+    fn dev_builds_let_go_while_the_one_asked_to_run_agents_lives() {
+        let dir = tempfile::tempdir().unwrap();
+        let hosts = || Ok(dir.path().join("hosts"));
+        let agent = "a".repeat(64);
+        let (first, second, third) = (
+            hosting(hosts(), false),
+            hosting(hosts(), false),
+            hosting(hosts(), false),
+        );
+        assert!(first.claim(&agent).unwrap());
+        second.run_here().unwrap();
+        // The holder lets go at its next claim, and no third copy takes it.
+        assert!(!second.claim(&agent).unwrap());
+        assert!(!first.claim(&agent).unwrap());
+        assert!(!third.claim(&agent).unwrap());
+        assert!(second.claim(&agent).unwrap());
+        // Asking again moves them back.
+        first.run_here().unwrap();
+        assert!(!second.claim(&agent).unwrap());
+        assert!(first.claim(&agent).unwrap());
+        // Once the copy asked exits, the others run it again.
+        drop(first);
+        assert!(third.claim(&agent).unwrap());
+        assert!(!second.claim(&agent).unwrap());
+        // A copy asked before and then passed over is forgotten once it exits.
+        third.run_here().unwrap();
+        second.run_here().unwrap();
+        drop(third);
+        second.run_here().unwrap();
+        let copies = std::fs::read_dir(dir.path().join("hosts"))
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "copy")
+            })
+            .count();
+        assert_eq!(copies, 1);
+        // An unreadable choice stops no one.
+        std::fs::remove_file(dir.path().join("hosts/here")).unwrap();
+        std::fs::create_dir(dir.path().join("hosts/here")).unwrap();
+        assert!(second.claim(&agent).unwrap());
+        // The installed app keeps what it runs, and says so.
+        let packaged = hosting(hosts(), true);
+        assert!(packaged.run_here().is_err());
+        assert!(packaged.claim(&agent).unwrap());
+        assert_eq!(
+            second.run_here(),
+            Err("Quit the installed Buzz app first; it runs your agents".into())
+        );
     }
 
     #[test]

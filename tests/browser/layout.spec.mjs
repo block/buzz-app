@@ -26,17 +26,8 @@ import {
   keyScroll,
 } from "./timeline.mjs";
 
-// These layout/navigation journeys exercise the opt-in Bestie surface.
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    const key = "buzzodz.plugins.v1";
-    if (localStorage.getItem(key) === null)
-      localStorage.setItem(
-        key,
-        JSON.stringify({ version: 2, enabled: { "buzz.bestie": true } }),
-      );
-  });
-});
+// These layout/navigation journeys exercise opt-in page surfaces.
+test.use({ enabledPlugins: ["buzz.bestie", "buzz.workflows"] });
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 const companionTest = test.extend({ companionFixture: true });
@@ -858,12 +849,45 @@ companionTest(
     await expect(launch).toBeVisible();
     await expect(companion).toHaveCount(0);
     await launch.click();
-    await openPage(page, "Messages");
+    // The companion keeps one default, minimum, saved width and reset as it
+    // moves between PanelFrame and Messages' dock.
+    await openPage(page, "Inbox");
+    await expect(companion).toBeVisible();
+    const resize = page.getByRole("separator", {
+      name: "Resize main and secondary panels",
+    });
+    const resizedWidth = async () =>
+      Number(await resize.getAttribute("aria-valuenow"));
+    const defaultWidth = await resizedWidth();
     const composer = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,
     });
-    await expect(composer).toBeVisible();
+    const visitMessages = async () => {
+      await openPage(page, "Messages");
+      await expect(composer).toBeVisible();
+    };
+    await visitMessages();
+    await expect.poll(resizedWidth).toBe(defaultWidth);
+    await openPage(page, "Inbox");
+    await resize.focus();
+    await resize.press("Home");
+    await expect.poll(resizedWidth).toBeLessThan(defaultWidth);
+    const minimumWidth = await resizedWidth();
+    await visitMessages();
+    await expect.poll(resizedWidth).toBe(minimumWidth);
+    await openPage(page, "Inbox");
+    await resize.focus();
+    await resize.press("Shift+ArrowLeft");
+    await expect.poll(resizedWidth).toBeGreaterThan(minimumWidth + 40);
+    const companionWidth = await resizedWidth();
+    await visitMessages();
+    await expect.poll(resizedWidth).toBe(companionWidth);
+    await resize.dblclick();
+    await expect.poll(resizedWidth).toBe(defaultWidth);
+    await openPage(page, "Inbox");
+    await expect.poll(resizedWidth).toBe(defaultWidth);
+    await visitMessages();
     await composer.fill("Companion draft");
     const conversation = page.getByRole("article", {
       name: "Conversation",

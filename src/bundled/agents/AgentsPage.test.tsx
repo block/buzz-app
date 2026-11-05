@@ -400,6 +400,7 @@ function setup(
     addedTabs: () => [],
     registerTab: () => {},
     controlAttention: () => {},
+    harness: {} as Agents["harness"],
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {
@@ -2889,7 +2890,7 @@ it("keeps a synced team in its home while none of its members is listed", async 
     ],
   });
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
-  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" });
+  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" }, undefined);
   await user.click(screen.getByRole("button", { name: "Gone" }));
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("gone");

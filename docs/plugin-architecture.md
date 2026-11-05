@@ -102,7 +102,7 @@ source imports are not a versioned external SDK. See
 
 ## Open a Git import from a link
 
-Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>]`
+Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>][&path=<encoded-folder>][&commit=<hex>]`
 to open a preview in **Settings > Plugins > Manage plugins > Add**. The repository
 accepts HTTPS, `ssh://`, `git@host:path`, `github.com/owner/repo`, or `owner/repo`.
 Omit `ref` to use the repository default. For example, on macOS:
@@ -110,7 +110,21 @@ Omit `ref` to use the repository default. For example, on macOS:
 ```sh
 open 'buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2FOWNER%2FPLUGIN.git&ref=main'
 open 'buzz://plugin-install?repository=git%40github.com%3AOWNER%2FPLUGIN.git&ref=main'
+open 'buzz://plugin-install?repository=OWNER%2FPLUGINS&path=plugins%2Fone&commit=0123456789abcdef0123456789abcdef01234567'
 ```
+
+`path` names the plugin folder inside the repository. It is relative and
+`/`-separated; absolute paths, `.` or `..` segments, empty segments, backslashes and
+control characters make the link invalid, and an empty value or `.` means the
+repository root. The review then offers only that folder instead of asking you to
+choose, and refuses a repository with no plugin there.
+
+`commit` is a full 40- or 64-digit hex commit. It pins the link the same way
+`requestInstall` pins a plugin's request: the import refuses a reference whose tip is
+any other commit, the review checks the fetched commit again, and nothing installs
+unless it matches. A link that carries `path` or `commit` locks the repository and
+reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
+`path` and `commit` may appear once; a repeated key makes the link invalid.
 
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
@@ -229,7 +243,7 @@ external source project with `pnpm exec tsc` in that directory.
 The host owns navigation, Settings, loading errors, and render error boundaries.
 Settings controls and CLI management do not depend on plugin activation. Updates are detected while the app
 is running. A selected page remounts when its revision changes; its local React
-state resets. Plugin-specific persistent data has no host API yet.
+state resets. Plugin-specific persistent data has no host API yet; bundled plugins such as Reminders and Focus keep small device-local state in namespaced `localStorage` keys.
 
 Plugins are trusted code executing in the app's JavaScript context. They are not
 sandboxed: infinite loops, global changes, and external side effects cannot be
@@ -340,6 +354,17 @@ ctx.reflect.get("sidebarSections")?.register({
 });
 ```
 
+### Solo-only sidebar
+
+`sidebarScope.restrict({ id, scope: "solo", banner })` shows only the Solo
+inventory while it is registered. The All/Solo/Team tabs and page destinations
+give way to the plugin's `banner` component, and the person's saved tab returns
+when the last restriction is removed. It returns a remover; disable, replacement
+and teardown remove it too, so a restriction can never outlive its plugin. A
+banner that throws renders nothing and leaves the sidebar usable. It changes
+only the sidebar: links, search and alert clicks still open any conversation.
+Focus is the first caller and registers its restriction only while Focus is on.
+
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
@@ -365,6 +390,21 @@ authentication work as blocking and supplies its cancellation control. Only
 active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
+
+An installed harness plugin gets the Buzz side of each turn from
+`ctx.agents.harness`, as the bundled harnesses do it, and keeps its own
+process, sessions and saved state. `conversation(delivery, scope)` admits a
+mention or wake (undefined means the harness ignores it: not the owner's own
+or attested by them, or with no conversation to go to) and freezes where
+it goes. `systemPrompt` and `turnPrompt` give Buzz's prompts, `turnPrompt`
+showing what the session has not seen and taking plugins' notes. Its
+`cursor` is opaque: save it with the session and give it to the next
+`turnPrompt`, which keeps a mark for each thread of a channel conversation.
+`reply` posts as the agent there. `tools(agent, conversation, { read })`
+answers the Buzz tools over MCP for `ctx.host.serveMcp`, so the manifest
+declares `host.mcp`; `read` is the plugin's own file access (`host.files`),
+which uploads of local files use. The kit grants nothing `ctx.agents` and
+`ctx.host` do not already give the plugin.
 
 A plugin, bundled or installed, can add a tab to the settings of agents
 running on this device, whatever their type, with
@@ -410,6 +450,24 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
+default) gives local agents three tools. `plugin_authoring_guide` returns
+[the authoring guide](plugin-authoring-guide.md), bundled with the app.
+`plugin_status` lists plugins with their activation state, and for one plugin
+its error, revision, folder, host access and what it registered.
+`plugin_reload` reloads an installed folder plugin the way Settings does: it
+disables the plugin, reloads it (refused when host access changed), enables it,
+waits for activation and rolls back to the revision that was running when the
+new one fails to start. It returns `application` (`applied`, `saved` or
+`failed`) with a `nextStep`. It never installs a new plugin or widens host
+access; those stay with the owner in Settings. The tools reach the plugin manager
+through the `pluginDevelopment` service, which throws for any other plugin, as
+`connectExternal` does for any plugin but Agents. While the plugin is on, every
+local agent gets these tools, so an agent that can write into an installed
+plugin's folder can replace that plugin's code, though not its host access,
+without a new review. Plugin code is trusted and unsandboxed, so only load folders
+that the agents you run may change.
+
 `ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
 the app runs in one of its conversations, as a mention there would, with no
 message. `root` is the thread's root event id (64 hex); leave it out for a Solo
@@ -432,6 +490,8 @@ Plugins can discover active Attention source registrations through `ctx.agents.a
 A source may also `present` its watches on the Agent Attention page. Given a watch and its display name, it returns the watch's kind and, optionally, an icon, a target with a subtitle, an external link, and a details component that replaces the name in the expanded row. When a provider has no `present`, or it throws, Buzz shows the watch by its name. The GitHub plugin presents pull request watches this way, linking to its comment author settings.
 
 Each Attention source `run` receives `spawn(processId, options)` for commands using that watch's owning agent. The host binds agent identity, watch destination and run lifetime; plugins cannot select another agent or obtain the raw authenticated connection. Declare the process in `host.processes` and request `host.mcp`, plus `host.files` for tools reading local paths. Options supply arguments, working directory, environment and output callbacks.
+
+On macOS and Linux, only one instance of a declared process may run for the same agent, provider and watch, including across Buzz builds. A concurrent instance waits for the existing instance to stop, then starts. Await the previous handle's `process.exited` before spawning a replacement, including after calling `kill()`. Different declared processes or watches can run concurrently. Windows does not enforce this singleton constraint.
 
 Buzz revokes command access on return, failure, cancellation, agent stop, provider unload or community reconnection, and closes the process and its descendants. Successfully emitted output remains queued after a producer returns. The key and MCP connection stay in Buzz; commands retain the app user's operating-system privileges and can use the agent's tools while their run remains active.
 
@@ -510,6 +570,16 @@ nothing and leaves navigation usable. Toolbar badges are clipped to a compact
 content. The overflow popover uses ordinary labelled rows with trailing badges.
 Pages without `primary` have no navigation entry, so their badge is not shown.
 
+A primary page may also supply `preview`, supplemental content the shell shows
+in a popover while a pointer rests on the page's sidebar row, after the design
+system's Preview hover delay. The shell owns the trigger, timing, placement and
+dismissal, and passes the content `close()` for actions that navigate. When the
+content has a `<header>`, the shell lifts the card so the line under it meets
+the row's top edge. It never
+shows a preview without a hover pointer, for header or overflow entries, or
+while that page is selected, so everything in it must stay reachable from the
+page itself. A preview that throws renders nothing and leaves navigation usable.
+
 `notifications.register({ id, label })` adds a category with its own switch in
 Settings and returns `submit({ sourceKey, target, title?, body? })`. Submissions
 share the host's permission, preference, duplicate and click handling. The host
@@ -519,10 +589,21 @@ to 200), so a plugin cannot send raw markup or unlimited text to the OS. Without
 them the banner reads `Buzz` / `New <label>`. The host applies no age limit to
 plugin submissions; the plugin decides what is still worth announcing.
 
+`notifications.gate({ id, allows(target) })` narrows which targets may alert.
+While any gate is registered, a banner, its sound and the Dock unread dot need
+every gate to allow the target; the Dock asks about each conversation as a
+`conversation` target. Pending alerts are rechecked when a gate is added or
+removed. A throwing gate is skipped. `gate` returns a remover, and disabling the
+plugin removes its gates. Gates never widen the host's own access and
+preference checks. A refused alert is dropped, not queued. Focus registers one
+only while Focus is on.
+
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
 render it as a decorative image, with the generic icon when it is absent or fails
-to load. Registration drops any other value with one console warning that names
+to load. An SVG that paints with `currentColor` is drawn as a mask in the text
+colour, so a monochrome glyph follows the theme and hover and selected states
+like the host's icons; any other image keeps its own colours. Registration drops any other value with one console warning that names
 the page; the page still registers and opens. Bundled pages keep their host icons.
 External plugins ship no separate assets, so inline the art into `plugin.js`, for
 example with a bundler `?inline` import.
@@ -631,9 +712,9 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos and Usage are off by default. Feedback, Diff viewer, Identity
+Todos, Usage, Reminders and Workflows are off by default for fresh installs. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
-Repositories, Agents, Claude, Codex, Workflows, Builderlab,
+Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
 
@@ -642,11 +723,16 @@ Messages, and Solo drafts are a Messages route. Channels requests topbar
 placement and the shell presents it as Messages, the startup destination.
 Saved `buzz.me` and `buzz.sessions` flags are ignored like any uninstalled owner.
 
-Saved enabled/disabled flags win over defaults (except required Channels). Profiles
-without a saved flag use the current default, so changing a default also changes
-those existing profiles. There is no migration or forced reset: a browser profile that previously saved its full
-plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
-overrides. Default-on does not promise platform support: Terminal contributes UI
+Saved enabled/disabled flags win over defaults (except required Channels).
+Both storage owners persist resolved bundled states. Native default snapshots
+are best effort: a failed write keeps the readable catalog usable and is retried
+on the next read; explicit edits and resets still report write failures.
+Existing profiles without saved Reminders or Workflows choices retain
+their former On state; fresh profiles start both Off. Reopening preserves either
+result, and an explicit reset uses current defaults. Future default-off changes
+must follow [the fresh-install decision](plugin-defaults.md), including legacy
+backfills for releases without saved states.
+Default-on does not promise platform support: Terminal contributes UI
 only on macOS/Linux desktop; Builderlab's hosted communities need either the desktop app or
 the live development broker. Disabling Membership removes its Invite to community shortcut.
 
@@ -855,7 +941,8 @@ its text when the save finishes. If the loaded Canvas was written in the current
 a single cancellable wait respects its timestamp ordering; there is no background
 retry loop. Failures and recovered drafts expose Retry rather than silently publishing
 on reopen. Save uses the existing session Canvas/outbox contract, including its
-24 KiB limit, fresh membership check, writer-backed Canvas head/editor-confirmation
+256 KiB content limit (the complete signed event must also fit the relay's
+512 KiB frame), fresh membership check, writer-backed Canvas head/editor-confirmation
 reads and exact signed-event recovery. Canvas reads default to strong consistency
 for editor/Todos bases and setup preconditions. Setup delivery and its separate
 exact-ID confirmation both use writer-backed reads; unknown seed outcomes are
@@ -885,13 +972,31 @@ storage is unavailable they survive only while the editor stays open. Save never
 promotes local recovery storage to shared state. Already accepted outbox operations
 remain session-owned if the drawer closes or plugin is disabled.
 
+**Canvas view:** Channel actions → View canvas opens on View, which renders the
+saved head (never a local draft) as GitHub-flavored Markdown with its own loading,
+read-failure retry and empty states. Raw HTML shows as text, inline images show
+their alt text, and only credential-free HTTP(S) and validated Buzz links are
+active. Rendering has its own budget of 128 KiB of text, independent of the save
+limit: larger Canvases, and Canvases nested past the shared Markdown depth limit,
+show a labelled source view even when saving them is allowed. History compares
+versions against the same saved head (below); read-only viewers keep Edit so recovered drafts stay visible, with
+Save and Restore disabled. Restoring does not switch tabs.
+
 **Canvas history:** Channel actions → View canvas → History lazily reads retained
-kind-40100 revisions in pages of 25, ordered by `created_at DESC, id ASC` with
+kind-40100 revisions in pages of 16 (as many full-size signed revisions as one 8 MiB read holds), ordered by `created_at DESC, id ASC` with
 `until`/`before_id` keyset cursors. The first page is writer-backed so a just-restored
 revision is visible; older pages remain replica-eligible. The current marker uses
 the editor's strong-read head, not list position. Refresh history rechecks the
 head without replacing the editor draft. Author labels use the shared profile
-directory, with public-key fallbacks; previews are read-only Markdown source.
+directory, with public-key fallbacks. The selected revision shows a line diff
+(`diff` package `diffLines(current, revision)`) against the editor's strong-read
+head, as old Buzz did: added lines are the revision's lines the current Canvas
+lacks, removed lines are current lines the revision drops. Lines carry +/−
+markers alongside colour and unchanged runs collapse to 3 lines of context. The
+head, or a revision with identical content, shows "Same as current version".
+Comparisons over 5,000 lines or past the library's edit-length or time bound
+show the full content with a label, and "Show full content" switches to the
+read-only Markdown source at any time.
 
 Restore requires explicit confirmation and publishes the selected content as a
 new signed revision through the existing Canvas save/outbox owner. Its precondition
@@ -903,9 +1008,9 @@ which may automatically replay the exact signed event with its original
 `expected-revision`. It never creates a fresh event or substitutes a newer
 precondition to retry. If confirmation ultimately fails or remains uncertain,
 the dialog retains drafts and shows the error without starting another restore.
-Empty revisions can be restored; revisions exceeding the existing 24 KiB save
-limit remain previewable but cannot be restored here. No diff viewer or new
-delivery owner is introduced.
+Empty revisions can be restored; revisions exceeding the 256 KiB live Canvas
+limit remain previewable but cannot be restored here. No new delivery owner is
+introduced.
 
 ### Top-bar launchers and the companion slot
 
@@ -1163,19 +1268,23 @@ SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access by default; the import preview says so.
 `protection: { readOnlyPaths, hiddenPaths }` adds macOS containment for the worker
-and descendants. Both arrays contain absolute existing paths. Read-only paths
-reject writes; hidden paths reject reads and writes. The host adds its application,
-plugin storage and actual Agents folder, blocks Apple Events, and refuses mutable
-development frontends or unsupported operating systems.
+and descendants. Both arrays contain paths, absolute or under the user's home
+written `~/…`. Hidden paths must exist; a read-only path may lack only its last
+component, under an existing parent other than `/`. Read-only paths reject writes,
+including creating a missing one; hidden paths reject reads and writes. The host
+adds its application, plugin storage and actual Agents folder, blocks Apple
+Events, and refuses mutable development frontends or unsupported operating
+systems.
 
 Contained launches require an app-bundled executable or an `artifact` descriptor;
-PATH-only entrypoints are refused. Artifact descriptors name an absolute executable,
-its SHA-256, and optional flat sibling files with their hashes. Native launch hashes
-while copying those declared files into a content-addressed generation beneath the
-actual shared Agents folder, then launches that copy. All contained workers are
-prevented from writing this store. Corrupt generations fail closed and are never
-repaired in place. Equivalent Windows path forms are accepted; symlinks remain
-rejected. Control characters in containment paths refuse launch.
+PATH-only entrypoints are refused. Artifact descriptors name an executable, absolute
+or under the user's home written `~/…`, its SHA-256, and optional flat sibling files
+with their hashes. Native launch hashes while copying those declared files into a
+content-addressed generation beneath the actual shared Agents folder, then launches
+that copy. All contained workers are prevented from writing this store. Corrupt
+generations fail closed and are never repaired in place. Equivalent Windows path
+forms are accepted; symlinks remain rejected. Control characters in containment
+paths refuse launch.
 
 This is approval-authority containment, covering the application, controls, private
 approval state, and declared launch files. It does not verify every dependency an
@@ -1582,6 +1691,17 @@ access and reports the previous and updated declarations. Rejected builds leave
 the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
+Agents reach management through the host's own tools: they read the catalog and
+disable directly, and every install, update, enable or removal waits for the person
+to confirm it on a card in the agent's conversation, or in Settings; see
+[managing plugins from a conversation](agents.md#managing-plugins-from-a-conversation).
+The request service is provided on the root context (`pluginRequests`) so agent
+runs can reach it, which also makes it reachable from plugin scopes; plugins remain
+trusted code. The card is a built-in feature (`buzz.plugin-requests`) that registers a
+message renderer for messages with a `plugin-request` tag. Two services,
+`pluginManagement` and `pluginReviewHold`, give the plugin manager and the open-review
+hold to that feature alone, so asking cannot install or delete another plugin's code
+without the review.
 
 Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
@@ -1611,7 +1731,9 @@ credentials/tokens are never saved with source metadata. SSH accepts explicit UR
 and `user@host:owner/repository.git` shorthand, including organization-specific
 usernames. On macOS, sources at `ssh://org-49461806@github.com/squareup/…` on
 port 22 use Block's agent when its socket exists at
-`~/Library/Application Support/block-ssh-agent/agent.sock`. Other SSH sources use
+`~/Library/Application Support/block-ssh-agent/agent.sock`. When that socket exists,
+`https://github.com/squareup/…` sources are read over that SSH URL instead; the saved
+source keeps the HTTPS URL. Public Square repositories then also need a working agent. Other SSH sources use
 the desktop process's inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with
 interactive prompts and SSH config disabled. For another agent selected by
 `IdentityAgent` in SSH config, launch the app with that socket in `SSH_AUTH_SOCK`.
@@ -2065,7 +2187,8 @@ still revokes unpublished work, without exposing ARIA controls for a missing lis
 
 Providers receive immutable observation/range evidence and `publish(result)`—not
 DOM, focus or replacement commands. Results contain stable IDs, labels, optional
-detail/decorative previews and either text, an exact `{ pubkey, name }` mention,
+detail/decorative previews, an optional `agent` flag (marked and announced only
+for the bundled mention and channel providers) and either text, an exact `{ pubkey, name }` mention,
 or a `mentions` array of up to 32 such recipients. Batch edit primitives are
 copied and frozen before display, and accepted as a single editor transaction.
 The host copies edit/query primitives and caps publications at 50 choices. A

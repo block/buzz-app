@@ -35,8 +35,8 @@ and reported as migration errors.
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
-`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
-It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name,
+optionally with a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
 the usual Create agent form, may edit the name, runtime and settings, and creates
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
@@ -47,12 +47,17 @@ the available operations and arguments. Agent tools do not expose draft approval
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
-key from `agent_types`, or new instructions. Absent fields stay as they are. The
+key from `agent_types`, new instructions or a new picture. An agent may propose
+changes to itself. Absent fields stay as they are. The
 owner reviews them in the New agent form, titled Edit and filled in with the
 agent's settings and the proposed changes, with the usual type-change preview;
 saving applies what the owner reviewed, and closing the review discards the
-request. A type change carries what the new type adopts, as a manual one does. Change
-requests share the creation requests' local bound and lifetime.
+request. A type change carries what the new type adopts, as a manual one does. A proposed picture
+is a local PNG, JPEG, GIF or WebP file that the tool uploads to the community as
+the requesting agent once the request is valid, stripped of metadata as the
+owner's own avatar upload is. The draft carries only its HTTPS URL, which starts the
+review's avatar picker, and saving sets it as the owner's own avatar change
+does. Change requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
@@ -124,6 +129,38 @@ the linked message's channel and thread; it cannot combine with `channel` or
 Unknown fields are rejected. File access, commands, Git credentials, and plugin
 tools are unavailable. Connection credentials must stay out of logs and messages.
 
+## Managing plugins from a conversation
+
+An agent in the desktop app can read and request changes to this device's
+plugins with the `plugin_*` tools, which load on search. `plugin_list` reports
+each plugin's state and source, and `plugin_discover` lists the built plugins in
+a Git repository without taking the install preview. `plugin_disable` applies at
+once: it only stops code, and an enable request reverses it.
+
+`plugin_request` asks the person using Buzz to install, update, enable or remove a
+plugin and returns a request ID with `applied: false`. Install and update read the
+repository when the agent asks and pin the commit it saw, so the code reviewed is
+the code requested. The tool also posts a message, signed as the agent, in the
+conversation the agent is working in, such as "Requested: install Browser — Open the
+staging site", and that message draws as a card with the plugin, the agent's name and
+reason, and **Review** and **Decline**. Review opens the same access review as a
+[managed recommendation](managed-plugins.md) at that commit; enable shows the
+plugin's access; remove confirms like Delete. Decline refuses it, and closing a review
+leaves it pending. Once decided, the card shows the outcome (such as Installed or
+Declined) without buttons. Only the device that holds the request shows the buttons;
+on another device, or after a restart, the card is the message alone. The request
+also stays under **Requested by agents** in **Settings → Plugins → Manage plugins**,
+for an agent with no conversation or a message that did not post.
+`plugin_request_status` tells only the requesting agent whether the request is
+pending, approved, declined or expired. Requests are local, at most 16 and one per plugin, and do not survive a
+restart. Agents cannot read Buzz-hosted repositories, since the desktop signs those
+reads as the owner; the owner adds them in Settings. A plugin listed in the
+[managed plugin file](managed-plugins.md) installs and updates only from its
+recommendation, and plugins Settings gates on admin access are not enabled by
+request. Only an agent's own runs get these tools, not a plugin's `Agents.handle`.
+The standalone tool server and the browser build have no plugins to manage, so the
+tools refuse there.
+
 ## Product help for agents
 
 The read-only `buzz_help` tool returns [the Buzz quick guide](buzz-help.md), bundled
@@ -152,6 +189,8 @@ behavior for its agents. Plugins can add a tab to every local agent with
 `ctx.agents.registerTab`, or to some of them with its optional `when(agent)`;
 the Attention plugin's Attention tab holds the device Attention switch, and the
 Bestie plugin's Bestie tab shows only on your Bestie.
+
+Attention command processes on macOS and Linux stop when their app process exits, including an abrupt exit. A shared lease allows one running command per agent, provider, watch and declared process across Buzz builds on the same computer. A new owner waits for the previous command to stop before starting its copy. Removing a watch or turning Attention off stops its command through the existing process host.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
@@ -740,10 +779,11 @@ turning it back on does not restore old recipients. Solo chat auto-recipient rul
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
-Team records in the channel kit (see [Channels](channels.md); groups, Canvas and
-`buzz-channel-kit-v2` team manifests) appear in both mention choosers as shortcuts.
-No bundled plugin writes team records now, so they appear only for records already
-in the community. A team is a shortcut, not a group identity: explicit selection
+Saved teams from **Your teams**, both local and confirmed synced copies, appear
+in both mention choosers under the same community visibility rules. Legacy
+channel-kit teams (see [Channels](channels.md)) remain available independently;
+a legacy catalog failure does not block current teams. A team is a shortcut, not
+a group identity: explicit selection
 inserts its saved agent keys as individual mentions in one undoable edit through
 `insertMentions`. Names never resolve membership. Typing a team name or Space
 alone does not select it. Team names also prevent Space from accidentally selecting
@@ -1036,10 +1076,11 @@ direction. Agent-elided strings and payloads are labeled, not hidden. Turns whos
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
 
-The shared Claude, Goose, and Pi turn formatter encodes conversation history and
-the triggering event as JSON with escaped markup delimiters. Message text,
-display names, and tags therefore cannot create extra request sections. The
-transcript reads that JSON directly and retains support for older line-based
+The shared Claude, Goose, and Pi turn formatter sends conversation history and
+the triggering event as exact JSON records with escaped markup delimiters, the
+same records Codex sends. Message text and tags therefore cannot create extra
+request sections. The transcript reads those records directly and retains
+support for the earlier single-object JSON event and older line-based
 `buzz-event` and `buzz-events` records; it never parses decoded message content
 as another prompt.
 

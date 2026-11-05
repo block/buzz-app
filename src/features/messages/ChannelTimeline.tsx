@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -293,6 +294,14 @@ function Timeline({
   );
   const activity = presentation.groups;
   const stableActivity = useStableRowActivity();
+  const rowsById = useMemo(
+    () => new Map(chronologicalRows.map((row) => [row.id, row])),
+    [chronologicalRows],
+  );
+  const stoppedRequest = (id: string) => {
+    const request = presentation.replyRequests.get(id);
+    return request ? rowsById.get(request) : undefined;
+  };
   const liveAgents = useLiveConversationAgents(
     queries,
     channelId,
@@ -1468,6 +1477,11 @@ function Timeline({
                     row.id,
                     presentation.representedAgents.get(row.id),
                   )}
+                  repliedAgents={stableActivity.agents(
+                    `replied:${row.id}`,
+                    presentation.repliedAgents.get(row.id),
+                  )}
+                  stoppedRequest={stoppedRequest(row.id)}
                   recordedActivity={stableActivity.activity(
                     row.id,
                     presentation.byRow.get(row.id),
@@ -1584,6 +1598,12 @@ function Timeline({
         </Virtualizer>
       )}
       <div ref={activityTail}>
+        <AgentConnectionSetup
+          key={channelId}
+          session={queries}
+          rows={window.rows}
+          channel={queries.channels.get?.(channelId)}
+        />
         <TypingIndicator
           audience="agents"
           inFlow

@@ -201,6 +201,31 @@ it("keeps a stopped note on the agent's latest reply that a collapsed branch can
   expect(article("aside")).not.toHaveAttribute("data-stopped-request");
   expect(article("answer")).toHaveAttribute("data-stopped-request", "root");
 });
+it("moves a follow-up outcome to its latest reply within an expanded branch", () => {
+  const h = setup();
+  const agent = "b".repeat(64);
+  const reply = (id: string) => ({
+    ...row(id, "follow-up"),
+    authorId: agent,
+    agentEnvelope: true as const,
+  });
+  h.update([
+    row("branch", "root"),
+    row("follow-up", "branch"),
+    reply("answer"),
+    reply("latest-answer"),
+  ]);
+  expect(screen.queryByText("follow-up")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "View 3 replies" }));
+  const article = (text: string) => screen.getByText(text).closest("article");
+  expect(article("follow-up")).toHaveAttribute("data-replied-agents", agent);
+  expect(article("answer")).not.toHaveAttribute("data-stopped-request");
+  expect(article("latest-answer")).toHaveAttribute(
+    "data-stopped-request",
+    "follow-up",
+  );
+  expect(article("branch")).not.toHaveAttribute("data-replied-agents");
+});
 it("expands a one-level branch by keyboard and focuses the first child", async () => {
   setup();
   const user = userEvent.setup();

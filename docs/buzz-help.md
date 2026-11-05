@@ -578,8 +578,16 @@ available rather than silently discarding it.
   sessions**, which searches goose's local history and can take a while. Watch
   and timer turns from before this version aren't listed, and **Search older
   sessions** doesn't find them, because it only matches channel conversations.
-- When a request to an agent running on this device fails, the activity under
-  the message offers **Retry**, which asks the agent again, and **Dismiss**,
+- A request that ends unsuccessfully shows **Couldn’t finish**; a cancelled request
+  shows **Stopped**. Captions follow the agent’s latest public reply, or stay with
+  your request when there is no reply.
+  **Status unavailable** means Buzz
+  cannot confirm the outcome. Choose **Details** for available status information.
+  New automatic failure replies appear as a compact status line; failures of channel
+  requests also appear directly in the channel. **Details** expands the original
+  explanation inline. Ordinary replies and partial results stay visible.
+- When a request to an agent running on this device fails, its **Details** offer
+  **Retry**, which asks the agent again, and **Dismiss**,
   which hides the failure.
 - Any agent running on this device can read and change some Buzz settings
   here when you ask it to: appearance mode, interface size, accent color,

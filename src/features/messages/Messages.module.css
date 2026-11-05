@@ -3439,6 +3439,12 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin-inline: auto;
   padding-block: var(--space-half) 0;
 }
+.failureNotice {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
 .audienceRow[data-layout="timeline"],
 .feed .audienceRow[data-layout="continuation"] {
   --activity-avatar-size: var(--size-control);
@@ -3516,9 +3522,25 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   grid-area: 1 / 1;
   inline-size: calc(1.5rem + var(--space-1) + var(--space-1h));
 }
+.audienceRow[data-message-notice] .audienceEntry {
+  display: flex;
+  align-items: stretch;
+  padding-inline-start: 0;
+}
+.audienceRow[data-message-notice] .audienceLine {
+  inline-size: fit-content;
+}
 .audiencePanel {
   grid-area: 1 / 2;
   min-inline-size: 0;
+}
+.audienceRow[data-message-notice] .audiencePanel {
+  margin-inline-start: calc(
+    var(--space-3) +
+    var(--space-1) +
+    var(--space-6) +
+    var(--space-2)
+  );
 }
 /* Base UI measures the full text; the collapsed endpoint is one avatar row. */
 .audienceBody {

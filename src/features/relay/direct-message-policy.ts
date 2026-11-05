@@ -1,7 +1,3 @@
-/** The most people a DM can include, the viewer among them. Agents do not
- * count; the relay enforces this. */
-export const MAX_DM_PEOPLE = 9;
-
 /** Participant-set policy shared by the app and the existing browser broker. */
 export function validDirectMessageParticipants(
   pubkeys: readonly string[],

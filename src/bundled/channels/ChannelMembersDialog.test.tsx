@@ -128,6 +128,8 @@ async function setup(
     /** Lets the viewer add to DMs; a person added without history lands in
      * a new DM, `forkId`. */
     directMessages?: boolean;
+    /** The person's profile claims to be an agent; the relay disagrees. */
+    personClaimsAgent?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -187,7 +189,10 @@ async function setup(
       members.push(_event.tags.find((tag) => tag[0] === "p")?.[1] ?? target);
     clock++;
   });
-  const personProfile = profile(person, { name: "Morgan" });
+  const personProfile = profile(person, {
+    name: "Morgan",
+    ...(options.personClaimsAgent ? { is_agent: true } : {}),
+  });
   const stableEvents = [
     signed(relay, {
       kind: 39000,
@@ -1669,7 +1674,26 @@ it("an agent joins a DM directly, without a history choice", async () => {
     expect.any(AbortSignal),
     {
       channelId: "11111111-1111-4111-8111-111111111111",
-      includeHistory: false,
+      includeHistory: true,
+    },
+  );
+});
+it("someone whose profile claims to be an agent still joins this DM", async () => {
+  const onOpenConversation = vi.fn(() => true);
+  const t = await setup("dm", false, false, { onOpenConversation }, undefined, {
+    directMessages: true,
+    personClaimsAgent: true,
+  });
+  await t.user.click(await t.search());
+  await screen.findByText("Morgan added.");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(onOpenConversation).not.toHaveBeenCalled();
+  expect(t.openDirectMessage).toHaveBeenCalledWith(
+    [t.person.pubkey],
+    expect.any(AbortSignal),
+    {
+      channelId: "11111111-1111-4111-8111-111111111111",
+      includeHistory: true,
     },
   );
 });

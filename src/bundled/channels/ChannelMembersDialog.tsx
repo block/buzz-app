@@ -65,7 +65,6 @@ import {
   canAddToDirectMessage,
   canShareSoloChat,
 } from "../../features/channel-members/members";
-import { MAX_DM_PEOPLE } from "../../features/relay/direct-message-policy";
 import { ownSolo, soloShareDisclosure } from "../../features/solo/labels";
 import { soloChatLink } from "../../features/solo/share";
 import {
@@ -1618,17 +1617,12 @@ export function ChannelMembersDialog({
     )
       input.current?.focus();
   }, [memberKey, offering]);
-  // A DM's people choose how a person joins; the latest classification and
-  // head count decide, without rebuilding `add` on each render.
-  const dmAddition = useRef<{ agent(key: string): boolean; people: number }>({
-    agent: () => false,
-    people: 0,
-  });
-  dmAddition.current = {
-    agent: (key) => agentCandidate(candidates.get(key) ?? { pubkey: key }),
-    people: [...members].filter((key) => !agentCandidate({ pubkey: key }))
-      .length,
-  };
+  // Whether to ask how someone joins a DM, from the latest classification,
+  // without rebuilding `add` on each render. Only the question depends on it:
+  // the relay decides who is an agent and enforces the people limit.
+  const dmAgent = useRef<(key: string) => boolean>(() => false);
+  dmAgent.current = (key) =>
+    agentCandidate(candidates.get(key) ?? { pubkey: key });
   const [dmChoice, setDmChoice] = useState<string>();
   const add = useCallback(
     async (key: string, includeHistory?: boolean) => {
@@ -1640,23 +1634,17 @@ export function ChannelMembersDialog({
         input.current?.value.trim().toLowerCase() ?? "",
       );
       setNotice("");
-      const dmAgent = dm && dmAddition.current.agent(key);
       const pending = directPending.current;
-      if (dm && !dmAgent && pending.has(key)) return;
-      if (dm && !dmAgent && dmAddition.current.people >= MAX_DM_PEOPLE) {
-        setDirectAdditions((old) => ({
-          ...old,
-          [key]: {
-            pending: false,
-            error: `A DM can include up to ${MAX_DM_PEOPLE} people.`,
-          },
-        }));
-        return;
-      }
       // A person joins a DM with or without its history; they choose first.
-      if (dm && !dmAgent && includeHistory === undefined) {
-        setDmChoice(key);
-        return;
+      // An agent joins with it, so someone the relay counts as a person
+      // still joins this DM instead of starting another.
+      if (dm && includeHistory === undefined) {
+        if (pending.has(key)) return;
+        if (!dmAgent.current(key)) {
+          setDmChoice(key);
+          return;
+        }
+        includeHistory = true;
       }
       // A Solo owner's agents and DM additions join directly; people use
       // ordinary additions.

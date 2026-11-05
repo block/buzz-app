@@ -401,14 +401,17 @@ containing the viewer and selected people, plus only agents they did not name.
 
 The access dialog of a DM adds people and agents through the same
 purpose-bound endpoint, which signs kind 41011 with the DM's `h` tag. An agent
-joins in place with the DM's history and never changes which DM it is. Adding
-a person first asks **Include history** or **Start new DM**. Include history
+joins in place with the DM's history and never changes which DM it is; the
+dialog sends it with `["history", "include"]`, so someone the relay counts as a
+person still joins in place. Only whether to ask depends on the app's agent
+classification. Adding a person first asks **Include history** or **Start new DM**. Include history
 adds them in place with `["history", "include"]`; the DM is then identified by
 the grown set of people, so messaging only the original people later starts a
 new DM. Start new DM, the default without the tag, creates a DM of everyone
 without the history. Either way, if a DM of the grown set of people already
 exists, the relay returns it and the dialog opens it. A DM holds at most nine
-people; agents do not count. The session confirms the returned DM from signed
+people; agents do not count. The relay enforces this and decides who is an
+agent. Opening a DM still names at most eight others, agents included. The session confirms the returned DM from signed
 discovery before reporting the addition. The first kind-9 message then uses the
 normal durable outbox. Navigation waits for an accepted receipt or verified echo.
 A failure retains recipients and draft; an uncertain delivery retries its exact

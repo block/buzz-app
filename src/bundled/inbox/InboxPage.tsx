@@ -700,7 +700,7 @@ function InboxList({
     // uncovers it; what showed before it was covered still holds.
     if (!list || covered(list)) return;
     // Compositor scrolling may update the position before its scroll event.
-    if (placed.current !== list && visible.length && list.scrollTop === 0) {
+    if (placed.current !== list && entries.length && list.scrollTop === 0) {
       const saved = selections.get(session);
       if (saved?.scrollTop) list.scrollTop = saved.scrollTop;
       if (saved?.selectedShown && selectedInView(list) === false)
@@ -708,7 +708,7 @@ function InboxList({
           .querySelector("li[data-selected]")
           ?.scrollIntoView({ block: "nearest" });
     }
-    if (visible.length) placed.current = list;
+    if (entries.length) placed.current = list;
     // Selecting a row, or rows arriving above it, moves nothing the scroll
     // handler sees, so record whether it shows after each commit too.
     const shown = selectedInView(list);

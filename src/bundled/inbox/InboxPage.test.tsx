@@ -714,6 +714,45 @@ it.each([
   },
 );
 
+it("restores All scroll when only reaction posts remain", async () => {
+  const h = fixture();
+  const original = message(h.viewer, "room", "Reaction-only post", 10);
+  h.addEvent(original);
+  h.addEvent(
+    signed(h.alice, {
+      kind: 7,
+      content: "✅",
+      created_at: 23,
+      tags: [
+        ["h", "room"],
+        ["e", original.id],
+      ],
+    }),
+  );
+  const view = render(h.view);
+  await screen.findByText("Reaction-only post");
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: /^Archive / })).toHaveLength(
+      2,
+    ),
+  );
+  for (let remaining = 2; remaining > 0; remaining--) {
+    const button = screen.getAllByRole("button", { name: /^Archive / })[0];
+    if (!button) throw new Error("Missing archive control");
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole("button", { name: /^Archive / }),
+      ).toHaveLength(remaining - 1),
+    );
+  }
+  scrollTo(120);
+  view.unmount();
+  render(h.view);
+  await screen.findByText("Reaction-only post");
+  expect(scroller()?.scrollTop).toBe(120);
+});
+
 it("returns the list to its last offset in the same session", async () => {
   const h = fixture();
   const view = render(h.view);

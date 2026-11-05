@@ -88,7 +88,8 @@ export function PageSearch({
   const [scopedChannelId, setScopedChannelId] = useState<string>();
   // Search reopens where it was left, so someone checking channels one by
   // one returns to the same list. Escape, or a while away, starts fresh, as
-  // does an empty All view leading with unread: it shows what is unread now.
+  // does an empty All view while it leads with unread: it shows what is
+  // unread now.
   const place = useRef<SearchPlace>({ top: 0, key: "" });
   const escaped = useRef(false);
   const remembered = useRef<{
@@ -114,9 +115,7 @@ export function PageSearch({
     if (!next && openRef.current) {
       const { query, tab, scopedChannelId } = latest.current;
       remembered.current =
-        escaped.current ||
-        scopedChannelId ||
-        (tab === "all" && !query.trim() && unreadFirstPreference())
+        escaped.current || scopedChannelId
           ? undefined
           : { query, tab, place: { ...place.current }, at: Date.now() };
       escaped.current = false;
@@ -136,7 +135,10 @@ export function PageSearch({
         ? document.activeElement
         : trigger.current;
     const memory = remembered.current;
-    const kept = memory && Date.now() - memory.at < SEARCH_MEMORY;
+    const kept =
+      memory &&
+      Date.now() - memory.at < SEARCH_MEMORY &&
+      (memory.query.trim() || memory.tab !== "all" || !unreadFirstPreference());
     setQuery(kept ? memory.query : "");
     selectKept.current = !!kept && !!memory.query;
     setTab(kept ? memory.tab : "all");

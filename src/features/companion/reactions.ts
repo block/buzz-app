@@ -14,6 +14,15 @@ export type ReactionBridge = {
     messageId: string;
     ids: readonly string[];
   }): Promise<undefined>;
+  retryReaction(args: { id: string }): Promise<undefined>;
+};
+/** One of main's unresolved reaction operations, as the window projects it. */
+export type MainReactionOperation = {
+  id: string;
+  messageId: string;
+  kind: 7 | 5;
+  delivery: "sending" | "failed" | "unknown";
+  error?: string | undefined;
 };
 type Pending = {
   item: OutgoingEvent;
@@ -34,8 +43,20 @@ export function createCompanionReactions(
   bridge: ReactionBridge,
   /** The message a reaction event id belongs to, from the rows shown now. */
   messageOf: (eventId: string) => string | undefined,
-): ReactionSession & { dispose(): void } {
+): ReactionSession & {
+  dispose(): void;
+  /** Main's operations from the latest view: shown beside local ones. */
+  setMainOperations(operations: readonly MainReactionOperation[]): void;
+} {
+  // Local: awaiting main's admission. Main: admitted, not yet delivered (or
+  // failed), as the view projects them; retrying one retries that event.
+  let local: readonly OutgoingEvent[] = [];
+  let main: readonly OutgoingEvent[] = [];
+  const combined = () => [...local, ...main];
   let operations: readonly OutgoingEvent[] = [];
+  const recompute = () => {
+    operations = combined();
+  };
   const pending = new Map<string, Pending>();
   const listeners = new Set<() => void>();
   let disposed = false;
@@ -45,11 +66,12 @@ export function createCompanionReactions(
   };
   const update = (id: string, patch: Partial<OutgoingEvent> | null) => {
     if (disposed) return;
-    operations = patch
-      ? operations.map((item) =>
+    local = patch
+      ? local.map((item) =>
           item.event.id === id ? { ...item, ...patch } : item,
         )
-      : operations.filter((item) => item.event.id !== id);
+      : local.filter((item) => item.event.id !== id);
+    recompute();
     publish();
   };
   function start(entry: Pending) {
@@ -94,7 +116,8 @@ export function createCompanionReactions(
       run,
     };
     pending.set(id, entry);
-    operations = [...operations, entry.item];
+    local = [...local, entry.item];
+    recompute();
     start(entry);
     return id;
   }
@@ -109,7 +132,30 @@ export function createCompanionReactions(
     },
     retry(id) {
       const entry = pending.get(id);
-      if (entry) start(entry);
+      if (entry) {
+        start(entry);
+        return;
+      }
+      // One of main's admitted events: main retries exactly that event; a
+      // refusal shows on it until the next projection replaces it.
+      if (main.some((item) => item.event.id === id))
+        void bridge.retryReaction({ id }).catch((cause: unknown) => {
+          if (disposed) return;
+          main = main.map((item) =>
+            item.event.id === id
+              ? {
+                  ...item,
+                  delivery: "failed",
+                  error:
+                    cause instanceof Error
+                      ? cause.message
+                      : "Could not retry this reaction.",
+                }
+              : item,
+          );
+          recompute();
+          publish();
+        });
     },
   };
   return {
@@ -140,9 +186,28 @@ export function createCompanionReactions(
           ? event.tags.find(([name]) => name === "e")?.[1]
           : undefined,
     },
+    setMainOperations(next) {
+      if (disposed) return;
+      main = next.map((op) => ({
+        event: {
+          id: op.id,
+          pubkey: session.viewer ?? "",
+          created_at: 0,
+          kind: op.kind,
+          content: "",
+          tags: [["e", op.messageId]],
+        },
+        delivery: op.delivery,
+        ...(op.error ? { error: op.error } : {}),
+      }));
+      recompute();
+      publish();
+    },
     dispose() {
       disposed = true;
       pending.clear();
+      local = [];
+      main = [];
       operations = [];
       listeners.clear();
     },

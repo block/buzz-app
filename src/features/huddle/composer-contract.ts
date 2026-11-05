@@ -70,6 +70,8 @@ export type ComposerOperations = {
     args: { messageId: string; ids: readonly string[] };
     result: undefined;
   };
+  /** Pop-out windows: retry main's own admitted reaction event. */
+  retryReaction: { args: { id: string }; result: undefined };
   release: { args: UploadedAttachment; result: undefined };
   agents: {
     args: { refresh: boolean; legacy: boolean | "templates" };

@@ -425,8 +425,12 @@ jaw's live tryout accepted startup/compose and asked for reactions and
 Boundary (reviewer-corrected): the companion stays a projection; reactions go
 through the existing composer bridge as bounded main-owned operations
 (`react`, `removeReactions`) admitted against the rows the window shows and
-main's own view of their reaction events; the companion keeps a local
-reaction outbox so pending/failed/retry are real (`companion/reactions.ts`);
+main's own view of their reaction events; the companion's reaction outbox
+(`companion/reactions.ts`) shows its own not-yet-admitted requests and,
+projected through the view, main's admitted-but-undelivered/failed reaction
+events (`reactionOperations`), so Retry retries the exact admitted event;
+main fences one reaction change per message through delivery; own events are
+capped at the 100 `messages.remove` accepts;
 `MessageReactions`/`ReactionTool`/`ReactionToolProps` are narrowed to the
 `ComposerSession`-based subset they use (type-only; `RelaySession` still
 satisfies them); `MessageRow` gains a `reactionSlot`. Rows project reactions

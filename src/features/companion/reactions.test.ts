@@ -9,18 +9,19 @@ const OWN = "c".repeat(64);
 function setup() {
   const react = vi.fn<(args: unknown) => Promise<string>>();
   const removeReactions = vi.fn<(args: unknown) => Promise<undefined>>();
+  const retryReaction = vi.fn<(args: unknown) => Promise<undefined>>();
   const base = {
     viewer: "a".repeat(64),
     messages: {},
   } as unknown as ComposerSession;
   const session = createCompanionReactions(
     base,
-    { react, removeReactions },
+    { react, removeReactions, retryReaction },
     (eventId) => (eventId === OWN ? MESSAGE : undefined),
   );
   const changed = vi.fn();
   session.outbox?.subscribe(changed);
-  return { session, react, removeReactions, changed };
+  return { session, react, removeReactions, retryReaction, changed };
 }
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -79,5 +80,36 @@ it("removes own reactions through main, naming the message they belong to", asyn
     /Load the reaction/,
   );
   await flush();
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("shows main's admitted-but-undelivered reactions and retries that exact event through main", async () => {
+  const h = setup();
+  const admitted = "e".repeat(64);
+  h.session.setMainOperations([
+    {
+      id: admitted,
+      messageId: MESSAGE,
+      kind: 7,
+      delivery: "failed",
+      error: "Relay refused",
+    },
+  ]);
+  const [item] = h.session.outbox?.snapshot() ?? [];
+  expect(item).toMatchObject({ delivery: "failed", error: "Relay refused" });
+  expect(
+    h.session.messages.reactionTarget(item?.event ?? { kind: 0, tags: [] }),
+  ).toBe(MESSAGE);
+  h.retryReaction.mockRejectedValueOnce(
+    new Error("This reaction can no longer be retried here."),
+  );
+  h.session.outbox?.retry(admitted);
+  expect(h.retryReaction).toHaveBeenCalledWith({ id: admitted });
+  await flush();
+  expect(h.session.outbox?.snapshot()[0]?.error).toMatch(
+    /no longer be retried/,
+  );
+  // The next projection is authoritative: a delivered reaction disappears.
+  h.session.setMainOperations([]);
   expect(h.session.outbox?.snapshot()).toEqual([]);
 });

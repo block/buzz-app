@@ -320,6 +320,8 @@ export function createHuddleComposerClient(token: string) {
       request("react", args),
     removeReactions: (args: ComposerOperations["removeReactions"]["args"]) =>
       request("removeReactions", args),
+    retryReaction: (args: ComposerOperations["retryReaction"]["args"]) =>
+      request("retryReaction", args),
     gifs: {
       supports: (_community, signal?: AbortSignal) =>
         request("gifSupport", undefined, signal),

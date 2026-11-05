@@ -41,6 +41,8 @@ export type CompanionRow = {
 };
 const MAX_REACTION_GROUPS = 64;
 const MAX_REACTION_EVENTS = 128;
+/** `messages.remove` takes at most 100 events; a toggle removes every own one. */
+const MAX_OWN_REACTION_EVENTS = 100;
 const hex = /^[0-9a-f]{64}$/;
 export function projectReactions(
   reactions: readonly MessageReaction[],
@@ -59,7 +61,9 @@ export function projectReactions(
     const events = group.events.filter(
       (event) => hex.test(event.id) && hex.test(event.authorId),
     );
-    const own = events.filter((event) => event.authorId === viewer);
+    const own = events
+      .filter((event) => event.authorId === viewer)
+      .slice(0, MAX_OWN_REACTION_EVENTS);
     const others = events.filter((event) => event.authorId !== viewer);
     const kept = [...own, ...others].slice(0, MAX_REACTION_EVENTS);
     if (kept.length < events.length) limited = true;

@@ -898,7 +898,7 @@ test("header openings keep focus while a main-pane thread is retained", async ({
     exact: true,
   });
   const projects = topbar.getByRole("tab", { name: "Workflows", exact: true });
-  const inbox = topbar.getByRole("tab", { name: "Inbox", exact: true });
+  const inbox = topbar.getByRole("tab", { name: "Activity", exact: true });
   for (const leave of [inbox, projects]) {
     await page
       .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)

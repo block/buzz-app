@@ -72,7 +72,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const alpha = sidebar.getByRole("button", { name: "Alpha", exact: true });
-  const destinations = ["Inbox", "Bestie"].map((name) =>
+  const destinations = ["Activity", "Bestie"].map((name) =>
     page
       .getByRole("navigation", { name: "Apps dock" })
       .getByRole("tab", { name, exact: true }),
@@ -616,15 +616,15 @@ test.extend({ companionFixture: true })(
       await pages.getByRole("tab", { name, exact: true }).click();
       const body = page.getByRole("region", { name, exact: true });
       await expect(
-        name === "Inbox"
-          ? body.getByRole("button", { name: "Inbox filters", exact: true })
+        name === "Activity"
+          ? body.getByRole("button", { name: /^From / })
           : body.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
       return body;
     };
     for (const width of [1440, 900, 600]) {
       await page.setViewportSize({ width, height: 950 });
-      let body = await openPage("Inbox");
+      let body = await openPage("Activity");
       await launcher.click();
       await checkGeometry(body, width <= 1000);
       body = await openPage("Bestie");
@@ -633,7 +633,7 @@ test.extend({ companionFixture: true })(
       await expect(companion).not.toBeVisible();
       await selectChannel("Alpha");
       await launcher.click();
-      body = await openPage("Inbox");
+      body = await openPage("Activity");
       await checkGeometry(body, width <= 1000);
       await launcher.click();
     }
@@ -806,12 +806,12 @@ test("non-ready sidebar keeps Retry reachable while dock pages remain available"
   await scrollToBottom(status);
   const inbox = page
     .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Inbox", exact: true });
+    .getByRole("tab", { name: "Activity", exact: true });
   await inbox.scrollIntoViewIfNeeded();
   await expect(inbox).toBeInViewport();
   await inbox.click();
   await expect(
-    page.getByRole("heading", { name: "Inbox", exact: true }),
+    page.getByRole("heading", { name: "Activity", exact: true }),
   ).toBeVisible();
 });
 

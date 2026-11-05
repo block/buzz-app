@@ -1104,17 +1104,20 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
-.fileAttachment {
+.fileAttachment,
+.filePreviewButton {
   text-align: start;
   display: inline-flex;
   align-items: center;
   gap: calc(var(--space-5) / 2 + var(--space-1));
+  padding: var(--space-2) calc(var(--space-5) / 2);
+}
+.fileAttachment {
   width: 18rem;
   box-sizing: border-box;
   min-height: calc(36px + 2 * var(--space-2) + 2px);
   max-width: 100%;
   margin-top: var(--space-2);
-  padding: var(--space-2) calc(var(--space-5) / 2);
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-icon-button);
   background: var(--surface-inset);
@@ -1128,14 +1131,16 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   cursor: pointer;
 }
 @media (hover: hover) and (pointer: fine) {
-  .fileAttachment:is(a, button):hover {
+  .fileAttachment:is(a, button):hover,
+  .filePreviewButton:hover {
     background: var(--surface-hover);
   }
 }
 .fileAttachment > svg {
   flex-shrink: 0;
 }
-html[data-keyboard-navigation] .fileAttachment:focus-visible {
+html[data-keyboard-navigation] .fileAttachment:focus-visible,
+html[data-keyboard-navigation] .filePreviewButton:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -1178,11 +1183,11 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   color: var(--text-standard);
 }
 .filePreviewAttachment {
-  width: 21rem;
+  width: 18rem;
   max-width: 100%;
   margin-top: var(--space-2);
   border: 1px solid var(--border-standard);
-  border-radius: var(--radius-row);
+  border-radius: var(--radius-icon-button);
   background: var(--surface-inset);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -1196,6 +1201,14 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   display: flex;
   flex: 1;
   min-width: 0;
+}
+.filePreviewButton {
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 .fileDownloadAction {
   display: flex;

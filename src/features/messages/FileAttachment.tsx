@@ -2,7 +2,6 @@ import {
   IconButton,
   type IconButtonProps,
 } from "../../shared/design-system/ui/IconButton";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowUpRightIcon,
   ArrowsClockwiseIcon,
@@ -114,25 +113,21 @@ export function FileAttachment({
               : styles.filePreviewAttachment
           }
         >
-          <div className={styles.filePreviewMain}>
-            {onPreview ? (
-              <NavigationItem
-                aria-label={`Preview ${displayName}`}
-                icon={
-                  <span className={fileIconStyles.slot}>
-                    <FileTypeIcon
-                      name={attachment.name}
-                      mime={attachment.mime}
-                    />
-                  </span>
-                }
-                label={label}
-                onClick={onPreview}
-              />
-            ) : (
-              label
-            )}
-          </div>
+          {onPreview ? (
+            <button
+              type="button"
+              className={`${styles.filePreviewMain} ${styles.filePreviewButton}`}
+              aria-label={`Preview ${displayName}`}
+              onClick={onPreview}
+            >
+              <span className={fileIconStyles.slot}>
+                <FileTypeIcon name={attachment.name} mime={attachment.mime} />
+              </span>
+              {label}
+            </button>
+          ) : (
+            <div className={styles.filePreviewMain}>{label}</div>
+          )}
           <span className={styles.fileDownloadAction}>
             {nativeSource ? (
               <IconButton

@@ -166,6 +166,13 @@ const order = (a: RelayEvent, b: RelayEvent) =>
   eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
 const contentKind = (event: RelayEvent) =>
   event.kind === 9 || event.kind === 40002 || event.kind === 40008;
+/**
+ * Live Inbox recompute window. Each recompute folds every channel (7-70 ms at
+ * 100-1000 items), so a burst would otherwise cost that per message. 200 ms
+ * caps it at 5 per second and stays at the edge of perceived-instant feedback
+ * for a list nobody is typing into; read marks and user actions bypass it.
+ */
+const INBOX_COALESCE_MS = 200;
 const channelIds = new WeakMap<RelayEvent, string | undefined>();
 /** Verified events are frozen, and every evidence index asks for each one. */
 const channelOf = (event: RelayEvent) => {
@@ -271,6 +278,10 @@ export function createUnread({
   const inboxListeners = new Set<() => void>();
   let inboxSnapshot: InboxSnapshot | undefined;
   let inboxDirty = true;
+  // Pending coalesced recompute for live evidence; see publish().
+  let inboxTimer: ReturnType<typeof setTimeout> | undefined;
+  // Snapshot listeners last saw: a direct inbox() read must not hide the change.
+  let inboxBase: InboxSnapshot | undefined;
   let inboxLoading = false;
   const handles = new Set<() => void>();
   const views = new Map<
@@ -377,6 +388,9 @@ export function createUnread({
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
+  // Ids named by an `e` tag of any retained or fetched event: a deletion, edit
+  // or reply that arrived before its target. Built with the index.
+  const referenced = new Set<string>();
   // Conversation membership: the viewer's own messages, and the parents the
   // viewer has replied to, each keyed by channel. A conversation is the set of
   // replies to one parent.
@@ -464,6 +478,62 @@ export function createUnread({
       return tagged("buzz:workflow-mention", viewer);
     return true;
   }
+  function markReferenced(event: RelayEvent) {
+    for (const [name, id] of event.tags)
+      if (name === "e" && id) referenced.add(id.toLowerCase());
+  }
+  /** Indexes one counted content event: the body of one `indexEvidence` step. */
+  function indexContent(event: RelayEvent) {
+    const channel = channelOf(event);
+    if (!channel) return;
+    const rootId = root(event);
+    const reference = threadReference(event);
+    const parentId = reference?.parentId;
+    if (event.pubkey === viewer) {
+      own.set(event.id, channel);
+      ownThreads.add(conversationKey(channel, reference?.rootId ?? event.id));
+      if (parentId) {
+        joined.add(`${channel}:${parentId}`);
+        // A later reply of the viewer outlives the window that showed it.
+        const lookup = lookups.get(conversationKey(channel, parentId));
+        if (lookup?.done) witness(lookup, event);
+      }
+    }
+    const rows = byChannel.get(channel) ?? [];
+    const entry: Evidence = {
+      event,
+      channelId: channel,
+      rootId: parentId ? rootId : undefined,
+      parentId,
+      threadRootId: reference?.rootId,
+      mentioned: mentionsViewer(event),
+      broadcast: event.tags.some(
+        ([name, value]) => name === "broadcast" && value === "1",
+      ),
+      quiet: agentAudience(event),
+    };
+    rows.push(entry);
+    byChannel.set(channel, rows);
+    byId.set(event.id, entry);
+    return channel;
+  }
+  /** Adds a just-stored live event to a valid index as `indexEvidence` would
+   * after it, or says it cannot: only another person's content event that no
+   * stored or fetched event named first qualifies. Everything it could change
+   * (a tombstone, a reply's root, the viewer's own conversations and lookup
+   * witnesses) comes from such a reference or from the viewer's authorship. */
+  function extendIndex(event: RelayEvent) {
+    if (
+      !contentKind(event) ||
+      event.pubkey === viewer ||
+      referenced.has(event.id)
+    )
+      return false;
+    markReferenced(event);
+    const channel = indexContent(event);
+    if (channel) foldedRows.delete(channel);
+    return true;
+  }
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
@@ -471,9 +541,12 @@ export function createUnread({
     byChannel.clear();
     byId.clear();
     tombstones.clear();
+    referenced.clear();
     own.clear();
     joined.clear();
     ownThreads.clear();
+    for (const event of events.values()) markReferenced(event);
+    for (const event of lookupEvents.values()) markReferenced(event);
     for (const event of events.values()) {
       if (event.kind !== 5 && event.kind !== 9005) continue;
       for (const [name, id] of event.tags) {
@@ -486,40 +559,8 @@ export function createUnread({
           tombstones.add(target.id);
       }
     }
-    for (const event of events.values()) {
-      if (!contentKind(event) || tombstones.has(event.id)) continue;
-      const channel = channelOf(event);
-      if (!channel) continue;
-      const rootId = root(event);
-      const reference = threadReference(event);
-      const parentId = reference?.parentId;
-      if (event.pubkey === viewer) {
-        own.set(event.id, channel);
-        ownThreads.add(conversationKey(channel, reference?.rootId ?? event.id));
-        if (parentId) {
-          joined.add(`${channel}:${parentId}`);
-          // A later reply of the viewer outlives the window that showed it.
-          const lookup = lookups.get(conversationKey(channel, parentId));
-          if (lookup?.done) witness(lookup, event);
-        }
-      }
-      const rows = byChannel.get(channel) ?? [];
-      const entry: Evidence = {
-        event,
-        channelId: channel,
-        rootId: parentId ? rootId : undefined,
-        parentId,
-        threadRootId: reference?.rootId,
-        mentioned: mentionsViewer(event),
-        broadcast: event.tags.some(
-          ([name, value]) => name === "broadcast" && value === "1",
-        ),
-        quiet: agentAudience(event),
-      };
-      rows.push(entry);
-      byChannel.set(channel, rows);
-      byId.set(event.id, entry);
-    }
+    for (const event of events.values())
+      if (contentKind(event) && !tombstones.has(event.id)) indexContent(event);
     for (const { channelId, evidence } of lookups.values()) {
       const event =
         evidence === undefined ? undefined : witnesses.get(evidence);
@@ -1225,11 +1266,32 @@ export function createUnread({
       if (!set.size) activityListeners.delete(channelId);
     };
   }
-  function publish(channelIds?: ReadonlySet<string>) {
+  function clearInboxTimer() {
+    clearTimeout(inboxTimer);
+    inboxTimer = undefined;
+  }
+  function flushInbox() {
+    inboxTimer = undefined;
+    if (closed || !inboxListeners.size) return;
+    if (inbox() !== inboxBase)
+      for (const listener of inboxListeners) notify(listener);
+  }
+  /**
+   * `deferInbox` coalesces the Inbox projection of live evidence into one
+   * recompute per window; every other publish settles it synchronously.
+   */
+  function publish(channelIds?: ReadonlySet<string>, deferInbox = false) {
     if (closed) return;
     inboxDirty = true;
-    const previousInbox = inboxSnapshot;
-    const nextInbox = inboxListeners.size ? inbox() : undefined;
+    const defer = deferInbox && inboxListeners.size > 0;
+    // A pending window compares against what listeners last saw: a direct
+    // inbox() read since then may already hold the newer snapshot.
+    const previousInbox = inboxTimer ? inboxBase : inboxSnapshot;
+    if (defer && !inboxTimer) {
+      inboxBase = inboxSnapshot;
+      inboxTimer = setTimeout(flushInbox, INBOX_COALESCE_MS);
+    } else if (!defer) clearInboxTimer();
+    const nextInbox = inboxListeners.size && !defer ? inbox() : undefined;
     const changed: string[] = [];
     const changedActivity: string[] = [];
     for (const [key, old] of snapshots) {
@@ -1746,7 +1808,8 @@ export function createUnread({
           // An overflow or refresh while this read was out discarded what the
           // mark stands for: an overflow waits for refresh, a refresh reads again.
           if (!current()) return;
-          // Accepting notifies subscribers, and one may refresh from there.
+          // Accepting notifies subscribers (the Inbox after its window), and one
+          // may refresh from there.
           if (!accept(result) || !current()) return;
           // The mark is anchored on what the relay returned, not the clock: a
           // skewed clock or a future-dated event cannot move the window past
@@ -1872,6 +1935,8 @@ export function createUnread({
         : [],
     );
     if (!ids.length) return;
+    // Lookup witnesses and fetched events feed the evidence index.
+    indexed = false;
     const changed = new Set<string>();
     for (const id of ids) {
       retracted.delete(id);
@@ -1898,7 +1963,6 @@ export function createUnread({
     if (closed) return false;
     retract(batch);
     const changed = new Set<string>();
-    indexed = false;
     const incoming = new Map(batch.map((event) => [event.id, event]));
     const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
     for (const event of batch) {
@@ -1913,6 +1977,7 @@ export function createUnread({
       const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
       if (events.size >= 4096 || bytes + size > 8 * 1024 * 1024) {
         events.clear();
+        indexed = false;
         forget();
         known.clear();
         bytes = 0;
@@ -1924,6 +1989,7 @@ export function createUnread({
       }
       events.set(event.id, event);
       bytes += size;
+      if (indexed && !extendIndex(event)) indexed = false;
       for (const channel of channels) {
         known.add(channel);
         changed.add(channel);
@@ -1952,7 +2018,8 @@ export function createUnread({
         });
       const global = freshness !== "observed";
       freshness = "observed";
-      publish(global ? undefined : changed);
+      // A freshness change is state, not just new evidence: settle it now.
+      publish(global ? undefined : changed, !global);
     }
     return true;
   }
@@ -2743,6 +2810,7 @@ export function createUnread({
       activitySnapshots.clear();
       activityDirty.clear();
       events.clear();
+      clearInboxTimer();
       inboxSnapshot = undefined;
       inboxDirty = true;
       inboxListeners.clear();

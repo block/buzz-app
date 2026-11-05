@@ -544,6 +544,15 @@ Buzz keeps no separate Goose defaults store. Readiness requires a working
 fields remain overrides. Types without a provider contribution have no Harness
 defaults row; a failed contribution retains the unavailable fallback.
 
+For creation-specific access, `CreateAction` presents a compact action beside
+Harness and receives the host's `disabled` state. `CreateConfiguration` reports
+readiness through `onReadyChange`; that gate also applies in the remote introduction.
+Builderlab uses it for Sign in with a pending loading spinner, while its creation
+fields keep Model and Thinking visible but disabled when signed out. After three
+seconds, browser sign-in shows guidance and Cancel sign-in, matching the agent
+pane. Account verification remains non-cancellable. Sign-in errors remain
+with the fields and drafts survive cancellation.
+
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
 rewritten. Their effective order is explicit agent override, saved device-wide
@@ -1421,10 +1430,13 @@ continues to use a searchable Combobox.
 
 Builderlab Identity and creation reuse the shared family → model menu, with a
 separate compact Thinking selector. Builderlab requires an explicit supported
-model/thinking pair rather than an inherited default. Its plugin owns catalog
-family aliases; changing the model clears the thinking choice. Creation places
-these controls beside the host-owned Harness row in one SettingsGroup, while
-keeping sign-in/recovery and Instructions outside the group.
+model/thinking pair rather than an inherited default. When the catalog's
+optional `recommended_selection` names an offered pair, creation fills it into
+untouched choices as a suggested change, which does not start the draft; a
+person's choice is never replaced. Its plugin owns catalog family aliases;
+changing the model clears the thinking choice. Creation places these controls
+beside the host-owned Harness row in one SettingsGroup, while keeping
+sign-in/recovery and Instructions outside the group.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,

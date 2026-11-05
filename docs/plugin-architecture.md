@@ -1446,6 +1446,11 @@ which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and
 never searches PATH; the Goose plugin runs `goose-acp` this way.
 
+Every process also gets `BUZZ_VERSION`, the running app's version, which `env`
+cannot change or remove. A script or shell config can check for it to tell that
+it runs under Buzz; an agent's shell commands see it when its runtime passes its
+environment on, as Claude Code does.
+
 `mcp` supplies an app-held MCP session URL and headers. The bundled command
 helper initializes that session and supplies an agent-scoped `buzz` tool command
 to the worker. Agent identity, signing authority and tool authorization stay in
@@ -2707,10 +2712,14 @@ app shortcuts (including live rebinds) win there; unhandled keys stay with xterm
 No plugin shortcut API or preference access is added. Ordinary editors continue
 to handle keys before the window's bubbling dispatcher.
 
-Slack-style message keys are host bindings. In an empty composer, Up selects the
-newest message (by id, not tree order) of the timeline or thread sharing its edit scope (on macOS ⌘↑ keeps editing
-the latest own message directly; elsewhere use Up, then E); a selection is
-DOM focus on that message's box (`features/messages/message-selection.ts`), so
+Slack-style message keys are host bindings. With the device-local
+**Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
+preference off (the default), Up in an empty composer selects the newest message
+(by id, not tree order) of the timeline or thread sharing its edit scope; E then
+edits an eligible own message. With the preference on, plain Up edits the latest
+eligible own message instead of selecting messages. On macOS, ⌘↑ edits directly
+with either preference value. A selection is DOM focus on that message's box
+(`features/messages/message-selection.ts`), so
 the timeline's Virtua keeps the row mounted and assistive technology follows it.
 Membership notices and folded or collapsed rows are skipped. While a message
 itself is focused, Up/Down move between rendered messages, Down past the newest and

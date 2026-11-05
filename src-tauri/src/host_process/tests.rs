@@ -1163,3 +1163,25 @@ async fn a_protection_change_revokes_a_protected_hosts_tool_credential() {
         hyper::StatusCode::UNAUTHORIZED
     );
 }
+
+#[test]
+fn every_process_is_told_the_buzz_version_a_plugin_cannot_change() {
+    let get = |command: &Command, name: &str| {
+        command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == name)
+            .and_then(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+    };
+    for plugin_value in [Some("spoofed".to_string()), None] {
+        let mut command = Command::new("/usr/bin/true");
+        let environment = HashMap::from([
+            ("BUZZ_VERSION".to_string(), plugin_value),
+            ("PLUGIN_SETTING".to_string(), Some("kept".to_string())),
+        ]);
+        set_environment(&mut command, OsStr::new("/bin"), &environment, "0.7.12").unwrap();
+        assert_eq!(get(&command, "BUZZ_VERSION").as_deref(), Some("0.7.12"));
+        assert_eq!(get(&command, "PLUGIN_SETTING").as_deref(), Some("kept"));
+        assert_eq!(get(&command, "PATH").as_deref(), Some("/bin"));
+    }
+}

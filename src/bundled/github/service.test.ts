@@ -62,6 +62,24 @@ it("gives other plugins the states links read, and never reads GitHub itself", a
   expect(Object.isFrozen(github)).toBe(true);
 });
 
+it("gives nothing for an issue the links hold, though its read is announced", async () => {
+  const issue = "https://github.com/block/buzz-app/issues/8";
+  const gh = vi.fn(async () => ({
+    r0: { issue: { state: "CLOSED", stateReason: "COMPLETED", title: "Done" } },
+  })) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const states = createPullStates(gh);
+  const github = gitHubPulls(states);
+  const heard = vi.fn();
+  github.subscribe(heard);
+  const unwatch = states.watch(issue, () => {});
+  await vi.waitFor(() => expect(heard).toHaveBeenCalled());
+  // The store holds the issue's state for its link; this is pull requests'.
+  expect(states.get(issue)).toMatchObject({ state: "closed" });
+  expect(github.prState(issue)).toBeUndefined();
+  expect(github.prState(issue, { details: true })).toBeUndefined();
+  unwatch();
+});
+
 it("stops telling an observer once it unsubscribes, and an observer alone keeps nothing read", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   let state = "OPEN";

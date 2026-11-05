@@ -210,8 +210,8 @@ export type PullStates = Readonly<{
     options?: Readonly<{ polling?: Polling; wantsText?: WantsText }>,
   ): () => void;
   /** Calls `listener` after any read records a changed state, for any pull
-   * request, or a change in why reading it again failed (failing, failing
-   * otherwise, or no longer failing). Unlike `watch`, it keeps nothing current
+   * request or issue, or a change in why reading it again failed (failing,
+   * failing otherwise, or no longer failing). Unlike `watch`, it keeps nothing current
    * and reads nothing: an observer sees only what readers had read anyway. */
   observe(listener: () => void): () => void;
   /** Its latest state, kept when a later read fails; `"failed"` when it was

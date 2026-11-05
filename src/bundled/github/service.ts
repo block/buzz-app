@@ -23,7 +23,8 @@ export type GitHubPulls = Readonly<{
   ): PullStateReport | undefined;
   /** Calls `listener` after a read records a changed state, or when reading
    * it again starts failing, fails for another reason, or works again (so
-   * `last_read_failed` changed); read `prState` again then. A read that
+   * `last_read_failed` changed); read `prState` again then. An issue link's
+   * read calls it too, though `prState` gives nothing for an issue. A read that
    * finds the same state only moves `read_at` and `age_seconds`, and is not
    * announced; nor is a state the app forgets. It does not make the app read
    * anything. */

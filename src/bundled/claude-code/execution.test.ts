@@ -229,6 +229,7 @@ async function remoteFixture() {
     inspect: async () => {},
     open: async () => {},
     dispose: async (_key: string) => {},
+    save: async () => {},
   };
   const sessions: { key: string; intent: string }[] = [];
   const disposed: string[] = [];
@@ -256,7 +257,10 @@ async function remoteFixture() {
       async () => null,
       fileStore(
         new Map(),
-        storage.set,
+        async (key, value) => {
+          await control.save();
+          await storage.set(key, value);
+        },
         storage.add,
         storage.read,
         storage.scan,
@@ -509,6 +513,36 @@ it("retires every remote conversation when one cleanup fails and retries only th
     await f.runtime.retire(f.agent.key);
     expect(f.disposed.filter((key) => key === first.key)).toHaveLength(2);
     expect(f.disposed.filter((key) => key === second.key)).toHaveLength(1);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+it("clears remote turn ownership after a failed durable save", async () => {
+  const f = await remoteFixture();
+  try {
+    await f.deliver();
+    let refused = false;
+    f.control.save = async () => {
+      if (!refused) {
+        refused = true;
+        throw new Error("disk unavailable");
+      }
+    };
+    await f.deliver();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "idle",
+      ),
+    );
+    expect(f.handle.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("disk unavailable"),
+      }),
+    );
+    await f.runtime.session(f.agent, { channelId: "room" }, "new");
+    await f.deliver();
+    expect(f.sessions).toHaveLength(2);
   } finally {
     await f.cleanup();
   }

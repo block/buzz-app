@@ -1,8 +1,8 @@
 # Packaged human identity and relay access
 
 Native macOS, Windows and Linux without the live development broker open on a
-welcome screen when no human key exists on this device: **Buzz** — "Your people,
-your agents, your projects — all in one place." — with **Sign in with Builderlab**
+welcome screen when no human key exists on this device: **Buzz**, "Your people,
+your agents, one place.", with **Sign in with Builderlab**
 (the label the Buzz mobile client uses; first-run copy never names the sign-in
 provider) and a live **Community URL** field with **Continue** beside it (the
 same field and normalisation as Join a community below). Sign in is the one
@@ -115,9 +115,10 @@ existing key** opens **Enter your private key**. **Use a different account**
 signs out the shared native session first run signed in as, so the Builderlab
 plugin stops using it, and returns to the welcome screen. It leaves a newer
 session (from Settings or another copy) signed in, and a failed sign-out shows
-on the welcome screen. Cancel and Back do not sign out.
-The browser may retain its portal session. This choice page shows the signed-in
-email so the account can be checked before linking a key.
+on the welcome screen. Cancel and Back do not sign out. Until a sign-in
+completes, every sign-in from there asks the browser for credentials rather
+than continuing as the account it remembers. This choice page shows the
+signed-in email so the account can be checked before linking a key.
 
 Builderlab setup automatically backs up the created key after linking it to the
 signed-in account and waits for the uploader. The import screen discloses
@@ -147,8 +148,9 @@ is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
 device** is *Coming soon* (device pairing is its future entry). Last in the
 stack, **Use a different account** is the same exit as on Get started with Buzz: it
-signs the session out and returns to the welcome screen without importing,
-restoring or replacing the linked key. The imported
+signs the session out and returns to the welcome screen, where the next
+sign-in asks for credentials, without importing, restoring or replacing the
+linked key. The imported
 key is already the account's, so nothing is linked. Unless the lookup already
 lists it, a successful import automatically backs up the key as on a new
 account; a listed key continues without another upload.

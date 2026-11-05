@@ -1,6 +1,6 @@
 import { nip19 } from "nostr-tools";
 import type { RelaySession } from "../relay/session";
-import { foldProfiles } from "../relay/profiles";
+import { searchedProfiles } from "../relay/profile-search";
 import { matchPerson } from "../search/person-match";
 
 export const MEMBER_SEARCH_PAGE_SIZE = 30;
@@ -35,11 +35,13 @@ export async function searchMembers(
         signal,
       });
   signal.throwIfAborted();
-  const profiles = foldProfiles(
-    events.filter(
-      (event) => event.kind === 0 && (!exact || event.pubkey === exact),
-    ),
+  const profiles = searchedProfiles(
+    exact ? events.filter((event) => event.pubkey === exact) : events,
   );
+  // A whole key names its owner even without a profile; the relay decides
+  // whether they can be added.
+  if (exact && !profiles.has(exact))
+    profiles.set(exact, { name: exact.slice(0, 10), nameIsFallback: true });
   // Rank the relay's page by the shared name rule.
   const score = (name: string) => matchPerson(name, text)?.tier ?? 4;
   return {

@@ -1,8 +1,11 @@
 import { PROFILE_CACHE_BASE } from "./budget";
 import { ReadError } from "./errors";
-import { newer, type RelayEvent } from "./events";
+import type { Profile } from "./contracts";
+import { newer, type EventData, type RelayEvent } from "./events";
+import { foldProfiles } from "./profiles";
 import type { RelayReader } from "./reader";
 import {
+  VERIFIED_PROFILE_KIND,
   verifiedProfileSubject,
   type VerifiedProfileAuthority,
 } from "./verified-profile";
@@ -46,7 +49,9 @@ export const PROFILE_SEARCH_HEADS_MS = 30_000;
  *
  * Where the authority is `searchable`, the endpoint also returns each found
  * person's current verified head, and none when they have none. Those
- * answers are kept, a page at a time, for {@link verifiedHeads}. */
+ * answers are kept, a page at a time, for {@link verifiedHeads}. A person it
+ * found who has no kind:0 is returned as their head, so the result has one
+ * event per person; {@link searchedProfiles} reads it. */
 export function createProfileSearch(
   fallback: RelayReader,
   now: () => number = Date.now,
@@ -57,11 +62,12 @@ export function createProfileSearch(
     string,
     { authority: VerifiedProfileAuthority; at: number; head?: RelayEvent }
   >();
+  /** Keeps the page's answers, and returns each found person's head. */
   function keep(events: readonly RelayEvent[]) {
-    const current = authority();
-    if (!current?.searchable) return;
-    const at = now();
     const page = new Map<string, RelayEvent | undefined>();
+    const current = authority();
+    if (!current?.searchable) return page;
+    const at = now();
     for (const event of events) {
       if (event.kind === 0 && !page.has(event.pubkey))
         page.set(event.pubkey, undefined);
@@ -80,6 +86,7 @@ export function createProfileSearch(
       if (answers.size <= PROFILE_CACHE_BASE) break;
       answers.delete(pubkey);
     }
+    return page;
   }
   /** Takes the recent answers this authority gave for `pubkeys`: each one's
    * head, or undefined for none. A taken answer is not given again. */
@@ -128,8 +135,16 @@ export function createProfileSearch(
           priority,
           fresh: true,
         });
-        keep(events);
-        return events.filter((event) => event.kind === 0);
+        // A person with no kind:0 is found by their verified head alone.
+        const named = new Set(
+          events.flatMap((event) => (event.kind === 0 ? [event.pubkey] : [])),
+        );
+        const unnamed = new Set(
+          [...keep(events)].flatMap(([pubkey, head]) =>
+            head && !named.has(pubkey) ? [head] : [],
+          ),
+        );
+        return events.filter((event) => event.kind === 0 || unnamed.has(event));
       } catch (error) {
         if (
           !(error instanceof ReadError) ||
@@ -155,3 +170,24 @@ export function createProfileSearch(
   return Object.assign(searchProfiles, { verifiedHeads });
 }
 export type ProfileSearch = ReturnType<typeof createProfileSearch>;
+
+/** The people a {@link createProfileSearch} page found, by pubkey: each
+ * kind:0 profile, and for a person found only by their verified head, the
+ * nameless profile an empty kind:0 gives. Their verified name comes from that
+ * head, which the search keeps for `useVerifiedNames`. Takes only that
+ * search's result: it already checked each head's authority. */
+export function searchedProfiles(
+  events: readonly EventData[],
+): Map<string, Profile> {
+  const profiles = foldProfiles(events);
+  for (const event of events) {
+    if (event.kind !== VERIFIED_PROFILE_KIND) continue;
+    const subject = event.tags.find(([name]) => name === "d")?.[1];
+    if (subject && !profiles.has(subject))
+      profiles.set(
+        subject,
+        Object.freeze({ name: subject.slice(0, 10), nameIsFallback: true }),
+      );
+  }
+  return profiles;
+}

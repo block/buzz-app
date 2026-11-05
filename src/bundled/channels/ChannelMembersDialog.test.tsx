@@ -21,6 +21,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { createRelaySession } from "../../features/relay/session";
+import type { VerifiedProfileAuthority } from "../../features/relay/verified-profile";
 import {
   keypair,
   metadata,
@@ -36,7 +37,7 @@ import {
   recordVisit,
 } from "../../features/search/usage";
 import { matchesEvent } from "../../features/relay/projection";
-import type { RelayEvent } from "../../features/relay/events";
+import { eventDto, type RelayEvent } from "../../features/relay/events";
 import { PublishRejected } from "../../features/relay/outbox";
 import type { AgentLibrary } from "../../features/agents/library";
 import { localAgentsFixture } from "../../features/agents/local-testing";
@@ -115,12 +116,14 @@ async function setup(
       page: number,
     ) => Promise<RelayEvent[]>;
     communities?: CommunityReader;
+    relay?: ReturnType<typeof keypair>;
+    verifiedProfiles?: VerifiedProfileAuthority;
     visibility?: "private" | "public";
     joinRole?: "member" | "guest";
   } = {},
 ) {
   const viewer = keypair(),
-    relay = keypair(),
+    relay = options.relay ?? keypair(),
     person = keypair();
   const agent = {
     pubkey: "ab".repeat(32),
@@ -232,6 +235,9 @@ async function setup(
       },
       ...(options.searchProfiles
         ? { searchProfiles: options.searchProfiles }
+        : {}),
+      ...(options.verifiedProfiles
+        ? { verifiedProfiles: options.verifiedProfiles }
         : {}),
       readAgentLibrary,
       writer: {
@@ -1114,6 +1120,45 @@ it("keeps relay-only matches after shared-ranked names without duplicating rows"
     expect.stringMatching(/^Add Robin/),
     expect.stringMatching(/^Add A different name/),
   ]);
+});
+
+it("finds a verified person who has no kind:0 by their verified name", async () => {
+  const relay = keypair(),
+    gabi = keypair();
+  const head = signed(relay, {
+    kind: 30382,
+    created_at: 1_000_000,
+    content: "",
+    tags: [
+      ["d", gabi.pubkey],
+      ["p", gabi.pubkey],
+      ["active", "true"],
+      ["display_name", "glilienfeld"],
+      ["username", "glilienfeld"],
+      ["full_name", "Gabi Lilienfeld"],
+      ["issuer_label", "Example"],
+      ["verified_at", "1000000"],
+    ],
+  });
+  const t = await setup("stream", false, false, undefined, undefined, {
+    relay,
+    searchProfiles: async () => [eventDto(head)],
+    verifiedProfiles: {
+      pubkey: relay.pubkey,
+      multipleIssuers: false,
+      searchable: true,
+    },
+  });
+  await t.user.type(screen.getByRole("searchbox"), "gabi");
+  await screen.findByRole("button", { name: /^Add glilienfeld/ });
+  await t.user.click(screen.getByRole("button", { name: /^Add glilienfeld/ }));
+  await vi.waitFor(() =>
+    expect(
+      t.publish.mock.calls.some(([event]) =>
+        event.tags.some((tag) => tag[0] === "p" && tag[1] === gabi.pubkey),
+      ),
+    ).toBe(true),
+  );
 });
 
 it("starts every invitation group at four and expands only the selected group", async () => {

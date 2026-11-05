@@ -117,16 +117,30 @@ export function createScreen(
       detach?.();
       host.append(element);
       applyFont();
-      terminal.options = terminalAppearance(element);
+      terminal.options = { theme: terminalAppearance(element).theme };
       if (!opened) {
         terminal.open(element);
         opened = true;
       }
       let attached = true;
-      const update = () => {
+      let revision = 0;
+      const update = async () => {
         if (!attached || disposed) return;
+        const current = ++revision;
         applyFont();
-        terminal.options = terminalAppearance(element);
+        const options = terminalAppearance(element);
+        // Other windows have independent FontFaceSets. Load before assigning
+        // xterm's options: assigning the same family again won't remeasure it.
+        try {
+          await document.fonts.load(
+            `${options.fontSize}px ${options.fontFamily}`,
+            "W",
+          );
+        } catch {
+          // Preserve the fallback for a saved face that can no longer load.
+        }
+        if (!attached || disposed || current !== revision) return;
+        terminal.options = options;
         if (host.clientWidth && host.clientHeight) {
           fit.fit();
           splash.layout();
@@ -142,9 +156,7 @@ export function createScreen(
         attributeFilter: ["data-color-mode", "data-accent", "style", "class"],
       });
       element.addEventListener("keydown", splash.dismiss);
-      update();
-      // Loaded mono metrics can differ from the fallback used on first mount.
-      void document.fonts.ready.then(update);
+      void update();
       terminal.focus();
       const cleanup = () => {
         attached = false;

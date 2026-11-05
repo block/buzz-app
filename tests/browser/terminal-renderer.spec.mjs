@@ -120,26 +120,62 @@ test("terminal font changes refit the retained emulator and restore the default"
     server: { host: "127.0.0.1", port: 0 },
   });
   const errors = watchPageErrors(page);
+  let fontGate = Promise.withResolvers();
+  let fontRequest = Promise.withResolvers();
+  const startupFont = Promise.withResolvers();
+  const startupRequest = Promise.withResolvers();
   try {
     await server.listen();
+    await page.route(
+      "**/jetbrains-mono-latin-400-normal.woff2",
+      async (route) => {
+        startupRequest.resolve();
+        await startupFont.promise;
+        await route.continue();
+      },
+    );
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal.html?fonts-ready`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal.html`,
+      { waitUntil: "domcontentloaded" },
     );
     const rows = page.locator(".xterm-rows");
+    await startupRequest.promise;
+    // Theme must be present even while the initial font metrics are pending.
+    const background = await page
+      .locator(".xterm")
+      .locator("..")
+      .evaluate((element) => getComputedStyle(element).backgroundColor);
+    await expect(page.locator(".xterm-scrollable-element")).toHaveCSS(
+      "background-color",
+      background,
+    );
+    startupFont.resolve();
     // Terminal ANSI styles must work even if an installed family has one face.
     // The surrounding app disables font synthesis for its own bundled fonts.
     await expect(rows).toHaveCSS("font-synthesis-weight", "auto");
     await expect(rows).toHaveCSS("font-synthesis-style", "auto");
     await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+    await page.route("**/terminal-delayed.woff2*", async (route) => {
+      fontRequest.resolve();
+      await fontGate.promise;
+      await route.fulfill({
+        response: await route.fetch({
+          url: new URL(
+            "/node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2",
+            page.url(),
+          ).href,
+        }),
+      });
+    });
     await page.evaluate(async () => {
       // Use a deliberately wider face from the pinned font asset, independent
       // of whichever system fonts happen to be installed on a CI machine.
       const face = new FontFace(
         "Buzz Terminal Test",
-        'url("/node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2")',
+        'url("/terminal-delayed.woff2")',
         { sizeAdjust: "150%" },
       );
-      document.fonts.add(await face.load());
+      document.fonts.add(face);
       await document.fonts.load('12px "JetBrains Mono"');
       await document.fonts.ready;
     });
@@ -154,9 +190,36 @@ test("terminal font changes refit the retained emulator and restore the default"
     await page.evaluate(() =>
       window.terminalRenderer.font.set("Buzz Terminal Test"),
     );
+    await fontRequest.promise;
+    await expect(dimensions).toHaveText(original);
+    fontGate.resolve();
+    await page.evaluate(() => document.fonts.load('12px "Buzz Terminal Test"'));
     await expect(rows).toHaveCSS("font-family", /^"?Buzz Terminal Test"?,/);
     await expect(dimensions).not.toHaveText(original);
     await page.evaluate(() => window.terminalRenderer.font.reset());
+    await expect(rows).toHaveCSS("font-family", /^"?JetBrains Mono"?,/);
+    await expect(dimensions).toHaveText(original);
+    // A slower, older choice must not overwrite a newer reset.
+    fontGate = Promise.withResolvers();
+    fontRequest = Promise.withResolvers();
+    await page.evaluate(() => {
+      document.fonts.add(
+        new FontFace(
+          "Buzz Terminal Stale",
+          'url("/terminal-delayed.woff2?stale")',
+          { sizeAdjust: "200%" },
+        ),
+      );
+      window.terminalRenderer.font.set("Buzz Terminal Stale");
+    });
+    await fontRequest.promise;
+    await page.evaluate(() => window.terminalRenderer.font.reset());
+    await expect(rows).toHaveCSS("font-family", /^"?JetBrains Mono"?,/);
+    fontGate.resolve();
+    await page.evaluate(async () => {
+      await document.fonts.load('12px "Buzz Terminal Stale"');
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
     await expect(rows).toHaveCSS("font-family", /^"?JetBrains Mono"?,/);
     await expect(dimensions).toHaveText(original);
     // Same face, different size: real cell dimensions and PTY resize must follow.
@@ -207,6 +270,8 @@ test("terminal font changes refit the retained emulator and restore the default"
     await expect(dimensions).toHaveText(original);
     expect(errors.unexplained()).toEqual([]);
   } finally {
+    startupFont.resolve();
+    fontGate.resolve();
     await server.close();
   }
 });

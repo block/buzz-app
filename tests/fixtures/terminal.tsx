@@ -108,7 +108,4 @@ function Fixture() {
 }
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing root");
-// Font-swap geometry needs a loaded baseline, independent of network timing.
-if (new URLSearchParams(location.search).has("fonts-ready"))
-  await document.fonts.load('12px "JetBrains Mono"');
 createRoot(root).render(<Fixture />);

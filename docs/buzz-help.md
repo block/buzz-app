@@ -80,10 +80,11 @@ the interface unless an available tool actually supports that action.
 - Where a community verifies names, the profile check appears beside the verified
   full name, or the verified username when no full name is supplied. The profile
   shows the issuer and verification time; cached verification has no check.
-  When you search for people (search, @mentions and adding channel members), a
-  verified person shows their verified name with the full name beside it.
-  Search finds people by their profile names; once found, a verified full name
-  also matches as you refine.
+  When you search for people (search, @mentions, adding channel members and new
+  direct messages), a verified person shows their verified name with the full
+  name beside it. Search finds people by their profile names; once found, a
+  verified full name also matches as you refine. Search and new direct messages
+  also find people already verified by a matching verified name or username.
 
 ## Connect an external app
 
@@ -275,7 +276,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   replies in thread, U marks it unread, and Delete deletes your own message.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
-  by"; change one of them to choose which fires.
+  by"; change one of them to choose which fires. In the Mac app, **Buzz →
+  Settings…** in the menu bar also opens Settings.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling
@@ -467,6 +469,21 @@ confirmation.
   A saved plugin sort can briefly wait for its plugin at startup, within the
   sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z
   without forgetting the saved choice.
+- On desktop, plugins can support update checks and set them on or off by default.
+  Use **Check for updates automatically** in the plugin's actions menu to change
+  this choice. Buzz saves your choice across updates and restarts. Plugins without
+  update support keep their existing manual import flow. Buzz checks eligible Git
+  sources at startup and once per hour while the app is visible. Checks do not
+  install or reload plugins. A notice
+  offers **Update and reload**, or **Review permissions** when access increases.
+  Click the notice body to open that plugin’s update checkbox in Manage plugins.
+  Its Update, Later, and Dismiss controls keep their own actions.
+  Save unfinished forms and stop active plugin workers before you update.
+  **Later** hides the notice for this candidate until the next app run. The
+  update stays in the profile menu under **Plugins**. A newer candidate can show
+  a notice again. Failed checks offer **Retry**. If the updated plugin cannot
+  start, use **Retry activation** or its recovery menu to **Roll back**, when
+  available. Checks, review, Later, and cancellation keep plugin work running.
 - **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
   their previous state, including when no choice was saved. Enable or disable
   them in **Manage plugins**; saved choices persist.
@@ -548,6 +565,15 @@ Release builds ignore this optional helper.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+### Saved External apps approval
+
+External apps can request saved approval. The app can renew valid approval
+for another 30 days. Approval expires after 30 days without renewal. Buzz shows
+this policy before you authorize access. Expired or revoked approval requires
+new owner consent. The app can restore the same access after Buzz or the app
+restarts. Keep Buzz open in the approved community. Keys stay in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
+even when no session is connected. Added access requires new approval.
 
 ### Reconnecting an old agent in a DM
 

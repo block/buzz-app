@@ -1309,6 +1309,12 @@ it.each([
     reference: "release/one",
     path: "dist",
   },
+  {
+    repository: "https://git.example.com/plugins",
+    reference: "release/one",
+    path: "dist",
+    commit: "b".repeat(40),
+  },
 ])(
   "checks the remembered source and build path with a fresh review: %j",
   async (updateSource) => {

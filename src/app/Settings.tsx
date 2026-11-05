@@ -305,6 +305,7 @@ function PluginDetails({
   onReviewHandled,
   initialUpdateAvailable,
   holdReview,
+  openUpdateSettings = false,
 }: {
   plugin: PluginInfo;
   managed?: ReturnType<typeof managedBy>;
@@ -324,6 +325,7 @@ function PluginDetails({
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
   holdReview: (() => () => void) | undefined;
+  openUpdateSettings?: boolean;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
@@ -469,6 +471,7 @@ function PluginDetails({
             plugin={plugin}
             plugins={plugins}
             busy={busy}
+            openUpdateSettings={openUpdateSettings}
             {...(updateAvailable
               ? {
                   toggle: {
@@ -636,6 +639,7 @@ export function Settings({
   onSection,
   onProvider,
   onPluginImportClosed,
+  onPluginDetailsClosed,
   navigationPane = false,
   onDeparturePending,
   onUnsavedChange,
@@ -662,6 +666,7 @@ export function Settings({
   onSection?: (section: string) => void;
   onProvider?: ((provider?: string) => void) | undefined;
   onPluginImportClosed?: (() => void) | undefined;
+  onPluginDetailsClosed?: (() => void) | undefined;
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
   onUnsavedChange?: (unsaved: boolean) => void;
@@ -849,6 +854,21 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const addressedPlugin = useRef(false);
+  const requestedPluginId =
+    navigation?.target.kind === "settings"
+      ? navigation.target.pluginId
+      : undefined;
+  useEffect(() => {
+    if (selected !== "plugins" || !navigation?.entryId) return;
+    if (requestedPluginId) {
+      setSelectedPluginId(requestedPluginId);
+      addressedPlugin.current = true;
+    } else if (addressedPlugin.current) {
+      setSelectedPluginId(undefined);
+      addressedPlugin.current = false;
+    }
+  }, [requestedPluginId, navigation?.entryId, selected]);
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -966,6 +986,7 @@ export function Settings({
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     setSelectedPluginId(undefined);
+    if (requestedPluginId) onPluginDetailsClosed?.();
   };
   useLayoutEffect(() => {
     const held = heldPluginRow.current;
@@ -1624,8 +1645,9 @@ export function Settings({
       </div>
       {showingDetails && selectedPlugin && catalog && (
         <PluginDetails
-          key={selectedPlugin.manifest.id}
+          key={`${selectedPlugin.manifest.id}:${requestedPluginId ? navigation?.entryId : ""}`}
           plugin={selectedPlugin}
+          openUpdateSettings={requestedPluginId === selectedPlugin.manifest.id}
           managed={managedBy(managed, selectedPlugin.manifest.id)}
           catalog={catalog}
           initialUpdateAvailable={

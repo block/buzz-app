@@ -602,7 +602,9 @@ test.describe("dialog origin retirement", () => {
         exact: true,
       }),
     ).toBeVisible();
-    // The returning tab keeps its view and the channel's draft.
+    // Returning shows the open Canvas; Edit still holds the channel's draft.
+    await expect(canvas).toBeVisible();
+    await edit.click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
     // Choosing channels from the sidebar keeps the tab the same way.
     await page.locator('button[data-channel-id="beta"]').click();
@@ -611,6 +613,8 @@ test.describe("dialog origin retirement", () => {
     ).toBeVisible();
     await expect(canvas).toHaveCount(0);
     await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await expect(canvas).toBeVisible();
+    await edit.click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
     await page
       .getByRole("button", { name: "Close Canvas tab", exact: true })

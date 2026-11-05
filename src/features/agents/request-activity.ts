@@ -1,5 +1,6 @@
 import type { ActivityTurn } from "./activity";
 import { activityRecords, type ActivityRecord } from "./activity-records";
+import { observerTriggerIds } from "./observer";
 
 type Parsed = Readonly<{
   record: ActivityRecord;
@@ -74,12 +75,10 @@ export function requestActivity(
   for (const start of parsed.filter(
     ({ value }) => value.kind === "turn_started",
   )) {
-    const triggers = start.value.payload?.triggeringEventIds;
-    if (
-      !Array.isArray(triggers) ||
-      !triggers.some((id) => triggersWanted.has(id))
-    )
-      continue;
+    const triggers = observerTriggerIds(
+      start.value.payload?.triggeringEventIds,
+    );
+    if (!triggers?.some((id) => triggersWanted.has(id))) continue;
     const turn = parsed.filter(
       ({ value }) => value.turnId === start.value.turnId,
     );
@@ -131,20 +130,20 @@ export function requestActivity(
 
 /** Already scoped lifecycle evidence, never a claim that a reply was delivered.
  * Working dominates; all linked turns must agree before an aggregate end label.
- * Any feed trimming can have erased another linked start; do not claim completeness. */
+ * Missing evidence for a linked turn leaves only that request uncertain. */
 export function requestActivityState(
   selected: ReturnType<typeof requestActivity>,
   turns: readonly ActivityTurn[],
-  trimmed = 0,
+  requestEvidenceLost = false,
 ): "waiting" | "working" | "unknown" | "ended" | "error" {
   const linked = [...selected.turnIds].map((id) =>
     turns.find((turn) => turn.turnId === id),
   );
   if (linked.some((turn) => turn?.state === "working")) return "working";
   if (
-    trimmed > 0 ||
+    requestEvidenceLost ||
     selected.uncertain ||
-    linked.some((turn) => !turn || turn.state === "unknown")
+    linked.some((turn) => !turn || turn.incomplete || turn.state === "unknown")
   )
     return "unknown";
   if (!linked.length) return "waiting";

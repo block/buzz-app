@@ -80,10 +80,11 @@ the interface unless an available tool actually supports that action.
 - Where a community verifies names, the profile check appears beside the verified
   full name, or the verified username when no full name is supplied. The profile
   shows the issuer and verification time; cached verification has no check.
-  When you search for people (search, @mentions and adding channel members), a
-  verified person shows their verified name with the full name beside it.
-  Search finds people by their profile names; once found, a verified full name
-  also matches as you refine.
+  When you search for people (search, @mentions, adding channel members and new
+  direct messages), a verified person shows their verified name with the full
+  name beside it. Search finds people by their profile names; once found, a
+  verified full name also matches as you refine. Search and new direct messages
+  also find people already verified by a matching verified name or username.
 
 ## Connect an external app
 
@@ -120,8 +121,13 @@ that agent in Buzz; they do not notify the external app through this connection.
 - Long message bubbles use the available conversation width, stopping 32px
   before the opposite speaker’s avatar column. Short messages hug their text.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
-  copy its link, or open More. **Copy message** is in More. Keyboard focus also
-  reveals these actions; touch layouts keep actions inline.
+  copy its link, forward it, or open More. **Copy message** is in More. Keyboard
+  focus also reveals these actions; touch layouts keep actions inline.
+- **Forward message** in a message's hover actions or message menu sends its link
+  to one person in the current community, with an optional note. Buzz opens or
+  creates the direct message for you. The link previews the original message;
+  the recipient still needs access to its conversation. Forwarding is unavailable
+  when the connection cannot start DMs or the message has no link yet.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -159,7 +165,15 @@ that agent in Buzz; they do not notify the external app through this connection.
   until you add one or turn worktree mode off.
 - **Inbox** collects DMs, ordinary responses in Solo chats, mentions of you, and replies in threads you started,
   replied in, or follow. Solo chats appear under All, not DMs; their nested threads stay separate. Agent-only
-  coordination stays out.
+  coordination stays out. If loading fails, use **Retry inbox** on the page or
+  preview to retry; recovered activity clears the loading error.
+- **New messages** marks the first known unread incoming channel message when
+  you enter. Once established, the divider stays in place for that visit as you
+  read, reveal another message, or receive new messages. It is absent for a visit
+  that starts with incomplete or unverified history, even if older rows load
+  later. It may also be absent when unread evidence is incomplete, or when read
+  intent or the read evidence needed to locate the boundary changes before it is
+  established.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
@@ -179,6 +193,15 @@ that agent in Buzz; they do not notify the external app through this connection.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
+- **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
+  of the sidebar without leaving it. To find one again, start a **New message**
+  to exactly the same people. Its earlier messages appear before you send,
+  without being marked read. Sending a message reopens the DM and brings it
+  back to the sidebar. For a one-to-one DM, choosing the person in search is
+  quicker and brings it back the same way. After **Hide conversation**, the row
+  can take until the channel list next refreshes to return. If this connection
+  can't start DMs, New message still shows the earlier messages but Send is
+  disabled, and search opens a one-to-one DM without bringing it back.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
@@ -209,7 +232,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
   one to make it a chip. Click a chip to remove it, or press Backspace at the
   start of the text to edit the last one. With a filter, search shows only
-  messages.
+  messages. Each message result's conversation name starts with the icon its
+  channel header shows: a hash for a public channel, a lock for a private
+  channel, or a chat bubble for a direct message or chat. Screen readers
+  announce the type before the name.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
@@ -220,9 +246,15 @@ that agent in Buzz; they do not notify the external app through this connection.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
+- In a channel, typing `/leave` by itself opens the same **Leave channel**
+  confirmation. The command is not posted as a message.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
+- In the composer, Enter sends and Shift+Enter adds a new line by default.
+  **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
+  outside Apple platforms) swaps that on this device: Enter adds a line and
+  ⌘/Ctrl+Enter sends. It starts off.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. If an upload fails, its attachment shows the reason, **Retry**, and
@@ -249,12 +281,20 @@ that agent in Buzz; they do not notify the external app through this connection.
   replies in thread, U marks it unread, and Delete deletes your own message.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
-  by"; change one of them to choose which fires.
+  by"; change one of them to choose which fires. In the Mac app, **Buzz →
+  Settings…** in the menu bar also opens Settings.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
+- **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
+  24-hour times. System, the default, follows the desktop app's operating
+  system: the 24-hour time setting on macOS, the short time format on Windows,
+  and on Linux GNOME's time format or else the `LC_TIME` locale. In a browser it
+  follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
+  time beside each message everywhere or only in Solo chats; day dividers and
+  screen-reader dates remain.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe
@@ -350,6 +390,15 @@ available rather than silently discarding it.
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Do not assume someone can edit another person's agent.
+- A desktop plugin can run native Codex on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
+  remote choice stays remote after an app restart. If the target cannot be
+  restored, Buzz shows an error and requires a new session.
+  The model control on a remote Codex card opens that agent's Settings.
+- When creating a Builderlab agent, sign in, choose a model from its family menu,
+  then choose a supported **Thinking** level. Both choices are required; changing
+  the model clears the thinking choice. Instructions are optional. **Create agent**
+  stays disabled until its name and required choices are complete; Builderlab
+  also waits for sign-in and its model catalog.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
@@ -379,6 +428,15 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
+- **Settings → Agent details → Previous versions** expands saved revisions for
+  agents whose configuration syncs here. Settings and instructions appear together
+  in one feed, newest first, with a label on each version. Versions are kept
+  automatically when changes are saved. Click a version to open
+  its changes in a dialog; older valid versions offer **Revert to this** (or
+  **Restore this** after deletion). An accent dot marks the current version in
+  the feed; the dialog identifies it in words and offers no restore action.
+  **Load older** fetches more history. Reverting one track saves
+  a new revision without changing the other track.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
@@ -391,9 +449,21 @@ available rather than silently discarding it.
   open its transcript or **Stop** the running request; before any work updates
   arrive, those controls appear on the live indicator. Stop availability depends
   on the agent type.
+- A Goose agent's Activity lists the sessions Buzz recorded on this device for
+  each conversation. A conversation with no recorded session, such as one from
+  an earlier version of Buzz or another computer, offers **Search older
+  sessions**, which searches goose's local history and can take a while. Watch
+  and timer turns from before this version aren't listed, and **Search older
+  sessions** doesn't find them, because it only matches channel conversations.
 - When a request to an agent running on this device fails, the activity under
   the message offers **Retry**, which asks the agent again, and **Dismiss**,
   which hides the failure.
+- Any agent running on this device can read and change some Buzz settings
+  here when you ask it to: appearance mode, interface size, accent color,
+  vibe level, where new threads open, Solo follow-up behavior, automatic
+  spelling correction (Mac only) and remembering mentioned agents. There is
+  no switch to turn on. A change shows as not saved when it is active but
+  could not be saved on this device.
 
 Saved teams from **Your teams** appear in the inline `@` suggestions and the
 mention picker. Select a team to insert its members as individual mentions.
@@ -406,6 +476,26 @@ confirmation.
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
+  If a plugin hides the focused Team sidebar row, keyboard focus moves to a
+  remaining row in its section, or the section heading when none remains.
+  A saved plugin sort can briefly wait for its plugin at startup, within the
+  sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z
+  without forgetting the saved choice.
+- On desktop, plugins can support update checks and set them on or off by default.
+  Use **Check for updates automatically** in the plugin's actions menu to change
+  this choice. Buzz saves your choice across updates and restarts. Plugins without
+  update support keep their existing manual import flow. Buzz checks eligible Git
+  sources at startup and once per hour while the app is visible. Checks do not
+  install or reload plugins. A notice
+  offers **Update and reload**, or **Review permissions** when access increases.
+  Click the notice body to open that plugin’s update checkbox in Manage plugins.
+  Its Update, Later, and Dismiss controls keep their own actions.
+  Save unfinished forms and stop active plugin workers before you update.
+  **Later** hides the notice for this candidate until the next app run. The
+  update stays in the profile menu under **Plugins**. A newer candidate can show
+  a notice again. Failed checks offer **Retry**. If the updated plugin cannot
+  start, use **Retry activation** or its recovery menu to **Roll back**, when
+  available. Checks, review, Later, and cancellation keep plugin work running.
 - **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
   their previous state, including when no choice was saved. Enable or disable
   them in **Manage plugins**; saved choices persist.
@@ -484,6 +574,15 @@ Release builds ignore this optional helper.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+### Saved External apps approval
+
+External apps can request saved approval. The app can renew valid approval
+for another 30 days. Approval expires after 30 days without renewal. Buzz shows
+this policy before you authorize access. Expired or revoked approval requires
+new owner consent. The app can restore the same access after Buzz or the app
+restarts. Keep Buzz open in the approved community. Keys stay in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
+even when no session is connected. Added access requires new approval.
 
 ### Reconnecting an old agent in a DM
 

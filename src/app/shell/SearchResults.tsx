@@ -55,6 +55,10 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { useMemberCounts } from "../../features/channels/useChannelDirectory";
+import {
+  channelIcon,
+  channelIconLabel,
+} from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -115,10 +119,18 @@ const isSearchAction = (key: string) =>
 
 function useDelayedSearch(pending: boolean) {
   const [slow, setSlow] = useState(false);
+  const shown = useRef(false);
   useEffect(() => {
-    setSlow(false);
+    // Even a no-op set re-renders, and re-ranks, the results on every key.
+    if (shown.current) {
+      shown.current = false;
+      setSlow(false);
+    }
     if (!pending) return;
-    const timer = setTimeout(() => setSlow(true), 1000);
+    const timer = setTimeout(() => {
+      shown.current = true;
+      setSlow(true);
+    }, 1000);
     return () => clearTimeout(timer);
   }, [pending]);
   return pending && slow;
@@ -894,6 +906,12 @@ export function SearchResults({
       });
     }
   }
+  // Several passes below rank the same names; rank each once per render.
+  const ranks = new Map<string, MatchRank | undefined>();
+  const rankName = (label: string) => {
+    if (!ranks.has(label)) ranks.set(label, matchRank(label, needle));
+    return ranks.get(label);
+  };
   // What the viewer chose before for this typed text. Only candidates that
   // match count, so a stale choice cannot add a row.
   const picked = usage.pick(
@@ -902,7 +920,7 @@ export function SearchResults({
       ...channels
         .filter(
           ({ id }) =>
-            parsed.text && matchRank(names.get(id) ?? "", needle) !== undefined,
+            parsed.text && rankName(names.get(id) ?? "") !== undefined,
         )
         .map(({ id }) => `channel:${id}`),
       ...publicChannels.channels.map(({ id }) => `channel:${id}`),
@@ -915,7 +933,7 @@ export function SearchResults({
   // The shared search order, with archived channels half a step behind live
   // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
-    const rank = matchRank(label, needle) ?? MatchRank.inOrder + 1;
+    const rank = rankName(label) ?? MatchRank.inOrder + 1;
     return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
   /** Whether a search order is an exact name, live (-2) or archived (-1.5). */
@@ -936,7 +954,7 @@ export function SearchResults({
       (channel) =>
         parsed.text &&
         !sidebarHidden(channel) &&
-        matchRank(names.get(channel.id) ?? "", needle) !== undefined,
+        rankName(names.get(channel.id) ?? "") !== undefined,
     ),
     channelRank,
   );
@@ -1134,15 +1152,17 @@ export function SearchResults({
         (channel) =>
           channel.channelType === "dm" &&
           !channel.archived &&
-          !channel.hidden &&
           channel.participants?.length === 1 &&
           channel.participants[0] === pubkey,
       );
     // Opening a DM hidden on this device goes through the confirmed open,
-    // which restores its sidebar row. A visible DM just opens.
+    // which restores its sidebar row. So does any DM opened while the relay's
+    // hidden set is not ready, since it may be hidden: before the first load,
+    // during every refresh and after a failed one. A visible DM just opens.
     if (
       existing &&
-      (!sidebarHidden(existing) || !session.directMessages.available)
+      (!session.directMessages.available ||
+        (dmVisibility.status === "ready" && !sidebarHidden(existing)))
     )
       return openConversation(existing.id);
     if (
@@ -1273,6 +1293,8 @@ export function SearchResults({
         ]
       : [];
   const messages: SearchDestination[] = search.messages.map((message) => {
+    // Every listed hit's channel is readable here, with settled metadata.
+    const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
     const name = resolveName(
       displayId,
@@ -1283,7 +1305,9 @@ export function SearchResults({
     return {
       key: message.id,
       label: message.preview,
-      detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      detailIcon: channel && channelIcon(channel),
+      detailIconLabel: channel && channelIconLabel(channel),
       icon: ChatCircleIcon,
       run: () => {
         cancelPersonOpen();

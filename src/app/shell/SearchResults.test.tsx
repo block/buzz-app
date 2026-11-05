@@ -33,6 +33,7 @@ import {
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
 import type { AppServices } from "../services";
+import type { SearchGroup } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
 import { useSearchSettings } from "./SearchSettings";
 import {
@@ -41,6 +42,7 @@ import {
   recordVisit,
 } from "../../features/search/usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import referenceStyles from "../../shared/InlineReference.module.css";
 import { clearViewScope, writeView } from "../../shared/view-state";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
@@ -4949,6 +4951,7 @@ it("matches an in: operator against the rendered DM participant label", async ()
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const discovery = [
     metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),
@@ -5098,6 +5101,140 @@ it.each([true, false])(
     }
   },
 );
+
+it("leads a message hit's conversation name with its type icon and words", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    peer = keypair(),
+    other = keypair();
+  // Each hit's channel, its icon, and the words read in place of the icon.
+  const rows = [
+    ["crew", "hash", "Public channel", "crew"],
+    ["plans", "lock", "Private channel", "plans"],
+    ["board", "hash", "Public channel", "board"],
+    ["vault", "lock", "Private channel", "vault"],
+    ["notes", "message-circle", "Chat", "Notes"],
+    ["dm", "message-circle", "Direct message", "Pinky"],
+    ["group", "message-circle", "Direct message", "Brain, Pinky"],
+  ] as const;
+  const dm = [
+    ["t", "dm"],
+    ["private", ""],
+  ];
+  const discovery = [
+    metadata(relay, "crew", "crew", 1700000000, [["t", "stream"]]),
+    metadata(relay, "plans", "plans", 1700000000, [
+      ["t", "stream"],
+      ["private"],
+    ]),
+    metadata(relay, "board", "board", 1700000000, [["t", "forum"]]),
+    metadata(relay, "vault", "vault", 1700000000, [
+      ["t", "forum"],
+      ["private"],
+    ]),
+    metadata(relay, "notes", "Notes", 1700000000, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    metadata(relay, "dm", "opaque", 1700000000, dm),
+    metadata(relay, "group", "opaque", 1700000000, dm),
+    ...rows.map(([id]) =>
+      roster(
+        relay,
+        id,
+        id === "dm"
+          ? [viewer.pubkey, peer.pubkey]
+          : id === "group"
+            ? [viewer.pubkey, peer.pubkey, other.pubkey]
+            : [viewer.pubkey],
+      ),
+    ),
+    profile(peer, { name: "Pinky" }),
+    profile(other, { name: "Brain" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return filters.some((filter) => filter.kinds?.includes(0))
+          ? []
+          : rows.map(([id]) =>
+              message(viewer, id, `match in ${id}`, 1700000001),
+            );
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const palette = (inlineSettings?: SearchGroup[]) => (
+    <SearchResults
+      session={owner.session}
+      query="match"
+      onQueryChange={() => {}}
+      input={createRef()}
+      // A detail without a type icon, for contrast.
+      pages={[
+        {
+          key: "page",
+          label: "Inbox",
+          detail: "Page",
+          icon: ChatCircleIcon,
+          run: () => {},
+        },
+      ]}
+      openConversation={() => {}}
+      inlineSettings={inlineSettings}
+    />
+  );
+  try {
+    const { rerender } = render(palette());
+    // An option is named from its content: the preview, then the detail led
+    // by its icon's hidden words (jsdom joins the two block lines unspaced).
+    await waitFor(() => {
+      for (const [id, icon, kind, name] of rows) {
+        const option = screen.getByRole("option", {
+          name: new RegExp(`^match in ${id}\\s*${kind}, ${name} · `),
+        });
+        // The icon styled as a channel mention's in a message: a hash
+        // flush against the name, a lock or bubble a little apart.
+        expect(
+          option.querySelector(
+            `.${referenceStyles.icon}.${icon === "hash" ? referenceStyles.flush : referenceStyles.snug}`,
+          ),
+        ).toHaveClass(`tabler-icon-${icon}`);
+        expect(within(option).getByText(`${kind},`)).toHaveClass("sr-only");
+      }
+    });
+    const page = screen.getByRole("option", { name: /^Inbox\s*Page$/ });
+    expect(page.querySelector(`.${referenceStyles.icon}`)).toBeNull();
+    // A grid row's own label reads the same words before the detail.
+    rerender(
+      palette([
+        {
+          label: "Settings",
+          destinations: [
+            {
+              key: "sound-setting",
+              label: "Notifications",
+              detail: "Sound",
+              icon: ChatCircleIcon,
+              content: <button type="button">Sound</button>,
+              run: vi.fn(),
+            },
+          ],
+        },
+      ]),
+    );
+    for (const [id, , kind, name] of rows)
+      screen.getByRole("row", {
+        name: new RegExp(`^match in ${id} — ${kind}, ${name} · `),
+      });
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 function peopleSession(
   session: ReturnType<typeof createRelaySession>["session"],
@@ -5428,6 +5565,7 @@ it("opens an existing DM from a person row and reports a failed start", async ()
     bob = keypair();
   const discovery = [
     metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),
@@ -5447,6 +5585,12 @@ it("opens an existing DM from a person row and reports a failed start", async ()
     { pubkey: bob.pubkey, name: "Ally Bob" },
   ]);
   t.open.mockRejectedValueOnce(new Error("Relay refused the DM."));
+  // The relay's DM visibility has loaded and hides nothing.
+  await owner.session.channelLifecycle.refreshVisibility();
+  expect(owner.session.channelLifecycle.snapshot()).toMatchObject({
+    status: "ready",
+    hidden: [],
+  });
   const openConversation = vi.fn();
   try {
     render(
@@ -5479,6 +5623,209 @@ it("opens an existing DM from a person row and reports a failed start", async ()
   } finally {
     cleanup();
     owner.dispose();
+  }
+});
+
+it("opens a DM from a person row through the confirmed open until the relay's hidden DMs load", async () => {
+  // Before the first visibility snapshot, a DM the relay hides looks
+  // visible. The confirmed open asks the relay to unhide it, so the sidebar
+  // cannot hide the row once the snapshot lands.
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const discovery = [
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { display_name: "Alice Chen", name: "ally" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  // A username match leaves the DM out of Direct messages, so the person row
+  // is what opens it.
+  const t = peopleSession(owner.session);
+  t.open.mockResolvedValueOnce("dm");
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="ally"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    const people = within(await screen.findByRole("group", { name: "People" }));
+    const row = await people.findByRole("option", { name: /Alice Chen/ });
+    expect(row.querySelector(".text-subtle")?.textContent).toBe(
+      "@ally · Direct message",
+    );
+    expect(owner.session.channelLifecycle.snapshot().status).toBe("idle");
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm"),
+    );
+    expect(t.open).toHaveBeenCalledExactlyOnceWith(
+      [alice.pubkey],
+      expect.any(AbortSignal),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each(["loading", "error"] as const)(
+  "opens a DM from a person row through the confirmed open while the relay's hidden DMs are %s",
+  async (status) => {
+    // A refresh keeps the last hidden set, which may be stale, and a failed
+    // one never replaces it, so neither shows the DM is still visible.
+    const relay = keypair(),
+      viewer = keypair(),
+      alice = keypair();
+    const discovery = [
+      metadata(relay, "dm", "opaque", 1700000000, [
+        ["hidden", ""],
+        ["t", "dm"],
+        ["private", ""],
+      ]),
+      roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+      profile(alice, { display_name: "Alice Chen", name: "ally" }),
+    ];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.search !== undefined)) return [];
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    const t = peopleSession(owner.session);
+    t.open.mockResolvedValueOnce("dm");
+    const lifecycle = owner.session.channelLifecycle;
+    const visibility = {
+      ...lifecycle.snapshot(),
+      status,
+      hidden: Object.freeze([]),
+    };
+    const session = {
+      ...t.session,
+      channelLifecycle: {
+        ...lifecycle,
+        snapshot: () => visibility,
+        subscribe: () => () => {},
+      },
+    } as typeof t.session;
+    const openConversation = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={session}
+          query="ally"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+        />,
+      );
+      const people = within(
+        await screen.findByRole("group", { name: "People" }),
+      );
+      const row = await people.findByRole("option", { name: /Alice Chen/ });
+      expect(row.querySelector(".text-subtle")?.textContent).toBe(
+        "@ally · Direct message",
+      );
+      fireEvent.click(row);
+      await waitFor(() =>
+        expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm"),
+      );
+      expect(t.open).toHaveBeenCalledExactlyOnceWith(
+        [alice.pubkey],
+        expect.any(AbortSignal),
+      );
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("opens a sidebar-hidden DM from a person row when this connection cannot start DMs", async () => {
+  // Relay-signed DM metadata carries NIP-29 `hidden`; the row must still find
+  // the DM, or it would ask a connection without DMs to start one.
+  const scope = "search-hidden-dm-unavailable";
+  writeView(scope, "hidden-dms", [{ id: "dm" }]);
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const discovery = [
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { name: "Alice Chen" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const open = vi.fn();
+  const session = {
+    ...owner.session,
+    directMessages: {
+      ...owner.session.directMessages,
+      available: false,
+      open,
+    },
+  } as typeof owner.session;
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="alice"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+        sidebarScope={scope}
+      />,
+    );
+    const people = within(await screen.findByRole("group", { name: "People" }));
+    const row = await people.findByRole("option", { name: /Alice Chen/ });
+    expect(row.querySelector(".text-subtle")?.textContent).toBe(
+      "Direct message",
+    );
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm"),
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+    clearViewScope(scope);
   }
 });
 
@@ -5690,6 +6037,7 @@ it.each([true, false])(
     const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
     const dm = (id: string, member: string) => [
       metadata(relay, id, "opaque", 1700000000, [
+        ["hidden", ""],
         ["t", "dm"],
         ["private", ""],
       ]),
@@ -5878,6 +6226,7 @@ it.each([
   const lower = exactName.toLowerCase();
   const dm = (id: string, member: string) => [
     metadata(relay, id, "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),
@@ -6505,6 +6854,7 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
   ];
   const discovery = dms.flatMap(({ id, key, name }) => [
     metadata(relay, id, "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),
@@ -6584,6 +6934,17 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
       [dms[0]?.key.pubkey],
       expect.any(AbortSignal),
     );
+    // So does the DM the relay's visibility snapshot hides.
+    open.mockResolvedValueOnce("relay-dm");
+    fireEvent.click(await people.findByRole("option", { name: /Scooby/ }));
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenLastCalledWith("relay-dm"),
+    );
+    expect(open).toHaveBeenLastCalledWith(
+      [dms[1]?.key.pubkey],
+      expect.any(AbortSignal),
+    );
+    expect(open).toHaveBeenCalledTimes(2);
     // When the sidebar restores the row, search follows without remounting.
     act(() => {
       writeView(scope, "hidden-dms", []);

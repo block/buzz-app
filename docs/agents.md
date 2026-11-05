@@ -68,8 +68,8 @@ origins. It defaults to no access. Desktop preview releases enable bb-block only
 Consent and Settings use this list. The Agents service also checks it before
 opening a connection and on each tool call. See [configuration](configuration.md#external-mcp-community-flag).
 
-Buzz desktop accepts `buzz://mcp-authorize` requests from local apps. Opening a
-link only shows consent. The owner selects a community and an app-held,
+Buzz desktop accepts `buzz://mcp-authorize` requests from local apps. A new request shows consent. A valid saved approval can restore a connection
+without new consent. The owner selects a community and an app-held,
 unprotected agent, then selects **Authorize** or **Deny**. No plugin specific
 to the external app is required. The bundled Agents plugin owns the native MCP
 permission. **Settings > External apps** shows the connection and **Revoke access**.
@@ -99,7 +99,8 @@ Bearer <token>`. Notifications return 202. There is no SSE or DELETE endpoint.
 Each grant admits one upstream session; the external app shares it among its
 agents. A second initialization stops the grant. Revocation, a community or
 identity change, or the end of the owning agent runtime, plugin, or app also
-stops it. Start setup again in the external app after a connection ends.
+stops it. A version 1 client needs new setup after its session ends. Version 2
+can use saved approval to create another session.
 
 The read scope allows `channel_list`, `channel_get`, and `read`. The post scope
 allows `send` and `reply_in_subthread`. Buzz classifies each built-in tool through
@@ -128,6 +129,61 @@ the linked message's channel and thread; it cannot combine with `channel` or
 `mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
 Unknown fields are rejected. File access, commands, Git credentials, and plugin
 tools are unavailable. Connection credentials must stay out of logs and messages.
+
+### Durable external approval
+
+Version 2 uses the same request fields and callback as version 1. Initial consent
+saves approval for 30 days. An authenticated reconnect renews valid approval
+for another 30 days after the current connection checks pass. Approval expires
+after 30 days without renewal. Expired or revoked approval requires new owner
+consent. The native credential store holds its random ID and
+256-bit reconnect secret. Approval binds the client display name, signed-in
+owner, agent membership, canonical community origin, and exact scopes. The
+webview receives only the public approval. Agent signing keys stay in Buzz.
+Version 1 remains limited to its current session.
+
+The one-use S256 exchange returns the normal MCP descriptor plus `pairing`:
+`{id,secret,approval:{client,viewer,agent,community,scopes},expires_at,counter}`.
+`expires_at` is a Unix time in seconds. `counter` starts at zero. The external
+client keeps this record in its native credential store. It never puts the
+secret in a link, workspace, log, or agent tool result.
+
+A reconnect link uses version 2 and adds `pairing_id`, `counter`, and `proof`.
+The client saves an increased counter before opening the link. Buzz accepts
+only a greater counter and saves it before it starts a fresh session. A lost
+handshake can skip a counter. A counter is a positive integer of at most
+999999999999999. The proof is unpadded base64url HMAC-SHA256 with the decoded
+reconnect secret as its key. Its input is the UTF-8 JSON array, with no spaces:
+
+```text
+["buzz-resume-request-v1",id,counter,callback,state,code_challenge]
+```
+
+Buzz checks the proof in native code. It checks the current owner, community,
+agent availability, and saved scopes through the Agents service. The callback
+carries a fresh one-use code and exchange endpoint. It also carries `proof`,
+with this HMAC input:
+
+```text
+["buzz-resume-response-v1",id,counter,state,code,exchange_url]
+```
+
+The client checks this proof before exchange. The endpoint can change after a
+restart. The exchange returns the same approval and secret, the accepted
+counter, a renewed `expires_at`, and a fresh bearer. Reservation of a counter
+does not renew approval. The client accepts only an unchanged ID, secret,
+approval, and accepted counter. The returned expiry must not decrease or exceed
+30 days from the current time. The client saves the renewed record before it
+initializes that one-session bearer.
+Neither side resumes or repeats a tool request.
+
+External apps restores the saved approval in Settings. **Revoke access** first
+erases the saved approval, then closes the live session. Revoke also cancels
+an in-flight initial approval. Page unload and connection loss close sessions
+without erasing approval. Every authenticated native request checks approval
+and expiry. The Agents service also checks current identity and community
+before tool dispatch. A changed identity, unavailable agent, changed community,
+revocation, or expiry cannot grant access. Added scopes require new owner consent.
 
 ## Managing plugins from a conversation
 
@@ -182,6 +238,41 @@ older app or remote host.
 Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
+
+### Plugin execution (preview)
+
+A native harness can opt into plugin execution with `execution: true` and a
+per-agent `retire` hook. A plugin declares `host.agentExecution` with the harness
+keys and calls `agents.registerExecution`. Its provider supplies `connect`, an
+absolute `workspace`, process I/O, file reads, directory resolution, and
+idempotent cleanup. The adapter owns transport, target credentials, allocation,
+reuse, expiry, and file access limits.
+
+The adapter selects itself with `agents.bindExecution(agent.key, { id, config })`.
+This write-once choice belongs to the agent's membership. It does not name a
+fixed workstation. The runner requires native custody and idle turns, then
+retires the current harness before it saves the choice. Admission reads durable
+state so another window's remote choice cannot start local work. Protected
+agents cannot use plugin execution.
+Agent snapshots include `executionBinding` so mounted controls observe a saved choice.
+
+The harness saves a session key before it calls
+`agents.execution(agent.key, { key, intent, signal })`. The first successful open
+changes `intent` from `new` to `existing`. Retries and app restarts keep the key.
+The adapter receives the trusted agent identity, key, intent, and abort signal.
+Repeated opens with the same key must use the same allocation.
+
+Buzz keeps identity, tools, hooks, and session controls with their existing
+owners. Adapter unload or session abort stops owned processes and rejects new
+work. Cleanup preserves the adapter's saved target mapping. A missing target
+returns `code: "EXECUTION_SESSION_RESET_REQUIRED"`; the harness must not resume
+old state in an empty replacement.
+
+Codex uses this contract to run `codex app-server` on the target. Each conversation
+session keeps its key and workspace across later turns and app restarts. **Start
+a new session** requests another allocation. **Interrupt** stops pending setup
+and keeps the key for retry. Activity reads the saved session inventory. Remote
+usage is unavailable. Settings and model discovery do not create targets.
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
@@ -386,7 +477,15 @@ in its profile panel.
 In completed owned-agent panes, inactive sections unmount. Switching sections
 with an unsaved draft asks for confirmation; a confirmed discard also clears a
 pending provider choice. Pending saves keep their section mounted until they
-settle, so failures remain visible.
+settle, so failures remain visible. On the Agents page, choosing another agent
+(from the grid, a card's menu, Create or the marketplace) or closing the panel
+asks the same way, including for an unsaved name or a staged harness change.
+While a save is pending, the selection stays: the agents grid is marked busy,
+and its other cards grey as the panel's other section tabs do. Focus in the
+grid follows the answer: it returns to the kept card, or goes to the card
+chosen or closed. Closing the panel while focus is inside it, with or without a
+prompt, moves focus to the closed agent's card. Import opens as a dialog over the page, so the open agent and
+its draft stay. Deleting an agent closes only its own panel, without asking.
 
 A reviewed provider choice remains a host-owned draft until the form's Save
 action succeeds or the owner confirms discarding it. While it is pending, the
@@ -1276,6 +1375,13 @@ guidance. Keep the selected model and effort accessible, preserve compact chip
 appearance and truncation, and offer a trailing action to restore inheritance
 without duplicating the current model as the first option. Provider selection
 continues to use a searchable Combobox.
+
+Builderlab Identity and creation reuse the shared family → model menu, with a
+separate compact Thinking selector. Builderlab requires an explicit supported
+model/thinking pair rather than an inherited default. Its plugin owns catalog
+family aliases; changing the model clears the thinking choice. Creation places
+these controls beside the host-owned Harness row in one SettingsGroup, while
+keeping sign-in/recovery and Instructions outside the group.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,

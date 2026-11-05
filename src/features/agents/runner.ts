@@ -93,6 +93,7 @@ import {
   type Stream,
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
+import type { DeviceSettings } from "../../shared/device-settings";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -468,7 +469,7 @@ export type RunnerHost = {
   /** The team sections of its prompt; empty without a team. */
   team(key: AgentKey): string;
   /** What its next run starts with, from this device's storage only. */
-  start(agent: Agent): Start<unknown>;
+  start(agent: Agent): Start<unknown> | Promise<Start<unknown>>;
   protection?(agent: Agent): AgentHandle["protection"];
   agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
   createAgent(
@@ -487,6 +488,8 @@ export type RunnerHost = {
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
+  /** Buzz settings on this device, where there are any. */
+  settings?(): DeviceSettings | undefined;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2509,7 +2512,7 @@ export class AgentRunners {
         handle.protection.assertAvailable();
       }
       const pick = await pickFor(job.trigger, agent, type);
-      const start = this.host.start(agent);
+      const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
@@ -2673,6 +2676,7 @@ export class AgentRunners {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
+    const settings = run ? this.host.settings?.() : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -2767,6 +2771,8 @@ export class AgentRunners {
         }),
         templates: () => this.host.templates(agent),
         tabs: () => this.host.tabs(agent),
+        // Only a run's: a plugin acting through the agent doesn't get them.
+        ...(settings && { settings }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

@@ -2,6 +2,10 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Component, useState, type ReactNode } from "react";
 import { SidebarIcon } from "../../shared/design-system/icons/index";
 import type { RegisteredPanel } from "../../features/panels/service";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../../features/conversation/ContributionBoundary";
 
 export function PanelLaunchers({
   panels,
@@ -14,18 +18,19 @@ export function PanelLaunchers({
 }) {
   return panels
     .filter((panel) => panel.launcher || panel.toolbar)
-    .map((panel) =>
-      panel.toolbar ? (
-        <ToolbarBoundary
-          key={`${panel.key}:${panel.revision}`}
-          title={panel.title}
-        >
-          <panel.toolbar />
-        </ToolbarBoundary>
-      ) : (
+    .map((panel) => {
+      const key = `${panel.key}:${panel.revision}`;
+      if (panel.toolbar)
+        return (
+          <ToolbarBoundary key={key} title={panel.title}>
+            <panel.toolbar />
+          </ToolbarBoundary>
+        );
+      const Badge = panel.launcher?.badge;
+      const button = (
         <IconButton
           type="button"
-          key={`${panel.key}:${panel.revision}`}
+          key={key}
           variant="chrome"
           aria-label={panel.title}
           title={panel.title}
@@ -38,8 +43,20 @@ export function PanelLaunchers({
             />
           }
         />
-      ),
-    );
+      );
+      return Badge ? (
+        <span className="shell-toolbar-launcher" key={key}>
+          {button}
+          <span className="shell-toolbar-badge">
+            <ContributionBoundary key={contributionKey(panel)} fallback={null}>
+              <Badge />
+            </ContributionBoundary>
+          </span>
+        </span>
+      ) : (
+        button
+      );
+    });
 }
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);

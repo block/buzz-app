@@ -10966,6 +10966,26 @@ it("discards a kept rewrite whose message is not here to open only when Edit is 
   expect(readView("scope", key, null)).toBeNull();
 });
 
+it("asks again before discarding a kept rewrite once a send clears that notice", async () => {
+  const { review, older, key } = reviewAfterKeptRewrite("newer");
+  const notice =
+    "Your unsaved edit of another message can't be opened here. Choose Edit again to discard it.";
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(screen.getByRole("alert")).toHaveTextContent(notice);
+  review.fill("Comment");
+  review.submit();
+  await waitFor(() => expect(review.input()).toHaveValue(""));
+  expect(review.messages.reply).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.keyDown(review.input(), { key: "ArrowUp" });
+  expect(review.input()).toHaveAccessibleName("Reply to thread");
+  expect(screen.getByRole("alert")).toHaveTextContent(notice);
+  expect(readView("scope", key, null)).toMatchObject({
+    id: older.id,
+    draft: { text: "Rewritten older" },
+  });
+});
+
 it("does not open a message by itself once its kept edit ends while the composer waits", () => {
   const root = "a".repeat(64);
   const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });

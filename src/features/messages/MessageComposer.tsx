@@ -62,6 +62,7 @@ import {
   markdownRanges,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
+import { useKeptEdit } from "./use-kept-edit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
@@ -128,6 +129,7 @@ import {
   useCallback,
   useId,
   useLayoutEffect,
+  useReducer,
   useRef,
   useState,
   useMemo,
@@ -255,16 +257,11 @@ export function flushPendingDraft(scope: string, key: string) {
   }
   return true;
 }
-// The edit each composer in this window has open, so a quiet resume leaves it
-// alone and choosing Edit elsewhere takes it over. handOver() is false while
-// the kept record lacks its text.
-const openEdits = new Map<
-  object,
-  { view: string; id: string; handOver(): boolean }
->();
-const discardKeptNotice =
-  "Your unsaved edit of another message can't be opened here. Choose Edit again to discard it.";
 const editAttachmentNotice = "Finish editing before attaching new files.";
+/** What the composer reports. A report that a kept rewrite of another message
+ * cannot open here names that message: Edit chosen while it shows discards
+ * the rewrite. */
+type Report = { error: string; discard?: string };
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -871,7 +868,6 @@ function Composer({
     setConflict(true);
   }
   const [storageFailed, setStorageFailed] = useState(false);
-  const [editStorageFailed, setEditStorageFailed] = useState(false);
   // A composer with nothing saved starts with the agents the viewer's latest
   // message in its conversation notified, in memory only: a draft is saved
   // once the user types, removes a mention or sends here, and relay history,
@@ -1383,11 +1379,7 @@ function Composer({
       keepEdit(next);
       return;
     }
-    // A draft in use is not replaced by a kept edit until Edit is chosen,
-    // in this mount or a later one. An edit open elsewhere still reopens.
-    setResuming(undefined);
-    if (![...openEdits.values()].some((edit) => edit.view === openView))
-      resumeKept(false);
+    keptEdit.drafted();
     if (submission) {
       // Submission recovery checks the durable prompt before restoring a
       // rejected send. It must see newer edits made in another window.
@@ -1472,20 +1464,17 @@ function Composer({
     setStorageFailed(result === "failed");
     return result;
   }
-  /** Keeps the open edit's text for a remount or another composer. A record
-   * that cannot be updated is cleared, so neither takes its older text for the
-   * latest; the text then stays only in this editor. */
+  /** Keeps the open edit's text for a remount or another composer. */
   function keepEdit(draft = valueRef.current) {
-    if (!editing.target || !editKey) return;
-    const kept = writeView(scope, editKey, {
-      id: editing.target.id,
-      base: editing.base(),
-      draft,
-    });
-    if (!kept) writeView(scope, editKey, null);
-    setEditStorageFailed(!kept);
+    if (editing.target) keptEdit.keep(editing.target.id, editing.base(), draft);
   }
-  const [error, setError] = useState<string>();
+  // A plain message replaces any report, and with it a discard it named.
+  const [report, setError] = useReducer(
+    (_: Report | undefined, next: Report | string | undefined) =>
+      typeof next === "string" ? { error: next } : next,
+    undefined,
+  );
+  const error = report?.error;
   const [pasteTooLong, setPasteTooLong] = useState(false);
   const [attachmentError, setAttachmentError] =
     useState<Readonly<{ title: string; description: string }>>();
@@ -1499,10 +1488,7 @@ function Composer({
   const editing = useMessageEdit(session, () => {
     const saved = beforeEdit.current;
     if (!saved) return;
-    // An edit handed over to another composer keeps its record there.
-    if (openEdits.delete(beforeEdit) && editKey)
-      writeView(scope, editKey, null);
-    setEditStorageFailed(false);
+    keptEdit.closed();
     valueRef.current = saved.value;
     updateDraft(saved.value);
     saved.restore();
@@ -2208,38 +2194,6 @@ function Composer({
     caret.current = undefined;
   });
   const requestDeletion = useMessageDeletion();
-  const openView = `${scope}\n${editKey}`;
-  const keptRecord = () =>
-    editKey
-      ? readView<Record<string, unknown> | null>(scope, editKey, null)
-      : null;
-  const keptEdit = () => {
-    const kept = keptRecord();
-    return typeof kept?.id === "string" && typeof kept.base === "string"
-      ? {
-          id: kept.id,
-          base: kept.base,
-          draft: mentionDraft(kept.draft),
-          resume: kept.resume !== false,
-        }
-      : undefined;
-  };
-  /** Whether the kept edit reopens unasked. A new-message draft written while
-   * it is closed stops that until Edit is chosen. */
-  const resumeKept = (resume: boolean) => {
-    const kept = keptRecord();
-    if (editKey && kept && (kept.resume !== false) !== resume)
-      writeView(scope, editKey, { ...kept, resume });
-  };
-  // Another composer took this edit over: return to the draft without moving
-  // focus here. Text that could not be kept stays here.
-  const handOver = useEffectEvent(() => {
-    if (editStorageFailed) return false;
-    openEdits.delete(beforeEdit);
-    editing.close();
-    focusRestoredDraft.current = false;
-    return true;
-  });
   /** Opens `row` in the editor, with its kept unsaved edit if there is one.
    * A quiet start, resuming that edit unasked, neither reports a message that
    * can no longer be edited nor moves focus. False: this composer cannot edit
@@ -2257,7 +2211,7 @@ function Composer({
       const item = editableRows().find((item) => item.id === id);
       return item && lastEditableMessage(session, [item]) ? item : undefined;
     };
-    let current = editableRow(row.id);
+    const current = editableRow(row.id);
     if (!current) {
       if (!quiet) setError("This message is no longer available to edit.");
       return true;
@@ -2269,45 +2223,31 @@ function Composer({
       return true;
     }
     flushDraft();
-    const other = [...openEdits.values()].find(
-      (edit) => edit.view === openView,
-    );
-    // The kept record holds the latest text of the edit taken over.
-    if (other && (quiet || other.id !== current.id || !other.handOver())) {
+    const opening = keptEdit.open(current, editableRow, quiet, report?.discard);
+    if (!opening) {
       if (!quiet) setError("Finish or cancel your current edit first.");
       return true;
     }
-    const kept = keptEdit();
-    // A quiet start only resumes this message's kept edit, which may have
-    // ended, been replaced or been kept closed while it waited.
-    if (quiet && (kept?.id !== current.id || !kept.resume)) return true;
-    // A kept rewrite of another message opens in its place. One whose message
-    // is not here to open, perhaps deleted, is discarded only when Edit is
-    // chosen again while that is said.
-    const earlier = kept && kept.id !== current.id;
-    if (earlier) {
-      const keptRow = editableRow(kept.id);
-      if (keptRow) current = keptRow;
-      else if (error !== discardKeptNotice) {
-        setError(discardKeptNotice);
-        return true;
-      } else if (editKey) writeView(scope, editKey, null);
+    if ("discard" in opening) {
+      setError({
+        error:
+          "Your unsaved edit of another message can't be opened here. Choose Edit again to discard it.",
+        discard: opening.discard,
+      });
+      return true;
     }
-    const resumed = kept?.id === current.id ? kept : undefined;
-    // Chosen again, it reopens on return as an edit left open does.
-    if (resumed) resumeKept(true);
+    const { kept } = opening;
     completion.invalidate();
     beforeEdit.current = {
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    openEdits.set(beforeEdit, { view: openView, id: current.id, handOver });
     const body = editing.start(
-      current,
+      opening.row,
       (body) => composerMarkdown(mentionDraft(body)),
-      resumed?.base,
+      kept?.base,
     );
-    const next = resumed?.draft ?? mentionDraft(body);
+    const next = kept?.draft ?? mentionDraft(body);
     valueRef.current = next;
     updateDraft(next);
     input.current.reset(next);
@@ -2315,7 +2255,7 @@ function Composer({
     if (!quiet || document.activeElement === input.current)
       caret.current = next.text.length;
     setError(
-      resumed && earlier
+      opening.redirected
         ? "Finish or cancel your current edit first."
         : undefined,
     );
@@ -2366,48 +2306,40 @@ function Composer({
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
-  // An edit kept from an earlier mount reopens once its message loads, unless
-  // another composer in this window has it open. Refreshed rows that load
-  // without it, a change to the new-message draft, or an error the composer
-  // reports for it, as for a recovered send, end the wait. A draft change also
-  // keeps a later mount from waiting (see resumeKept).
-  // It starts in a later commit than the mount: StrictMode's replayed mount
-  // effects rebuild the editor from the draft and would drop its reset.
-  const [resuming, setResuming] = useState<string>();
-  const resume = useEffectEvent(() => {
-    const kept = keptEdit();
-    if (resumeEdit && kept?.resume) setResuming(kept.id);
-  });
-  useEffect(() => resume(), []);
-  useEffect(() => () => void openEdits.delete(beforeEdit), []);
   // A thread's rows and load signal arrive as props, which re-render it.
   const subscribeResume = useCallback(
     (listener: () => void) =>
-      resuming && !threadRootId
-        ? (session.channels.subscribeWindow?.(channelId, listener) ??
-          noSubscription())
-        : noSubscription(),
-    [resuming, threadRootId, session.channels, channelId],
+      threadRootId
+        ? noSubscription()
+        : (session.channels.subscribeWindow?.(channelId, listener) ??
+          noSubscription()),
+    [threadRootId, session.channels, channelId],
   );
-  const resumeRow = useSyncExternalStore(subscribeResume, () => {
-    if (!resuming) return;
-    const row = editableRows().find((item) => item.id === resuming);
-    if (row) return row;
-    // A thread has loaded once it supplies the viewer's latest message there,
-    // a channel once its history is revalidated: a cached head, as restored
-    // after a reload, can predate the message.
-    if (threadRootId) return threadSeed ? "missing" : undefined;
-    const history = session.channels.window?.(channelId);
-    return history?.status === "ready" && history.freshness !== "cached"
-      ? "missing"
-      : undefined;
+  const keptEdit = useKeptEdit({
+    scope,
+    key: editKey,
+    resume: resumeEdit,
+    find: (id) => {
+      const row = editableRows().find((item) => item.id === id);
+      if (row) return row;
+      // A thread has loaded once it supplies the viewer's latest message
+      // there, a channel once its history is revalidated: a cached head, as
+      // restored after a reload, can predate the message.
+      if (threadRootId) return threadSeed ? "missing" : undefined;
+      const history = session.channels.window?.(channelId);
+      return history?.status === "ready" && history.freshness !== "cached"
+        ? "missing"
+        : undefined;
+    },
+    subscribe: subscribeResume,
+    ready: active && !editingDisabled,
+    blocked: !!error,
+    reopen: (row) => startEdit(row, true),
+    close: () => {
+      editing.close();
+      focusRestoredDraft.current = false;
+    },
   });
-  useEffect(() => {
-    if (!resumeRow) return;
-    if (resumeRow === "missing" || error) setResuming(undefined);
-    else if (active && !editingDisabled && startEdit(resumeRow, true))
-      setResuming(undefined);
-  }, [resumeRow, error, active, editingDisabled]);
   useEffect(() => {
     if (!editScope) return;
     const start = (row: ChannelMessage) => startEdit(row);
@@ -3350,10 +3282,7 @@ function Composer({
         editableRows().find((row) => row.id === editing.target?.id),
       );
       // The outbox keeps a submitted edit, a failed one included.
-      if (submitted && editKey) {
-        writeView(scope, editKey, null);
-        setEditStorageFailed(false);
-      }
+      if (submitted) keptEdit.saved();
       return;
     }
     if (
@@ -5014,7 +4943,7 @@ function Composer({
               current choices remain until this composer closes.
             </p>
           )}
-          {editing.target && editStorageFailed && (
+          {editing.target && keptEdit.storageFailed && (
             <div>
               <p role="alert">
                 Could not save this edit on this device. Your changes are kept

@@ -22,8 +22,12 @@ import {
   type ChannelLifecycleSettings,
 } from "./channel-lifecycle-protocol";
 
+/** The channel state the action relied on may be out of date; refreshing
+ * channels is the recovery. */
+export class ChannelLifecycleStale extends Error {}
+
 /** No automatic or same-dialog retry after a request may have reached the relay. */
-export class ChannelLifecycleUnconfirmed extends Error {
+export class ChannelLifecycleUnconfirmed extends ChannelLifecycleStale {
   constructor(reason: unknown) {
     super(
       `The request may have taken effect. Refresh channels before trying again. ${reason instanceof Error ? reason.message : String(reason)}`,
@@ -489,11 +493,11 @@ export function createChannelLifecycle({
               hide: settings.canHide,
             }[action];
             if (!permitted)
-              throw new Error(
-                action === "leave" && settings.leaveReason
-                  ? settings.leaveReason
-                  : "This action is no longer permitted. Refresh channel permissions.",
-              );
+              throw action === "leave" && settings.leaveReason
+                ? new Error(settings.leaveReason)
+                : new ChannelLifecycleStale(
+                    "This action is no longer permitted. Refresh channels to see what you can do now.",
+                  );
           };
           if (await authorize()) return;
           const fresh = lifecycleTemplate(action, id);
@@ -587,7 +591,7 @@ export function createChannelLifecycle({
             }
           }
           throw new Error(
-            "The relay accepted the request, but the change is not confirmed. Refresh channels before trying again.",
+            "The relay accepted the request, but the change is not confirmed.",
           );
         });
       } catch (error) {

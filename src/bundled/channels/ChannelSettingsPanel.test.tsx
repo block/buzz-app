@@ -532,7 +532,7 @@ it.each([
     // As the lifecycle owner throws it when readback never shows the flag.
     new ChannelLifecycleUnconfirmed(
       new Error(
-        "The relay accepted the request, but the change is not confirmed. Refresh channels before trying again.",
+        "The relay accepted the request, but the change is not confirmed.",
       ),
     ),
     "Saved, but not confirmed yet. Try again to check.",

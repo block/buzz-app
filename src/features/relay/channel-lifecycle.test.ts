@@ -19,6 +19,7 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
   createChannelLifecycle,
+  ChannelLifecycleStale,
   ChannelLifecycleUnconfirmed,
 } from "./channel-lifecycle";
 import {
@@ -644,8 +645,11 @@ it("rereads authority after signing; a removed admin cannot publish", async () =
     ]);
     return finalizeEvent(event, key);
   });
-  await expect(h.owner.capability.run("archive", id)).rejects.toThrow(
-    "no longer permitted",
+  const run = h.owner.capability.run("archive", id);
+  // Stale state the viewer can refresh, and copy naming that control.
+  await expect(run).rejects.toBeInstanceOf(ChannelLifecycleStale);
+  await expect(run).rejects.toThrow(
+    /^This action is no longer permitted\. Refresh channels to see what you can do now\.$/,
   );
   expect(h.publish).not.toHaveBeenCalled();
   h.owner.dispose();
@@ -939,9 +943,14 @@ describe("Leave confirmation across access revocation", () => {
       h.read.mockRejectedValueOnce(cancelled());
     });
     try {
-      const rejected = expect(
-        h.owner.capability.run("leave", id),
-      ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      const run = h.owner.capability.run("leave", id);
+      const rejected = Promise.all([
+        expect(run).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed),
+        // The wrapper names the recovery once; the readback reason adds none.
+        expect(run).rejects.toThrow(
+          /^The request may have taken effect\. Refresh channels before trying again\. The relay accepted the request, but the change is not confirmed\.$/,
+        ),
+      ]);
       // The retired read is reread after a real macrotask the fake clock
       // does not drive; start the poll budget once that reread is issued.
       while (h.read.mock.calls.length < 4)

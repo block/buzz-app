@@ -22,6 +22,7 @@ import type {
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import {
   createRelaySession,
   type RelaySession,
@@ -414,9 +415,12 @@ function workspace(
   {
     membership,
     lifecycle,
+    handoff = false,
   }: {
     membership?: CommunityMembership;
     lifecycle?: (event: RelayEvent) => Promise<void>;
+    /** Mount the shell's channel navigation, which owns lifecycle actions. */
+    handoff?: boolean;
   } = {},
 ) {
   const owner = createRelaySession(
@@ -469,8 +473,8 @@ function workspace(
   const navigator = createNavigationController(
     createMemoryHistory(),
   ).navigation;
-  const page = (navigation?: PageNavigation) => (
-    <ToastProvider>
+  const page = (navigation?: PageNavigation) => {
+    const content = (
       <ChannelsPage
         relay={relay}
         panels={panels}
@@ -478,8 +482,19 @@ function workspace(
         navigation={navigation}
         membership={membership}
       />
-    </ToastProvider>
-  );
+    );
+    return (
+      <ToastProvider>
+        {handoff ? (
+          <ChannelNavigationProvider relay={relay}>
+            {content}
+          </ChannelNavigationProvider>
+        ) : (
+          content
+        )}
+      </ToastProvider>
+    );
+  };
   const { rerender } = render(page());
   /** Re-route the mounted page; `undefined` returns to the unrouted workspace. */
   const visit = (target?: OpenTarget) =>
@@ -568,6 +583,89 @@ it("hands the community roster to Channel settings and follows the republished f
   await vi.waitFor(() => expect(control).toBeChecked());
   expect(control).not.toHaveAttribute("aria-busy");
   expect(control.closest("dd")?.querySelector("[role=alert]")).toBeNull();
+});
+
+it("a refreshed roster that demotes the viewer retires Archive and Delete in Channel settings", async () => {
+  const viewer = keypair(),
+    authority = keypair(),
+    other = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  // Both records carry roles, as the relay re-signs them on a role change.
+  const roles = (role: "owner" | "member", at: number) => [
+    signed(authority, {
+      kind: 39001,
+      created_at: at,
+      content: "",
+      tags: [
+        ["d", id],
+        ["p", other.pubkey, "owner"],
+        ...(role === "owner" ? [["p", viewer.pubkey, "owner"]] : []),
+      ],
+    }),
+    signed(authority, {
+      kind: 39002,
+      created_at: at,
+      content: "",
+      tags: [
+        ["d", id],
+        ["p", other.pubkey, "", "owner"],
+        ["p", viewer.pubkey, "", role],
+      ],
+    }),
+  ];
+  const events = [
+    metadata(authority, id, "Alpha", undefined, [["t", "stream"]]),
+    ...roles("owner", 1_700_000_000),
+  ];
+  const publish = vi.fn(async () => {});
+  workspace(events, viewer, authority, { lifecycle: publish, handoff: true });
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View channel details" }),
+  );
+  const settings = await screen.findByRole("complementary", {
+    name: "Channel settings",
+  });
+  await within(settings).findByRole("button", { name: "Delete channel" });
+  // Another owner demotes the viewer; this page has not seen it.
+  events.splice(1, 2, ...roles("member", 1_700_000_100));
+  await user.click(
+    within(settings).getByRole("button", { name: "Archive channel" }),
+  );
+  const confirm = await screen.findByRole("dialog", {
+    name: "Archive channel: Alpha",
+  });
+  await user.click(
+    within(confirm).getByRole("button", { name: "Archive channel" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Archive channel failed",
+  });
+  expect(toast).toHaveAccessibleDescription(
+    "This action is no longer permitted. Refresh channels to see what you can do now.",
+  );
+  fireEvent.click(
+    within(toast).getByRole("button", { name: "Refresh channels" }),
+  );
+  expect(
+    screen.queryByRole("dialog", { name: "Archive channel failed" }),
+  ).toBeNull();
+  // The refreshed role remounts the actions; Leave arrives with fresh permissions.
+  await vi.waitFor(() =>
+    expect(
+      within(settings).queryByRole("button", { name: "Archive channel" }),
+    ).toBeNull(),
+  );
+  await within(settings).findByRole("button", { name: "Leave channel" });
+  expect(
+    within(settings).queryByRole("button", { name: "Archive channel" }),
+  ).toBeNull();
+  expect(
+    within(settings).queryByRole("button", { name: "Delete channel" }),
+  ).toBeNull();
+  expect(publish).not.toHaveBeenCalled();
 });
 
 it("selects a default channel the relay adds after the page opened", async () => {

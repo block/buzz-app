@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
+import {
+  ChannelLifecycleStale,
+  type ChannelLifecycleCapability,
+} from "../../features/relay/channel-lifecycle";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { ApiPaused } from "../../features/relay/http-admission";
 import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
@@ -96,7 +99,8 @@ export function ChannelLifecycleDialog({
   completed(): void;
   onSubmit?(): void;
   finalFocus?: DialogProps["finalFocus"];
-  failed?(title: string, message: string): void;
+  /** `refresh`: refreshing channels is the recovery. */
+  failed?(title: string, message: string, refresh: boolean): void;
   /** Already chosen without a dialog, as Undo is: run it on mount. */
   confirmed?: boolean;
   /** Offered from an immediate archive's result toast. */
@@ -197,7 +201,11 @@ export function ChannelLifecycleDialog({
       } else if (!controller.signal.aborted) {
         const message = error instanceof Error ? error.message : String(error);
         if (callbacks.current.failed)
-          callbacks.current.failed(`${copy.title} failed`, message);
+          callbacks.current.failed(
+            `${copy.title} failed`,
+            message,
+            error instanceof ChannelLifecycleStale,
+          );
         else setError(message);
       }
     } finally {

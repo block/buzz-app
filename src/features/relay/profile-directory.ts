@@ -565,6 +565,12 @@ export function createProfileDirectory(
       return ensure(ids, "background", true);
     },
     event: (id: string) => events.peek(id),
+    /** Up to `count` held kind 0 events, least recently used first. */
+    recent: (count: number) =>
+      [...events.keys()].slice(-count).flatMap((id) => {
+        const event = events.peek(id);
+        return event ? [event] : [];
+      }),
     stats: () => events.stats(),
     dispose() {
       closed = true;

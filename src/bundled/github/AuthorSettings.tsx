@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
-import { Header } from "../../shared/design-system/ui/Header";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -30,9 +30,9 @@ export function AuthorSettings({
     parsed.text !== saved.text ||
     fallback !== saved.fallback;
   return (
-    <section aria-label="GitHub settings">
-      <Header
-        title="GitHub"
+    <section aria-label="GitHub comment authors settings">
+      <InlineHeader
+        title="Comment authors"
         subtitle="Agents watching a pull request are woken by CI, and by the comments and reviews these rules allow."
       />
       <form

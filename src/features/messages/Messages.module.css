@@ -563,6 +563,11 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 .attachmentImage video {
   object-fit: contain;
 }
+/* The scale hides the blur's faded edge. */
+.attachmentImage img[data-thumbnail] {
+  filter: blur(12px);
+  transform: scale(1.1);
+}
 .mediaGridBadge {
   position: absolute;
   inset-inline-start: var(--space-2);
@@ -3280,6 +3285,23 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
   padding-block: 0;
+}
+.newMessages {
+  width: min(100%, var(--timeline-measure));
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-2) auto;
+  color: var(--text-subtle);
+  @apply text-caption;
+}
+.newMessages::before,
+.newMessages::after {
+  content: "";
+  height: 1px;
+  min-width: 0;
+  flex: 1;
+  background: var(--border-standard);
 }
 .activityExpansionRoot {
   display: contents;

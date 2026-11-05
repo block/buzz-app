@@ -1,6 +1,7 @@
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
@@ -815,6 +816,7 @@ export function createTabs({
     close?: AgentViewProps<Config>["close"];
     openConversation?: AgentViewProps<Config>["openConversation"];
   }) {
+    useClockFormat();
     const sessions = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
@@ -834,8 +836,14 @@ export function createTabs({
       (place, signal) => runtime.find(agent.key, place, workspace, signal),
       (channelId) => runtime.channelLabel(agent.key, channelId),
     );
+    // Newest first, the opened conversation's channel above the rest.
     const recent = conversations
       .filter((item) => item.key !== here?.key)
+      .sort(
+        (a, b) =>
+          Number(b.channelId === conversation?.channelId) -
+          Number(a.channelId === conversation?.channelId),
+      )
       .slice(0, CONVERSATION_LIMIT);
     const activity = (key: string) => {
       const running = busy.get(key);

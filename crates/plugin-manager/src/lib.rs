@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod access;
 pub mod imports;
 pub mod managed;
 mod migrate_agent_flag;
@@ -36,9 +37,16 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<UpdatePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<Discovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostGrants>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdatePolicy {
+    pub default_enabled: bool,
 }
 /// Display-only metadata is deliberately forward-compatible. Unknown fields are
 /// ignored so adding a discovery hint does not make a plugin unloadable.
@@ -58,6 +66,9 @@ pub struct HostGrants {
     /// Hook callbacks may observe and influence these agent types.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_hooks: Vec<String>,
+    /// Execution targets may run these native agent types.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_execution: Vec<String>,
     #[serde(default)]
     pub commands: Vec<HostCommand>,
     #[serde(default)]
@@ -224,6 +235,7 @@ impl Manifest {
         }
         if let Some(host) = &self.host {
             if host.agent_hooks.len() > 16
+                || host.agent_execution.len() > 16
                 || host.commands.len() > 16
                 || host.network_origins.len() > 16
                 || host.processes.len() > 16
@@ -237,6 +249,15 @@ impl Manifest {
                 valid_id(kind)?;
                 if !hook_types.insert(key) {
                     return Err("Duplicate agent hook type".into());
+                }
+            }
+            let mut execution_types = std::collections::HashSet::new();
+            for key in &host.agent_execution {
+                let (plugin, kind) = key.split_once('/').ok_or("Invalid agent execution type")?;
+                valid_id(plugin)?;
+                valid_id(kind)?;
+                if !execution_types.insert(key) {
+                    return Err("Duplicate agent execution type".into());
                 }
             }
             if let Some(grant) = &host.federated_identity {
@@ -530,7 +551,7 @@ fn enabled_by_default(id: &str) -> bool {
 /// Bundled ids that older profiles may still hold as installed plugins.
 const FORMERLY_INSTALLED: &[&str] = &["buzz.claude-code", "buzz.codex"];
 /// Host-owned features stay reserved even though they have no catalog entries.
-const BUILT_IN: &[&str] = &["buzz.emoji", "buzz.mentions"];
+const BUILT_IN: &[&str] = &["buzz.emoji", "buzz.mentions", "buzz.plugin-requests"];
 fn is_bundled(id: &str) -> bool {
     bundled_manifests().iter().any(|manifest| manifest.id == id)
 }
@@ -553,6 +574,8 @@ struct Installed {
     #[serde(default)]
     previous_source: Option<InstallSource>,
     enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    update_checks: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     readme_revision: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -746,6 +769,7 @@ pub struct PluginInfo {
     pub manifest: Manifest,
     pub source: &'static str,
     pub enabled: bool,
+    pub update_checks: Option<bool>,
     pub revision: String,
     pub previous: Option<String>,
     pub has_signature: bool,
@@ -864,6 +888,10 @@ impl Manager {
             catalog,
         )
     }
+    /// Repository access rules for Git imports, from the file beside the profile folders.
+    pub fn repository_access(&self) -> access::AccessRules {
+        access::load(&self.home, std::env::var_os(access::PATH_ENV))
+    }
     fn lock(&self) -> Result<File> {
         fs::create_dir_all(&self.root).map_err(err)?;
         let file = OpenOptions::new()
@@ -971,6 +999,7 @@ impl Manager {
                     manifest,
                     source: "bundled",
                     enabled,
+                    update_checks: None,
                     revision: "bundled".into(),
                     previous: None,
                     has_signature: false,
@@ -1011,6 +1040,7 @@ impl Manager {
                 manifest: p.manifest,
                 source: "external",
                 enabled: p.enabled,
+                update_checks: p.update_checks,
                 revision: p.current,
                 previous: p.previous,
                 has_signature,
@@ -1069,6 +1099,7 @@ impl Manager {
                 }
             });
             let enabled = old.is_some_and(|p| p.enabled);
+            let update_checks = old.and_then(|p| p.update_checks);
             let previous_signature = old.and_then(|p| {
                 if p.current == revision {
                     p.previous_signature.clone()
@@ -1088,6 +1119,7 @@ impl Manager {
                     previous_signature,
                     previous_source,
                     enabled,
+                    update_checks,
                     readme_revision,
                     icon_png_revision,
                     icon_jpg_revision,
@@ -1129,6 +1161,14 @@ impl Manager {
                         p.enabled = true;
                     }
                     "disable" => p.enabled = false,
+                    "enable-update-checks" | "disable-update-checks" => {
+                        if p.manifest.updates.is_none()
+                            || !matches!(p.current_source, Some(InstallSource::Git(_)))
+                        {
+                            return Err("This plugin does not support Git update checks".into());
+                        }
+                        p.update_checks = Some(action == "enable-update-checks");
+                    }
                     "remove" => {
                         registry.installed.remove(id);
                     }
@@ -1703,17 +1743,27 @@ mod tests {
         let mut host_ids: Vec<_> = features
             .split("manifest: { ...")
             .skip(1)
-            .map(|entry| manifests[entry.split(',').next().unwrap()].as_str())
+            .map(|entry| manifests[entry.split(',').next().unwrap()].to_string())
             .collect();
+        // A feature whose manifest is written out names its id by a constant.
+        let constants = fs::read_to_string(format!("{root}/../plugins/review-access.ts")).unwrap();
+        host_ids.extend(features.lines().filter_map(|line| {
+            let constant = line.trim().strip_prefix("id: ")?.trim_end_matches(',');
+            let declaration = format!("export const {constant} = \"");
+            let value = constants
+                .lines()
+                .find_map(|line| line.strip_prefix(&declaration))?;
+            Some(value.trim_end_matches("\";").to_string())
+        }));
         host_ids.sort_unstable();
-        let mut reserved_ids = super::BUILT_IN.to_vec();
+        let mut reserved_ids: Vec<_> = super::BUILT_IN.iter().map(|id| id.to_string()).collect();
         reserved_ids.sort_unstable();
         assert_eq!(reserved_ids, host_ids);
     }
 
     #[test]
     fn prebuilt_artifacts_cannot_claim_built_in_conversation_ids() {
-        for id in ["buzz.emoji", "buzz.mentions"] {
+        for id in ["buzz.emoji", "buzz.mentions", "buzz.plugin-requests"] {
             let release = Release {
                 bytes: serde_json::to_vec(&serde_json::json!({
                     "manifest": { "id": id, "name": "Reserved feature", "apiVersion": 1 },
@@ -1936,6 +1986,86 @@ mod tests {
         ] {
             assert!(publisher(&bytes, &sign(invalid)).is_err());
         }
+    }
+
+    #[test]
+    fn update_check_choices_survive_reinstall_update_rollback_and_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let open = || Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let manager = open();
+        let source = Some(super::InstallSource::Git(super::GitSource {
+            repository: "https://example.com/plugins.git".into(),
+            reference: "main".into(),
+            path: ".".into(),
+            commit: None,
+        }));
+        let release = |policy: Option<bool>| {
+            let mut manifest = serde_json::json!({
+                "id": "example.updates", "name": "Updates", "apiVersion": 1
+            });
+            if let Some(default_enabled) = policy {
+                manifest["updates"] = serde_json::json!({"defaultEnabled": default_enabled});
+            }
+            Release {
+                bytes: artifact_from_text(
+                    &manifest.to_string(),
+                    "export function apply() {}".into(),
+                )
+                .unwrap(),
+                signature: None,
+            }
+        };
+        let installed = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "example.updates")
+                .unwrap()
+        };
+        manager
+            .install_artifact(&release(None), source.clone())
+            .unwrap();
+        assert_eq!(installed(&manager).update_checks, None);
+        assert!(manager
+            .change("enable-update-checks", "example.updates")
+            .is_err());
+        for default_enabled in [false, true] {
+            manager
+                .install_artifact(&release(Some(default_enabled)), source.clone())
+                .unwrap();
+            assert_eq!(
+                installed(&manager)
+                    .manifest
+                    .updates
+                    .unwrap()
+                    .default_enabled,
+                default_enabled
+            );
+            for (action, expected) in [
+                ("enable-update-checks", true),
+                ("disable-update-checks", false),
+            ] {
+                manager.change(action, "example.updates").unwrap();
+                manager
+                    .install_artifact(&release(Some(default_enabled)), source.clone())
+                    .unwrap();
+                assert_eq!(installed(&open()).update_checks, Some(expected));
+                manager
+                    .install_artifact(&release(Some(!default_enabled)), source.clone())
+                    .unwrap();
+                assert_eq!(installed(&open()).update_checks, Some(expected));
+                manager.change("rollback", "example.updates").unwrap();
+                assert_eq!(installed(&open()).update_checks, Some(expected));
+                assert!(!installed(&manager).enabled);
+            }
+        }
+        manager.change("remove", "example.updates").unwrap();
+        manager
+            .install_artifact(&release(Some(true)), source)
+            .unwrap();
+        assert_eq!(installed(&open()).update_checks, None);
     }
 
     #[test]
@@ -2660,7 +2790,7 @@ mod tests {
         assert_eq!(plugin.previous, None);
     }
     #[test]
-    fn validates_agent_hook_grants() {
+    fn validates_agent_type_grants() {
         for (keys, valid) in [
             (vec!["buzz.pi/pi"], true),
             (vec!["buzz.pi/pi", "buzz.codex/codex"], true),
@@ -2668,12 +2798,14 @@ mod tests {
             (vec!["buzz.pi/pi", "buzz.pi/pi"], false),
             (vec!["buzz.pi/../pi"], false),
         ] {
-            let manifest: super::Manifest = serde_json::from_value(serde_json::json!({
-                "id": "policy", "name": "Policy", "apiVersion": 1,
-                "host": { "agentHooks": keys },
-            }))
-            .unwrap();
-            assert_eq!(manifest.validate().is_ok(), valid);
+            for field in ["agentHooks", "agentExecution"] {
+                let manifest: super::Manifest = serde_json::from_value(serde_json::json!({
+                    "id": "policy", "name": "Policy", "apiVersion": 1,
+                    "host": { field: keys },
+                }))
+                .unwrap();
+                assert_eq!(manifest.validate().is_ok(), valid);
+            }
         }
     }
 }

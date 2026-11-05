@@ -38,8 +38,10 @@ import {
 } from "../../features/channel-navigation/routes";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
+import type { CommunityMembership } from "../moderation/membership";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
+import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -142,12 +144,15 @@ export function ChannelsPage({
   communities,
   archive,
   read,
+  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
   agents?: Agents | undefined;
   communities?: CommunityReader | undefined;
+  /** The viewer's community role, for the auto-join switch in Channel settings. */
+  membership?: CommunityMembership | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -303,6 +308,7 @@ export function ChannelsPage({
           companion={companion}
           agents={agents}
           communities={communities}
+          membership={membership}
         />
       )}
     </section>
@@ -333,10 +339,12 @@ function ChannelWorkspace({
   communities,
   archive,
   read,
+  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
   agents?: Agents | undefined;
+  membership?: CommunityMembership | undefined;
   companion?: ReactNode;
   communities?: CommunityReader | undefined;
   scope: string;
@@ -523,6 +531,8 @@ function ChannelWorkspace({
     channelId: string;
     queries: RelaySession;
   }>(undefined);
+  // The last resolved channel, saved or computed; see `requestedDestination`.
+  const chosen = useRef<string>(undefined);
   const previewAvailable =
     resolved?.request === navigation
       ? resolved?.available
@@ -548,6 +558,13 @@ function ChannelWorkspace({
           ? queries.channels.get?.(visiblePreview.current.channelId)
           : undefined) ??
         channels.find((channel) => channel.id === selected) ??
+        // A computed choice stays put while its channel is listed, so a channel
+        // flagged or added later never swaps the one being read.
+        channels.find((channel) => channel.id === chosen.current) ??
+        // A new member lands in the community's default channel when it has one.
+        channels.find(
+          (channel) => channel.autoJoin && channel.channelType !== "solo",
+        ) ??
         channels.find((item) => item.channelType !== "solo"));
   // Exact links and saved selections must respect the same Huddle-only entry point.
   const resolving =
@@ -558,6 +575,8 @@ function ChannelWorkspace({
       ? undefined
       : requestedDestination;
   useLayoutEffect(() => {
+    // An open draft resolves nothing; keep the choice for when it closes.
+    if (requestedDestination) chosen.current = requestedDestination.id;
     visiblePreview.current =
       current?.readOnly && !current.cached && !cached
         ? { channelId: current.id, queries }
@@ -783,6 +802,27 @@ function ChannelWorkspace({
           );
       },
     });
+  };
+  const handleCommand = (command: string, signal: AbortSignal) => {
+    if (command.toLowerCase() !== "/leave" || !current || solo) return false;
+    return (async () => {
+      const permissions = await queries.channelLifecycle.load(
+        current.id,
+        signal,
+      );
+      signal.throwIfAborted();
+      if (!permissions.canLeave)
+        throw new Error(
+          permissions.leaveReason ??
+            "You can’t leave this channel with your current permissions.",
+        );
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : undefined;
+      chooseLifecycle(current, "leave", trigger);
+      return true;
+    })();
   };
   // A Solo start that fails leaves its chat for New chat only while this
   // workspace still shows that chat.
@@ -1783,6 +1823,11 @@ function ChannelWorkspace({
       }
       channel={current}
       details={queries.channelDetails}
+      lifecycle={queries.channelLifecycle}
+      membership={membership}
+      session={queries}
+      canOpenLink={canOpenLink}
+      onOpenLink={openLink}
       close={closeSettings}
     >
       <UnreadOptions session={queries} channelId={current?.id} />
@@ -1974,6 +2019,7 @@ function ChannelWorkspace({
               ) : undefined
             }
             onSend={onComposerSend}
+            onCommand={handleCommand}
             focusRequest={composerFocus}
           />
         )}
@@ -2437,7 +2483,14 @@ function ChannelWorkspace({
           }
         }
       >
-        {workspace}
+        <ForwardMessageProvider
+          session={queries}
+          scope={scope}
+          navigation={navigator}
+          renderDialog
+        >
+          {workspace}
+        </ForwardMessageProvider>
       </ConversationChannel>
       {soloMoveNotices}
     </LinkThreadTabContext>

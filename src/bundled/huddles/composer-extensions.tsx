@@ -6,6 +6,7 @@ import type {
 import type { Contribution } from "../../plugins/contributions";
 import type { GifRequests } from "../../features/relay/gifs";
 import { EmojiPicker } from "../emoji/EmojiPicker";
+import { createReactionPicker } from "../emoji/ReactionPicker";
 import { EmojiCompletion } from "../emoji/EmojiCompletion";
 import { emojiQuery } from "../emoji/emoji-query";
 import { MentionPicker } from "../mentions/MentionPicker";
@@ -29,6 +30,8 @@ const tools = (gifRequests?: GifRequests): Record<string, ComposerTool> => ({
         insert={insertText}
       />
     ),
+    // Pop-out windows react with the same picker the main window uses.
+    reactionComponent: createReactionPicker(),
   },
   "buzz.mentions/picker": {
     id: "picker",

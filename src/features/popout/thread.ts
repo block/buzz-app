@@ -6,6 +6,8 @@ import { type CompanionRow, projectCompanionRow } from "../companion/row";
 /** What a pop-out window shows for one thread. Bounded like the native DTO. */
 export type PopoutThreadView = {
   title: string;
+  /** The owner's persistence scope, for message links the companion copies. */
+  scope: string;
   status: "loading" | "ready" | "error";
   error?: string | undefined;
   writable: boolean;
@@ -97,6 +99,15 @@ export function createPopoutThread(
     available,
     rootVerified,
     writable,
+    /** A shown message by id, with main's own reaction events, for admission. */
+    shown(id: string): ChannelMessage | undefined {
+      const snap = thread?.snapshot();
+      if (!snap || !available()) return undefined;
+      if (snap.root?.id === id) return snap.root;
+      return visible(snap.replies)
+        .slice(-MAX_REPLIES)
+        .find((row) => row.id === id);
+    },
     /** Ids this window presents; the reading owner claims nothing else. */
     known(): ReadonlySet<string> {
       const snap = thread?.snapshot();
@@ -118,6 +129,7 @@ export function createPopoutThread(
         projectCompanionRow(session, profiles, row, channelId);
       return {
         title: (channel()?.name ?? "Conversation").slice(0, 1000),
+        scope: session.scope.slice(0, 4096),
         status:
           error || snap?.status === "error"
             ? "error"

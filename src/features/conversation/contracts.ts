@@ -106,7 +106,9 @@ export type AttachmentRenderer = Readonly<{
   component: ComponentType<AttachmentRendererProps>;
 }>;
 export type ReactionToolProps = Readonly<{
-  session: RelaySession;
+  /** As `ComposerToolProps`: the emoji catalog and media, not a data owner.
+   * A pop-out window supplies a session whose operations run in main. */
+  session: ComposerSession;
   scope: string;
   disabled: boolean;
   /** Host-owned reaction intent; revoked when the tool or target is removed. */

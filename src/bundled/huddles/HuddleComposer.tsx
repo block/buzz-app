@@ -1,5 +1,6 @@
 import { MentionModelsContext } from "../../features/agents/react";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -20,13 +21,20 @@ export type CompanionComposerPresentation = {
   label?: string;
   placeholder?: string;
   onHeld?: ((held: boolean) => void) | undefined;
+  /** Reply to this message within the thread (pop-out windows). */
+  replyParentId?: string | undefined;
+  replyContext?: ReactNode;
 };
-export function useHuddleComposer(
+export type CompanionComposerClient = ReturnType<
+  typeof createHuddleComposerClient
+>;
+/** The connected editor plus its bridge client, for hosts that also react or
+ * otherwise operate through the same main-window owner. */
+export function useCompanionComposer(
   token: string | undefined,
   presentation?: CompanionComposerPresentation,
 ) {
-  const [client, setClient] =
-    useState<ReturnType<typeof createHuddleComposerClient>>();
+  const [client, setClient] = useState<CompanionComposerClient>();
   useEffect(() => {
     if (!token) {
       setClient(undefined);
@@ -36,9 +44,18 @@ export function useHuddleComposer(
     setClient(next);
     return () => next.dispose();
   }, [token]);
-  return client ? (
-    <ConnectedComposer client={client} presentation={presentation} />
-  ) : null;
+  return {
+    client,
+    composer: client ? (
+      <ConnectedComposer client={client} presentation={presentation} />
+    ) : null,
+  };
+}
+export function useHuddleComposer(
+  token: string | undefined,
+  presentation?: CompanionComposerPresentation,
+) {
+  return useCompanionComposer(token, presentation).composer;
 }
 function ConnectedComposer({
   client,
@@ -93,6 +110,8 @@ function ConnectedComposer({
         label={presentation?.label ?? "Message this Huddle"}
         placeholder={presentation?.placeholder ?? "Message this Huddle"}
         {...(data.thread ? { threadRootId: data.thread } : {})}
+        replyParentId={presentation?.replyParentId}
+        replyContext={presentation?.replyContext}
         onHeld={onHeld ? setEditorHeld : undefined}
         disabled={!data.writable}
         editMessages={[]}

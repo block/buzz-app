@@ -418,6 +418,24 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
 6. Window title/branding for pop-outs ("Thread — #channel — Buzz"?), and
    whether the pop-out should show the member avatar stack or only the name.
 
+### F1 — reactions and core menu in the companion (2026-11-05)
+
+jaw's live tryout accepted startup/compose and asked for reactions and
+"normal menus", with containment (a thread pop-out never spawns another).
+Boundary (reviewer-corrected): the companion stays a projection; reactions go
+through the existing composer bridge as bounded main-owned operations
+(`react`, `removeReactions`) admitted against the rows the window shows and
+main's own view of their reaction events; the companion keeps a local
+reaction outbox so pending/failed/retry are real (`companion/reactions.ts`);
+`MessageReactions`/`ReactionTool`/`ReactionToolProps` are narrowed to the
+`ComposerSession`-based subset they use (type-only; `RelaySession` still
+satisfies them); `MessageRow` gains a `reactionSlot`. Rows project reactions
+with the viewer's events first so a capped list still toggles correctly.
+Copy text / Copy link (clipboard) and reply-to-message work; edit, delete,
+read-state, report and plugin-contributed actions remain **gaps** (they need
+real admission paths, not menu labels). No spawn operation exists for a
+thread companion.
+
 ## 9. Review log
 
 - 2026-11-03 jaw-gpt56sol adversarial review at `dae45a5` (7/10 readiness).

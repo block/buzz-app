@@ -1,4 +1,9 @@
-import type { Attachment, ChannelMessage } from "../relay/contracts";
+import type {
+  Attachment,
+  ChannelMessage,
+  MessageReaction,
+} from "../relay/contracts";
+import { validReactionContent } from "../relay/emoji";
 import type { Delivery } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -27,7 +32,51 @@ export type CompanionRow = {
   mentionReferences?: readonly string[];
   time: number;
   delivery: Delivery;
+  /** Reaction groups as main knows them, bounded for the native DTO: at most
+   * 64 groups and 128 events each, the viewer's own events first so a capped
+   * list still decides add-versus-remove correctly. */
+  reactions?: MessageReaction[];
+  /** Some reaction groups or events were left out of this projection. */
+  reactionsLimited?: boolean;
 };
+const MAX_REACTION_GROUPS = 64;
+const MAX_REACTION_EVENTS = 128;
+const hex = /^[0-9a-f]{64}$/;
+export function projectReactions(
+  reactions: readonly MessageReaction[],
+  viewer: string | undefined,
+): Pick<CompanionRow, "reactions" | "reactionsLimited"> {
+  let limited = false;
+  const groups = reactions.flatMap((group) => {
+    if (!validReactionContent(group.content)) return [];
+    const emoji =
+      group.emoji &&
+      group.emoji.shortcode.length <= 64 &&
+      bytes(group.emoji.url) <= 8192
+        ? { shortcode: group.emoji.shortcode, url: group.emoji.url }
+        : undefined;
+    if (group.emoji && !emoji) return [];
+    const events = group.events.filter(
+      (event) => hex.test(event.id) && hex.test(event.authorId),
+    );
+    const own = events.filter((event) => event.authorId === viewer);
+    const others = events.filter((event) => event.authorId !== viewer);
+    const kept = [...own, ...others].slice(0, MAX_REACTION_EVENTS);
+    if (kept.length < events.length) limited = true;
+    return [
+      {
+        content: group.content,
+        ...(emoji ? { emoji } : {}),
+        events: kept.map(({ id, authorId }) => ({ id, authorId })),
+      },
+    ];
+  });
+  if (groups.length > MAX_REACTION_GROUPS) limited = true;
+  return {
+    reactions: groups.slice(0, MAX_REACTION_GROUPS),
+    ...(limited ? { reactionsLimited: true } : {}),
+  };
+}
 
 const bytes = (value: string) => new TextEncoder().encode(value).length;
 // Keep one malformed metadata value from rejecting the entire native view.
@@ -101,5 +150,6 @@ export function projectCompanionRow(
     mentionReferences: r.mentionReferences ?? [],
     time: r.createdAt,
     delivery: r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
+    ...projectReactions(r.reactions, session.viewer),
   };
 }

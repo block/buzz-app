@@ -1,16 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { PopoutAction, PopoutView } from "../../features/popout/window";
 import { createReadingProxy } from "../../features/popout/reading-bridge";
 import { isBuzzLink } from "../../features/navigation/buzz-links";
 import { CompanionRows } from "../../features/companion/CompanionRows";
+import { createCompanionReactions } from "../../features/companion/reactions";
 import { MessageEditScope } from "../../features/messages/MessageEditScope";
 import { Reading } from "../../features/messages/use-reading";
-import { useHuddleComposer } from "../huddles/HuddleComposer";
+import { useCompanionComposer } from "../huddles/HuddleComposer";
+import { huddleComposerExtensions } from "../huddles/composer-extensions";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import styles from "./Popout.module.css";
+
+const noSubscription = () => () => {};
+const zero = () => 0;
 
 export function PopoutWindowView({
   view,
@@ -47,15 +59,58 @@ export function PopoutWindowView({
     if (closeRequested) setConfirming(closeRequested);
   }, [closeRequested]);
   const onHeld = useCallback((value: boolean) => setHeld(value), []);
-  const composer = useHuddleComposer(
+  // Reply to one message within the thread; cleared when it leaves the view.
+  const [replyParent, setReplyParent] = useState<string>();
+  const replyTarget = rows.find((row) => row.id === replyParent);
+  const replyContext = replyTarget ? (
+    <div className={styles.replyContext}>
+      <span>Replying to {replyTarget.author}</span>
+      <Button size="sm" onClick={() => setReplyParent(undefined)}>
+        Cancel
+      </Button>
+    </div>
+  ) : undefined;
+  const { composer, client } = useCompanionComposer(
     view.detached ? undefined : view.composer,
     {
       channelName: view.title,
       label: "Reply to thread",
       placeholder: "Reply to thread",
       onHeld,
+      replyParentId: replyTarget?.id,
+      replyContext,
     },
   );
+  // Reactions and the picker use the same bridge as the composer: one owner
+  // in main admits them against the rows this window shows.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  useSyncExternalStore(
+    client?.subscribe ?? noSubscription,
+    client?.revision ?? zero,
+  );
+  const bridgeSession = client?.snapshot().session;
+  const toolKeys = JSON.stringify(client?.snapshot().data?.tools ?? []);
+  const reactions = useMemo(() => {
+    if (!client || !bridgeSession) return undefined;
+    const session = createCompanionReactions(
+      bridgeSession,
+      client,
+      (eventId) =>
+        rowsRef.current.find((row) =>
+          row.reactions?.some((group) =>
+            group.events.some((event) => event.id === eventId),
+          ),
+        )?.id,
+    );
+    const extensions = huddleComposerExtensions({
+      tools: JSON.parse(toolKeys) as string[],
+      completions: [],
+      gifRequests: client.gifs,
+    });
+    return { session, tools: extensions.tools, inline: extensions.inline };
+  }, [client, bridgeSession, toolKeys]);
+  useEffect(() => () => reactions?.session.dispose(), [reactions]);
   const focusConversation = () => {
     const editor = composerHost.current?.querySelector<HTMLElement>(
       '[role="textbox"]:not([aria-disabled="true"]), textarea:not(:disabled)',
@@ -139,6 +194,14 @@ export function PopoutWindowView({
             rows={rows}
             writable={view.writable}
             allowImageCopy={false}
+            capabilities={{
+              reactions,
+              scope: view.scope,
+              onReply: (messageId) => {
+                setReplyParent(messageId);
+                focusConversation();
+              },
+            }}
             openLink={(url) => {
               // Buzz targets continue in main; the OS browser takes the rest.
               if (!isBuzzLink(url)) return false;

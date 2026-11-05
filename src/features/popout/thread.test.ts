@@ -73,7 +73,15 @@ function fixture() {
         content: "Root",
         attachments: [],
         mentions: [],
-        reactions: [],
+        reactions: [
+          {
+            content: "👍",
+            events: [
+              { id: "c".repeat(64), authorId: VIEWER },
+              { id: "d".repeat(64), authorId: "e".repeat(64) },
+            ],
+          },
+        ],
         replyCount: 0,
         participants: [],
       },
@@ -81,6 +89,8 @@ function fixture() {
     },
   };
   const reply = vi.fn(() => "accepted-id");
+  const react = vi.fn(() => "reaction-id");
+  const remove = vi.fn(() => "removal-id");
   const session = {
     ...store.session,
     viewer: VIEWER,
@@ -94,12 +104,14 @@ function fixture() {
       retarget: async () => "selected" as const,
       dispose: () => {},
     }),
-    messages: { ...store.session.messages, reply },
+    messages: { ...store.session.messages, reply, react, remove },
   } as unknown as RelaySession;
   const thread = createPopoutThread(session, "channel", ROOT, () => {});
   clean.push(() => thread.dispose());
-  return { session, channel, snapshot, thread, reply };
+  return { session, channel, snapshot, thread, reply, react, remove };
 }
+const OWN_EVENT = "c".repeat(64);
+const OTHER_EVENT = "d".repeat(64);
 
 it("offers and admits replies in a verified thread whose summary has no roster", async () => {
   const h = fixture();
@@ -160,4 +172,49 @@ it("keeps the root, read-only, cached and archived gates", () => {
   expect(h.thread.writable()).toBe(false);
   h.snapshot.current = { ...verified, status: "loading" };
   expect(h.thread.writable()).toBe(false);
+});
+
+it("admits reactions only for shown messages and removes only the viewer's own", async () => {
+  const h = fixture();
+  const owner = createHuddleComposerOwner(
+    h.session,
+    "channel",
+    "channel",
+    undefined,
+    () => true,
+    () => h.thread.rootVerified(),
+    undefined,
+    ROOT,
+    (id) => h.thread.shown(id),
+  );
+  clean.push(owner.dispose);
+  const client = createHuddleComposerClient(owner.token);
+  clean.push(client.dispose);
+  await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
+  await expect(client.react({ messageId: ROOT, content: "🎉" })).resolves.toBe(
+    "reaction-id",
+  );
+  expect(h.react).toHaveBeenCalledWith(ROOT, "🎉", undefined);
+  await expect(
+    client.react({ messageId: "f".repeat(64), content: "🎉" }),
+  ).rejects.toThrow(/not shown in this window/);
+  await expect(
+    client.react({ messageId: ROOT, content: "x".repeat(600) }),
+  ).rejects.toThrow(/Invalid reaction/);
+  await expect(
+    client.removeReactions({ messageId: ROOT, ids: [OWN_EVENT] }),
+  ).resolves.toBeUndefined();
+  expect(h.remove).toHaveBeenCalledWith([OWN_EVENT]);
+  await expect(
+    client.removeReactions({ messageId: ROOT, ids: [OTHER_EVENT] }),
+  ).rejects.toThrow(/Only your own reactions/);
+  // The root's own reactions are projected with the viewer's event first.
+  expect(h.thread.snapshot().root?.reactions?.[0]?.events[0]?.authorId).toBe(
+    VIEWER,
+  );
+  // A loading root blocks reactions as it blocks replies.
+  h.snapshot.current = { ...h.snapshot.current, status: "loading" };
+  await expect(
+    client.react({ messageId: ROOT, content: "🎉" }),
+  ).rejects.toThrow();
 });

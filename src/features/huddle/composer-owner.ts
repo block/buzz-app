@@ -29,6 +29,11 @@ export function createHuddleComposerOwner(
   agents?: import("../agents/service").Agents,
   /** Reply into this thread of `room` instead of posting to the room. */
   thread?: string,
+  /** The messages this window currently shows, by id: reactions are admitted
+   * only against them, from main's own view of their reaction events. */
+  shown?: (
+    id: string,
+  ) => import("../relay/contracts").ChannelMessage | undefined,
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
   async function modelChoices(pubkeys: readonly string[]) {
@@ -314,6 +319,53 @@ export function createHuddleComposerOwner(
           writeView(scope, draftKey, mentionDraft(""));
         for (const file of files) release(file);
         return id;
+      }
+      case "react":
+      case "removeReactions": {
+        check(true);
+        if (!thread || !shown)
+          throw new Error("Reactions are not available in a Huddle composer.");
+        const { messageId } = request.args;
+        const target =
+          typeof messageId === "string" && /^[0-9a-f]{64}$/.test(messageId)
+            ? shown(messageId)
+            : undefined;
+        if (!target || target.channelId !== room)
+          throw new Error("This message is not shown in this window.");
+        if (request.op === "react") {
+          const { content, emoji } = request.args;
+          if (typeof content !== "string" || content.length > 512)
+            throw new Error("Invalid reaction.");
+          if (
+            emoji !== undefined &&
+            (typeof emoji !== "object" ||
+              !emoji ||
+              typeof emoji.shortcode !== "string" ||
+              typeof emoji.url !== "string" ||
+              emoji.shortcode.length > 64 ||
+              emoji.url.length > 8192)
+          )
+            throw new Error("Invalid custom emoji.");
+          return session.messages.react(messageId, content, emoji);
+        }
+        // Only the viewer's own reaction events on that message, as main sees them.
+        const own = new Set(
+          target.reactions.flatMap((group) =>
+            group.events
+              .filter((event) => event.authorId === session.viewer)
+              .map((event) => event.id),
+          ),
+        );
+        const ids = request.args.ids;
+        if (
+          !Array.isArray(ids) ||
+          !ids.length ||
+          ids.length > 100 ||
+          ids.some((id) => typeof id !== "string" || !own.has(id))
+        )
+          throw new Error("Only your own reactions can be removed here.");
+        session.messages.remove(ids);
+        return;
       }
       case "release":
         release(request.args);

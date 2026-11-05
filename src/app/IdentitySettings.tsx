@@ -31,6 +31,7 @@ import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { CopyIcon } from "../shared/design-system/icons";
 import styles from "./IdentitySettings.module.css";
 import { writeClipboardText } from "../shared/clipboard";
+import { ExternalIdentityAuthorization } from "./ExternalIdentityAuthorization";
 
 const WAITING = {
   no_consent: undefined,
@@ -430,6 +431,9 @@ export function IdentitySettings({
                   identity={identity}
                   onClose={() => setSigningOut(false)}
                 />
+              )}
+              {!signingOut && (
+                <ExternalIdentityAuthorization key={viewer} viewer={viewer} />
               )}
             </div>
           )}

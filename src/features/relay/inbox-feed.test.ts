@@ -77,6 +77,112 @@ it("paginates short addressed pages and joined thread history without treating s
   expect(rows(h).map((row) => row.preview)).toContain("older");
 });
 
+it.each([true, false])(
+  "preserves both request intents when older history starts first: %s",
+  async (olderFirst) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const feed = h.session.inboxFeed;
+    const recent = addressed(h, "recent", 100);
+    const old = addressed(h, "older", 90);
+    const fresh = addressed(h, "fresh", 110);
+    const initial = feed.ensure();
+    (await historyCall(h)).pending.resolve([recent]);
+    await initial;
+
+    const first = olderFirst ? feed.loadOlder() : feed.refresh();
+    const active = await historyCall(h);
+    const second = olderFirst ? feed.refresh() : feed.loadOlder();
+    const duplicate = olderFirst ? feed.refresh() : feed.loadOlder();
+    expect(h.calls).toHaveLength(0);
+    let settled = false;
+    void second.then(() => {
+      settled = true;
+    });
+    active.pending.resolve([olderFirst ? old : fresh]);
+    await first;
+
+    const queued = await historyCall(h);
+    expect(settled).toBe(false);
+    expect(feed.snapshot()).toMatchObject({
+      status: "loading",
+      loadingOlder: !olderFirst,
+    });
+    if (olderFirst) {
+      expect(active.filters[0]).toMatchObject({
+        until: 100,
+        before_id: recent.id,
+      });
+      expect(queued.filters[0]?.until).toBeUndefined();
+      expect(queued.filters[0]?.before_id).toBeUndefined();
+    } else {
+      expect(active.filters[0]?.until).toBeUndefined();
+      expect(queued.filters[0]).toMatchObject({
+        until: 110,
+        before_id: fresh.id,
+      });
+    }
+    queued.pending.resolve([olderFirst ? fresh : old]);
+    await Promise.all([second, duplicate]);
+    expect(settled).toBe(true);
+    expect(h.calls).toHaveLength(0);
+    expect(
+      h.query.mock.calls.filter(([filters]) => filters[0]?.["#p"]),
+    ).toHaveLength(3);
+    expect(rows(h).map((row) => row.preview)).toEqual([
+      "fresh",
+      "recent",
+      "older",
+    ]);
+    expect(feed.snapshot()).toMatchObject({
+      status: "ready",
+      loadingOlder: false,
+    });
+  },
+);
+
+it.each([true, false])(
+  "retires queued intent on access changes when older history starts first: %s",
+  async (olderFirst) => {
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const feed = h.session.inboxFeed;
+    const first = olderFirst ? feed.loadOlder() : feed.refresh();
+    const active = await historyCall(h);
+    const second = olderFirst ? feed.refresh() : feed.loadOlder();
+    h.admit([h.alice.pubkey], 30);
+    active.pending.resolve([addressed(h, "revoked", 20)]);
+    await Promise.all([first, second]);
+    expect(h.calls).toHaveLength(0);
+    expect(
+      h.query.mock.calls.filter(([filters]) => filters[0]?.["#p"]),
+    ).toHaveLength(1);
+    expect(feed.snapshot().status).toBe("idle");
+    expect(rows(h)).toEqual([]);
+  },
+);
+
+it("runs a queued refresh after older history fails", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const feed = h.session.inboxFeed;
+  const first = feed.loadOlder();
+  const active = await historyCall(h);
+  const second = feed.refresh();
+  active.pending.reject(new Error("older history unavailable"));
+  await first;
+  const queued = await historyCall(h);
+  expect(queued.filters[0]?.until).toBeUndefined();
+  queued.pending.resolve([addressed(h, "fresh", 110)]);
+  await Promise.all([first, second]);
+  expect(h.calls).toHaveLength(0);
+  expect(
+    h.query.mock.calls.filter(([filters]) => filters[0]?.["#p"]),
+  ).toHaveLength(2);
+  expect(feed.snapshot()).toMatchObject({ status: "ready", error: undefined });
+  expect(rows(h).map((row) => row.preview)).toEqual(["fresh"]);
+});
+
 it("retries the same page after a failed overlay and holds its preview incomplete", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);

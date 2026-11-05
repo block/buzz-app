@@ -64,6 +64,7 @@ export function createInboxFeed({
   let closed = false;
   let epoch = 0;
   let work: Promise<void> | undefined;
+  let workOlder = false;
   let controller: AbortController | undefined;
   let requested = false;
   let headCursor: ReturnType<typeof cursorOf> | undefined;
@@ -175,9 +176,16 @@ export function createInboxFeed({
       });
     return sources;
   }
-  async function request(loadOlder = false) {
+  async function request(loadOlder = false): Promise<void> {
     if (closed) return;
-    if (work) return work;
+    if (work) {
+      if (workOlder === loadOlder) return work;
+      const generation = epoch;
+      // Different intents must run, but never survive access/cache retirement.
+      return work.then(() => {
+        if (generation === epoch) return request(loadOlder);
+      });
+    }
     if (!loadOlder) {
       history = undefined;
       headCursor = undefined;
@@ -200,6 +208,7 @@ export function createInboxFeed({
     const generation = epoch;
     const owned = new AbortController();
     controller = owned;
+    workOlder = loadOlder;
     // Do not clear incomplete targets on retry: the new first read can re-admit
     // the old body before its stored overlays are checked again.
     work = (async () => {

@@ -47,6 +47,8 @@ export type ChannelSummary = Readonly<{
   channelType?: "stream" | "forum" | "dm" | "solo" | "system";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
+  /** Relay-advertised default: the relay joins new community members here. */
+  autoJoin?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
   parentChannelId?: string | undefined;
   /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
@@ -138,6 +140,9 @@ export type ChannelMessage = Readonly<{
     truncated: boolean;
   }>;
   membership?: MembershipChange;
+  /** Signed `plugin-request` tag: an agent's plugin change request, by id.
+   * Untrusted display metadata; the device that holds the request decides. */
+  pluginRequest?: Readonly<{ id: string }>;
   huddle?: Readonly<{
     room: string;
     state: "started" | "ended";
@@ -203,6 +208,9 @@ export type ChannelWindow = Readonly<{
   historyLimited?: boolean;
   /** A head read is in flight for these rows; older pages wait for it. */
   refreshing?: boolean | undefined;
+  /** Detached: the rows are a seek segment and newer history is not loaded. */
+  hasNewer?: boolean | undefined;
+  loadingNewer?: boolean | undefined;
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default. */
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;
@@ -346,6 +354,17 @@ export interface ChannelQueries {
   ensureList(): void;
   ensure(channelId: string): void;
   loadOlder(channelId: string): void;
+  /** Detach the window to history at `from` (unix seconds; 0 is the channel
+   * start). Resolves the first message at or after `from`, else the newest. */
+  seek?(
+    channelId: string,
+    from: number,
+    signal: AbortSignal,
+  ): Promise<string | undefined>;
+  /** Read the rows above a detached window; reattaches on reaching the head. */
+  loadNewer?(channelId: string): void;
+  /** Return a detached window to the newest messages. */
+  attach?(channelId: string): void;
   /** Explicit same-scope head revalidation; replaces the bounded head, not a realtime tail. */
   refresh?(channelId: string): void;
   /** Intent warming is optional for fixture-only query implementations. */

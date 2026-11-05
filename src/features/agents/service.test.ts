@@ -49,6 +49,7 @@ import type { RelaySession } from "../relay/session";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
+  type AgentHandle,
   AgentsService,
   type AgentType,
   type ConfigBinding,
@@ -73,6 +74,12 @@ import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
+import { createPluginRequests } from "../../plugins/requests";
+import {
+  createDeviceSettings,
+  type DeviceSettings,
+  type SettingValue,
+} from "../../shared/device-settings";
 import {
   bot,
   channel,
@@ -180,6 +187,8 @@ async function setup({
   /** Whether another plugin is still starting after setup, so startup is not
    * over. */
   starting = false,
+  /** The Buzz settings agents' runs can change. */
+  deviceSettings = undefined as DeviceSettings | undefined,
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -220,6 +229,7 @@ async function setup({
     activity,
     decisions,
     binding,
+    deviceSettings,
   );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -447,6 +457,113 @@ it("brings over an identity not already an agent, with its type's defaults and w
   await expect(
     service.port({ source: "harness", pubkey: bot, type: "nope/none" }),
   ).rejects.toThrow("That agent type is not available");
+});
+
+it("binds a dedicated native agent and preserves its target when a provider change is refused", async () => {
+  const storage = memoryStorage();
+  const { ctx, plugin, service, native } = await setup({ storage });
+  const retire = vi.fn(async () => {});
+  plugin.agents.register({
+    id: "native",
+    title: "Native",
+    execution: true,
+    protection: true,
+    retire,
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  const target = {
+    workspace: "/work/task",
+    spawn: vi.fn(),
+    readFile: vi.fn(),
+    resolveDirectory: vi.fn(),
+    dispose: vi.fn(async () => {}),
+  };
+  const adapter = ctx.extend({
+    pluginOwner: {
+      id: "internal",
+      revision: "one",
+      agentExecution: ["example/native"],
+    },
+  });
+  adapter.agents.registerExecution({
+    id: "remote",
+    harnesses: ["example/native"],
+    connect: async () => target,
+  });
+  const agent = await service.create({
+    type: "example/native",
+    name: "Dedicated",
+  });
+  await service.retype(agent.key, "example/native");
+  const observed: Agent[] = [];
+  const off = service.subscribe(() => {
+    const current = service.find(agent.key);
+    if (current) observed.push(current);
+  });
+  const binding = { id: "remote", config: { profile: "scratch" } };
+  native.claim.mockResolvedValueOnce(false);
+  await expect(
+    adapter.agents.bindExecution(agent.key, binding),
+  ).rejects.toThrow("Another copy of Buzz is running this agent");
+  expect(service.executionBinding(agent.key)).toBeUndefined();
+  let finishRetirement = () => {};
+  const retiring = new Promise<void>((resolve) => {
+    finishRetirement = resolve;
+  });
+  retire.mockClear();
+  retire.mockImplementationOnce(() => retiring);
+  const changing = adapter.agents.bindExecution(agent.key, binding);
+  try {
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledWith(agent.key));
+    expect(service.executionBinding(agent.key)).toBeUndefined();
+  } finally {
+    finishRetirement();
+  }
+  await changing;
+  off();
+  expect(observed.at(-1)?.executionBinding).toEqual({
+    provider: "internal/remote",
+    config: { profile: "scratch" },
+  });
+  expect(service.executionBinding(agent.key)).toEqual({
+    provider: "internal/remote",
+    config: { profile: "scratch" },
+  });
+  const setProtection = vi.fn(async () => {});
+  Object.assign(native, { setProtection });
+  await expect(
+    plugin.agentProtection.saveAgent(agent.pubkey, 0, {}),
+  ).rejects.toThrow("Plugin execution does not support protected agents");
+  expect(setProtection).not.toHaveBeenCalled();
+  await plugin.agentProtection.saveAgent(agent.pubkey, 0, null);
+  expect(setProtection).toHaveBeenCalledWith(agent.pubkey, 0, "example", null);
+  const session = { key: "session-1", intent: "new" as const };
+  await expect(adapter.agents.execution(agent.key, session)).rejects.toThrow(
+    "Only the native harness",
+  );
+  expect((await plugin.agents.execution(agent.key, session))?.workspace).toBe(
+    "/work/task",
+  );
+  const get = storage.get;
+  const cached = vi
+    .spyOn(storage, "get")
+    .mockImplementation((key) =>
+      key.startsWith("buzz.agent.execution.v1:") ? null : get(key),
+    );
+  const read = vi.spyOn(storage, "read");
+  read.mockRejectedValueOnce(new Error("Saved state is unavailable"));
+  await expect(service.retype(agent.key, "example/echo")).rejects.toThrow(
+    "Saved state is unavailable",
+  );
+  await expect(service.retype(agent.key, "example/echo")).rejects.toThrow(
+    "does not support the saved execution binding",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  cached.mockRestore();
+  expect(service.executionBinding(agent.key)?.config).toEqual({
+    profile: "scratch",
+  });
 });
 
 it("brings back unarchived an agent whose Delete cleanup archived it, or says it stays archived", async () => {
@@ -4807,8 +4924,8 @@ it("starts a timer due while a change was saving as soon as it is saved", async 
 it("starts a due timer in a free Interest while another timer's progress saves", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   let hold: Promise<void> | undefined;
-  const storage = fileStore(new Map(), async () => {
-    await hold;
+  const storage = fileStore(new Map(), async (key) => {
+    if (!key.startsWith("buzz.agent.execution.v1:")) await hold;
   });
   const { service, run } = await setup({ storage });
   await service.create({ type: "example/echo", name: "Echo" });
@@ -12844,6 +12961,7 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
           {
             env: {
               PATH: process.env.PATH,
+              ...options.env,
               BUZZ_AGENT_CONNECTION: JSON.stringify(options.mcp),
             },
             stdio: ["pipe", "pipe", "pipe"],
@@ -12951,46 +13069,49 @@ it.runIf(process.env.BUZZ_AGENT_COMMAND_BINARY)(
   20_000,
 );
 
-it.each(["Attention turns off", "the community reconnects"])(
-  "kills a source command when %s",
-  async (reason) => {
-    const { ctx, service, native, connect } = await setup();
-    let close!: () => void;
-    const closed = new Promise<void>((resolve) => {
-      close = resolve;
-    });
-    const kill = vi.fn(async () => {});
-    const spawn = vi.fn(async () => ({
-      exited: new Promise<number | null>(() => {}),
-      kill,
-      write: async () => {},
-      end: async () => {},
-    }));
-    ctx.provide("host", {
-      spawn,
-      serveMcp: async () => ({
-        url: "http://127.0.0.1:1234/mcp",
-        headers: [],
-        closed,
-        close: async () => {
-          close();
-        },
-      }),
-    } as unknown as import("../host/service").Host);
-    const consumer = ctx.extend({
-      pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
-    });
-    await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
-    const controller = new AbortController();
-    expect(spawn).not.toHaveBeenCalled();
-    await sourceCommand(service, consumer, { signal: controller.signal });
-    if (reason === "Attention turns off")
-      await service.save(bot, { attentionEnabled: false });
-    else connect(true);
-    await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
-  },
-);
+it.each([
+  "Attention turns off",
+  "the community reconnects",
+  "the watch is removed",
+])("kills a source command when %s", async (reason) => {
+  const { ctx, service, native, connect } = await setup();
+  let close!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    close = resolve;
+  });
+  const kill = vi.fn(async () => {});
+  const spawn = vi.fn(async () => ({
+    exited: new Promise<number | null>(() => {}),
+    kill,
+    write: async () => {},
+    end: async () => {},
+  }));
+  ctx.provide("host", {
+    spawn,
+    serveMcp: async () => ({
+      url: "http://127.0.0.1:1234/mcp",
+      headers: [],
+      closed,
+      close: async () => {
+        close();
+      },
+    }),
+  } as unknown as import("../host/service").Host);
+  const consumer = ctx.extend({
+    pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
+  const controller = new AbortController();
+  expect(spawn).not.toHaveBeenCalled();
+  await sourceCommand(service, consumer, { signal: controller.signal });
+  if (reason === "Attention turns off")
+    await service.save(bot, { attentionEnabled: false });
+  else if (reason === "the watch is removed")
+    await service.save(bot, { attention: { "watch/command": null } });
+  else connect(true);
+  await vi.waitFor(() => expect(kill).toHaveBeenCalledTimes(1));
+});
 
 it("exposes agent execution only inside an Attention source run", async () => {
   const { service, plugin } = await setup();
@@ -13613,6 +13734,15 @@ it.each(["command"])(
           id === "command"
             ? ["printf", "hello"]
             : ["--interval", "60", "https://github.com/example/repo/pull/1"],
+        env: {
+          BUZZ_ATTENTION_COMMAND: JSON.stringify([
+            bot,
+            "buzz.agents",
+            "command",
+            "watch/saved",
+            "attention-command",
+          ]),
+        },
         mcp: expect.objectContaining({ url: "http://127.0.0.1/mcp" }),
       }),
     );
@@ -14553,4 +14683,304 @@ it("keeps owned protection settings visible while the selected community reconne
   f.emit({ events: [deploy("offline-protection-settings")] });
   await settle();
   expect(f.run).not.toHaveBeenCalled();
+});
+
+it("saves reviewed import config before native identity installation and adopts the old instructions", async () => {
+  const { service, native, storage, session } = await setup();
+  const port = native.port.getMockImplementation();
+  if (!port) throw new Error("Missing native port fixture");
+  native.port.mockImplementation(async (...args) => {
+    expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain(
+      "Reviewed choice",
+    );
+    const result = await port(...args);
+    return { ...result, carry: { instructions: "Adopted instructions" } };
+  });
+  const { agent } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed choice" },
+    scope: session.scope,
+  });
+  expect(agent.config).toEqual({ reply: "Adopted instructions" });
+  expect(service.find(sibling)?.config).toEqual({
+    reply: "Adopted instructions",
+  });
+});
+
+it("refuses stale-community connection and does not import when reviewed settings cannot be saved", async () => {
+  const { service, native, storage } = await setup();
+  const input = {
+    source: "installed" as const,
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed" },
+  };
+  await expect(
+    service.port({ ...input, scope: "another-community" }),
+  ).rejects.toThrow("community changed");
+  expect(native.port).not.toHaveBeenCalled();
+  vi.spyOn(storage, "add").mockRejectedValue(new Error("Disk full"));
+  await expect(service.port(input)).rejects.toThrow("Disk full");
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("does not overwrite settings another app saved before an inline import", async () => {
+  const { service, native, storage } = await setup();
+  const kept = JSON.stringify({
+    pubkey: sibling,
+    config: { reply: "Other app" },
+    attention: {},
+  });
+  await storage.set(`buzz.agent.v1:${sibling}`, kept);
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("already has saved setup");
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toBe(kept);
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("reports an incomplete import when adopting settings fails after identity installation", async () => {
+  const { service, native, storage } = await setup();
+  vi.spyOn(storage, "set").mockRejectedValue(new Error("Disk full"));
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("identity was imported");
+  expect(native.port).toHaveBeenCalledOnce();
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
+  await service.refresh();
+  expect(service.find(sibling)?.config).toEqual({ reply: "Reviewed" });
+});
+
+it("serializes inline import before the staged write is durable", async () => {
+  const { service, native, storage } = await setup();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const add = storage.add.bind(storage);
+  const staged = vi
+    .spyOn(storage, "add")
+    .mockImplementation(async (key, value) => {
+      const result = await add(key, value);
+      await held;
+      return result;
+    });
+  const input = {
+    source: "installed" as const,
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed" },
+  };
+  const first = service.port(input);
+  try {
+    await vi.waitFor(() => expect(staged).toHaveBeenCalledOnce());
+    await expect(service.port(input)).rejects.toThrow(
+      "already being connected",
+    );
+    expect(native.port).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+  await first;
+  expect(native.port).toHaveBeenCalledOnce();
+});
+
+it("preserves staged settings after native installation fails and later refreshes", async () => {
+  const { service, native, storage } = await setup();
+  native.port.mockRejectedValueOnce(new Error("Installation failed"));
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("Installation failed");
+  await service.refresh();
+  await settle();
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
+  expect(service.find(sibling)).toBeUndefined();
+});
+
+it("keeps reviewed settings when native port persists the identity then rejects", async () => {
+  const { service, native } = await setup();
+  const port = native.port.getMockImplementation();
+  if (!port) throw new Error("Missing native port fixture");
+  native.port.mockImplementation(async (...args) => {
+    await port(...args);
+    native.list.mockRejectedValueOnce(new Error("Temporary list failure"));
+    throw new Error("Native installation reported failure");
+  });
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("Native installation reported failure");
+  await service.refresh();
+  expect(service.find(sibling)?.config).toEqual({ reply: "Reviewed" });
+});
+
+it("gives a run this device's plugins as the agent, and refuses a request its removal overtakes", async () => {
+  const { service, run, emit, ctx } = await setup();
+  let release!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const checkGit = vi.fn(async () => {
+    await reading;
+    return {
+      token: "",
+      source: "owner/plugins",
+      commit: "c".repeat(40),
+      warnings: [],
+      candidates: [
+        {
+          path: ".",
+          revision: "one",
+          manifest: {
+            id: "example.tasks",
+            name: "Tasks",
+            apiVersion: 1 as const,
+          },
+        },
+      ],
+    };
+  });
+  const requests = createPluginRequests({
+    catalog: () => ({ profile: "test", location: "test", plugins: [] }),
+    imports: { checkGit } as never,
+    change: vi.fn(async () => true),
+    error: () => null,
+  });
+  ctx.provide("pluginRequests", requests);
+  try {
+    await service.create({ type: "example/echo", name: "Echo" });
+    const { plugins } = await handleOf(run, emit);
+    const input = {
+      action: "install",
+      repository: "owner/plugins",
+      reason: "Tracks the board",
+    } as const;
+    release();
+    await plugins?.request(input);
+    expect(requests.pending()).toMatchObject([
+      { requester: { pubkey: bot, name: "Echo" }, pluginId: "example.tasks" },
+    ]);
+    requests.settle(requests.pending()[0]?.id ?? "", "declined");
+    let resume!: () => void;
+    checkGit.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      return checkGit.getMockImplementation()?.() as never;
+    });
+    const overtaken = plugins?.request(input);
+    await vi.waitFor(() => expect(checkGit).toHaveBeenCalledTimes(2));
+    await service.remove(bot);
+    resume();
+    await expect(overtaken).rejects.toThrow(
+      "The requesting agent is no longer available",
+    );
+    expect(requests.pending()).toEqual([]);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
+describe("Buzz settings", () => {
+  const root = "e".repeat(64);
+  function catalog() {
+    let value: SettingValue = "calm";
+    const write = vi.fn((next: SettingValue) => {
+      value = next;
+    });
+    const deviceSettings = createDeviceSettings([
+      {
+        key: "example.mood",
+        description: "A mood.",
+        schema: { type: "string", enum: ["calm", "busy"] },
+        read: () => ({ value }),
+        write,
+      },
+    ]);
+    return { deviceSettings, write };
+  }
+  /** The agent's handle from a run. */
+  async function running(f: Awaited<ReturnType<typeof setup>>) {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const handle = runnerGate<AgentHandle>();
+    f.run.mockImplementationOnce(async ({ agent }) => {
+      handle.resolve(agent);
+    });
+    f.plugin.agents.wake(bot, { channel, root, text: "hi" });
+    return handle.promise;
+  }
+
+  it("are on every run's handle, with no switch, and not a plugin's", async () => {
+    const { deviceSettings, write } = catalog();
+    const f = await setup({ deviceSettings });
+    const agent = await running(f);
+    expect(agent.settings?.list().map(({ key }) => key)).toEqual([
+      "example.mood",
+    ]);
+    expect(agent.settings?.set("example.mood", "busy")).toMatchObject({
+      value: "busy",
+      saved: true,
+    });
+    expect(write).toHaveBeenCalledExactlyOnceWith("busy");
+    expect(agent.settings?.get("example.mood").value).toBe("busy");
+    expect(f.plugin.agents.handle(bot)).not.toHaveProperty("settings");
+  });
+
+  it.each(["the call's turn signal aborts", "the agent is removed"])(
+    "change nothing when %s while the call waits for review",
+    async (what) => {
+      const { deviceSettings, write } = catalog();
+      const f = await setup({ deviceSettings });
+      const agent = await running(f);
+      const turn = new AbortController();
+      const review = runnerGate();
+      const reviewing = runnerGate();
+      const client = {
+        ...appClient(agent, {
+          read: vi.fn(),
+          memories: async () => ({ entries: [], partial: false }),
+          signal: turn.signal,
+        }),
+        protect: vi.fn(async (action: { kind: string }) => {
+          if (action.kind !== "tool") return;
+          reviewing.resolve();
+          await review.promise;
+        }),
+      };
+      const call = callSessionTool(client, {}, "settings_set", {
+        key: "example.mood",
+        value: "busy",
+      });
+      await reviewing.promise;
+      if (what === "the call's turn signal aborts")
+        turn.abort(new Error("Turn ended"));
+      else await f.service.remove(bot);
+      review.resolve();
+      await expect(call).rejects.toThrow();
+      expect(write).not.toHaveBeenCalled();
+    },
+  );
 });

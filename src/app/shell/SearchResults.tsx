@@ -30,8 +30,8 @@ import {
   ChatCircleIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Calendar } from "../../shared/design-system/ui/Calendar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   MenuPopup,
   MenuRadioGroup,
@@ -45,7 +45,7 @@ import type {
   SearchInputProps,
   SearchViews,
 } from "./SearchChoices";
-import { SearchChoices } from "./SearchChoices";
+import { type SearchChip, SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
 import {
   noSearchUsage,
@@ -55,6 +55,10 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { useMemberCounts } from "../../features/channels/useChannelDirectory";
+import {
+  channelIcon,
+  channelIconLabel,
+} from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -62,7 +66,7 @@ import {
   searchDebounce,
   searchable,
 } from "../../shared/search-debounce";
-import { matchPerson } from "../../features/search/person-match";
+import { matchPerson, normalizeName } from "../../features/search/person-match";
 import {
   personKey,
   rankPeople,
@@ -74,7 +78,10 @@ import { usePersonDirectory } from "./usePersonDirectory";
 import {
   isChannelUuid,
   isHexPubkey,
+  isViewerHandle,
+  normalizeFromHandle,
   normalizeInChannel,
+  operatorMatches,
   parseSearchOperators,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -109,6 +116,41 @@ const noMembers: readonly string[] = [];
  * extends it; neither is a result. */
 const isSearchAction = (key: string) =>
   key.startsWith("scope:") || key === "more-messages";
+
+function useDelayedSearch(pending: boolean) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!pending) return;
+    const timer = setTimeout(() => setSlow(true), 1000);
+    return () => clearTimeout(timer);
+  }, [pending]);
+  return pending && slow;
+}
+
+function useSearchAnnouncement(
+  channels: boolean,
+  people: boolean,
+  messages: boolean,
+) {
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    const sources = [
+      channels && "channels",
+      people && "people",
+      messages && "messages",
+    ].filter(Boolean);
+    setAnnouncement((previous) => {
+      if (!sources.length) return "";
+      const names =
+        sources.length === 3
+          ? `${sources.slice(0, 2).join(", ")}, and ${sources[2]}`
+          : sources.join(" and ");
+      return previous || `Searching ${names}…`;
+    });
+  }, [channels, people, messages]);
+  return announcement;
+}
 
 export function SearchResults({
   session,
@@ -146,8 +188,16 @@ export function SearchResults({
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
   const parsed = useMemo(() => parseSearchOperators(query.trim()), [query]);
-  const authorPrompt = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
-  const pickerPrompt = !!authorPrompt && !isHexPubkey(authorPrompt[2] ?? "");
+  // `in:@` names a person too, so it shares the author picker.
+  const authorPrompt = operatorMatches(
+    query,
+    /(?:^|\s)(from:@?|in:@)([^\s]*)$/gi,
+  ).at(-1);
+  // `me` is the viewer, never a name to pick.
+  const pickerPrompt =
+    !!authorPrompt &&
+    !isHexPubkey(authorPrompt[2] ?? "") &&
+    !isViewerHandle(authorPrompt[2] ?? "");
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -180,47 +230,71 @@ export function SearchResults({
   const sidebarHidden = (channel: ChannelSummary) =>
     channel.channelType === "dm" &&
     (savedHidden.has(channel.id) || dmVisibility.hidden.includes(channel.id));
-  const [selectedAuthor, setSelectedAuthor] = useState<{
+  // Chosen filters render as chips ahead of the typed text: the query holds
+  // their exact operands first, then whatever the input shows.
+  const [chipState, setChipState] = useState<{
     query: string;
-    pubkey: string;
-    name: string;
-    index: number;
+    chips: readonly SearchChip[];
   }>();
-  const authorOperand = selectedAuthor ? `from:${selectedAuthor.pubkey}` : "";
-  const selectedIndex = selectedAuthor?.index ?? -1;
-  const showAuthorChip =
-    !!selectedAuthor &&
-    query === selectedAuthor.query &&
-    query.slice(selectedIndex, selectedIndex + authorOperand.length) ===
-      authorOperand;
-  const displayQuery = showAuthorChip
-    ? `${query.slice(0, selectedIndex)}${query.slice(selectedIndex + authorOperand.length).replace(/^\s/, "")}`
+  const chips = chipState?.query === query ? chipState.chips : [];
+  const chipPrefix = chips.map(({ operand }) => `${operand} `).join("");
+  const displayQuery = chips.length
+    ? query.slice(chipPrefix.length)
     : undefined;
-  const updateDisplayQuery = (value: string) => {
-    const nextQuery = showAuthorChip
-      ? `from:${selectedAuthor?.pubkey} ${value.trimStart()}`
-      : value;
-    setSelectedAuthor(
-      showAuthorChip && selectedAuthor
-        ? { ...selectedAuthor, query: nextQuery, index: 0 }
-        : undefined,
-    );
+  const setChipQuery = (next: readonly SearchChip[], visible: string) => {
+    const nextQuery = `${next.map(({ operand }) => `${operand} `).join("")}${visible}`;
+    setChipState(next.length ? { query: nextQuery, chips: next } : undefined);
     onQueryChange(nextQuery);
   };
-  const removeSelectedAuthor = () => {
-    if (!selectedAuthor || !showAuthorChip) return;
-    onQueryChange(displayQuery ?? "");
-    setSelectedAuthor(undefined);
+  const updateDisplayQuery = (value: string) =>
+    chips.length
+      ? setChipQuery(chips, value.trimStart())
+      : onQueryChange(value);
+  const removeChip = (chip: SearchChip) => {
+    setChipQuery(
+      chips.filter((other) => other !== chip),
+      displayQuery ?? "",
+    );
     input.current?.focus();
   };
-  const updateDateQuery = (nextQuery: string) => {
-    if (showAuthorChip && selectedAuthor) {
-      const index = nextQuery.indexOf(authorOperand);
-      setSelectedAuthor(
-        index < 0 ? undefined : { ...selectedAuthor, query: nextQuery, index },
-      );
-    }
-    onQueryChange(nextQuery);
+  /**
+   * Backspace before the text turns the last chip back into its text. It ends
+   * the query, where its picker opens again to choose an exact value.
+   */
+  const editLastChip = () => {
+    const last = chips.at(-1);
+    if (!last) return;
+    const text = displayQuery?.trimEnd();
+    setChipQuery(chips.slice(0, -1), text ? `${text} ${last.edit}` : last.edit);
+  };
+  /**
+   * Replace the operator token at `tokenStart` with a chip. A chip for the
+   * same operator is replaced; other operators are independent filters. The
+   * parser keeps the last `from:` or `in:`, so a typed one ahead of the chip
+   * would win: it goes too, outside quotes. Date bounds intersect instead.
+   */
+  const selectChip = (
+    tokenStart: number,
+    tokenEnd: number,
+    chip: SearchChip,
+  ) => {
+    const operator = (operand: string) =>
+      operand.slice(0, operand.indexOf(":")).toLowerCase();
+    const visible = `${query.slice(chipPrefix.length, tokenStart)}${query.slice(tokenEnd).trimStart()}`;
+    const kind = operator(chip.operand);
+    setChipQuery(
+      [...chips.filter((other) => operator(other.operand) !== kind), chip],
+      kind === "from" || kind === "in"
+        ? visible
+            .replace(
+              new RegExp(`"[^"]*"?|(^|\\s)${kind}:\\S*`, "gi"),
+              (token, lead?: string) =>
+                token.startsWith('"') ? token : (lead ?? ""),
+            )
+            .trimStart()
+        : visible,
+    );
+    input.current?.focus();
   };
   const [authorSuggestions, setAuthorSuggestions] = useState<{
     query: string;
@@ -228,41 +302,78 @@ export function SearchResults({
     remote: readonly EventData[];
   }>();
   // Completing either from:name or from:@name selects an exact signed key.
-  const datePrompt = /(?:^|\s)(after|before):([^\s]*)$/i.exec(query);
+  const datePrompt = operatorMatches(
+    query,
+    /(?:^|\s)(after|before|on|during):([^\s]*)$/gi,
+  ).at(-1);
   const showDateChoices =
-    !!datePrompt && !/^\d{4}-\d{2}-\d{2}$/.test(datePrompt[2] ?? "");
-  const datePresets = [
-    ["Today", 0],
-    ["Yesterday", 1],
-    ["This week", 2],
-    ["Last week", 3],
-    ["This month", 4],
-  ] as const;
-  const dateChoices: SearchDestination[] =
-    showDateChoices && datePrompt
-      ? datePresets.map(([label, kind]) => {
-          const day = new Date();
-          day.setHours(0, 0, 0, 0);
-          if (kind === 1) day.setDate(day.getDate() - 1);
-          if (kind === 2 || kind === 3) {
-            day.setDate(
-              day.getDate() - ((day.getDay() + 6) % 7) - (kind === 3 ? 7 : 0),
-            );
-          }
-          if (kind === 4) day.setDate(1);
-          const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
-          return {
-            key: `date:${kind}`,
-            label,
-            detail: date,
-            icon: CalendarIcon,
-            run: () =>
-              updateDateQuery(
-                `${query.slice(0, datePrompt.index)} ${datePrompt[1]}:${date} `.trimStart(),
-              ),
-          };
-        })
-      : [];
+    !!datePrompt && parseSearchOperators(datePrompt[0]).text !== "";
+  const dateOperator = showDateChoices ? datePrompt?.[1]?.toLowerCase() : "";
+  /** Replace the unfinished date token with a completed `operator:value`. */
+  const completeDate = (operand: string) =>
+    selectChip(
+      (datePrompt?.index ?? query.length) +
+        (datePrompt?.[0].match(/^\s*/)?.[0].length ?? 0),
+      query.length,
+      {
+        operand,
+        text: operand,
+        edit: operand,
+        label: `Remove date ${operand}`,
+      },
+    );
+  const localDate = (day: Date) =>
+    `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+  // `on:` picks a day from the calendar instead; `during:` names periods.
+  const datePresets =
+    dateOperator === "during"
+      ? ([
+          "Today",
+          "Yesterday",
+          "This week",
+          "This month",
+          "This year",
+        ] as const)
+      : dateOperator === "on"
+        ? []
+        : ([
+            "Today",
+            "Yesterday",
+            "This week",
+            "Last week",
+            "This month",
+          ] as const);
+  const dateChoices: SearchDestination[] = datePresets.map((label) => {
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    if (label === "Yesterday") day.setDate(day.getDate() - 1);
+    if (label === "This week" || label === "Last week")
+      day.setDate(
+        day.getDate() -
+          ((day.getDay() + 6) % 7) -
+          (label === "Last week" ? 7 : 0),
+      );
+    if (label === "This month") day.setDate(1);
+    const date = localDate(day);
+    // There is no week period, so `during:` this week starts after its Monday.
+    const operand =
+      dateOperator !== "during"
+        ? `${datePrompt?.[1]}:${date}`
+        : label === "This week"
+          ? `after:${date}`
+          : label === "This month"
+            ? `during:${date.slice(0, 7)}`
+            : label === "This year"
+              ? `during:${date.slice(0, 4)}`
+              : `during:${date}`;
+    return {
+      key: `date:${label}`,
+      label,
+      detail: operand.slice(operand.indexOf(":") + 1),
+      icon: CalendarIcon,
+      run: () => completeDate(operand),
+    };
+  });
   // Every keystroke renders; DM names only change with their inputs.
   const names = useMemo(
     () =>
@@ -275,28 +386,126 @@ export function SearchResults({
     [channels, profiles, resolveName],
   );
   const operatorChannel = parsed.in ? normalizeInChannel(parsed.in) : "";
-  const localChannel = operatorChannel
-    ? list.channels.find(
-        (channel) =>
-          channel.name.toLowerCase() === operatorChannel.toLowerCase() ||
-          names.get(channel.id)?.toLowerCase() ===
-            operatorChannel.toLowerCase(),
-      )
+  // `in:@person` names your direct message with them, by key, `me` or name.
+  const operatorPerson = operatorChannel.startsWith("@")
+    ? normalizeFromHandle(operatorChannel)
     : undefined;
+  const operatorPersonKey =
+    operatorPerson && isViewerHandle(operatorPerson)
+      ? session.viewer
+      : operatorPerson && isHexPubkey(operatorPerson)
+        ? operatorPerson.toLowerCase()
+        : undefined;
+  const sameName = (name: string | undefined, wanted: string) =>
+    !!name && !!wanted && normalizeName(name) === normalizeName(wanted);
+  /** Whether `channel` is the conversation the `in:` operator names. */
+  const matchesInOperator = (channel: ChannelSummary) => {
+    if (channel.huddle) return false;
+    if (operatorPerson === undefined)
+      return (
+        channel.name.toLowerCase() === operatorChannel.toLowerCase() ||
+        names.get(channel.id)?.toLowerCase() === operatorChannel.toLowerCase()
+      );
+    if (channel.channelType !== "dm") return false;
+    const others = channel.participants;
+    // A self-DM lists no other participants.
+    if (operatorPersonKey && operatorPersonKey === session.viewer)
+      return others?.length === 0;
+    // Only a one-to-one DM names a single person.
+    if (others?.length !== 1) return false;
+    if (operatorPersonKey) return others[0] === operatorPersonKey;
+    return (
+      sameName(names.get(channel.id), operatorPerson) ||
+      sameName(profiles.get(others[0] ?? "")?.name, operatorPerson)
+    );
+  };
+  const namedChannels =
+    !operatorChannel || isChannelUuid(operatorChannel)
+      ? []
+      : list.channels.filter(matchesInOperator);
   const needsPublicLookup =
     !scopedChannelId &&
     !!operatorChannel &&
-    !isChannelUuid(operatorChannel) &&
-    !localChannel;
+    operatorPerson === undefined &&
+    !isChannelUuid(operatorChannel);
   const operatorPublicChannels = usePublicChannelSearch(
     session,
     needsPublicLookup ? operatorChannel : "",
     list.status === "ready",
     true,
   );
+  const operatorLookupPending =
+    needsPublicLookup &&
+    (list.status !== "ready" || operatorPublicChannels.loading);
+  const operatorLookupError = needsPublicLookup
+    ? operatorPublicChannels.error
+    : undefined;
+  // Joined and open namesakes compete together. A live conversation outranks
+  // an archived namesake; live namesakes are ambiguous, so the search waits
+  // for a clearer name rather than guess. Cached rows shown while the exact
+  // lookup runs may miss a namesake, so only its settled answer resolves.
+  const namedCandidates = [
+    ...namedChannels,
+    ...operatorPublicChannels.channels.filter(
+      ({ id }) => !namedChannels.some((channel) => channel.id === id),
+    ),
+  ];
+  const liveNamed = namedCandidates.filter((channel) => !channel.archived);
+  const inMatches = liveNamed.length ? liveNamed : namedCandidates;
   const operatorChannelId = isChannelUuid(operatorChannel)
     ? operatorChannel
-    : (localChannel?.id ?? operatorPublicChannels.channels[0]?.id);
+    : !operatorLookupPending && !operatorLookupError && inMatches.length === 1
+      ? inMatches[0]?.id
+      : undefined;
+  const operatorChannelAmbiguous = inMatches.length > 1;
+  // An unfinished `in:` or `in:#` names a channel to pick, as `from:` names a
+  // person.
+  const channelPrompt = operatorMatches(
+    query,
+    /(?:^|\s)in:(?!@)(#?)([^\s]*)$/gi,
+  ).at(-1);
+  const showChannelPicker =
+    !!channelPrompt && !isChannelUuid(channelPrompt[2] ?? "");
+  const channelNeedle = (channelPrompt?.[2] ?? "").toLowerCase();
+  const startsWithNeedle = (channel: ChannelSummary) =>
+    channel.name.toLowerCase().startsWith(channelNeedle);
+  const channelChoices: SearchDestination[] =
+    showChannelPicker && channelPrompt
+      ? channels
+          .filter(
+            (channel) =>
+              channel.channelType !== "dm" &&
+              channel.channelType !== "solo" &&
+              channel.name.toLowerCase().includes(channelNeedle),
+          )
+          .sort(
+            (a, b) =>
+              Number(startsWithNeedle(b)) - Number(startsWithNeedle(a)) ||
+              Number(!!a.archived) - Number(!!b.archived),
+          )
+          .slice(0, 12)
+          .map((channel) => ({
+            key: `in:${channel.id}`,
+            label: channel.name,
+            detail: channel.archived ? "Archived channel" : "Channel",
+            icon: ChatCircleIcon,
+            // The id keeps the choice exact past any namesake; the chip shows
+            // its name.
+            run: () =>
+              selectChip(
+                channelPrompt.index +
+                  (channelPrompt[0].match(/^\s*/)?.[0].length ?? 0),
+                query.length,
+                {
+                  operand: `in:${channel.id}`,
+                  text: `in:#${channel.name}`,
+                  edit: `in:#${channel.name}`,
+                  label: `Remove channel ${channel.name}`,
+                  title: channel.id,
+                },
+              ),
+          }))
+      : [];
   // The author picker also matches a selectable agent by its own name, so a
   // completed from: name resolves against the same names.
   const agentSnapshot = useSyncExternalStore(
@@ -326,7 +535,7 @@ export function SearchResults({
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
   const completedAuthor = showAmbiguousPicker
-    ? [...query.matchAll(/(?:^|\s)from:(@?)(\S+)/gi)].at(-1)
+    ? operatorMatches(query, /(?:^|\s)from:(@?)(\S+)/gi).at(-1)
     : undefined;
   const authorToken = authorPrompt ?? completedAuthor;
   const authorNeedle = (authorPrompt?.[2] ?? parsed.from ?? "")
@@ -339,14 +548,17 @@ export function SearchResults({
   // and `#` for a channel.
   const peopleText = parsed.text.trim();
   const peopleNeedle = peopleText.replace(/^@/, "");
+  const hasOperator =
+    parsed.from !== null ||
+    parsed.in !== null ||
+    parsed.since !== null ||
+    parsed.until !== null;
   const peopleActive =
     !scopedChannelId &&
-    parsed.from === null &&
-    parsed.in === null &&
-    parsed.since === null &&
-    parsed.until === null &&
+    !hasOperator &&
     !showAuthorPicker &&
     !showDateChoices &&
+    !showChannelPicker &&
     !!peopleNeedle &&
     !peopleText.startsWith("#");
   const personDirectory = usePersonDirectory(
@@ -491,42 +703,33 @@ export function SearchResults({
               },
               isAgent,
               run: () => {
-                // The prompt's leading separator may be the one removed with
-                // the old chip. Map the token itself through that removal,
-                // rather than subtracting the separator from its start twice.
-                const visible = displayQuery ?? query;
-                const oldEnd = selectedIndex + authorOperand.length;
-                const removedLength = showAuthorChip
-                  ? authorOperand.length + (query[oldEnd] === " " ? 1 : 0)
-                  : 0;
-                const tokenStart =
-                  authorToken.index +
-                  (authorToken[0].match(/^\s*/)?.[0].length ?? 0);
-                const promptStart =
-                  showAuthorChip && selectedIndex < tokenStart
-                    ? tokenStart - removedLength
-                    : tokenStart;
-                const promptEnd =
-                  promptStart + authorToken[0].trimStart().length;
-                const prefix = visible.slice(0, promptStart);
-                const nextQuery = `${prefix}from:${pubkey}${visible.slice(promptEnd) || " "}`;
-                setSelectedAuthor({
-                  query: nextQuery,
-                  pubkey,
-                  name: profile.name,
-                  index: prefix.length,
-                });
-                onQueryChange(nextQuery);
-                input.current?.focus();
+                const conversation = /^in:/i.test(authorToken[0].trimStart());
+                const operator = conversation ? "in" : "from";
+                const tokenEnd = authorToken.index + authorToken[0].length;
+                selectChip(
+                  tokenEnd - authorToken[0].trimStart().length,
+                  tokenEnd,
+                  {
+                    operand: conversation ? `in:@${pubkey}` : `from:${pubkey}`,
+                    text: `${operator}:@${profile.name}`,
+                    // Its first word reopens the picker on this person.
+                    edit: `${operator}:@${profile.name.split(/\s/)[0]}`,
+                    label: `Remove ${conversation ? "conversation with" : "author"} ${profile.name}`,
+                    title: npubEncode(pubkey),
+                  },
+                );
               },
             };
           })
       : [];
   const publicChannels = usePublicChannelSearch(
     session,
-    scopedChannelId ? "" : parsed.text,
+    scopedChannelId || hasOperator ? "" : parsed.text,
     list.status === "ready",
   );
+  // Scoped search passes no text, so the lookup is idle there.
+  const slowChannels = useDelayedSearch(publicChannels.loading);
+  const slowPeople = useDelayedSearch(peopleActive && personDirectory.loading);
 
   const profileKey = [
     ...new Set([
@@ -935,15 +1138,17 @@ export function SearchResults({
         (channel) =>
           channel.channelType === "dm" &&
           !channel.archived &&
-          !channel.hidden &&
           channel.participants?.length === 1 &&
           channel.participants[0] === pubkey,
       );
     // Opening a DM hidden on this device goes through the confirmed open,
-    // which restores its sidebar row. A visible DM just opens.
+    // which restores its sidebar row. So does any DM opened while the relay's
+    // hidden set is not ready, since it may be hidden: before the first load,
+    // during every refresh and after a failed one. A visible DM just opens.
     if (
       existing &&
-      (!sidebarHidden(existing) || !session.directMessages.available)
+      (!session.directMessages.available ||
+        (dmVisibility.status === "ready" && !sidebarHidden(existing)))
     )
       return openConversation(existing.id);
     if (
@@ -1074,6 +1279,8 @@ export function SearchResults({
         ]
       : [];
   const messages: SearchDestination[] = search.messages.map((message) => {
+    // Every listed hit's channel is readable here, with settled metadata.
+    const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
     const name = resolveName(
       displayId,
@@ -1084,7 +1291,9 @@ export function SearchResults({
     return {
       key: message.id,
       label: message.preview,
-      detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      detailIcon: channel && channelIcon(channel),
+      detailIconLabel: channel && channelIconLabel(channel),
       icon: ChatCircleIcon,
       run: () => {
         cancelPersonOpen();
@@ -1108,29 +1317,49 @@ export function SearchResults({
         },
       ]
     : messages;
-  const operatorLookupPending =
-    needsPublicLookup &&
-    (list.status !== "ready" || operatorPublicChannels.loading);
-  const operatorLookupError = needsPublicLookup
-    ? operatorPublicChannels.error
-    : undefined;
   const directoryPending = publicChannels.loading || personDirectory.loading;
+  const messagesPending = operatorLookupPending || search.loading;
+  const slowMessages = useDelayedSearch(messagesPending);
+  // An author or date picker replaces the result groups, so it announces
+  // none of their lookups.
+  const resultsShown =
+    !showAuthorPicker && !showDateChoices && !showChannelPicker;
+  const searchAnnouncement = useSearchAnnouncement(
+    resultsShown && slowChannels,
+    slowPeople,
+    resultsShown && slowMessages,
+  );
+  const operatorChannelProblem =
+    scopedChannelId ||
+    !operatorChannel ||
+    operatorChannelId ||
+    operatorLookupPending ||
+    operatorLookupError ||
+    list.status === "loading"
+      ? undefined
+      : operatorChannelAmbiguous
+        ? `More than one conversation is named “${operatorChannel}”. Search in that conversation instead.`
+        : `No conversation named “${operatorChannel}”.`;
   const messageEmpty =
     operatorLookupPending || search.loading
-      ? "Searching messages…"
+      ? undefined
       : operatorLookupError || search.error
         ? "Message search is unavailable."
-        : query.trim()
-          ? directoryPending
-            ? undefined
-            : search.tooShort
-              ? // Only the last word is matched as a prefix, so name it
-                // once earlier words make the whole query long enough.
-                `Type at least ${MESSAGE_SEARCH_MIN_CHARS} characters${/\s/.test(parsed.text.trim()) ? " in the last word" : ""} to search messages.`
-              : "No matching messages in accessible conversations."
-          : scopedChannelId
-            ? "Type to search messages in this conversation."
-            : "Type to search messages in this community.";
+        : operatorChannelProblem
+          ? operatorChannelProblem
+          : query.trim()
+            ? directoryPending
+              ? undefined
+              : search.tooShort
+                ? // Only the last word is matched as a prefix, so name it
+                  // once earlier words make the whole query long enough.
+                  `Type at least ${MESSAGE_SEARCH_MIN_CHARS} characters${/\s/.test(parsed.text.trim()) ? " in the last word" : ""} to search messages.`
+                : search.onlyExclusions
+                  ? "Add a word or “phrase” to search for alongside -exclusions."
+                  : "No matching messages in accessible conversations."
+            : scopedChannelId
+              ? "Type to search messages in this conversation."
+              : "Type to search messages in this community.";
   // A retry removes its own focused button. Return focus to the combobox,
   // which owns keyboard navigation, before the retry starts.
   const retryFromInput = (retry: () => unknown) => () => {
@@ -1160,14 +1389,23 @@ export function SearchResults({
             destinations: authorChoices.filter((choice) => choice.isAgent),
           },
         ]
-      : showDateChoices
-        ? [{ label: "Dates", destinations: dateChoices }]
-        : scopedChannelId
+      : showDateChoices || showChannelPicker
+        ? [
+            showDateChoices
+              ? { label: "Dates", destinations: dateChoices }
+              : {
+                  label: "Channels",
+                  destinations: channelChoices,
+                  empty: "No matching channels.",
+                },
+          ]
+        : scopedChannelId || hasOperator
           ? [
               {
                 label: messageOrder,
                 rank: Infinity,
                 destinations: messageRows,
+                headingStatus: slowMessages ? "Searching…" : undefined,
                 empty: messageEmpty,
               },
             ]
@@ -1214,10 +1452,12 @@ export function SearchResults({
                     label: "Channels",
                     destinations: channelResults.map(channelDestination),
                     best: Math.min(...channelResults.map(channelRank)),
+                    headingStatus: slowChannels ? "Searching…" : undefined,
                   },
                   {
                     label: "People",
                     destinations: personResults,
+                    headingStatus: slowPeople ? "Searching…" : undefined,
                     best: Math.min(...personResults.map(({ score }) => score)),
                   },
                   {
@@ -1272,6 +1512,7 @@ export function SearchResults({
                   label: messageOrder,
                   rank: Infinity,
                   destinations: messageRows,
+                  headingStatus: slowMessages ? "Searching…" : undefined,
                   empty:
                     directMessageResults.length ||
                     chatResults.length ||
@@ -1301,15 +1542,9 @@ export function SearchResults({
       query={query}
       onQueryChange={onQueryChange}
       views={views}
-      authorChip={
-        showAuthorChip && selectedAuthor
-          ? {
-              label: selectedAuthor.name,
-              title: npubEncode(selectedAuthor.pubkey),
-              onRemove: removeSelectedAuthor,
-            }
-          : undefined
-      }
+      chips={chips}
+      onRemoveChip={removeChip}
+      onEditLastChip={editLastChip}
       displayQuery={displayQuery}
       onDisplayQueryChange={updateDisplayQuery}
       input={input}
@@ -1385,6 +1620,16 @@ export function SearchResults({
       }
       isAction={isSearchAction}
     >
+      {dateOperator === "on" && (
+        <Calendar
+          mode="single"
+          aria-label="Choose a day"
+          onSelect={(day) => {
+            if (day) completeDate(`on:${localDate(day)}`);
+            input.current?.focus();
+          }}
+        />
+      )}
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"
         aria-live="polite"
@@ -1472,16 +1717,9 @@ export function SearchResults({
           </div>
         )}
       </div>
-      {/* A warm directory answers within the typing pause, so this feedback
-          waits a second; the rows and errors above are immediate. */}
-      {query.trim() && !scopedChannelId && (
-        <LoadingRegion
-          pending={publicChannels.loading}
-          label="Searching open channels…"
-        >
-          {null}
-        </LoadingRegion>
-      )}
+      <p className="sr-only" role={searchAnnouncement ? "status" : undefined}>
+        {searchAnnouncement}
+      </p>
     </SearchChoices>
   );
 }

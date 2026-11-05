@@ -45,6 +45,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import type { SidebarSortMode } from "../../features/relay/sidebar-sort";
 import type { SidebarFilter } from "./useSidebarFilters";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import { SidebarStarIcon } from "./SidebarStarIcon";
@@ -62,6 +63,7 @@ export function SidebarSection({
   headerActions,
   headerNotice,
   hideMoreActions = false,
+  persistentChevron = false,
   createChannel,
   createSection,
   newMessage,
@@ -92,6 +94,8 @@ export function SidebarSection({
   onRemove?: (() => unknown) | undefined;
   onRename?: ((name: string) => unknown) | undefined;
   hideMoreActions?: boolean;
+  /** Keep the disclosure affordance visible instead of revealing it on hover. */
+  persistentChevron?: boolean;
   channelCount?: number | undefined;
   removalFocus?: (() => HTMLElement | null | undefined) | undefined;
   createChannel?:
@@ -103,8 +107,9 @@ export function SidebarSection({
     | undefined;
   sort?:
     | {
-        value: "alpha" | "recent";
-        change: (mode: "alpha" | "recent") => void;
+        value: SidebarSortMode;
+        modes?: readonly { id: SidebarSortMode; label: string }[];
+        change: (mode: SidebarSortMode) => void;
       }
     | undefined;
   filter?:
@@ -167,6 +172,7 @@ export function SidebarSection({
   if (hideTitle)
     return (
       <div className={`${styles.channelSection} ${styles.untitledSection}`}>
+        {headerNotice}
         <div
           id={id}
           className={`${styles.sectionContent} ${styles.untitledSectionContent}`}
@@ -174,6 +180,7 @@ export function SidebarSection({
           <div>{children}</div>
         </div>
         <div className={styles.sectionActions}>
+          {headerActions}
           {newMessage && (
             <IconButton
               hint="familiar"
@@ -196,6 +203,7 @@ export function SidebarSection({
       data-drop-edge={dropEdge}
       data-section-dragging={dragging || undefined}
       data-menu-open={menuOpen || undefined}
+      data-persistent-chevron={persistentChevron || undefined}
     >
       <div className={styles.sectionHeader}>
         <details open={open}>
@@ -218,7 +226,13 @@ export function SidebarSection({
               ) : (
                 icon
               )}
-              <FadingLabel className={styles.sectionTitle}>{title}</FadingLabel>
+              <FadingLabel
+                className={`${styles.sectionTitle} ${
+                  persistentChevron ? styles.scopeSectionTitle : ""
+                }`}
+              >
+                {title}
+              </FadingLabel>
             </span>
             <span className={`${styles.sidebarIcon} ${styles.sectionChevron}`}>
               <CaretDownIcon strokeWidth={2.5} size={15} />
@@ -362,7 +376,7 @@ export function SidebarSection({
                     <MenuRadioGroup
                       value={sort.value}
                       onValueChange={(mode) => {
-                        sort.change(mode as "alpha" | "recent");
+                        sort.change(mode as SidebarSortMode);
                         setMenuOpen(false);
                       }}
                     >
@@ -378,6 +392,16 @@ export function SidebarSection({
                         </MenuIcon>
                         A–Z
                       </MenuRadioItem>
+                      {sort.modes?.map((mode) => (
+                        <MenuRadioItem
+                          key={mode.id}
+                          closeOnClick={false}
+                          value={mode.id}
+                        >
+                          <MenuIcon>{null}</MenuIcon>
+                          {mode.label}
+                        </MenuRadioItem>
+                      ))}
                     </MenuRadioGroup>
                   </MenuSubmenuPopup>
                 </MenuSubmenu>

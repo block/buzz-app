@@ -1,6 +1,7 @@
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -9,10 +10,14 @@ import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
-import { ChannelInventory } from "../../features/channel-navigation/ChannelInventory";
+import {
+  ChannelInventory,
+  sidebarEntryLocation,
+} from "../../features/channel-navigation/ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
+import { SidebarSection } from "../../bundled/channels/SidebarSection";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -21,7 +26,6 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Agents } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import type {
@@ -37,6 +41,7 @@ import { readView, writeView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
+import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
@@ -60,6 +65,7 @@ type Props = {
   sidebarSections?: SidebarSections | undefined;
   /** A plugin restriction shows only Solo; the saved filter returns after. */
   sidebarScope?: SidebarScope | undefined;
+  sidebarRows?: SidebarRows | undefined;
   target: OpenTarget;
   children: ReactNode;
   creationAction?: ReactNode;
@@ -168,6 +174,9 @@ function ScopedSidebar({
         : undefined
     : undefined;
   const location = destination ? targetKey(target) : undefined;
+  const sidebarLocation = destination
+    ? sidebarEntryLocation(target)
+    : undefined;
   const restriction = useSyncExternalStore(
     props.sidebarScope?.subscribe ?? noSubscription,
     () => props.sidebarScope?.snapshot()[0],
@@ -227,12 +236,6 @@ function ScopedSidebar({
       )}
     </>
   );
-  const label = (title: string) =>
-    filter === "all" && (
-      <div className={styles.sidebarScopeLabel}>
-        <InlineHeader title={<span className="text-standard">{title}</span>} />
-      </div>
-    );
   return (
     <SidebarBoundary
       key={`${scope}:${connection.generation}`}
@@ -250,6 +253,7 @@ function ScopedSidebar({
           scope={scope}
           viewer={connection.viewer}
           sidebarSections={props.sidebarSections}
+          sidebarRows={props.sidebarRows}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}
@@ -299,6 +303,7 @@ function ScopedSidebar({
                         header,
                         creationTrigger,
                         pendingClick,
+                        headerActions,
                       ) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}
@@ -311,6 +316,20 @@ function ScopedSidebar({
                           ordinaryActions={ordinaryActions}
                           creationTrigger={creationTrigger}
                           pendingClick={pendingClick}
+                          groupDisclosure={
+                            filter === "all"
+                              ? {
+                                  sectionKey: "scope:solo",
+                                  title: soloTitle,
+                                  open:
+                                    !sidebar.collapsed.includes("scope:solo"),
+                                  onToggle: (open) =>
+                                    sidebar.toggle("scope:solo", open),
+                                }
+                              : undefined
+                          }
+                          hidePrimaryHeading={filter === "solo"}
+                          fallbackHeaderActions={headerActions}
                           fallback={
                             <>
                               {header}
@@ -325,10 +344,19 @@ function ScopedSidebar({
                     className={styles.sidebarGroup}
                     hidden={filter === "solo"}
                   >
-                    {filter === "all" && (
-                      <div className={styles.teamHeading}>{label("Team")}</div>
+                    {filter === "all" ? (
+                      <InventoryGroup
+                        sidebar={sidebar}
+                        sectionKey="scope:team"
+                        title="Team"
+                        ownsCurrent={destination === "team"}
+                        location={sidebarLocation}
+                      >
+                        {content}
+                      </InventoryGroup>
+                    ) : (
+                      content
                     )}
-                    {content}
                   </div>
                 </SidebarUnread>
                 {after}
@@ -376,6 +404,52 @@ function ScopedSidebar({
         </div>
       )}
     </SidebarBoundary>
+  );
+}
+
+function InventoryGroup({
+  sidebar,
+  sectionKey,
+  title,
+  ownsCurrent,
+  location,
+  children,
+}: {
+  sidebar: Parameters<typeof SoloRegions>[0]["sidebar"];
+  sectionKey: string;
+  title: string;
+  ownsCurrent: boolean;
+  location: string | undefined;
+  children: ReactNode;
+}) {
+  const open = !sidebar.collapsed.includes(sectionKey);
+  useLayoutEffect(
+    () =>
+      sidebar.beforeReveal((next) => {
+        if (!ownsCurrent || next !== location || open) return true;
+        sidebar.toggle(sectionKey, true);
+        return false;
+      }),
+    [
+      location,
+      open,
+      ownsCurrent,
+      sectionKey,
+      sidebar.beforeReveal,
+      sidebar.toggle,
+    ],
+  );
+  return (
+    <SidebarSection
+      sectionKey={sectionKey}
+      title={title}
+      open={open}
+      onToggle={(next) => sidebar.toggle(sectionKey, next)}
+      hideMoreActions
+      persistentChevron
+    >
+      {children}
+    </SidebarSection>
   );
 }
 

@@ -2439,6 +2439,24 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           },
         ]}
       />
+      <SettingsGroup>
+        <PreferenceRow title="Public key" subtitle="npub1…" />
+        <Accordion
+          variant="settings"
+          items={[
+            {
+              value: "Previous versions",
+              title: "Previous versions · 3 versions",
+              content: (
+                <p className="text-body-sm">
+                  Settings and instructions versions.
+                </p>
+              ),
+            },
+          ]}
+        />
+        <PreferenceRow title="Remove from this community" />
+      </SettingsGroup>
       <h3 className="text-label">
         Form disclosures · spacing owned by the form
       </h3>
@@ -2496,6 +2514,23 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           icon={<SquaresFourIcon />}
           title="No templates yet"
           description="Save a starting setup to reuse in new channels."
+        />
+      </SpecimenFrame>
+      <SpecimenFrame
+        code={`<EmptyState
+  frame="none"
+  level={4}
+  icon={<SmileyIcon />}
+  title="You're all caught up"
+  description="Inside a popover, the popover is the frame."
+/>`}
+      >
+        <EmptyState
+          frame="none"
+          level={4}
+          icon={<SmileyIcon />}
+          title="You're all caught up"
+          description="Inside a popover, the popover is the frame."
         />
       </SpecimenFrame>
     </div>

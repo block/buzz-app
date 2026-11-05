@@ -21,7 +21,18 @@ export type {
 } from "../features/identity-names/service";
 export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
-export type { Page, PageSidebarProps, Pages } from "../features/pages/service";
+export type {
+  Page,
+  PagePreviewProps,
+  PageSidebarProps,
+  Pages,
+} from "../features/pages/service";
+export type {
+  SidebarRow,
+  SidebarRowSortMode,
+  SidebarRowContribution,
+  SidebarRows,
+} from "../features/channel-navigation/sidebar-rows-service";
 export type {
   SidebarSectionAction,
   SidebarSectionContribution,
@@ -150,6 +161,13 @@ export type {
 } from "../features/agent-harness/kit";
 
 export type { ArtifactStorage } from "../features/artifact-storage/service";
+export type {
+  AgentExecution,
+  AgentExecutionBinding,
+  AgentExecutionProvider,
+  AgentExecutionSession,
+  AgentExecutionTarget,
+} from "../features/agents/execution";
 export type {
   ArtifactCollection,
   ArtifactCollectionDefinition,

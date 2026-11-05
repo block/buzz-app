@@ -33,9 +33,14 @@ import type { Communities, PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
 import { BackupError } from "./backup";
-import { hostedByThisBuilderlab } from "./builderlab-hosted";
+import { BackupConsent } from "./BackupConsent";
+import {
+  atPublicBuilderlab,
+  hostedByThisBuilderlab,
+} from "./builderlab-hosted";
 import {
   builderlabAccount,
+  type CommunityList,
   federatedBuilderlabAccount,
   type FirstRunAccount,
   type OwnedCommunity,
@@ -43,6 +48,7 @@ import {
 } from "./builderlab-account";
 import { CommunityUrlField } from "./CommunityUrlField";
 import { ConnectChoice } from "./ConnectChoice";
+import { CreateCommunityStep } from "./CreateCommunityStep";
 import { InviteCodeField } from "./InviteCodeField";
 import styles from "./IdentitySetup.module.css";
 import { parseFirstRunAccountSeed } from "./first-run-seed";
@@ -62,10 +68,12 @@ import {
   backUp,
   checkAccount,
   checkBackup,
+  checkCreation,
   createKey,
   createSetup,
   findCommunities,
   importKey,
+  keepBackup,
   linkKey,
   type Resting,
   restoreCommunities,
@@ -112,8 +120,15 @@ export function Welcome({
     firstRunAccount(credential, identity, federatedIdentity),
 }: {
   identity: Identity;
-  /** The live startup service: joining through it is what selects the community. */
-  communities: Pick<Communities, "snapshot" | "joined" | "select">;
+  /**
+   * The live startup service: joining through it is what selects the
+   * community, and once the gate lifts its memberships decide a missing
+   * backup choice.
+   */
+  communities: Pick<
+    Communities,
+    "snapshot" | "subscribe" | "joined" | "select"
+  >;
   /**
    * The app's invite intent: a typed address the restore did not admit is
    * handed to the rail's Add-a-community dialog as the gate lifts.
@@ -155,6 +170,10 @@ export function Welcome({
   const known = useRef<readonly string[] | undefined>(undefined);
   // Backup status belongs to this signed-in account and is cleared on the landing.
   const [backups, setBackups] = useState<readonly string[]>();
+  // The community list that lets Join a community offer Create a community
+  // (`checkCreation`), and whether its page is shown; both cleared on the landing.
+  const [creatable, setCreatable] = useState<CommunityList>();
+  const [creating, setCreating] = useState(false);
 
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
@@ -167,6 +186,9 @@ export function Welcome({
   // The code of the invite link `finding` came from, claimed on Join; "" for
   // a bare address. Every submit sets it with `finding`.
   const [inviteCode, setInviteCode] = useState("");
+  // Whether `finding` is the community just created, which its owner joins
+  // without Join Community. Every submit sets it with `finding`.
+  const [created, setCreated] = useState(false);
   const [joinError, setJoinError] = useState<{
     title: string;
     error: string;
@@ -235,7 +257,9 @@ export function Welcome({
                 ? `done:join-error:${joinError.title}`
                 : finding
                   ? "done:find"
-                  : "done:join"
+                  : creating
+                    ? "done:create"
+                    : "done:join"
             : progress.status === "paused"
               ? `paused:${progress.at}`
               : progress.status;
@@ -280,7 +304,13 @@ export function Welcome({
     identity,
     page === "landing" && auth.status !== "pending",
   );
-  if (state.status === "ready" && progress.status === "idle") return children;
+  if (state.status === "ready" && progress.status === "idle")
+    return (
+      <>
+        {children}
+        <BackupConsent identity={identity} communities={communities} />
+      </>
+    );
   // The linked key is backed up: Welcome back offers a restore, and an
   // import of it skips another backup.
   const backedUp = !!linked && !!backups?.includes(linked);
@@ -352,6 +382,8 @@ export function Welcome({
     setFinding(undefined);
     setInviteCode("");
     setEntered("");
+    setCreatable(undefined);
+    setCreating(false);
     setup.reset();
   };
   /**
@@ -385,11 +417,29 @@ export function Welcome({
     known.current?.length
       ? [restoreCommunities(known.current, communities, decide)]
       : [];
-  /** How every lane ends: a linked account's owned communities feed Join a community. */
+  /**
+   * Whether Join a community may offer Create a community: only for an
+   * account at the public Builderlab, which the check then asks.
+   */
+  const offerCreation = () =>
+    reads.current && atPublicBuilderlab()
+      ? [checkCreation(identity, reads.current, setCreatable)]
+      : [];
+  /**
+   * How every lane ends: a linked account's owned communities feed Join a
+   * community, beside whether it offers Create a community. Every lane that
+   * finishes with `linked` holds that key, so its one list read answers both.
+   */
   const finish = () => [
     ...(linked && reads.current
-      ? [findCommunities(reads.current, setOwned)]
-      : []),
+      ? [
+          findCommunities(
+            reads.current,
+            setOwned,
+            atPublicBuilderlab() ? setCreatable : undefined,
+          ),
+        ]
+      : offerCreation()),
     ...restore(),
   ];
   /** A retry after expiration reacquires the same account before uploading. */
@@ -426,9 +476,10 @@ export function Welcome({
     });
   };
   /** A submitted address or invite link: what to look up, and the code to claim. */
-  const find = (origin: string, code = "") => {
+  const find = (origin: string, code = "", justCreated = false) => {
     setFinding(origin);
     setInviteCode(code);
+    setCreated(justCreated);
   };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
@@ -439,6 +490,8 @@ export function Welcome({
     setLinked(undefined);
     setOwned(undefined);
     setBackups(undefined);
+    setCreatable(undefined);
+    setCreating(false);
     reads.current = undefined;
     known.current = undefined;
     setup.reset();
@@ -612,12 +665,15 @@ export function Welcome({
         // With no account this run (the connect choice), the key is nobody's
         // to link or back up, so the import is the whole setup. On the linked
         // lane only the linked key is accepted, so there is nothing to link.
-        // A Builderlab import is linked and backed up automatically; an
-        // independent community import never uploads to Builderlab.
+        // A Builderlab import is linked and backed up automatically, or, when
+        // the account already holds its backup, only saved as consented
+        // unless a choice is saved; both disclose it. An independent
+        // community import saves no backup choice: once Builderlab has a
+        // session for it, `BackupConsent` decides.
         return (
           <KeyImport
             expectedPubkey={linked}
-            automaticBackup={!!current && !backedUp}
+            automaticBackup={!!current && (backedUp ? "kept" : true)}
             onLost={
               linked && current
                 ? () =>
@@ -643,7 +699,7 @@ export function Welcome({
               else
                 void setup.start([
                   ...(!linked ? [linkKey(identity, current)] : []),
-                  ...(!backedUp ? [backupKey(current)] : []),
+                  backedUp ? keepBackup(identity) : backupKey(current),
                   ...finish(),
                 ]);
             }}
@@ -742,6 +798,7 @@ export function Welcome({
                 unlinkKey(identity, current, linked),
                 link,
                 backUpKey,
+                ...offerCreation(),
                 ...restore(),
               ]);
             }}
@@ -886,13 +943,20 @@ export function Welcome({
     ["key-choice", "key-import", "key-restore"].includes(progress.at)
   )
     return paused(progress.at) ?? <WireframeScreen>{null}</WireframeScreen>;
-  if (progress.status === "done" && !profileStep && !joinError && !finding)
+  if (
+    progress.status === "done" &&
+    !profileStep &&
+    !joinError &&
+    !finding &&
+    !creating
+  )
     return (
       <JoinCommunity
         url={entered}
         onUrlChange={setEntered}
         onFind={find}
         owned={owned}
+        onCreate={creatable ? () => setCreating(true) : undefined}
       />
     );
   return (
@@ -906,11 +970,20 @@ export function Welcome({
             onContinue={(next) => finishJoin(profileStep, next)}
           />
         ) : joinError ? (
-          // Back returns to the find page, which looks the community up again.
+          // Back returns to the find page, which looks the community up again,
+          // through Join Community even for a created one: another automatic
+          // join would leave no way out of a join that keeps failing.
           <Failure
             title={joinError.title}
             error={joinError.error}
-            onBack={admitted ? undefined : () => setJoinError(undefined)}
+            onBack={
+              admitted
+                ? undefined
+                : () => {
+                    setCreated(false);
+                    setJoinError(undefined);
+                  }
+            }
             publicKey={denied ? npubOf(state) : undefined}
             invite={
               denied && {
@@ -931,7 +1004,26 @@ export function Welcome({
             url={finding}
             onCancel={() => setFinding(undefined)}
             onJoin={(found, consent) => join(found, consent, inviteCode)}
+            autoJoin={created}
             titleId="welcome-title"
+          />
+        ) : creating && reads.current ? (
+          // The created community is looked up and joined as an entered
+          // address is, without Join Community.
+          <CreateCommunityStep
+            account={reads.current}
+            quotaLimit={creatable?.quotaLimit}
+            onCreated={(origin) => {
+              setCreating(false);
+              // Kept in the field, as a typed address is, so after Cancel its
+              // Continue finds the new community again, through Join Community.
+              setEntered(new URL(origin).host);
+              find(origin, "", true);
+            }}
+            onBack={() => {
+              returnFocus.current = "create";
+              setCreating(false);
+            }}
           />
         ) : null
       ) : progress.status === "running" ? (

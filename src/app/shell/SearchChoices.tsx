@@ -13,6 +13,7 @@ import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
+import { channelIconClass } from "../../shared/inline-reference";
 import { PageIcon } from "./PageIcon";
 import "./SearchChoices.css";
 
@@ -24,6 +25,12 @@ export type SearchDestination = {
   detail?: string;
   /** Quiet metadata at the row's end, such as a count. */
   trailing?: ReactNode;
+  /** Leads `detail`, as a channel mention's icon leads its name in a
+   * message. */
+  detailIcon?: typeof ChatCircleIcon | undefined;
+  /** What `detailIcon` shows, read before `detail` but neither shown nor
+   * matched. */
+  detailIconLabel?: string | undefined;
   /** Code points of `label` that match the typed text. */
   matches?: readonly number[];
   icon: typeof ChatCircleIcon;
@@ -47,6 +54,21 @@ export type SearchGroup = {
   total?: number;
   empty?: ReactNode;
   notice?: ReactNode;
+  /** Non-interactive visual status; callers own its live announcement. */
+  headingStatus?: string | undefined;
+};
+
+/** A chosen filter shown before the typed text. */
+export type SearchChip = {
+  /** As the query holds it, e.g. `from:<key>` or `in:<channel id>`. */
+  operand: string;
+  /** What the chip shows, e.g. `from:@Wes`. */
+  text: string;
+  /** The text Backspace restores for editing. */
+  edit: string;
+  /** The remove button's accessible name. */
+  label: string;
+  title?: string;
 };
 
 export type SearchInputProps = {
@@ -58,9 +80,10 @@ export type SearchInputProps = {
   scope?: { label: string; onRemove: () => void } | undefined;
   /** A control that refines the scoped results, beside the scope chip. */
   scopeAction?: ReactNode;
-  authorChip?:
-    | { label: string; title: string; onRemove: () => void }
-    | undefined;
+  chips?: readonly SearchChip[] | undefined;
+  onRemoveChip?: ((chip: SearchChip) => void) | undefined;
+  /** Backspace before the text edits the last chip. */
+  onEditLastChip?: (() => void) | undefined;
   displayQuery?: string | undefined;
   onDisplayQueryChange?: ((value: string) => void) | undefined;
   /** False while the palette closes, so a held Enter chooses nothing. */
@@ -101,7 +124,9 @@ export function SearchChoices({
   groups: originalGroups,
   query,
   onQueryChange,
-  authorChip,
+  chips,
+  onRemoveChip,
+  onEditLastChip,
   displayQuery,
   onDisplayQueryChange,
   input,
@@ -397,17 +422,20 @@ export function SearchChoices({
       <SearchField
         variant="palette"
         prefix={
-          authorChip ? (
+          chips?.length ? (
             <span className="search-palette-author-prefix">
-              <button
-                type="button"
-                className="search-palette-author-chip"
-                aria-label={`Remove author ${authorChip.label}`}
-                title={authorChip.title}
-                onClick={authorChip.onRemove}
-              >
-                <span aria-hidden="true">×</span> from:@{authorChip.label}
-              </button>
+              {chips.map((chip) => (
+                <button
+                  key={chip.operand}
+                  type="button"
+                  className="search-palette-author-chip"
+                  aria-label={chip.label}
+                  title={chip.title}
+                  onClick={() => onRemoveChip?.(chip)}
+                >
+                  <span aria-hidden="true">×</span> {chip.text}
+                </button>
+              ))}
             </span>
           ) : undefined
         }
@@ -443,6 +471,16 @@ export function SearchChoices({
               event.preventDefault();
               if (!event.repeat) highlight.choose(destination.key);
             }
+            return;
+          }
+          if (
+            event.key === "Backspace" &&
+            chips?.length &&
+            event.currentTarget.selectionStart === 0 &&
+            event.currentTarget.selectionEnd === 0
+          ) {
+            event.preventDefault();
+            onEditLastChip?.();
             return;
           }
           if (event.key === "ArrowDown" || event.key === "ArrowUp")
@@ -500,217 +538,272 @@ export function SearchChoices({
           >
             {groups
               .filter(
-                ({ destinations, empty }) =>
-                  destinations.length || empty !== undefined,
+                ({ destinations, empty, headingStatus }) =>
+                  destinations.length || empty !== undefined || headingStatus,
               )
-              .map(({ label, hideLabel, destinations, empty, notice }) => (
-                // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Both grid rowgroups and listbox groups are named.
-                <div
-                  key={label}
-                  role={hasControls ? "rowgroup" : "group"}
-                  aria-label={label}
-                  className="search-palette-group"
-                >
-                  <div className="navigation-section" data-buzz-ui="">
-                    {!hideLabel && (
-                      <div
-                        className="navigation-section-heading"
-                        aria-hidden={hasControls || undefined}
-                      >
-                        <h2 className="navigation-section-label text-body text-secondary">
-                          {label}
-                        </h2>
-                      </div>
-                    )}
-                    <div className="navigation-section-rows">
-                      {destinations.map(
-                        ({
-                          content,
-                          key,
-                          label,
-                          detail,
-                          trailing,
-                          matches,
-                          icon,
-                          image,
-                          avatar,
-                        }) =>
-                          content ? (
-                            // biome-ignore lint/a11y/useSemanticElements: Interactive search grid, not a data table.
-                            <div
-                              key={key}
-                              {...highlight.rowProps(key)}
-                              role="row"
-                              aria-label={[label, detail]
-                                .filter(Boolean)
-                                .join(" — ")}
-                              aria-selected={selected === key}
-                              tabIndex={-1}
-                              className="search-control-row"
-                              data-highlighted={selected === key || undefined}
-                              onClick={(event) => {
-                                if (
-                                  !event.currentTarget.contains(
-                                    event.target as Node,
-                                  )
-                                )
-                                  return;
-                                if (
-                                  (event.target as HTMLElement).closest(
-                                    "button, input, label, [role=switch], [role=combobox]",
-                                  )
-                                )
-                                  return;
-                                highlight.choose(key);
-                              }}
-                              onKeyDownCapture={(event) => {
-                                const target = event.target as HTMLElement;
-                                if (
-                                  target !== event.currentTarget &&
-                                  event.currentTarget.contains(target) &&
-                                  !target.closest(
-                                    '[role="combobox"][aria-expanded="true"]',
-                                  )
-                                )
-                                  highlight.rowProps(key).onKeyDown(event);
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.target !== event.currentTarget)
-                                  return;
-                                if (
-                                  event.key === "Enter" ||
-                                  event.key === " "
-                                ) {
-                                  event.preventDefault();
-                                  highlight.choose(key);
-                                } else highlight.rowProps(key).onKeyDown(event);
-                              }}
-                            >
-                              {/* biome-ignore lint/a11y/useSemanticElements: Interactive search grid, not a data table. */}
-                              <div id={key} role="gridcell" tabIndex={-1}>
-                                {content}
-                              </div>
-                            </div>
-                          ) : (
-                            // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Selection and label apply only to the grid row.
-                            // biome-ignore lint/a11y/noStaticElementInteractions: Keyboard handling applies only to the grid row.
-                            <div
-                              key={key}
-                              {...(hasControls ? highlight.rowProps(key) : {})}
-                              role={hasControls ? "row" : "presentation"}
-                              aria-label={
-                                hasControls
-                                  ? [label, detail].filter(Boolean).join(" — ")
-                                  : undefined
-                              }
-                              aria-selected={
-                                hasControls ? selected === key : undefined
-                              }
-                              tabIndex={hasControls ? -1 : undefined}
-                              data-search-result={hasControls ? "" : undefined}
-                              data-search-key={watching ? key : undefined}
-                              data-highlighted={
-                                (hasControls && selected === key) || undefined
-                              }
-                              onKeyDown={
-                                hasControls
-                                  ? (event) => {
-                                      if (
-                                        event.target === event.currentTarget &&
-                                        event.key === "Enter"
-                                      ) {
-                                        event.preventDefault();
-                                        highlight.choose(key);
-                                      } else
-                                        highlight
-                                          .rowProps(key)
-                                          .onKeyDown(event);
-                                    }
-                                  : undefined
-                              }
-                            >
-                              <div
-                                role={hasControls ? "gridcell" : "presentation"}
-                              >
-                                <NavigationItem
-                                  variant="search"
-                                  key={key}
-                                  {...(!hasControls
-                                    ? highlight.rowProps(key)
-                                    : {})}
-                                  role={hasControls ? "button" : "option"}
-                                  aria-selected={
-                                    hasControls ? undefined : selected === key
-                                  }
-                                  {...(!hasControls && positions.get(key))}
-                                  tabIndex={-1}
-                                  aria-current={false}
-                                  highlighted={selected === key}
-                                  data-search-result={
-                                    !hasControls ? "" : undefined
-                                  }
-                                  aria-keyshortcuts={
-                                    shortcutNumbers.has(key)
-                                      ? `Shift+${apple ? "Meta" : "Control"}+${shortcutNumbers.get(key)}`
-                                      : undefined
-                                  }
-                                  icon={
-                                    <span className="grid size-6 shrink-0 items-center justify-items-start">
-                                      {avatar ? (
-                                        <Avatar
-                                          alt=""
-                                          fallback={label}
-                                          src={avatar.src}
-                                          size="small"
-                                          shape={avatar.shape}
-                                        />
-                                      ) : (
-                                        <PageIcon
-                                          icon={icon}
-                                          image={image}
-                                          size={21}
-                                        />
-                                      )}
-                                    </span>
-                                  }
-                                  label={
-                                    <>
-                                      <span className="block truncate text-body-sm">
-                                        <MatchedLabel
-                                          label={label}
-                                          positions={matches}
-                                        />
-                                      </span>
-                                      {detail && (
-                                        <span className="block truncate text-body-sm text-subtle">
-                                          {detail}
-                                        </span>
-                                      )}
-                                    </>
-                                  }
-                                  trailing={trailing}
-                                  onClick={() => highlight.choose(key)}
-                                />
-                              </div>
-                            </div>
-                          ),
-                      )}
-                      {(notice || !destinations.length) && (
-                        <div role={hasControls ? "row" : "presentation"}>
-                          <div role={hasControls ? "gridcell" : "presentation"}>
-                            {notice}
-                            {!destinations.length && (
-                              <p className="search-palette-group-empty">
-                                {empty ?? "No matching results."}
-                              </p>
+              .map(
+                ({
+                  label,
+                  hideLabel,
+                  destinations,
+                  empty,
+                  notice,
+                  headingStatus,
+                }) => (
+                  // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Both grid rowgroups and listbox groups are named.
+                  <div
+                    key={label}
+                    role={hasControls ? "rowgroup" : "group"}
+                    aria-label={label}
+                    // A status-only group has no rows yet; busy states why.
+                    aria-busy={
+                      (!!headingStatus && !destinations.length) || undefined
+                    }
+                    className="search-palette-group"
+                  >
+                    <div className="navigation-section" data-buzz-ui="">
+                      {!hideLabel && (
+                        <div
+                          className="navigation-section-heading"
+                          aria-hidden={hasControls || undefined}
+                        >
+                          <h2
+                            className={`navigation-section-label text-body text-secondary${headingStatus ? " truncate" : ""}`}
+                          >
+                            {label}
+                            {headingStatus && (
+                              <span aria-hidden="true"> · {headingStatus}</span>
                             )}
-                          </div>
+                          </h2>
                         </div>
                       )}
+                      <div className="navigation-section-rows">
+                        {destinations.map(
+                          ({
+                            content,
+                            key,
+                            label,
+                            detail,
+                            detailIcon: DetailIcon,
+                            detailIconLabel,
+                            trailing,
+                            matches,
+                            icon,
+                            image,
+                            avatar,
+                          }) =>
+                            content ? (
+                              // biome-ignore lint/a11y/useSemanticElements: Interactive search grid, not a data table.
+                              <div
+                                key={key}
+                                {...highlight.rowProps(key)}
+                                role="row"
+                                aria-label={[label, detail]
+                                  .filter(Boolean)
+                                  .join(" — ")}
+                                aria-selected={selected === key}
+                                tabIndex={-1}
+                                className="search-control-row"
+                                data-highlighted={selected === key || undefined}
+                                onClick={(event) => {
+                                  if (
+                                    !event.currentTarget.contains(
+                                      event.target as Node,
+                                    )
+                                  )
+                                    return;
+                                  if (
+                                    (event.target as HTMLElement).closest(
+                                      "button, input, label, [role=switch], [role=combobox]",
+                                    )
+                                  )
+                                    return;
+                                  highlight.choose(key);
+                                }}
+                                onKeyDownCapture={(event) => {
+                                  const target = event.target as HTMLElement;
+                                  if (
+                                    target !== event.currentTarget &&
+                                    event.currentTarget.contains(target) &&
+                                    !target.closest(
+                                      '[role="combobox"][aria-expanded="true"]',
+                                    )
+                                  )
+                                    highlight.rowProps(key).onKeyDown(event);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.target !== event.currentTarget)
+                                    return;
+                                  if (
+                                    event.key === "Enter" ||
+                                    event.key === " "
+                                  ) {
+                                    event.preventDefault();
+                                    highlight.choose(key);
+                                  } else
+                                    highlight.rowProps(key).onKeyDown(event);
+                                }}
+                              >
+                                {/* biome-ignore lint/a11y/useSemanticElements: Interactive search grid, not a data table. */}
+                                <div id={key} role="gridcell" tabIndex={-1}>
+                                  {content}
+                                </div>
+                              </div>
+                            ) : (
+                              // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Selection and label apply only to the grid row.
+                              // biome-ignore lint/a11y/noStaticElementInteractions: Keyboard handling applies only to the grid row.
+                              <div
+                                key={key}
+                                {...(hasControls
+                                  ? highlight.rowProps(key)
+                                  : {})}
+                                role={hasControls ? "row" : "presentation"}
+                                aria-label={
+                                  hasControls
+                                    ? [
+                                        label,
+                                        detail && detailIconLabel
+                                          ? `${detailIconLabel}, ${detail}`
+                                          : detail,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" — ")
+                                    : undefined
+                                }
+                                aria-selected={
+                                  hasControls ? selected === key : undefined
+                                }
+                                tabIndex={hasControls ? -1 : undefined}
+                                data-search-result={
+                                  hasControls ? "" : undefined
+                                }
+                                data-search-key={watching ? key : undefined}
+                                data-highlighted={
+                                  (hasControls && selected === key) || undefined
+                                }
+                                onKeyDown={
+                                  hasControls
+                                    ? (event) => {
+                                        if (
+                                          event.target ===
+                                            event.currentTarget &&
+                                          event.key === "Enter"
+                                        ) {
+                                          event.preventDefault();
+                                          highlight.choose(key);
+                                        } else
+                                          highlight
+                                            .rowProps(key)
+                                            .onKeyDown(event);
+                                      }
+                                    : undefined
+                                }
+                              >
+                                <div
+                                  role={
+                                    hasControls ? "gridcell" : "presentation"
+                                  }
+                                >
+                                  <NavigationItem
+                                    variant="search"
+                                    key={key}
+                                    {...(!hasControls
+                                      ? highlight.rowProps(key)
+                                      : {})}
+                                    role={hasControls ? "button" : "option"}
+                                    aria-selected={
+                                      hasControls ? undefined : selected === key
+                                    }
+                                    {...(!hasControls && positions.get(key))}
+                                    tabIndex={-1}
+                                    aria-current={false}
+                                    highlighted={selected === key}
+                                    data-search-result={
+                                      !hasControls ? "" : undefined
+                                    }
+                                    aria-keyshortcuts={
+                                      shortcutNumbers.has(key)
+                                        ? `Shift+${apple ? "Meta" : "Control"}+${shortcutNumbers.get(key)}`
+                                        : undefined
+                                    }
+                                    icon={
+                                      <span className="grid size-6 shrink-0 items-center justify-items-start">
+                                        {avatar ? (
+                                          <Avatar
+                                            alt=""
+                                            fallback={label}
+                                            src={avatar.src}
+                                            size="small"
+                                            shape={avatar.shape}
+                                          />
+                                        ) : (
+                                          <PageIcon
+                                            icon={icon}
+                                            image={image}
+                                            size={21}
+                                          />
+                                        )}
+                                      </span>
+                                    }
+                                    label={
+                                      <>
+                                        <span className="block truncate text-body-sm">
+                                          <MatchedLabel
+                                            label={label}
+                                            positions={matches}
+                                          />
+                                        </span>
+                                        {detail && (
+                                          <span className="block truncate text-body-sm text-subtle">
+                                            {/* Read in place of the icon. jsdom (dom-accessibility-api) trims
+                                                each element's text, so the space sits outside the span;
+                                                browsers don't trim it. Shown, the space collapses at the
+                                                line's start. */}
+                                            {detailIconLabel && (
+                                              <>
+                                                <span className="sr-only">{`${detailIconLabel},`}</span>{" "}
+                                              </>
+                                            )}
+                                            {/* Text-sized and spaced as LinkLabel shows a channel mention's icon. */}
+                                            {DetailIcon && (
+                                              <DetailIcon
+                                                className={channelIconClass(
+                                                  DetailIcon,
+                                                )}
+                                              />
+                                            )}
+                                            {detail}
+                                          </span>
+                                        )}
+                                      </>
+                                    }
+                                    trailing={trailing}
+                                    onClick={() => highlight.choose(key)}
+                                  />
+                                </div>
+                              </div>
+                            ),
+                        )}
+                        {(notice ||
+                          (!destinations.length && !headingStatus)) && (
+                          <div role={hasControls ? "row" : "presentation"}>
+                            <div
+                              role={hasControls ? "gridcell" : "presentation"}
+                            >
+                              {notice}
+                              {!destinations.length && (
+                                <p className="search-palette-group-empty">
+                                  {empty ?? "No matching results."}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ),
+              )}
           </div>
           {children && <div className="search-palette-status">{children}</div>}
         </div>

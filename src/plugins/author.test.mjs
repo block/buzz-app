@@ -33,7 +33,7 @@ test("generated author package in a path with spaces exposes shared message fact
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PageSidebarProps, SidebarSectionContribution, SidebarSections, UnreadCapability } from "@buzz/author";
+import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -46,6 +46,8 @@ const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
   void target.kind;
   return children;
 };
+const ExamplePreview = ({ close }: PagePreviewProps) =>
+  createElement("button", { type: "button", onClick: close }, "Open");
 export const inject = ["agents", "decisions", "host", "identityNames", "pages", "relay"];
 export function apply(ctx: Context) {
   const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
@@ -144,6 +146,14 @@ export function apply(ctx: Context) {
     primary: true,
     placement: "toolbar",
     sidebar: ExampleSidebar,
+    preview: ExamplePreview,
+  });
+  ctx.pages.register({
+    id: "bad-preview",
+    title: "Bad preview",
+    component: () => null,
+    // @ts-expect-error A page preview must be a React component.
+    preview: "card",
   });
   ctx.pages.register({
     id: "bad-sidebar",
@@ -171,6 +181,17 @@ export function apply(ctx: Context) {
   // @ts-expect-error Row counts are numeric, not display text.
   const badCount: SidebarSectionContribution = { ...section, rows: { snapshot: () => [{ id: "bad", label: "Bad", count: "two" }], subscribe: () => () => {} } };
   void badCount;
+  const hostRows: SidebarRows | undefined = ctx.reflect.get("sidebarRows");
+  const decoration: SidebarRowContribution = {
+    version: 1, id: "details",
+    render: (row, Default) => row.kind === "dm" ? createElement("div", { title: row.label }, Default) : Default,
+    sortModes: [{ id: "reverse", label: "Reverse", compare: (a, b) => b.label.localeCompare(a.label) }],
+  };
+  hostRows?.register(decoration);
+  // @ts-expect-error Host row contribution versions are explicit.
+  hostRows?.register({ ...decoration, version: 2 });
+  // @ts-expect-error Render results must be elements or an intentional null.
+  hostRows?.register({ version: 1, id: "invalid", render: () => "text" });
   ctx.pages.register({
     id: "other",
     title: "Other",

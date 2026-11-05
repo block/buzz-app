@@ -1574,7 +1574,8 @@ export function createChannelStore(
           limit: batch.length + 1,
         },
       ],
-      { signal, fresh: true },
+      // Up to DISCOVERY_CONFIRM_LIMIT full rosters: a large read too.
+      { signal, fresh: true, deadlineMs: LARGE_READ_DEADLINE_MS },
     );
     if (
       events.length > batch.length ||

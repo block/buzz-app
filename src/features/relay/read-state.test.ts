@@ -6,7 +6,8 @@ import {
   type ReadJournal,
   type ReadStateStorage,
 } from "./read-state-storage";
-import { keypair } from "./testing";
+import { keypair, scriptedTransport } from "./testing";
+import { createRelayReader } from "./reader";
 import { eventDto, type RelayEvent } from "./events";
 // Test the real host codec with ephemeral identities, never a bypass signer.
 import {
@@ -1573,6 +1574,59 @@ describe("publication fences", () => {
     expect(g.host.publish).toHaveBeenCalledTimes(3);
     expect(ownerStatus(owner)).toBe("reconciled");
   }, 30000);
+
+  it("lets a slow complete snapshot finish on refresh and before a send", async () => {
+    vi.useFakeTimers();
+    // Node's native AbortSignal timer is not driven by Vitest's clock.
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((milliseconds) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), milliseconds);
+        return controller.signal;
+      });
+    const f = fixture(T);
+    // The real reader, with a snapshot that takes longer than its ordinary
+    // ten-second deadline to download.
+    const snapshots = vi.fn(
+      (signal: AbortSignal) =>
+        new Promise<RelayEvent[]>((resolve, reject) => {
+          const timer = setTimeout(
+            () => void f.reader.read().then(resolve),
+            25_000,
+          );
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          });
+        }),
+    );
+    const relay = createRelayReader({
+      ...scriptedTransport(f.key.pubkey, "relay").transport,
+      query: async () => f.reader.read(),
+      readStateSnapshot: snapshots,
+    });
+    const owner = snapshotted(f, [])({ reader: relay.reader });
+    await owner.ready;
+    const refreshed = owner.refresh();
+    await vi.advanceTimersByTimeAsync(25_000);
+    await refreshed;
+    expect(owner.snapshot()).toMatchObject({
+      status: "reconciled",
+      completeness: "snapshot",
+    });
+    // A gap drops the capacity basis, so the next send reads a snapshot first.
+    owner.stale();
+    await owner.read("room", T, () => true);
+    const flushed = owner.flush();
+    await vi.advanceTimersByTimeAsync(25_000);
+    await flushed;
+    expect(snapshots).toHaveBeenCalledTimes(2);
+    expect(f.host.publish).toHaveBeenCalledOnce();
+    expect(ownerStatus(owner)).toBe("reconciled");
+    relay.dispose();
+    timeout.mockRestore();
+  });
 
   it("refuses a send whose basis a gap dropped while signing or saving", async () => {
     for (const gapIn of ["sign", "save"] as const) {

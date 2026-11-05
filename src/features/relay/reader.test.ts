@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createRelayReader, LARGE_READ_DEADLINE_MS } from "./reader";
+import { createRelayReader } from "./reader";
 import { flush, scriptedTransport } from "./testing";
 
 const owners: ReturnType<typeof createRelayReader>[] = [];
@@ -463,27 +463,4 @@ it("gives large reads their own deadline; a joining read keeps it", async () => 
   await vi.advanceTimersByTimeAsync(899);
   await failures;
   expect(wire.signal?.aborted).toBe(true);
-});
-it("gives the read-state snapshot the large-read deadline", async () => {
-  vi.useFakeTimers();
-  const scripted = scriptedTransport("viewer", "relay");
-  let signal: AbortSignal | undefined;
-  const owner = createRelayReader(
-    {
-      ...scripted.transport,
-      readStateSnapshot: (abort) => {
-        signal = abort;
-        return new Promise(() => {});
-      },
-    },
-    { timeoutMs: 100 },
-  );
-  owners.push(owner);
-  const snapshot = owner.reader.readStateSnapshot?.();
-  const expired = expect(snapshot).rejects.toThrow("timed out");
-  await vi.advanceTimersByTimeAsync(LARGE_READ_DEADLINE_MS - 1);
-  expect(signal?.aborted).toBe(false);
-  await vi.advanceTimersByTimeAsync(1);
-  await expired;
-  expect(signal?.aborted).toBe(true);
 });

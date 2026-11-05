@@ -130,7 +130,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     };
     ctx.agents.register({
-      ...builderlabType(agents, session, ctx.relay, openIdentity, openSettings),
+      ...builderlabType(agents, session, ctx.relay, openSettings),
       provider: {
         snapshot: () => providerState,
         subscribe: (listener) => {

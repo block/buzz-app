@@ -208,7 +208,6 @@ function ImagePixels({
 }: {
   session: RelaySession | undefined;
   source: string;
-  /** Relay-derived small preview; undefined when the source has none. */
   thumbnail: string | undefined;
   blurhash: string | undefined;
   onDecoded: (dimensions: NonNullable<Attachment["dimensions"]>) => void;
@@ -316,6 +315,14 @@ function ImagePixels({
           aria-hidden="true"
         />
       )}
+      <img
+        ref={image}
+        src={source}
+        alt=""
+        loading="lazy"
+        style={{ visibility: ready ? "visible" : "hidden" }}
+      />
+      {/* After the original, so preview queries still find the original first. */}
       {thumbnail && !ready && (
         <img
           src={thumbnail}
@@ -326,13 +333,6 @@ function ImagePixels({
           onLoad={() => setThumbnailLoaded(true)}
         />
       )}
-      <img
-        ref={image}
-        src={source}
-        alt=""
-        loading="lazy"
-        style={{ visibility: ready ? "visible" : "hidden" }}
-      />
     </>
   );
 }

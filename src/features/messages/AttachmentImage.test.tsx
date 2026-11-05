@@ -40,9 +40,8 @@ function mount(
 }
 
 function decode(view: ReturnType<typeof render>) {
-  const image = view.container.querySelector("img:not([data-thumbnail])");
-  if (!(image instanceof HTMLImageElement))
-    throw new Error("Missing attachment image");
+  const image = view.container.querySelector("img");
+  if (!image) throw new Error("Missing attachment image");
   Object.defineProperties(image, {
     naturalWidth: { value: dimensions.width },
     naturalHeight: { value: dimensions.height },
@@ -233,7 +232,9 @@ it("shows the thumbnail once it loads and drops it when the original decodes", a
   expect(thumbnail).toHaveStyle({ visibility: "hidden" });
   fireEvent.load(thumbnail as HTMLImageElement);
   expect(thumbnailOf(view)).toHaveStyle({ visibility: "visible" });
-  const original = view.container.querySelector("img:not([data-thumbnail])");
+  // The review entrance reads the first image's aspect, so it must be the original.
+  const original = view.container.querySelector("img");
+  expect(original).toHaveAttribute("src", relaySource);
   expect(original).toHaveStyle({ visibility: "hidden" });
   await decode(view).release();
   expect(thumbnailOf(view)).toBeNull();

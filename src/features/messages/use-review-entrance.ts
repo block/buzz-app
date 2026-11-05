@@ -108,7 +108,7 @@ export function readReviewOrigin(
   const bounds = preview?.getBoundingClientRect();
   if (!preview || !bounds || bounds.width <= 0 || bounds.height <= 0)
     return undefined;
-  const media = preview?.querySelector("img:not([data-thumbnail]), video");
+  const media = preview?.querySelector("img, video");
   const aspect =
     media instanceof HTMLImageElement &&
     media.naturalWidth &&
@@ -135,7 +135,7 @@ function previewPicture(
   bounds: Bounds,
   aspect: number,
 ): Bounds {
-  const media = preview.querySelector("img:not([data-thumbnail]), video");
+  const media = preview.querySelector("img, video");
   if (media && getComputedStyle(media).objectFit === "cover") {
     // The full image extends beyond the cropped tile; previewBounds clips it.
     const width = Math.max(bounds.width, bounds.height * aspect);

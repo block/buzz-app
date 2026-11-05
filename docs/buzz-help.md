@@ -1105,7 +1105,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. External plugins, including local development builds, require valid
   signatures by default; unsigned installations remain blocked until replaced
-  with signed releases. Launching Buzz with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=0`
+  with signed releases. Use **Update** in the plugin’s Settings details to apply
+  a signed release, even when its code has not changed. Launching Buzz with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=0`
   allows unsigned plugins; restart with the variable unset to restore enforcement.
   Supplied signatures are always verified. Plugins built into Buzz are exempt.
   Do not assume a particular optional plugin is on.

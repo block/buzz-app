@@ -121,6 +121,27 @@ it.each([
   },
 );
 
+it("offers a signature-only repair and retires its notice after installation", async () => {
+  const f = fixture();
+  f.preview.candidates = [
+    { ...f.candidate, revision: f.plugin.revision, publisher: "a".repeat(64) },
+  ];
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  try {
+    await updates.check();
+    expect(updates.snapshot()[0]?.candidate?.publisher).toBe("a".repeat(64));
+    expect(f.imports.install).not.toHaveBeenCalled();
+    f.plugin.publisher = "a".repeat(64);
+    f.plugin.hasSignature = true;
+    f.set(f.get());
+    expect(updates.snapshot()).toEqual([]);
+    await updates.check(true);
+    expect(updates.snapshot()).toEqual([]);
+  } finally {
+    updates.dispose();
+  }
+});
+
 it("retires a notice on opt-out and checks immediately on opt-in", async () => {
   const f = fixture();
   f.plugin.updateChecks = false;

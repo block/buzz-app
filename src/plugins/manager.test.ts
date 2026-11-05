@@ -432,7 +432,7 @@ it.each(["resolve", "reject"] as const)(
   async (settlement) => {
     const install = deferred();
     const imports = {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => null),
       folder: vi.fn(async () => null),
       files: vi.fn(async () => null),

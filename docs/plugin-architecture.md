@@ -2270,8 +2270,10 @@ Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
 while the pane is open and the app is visible, and again when the app becomes active.
 Checks pause during review or pending management operations. Folder checks resolve
-the saved source by installed plugin ID and return only a revision or build diagnostic,
-without reserving the native import slot. Add can prepare its own preview while a
+the saved source by installed plugin ID and return the revision and verified publisher,
+or a build diagnostic, without reserving the native import slot. Freshness compares
+both revision and publisher, so a newly signed copy of unchanged code can repair an
+unsigned installation after confirmation. Add can prepare its own preview while a
 folder check is pending. Choosing Update acquires a fresh immutable preview; checks
 never supply installation bytes. A changed package offers
 Update, which opens access review before explicit confirmation. A known update takes

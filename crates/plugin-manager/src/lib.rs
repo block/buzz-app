@@ -2079,12 +2079,24 @@ mod tests {
             manager.change("rollback", "example.page").err().as_deref(),
             Some(super::SIGNED_ROLLBACK_ERROR)
         );
-        let repaired = manager.install(source.path()).unwrap();
+        let original_revision = plugin.revision.clone();
+        let checked = serde_json::to_value(
+            super::imports::check_saved_folder(&manager, "example.page").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(checked["revision"], original_revision);
+        assert!(checked["publisher"].as_str().is_some());
+        let prepared = super::imports::prepare_saved_folder(&manager, "example.page").unwrap();
+        assert!(manager.module("example.page", &original_revision).is_err());
+        let repaired = prepared
+            .install(&manager, &prepared.preview.token, ".")
+            .unwrap();
         let plugin = repaired
             .plugins
             .iter()
             .find(|p| p.manifest.id == "example.page")
             .unwrap();
+        assert_eq!(plugin.revision, original_revision);
         assert!(plugin.enabled);
         assert!(plugin.error.is_none());
         assert!(plugin.publisher.is_some());
@@ -2222,6 +2234,7 @@ mod tests {
             path: ".".into(),
             commit: None,
         }));
+        let directory = tempfile::tempdir().unwrap();
         let release = |policy: Option<bool>| {
             let mut manifest = serde_json::json!({
                 "id": "example.updates", "name": "Updates", "apiVersion": 1
@@ -2229,14 +2242,14 @@ mod tests {
             if let Some(default_enabled) = policy {
                 manifest["updates"] = serde_json::json!({"defaultEnabled": default_enabled});
             }
-            Release {
-                bytes: artifact_from_text(
-                    &manifest.to_string(),
-                    "export function apply() {}".into(),
-                )
-                .unwrap(),
-                signature: None,
-            }
+            fs::write(directory.path().join("manifest.json"), manifest.to_string()).unwrap();
+            fs::write(
+                directory.path().join("plugin.js"),
+                "export function apply() {}",
+            )
+            .unwrap();
+            sign_source(directory.path());
+            super::prepare_artifact(directory.path()).unwrap()
         };
         let installed = |manager: &Manager| {
             manager

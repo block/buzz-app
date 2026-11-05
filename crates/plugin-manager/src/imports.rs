@@ -300,14 +300,23 @@ pub fn prepare_saved_folder(manager: &Manager, id: &str) -> Result<PreparedImpor
     Ok(prepared)
 }
 
+#[derive(Debug, Serialize)]
+pub struct UpdateCheck {
+    pub revision: String,
+    pub publisher: Option<String>,
+}
+
 /// No preview is retained, installed, or published to the native import slot.
-pub fn check_saved_folder(manager: &Manager, id: &str) -> Result<String> {
+pub fn check_saved_folder(manager: &Manager, id: &str) -> Result<UpdateCheck> {
     let prepared = prepare_saved_folder(manager, id)?;
     prepared
         .preview
         .candidates
         .first()
-        .map(|candidate| candidate.revision.clone())
+        .map(|candidate| UpdateCheck {
+            revision: candidate.revision.clone(),
+            publisher: candidate.publisher.clone(),
+        })
         .ok_or_else(|| "Saved source has no candidate".into())
 }
 
@@ -2205,7 +2214,9 @@ mod tests {
             .revision
             .clone();
         assert_eq!(
-            check_saved_folder(&manager, "example.checked").unwrap(),
+            check_saved_folder(&manager, "example.checked")
+                .unwrap()
+                .revision,
             original
         );
         fs::write(
@@ -2215,7 +2226,9 @@ mod tests {
         .unwrap();
         sign(&source);
         assert_ne!(
-            check_saved_folder(&manager, "example.checked").unwrap(),
+            check_saved_folder(&manager, "example.checked")
+                .unwrap()
+                .revision,
             original
         );
         // A read never installs bytes or invalidates an unrelated captured preview.

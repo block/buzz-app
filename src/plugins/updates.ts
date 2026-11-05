@@ -1,3 +1,4 @@
+import { samePluginRelease } from "./same-release";
 import { managedBy } from "./managed";
 import type { PluginManager } from "./manager";
 import type { ImportPreview } from "./types";
@@ -298,7 +299,7 @@ export function createPluginUpdates(
     if (closed && !activeReview) lifetime.retired = true;
   };
   const key = (update: PluginUpdate) =>
-    `${update.id}:${updateSourceKey(update.source)}:${update.candidate?.revision ?? update.error}`;
+    `${update.id}:${updateSourceKey(update.source)}:${update.candidate?.revision ?? update.error}:${update.candidate?.publisher ?? ""}`;
   const getSources = () => {
     const { configuration } = plugins.snapshot();
     return configuration.status === "ready"
@@ -546,7 +547,7 @@ export function createPluginUpdates(
             throw new Error(
               "The saved repository has no plugin at its installed path.",
             );
-          if (candidate.revision !== plugin.revision) {
+          if (!samePluginRelease(candidate, plugin)) {
             update.candidate = candidate;
             const previous = updates.find(
               (item) =>

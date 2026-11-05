@@ -111,7 +111,7 @@ mod test_executable;
 use buzzodz_plugins::{
     imports::{
         check_saved_folder, prepare_folder, prepare_saved_folder, prepare_upload, FolderUpload,
-        PreparedImport, Preview,
+        PreparedImport, Preview, UpdateCheck,
     },
     Catalog, InstallationResult, Manager,
 };
@@ -368,7 +368,7 @@ async fn plugin_import_folder<R: tauri::Runtime>(
 async fn plugin_update_check(
     manager: tauri::State<'_, PluginManager>,
     id: String,
-) -> Result<String, String> {
+) -> Result<UpdateCheck, String> {
     with_manager(manager, move |manager| check_saved_folder(&manager, &id)).await
 }
 #[tauri::command]

@@ -482,7 +482,7 @@ it("archives from the shortcut without confirmation, then opens a new Solo draft
 it("offers no Archive shortcut outside a Solo chat", async () => {
   const f = fixture({ type: "stream" });
   f.mount();
-  await screen.findByRole("textbox", { name: "Message #Planning" });
+  await screen.findByRole("textbox", { name: "Message Planning" });
   expect(f.archive.current).toBeUndefined();
 });
 
@@ -490,7 +490,7 @@ it("turns /leave into the existing channel confirmation without posting it", asy
   const f = fixture({ type: "stream", canLeave: true });
   f.mount();
   const editor = await screen.findByRole("textbox", {
-    name: "Message #Planning",
+    name: "Message Planning",
   });
   const user = userEvent.setup();
   await user.type(editor, "/leave{Enter}");
@@ -637,7 +637,7 @@ it("keeps the newer destination when a departed New chat acquires model ownershi
     view.unmount();
     const newer = fixture({ type: "stream" });
     newer.mount();
-    await screen.findByRole("textbox", { name: "Message #Planning" });
+    await screen.findByRole("textbox", { name: "Message Planning" });
     await act(async () => {
       release();
       await settled;
@@ -645,7 +645,7 @@ it("keeps the newer destination when a departed New chat acquires model ownershi
     expect(first.open).not.toHaveBeenCalled();
     expect(newer.open).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("textbox", { name: "Message #Planning" }),
+      screen.getByRole("textbox", { name: "Message Planning" }),
     ).toBeVisible();
   } finally {
     release();

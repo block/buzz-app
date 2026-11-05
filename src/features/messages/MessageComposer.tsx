@@ -79,10 +79,14 @@ import {
 } from "../solo/people";
 import {
   ArrowUpIcon,
+  ChatCircleIcon,
+  LockIcon,
   PaperclipIcon,
   PencilSimpleIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../channels/channel-icon";
+import { channelIconClass } from "../../shared/inline-reference";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
@@ -1239,10 +1243,21 @@ function Composer({
     threadRootId,
     active && !editingDisabled && !editing.target && !submission && !cached,
   );
+  // The editor's placeholder is text, so a channel's own placeholder is drawn
+  // over it with its sidebar icon; DMs, threads and edits keep their text.
+  const ChannelIcon = useListedChannel(listed, channelId, channelIcon);
+  const iconPlaceholder =
+    ChannelIcon !== ChatCircleIcon &&
+    !editing.target &&
+    customLabel === undefined &&
+    placeholder === undefined &&
+    !threadRootId;
   const label = editing.target
     ? "Edit message"
     : (customLabel ??
-      (threadRootId ? "Reply to thread" : `Message #${channelName}`));
+      (threadRootId
+        ? "Reply to thread"
+        : `Message ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`));
   const gifPreview = useGifDraftPreview(extensions?.tools);
   const attachments = useAttachmentDraft(
     session,
@@ -3560,6 +3575,13 @@ function Composer({
                 }
               }}
             />
+            {iconPlaceholder && (
+              <span className={styles.channelPlaceholder} aria-hidden="true">
+                Message{" "}
+                <ChannelIcon className={channelIconClass(ChannelIcon)} />
+                {channelName}
+              </span>
+            )}
           </div>
         </div>
         {!editing.target &&

@@ -325,11 +325,16 @@ it("shows the failed save, keeps the draft and saves on retry", async () => {
   store.connect(vi.fn(async (file: File) => uploaded(file)));
   await user.upload(screen.getByLabelText("Upload image"), png("wave.png"));
   await screen.findByRole("img", { name: "Selected custom emoji preview" });
-  store.rejectNext(new PublishRejected("blocked: no"));
+  store.rejectNext(
+    new PublishRejected(
+      "You are timed out until 12:00",
+      "restricted: you are timed out until 12:00",
+    ),
+  );
   const save = screen.getByRole("button", { name: "Save emoji" });
   await user.click(save);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Failed to add emoji.",
+    /^Failed to add emoji\. You are timed out until 12:00$/,
   );
   expect(save).toBeEnabled();
   expect(screen.getByRole("textbox")).toHaveValue("wave");

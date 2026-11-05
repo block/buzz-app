@@ -13,6 +13,7 @@ import {
   type CustomEmoji,
 } from "./emoji";
 import { eventDto, newer, type RelayEvent } from "./events";
+import { PublishNotSent, PublishRejected } from "./outbox";
 import type { Priority, RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
@@ -244,13 +245,16 @@ export function createEmojiDirectory(
       signal.throwIfAborted();
       accept([event]);
       return shortcode;
-    } catch {
+    } catch (error) {
       throw new Error(
         timeout.aborted
           ? url === undefined
             ? "Timed out while removing emoji."
             : "Timed out while adding emoji."
-          : failure,
+          : error instanceof PublishRejected &&
+              !(error instanceof PublishNotSent)
+            ? `${failure} ${error.message}`
+            : failure,
       );
     }
   }

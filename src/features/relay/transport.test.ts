@@ -148,6 +148,10 @@ it.each([
   ],
   ["blocked:   you are banned", "You are banned"],
   ["restricted: not a channel member", "Not a channel member"],
+  [
+    "forbidden: workflow is disabled or inactive",
+    "Workflow is disabled or inactive",
+  ],
   ["error: internal failure", "Internal failure"],
   ["pow: difficulty too low", "Difficulty too low"],
   ["duplicate: already accepted", "Already accepted"],

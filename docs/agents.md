@@ -1257,23 +1257,19 @@ beyond 30 seconds or disconnect makes work unknown, not stopped. Terminal state
 retains a monotonic evidence timestamp through clock rollback and bounded eviction.
 There is no agent-global sequence gate: producer sequences reset, skip and interleave.
 
-Remote completion outcomes distinguish success, failure (`failed` or
-`terminated`), and stopped execution (`cancelled`). Stopped execution does not
-establish who cancelled it. The bounded turn states retain exact trigger IDs and
-outcomes independently of raw tool records, so raw-buffer trimming cannot turn
-a received terminal result into unknown. Evicting an entire lifecycle turn still
-leaves aggregate request completion uncertain.
+Remote terminal outcomes map `completed` to success, `failed`/`terminated` to
+failure, and `cancelled` to stopped without identifying who cancelled. Exact
+trigger IDs and outcomes survive raw-record trimming. Losing a lifecycle turn
+makes aggregate request completion uncertain.
 
-While signed in to Builderlab, a stale or reconnected live feed reads terminal
-outcomes for its retained exact tasks through the owner-only
-`/v3/beekeeper/get-agent-turn-status` endpoint. Reads group up to 64 tasks in one
-agent/session/channel and use the existing bounded read retries, with no new
-timer. Missing or nonterminal tasks stay unknown until new evidence arrives or
-the next reconnect allows another read. Account changes, community changes,
-disable/reset and disposal cancel outstanding recovery. A late readback cannot
-replace an already received terminal result. This recovers missed terminal
-frames for retained turns, not history after reload; it does not archive raw
-activity. An older server without the endpoint leaves those tasks unknown.
+With Builderlab sign-in, stale activity or reconnect triggers an owner-only
+`/v3/beekeeper/get-agent-turn-status` read for retained exact tasks. Reads batch
+up to 64 tasks per agent/session/channel using existing bounded retries. Missing
+or nonterminal tasks stay unknown until new evidence or another reconnect.
+Account/community changes, disable/reset and disposal cancel recovery; readback
+cannot replace a received terminal result. Recovery neither archives raw activity
+nor restores history after reload. Older servers without the endpoint leave
+tasks unknown.
 
 ### Activity updates in the conversation
 

@@ -849,7 +849,11 @@ export function PluginImport({
                   : "Try another folder or repository."
               : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
-        size={error || (reviewing && updating) ? "compact" : "wide"}
+        size={
+          error || (reviewing && updating) || (bound && !preview)
+            ? "compact"
+            : "wide"
+        }
         leadingActions={
           !error &&
           !showUnchanged &&
@@ -1059,7 +1063,7 @@ export function PluginImport({
         <div hidden={!!error || showUnchanged}>
           <div hidden={!!preview || (!!updateId && !!savedSource)}>
             {(!updateId || !savedSource) && (
-              <div className={styles.columns}>
+              <div className={bound ? undefined : styles.columns}>
                 {!bound && (
                   <section
                     aria-label="Add from folder"
@@ -1145,7 +1149,7 @@ export function PluginImport({
                       />
                     </Field>
                     {(bound || linkConstrained) && (
-                      <p className="m-0 break-all text-caption text-muted">
+                      <p className="m-0 break-words text-caption text-muted">
                         {bound
                           ? `Opened from ${requester(bound.origin)}. `
                           : "Opened from a link. "}

@@ -1051,6 +1051,7 @@ test("media proxy accepts only the media URLs the native proxy accepts", async (
     `${fixtureRelayUrl}/media/${blob}.PNG`,
     `${fixtureRelayUrl}/media/${blob}.toolongext`,
     `${fixtureRelayUrl}/media/${blob}.tar.gz`,
+    `${fixtureRelayUrl}/media/${blob}.thumb.png`,
     `${fixtureRelayUrl}/media/${blob}/nested.png`,
     `${fixtureRelayUrl}/other/${blob}.png`,
   ];
@@ -1058,6 +1059,7 @@ test("media proxy accepts only the media URLs the native proxy accepts", async (
     `${fixtureRelayUrl}/media/${blob}`,
     still,
     `${fixtureRelayUrl}/media/${blob}.thumb.jpg`,
+    `${fixtureRelayUrl}/media/${blob}.thumb.webp`,
   ];
   const h = await harness(
     () => new Response("ok", { headers: { "Content-Type": "image/png" } }),
@@ -1492,6 +1494,7 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
       tags: [
         ["h", "c"],
         ["e", "a".repeat(64)],
+        ["p", "b".repeat(64)],
         ["emoji", "party", "https://a.test/party.png"],
       ],
     };

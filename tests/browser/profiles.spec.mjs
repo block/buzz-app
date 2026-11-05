@@ -1,6 +1,46 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+// Real Members -> Profiles wiring must retain a visible distinction after the
+// browser collapses trailing whitespace, without changing the clicked key.
+test("qualifies a whitespace namesake in Members and opens its exact profile", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/profiles.html?verified-name&name-collision");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const { key, npub } = await page.evaluate(() => ({
+    key: window.profilesFixture.keys.mic,
+    npub: window.profilesFixture.npubs.mic,
+  }));
+  const name = `Viewer (${key.slice(0, 10)})`;
+  await page
+    .getByRole("button", { name: "Manage members", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Manage members",
+    exact: true,
+  });
+  const label = dialog.getByText(name, { exact: true });
+  await expect(label).toBeVisible();
+  const row = dialog.getByRole("button", {
+    name: new RegExp(`^Open profile for Viewer \\(${key.slice(0, 10)}\\)`),
+  });
+  await row.focus();
+  await row.press("Enter");
+  const panel = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  await expect(panel.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(panel.locator("code")).toHaveText(npub);
+  await expect(panel.getByText("Mic biography", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(() => window.profilesFixture.report.publications),
+  ).toBe(0);
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("transient profiles replace without retiring Back/Forward return paths", async ({
   page,
 }) => {
@@ -1300,4 +1340,54 @@ test("profile preview fits enlarged text and stops its status with reduced motio
       ),
     )
     .toEqual({ inside: true, truncated: true });
+});
+
+// Browser-only: the preview paints in the native top layer, above any z-index,
+// so only a rendering engine shows whether its hints paint above it.
+test("profile preview names its status emoji above the card and stays open over the hint", async ({
+  page,
+}) => {
+  // Hold the status ticker still under the pointer.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/tests/fixtures/profiles.html?long-status");
+  const avatar = page.getByRole("button", {
+    name: "View Viewer profile",
+    exact: true,
+  });
+  await expect(avatar).toBeVisible();
+  await page.clock.install();
+  await avatar.hover();
+  await page.clock.runFor(600);
+  const preview = page.getByRole("dialog", { name: "Viewer profile preview" });
+  await expect(preview).toBeVisible();
+  await preview.getByText("🇺🇸", { exact: true }).first().hover();
+  await page.clock.runFor(300);
+  const hint = page.locator(".buzz-tooltip[data-open]");
+  await expect(hint).toHaveText(":us:");
+  // The hint covers the card's name row. Assert paint order, not visibility:
+  // Base UI makes a non-hoverable hint pass the pointer through, so restore
+  // hit testing only to ask what is topmost at the hint's center.
+  await expect
+    .poll(() =>
+      hint.evaluate((tip) => {
+        const positioner = tip.parentElement;
+        const rect = tip.getBoundingClientRect();
+        const pointerEvents = positioner.style.pointerEvents;
+        positioner.style.pointerEvents = "auto";
+        const hit = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
+        );
+        positioner.style.pointerEvents = pointerEvents;
+        return tip.contains(hit);
+      }),
+    )
+    .toBe(true);
+  // Moving onto the hint stays over the card, so the preview does not close.
+  const box = await hint.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+    steps: 4,
+  });
+  await page.clock.runFor(600);
+  await expect(preview).toHaveAttribute("data-open", "");
 });

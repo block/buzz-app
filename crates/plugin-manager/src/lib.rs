@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod access;
 pub mod imports;
 pub mod managed;
 mod migrate_agent_flag;
@@ -36,9 +37,16 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<UpdatePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<Discovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostGrants>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdatePolicy {
+    pub default_enabled: bool,
 }
 /// Display-only metadata is deliberately forward-compatible. Unknown fields are
 /// ignored so adding a discovery hint does not make a plugin unloadable.
@@ -112,6 +120,9 @@ pub struct HostCommand {
         skip_serializing_if = "Option::is_none"
     )]
     pub max_output_bytes: Option<u64>,
+    /// Run these verified bytes, never a program found on PATH.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ProcessArtifact>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -290,6 +301,10 @@ impl Manifest {
                     || command
                         .max_output_bytes
                         .is_some_and(|limit| !(1..=MAX_HOST_COMMAND_OUTPUT_BYTES).contains(&limit))
+                    || command
+                        .artifact
+                        .as_ref()
+                        .is_some_and(|artifact| !valid_artifact(artifact))
                 {
                     return Err("Invalid host command declaration".into());
                 }
@@ -342,13 +357,17 @@ pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
 /// Exact Apps domain paired with the build's login origin, or empty when native SSO is unconfigured.
 pub const BUILDERLAB_APPS_DOMAIN: &str = env!("BUZZ_BUILDERLAB_APPS_DOMAIN");
 /// The Apps Platform control plane of the tenant whose Builderlab sign-in
-/// `origin` is, which the bundled Builderlab plugin deploys apps to. Kept in
-/// step with `src/bundled/builderlab/apps/environment.ts`.
+/// `origin` is, which the bundled Builderlab plugin deploys apps to through
+/// the native FI session. Kept in step with
+/// `src/bundled/builderlab/apps/environment.ts`.
 pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
     match origin {
         "https://app.builderlab.xyz" => Some("https://compose-ctrl.builderlab.xyz"),
         "https://app.builderlabstaging.xyz" => Some("https://compose-ctrl.builderlabstaging.xyz"),
         "https://block.builderlab.xyz" => Some("https://compose-ctrl.block.builderlab.xyz"),
+        "https://block.builderlabstaging.xyz" => {
+            Some("https://compose-ctrl.block.builderlabstaging.xyz")
+        }
         _ => None,
     }
 }
@@ -386,24 +405,11 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         "../../../src/bundled/builderlab/manifest.json"
     ))
     .expect("builderlab manifest");
-    let origin = BUILDERLAB_ORIGIN;
+    // Builderlab is reached only through the native FI session forwarder: no
+    // renderer network or file access. A development broker build reaches it
+    // through the broker, and a build with neither has no Builderlab.
     let descriptor = env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG");
-    builderlab.host = Some(if descriptor.is_empty() {
-        HostGrants {
-            files: apps_control_plane(origin).is_some(),
-            network_origins: if origin.is_empty() {
-                vec![]
-            } else {
-                std::iter::once(origin)
-                    .chain(apps_control_plane(origin))
-                    .map(Into::into)
-                    .collect()
-            },
-            ..HostGrants::default()
-        }
-    } else {
-        // An FI build reaches Builderlab only through the native session
-        // forwarder: no renderer network or file access.
+    builderlab.host = (!descriptor.is_empty()).then(|| {
         let config: serde_json::Value =
             serde_json::from_str(descriptor).expect("validated FI descriptor");
         let base = config["apiBasePath"].as_str().expect("API base");
@@ -566,6 +572,8 @@ struct Installed {
     #[serde(default)]
     previous_source: Option<InstallSource>,
     enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    update_checks: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     readme_revision: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -759,6 +767,7 @@ pub struct PluginInfo {
     pub manifest: Manifest,
     pub source: &'static str,
     pub enabled: bool,
+    pub update_checks: Option<bool>,
     pub revision: String,
     pub previous: Option<String>,
     pub has_signature: bool,
@@ -877,6 +886,10 @@ impl Manager {
             catalog,
         )
     }
+    /// Repository access rules for Git imports, from the file beside the profile folders.
+    pub fn repository_access(&self) -> access::AccessRules {
+        access::load(&self.home, std::env::var_os(access::PATH_ENV))
+    }
     fn lock(&self) -> Result<File> {
         fs::create_dir_all(&self.root).map_err(err)?;
         let file = OpenOptions::new()
@@ -984,6 +997,7 @@ impl Manager {
                     manifest,
                     source: "bundled",
                     enabled,
+                    update_checks: None,
                     revision: "bundled".into(),
                     previous: None,
                     has_signature: false,
@@ -1024,6 +1038,7 @@ impl Manager {
                 manifest: p.manifest,
                 source: "external",
                 enabled: p.enabled,
+                update_checks: p.update_checks,
                 revision: p.current,
                 previous: p.previous,
                 has_signature,
@@ -1082,6 +1097,7 @@ impl Manager {
                 }
             });
             let enabled = old.is_some_and(|p| p.enabled);
+            let update_checks = old.and_then(|p| p.update_checks);
             let previous_signature = old.and_then(|p| {
                 if p.current == revision {
                     p.previous_signature.clone()
@@ -1101,6 +1117,7 @@ impl Manager {
                     previous_signature,
                     previous_source,
                     enabled,
+                    update_checks,
                     readme_revision,
                     icon_png_revision,
                     icon_jpg_revision,
@@ -1142,6 +1159,14 @@ impl Manager {
                         p.enabled = true;
                     }
                     "disable" => p.enabled = false,
+                    "enable-update-checks" | "disable-update-checks" => {
+                        if p.manifest.updates.is_none()
+                            || !matches!(p.current_source, Some(InstallSource::Git(_)))
+                        {
+                            return Err("This plugin does not support Git update checks".into());
+                        }
+                        p.update_checks = Some(action == "enable-update-checks");
+                    }
                     "remove" => {
                         registry.installed.remove(id);
                     }
@@ -1962,6 +1987,86 @@ mod tests {
     }
 
     #[test]
+    fn update_check_choices_survive_reinstall_update_rollback_and_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let open = || Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let manager = open();
+        let source = Some(super::InstallSource::Git(super::GitSource {
+            repository: "https://example.com/plugins.git".into(),
+            reference: "main".into(),
+            path: ".".into(),
+            commit: None,
+        }));
+        let release = |policy: Option<bool>| {
+            let mut manifest = serde_json::json!({
+                "id": "example.updates", "name": "Updates", "apiVersion": 1
+            });
+            if let Some(default_enabled) = policy {
+                manifest["updates"] = serde_json::json!({"defaultEnabled": default_enabled});
+            }
+            Release {
+                bytes: artifact_from_text(
+                    &manifest.to_string(),
+                    "export function apply() {}".into(),
+                )
+                .unwrap(),
+                signature: None,
+            }
+        };
+        let installed = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "example.updates")
+                .unwrap()
+        };
+        manager
+            .install_artifact(&release(None), source.clone())
+            .unwrap();
+        assert_eq!(installed(&manager).update_checks, None);
+        assert!(manager
+            .change("enable-update-checks", "example.updates")
+            .is_err());
+        for default_enabled in [false, true] {
+            manager
+                .install_artifact(&release(Some(default_enabled)), source.clone())
+                .unwrap();
+            assert_eq!(
+                installed(&manager)
+                    .manifest
+                    .updates
+                    .unwrap()
+                    .default_enabled,
+                default_enabled
+            );
+            for (action, expected) in [
+                ("enable-update-checks", true),
+                ("disable-update-checks", false),
+            ] {
+                manager.change(action, "example.updates").unwrap();
+                manager
+                    .install_artifact(&release(Some(default_enabled)), source.clone())
+                    .unwrap();
+                assert_eq!(installed(&open()).update_checks, Some(expected));
+                manager
+                    .install_artifact(&release(Some(!default_enabled)), source.clone())
+                    .unwrap();
+                assert_eq!(installed(&open()).update_checks, Some(expected));
+                manager.change("rollback", "example.updates").unwrap();
+                assert_eq!(installed(&open()).update_checks, Some(expected));
+                assert!(!installed(&manager).enabled);
+            }
+        }
+        manager.change("remove", "example.updates").unwrap();
+        manager
+            .install_artifact(&release(Some(true)), source)
+            .unwrap();
+        assert_eq!(installed(&open()).update_checks, None);
+    }
+
+    #[test]
     fn validates_discovery_metadata_and_old_manifests() {
         let old: Manifest =
             serde_json::from_str(r#"{"id":"example.page","name":"Example","apiVersion":1}"#)
@@ -2164,6 +2269,18 @@ mod tests {
             .unwrap()
             .push(manifest["host"]["commands"][0].clone());
         assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        let mut pinned = manifest.clone();
+        pinned["host"]["commands"][0]["artifact"] =
+            serde_json::json!({"path": "~/example/cli", "sha256": "a".repeat(64)});
+        assert!(artifact_from_text(&pinned.to_string(), "export const x = 1".into()).is_ok());
+        for (field, value) in [
+            ("path", serde_json::json!("relative/cli")),
+            ("sha256", serde_json::json!("A".repeat(64))),
+        ] {
+            let mut invalid = pinned.clone();
+            invalid["host"]["commands"][0]["artifact"][field] = value;
+            assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
 
         let mut processes = manifest.clone();
         processes["host"]["processes"] = serde_json::json!([
@@ -2349,6 +2466,10 @@ mod tests {
             Some("https://compose-ctrl.block.builderlab.xyz")
         );
         assert_eq!(
+            super::apps_control_plane("https://block.builderlabstaging.xyz"),
+            Some("https://compose-ctrl.block.builderlabstaging.xyz")
+        );
+        assert_eq!(
             super::apps_control_plane("https://builderlab.example"),
             None
         );
@@ -2359,25 +2480,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
+        // Only the native session's Builderlab routes are granted, and only in
+        // an FI build.
         if env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG").is_empty() {
-            assert_eq!(
-                grants.files,
-                super::apps_control_plane(super::BUILDERLAB_ORIGIN).is_some()
-            );
-            assert_eq!(
-                grants.network_origins,
-                if env!("BUZZ_BUILDERLAB_ORIGIN").is_empty() {
-                    vec![]
-                } else {
-                    std::iter::once(env!("BUZZ_BUILDERLAB_ORIGIN"))
-                        .chain(super::apps_control_plane(env!("BUZZ_BUILDERLAB_ORIGIN")))
-                        .map(str::to_owned)
-                        .collect()
-                }
-            );
-            assert_eq!(grants.federated_identity, None);
+            assert_eq!(grants, super::HostGrants::default());
         } else {
-            // An FI build grants only the native session's Builderlab routes.
             assert!(!grants.files);
             assert!(grants.network_origins.is_empty());
             let grant = grants.federated_identity.clone().unwrap();

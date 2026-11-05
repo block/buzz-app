@@ -1,3 +1,4 @@
+import { ActivityNavigationProvider } from "./ActivityNavigation";
 import {
   useEffect,
   useLayoutEffect,
@@ -50,7 +51,12 @@ export function AppShell(props: ComponentProps<typeof AppShellContent>) {
       pages={props.pages}
       relay={props.communities.relay}
     >
-      <AppShellContent {...props} />
+      <ActivityNavigationProvider
+        pages={props.pages}
+        relay={props.communities.relay}
+      >
+        <AppShellContent {...props} />
+      </ActivityNavigationProvider>
     </BestieNavigationProvider>
   );
 }
@@ -77,6 +83,7 @@ function AppShellContent({
   onCommunitySelect,
   onOpenTarget,
   launchers,
+  backdrop,
   companion,
   creationAction,
   creationInSidebar = true,
@@ -109,6 +116,8 @@ function AppShellContent({
   /** Community menu destinations, opened through the host's navigation. */
   onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
+  /** Plugin-painted layers behind the shell; absent by default. */
+  backdrop?: ReactNode;
   companion?: ReactNode;
   creationAction?: (
     open: boolean,
@@ -331,6 +340,7 @@ function AppShellContent({
       data-shell-tone={tone}
       className="shell-background flex h-dvh min-h-0 flex-col overflow-hidden text-ink"
     >
+      {backdrop}
       {/* biome-ignore lint/a11y/useValidAnchor: A skip link navigates to a real fragment; enhance focus without replacing the app route hash. */}
       <a
         href="#main-content"

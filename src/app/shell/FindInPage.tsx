@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   CaretDownIcon,
@@ -20,6 +26,11 @@ const TYPING_DELAY = 100;
 const MUTATION_DELAY = 250;
 /** Content that never pauses, such as a streaming reply, still recounts. */
 const MUTATION_MAX_WAIT = 1000;
+/** Engines without the Popover API keep the bar where its own styles put it. */
+const POPOVER =
+  globalThis.HTMLElement && "showPopover" in HTMLElement.prototype
+    ? ("manual" as const)
+    : undefined;
 /** Attributes that show, hide or cover content without changing its text. */
 const VISIBILITY = [
   "class",
@@ -136,6 +147,16 @@ export function FindInPage({
       }),
     [shortcuts, open],
   );
+  // A dialog's floating material contains and clips fixed descendants. The top
+  // layer keeps the bar at the window's corner while it stays in the modal.
+  useLayoutEffect(() => {
+    const element = bar.current;
+    if (!root || !POPOVER || !element) return;
+    element.showPopover();
+    return () => {
+      if (element.isConnected) element.hidePopover();
+    };
+  }, [root]);
   // Each opening, including one while already open, selects the query.
   useEffect(() => {
     if (!opened) return;
@@ -201,6 +222,7 @@ export function FindInPage({
       ref={bar}
       aria-label="Find on screen"
       className={styles.bar}
+      popover={POPOVER}
       onKeyDown={(event) => {
         // Enter and Escape belong to an input method while it composes.
         if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)

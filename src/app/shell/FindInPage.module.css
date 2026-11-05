@@ -2,7 +2,12 @@
 
 /* Chrome's find bar: below the top bar at the window's trailing edge. */
 .bar {
+  /* Shown as a popover in the top layer; undo its default placement. */
   position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  overflow: visible;
   top: calc(var(--size-topbar) + var(--space-2));
   right: max(var(--space-4), env(safe-area-inset-right));
   z-index: var(--layer-popover);

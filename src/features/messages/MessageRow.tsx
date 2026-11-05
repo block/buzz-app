@@ -53,6 +53,7 @@ import {
   type ReactNode,
   type ReactElement,
   type RefObject,
+  type SyntheticEvent,
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
@@ -430,23 +431,21 @@ function MessageRowContent({
   // attachment list through React, but only players inside its DOM count: a
   // plugin player portalled elsewhere never pins the row. load() and src swaps
   // pause with only an emptied event.
-  const attachmentList = useRef<HTMLDivElement>(null);
   const [mediaPlaying, setMediaPlaying] = useState(false);
-  const trackMedia = () => setMediaPlaying(playingIn(attachmentList.current));
+  const trackMedia = (event: SyntheticEvent<HTMLDivElement>) =>
+    setMediaPlaying(playingIn(event.currentTarget));
   // React drops the pause a player fires once removed. While one plays,
   // recheck when the list's tree changes: a player edited out, claimed by a
   // message renderer or swapped by its plugin's boundary. Whatever unmounts
   // the list itself (a claim of its last group, an agents row folding) clears
   // the flag. A stable ref, so re-renders never detach it.
   const observeAttachments = useCallback((list: HTMLDivElement) => {
-    attachmentList.current = list;
     const observer = new MutationObserver(() =>
       setMediaPlaying((playing) => playing && playingIn(list)),
     );
     observer.observe(list, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
-      attachmentList.current = null;
       setMediaPlaying(false);
     };
   }, []);
@@ -1792,8 +1791,8 @@ const none: readonly never[] = [];
 const noActions = () => none;
 const noLibrary = () => undefined;
 // A failed player can still report paused false.
-const playingIn = (list: Element | null) =>
-  [...(list?.querySelectorAll<HTMLMediaElement>("audio, video") ?? [])].some(
+const playingIn = (list: Element) =>
+  [...list.querySelectorAll<HTMLMediaElement>("audio, video")].some(
     (player) => !player.paused && !player.error,
   );
 // Confirmed lifecycle evidence wins; legacy agents retain public typing fallback.

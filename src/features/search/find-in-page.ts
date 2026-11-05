@@ -2,7 +2,7 @@
 export const FIND_LIMIT = 1000;
 
 const SKIPPED =
-  'script, style, noscript, template, textarea, select, .sr-only, [contenteditable]:not([contenteditable="false"])';
+  'script, style, noscript, template, textarea, select, .sr-only, [inert], [contenteditable]:not([contenteditable="false"])';
 
 /**
  * Whether text in `element` is on-screen text a person can select. Labels,
@@ -10,6 +10,9 @@ const SKIPPED =
  * (`display: none`, `visibility: hidden`, covered `content-visibility: hidden`
  * tabs) don't count. Neither does `user-select: none` chrome such as sidebar
  * rows: WebKit paints highlights there onto the next selectable text instead.
+ * Inert content, such as a collapsed drop target, can't be selected either,
+ * even where its computed style says it can. A highlight there makes older
+ * WebKit paint the unselectable text around it.
  */
 function findable(element: Element, exclude: Element | null | undefined) {
   if (element.closest(SKIPPED) || exclude?.contains(element)) return false;

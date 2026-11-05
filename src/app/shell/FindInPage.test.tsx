@@ -240,13 +240,6 @@ it("leaves Enter and Escape to an input method while composing", async () => {
 });
 
 it("recounts when a retained panel is covered or uncovered", async () => {
-  // jsdom has no layout; an inert panel's text reports as not visible.
-  Object.defineProperty(Element.prototype, "checkVisibility", {
-    configurable: true,
-    value(this: Element) {
-      return !this.closest("[inert]");
-    },
-  });
   const { user } = setup(
     <>
       <section id="one-panel">
@@ -270,7 +263,6 @@ it("recounts when a retained panel is covered or uncovered", async () => {
   expect(painted("buzz-find-active")).toEqual([
     { text: "panequery", in: "two" },
   ]);
-  delete (Element.prototype as { checkVisibility?: unknown }).checkVisibility;
 });
 
 it("recounts at least once a second while content keeps changing", async () => {

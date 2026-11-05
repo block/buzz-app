@@ -60,6 +60,18 @@ it("skips content the engine reports as not visible", () => {
   expect(ranges[0]?.startContainer.parentElement?.id).toBe("shown");
 });
 
+it("skips inert content, which engines treat as unselectable", () => {
+  // A collapsed drop target stays rendered and reports selectable text.
+  document.body.innerHTML = `
+    <p id="shown">match</p>
+    <div inert aria-hidden="true" style="height: 0; overflow: hidden">
+      <div><span>match</span></div>
+    </div>`;
+  const ranges = findRanges(document.body, "match");
+  expect(ranges).toHaveLength(1);
+  expect(ranges[0]?.startContainer.parentElement?.id).toBe("shown");
+});
+
 it("stops at the match limit", () => {
   document.body.innerHTML = `<p>${"x ".repeat(FIND_LIMIT + 5)}</p>`;
   expect(findRanges(document.body, "x")).toHaveLength(FIND_LIMIT);

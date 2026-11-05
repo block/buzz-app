@@ -19,9 +19,9 @@ export type ConfigOptions = {
   }[];
 };
 /** A select's choice, or a group of them. */
-type ConfigValue = { value?: string; options?: ConfigValue[] };
+export type ConfigValue = { value?: string; options?: ConfigValue[] };
 /** Every choice's value, groups flattened. */
-const valuesOf = (options: readonly ConfigValue[] = []): string[] =>
+export const valuesOf = (options: readonly ConfigValue[] = []): string[] =>
   options.flatMap((option) =>
     option.options
       ? valuesOf(option.options)

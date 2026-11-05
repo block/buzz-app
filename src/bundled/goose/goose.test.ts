@@ -477,6 +477,33 @@ describe("GooseProcess", () => {
     expect(process?.turns.map((turn) => turn.text)).toEqual(["one"]);
   });
 
+  it("runs a grouped synced level already current, setting nothing", async () => {
+    const fake = fakeSpawn({
+      thinking: {
+        "": { current: "high", levels: ["low", "high"], grouped: true },
+      },
+    });
+    const goose = await GooseProcess.start(fake.spawn, {
+      cwd: "/work",
+      serve: fake.serve,
+    });
+    const [process] = fake.geese;
+    const choice = { provider: "openai", model: "", effort: "high" };
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      tools: ok,
+      choice: () => choice,
+    });
+    // Already on the level goose opened it at.
+    session.chosen = choice;
+    await expect(
+      session.send("one", {}, undefined, undefined, "high"),
+    ).resolves.toEqual({ ok: true });
+    expect(process?.configured).toEqual([]);
+    expect(process?.turns.map((turn) => turn.text)).toEqual(["one"]);
+  });
+
   it("refuses a synced level when goose lists none for the model", async () => {
     const { open, process } = await start();
     const session = await open({

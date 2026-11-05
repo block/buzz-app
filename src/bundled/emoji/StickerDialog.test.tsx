@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelMessage } from "../../features/relay/contracts";
@@ -38,16 +38,27 @@ function session(media: (url: string) => string | undefined = () => nativeUrl) {
     url: "https://relay.test/media/sticker.png",
     type: file.type,
   }));
-  const snapshot = { status: "ready", entries: [], mine: [] };
+  const refresh = vi.fn(async () => {});
+  let snapshot: object = { status: "ready", entries: [], mine: [] };
+  const listeners = new Set<() => void>();
   return {
     add,
     upload,
+    refresh,
+    setCatalog(next: object) {
+      snapshot = next;
+      for (const listener of listeners) listener();
+    },
     value: {
       media,
       emoji: {
-        subscribe: () => () => {},
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
         snapshot: () => snapshot,
         ensure: async () => {},
+        refresh,
         add,
         upload,
       },
@@ -117,6 +128,42 @@ it("uploads the lifted subject and saves it as the named emoji", async () => {
   expect(await screen.findByText("Added :cat_nap:")).toBeVisible();
   cleanup();
   expect(revoke).toHaveBeenCalledWith("blob:x");
+});
+
+it("waits for the viewer's emoji before saving over a matching name", async () => {
+  lift.mockResolvedValue(PNG.buffer);
+  const { add, refresh, setCatalog, value } = session();
+  const empty = { entries: [], mine: [] };
+  act(() => setCatalog({ status: "loading", ...empty }));
+  open(value);
+  expect(await screen.findByAltText("Sticker preview")).toBeVisible();
+  const save = screen.getByRole("button", { name: "Save sticker" });
+  expect(save).toBeDisabled();
+
+  act(() =>
+    setCatalog({ status: "error", error: "Relay timed out", ...empty }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("Relay timed out");
+  expect(save).toBeDisabled();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Retry emoji" }));
+  expect(refresh).toHaveBeenCalledOnce();
+
+  const existing = {
+    shortcode: "cat_nap",
+    url: "https://relay.test/media/old.png",
+  };
+  act(() =>
+    setCatalog({ status: "ready", entries: [existing], mine: [existing] }),
+  );
+  expect(
+    screen.getByText(
+      "You already have :cat_nap: — saving will replace its image.",
+    ),
+  ).toBeVisible();
+  expect(save).toBeEnabled();
+  expect(add).not.toHaveBeenCalled();
 });
 
 it("does not publish the emoji when the dialog closes during upload", async () => {

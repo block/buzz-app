@@ -105,11 +105,14 @@ export function StickerDialog({
     !!normalized && catalog.mine.some((e) => e.shortcode === normalized);
   const lifted = lift.status === "lifted" && cutout ? lift : undefined;
   const preview = lifted ? lifted.preview : source;
+  // Saving replaces an emoji with the same name, so wait until the viewer's
+  // own set is known and the replacement warning can show.
   const canSave =
     !!add &&
     !!upload &&
     !!attachment &&
     !!normalized &&
+    catalog.status === "ready" &&
     lift.status !== "lifting" &&
     !saving;
 
@@ -250,6 +253,16 @@ export function StickerDialog({
             <p className="text-body-sm text-muted">
               You already have :{normalized}: — saving will replace its image.
             </p>
+          )}
+          {catalog.status === "error" && (
+            <>
+              <p role="alert" className="error">
+                {catalog.error ?? "Couldn't load your emoji."}
+              </p>
+              <Button onClick={() => void session.emoji.refresh()}>
+                Retry emoji
+              </Button>
+            </>
           )}
           {error && (
             <p role="alert" className="error">

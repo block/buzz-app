@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentArchiveRetry, AgentDelete } from "./AgentManage";
-import type { Agent, Agents } from "./service";
+import { UnknownHostedAgent, type Agent, type Agents } from "./service";
 
 afterEach(cleanup);
 
@@ -46,6 +46,35 @@ it("deletes after confirming, and keeps the dialog open with the error when Dele
   await user.click(screen.getByRole("button", { name: "Delete" }));
   await vi.waitFor(() => expect(onRemoved).toHaveBeenCalledOnce());
   expect(remove).toHaveBeenCalledWith(agent.key);
+});
+
+it("offers Remove from Buzz only after Delete finds the provider doesn't know a hosted agent", async () => {
+  const user = userEvent.setup();
+  const remove = vi
+    .fn<Agents["remove"]>()
+    .mockRejectedValueOnce(new Error("Could not reach Builderlab"))
+    .mockRejectedValueOnce(new UnknownHostedAgent("Not in this account."));
+  const forget = vi.fn<Agents["forget"]>().mockResolvedValue(undefined);
+  const onRemoved = vi.fn();
+  render(
+    <AgentDelete
+      agents={{ remove, forget, memberships: () => [] } as unknown as Agents}
+      agent={{ ...agent, place: "hosted" }}
+      onRemoved={onRemoved}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not reach Builderlab",
+  );
+  expect(screen.queryByRole("button", { name: "Remove from Buzz" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Delete" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Remove from Buzz" }),
+  );
+  await vi.waitFor(() => expect(onRemoved).toHaveBeenCalledOnce());
+  expect(forget).toHaveBeenCalledWith(agent.key);
 });
 
 it("retries an unchecked archive state and shows what is left", async () => {

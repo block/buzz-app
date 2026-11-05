@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
 import type { RelayData } from "../../../features/relay/service";
+import { UnknownHostedAgent } from "../../../features/agents/service";
 import { createOAuthSession } from "../oauth/session";
 import { builderlabType } from "./index";
 
@@ -221,7 +222,9 @@ it("looks up an agent from another device and retains its ID before a failed del
 it("does not infer provider deletion from absence in an unrecognized account", async () => {
   const h = await fixture();
   h.request.mockResolvedValueOnce(response({ status: 1, agents: [] }));
-  await expect(h.remote.remove(removal)).rejects.toThrow(
+  const removing = h.remote.remove(removal);
+  await expect(removing).rejects.toThrow(UnknownHostedAgent);
+  await expect(removing).rejects.toThrow(
     "not found in this Builderlab account",
   );
   expect(h.request).toHaveBeenCalledOnce();

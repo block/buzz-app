@@ -3,7 +3,10 @@ import { createActivityTab } from "./Activity";
 import { createSettingsTab } from "./Instructions";
 import { createProfileActions, createSignInFooter } from "./SignInFooter";
 import { creationConfig, createCreationFields, EMPTY_CREATION } from "./Create";
-import type { AgentType } from "../../../features/agents/service";
+import {
+  UnknownHostedAgent,
+  type AgentType,
+} from "../../../features/agents/service";
 import type { RelayData } from "../../../features/relay/service";
 import type { AgentClient } from "../agents/client";
 import {
@@ -74,7 +77,10 @@ export function builderlabType(
     );
     if (session.credential() !== credential)
       throw new DOMException("Builderlab session changed.", "AbortError");
-    if (!agent) throw new Error("Agent not found in this Builderlab account.");
+    if (!agent)
+      throw new UnknownHostedAgent(
+        "Agent not found in this Builderlab account.",
+      );
     return remember(pubkey, agent.id);
   }
   async function validateCreation(config: unknown, signal: AbortSignal) {

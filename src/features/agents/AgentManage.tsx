@@ -5,7 +5,7 @@ import { TrashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import type { Agent, Agents } from "./service";
+import { UnknownHostedAgent, type Agent, type Agents } from "./service";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -51,6 +51,7 @@ export function AgentDelete({
   const [error, setError] = useState("");
   // Forgot where it couldn't reach, so Delete is what is left to press.
   const [forgot, setForgot] = useState(false);
+  const [unknownHosted, setUnknownHosted] = useState(false);
   const memberships =
     agent.place === "here" ? agents.memberships(agent.pubkey) : [];
   const several = memberships.length > 1;
@@ -62,12 +63,14 @@ export function AgentDelete({
     setRemoving(true);
     setError("");
     setForgot(false);
+    setUnknownHosted(false);
     try {
       await agents.remove(agent.key);
       setConfirming(false);
       onRemoved();
     } catch (reason) {
       setError(message(reason));
+      setUnknownHosted(reason instanceof UnknownHostedAgent);
       setRemoving(false);
     }
   };
@@ -181,6 +184,25 @@ export function AgentDelete({
                   Delete again to finish here.
                 </p>
               )}
+            {unknownHosted && (
+              <>
+                <p className="m-0 text-body-sm text-secondary">
+                  Remove from Buzz takes it out of its channels here without its
+                  provider. If another account still runs it, it keeps running
+                  there.
+                </p>
+                <div>
+                  <Button
+                    size="compact"
+                    variant="destructive"
+                    disabled={removing}
+                    onClick={() => void forget(agent.key)}
+                  >
+                    Remove from Buzz
+                  </Button>
+                </div>
+              </>
+            )}
             {!several && unreachable[0] && (
               <div>
                 <Button

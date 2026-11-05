@@ -361,6 +361,11 @@ available rather than silently discarding it.
   what Automatic picked. An agent's **Identity** tab shows the same **AI
   settings** row; changing the model, provider or thinking level turns Automatic
   off. Builds without a recommendation show none of this.
+- In those builds, **Runs on** chooses where a new agent runs: **This
+  computer**, or a hosted option such as Builderlab when it is available to your
+  account (otherwise it shows **Coming soon**). A hosted agent's Automatic uses
+  that service's own default model. Where an agent runs is set when it is
+  created; its Identity tab shows it but cannot change it.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.

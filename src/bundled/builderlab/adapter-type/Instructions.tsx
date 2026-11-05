@@ -27,10 +27,12 @@ export function createSettingsTab(
     pubkey,
     retry,
     harnessControl,
+    runsOn,
   }: {
     pubkey: string;
     retry(): void;
     harnessControl: ReactNode;
+    runsOn: ReactNode;
   }) {
     const login = useSyncExternalStore(session.subscribe, session.snapshot);
     const [loaded, setLoaded] = useState<{
@@ -88,6 +90,7 @@ export function createSettingsTab(
           }
         }
         harnessControl={harnessControl}
+        runsOn={runsOn}
       />
     );
   }
@@ -106,6 +109,7 @@ export function createSettingsTab(
             pubkey={agent.pubkey}
             retry={() => setRevision((value) => value + 1)}
             harnessControl={settingsHost?.typeControl?.(false)}
+            runsOn={settingsHost?.runsOn}
           />
         )}
         {settingsSection !== "identity" && (

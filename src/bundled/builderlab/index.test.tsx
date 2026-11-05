@@ -260,6 +260,7 @@ it.each([undefined, false, true])(
           await screen.findByText("No remote agents yet."),
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("ready");
+        expect(type.provider?.snapshot().unavailable).toBeUndefined();
       } else {
         expect(
           screen.getByRole("heading", { name: "Coming soon" }),
@@ -267,6 +268,10 @@ it.each([undefined, false, true])(
         expect(
           screen.getByRole("button", { name: "Coming soon, attention" }),
         ).toBeEnabled();
+        // Create agent shows why it can't run there yet.
+        expect(type.provider?.snapshot().unavailable).toBe(
+          "Not available for your account yet.",
+        );
         await expect(
           type.remote.provision({
             name: "Helper",

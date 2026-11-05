@@ -133,7 +133,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         state.status === "signed-in"
           ? state.account?.canUseRemoteAgents
             ? { readiness: "ready" }
-            : { readiness: "attention", attentionLabel: "Coming soon" }
+            : {
+                readiness: "attention",
+                attentionLabel: "Coming soon",
+                unavailable: "Not available for your account yet.",
+              }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {

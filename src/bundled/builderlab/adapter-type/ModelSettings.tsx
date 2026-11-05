@@ -27,6 +27,8 @@ import {
 import type { BuilderlabSession } from "../session";
 import { AccountRecoverySheet, SettingsErrorSheet } from "./SignInFooter";
 import { effortLabel, modelChoice } from "./models";
+import { defaultChoice } from "./Create";
+import { AISettings, UsesLine } from "../../../features/agents/AISettings";
 
 const statuses = {
   "setup-required": "Choose a model and thinking level to finish setup.",
@@ -47,12 +49,15 @@ export function ModelSettings({
   session,
   settings,
   harnessControl,
+  runsOn,
   openIdentity,
 }: {
   client: AgentClient;
   session: BuilderlabSession;
   openIdentity?: (() => void) | undefined;
   harnessControl?: ReactNode;
+  /** With AI settings: the host's Runs on row, above Automatic or Manual. */
+  runsOn?: ReactNode;
   settings:
     | { agent: RemoteAgent; subject: string; email?: string }
     | { pending: boolean; error: string; retry(): void };
@@ -122,6 +127,14 @@ export function ModelSettings({
     return () => current.abort();
   }, [client, agent, revision, login, hasAccess]);
   const model = models?.find((choice) => choice.id === modelId);
+  // Automatic is Builderlab's own default; Manual is any other choice.
+  const pick = models && defaultChoice(models);
+  const [manual, setManual] = useState(false);
+  const automatic =
+    !manual &&
+    !!pick &&
+    modelId === pick.model.id &&
+    effort === (pick.effort ?? "");
   const valid = !!model?.supportedReasoningEfforts.includes(effort);
   const modelChanged =
     modelId !== (saved?.modelId ?? "") ||
@@ -206,6 +219,46 @@ export function ModelSettings({
         : "Unavailable";
   const loadError = "error" in settings ? settings.error : "";
   const failure = hasAccess ? loadError || error || catalogError : "";
+  const modelRows = (
+    <>
+      <ModelFamilyMenu
+        label="Model"
+        align="end"
+        selected={
+          model
+            ? modelChoice(model)
+            : {
+                id: "",
+                label: models?.length ? "Choose a model" : placeholder,
+              }
+        }
+        models={(models ?? []).map(modelChoice)}
+        disabled={busy || !models?.length}
+        onChange={(next) => {
+          setModelId(next);
+          setEffort("");
+        }}
+      />
+      <Select
+        label="Thinking"
+        variant="preference"
+        align="end"
+        value={valid ? effort : ""}
+        placeholder={models?.length ? "Choose thinking" : placeholder}
+        disabled={busy || !model}
+        groups={[
+          {
+            label: "",
+            options: (model?.supportedReasoningEfforts ?? []).map((value) => ({
+              value,
+              label: effortLabel(value),
+            })),
+          },
+        ]}
+        onValueChange={setEffort}
+      />
+    </>
+  );
   return (
     <LoadingRegion
       pending={pending}
@@ -276,52 +329,57 @@ export function ModelSettings({
           </p>
         )}
         <SettingsGroup>
-          {harnessControl ?? (
-            <PreferenceRow
-              title="Harness"
-              trailing={
-                <span className="flex min-w-0 items-center gap-2">
-                  <BuilderlabLogoIcon size={20} aria-hidden="true" />
-                  Builderlab
-                </span>
-              }
-            />
-          )}
-          <ModelFamilyMenu
-            label="Model"
-            align="end"
-            selected={
-              model
-                ? modelChoice(model)
-                : {
-                    id: "",
-                    label: models?.length ? "Choose a model" : placeholder,
+          {runsOn ? (
+            <>
+              {runsOn}
+              <AISettings
+                automatic={automatic}
+                short
+                disabled={busy}
+                automaticHint="Builderlab picks its default model and thinking level."
+                manualHint="You choose the Builderlab model and thinking level."
+                summary={
+                  pick?.effort ? (
+                    <UsesLine
+                      prefix="Builderlab picks"
+                      icon={BuilderlabLogoIcon}
+                      title="Builderlab"
+                      candidate={{
+                        label: pick.model.displayName,
+                        effort: pick.effort,
+                      }}
+                    />
+                  ) : (
+                    placeholder || "Builderlab picks a good default."
+                  )
+                }
+                onChange={(on) => {
+                  setManual(!on);
+                  if (on && pick?.effort) {
+                    setModelId(pick.model.id);
+                    setEffort(pick.effort);
                   }
-            }
-            models={(models ?? []).map(modelChoice)}
-            disabled={busy || !models?.length}
-            onChange={(next) => {
-              setModelId(next);
-              setEffort("");
-            }}
-          />
-          <Select
-            label="Thinking"
-            variant="preference"
-            align="end"
-            value={valid ? effort : ""}
-            placeholder={models?.length ? "Choose thinking" : placeholder}
-            disabled={busy || !model}
-            groups={[
-              {
-                label: "",
-                options: (model?.supportedReasoningEfforts ?? []).map(
-                  (value) => ({ value, label: effortLabel(value) }),
-                ),
-              },
-            ]}
-            onValueChange={setEffort}
-          />
+                }}
+              >
+                {modelRows}
+              </AISettings>
+            </>
+          ) : (
+            <>
+              {harnessControl ?? (
+                <PreferenceRow
+                  title="Harness"
+                  trailing={
+                    <span className="flex min-w-0 items-center gap-2">
+                      <BuilderlabLogoIcon size={20} aria-hidden="true" />
+                      Builderlab
+                    </span>
+                  }
+                />
+              )}
+              {modelRows}
+            </>
+          )}
         </SettingsGroup>
         {hasAccess && models?.length === 0 && (
           <p className="m-0 text-body-sm text-secondary">

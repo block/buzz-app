@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { type ReactNode, StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host } from "../../../features/host/service";
 import {
@@ -32,6 +32,8 @@ afterEach(() => {
 async function fixture(
   selection: Partial<RemoteAgent> = {},
   catalog?: readonly RemoteAgentModel[],
+  /** The host's Runs on row, which brings the AI settings choice. */
+  runsOn?: ReactNode,
 ) {
   let agent: RemoteAgent = {
     id: "agent",
@@ -110,6 +112,7 @@ async function fixture(
     <ModelSettings
       {...{ client, session }}
       settings={{ agent, subject: "account" }}
+      runsOn={runsOn}
     />,
     {
       wrapper: ({ children }) => (
@@ -641,4 +644,66 @@ it("retries a failed save with the current draft and blocks duplicate writes whi
     await screen.findByRole("dialog", { name: "Model preferences saved" }),
   ).toBeVisible();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("shows Builderlab's own default as Automatic under the host's Runs on row", async () => {
+  await fixture(
+    { modelId: "model-one", reasoningEffort: "low" },
+    undefined,
+    <p>Runs on Builderlab</p>,
+  );
+  expect(screen.getByText("Runs on Builderlab")).toBeInTheDocument();
+  const aiSettings = screen.getByRole("combobox", { name: "AI settings" });
+  // The first model, on its first level when it offers no Medium.
+  await waitFor(() => expect(aiSettings).toHaveTextContent("Automatic"));
+  expect(screen.getByText("Builderlab picks")).toBeInTheDocument();
+  expect(screen.getByText("Friendly One · Low")).toBeInTheDocument();
+  // Builderlab runs it, so there is no harness row to change.
+  expect(screen.queryByText("Harness")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /^Model:/ }).closest("[inert]"),
+  ).not.toBeNull();
+});
+
+it("shows another choice as Manual, and Automatic puts back Builderlab's default", async () => {
+  const h = await fixture(
+    { modelId: "model-two", reasoningEffort: "none" },
+    undefined,
+    <p>Runs on Builderlab</p>,
+  );
+  const aiSettings = screen.getByRole("combobox", { name: "AI settings" });
+  await waitFor(() => expect(aiSettings).toHaveTextContent("Manual"));
+  expect(
+    screen.getByText("You choose the Builderlab model and thinking level."),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /^Model:/ }).closest("[inert]"),
+  ).toBeNull();
+  const user = userEvent.setup();
+  await user.click(aiSettings);
+  const automatic = await screen.findByRole("option", {
+    name: "Automatic (Recommended)",
+  });
+  // Builderlab's own default, not a recommendation kept current.
+  expect(automatic).toHaveAccessibleDescription(
+    "Builderlab picks its default model and thinking level.",
+  );
+  await user.click(automatic);
+  expect(aiSettings).toHaveTextContent("Automatic");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(
+      h.request.mock.calls.some(([request]) =>
+        request.url.endsWith("/update-agent"),
+      ),
+    ).toBe(true),
+  );
+  const update = h.request.mock.calls.find(([request]) =>
+    request.url.endsWith("/update-agent"),
+  );
+  expect(JSON.parse(update?.[0].body ?? "{}")).toEqual({
+    agent_pubkey: "ab".repeat(32),
+    model_id: "model-one",
+    reasoning_effort: "low",
+  });
 });

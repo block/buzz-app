@@ -9,7 +9,11 @@ import { createAgentClient } from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import type { Credential } from "../oauth/browser";
 import { deferred } from "../test-helpers";
-import { createCreationFields, EMPTY_CREATION } from "./Create";
+import {
+  createCreationFields,
+  createCreationModel,
+  EMPTY_CREATION,
+} from "./Create";
 
 beforeEach(() =>
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
@@ -30,7 +34,11 @@ const catalog = [
     supported_reasoning_efforts: ["none"],
   },
 ];
-async function fixture(signedIn = true) {
+async function fixture(
+  signedIn = true,
+  /** Renders Create agent's AI settings rows, or its rows-layout fields. */
+  layout?: { rows: "automatic" | "manual" | "fields" },
+) {
   const acquire = vi.fn(async () => ({
     value: "credential",
     account: {
@@ -57,13 +65,29 @@ async function fixture(signedIn = true) {
   });
   const client = createAgentClient(session, null);
   const Fields = createCreationFields(client, session);
+  const Rows = createCreationModel(client, session);
   let draft = { ...EMPTY_CREATION };
   function Form() {
     const [config, setConfig] = useState(draft);
     draft = config;
     return (
       <form onSubmit={(event) => event.preventDefault()}>
-        <Fields config={config} onChange={setConfig} disabled={false} />
+        {layout && layout.rows !== "fields" ? (
+          <Rows
+            layout="rows"
+            automatic={layout.rows === "automatic"}
+            config={config}
+            onChange={setConfig}
+            disabled={false}
+          />
+        ) : (
+          <Fields
+            {...(layout ? { layout: "rows" as const } : {})}
+            config={config}
+            onChange={setConfig}
+            disabled={false}
+          />
+        )}
       </form>
     );
   }
@@ -190,4 +214,58 @@ it("can cancel a pending shared sign-in even while the creation form is disabled
     "Sign in to choose a model",
   );
   expect(request).not.toHaveBeenCalled();
+});
+
+it("sets and shows Builderlab's own default under Automatic", async () => {
+  const h = await fixture(true, { rows: "automatic" });
+  expect(screen.getByText("Loading Builderlab’s models…")).toBeInTheDocument();
+  await act(async () => h.pending.resolve());
+  // The first model, on its first level when it offers no Medium.
+  expect(await screen.findByText("Model One · Low")).toBeInTheDocument();
+  expect(screen.getByText("Builderlab picks")).toBeInTheDocument();
+  expect(h.draft()).toEqual({
+    ...EMPTY_CREATION,
+    modelId: "one",
+    reasoningEffort: "low",
+    subject: "account",
+  });
+});
+
+it("offers Builderlab's Model and Thinking rows under Manual", async () => {
+  const h = await fixture(true, { rows: "manual" });
+  await act(async () => h.pending.resolve());
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeEnabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
+  await choose("Model", "Model One");
+  await choose("Thinking", "Extra high");
+  expect(h.draft()).toMatchObject({
+    modelId: "one",
+    reasoningEffort: "xhigh",
+    subject: "account",
+  });
+  // The rows carry no instructions field; Create agent shows its own.
+  expect(
+    screen.queryByRole("textbox", { name: "Instructions Optional" }),
+  ).not.toBeInTheDocument();
+});
+
+it("asks for sign-in before Automatic can show Builderlab's pick", async () => {
+  const h = await fixture(false, { rows: "automatic" });
+  expect(
+    screen.getByText("Sign in to Builderlab to choose a model."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+  expect(h.request).not.toHaveBeenCalled();
+  expect(h.draft()).toEqual(EMPTY_CREATION);
+});
+
+it("shows only instructions in the rows layout, under the AI settings rows", async () => {
+  const h = await fixture(true, { rows: "fields" });
+  expect(
+    screen.getByRole("textbox", { name: "Instructions Optional" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", { name: "Model" }),
+  ).not.toBeInTheDocument();
+  expect(h.request).not.toHaveBeenCalled();
 });

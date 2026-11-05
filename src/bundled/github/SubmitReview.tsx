@@ -22,19 +22,15 @@ const decisions: readonly (readonly [ReviewEvent, string, string])[] = [
 ];
 
 /** Reviews someone else's pull request. The draft outlasts dismissing the
- * popover, as GitHub's does, and clears once the review is in. Approving
- * needs the diff of the head the review names to have been shown. */
+ * popover, as GitHub's does, and clears once the review is in. */
 export function SubmitReview({
   pull,
   gh,
   refresh,
-  viewed,
 }: {
   pull: PullChecklist;
   gh: GitHubCli;
   refresh(): Promise<void>;
-  /** Heads whose Files changed the person has seen. */
-  viewed: ReadonlySet<string>;
 }) {
   const [open, setOpen] = useState(false);
   // The head the draft is written against. As with the merge confirmation, a
@@ -53,9 +49,8 @@ export function SubmitReview({
       alive.current = false;
     };
   }, []);
-  const canApprove = viewed.has(head);
   // GitHub refuses Comment and Request changes reviews without text.
-  const ready = event === "APPROVE" ? canApprove : !!body.trim();
+  const ready = event === "APPROVE" || !!body.trim();
   const pushed = head !== pull.head;
   async function submit() {
     if (busy || !ready || pushed) return;
@@ -128,12 +123,7 @@ export function SubmitReview({
                   key={value}
                   value={value}
                   label={label}
-                  disabled={value === "APPROVE" && !canApprove}
-                  description={
-                    value === "APPROVE" && !canApprove
-                      ? "View the changes to approve"
-                      : description
-                  }
+                  description={description}
                 />
               ))}
             </RadioGroup>

@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { PanelSubview } from "../../features/panels/PanelSubview";
 import { ArrowSquareOutIcon } from "../../shared/design-system/icons/index";
-import { Button } from "../../shared/design-system/ui/Button";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { DiffViewer } from "../diffs/DiffViewer";
 import { parsePatch } from "../diffs/parse";
@@ -9,68 +7,27 @@ import type { GitHubDiff } from "./gh";
 import { readable } from "./object";
 import styles from "./GitHub.module.css";
 
-type Pull = Readonly<{ repository: string; base: string; head: string }>;
-
 /** One patch per file, so a file the parser cannot render falls back to raw
  * text without taking the rest of the diff with it. */
 export function splitPatch(content: string): string[] {
   return content.split(/^(?=diff --git )/m).filter((part) => part.trim());
 }
 
-/** Opens the pull request's Files changed in a subview, and reports each head
- * whose diff it showed. */
+/** A pull request's Files changed, read for the base and head it names. */
 export function PullFiles({
   url,
   pull,
   diff,
-  onViewed,
 }: {
   url: string;
-  pull: Pull;
+  pull: Parameters<GitHubDiff>[0];
   diff: GitHubDiff;
-  onViewed(head: string): void;
 }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button size="sm" onClick={() => setOpen(true)}>
-        View changes
-      </Button>
-      {open && (
-        <PanelSubview
-          title="Files changed"
-          backLabel="Back to pull request"
-          onBack={() => setOpen(false)}
-        >
-          <FilesChanged
-            key={`${pull.base}...${pull.head}`}
-            url={url}
-            pull={pull}
-            diff={diff}
-            onViewed={onViewed}
-          />
-        </PanelSubview>
-      )}
-    </>
-  );
-}
-
-function FilesChanged({
-  url,
-  pull,
-  diff,
-  onViewed,
-}: {
-  url: string;
-  pull: Pull;
-  diff: GitHubDiff;
-  onViewed(head: string): void;
-}) {
-  const { repository, base, head } = pull;
+  const { repository, base, head, merged } = pull;
   const [result, setResult] = useState<string | Error>();
   useEffect(() => {
     const controller = new AbortController();
-    diff({ repository, base, head }, controller.signal).then(
+    diff({ repository, base, head, merged }, controller.signal).then(
       (content) => {
         if (!controller.signal.aborted) setResult(content);
       },
@@ -79,7 +36,7 @@ function FilesChanged({
       },
     );
     return () => controller.abort();
-  }, [diff, repository, base, head]);
+  }, [diff, repository, base, head, merged]);
   const parts = useMemo(
     () =>
       typeof result === "string"
@@ -90,9 +47,6 @@ function FilesChanged({
         : undefined,
     [result],
   );
-  useEffect(() => {
-    if (parts) onViewed(head);
-  }, [parts, head, onViewed]);
   return (
     <LoadingRegion
       pending={result === undefined}
@@ -126,7 +80,7 @@ function FilesChanged({
             ))}
           </div>
         ) : (
-          <p>No file changes.</p>
+          <p className={styles.files}>No file changes.</p>
         ))}
     </LoadingRegion>
   );

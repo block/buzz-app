@@ -172,6 +172,30 @@ it("reads the diff from the base branch to the head a review names", async () =>
   ).rejects.toThrow(GitHubError);
 });
 
+it("reads a merged pull request's own diff, since its head is in the base by then", async () => {
+  const { spawn } = diffSpawn(["diff --git a/x b/x\n"], 0);
+  const diff = gitHubDiff({ spawn });
+  await diff?.({
+    repository: "block/buzz",
+    base: "main",
+    head: "abc123",
+    merged: 42,
+  });
+  expect(spawn).toHaveBeenCalledWith("diff", {
+    args: ["repos/block/buzz/pulls/42"],
+    onStdout: expect.any(Function),
+    onStderr: expect.any(Function),
+  });
+  await expect(
+    diff?.({
+      repository: "block/buzz",
+      base: "main",
+      head: "abc123",
+      merged: 0,
+    }),
+  ).rejects.toThrow(GitHubError);
+});
+
 it("gives GitHub's reason a diff was refused, and stops gh past the size the panel shows", async () => {
   const refused = gitHubDiff(
     diffSpawn(['{"message":"Not Found"}'], 1, "gh: Not Found (HTTP 404)"),

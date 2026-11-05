@@ -118,7 +118,14 @@ export class OutputTooLarge extends Error {
 /** A pull request's unified diff, as GitHub's Files changed tab shows it,
  * for exactly `head`. */
 export type GitHubDiff = (
-  pull: Readonly<{ repository: string; base: string; head: string }>,
+  pull: Readonly<{
+    repository: string;
+    base: string;
+    head: string;
+    /** A merged pull request's number. Its head is in the base by then, so
+     * comparing the two would show nothing. */
+    merged?: number | undefined;
+  }>,
   signal?: AbortSignal,
 ) => Promise<string>;
 
@@ -131,15 +138,20 @@ export const MAX_DIFF_CHARS = 1_000_000;
 export function gitHubDiff(host: Pick<Host, "spawn">): GitHubDiff | undefined {
   const spawn = host.spawn?.bind(host);
   if (!spawn) return undefined;
-  return async ({ repository, base, head }, signal) => {
+  return async ({ repository, base, head, merged }, signal) => {
     if (
       !/^[\w.-]+\/[\w.-]+$/.test(repository) ||
-      !/^[0-9a-f]{1,64}$/i.test(head)
+      !/^[0-9a-f]{1,64}$/i.test(head) ||
+      (merged !== undefined && !(Number.isSafeInteger(merged) && merged > 0))
     )
       throw new GitHubError("Unsupported pull request");
     const range = `${base.split("/").map(encodeURIComponent).join("/")}...${head}`;
     const { stdout, stderr, code } = await runGh(spawn, "diff", {
-      args: [`repos/${repository}/compare/${range}`],
+      args: [
+        merged === undefined
+          ? `repos/${repository}/compare/${range}`
+          : `repos/${repository}/pulls/${merged}`,
+      ],
       signal,
       maxOutput: MAX_DIFF_CHARS,
     });

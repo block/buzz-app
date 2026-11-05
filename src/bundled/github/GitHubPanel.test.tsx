@@ -1129,7 +1129,6 @@ index 0000000..3333333
 it("approves someone else's pull request without a comment, at the head it showed", async () => {
   const user = userEvent.setup();
   let approved = false;
-  const diff = vi.fn(async () => patch);
   const gh = vi.fn(async (query: string, _variables?: unknown) => {
     if (query.startsWith("mutation")) {
       approved = true;
@@ -1147,39 +1146,12 @@ it("approves someone else's pull request without a comment, at the head it showe
       target={pull}
       close={() => {}}
       gh={gh as unknown as GitHubCli}
-      diff={diff}
     />,
     { wrapper: ToastProvider },
   );
   await screen.findByRole("heading", { name: "Private change #9" });
-  // Approving waits until the changes have been on screen.
   await user.click(screen.getByRole("button", { name: "Submit review" }));
-  let popup = await screen.findByRole("dialog", { name: "Submit review" });
-  expect(
-    within(popup).getByRole("radio", { name: /^Approve/ }),
-  ).toHaveAccessibleDescription("View the changes to approve");
-  expect(
-    within(popup).getByRole("radio", { name: /^Approve/ }),
-  ).toHaveAttribute("aria-disabled", "true");
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(popup).not.toBeInTheDocument());
-  await user.click(screen.getByRole("button", { name: "View changes" }));
-  const files = await screen.findByRole("region", { name: "Files changed" });
-  expect(
-    await within(files).findByRole("region", { name: "src/app.ts" }),
-  ).toHaveTextContent("+1−1");
-  expect(
-    within(files).getByRole("region", { name: "README.md" }),
-  ).toHaveTextContent("New file");
-  expect(diff).toHaveBeenCalledWith(
-    { repository: "block/private", base: "main", head: "abc123" },
-    expect.any(AbortSignal),
-  );
-  await user.click(
-    screen.getByRole("button", { name: "Back to pull request" }),
-  );
-  await user.click(screen.getByRole("button", { name: "Submit review" }));
-  popup = await screen.findByRole("dialog", { name: "Submit review" });
+  const popup = await screen.findByRole("dialog", { name: "Submit review" });
   const submit = within(popup).getByRole("button", { name: "Submit review" });
   // A comment, or a change request, needs something to say. The field says
   // so, and Submit stays reachable from the keyboard.
@@ -1213,7 +1185,86 @@ it("approves someone else's pull request without a comment, at the head it showe
   ]);
 });
 
-it("keeps Approve unavailable when the changes cannot be shown, pointing to GitHub", async () => {
+it("shows a pull request's changes under Changes, with its line counts", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async () => pullData());
+  const diff = vi.fn(async () => patch);
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+      diff={diff}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(diff).not.toHaveBeenCalled();
+  const changes = screen.getByRole("tab", { name: /^Changes/ });
+  expect(changes).toHaveTextContent("+3 −1");
+  await user.click(changes);
+  expect(
+    await screen.findByRole("region", { name: "src/app.ts" }),
+  ).toHaveTextContent("+1−1");
+  expect(screen.getByRole("region", { name: "README.md" })).toHaveTextContent(
+    "New file",
+  );
+  expect(
+    screen.queryByRole("heading", { name: "Private change #9" }),
+  ).not.toBeInTheDocument();
+  // Reviewing stays a click away while reading the changes.
+  expect(
+    screen.getByRole("button", { name: "Submit review" }),
+  ).toBeInTheDocument();
+  expect(diff).toHaveBeenCalledWith(
+    {
+      repository: "block/private",
+      base: "main",
+      head: "abc123",
+      merged: undefined,
+    },
+    expect.any(AbortSignal),
+  );
+  await user.click(screen.getByRole("tab", { name: "Summary" }));
+  expect(
+    screen.getByRole("heading", { name: "Private change #9" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "src/app.ts" }),
+  ).not.toBeInTheDocument();
+  await user.click(changes);
+  expect(screen.getByRole("region", { name: "src/app.ts" })).toBeVisible();
+  expect(diff).toHaveBeenCalledTimes(1);
+});
+
+it("reads a merged pull request's changes by its number", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async () => pullData({ state: "MERGED" }));
+  const diff = vi.fn(async () => patch);
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+      diff={diff}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Private change #9" });
+  await user.click(screen.getByRole("tab", { name: /^Changes/ }));
+  expect(
+    await screen.findByRole("region", { name: "src/app.ts" }),
+  ).toBeInTheDocument();
+  expect(diff).toHaveBeenCalledWith(
+    { repository: "block/private", base: "main", head: "abc123", merged: 9 },
+    expect.any(AbortSignal),
+  );
+});
+
+it("points to GitHub when the changes cannot be shown", async () => {
   const user = userEvent.setup();
   const gh = vi.fn(async () => pullData());
   const diff = vi.fn(async () => {
@@ -1228,22 +1279,14 @@ it("keeps Approve unavailable when the changes cannot be shown, pointing to GitH
     />,
   );
   await screen.findByRole("heading", { name: "Private change #9" });
-  await user.click(screen.getByRole("button", { name: "View changes" }));
-  const files = await screen.findByRole("region", { name: "Files changed" });
-  expect(await within(files).findByRole("alert")).toHaveTextContent(
+  await user.click(screen.getByRole("tab", { name: /^Changes/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
     "This diff is too large to show here.",
   );
-  expect(
-    within(files).getByRole("link", { name: "Open on GitHub" }),
-  ).toHaveAttribute("href", `${pull}/files`);
-  await user.click(
-    screen.getByRole("button", { name: "Back to pull request" }),
+  expect(screen.getByRole("link", { name: "Open on GitHub" })).toHaveAttribute(
+    "href",
+    `${pull}/files`,
   );
-  await user.click(screen.getByRole("button", { name: "Submit review" }));
-  const popup = await screen.findByRole("dialog", { name: "Submit review" });
-  expect(
-    within(popup).getByRole("radio", { name: /^Approve/ }),
-  ).toHaveAttribute("aria-disabled", "true");
 });
 
 it("shows a file the parser cannot render as raw text beside the rest", async () => {
@@ -1267,14 +1310,13 @@ Ic${"$"}@
   expect(
     screen.queryByRole("button", { name: "Submit review" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "View changes" }));
-  const files = await screen.findByRole("region", { name: "Files changed" });
+  await user.click(screen.getByRole("tab", { name: /^Changes/ }));
   expect(
-    await within(files).findByRole("region", { name: "src/app.ts" }),
+    await screen.findByRole("region", { name: "src/app.ts" }),
   ).toBeInTheDocument();
-  expect(
-    within(files).getByRole("region", { name: "Raw diff" }),
-  ).toHaveTextContent("GIT binary patch");
+  expect(screen.getByRole("region", { name: "Raw diff" })).toHaveTextContent(
+    "GIT binary patch",
+  );
 });
 
 it("keeps a refused review's draft with GitHub's reason, and clears it once it is in", async () => {

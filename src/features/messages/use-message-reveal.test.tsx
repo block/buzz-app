@@ -189,6 +189,69 @@ it("does not mark a row that fails verification", async () => {
   expect(highlighted(row)).toBe(false);
 });
 
+it("completes a reveal that finds its row off screen once the row shows", async () => {
+  const watchers: {
+    callback: IntersectionObserverCallback;
+    target: Element;
+    disconnected: boolean;
+  }[] = [];
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        watchers.push({
+          callback: this.callback,
+          target,
+          disconnected: false,
+        });
+      }
+      disconnect() {
+        for (const watcher of watchers)
+          if (watcher.callback === this.callback) watcher.disconnected = true;
+      }
+    },
+  );
+  const { row, complete } = mount();
+  const onscreen = row.getBoundingClientRect();
+  const slidingIn = vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+    ...onscreen,
+    left: 2000,
+    right: 2100,
+    x: 2000,
+  });
+  await frame(); // Attach observers.
+  await frame(); // Reveal.
+  await frame(); // Verify: the row is still sliding in from the right.
+  expect(complete).not.toHaveBeenCalled();
+  expect(watchers).toHaveLength(1);
+  expect(watchers[0]?.target).toBe(row);
+  const [watcher] = watchers;
+  // Still outside the window: no retry, no frame spent.
+  watcher?.callback(
+    [
+      {
+        intersectionRect: { width: 0, height: 0 },
+      } as IntersectionObserverEntry,
+    ],
+    {} as IntersectionObserver,
+  );
+  expect(frames.size).toBe(0);
+  slidingIn.mockReturnValue(onscreen);
+  watcher?.callback(
+    [
+      {
+        intersectionRect: { width: 40, height: 100 },
+      } as IntersectionObserverEntry,
+    ],
+    {} as IntersectionObserver,
+  );
+  await idle();
+  expect(complete).toHaveBeenCalledOnce();
+  expect(watchers[0]?.disconnected).toBe(true);
+  expect(frames.size).toBe(0);
+});
+
 it("does not mark a reveal behind a covering panel", async () => {
   const { row, complete } = mount(undefined, { focus: false });
   await frame();

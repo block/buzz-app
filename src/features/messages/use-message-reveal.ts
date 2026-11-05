@@ -107,10 +107,12 @@ export function useMessageReveal({
     if (!container) return;
     const target = messageId;
     let frame = 0;
+    let arrival: IntersectionObserver | undefined;
     const cancel = () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       inertObserver.disconnect();
+      arrival?.disconnect();
     };
     const schedule = () => {
       cancelAnimationFrame(frame);
@@ -182,6 +184,22 @@ export function useMessageReveal({
         ) {
           holding.current?.();
           holding.current = undefined;
+          // A panel can still be sliding in. Moving a row off or onto the
+          // screen is not a DOM mutation, so wait for it to show.
+          arrival?.disconnect();
+          if (typeof IntersectionObserver === "undefined") return;
+          arrival = new IntersectionObserver((entries) => {
+            if (
+              entries.some(
+                ({ intersectionRect: { width, height } }) =>
+                  width > 0 && height > 0,
+              )
+            ) {
+              arrival?.disconnect();
+              schedule();
+            }
+          });
+          arrival.observe(row);
           return;
         }
         revealed.current = signal;

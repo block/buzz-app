@@ -13,6 +13,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
+  type HTMLAttributes,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -22,7 +24,11 @@ import {
   XIcon,
 } from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
-import type { Attachment } from "../relay/contracts";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
+import {
+  ATTACHMENT_FORWARD_MIME,
+  attachmentForwardPayload,
+} from "./attachment-forwarding";
 import {
   openingFrame,
   openingFrameCapture,
@@ -50,6 +56,7 @@ type MediaAttachmentProps = {
   compact?: boolean;
   overlayCount?: number;
   label?: string;
+  dragSource?: ChannelMessage | undefined;
 };
 
 function useVideoPosition(
@@ -95,6 +102,7 @@ export function MediaAttachment({
   compact = false,
   overlayCount = 0,
   label = "Open video fullscreen",
+  dragSource,
 }: MediaAttachmentProps) {
   const active = useConversationPresentation();
   const corners = useMediaCorners();
@@ -125,6 +133,18 @@ export function MediaAttachment({
       } as CSSProperties)
     : undefined;
   const visiblePreview = preview ?? capturedPreview;
+  const dragProps: HTMLAttributes<HTMLElement> = dragSource
+    ? {
+        draggable: true,
+        onDragStart: (event: DragEvent) => {
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData(
+            ATTACHMENT_FORWARD_MIME,
+            attachmentForwardPayload(dragSource, [attachment]),
+          );
+        },
+      }
+    : {};
   useVideoPosition(video, seekTo, seekRequest, active && !compact);
   const element = useMediaElementSource(
     attachment.kind === "video" ? source : undefined,
@@ -164,6 +184,7 @@ export function MediaAttachment({
           aria-label="Open image fullscreen"
           data-image-preview=""
           data-media-preview=""
+          {...dragProps}
           onClick={(event) => {
             prepareReviewEntrance(event);
             if (onOpenReview) onOpenReview(attachment, 0);
@@ -348,6 +369,7 @@ export function MediaAttachment({
         aria-label={label}
         data-media-preview=""
         data-video-preview=""
+        {...dragProps}
         onClick={(event) => {
           event.preventDefault();
           prepareReviewEntrance(event);
@@ -385,6 +407,7 @@ export function MediaAttachment({
         data-started={started || undefined}
         data-playing={playing ? "true" : undefined}
         style={previewStyle}
+        {...dragProps}
       >
         <div
           className={`${styles.mediaPreviewPixels} dark`}

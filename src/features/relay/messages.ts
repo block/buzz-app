@@ -1,11 +1,16 @@
 import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "./events";
 import type { ProfileQueries } from "./profile-directory";
-import { attachmentMessage, type UploadedAttachment } from "./attachments";
+import {
+  attachmentMarkdown,
+  attachmentMessage,
+  type UploadedAttachment,
+} from "./attachments";
 import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
+import { safeMessageUrl } from "./message-content";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
@@ -306,6 +311,52 @@ export function createMessages(
         },
         ...(recovery ? [recovery] : []),
       );
+    },
+    resendAttachments(
+      channelId: string,
+      source: ChannelMessage,
+      attachments: readonly ChannelMessage["attachments"][number][],
+    ) {
+      if (!channelId) throw new Error("A channel is required");
+      if (!attachments.length) throw new Error("Choose an attachment to send");
+      const original = find(source.attachmentSourceId ?? source.id);
+      if (!original || ![9, 40002, 40003].includes(original.kind))
+        throw new Error("Reload the message attachments before sending");
+      const selected = attachments.filter(
+        (attachment, index) =>
+          attachments.findIndex(({ url }) => url === attachment.url) === index,
+      );
+      const urls = new Set(selected.map((attachment) => attachment.url));
+      const tagsByUrl = new Map<string, string[]>();
+      for (const tag of original.tags) {
+        if (tag[0] !== "imeta") continue;
+        const rawUrl = tag
+          .filter((field) => field.startsWith("url "))
+          .at(-1)
+          ?.slice("url ".length);
+        const url = rawUrl && safeMessageUrl(rawUrl);
+        if (url && urls.has(url) && !tagsByUrl.has(url))
+          tagsByUrl.set(url, tag);
+      }
+      const tags = selected.map((attachment) => {
+        const tag = tagsByUrl.get(attachment.url);
+        if (!tag)
+          throw new Error("Reload the message attachments before sending");
+        return tag;
+      });
+      const content = selected
+        .map((attachment) =>
+          attachmentMarkdown(attachment.name ?? "Attachment", {
+            url: attachment.url,
+            type: attachment.mime ?? "application/octet-stream",
+          }),
+        )
+        .join("\n");
+      return writer(9, channelId).send({
+        kind: 9,
+        content: text(content),
+        tags: [["h", channelId], ...tags],
+      });
     },
     /** Copy an authored reply as a fresh top-level event, preserving its displayed semantics. */
     sendToChannel(row: ChannelMessage, root?: ChannelMessage) {

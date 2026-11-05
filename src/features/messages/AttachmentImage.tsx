@@ -4,7 +4,11 @@ import { useMediaCorners } from "./use-media-corners";
 import { MediaViewer } from "./MediaAttachment";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Attachment } from "../relay/contracts";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
+import {
+  ATTACHMENT_FORWARD_MIME,
+  attachmentForwardPayload,
+} from "./attachment-forwarding";
 import type { RelaySession } from "../relay/session";
 import { imageDimensions, rememberImageDimensions } from "./image-dimensions";
 import { validatedBlurhash } from "../relay/blurhash";
@@ -22,9 +26,11 @@ export function AttachmentImage({
   onOpenLink,
   keepMounted,
   label = "Open image attachment",
+  dragSource,
 }: {
   label?: string;
   attachment: Attachment;
+  dragSource?: ChannelMessage | undefined;
   session?: RelaySession | undefined;
   source: string | undefined;
   cached?: boolean;
@@ -128,6 +134,15 @@ export function AttachmentImage({
         aria-label={label}
         data-media-preview=""
         data-image-ready={decodedDimensions ? true : undefined}
+        draggable={!!dragSource}
+        onDragStart={(event) => {
+          if (!dragSource) return;
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData(
+            ATTACHMENT_FORWARD_MIME,
+            attachmentForwardPayload(dragSource, [attachment]),
+          );
+        }}
         onClick={(event) => {
           // Every activation stays in-app, modifiers included: the desktop
           // opener treats an unprevented Ctrl/Shift or `_blank` click as browser

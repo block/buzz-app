@@ -16,6 +16,7 @@ import styles from "./ChannelSidebarRow.module.css";
 
 export function ChannelSidebarRow({
   channel,
+  attachmentDrop,
   icon,
   nameAccessory,
   badge,
@@ -31,6 +32,10 @@ export function ChannelSidebarRow({
   onHideDm,
 }: {
   channel: ChannelSummary;
+  attachmentDrop?: {
+    props: React.HTMLAttributes<HTMLDivElement>;
+    overlay: ReactNode;
+  };
   icon: ReactNode;
   nameAccessory?: ReactNode;
   badge?: ReactNode;
@@ -140,6 +145,7 @@ export function ChannelSidebarRow({
   );
   return (
     <div
+      {...attachmentDrop?.props}
       className={styles.row}
       data-channel-sidebar-row=""
       data-ordinary={ordinary || undefined}
@@ -152,6 +158,7 @@ export function ChannelSidebarRow({
             {presenceDescription}
           </span>
         )}
+        {attachmentDrop?.overlay}
       </div>
       {channel.channelType === "dm" && onHideDm && (
         <span className={`${styles.more} ${styles.remove}`}>

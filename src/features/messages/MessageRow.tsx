@@ -1168,6 +1168,7 @@ function MessageRowContent({
                             attachment={{ ...attachment, url }}
                             source={source}
                             onOpenLink={openLink}
+                            dragSource={row}
                           />
                         );
                       if (attachment.kind === "audio") {
@@ -1185,6 +1186,7 @@ function MessageRowContent({
                                   <AudioAttachment
                                     attachment={{ ...attachment, url }}
                                     source={source}
+                                    dragSource={row}
                                   />
                                 }
                               />
@@ -1194,6 +1196,7 @@ function MessageRowContent({
                               key={url}
                               attachment={{ ...attachment, url }}
                               source={source}
+                              dragSource={row}
                             />
                           );
                         return (
@@ -1202,6 +1205,7 @@ function MessageRowContent({
                             attachment={{ ...attachment, url }}
                             source={source}
                             onOpenLink={openLink}
+                            dragSource={row}
                           />
                         );
                       }
@@ -1217,6 +1221,7 @@ function MessageRowContent({
                             session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
+                            dragSource={row}
                             cached={cached}
                             compact={group.length >= 4}
                             overlayCount={
@@ -1265,6 +1270,7 @@ function MessageRowContent({
                           key={url}
                           attachment={{ ...attachment, url }}
                           media={media}
+                          dragSource={row}
                           compact={
                             images && group.length >= 4 && !!onOpenMediaReview
                           }

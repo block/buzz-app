@@ -5,6 +5,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
+  type HTMLAttributes,
 } from "react";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import {
@@ -15,7 +17,12 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
   type Attachment,
+  type ChannelMessage,
 } from "../relay/contracts";
+import {
+  ATTACHMENT_FORWARD_MIME,
+  attachmentForwardPayload,
+} from "./attachment-forwarding";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
 import { useMediaElementSource } from "./use-media-element-source";
@@ -40,10 +47,12 @@ export function AudioAttachment({
   attachment,
   source,
   allowDownload = true,
+  dragSource,
 }: {
   attachment: Attachment;
   source: string;
   allowDownload?: boolean;
+  dragSource?: ChannelMessage | undefined;
 }) {
   const active = useConversationPresentation();
   const audio = useRef<HTMLAudioElement>(null);
@@ -80,6 +89,19 @@ export function AudioAttachment({
     releaseAudio(audio.current);
     audio.current = element;
   }, []);
+
+  const dragProps: HTMLAttributes<HTMLFieldSetElement> = dragSource
+    ? {
+        draggable: true,
+        onDragStart: (event: DragEvent) => {
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData(
+            ATTACHMENT_FORWARD_MIME,
+            attachmentForwardPayload(dragSource, [attachment]),
+          );
+        },
+      }
+    : {};
 
   if (previousSource.current !== source) {
     previousSource.current = source;
@@ -118,6 +140,7 @@ export function AudioAttachment({
     <fieldset
       className={`${styles.audioAttachment} ${mediaStyles.controls}`}
       aria-label={attachment.name || "Audio playback"}
+      {...dragProps}
     >
       {/* biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL. */}
       <audio

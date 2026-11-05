@@ -427,3 +427,137 @@ it("still deletes the other copies when one deletion fails, then reports it", as
   );
   expect(sent).toEqual(copies.map((copy) => copy.id));
 });
+
+it("resends selected attachments to another channel using source imeta", () => {
+  const { messages, row, outbox } = setup();
+  const attachment = row.attachments[0];
+  assert.exists(attachment);
+  messages.resendAttachments("destination", row, [attachment]);
+  const event = outbox.snapshot()[0]?.event;
+  assert.exists(event);
+  expect(event.content).toBe("![photo.png](<https://example.com/photo.png>)");
+  expect(event.tags).toContainEqual(["h", "destination"]);
+  expect(event.tags.some(([name]) => name === "buzz:copy-of")).toBe(false);
+  expect(event.tags).toContainEqual(
+    reply.tags.find(([name]) => name === "imeta"),
+  );
+});
+
+it("resends edited attachment metadata from the attachment source event", () => {
+  const edit = signed(author, {
+    kind: 40003,
+    created_at: 3,
+    content: "",
+    tags: [
+      ["e", reply.id],
+      ["h", "channel"],
+      ["imeta", "url https://example.com/new.png", "m image/png"],
+    ],
+  });
+  const { messages, row, outbox } = setup([root, reply, edit]);
+  const attachment = row.attachments[0];
+  assert.exists(attachment);
+  messages.resendAttachments("destination", row, [attachment]);
+  const event = outbox.snapshot()[0]?.event;
+  assert.exists(event);
+  expect(event.content).toBe("![new.png](<https://example.com/new.png>)");
+  expect(event.tags).toContainEqual(edit.tags[2]);
+  expect(event.tags).not.toContainEqual(
+    reply.tags.find(([name]) => name === "imeta"),
+  );
+});
+
+it("uses the first source imeta when duplicate attachment metadata is present", () => {
+  const duplicate = message(author, "channel", "", 3, [
+    ["imeta", "url https://example.com/photo.png", "m image/png"],
+    ["imeta", "url https://example.com/photo.png", "m image/png", "dim 10x10"],
+  ]);
+  const { messages, outbox } = setup([root, duplicate]);
+  const row = foldMessages("channel", other.pubkey, [duplicate], {
+    includeReplies: true,
+  })[0];
+  assert.exists(row);
+  const attachment = row.attachments[0];
+  assert.exists(attachment);
+  messages.resendAttachments("destination", row, [attachment]);
+  const event = outbox.snapshot()[0]?.event;
+  assert.exists(event);
+  expect(event.tags.filter(([name]) => name === "imeta")).toEqual([
+    duplicate.tags.find(([name]) => name === "imeta"),
+  ]);
+});
+
+it("rejects attachment resend when the source metadata is unavailable", () => {
+  const { messages, row, outbox } = setup([root]);
+  const attachment = row.attachments[0];
+  assert.exists(attachment);
+  expect(() =>
+    messages.resendAttachments("destination", row, [attachment]),
+  ).toThrow(/Reload/);
+  expect(outbox.snapshot()).toHaveLength(0);
+});
+
+it("same-channel attachment resends never cascade edits or deletes", async () => {
+  const { messages: first, row, outbox } = setup();
+  await outbox.ready();
+  const attachment = row.attachments[0];
+  assert.exists(attachment);
+  first.resendAttachments("channel", row, [attachment]);
+  const copy = outbox.snapshot()[0]?.event;
+  assert.exists(copy);
+  const events = [root, reply, copy];
+  const messages = createMessages(
+    outbox,
+    author.pubkey,
+    (id) => events.find((event) => event.id === id),
+    () => [],
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (id) =>
+      events.filter((event) =>
+        event.tags.some(
+          ([name, value]) => name === "buzz:copy-of" && value === id,
+        ),
+      ),
+  );
+  for (const target of [reply, copy]) {
+    const start = outbox.snapshot().length;
+    messages.edit(target.id, "Changed", target.id);
+    const edits = outbox
+      .snapshot()
+      .slice(start)
+      .map(({ event }) => event);
+    expect(edits).toHaveLength(1);
+    expect(edits[0]?.tags).toContainEqual(["e", target.id]);
+    const next = outbox.snapshot().length;
+    messages.remove([target.id]);
+    const deletes = outbox
+      .snapshot()
+      .slice(next)
+      .map(({ event }) => event);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]?.tags).toContainEqual(["e", target.id]);
+  }
+});
+
+it("retains raw imeta when its URL normalizes to the displayed attachment", () => {
+  const original = message(author, "channel", "", 3, [
+    ["imeta", "url https://EXAMPLE.com:443/photo.png", "m image/png"],
+  ]);
+  const { messages, outbox } = setup([root, original]);
+  const row = foldMessages("channel", other.pubkey, [original])[0];
+  assert.exists(row);
+  expect(row.attachments[0]?.url).toBe("https://example.com/photo.png");
+  messages.resendAttachments("destination", row, row.attachments);
+  const event = outbox.snapshot()[0]?.event;
+  assert.exists(event);
+  expect(event.tags).toContainEqual(original.tags[1]);
+  expect(
+    foldMessages("destination", other.pubkey, [event])[0]?.attachments,
+  ).toEqual(row.attachments);
+});

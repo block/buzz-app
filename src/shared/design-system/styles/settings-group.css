@@ -103,4 +103,88 @@
       --settings-group-inset: var(--space-1);
     }
   }
+
+  /* Rows a choice above reveals in place. The wrapper is one group child, so
+   * the group's divider above it is dropped; its rows draw their own, starting
+   * at the revealing row's title so they read as part of that choice. */
+  .buzz-settings-group[data-layout="rows"] > .buzz-settings-group-expand {
+    display: grid;
+    grid-template-rows: 0fr;
+    border-block-start-color: transparent;
+    transition: grid-template-rows var(--duration-panel-enter)
+      var(--easing-enter);
+  }
+  .buzz-settings-group[data-layout="rows"]
+    > .buzz-settings-group-expand[data-open] {
+    grid-template-rows: 1fr;
+  }
+  .buzz-settings-group-expand-rows {
+    min-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity var(--duration-panel-enter) var(--easing-enter);
+  }
+  .buzz-settings-group-expand[data-open] > .buzz-settings-group-expand-rows {
+    opacity: 1;
+  }
+  .buzz-settings-group[data-layout="rows"]
+    .buzz-settings-group-expand-rows
+    > * {
+    margin-inline-start: calc(var(--space-5) + var(--space-4));
+    border-block-start: 1px solid var(--border-standard);
+  }
+  .buzz-settings-group-expand[data-open]
+    > .buzz-settings-group-expand-rows
+    > * {
+    animation: buzz-settings-row-enter var(--duration-panel-enter)
+      var(--easing-enter) both;
+  }
+  @keyframes buzz-settings-row-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-settings-group[data-layout="rows"] > .buzz-settings-group-expand,
+    .buzz-settings-group-expand-rows {
+      transition: none;
+    }
+    .buzz-settings-group-expand[data-open]
+      > .buzz-settings-group-expand-rows
+      > * {
+      animation: none;
+    }
+  }
+
+  /* A short read-only value in running text, such as what a setting chose. */
+  .buzz-value-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    max-inline-size: 100%;
+    padding: var(--space-half) var(--space-2);
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-pill);
+    background: var(--surface-inset);
+    color: var(--text-standard);
+    @apply text-caption;
+    vertical-align: middle;
+  }
+  .buzz-value-chip-icon {
+    display: inline-flex;
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
+  .buzz-value-chip-icon > svg {
+    width: 100%;
+    height: 100%;
+  }
+  .buzz-value-chip-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }

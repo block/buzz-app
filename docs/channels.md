@@ -220,18 +220,24 @@ the section and channel without changing the filter. Choices reuse the sidebar's
 channel-type icons, unread emphasis, attention/thread dots and working-agent
 indicators. The temporarily visible open channel is excluded. Empty filtered sections retain
 their header and menu so the filter can be changed or a hidden row opened.
-Read-only hosts disable the filter choices while keeping hidden-channel navigation available.
-**Settings → Appearance → Hide muted channels** is a device-local opt-in, off by default
-(`buzz-hide-muted-channels.v1`). It removes muted channels from saved groups,
-**Channels** and **Forums** before the section filter applies; **Starred** and DMs are
-unaffected. Saved and cached mutes hide at startup, and a pending Mute hides at once so
-the row menu returns focus to its section header; a failed Mute brings the row back. The open channel stays visible, and so does a muted channel with unread attention
-(the badge `attentionCount`: mentions, replies in the viewer's threads, broadcasts) or a
-manual unread mark. Hidden muted channels appear under **Muted** in the section's **Filter** submenu,
-after any filter-hidden channels, whatever the filter. It is not an account preference:
-older clients reject unknown `channel-filter` values and fail the whole preference read. The saved-groups
+Read-only hosts disable the filter choices while keeping hidden-channel navigation available. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
+
+**Settings → Appearance → Hide muted channels** is a device-local opt-in, off by
+default (`buzz-hide-muted-channels.v1`). It removes muted channels from saved
+groups, **Channels** and **Forums** before the section filter applies; **Starred**,
+DMs and Solo chats are unaffected. The open channel stays visible, and so does a
+muted channel with unread attention (the badge `attentionCount`: mentions, replies
+in the viewer's threads, broadcasts) or a manual unread mark. Until unread evidence
+loads, attention is unknown and the channel stays hidden, so a channel with a
+mention can appear shortly after startup. Saved and cached mutes hide at startup,
+and a pending Mute hides at once so the row menu returns focus to its section
+header; a failed Mute brings the row back. Hidden muted channels appear under
+**Muted** in the section's **Filter** submenu, after any filter-hidden channels,
+whatever the filter, and leaving or deleting the open channel never opens one.
+It is not an account preference: older clients reject unknown `channel-filter`
+values and fail the whole preference read.
 
 Channel row actions share one sidebar-owned `ContextMenuRoot` / `MenuPopup`, labelled
 `Actions for <channel>`. **Move channel** comes first when placement is writable; additional sidebar actions

@@ -302,7 +302,7 @@ export function AppearanceSettings({
           )}
           <SwitchPreferenceRow
             label="Hide muted channels"
-            description="Muted channels leave the sidebar unless they’re open, starred, mention you, or are marked unread. Find them under Muted in a section’s Filter menu, or search with ⌘K. Direct messages stay visible."
+            description="Muted channels leave the sidebar unless they’re open, starred, or need your attention. Find them under Muted in a section’s Filter menu, or use search. Direct messages stay visible. Applies to this device only."
             checked={hideMuted.enabled}
             onCheckedChange={setHideMutedChannelsPreference}
           />

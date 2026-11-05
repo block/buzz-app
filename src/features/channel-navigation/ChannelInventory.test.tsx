@@ -570,6 +570,45 @@ it("hides mutes on this device's opt-in, returns focus to the section and lists 
   }
 });
 
+it("keeps a channel visible while its unmute saves, and hides it again if the unmute fails", async () => {
+  const user = userEvent.setup();
+  let settle: (error?: Error) => void = () => {};
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: ["beta"],
+    }),
+    available: true,
+    writeMute: () =>
+      new Promise<readonly string[]>((resolve, reject) => {
+        settle = (error) => (error ? reject(error) : resolve([]));
+      }),
+  });
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    const h = fixture(preferences.queries);
+    const mounted = render(h.view("beta"));
+    fireEvent.keyDown(await screen.findByRole("button", { name: /^beta/ }), {
+      key: "ContextMenu",
+    });
+    await user.click(await screen.findByRole("menuitem", { name: "Unmute" }));
+    mounted.rerender(h.view("alpha"));
+    await screen.findByRole("button", { name: "alpha" });
+    expect(screen.getByRole("button", { name: /^beta/ })).toBeVisible();
+    await act(async () => settle(new Error("offline")));
+    expect(
+      await screen.findByRole("dialog", { name: "Couldn’t unmute beta" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
+  } finally {
+    settle();
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
+
 it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
   const user = userEvent.setup();
   let filters: Record<string, SidebarFilterMode> = {};
@@ -1803,6 +1842,36 @@ it("deleting the open channel opens its neighbor after the roster drops it", asy
     ),
   );
   expect(h.navigator.open).toHaveBeenCalledOnce();
+});
+
+it("deleting the open channel skips a neighbor hidden because it is muted", async () => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: ["gamma"],
+    }),
+    available: true,
+  });
+  await preferences.queries.ensure();
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    const h = pendingLifecycle("delete", preferences.queries);
+    await h.start();
+    expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull();
+    h.drop("beta");
+    await act(async () => h.finish());
+    await waitFor(() =>
+      expect(h.navigator.open).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "conversation", channelId: "alpha" }),
+      ),
+    );
+    expect(h.navigator.open).toHaveBeenCalledOnce();
+  } finally {
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
 });
 
 it("deleting the only row in its section opens the nearest row below it", async () => {

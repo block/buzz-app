@@ -1011,10 +1011,10 @@ export function ChannelInventory({
     if (!lifecycleCallbacks) return;
     const dialogId = lifecycleDialog?.channel.id;
     if (!dialogId) lifecycleNeighbors.current = undefined;
-    const at = sections.findIndex((section) =>
+    const at = filteredSections.findIndex((section) =>
       section.rows.some((row) => row.id === dialogId),
     );
-    const placement = sections[at];
+    const placement = filteredSections[at];
     if (dialogId && placement) {
       const shown = (section: typeof placement) =>
         sidebar.collapsed.includes(section.key)
@@ -1027,8 +1027,8 @@ export function ChannelInventory({
         ids: [
           ...own.slice(index + 1),
           ...own.slice(0, index).reverse(),
-          ...sections.slice(at + 1).flatMap(shown),
-          ...sections.slice(0, at).flatMap(shown).reverse(),
+          ...filteredSections.slice(at + 1).flatMap(shown),
+          ...filteredSections.slice(0, at).flatMap(shown).reverse(),
         ],
       };
     }

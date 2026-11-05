@@ -664,11 +664,18 @@ test("closing an active thread highlights its visible channel origin without scr
   const origin = item.locator(":scope > [data-layout]");
   // Keep another side tab open so closing does not change the channel width
   // and rewrap the history independently of the highlight.
-  await timeline
-    .locator(`[data-message-id="${roots[1].id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
-    .click();
-  await item.getByRole("button", { name: /^View thread:/ }).click();
+  await clickRow(
+    page,
+    timeline
+      .locator(`[data-message-id="${roots[1].id}"]`)
+      .getByRole("button", { name: /^View thread:/ }),
+    timeline,
+  );
+  await clickRow(
+    page,
+    item.getByRole("button", { name: /^View thread:/ }),
+    timeline,
+  );
   const side = page.locator("[data-panel-workspace]");
   await expect(
     side.locator('[role="tab"][data-tab-value^="thread:"]'),

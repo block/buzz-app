@@ -249,10 +249,14 @@ export async function hoverRow(page, locator, scroller = history(page)) {
 // can pass Playwright's checks and still land in a hold that starts after them
 // (seen on Linux WebKit CI after Playwright scrolled the row into view); it
 // reaches the scroller and the control never sees it. Scroll first, then wait.
+// A scroll event reaches Virtua in a later rendering update, so wait for those
+// updates, and check pointer events again after the geometry settles.
 export async function clickRow(page, locator, scroller = history(page)) {
   await virtuaIdle(page, scroller);
   await locator.scrollIntoViewIfNeeded();
+  await frames(page);
   await virtuaIdle(page, scroller);
+  await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
   await locator.click();
 }
 export { activate } from "./navigation.mjs";

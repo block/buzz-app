@@ -261,3 +261,26 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* A caption-sized pill: a circle for one digit, wider for more. 1lh follows the
+   caption line height, so it grows with Interface size. */
+.badge {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  min-width: 1lh;
+  height: 1lh;
+  margin-inline-end: var(--space-1);
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--affordance-subtle);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+}
+[data-selected] .badge {
+  background: var(--surface-row-selected-detail);
+  color: var(--text-row-selected-detail);
+}

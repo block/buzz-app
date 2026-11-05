@@ -5,6 +5,7 @@ import {
   selectCommunity,
   settingsSections,
   settleShellToggle,
+  ACTIVITY_BUTTON,
 } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -915,10 +916,8 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
   });
   await expect(status).toBeAttached();
   await scrollToBottom(status);
-  await expectUnclippedFocus(
-    sidebar.getByRole("button", { name: "Activity", exact: true }),
-  );
-  await sidebar.getByRole("button", { name: "Activity", exact: true }).click();
+  await expectUnclippedFocus(sidebar.getByRole("button", ACTIVITY_BUTTON));
+  await sidebar.getByRole("button", ACTIVITY_BUTTON).click();
   await expect(
     page.getByRole("heading", { name: "Activity", exact: true }),
   ).toBeVisible();

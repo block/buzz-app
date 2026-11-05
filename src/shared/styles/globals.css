@@ -307,6 +307,22 @@
     flex: 0 0 1.125rem;
     place-items: center;
   }
+  /* A badge marked data-navigation-unread emphasizes its labelled page row
+     (sidebar or More pages popover) the way unread channel rows are; a
+     selected row keeps its fill's ink. */
+  .shell-pages
+    .navigation-item:has(> .navigation-item-trailing [data-navigation-unread])
+    > .navigation-item-label {
+    color: var(--text-navigation-unread);
+    font-weight: var(--type-weight-semibold);
+  }
+  .shell-pages
+    .navigation-item[data-selected]:has(
+      > .navigation-item-trailing [data-navigation-unread]
+    )
+    > .navigation-item-label {
+    color: var(--text-row-selected);
+  }
   .shell-navigation,
   .shell-navigation-content {
     display: contents;

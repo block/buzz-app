@@ -11,6 +11,11 @@ export async function pageChoices(page, query = "") {
   );
 }
 
+/** The Activity page row, whose name also announces any unread count. */
+export const ACTIVITY_BUTTON = {
+  name: /^Activity(?: \d+ unread conversations?)?$/,
+};
+
 export async function openPage(page, name, { connected = true } = {}) {
   // The community switcher appears after local startup has replaced the launch view.
   await expect(

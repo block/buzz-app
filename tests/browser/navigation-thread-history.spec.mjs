@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
+import { ACTIVITY_BUTTON } from "./navigation.mjs";
 import {
   activate,
   clickRow,
@@ -900,7 +901,7 @@ test("header openings keep focus while a main-pane thread is retained", async ({
   const projects = topbar.getByRole("tab", { name: "Workflows", exact: true });
   const inbox = page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Activity", exact: true });
+    .getByRole("button", ACTIVITY_BUTTON);
   for (const leave of [inbox, projects]) {
     await page
       .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)

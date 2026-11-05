@@ -4,6 +4,7 @@ import {
   selectSettingsSection,
   chooseColorMode,
   closeSettings,
+  ACTIVITY_BUTTON,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -67,7 +68,7 @@ test("hovering the sidebar Activity row previews recent conversations and opens 
   app.relay.publish("primary", shared, { requireSubscriber: false });
   await open(page, app);
   const pages = page.getByRole("navigation", { name: "Pages", exact: true });
-  const inboxRow = pages.getByRole("button", { name: "Activity", exact: true });
+  const inboxRow = pages.getByRole("button", ACTIVITY_BUTTON);
   const card = page.getByRole("dialog", { name: "Activity", exact: true });
   const rows = card.getByRole("list", { name: "Recent activity" });
   // Beside the row, inside the window, in both themes, at an intermediate

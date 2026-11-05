@@ -1,4 +1,5 @@
 import type { PluginModule } from "../../plugins/api";
+import { InboxBadge } from "./InboxBadge";
 import { InboxPage } from "./InboxPage";
 import { InboxPreview } from "./InboxPreview";
 import { inboxRouteTarget, isInboxRoute, type InboxRoute } from "./route";
@@ -47,6 +48,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Activity",
     layout: "workspace",
     primary: true,
+    badge: () => <InboxBadge relay={relay} />,
     route: { version: 1, validate: isInboxRoute },
     component: ({ navigation }) => (
       <InboxPage

@@ -16,6 +16,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { PageTabs } from "../channels/PageTabs";
 import { InboxPage } from "./InboxPage";
+import { InboxBadge } from "./InboxBadge";
 import { InboxPreview } from "./InboxPreview";
 import { huddleDescription } from "../../features/huddle/lifecycle";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
@@ -379,6 +380,58 @@ it("All caught up offers Show all once Unread leaves nothing, then shows the rea
   await waitFor(() => expect(rows()).toHaveLength(2));
   expect(unreadToggle()).toHaveAttribute("aria-checked", "false");
   expect(fromTrigger()).toHaveFocus();
+});
+
+it("hides the navigation badge while the relay connection is not ready", async () => {
+  const h = fixture();
+  render(
+    <>
+      <InboxBadge relay={h.relay} />
+      {h.view}
+    </>,
+  );
+  const badge = () =>
+    screen.queryByRole("img", { name: /unread conversations?$/ });
+  await waitFor(() =>
+    expect(badge()).toHaveAccessibleName("2 unread conversations"),
+  );
+  act(() => h.disconnect());
+  await waitFor(() => expect(badge()).toBeNull());
+});
+
+it("decrements the navigation badge when a conversation is read and restores it on Mark unread", async () => {
+  const h = fixture();
+  render(
+    <>
+      <InboxBadge relay={h.relay} />
+      {h.view}
+    </>,
+  );
+  const badge = () =>
+    screen.queryByRole("img", { name: /unread conversations?$/ });
+  await waitFor(() =>
+    expect(badge()).toHaveAccessibleName("2 unread conversations"),
+  );
+  // The shell bolds the Activity row while its badge carries this mark.
+  expect(badge()).toHaveAttribute("data-navigation-unread");
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const row = rows().find((entry) =>
+    entry.textContent?.includes("Please review this"),
+  );
+  if (!row) throw new Error("Missing fixture mention");
+  const mention = within(row).getByRole("button", { name: /^Open / });
+  fireEvent.click(mention);
+  await waitFor(() =>
+    expect(badge()).toHaveAccessibleName("1 unread conversation"),
+  );
+  expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBe(21);
+  // Reading leaves the conversation in the list.
+  expect(rows()).toHaveLength(2);
+  fireEvent.contextMenu(mention, { clientX: 20, clientY: 20 });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark unread" }));
+  await waitFor(() =>
+    expect(badge()).toHaveAccessibleName("2 unread conversations"),
+  );
 });
 
 it.each(["button", "menu"] as const)(

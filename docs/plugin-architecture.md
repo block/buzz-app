@@ -721,7 +721,11 @@ re-rendering; the shell owns the row and placement. A badge that throws renders
 nothing and leaves navigation usable. Toolbar badges are clipped to a compact
 2rem × 1rem corner mark; authors should use short counts or dots there, not rich
 content. The overflow popover uses ordinary labelled rows with trailing badges.
-Pages without `primary` have no navigation entry, so their badge is not shown.
+Pages without `primary` have no navigation entry, so their badge is not shown. On
+labelled rows (the sidebar and the overflow popover), a badge that renders an
+element with `data-navigation-unread` also bolds its row's label, matching unread
+channels. Topbar tabs and toolbar corner marks are unchanged by it. Render nothing,
+or omit the attribute, when nothing is unread.
 
 A primary page may also supply `preview`, supplemental content the shell shows
 in a popover while a pointer rests on the page's sidebar row, after the design

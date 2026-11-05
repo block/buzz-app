@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import { newChat, openPage, ACTIVITY_BUTTON } from "./navigation.mjs";
 
 // Browser-only boundaries: measured overflow/simulated native insets, keyboard focus on
 // resize, and real App wiring between Messages and Solo chats. Contract matrices stay in RTL.
@@ -193,7 +193,7 @@ test("shared navigation preserves drafts and history across Solo and header page
   // The real sidebar changes the route, not the containing Messages area.
   const inbox = page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Activity", exact: true });
+    .getByRole("button", ACTIVITY_BUTTON);
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     for (const activation of ["pointer", "Enter", "Space"]) {

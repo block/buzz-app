@@ -1,7 +1,7 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, ACTIVITY_BUTTON } from "./navigation.mjs";
 
 // Browser-only contract: actual sidebar/plugin routing -> exact thread target,
 // browser history, and responsive/light-dark CSS. Matrices stay in RTL/unread tests.
@@ -19,10 +19,11 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   app,
 }, testInfo) => {
   await open(page, app);
-  const inboxButton = page.getByRole("button", {
-    name: "Activity",
-    exact: true,
-  });
+  const inboxButton = page.getByRole("button", ACTIVITY_BUTTON);
+  // Unread conversations bold the sidebar row through its badge's mark.
+  const inboxLabel = inboxButton.locator(".navigation-item-label");
+  await expect(inboxButton.locator("[data-navigation-unread]")).toHaveText("3");
+  await expect(inboxLabel).toHaveCSS("font-weight", "600");
   await inboxButton.click();
   const inbox = page.getByRole("region", { name: "Activity", exact: true });
   await expect(
@@ -606,7 +607,7 @@ test("narrow Inbox keeps a rejected read save and its captured Retry behind an o
   await page
     .getByRole("button", { name: "Show navigation", exact: true })
     .click();
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.getByRole("button", ACTIVITY_BUTTON).click();
   const inbox = page.getByRole("region", { name: "Activity", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   const filters = inbox.getByRole("button", { name: /^From / });
@@ -768,7 +769,7 @@ test.describe("Inbox names after leaving a channel", () => {
       ),
     );
     await open(page, app);
-    await page.getByRole("button", { name: "Activity", exact: true }).click();
+    await page.getByRole("button", ACTIVITY_BUTTON).click();
     const row = page
       .getByRole("region", { name: "Activity", exact: true })
       .getByRole("list", { name: "Activity", exact: true })

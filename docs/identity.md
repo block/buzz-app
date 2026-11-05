@@ -155,6 +155,8 @@ saved before installation succeeds.
 **I lost my key** opens **Lost your key?**, which first suggests checking another
 signed-in device or a usable backup. Starting over replaces the linked key;
 old messages and profiles are not deleted, but access does not carry over.
+A warning says the old key can never be linked again: kgoose revokes an
+unlinked key, and binding it later fails.
 Owned community hostnames appear only when present; a failed lookup still shows
 its error. **Go back** returns to the prior screen. **Start over with a new key**
 creates a key, unlinks the old key, links the new one, then automatically backs it up.
@@ -206,7 +208,21 @@ to the client. Both are safe to run again — the link reads the account's curre
 key first and does nothing when it already holds this one, and the uploader runs
 again when the user next signs in to Builderlab in Settings — but nothing
 re-runs the link on its own, and Settings has no row for it; the Identity
-sync row reports only what the uploader's last pass found.
+sync row reports only what the uploader's last pass found. Below it, a **Backed-up key**
+row shows the account's linked key when `nsec-backups/status` (read with the
+bundled Builderlab session as first run reads it) lists it, marked This device
+when it is, with when it was last active in a channel on the current
+community's relay. Backups of other keys are left out and the row is
+read-only: making another key the account's would unlink the current one, and
+kgoose never links a key again once it is unlinked.
+
+In Builderlab → Communities, a mismatched account offers **Switch to this
+device’s identity** only behind a confirmation that the account's current key
+will be permanently unlinked, and that this device's key is refused too if it
+was unlinked before (as after Start over on another device), leaving the
+account with no key. The client can't detect that revocation, so the mismatch
+copy also points to the safe path: sign in on this device with the account's
+key. There is no Unpair action.
 
 Every lane ends with *Restoring your communities…* when the account check
 listed destinations saved to the account (`src/features/identity/restore-communities.ts`):
@@ -427,13 +443,13 @@ No user key belongs in release configuration.
 ## Local restore helper on macOS
 
 macOS builds with Rust debug assertions accept `BUZZ_DEV_CREDENTIAL_HELPER` as an
-absolute executable path. When set, `read_human()` and native agent storage use
-this helper.
+absolute executable path. When set, `read_human()`, native agent storage, and
+federated session storage use this helper.
 The helper replaces both the normal read and the copy from the previous service.
 Its setup must select the intended saved identity, including its service name.
 Exit 10 declares that identity absent; it does not start a Keychain migration.
 Release builds ignore it. With no setting, the normal Keychain read is unchanged.
-Human import, creation, deletion, and session records keep their own owners.
+Human import, creation, and deletion keep their own owners.
 Legacy agent import also keeps its exact-source read owner.
 
 The helper receives a fresh Unix socket as stdout and no stdin. It must return
@@ -480,6 +496,24 @@ The app retains bundle validation, create-only agent writes, migration order,
 locks, cache epochs, and read-back checks. The helper does not store keys in
 files or change their access controls to avoid approval. Configure its signed
 binary outside this repository. Do not copy existing keys into its setup.
+
+For federated sessions, the app passes `--session-store <operation> <service>
+<account>`. It uses the same socket protocol as agent storage. Operations are
+`read`, `replace`, and `delete`. The only service is
+`xyz.block.buzz.desktop.federated-session.debug`. Accounts contain exactly 64
+lowercase hexadecimal characters. The session owner derives them from the
+profile and deployment, or from the exact agent grant. Each direction has a
+1 MiB limit. The helper must restrict access to the exact configured accounts.
+It must retain peer checks, item access controls, and disabled normal dialogs.
+The app retains session locks, compare-before-write, refusal records, and
+validation. An older helper that rejects session requests stops the operation;
+the app never retries through direct Keychain access.
+
+Independent worktrees have separate app identifiers. A helper must admit each
+exact identifier and certificate before it serves that app. Preserve the helper's
+code identity across compatible updates. An ad hoc signed helper has a code-hash
+requirement; a rebuild cannot establish that it retains existing item approval.
+Verify normal launch and restart without approval mode before claiming success.
 
 Before a real test, wait for green CI. Obtain explicit consent for first approval.
 Then use a disposable agent to check creation, restore after restart, and deletion.

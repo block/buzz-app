@@ -119,6 +119,12 @@ export function useFloatingActionBar(
       target instanceof Element && row.contains(target)
         ? target.closest(contentSelector)
         : null;
+    // The toolbar is clamped to the scroller, not the row, so a short bubble's
+    // route can cross the scroller's empty gutter. It never crosses another row.
+    const scroller = row.closest("[data-message-scroller]");
+    const routeSurface = (target: Element) =>
+      row.contains(target) ||
+      (!!scroller?.contains(target) && !target.closest("[data-layout]"));
     const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
       if (
         !(target instanceof Element) ||
@@ -136,7 +142,7 @@ export function useFloatingActionBar(
         bounds.content.height <= 0 ||
         bounds.toolbar.width <= 0 ||
         bounds.toolbar.height <= 0 ||
-        !row.contains(target)
+        !routeSurface(target)
       )
         return false;
       const { content, toolbar, clearance } = bounds;
@@ -214,12 +220,44 @@ export function useFloatingActionBar(
       if (!next) row.removeAttribute("data-actions-revealed");
       setRevealed(next);
     };
+    // Pointer events outside the row never reach its listeners. Follow a
+    // retained route through the gutter until it re-enters the row or leaves.
+    let tracking = false;
+    const outside = (event: PointerEvent) => {
+      const target =
+        event.type === "pointerout" ? event.relatedTarget : event.target;
+      if (target instanceof Node && row.contains(target)) return;
+      const next = hoverTarget(target, event);
+      if (!next) track(false);
+      if (hovered === next) return;
+      hovered = next;
+      update();
+    };
+    const track = (next: boolean) => {
+      if (tracking === next) return;
+      tracking = next;
+      if (next) {
+        document.addEventListener("pointermove", outside, true);
+        document.addEventListener("pointerout", outside, true);
+      } else {
+        document.removeEventListener("pointermove", outside, true);
+        document.removeEventListener("pointerout", outside, true);
+      }
+    };
     const over = (event: PointerEvent) => {
+      track(false);
       hovered = hoverTarget(event.target, event);
       update();
     };
     const out = (event: PointerEvent) => {
       hovered = hoverTarget(event.relatedTarget, event);
+      track(
+        hovered &&
+          !(
+            event.relatedTarget instanceof Node &&
+            row.contains(event.relatedTarget)
+          ),
+      );
       update();
     };
     const move = (event: PointerEvent) => {
@@ -259,6 +297,7 @@ export function useFloatingActionBar(
       row.removeEventListener("pointermove", move);
       row.removeEventListener("focusin", focusIn);
       row.removeEventListener("focusout", focusOut);
+      track(false);
       observer.disconnect();
       row.removeAttribute("data-actions-revealed");
     };
@@ -276,10 +315,17 @@ export function useFloatingActionBar(
     // Returns whether the row shows as revealed. Positioning defers that row
     // write until the bar is placed, so an offscreen frame writes nothing.
     const updateVisibility = (reveal = true) => {
-      const blocked = behindActiveOverlay(row);
-      const ownsPopup = !!bar.querySelector(
+      const trigger = bar.querySelector(
         '[aria-haspopup][aria-expanded="true"]',
       );
+      const ownsPopup = !!trigger;
+      // The bar's own menu opens beside its trigger, so the bar stays to show
+      // what the menu acts on. Pickers, modals and other popups still cover it.
+      const menu =
+        trigger?.getAttribute("aria-haspopup") === "menu"
+          ? document.getElementById(trigger.getAttribute("aria-controls") ?? "")
+          : null;
+      const blocked = behindActiveOverlay(row, menu);
       // The toolbar yields, but its popup must still identify the target message.
       const revealed = !blocked || ownsPopup;
       if (reveal) row.toggleAttribute("data-actions-revealed", revealed);

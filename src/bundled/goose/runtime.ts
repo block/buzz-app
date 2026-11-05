@@ -55,6 +55,7 @@ import {
   systemPrompt,
   turnPrompt,
 } from "../claude-code/prompt";
+import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
 import { REQUEST_TIMEOUT_MS, type ServeMcp, type ToolServer } from "./goose";
 import { AgentSessions, localSessions, SharedProcess } from "./sessions";
@@ -296,7 +297,13 @@ export class GooseRuntime {
   conversations(agent: AgentKey) {
     return localSessions(this.storage, agent)
       .list()
-      .map(([key, { at }]) => ({ key, at }));
+      .map(([key, { at, sessions = [] }]) => ({ key, at, sessions }));
+  }
+  /** The community's current name and kind for a channel, if it lists it. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return ownerReads(this.relay(agent), pubkeyOf(agent))?.channelLabel(
+      channelId,
+    );
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -752,7 +759,16 @@ export class GooseRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const project = (await reading)?.section;
+    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
+    const signingAuthority = reads?.workflowAuthority();
+    const [names, project] = await Promise.all([
+      readAuthorNames(
+        reads,
+        [event, ...unseen.slice(-CONTEXT_LIMIT)],
+        signingAuthority,
+      ),
+      reading.then((read) => read?.section),
+    ]);
     return {
       key,
       event,
@@ -775,6 +791,8 @@ export class GooseRuntime {
               ...unseen.map((item) => item.created_at),
             ),
       total: earlier.length + 1,
+      ...(signingAuthority ? { signingAuthority } : {}),
+      names,
       ...(project ? { project } : {}),
     };
   }
@@ -865,8 +883,12 @@ export class GooseRuntime {
         },
       },
       store: localSessions(this.storage, agent),
-      started: (session, text) =>
-        void this.prompts(agent).save(session, [{ label: "", text }]),
+      started: (session, text, title, conversation) =>
+        void this.prompts(agent).save(session, [{ label: "", text }], {
+          at: Date.now(),
+          title: title ?? "",
+          conversation: conversation ?? null,
+        }),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({

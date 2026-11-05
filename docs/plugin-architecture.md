@@ -131,9 +131,10 @@ computer access, then select **Install plugin**. Opening the link does not insta
 enable, or grant access. You can close the dialog while the preview loads. A late
 result is discarded. Confirmed installation remains protected from dismissal.
 
-SSH uses the desktop process's inherited `SSH_AUTH_SOCK` and known hosts.
-The importer disables SSH config and interactive prompts. If terminal Git uses
-an `IdentityAgent`, launch Buzz with that socket as `SSH_AUTH_SOCK`.
+SSH uses known hosts and, unless a [repository access rule](repository-access.md)
+selects another agent, the desktop process's inherited `SSH_AUTH_SOCK`. The importer
+disables SSH config and interactive prompts. If terminal Git uses an `IdentityAgent`,
+add a rule with that socket, or launch Buzz with it as `SSH_AUTH_SOCK`.
 
 A new installation completes identity setup before the app can show the linked
 preview. For a repository hosted by a Buzz community, select that community and
@@ -163,6 +164,8 @@ The CLI prints readable results and reports errors with a nonzero exit code.
 existing enabled state. `recover` backs up management settings and resets to
 bundled defaults, preserving artifacts for reinstallation. `managed` prints the
 [managed plugin policy](managed-plugins.md) and how each recommendation stands.
+`access [URL]` prints the [repository access rules](repository-access.md) and, for a
+URL, the rule, clone URL and agent socket a Git import would use.
 
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
@@ -191,6 +194,44 @@ or install scripts. See [import behavior and limits](#loading-from-folders-and-r
 Browser installation is not supported; the browser shows a desktop-only explanation.
 An organization can recommend plugin sources through a policy file next to the profile
 folders; see [managed plugin sources](managed-plugins.md).
+
+## Git plugin updates
+
+A plugin declares support in its installed `manifest.json`:
+
+```json
+"updates": { "defaultEnabled": true }
+```
+
+`true` enables background checks by default. `false` requires the user to enable
+them. An absent `updates` declaration excludes the plugin from this mechanism.
+The user can change **Check for updates automatically** in the plugin's actions
+menu. Buzz saves the choice per installed plugin and preserves it across updates,
+rollback, and restart. A saved choice overrides the plugin default.
+
+The desktop shell checks eligible saved Git sources at startup and once per hour
+while Buzz is visible. `imports.checkGit` reads metadata without taking the import
+preview slot. Checks do not install, reload, or stop a plugin. Folder sources
+keep their existing update flow.
+
+A shell notice offers **Update and reload** when access does not increase.
+An increase in declared host access requires **Review permissions** and explicit
+confirmation in the existing access review. A publisher change also requires
+review and remains subject to native signing rules. **Later** hides the notice
+for the current app run and candidate. The update stays in the profile menu's
+**Plugins** submenu. A newer candidate can show a notice again.
+
+An update action fetches a fresh immutable preview. The importer checks access
+and publisher data from that preview before it applies the update. It checks
+the live source again before installation. A managed source retains its commit
+pin. A changed source or recommendation retires the pending action.
+
+Save unfinished forms and stop active plugin workers before confirmation.
+Installation preserves the enabled state. An enabled plugin reloads immediately
+through the existing manager. Checks, review, Later, and cancellation leave
+plugin work running. Failed checks and imports offer retry. An activation
+failure offers **Retry activation** and the existing plugin menu for rollback.
+The rollback confirmation and signing limits still apply.
 
 ## Emoji and reusable conversation UI
 
@@ -365,6 +406,114 @@ banner that throws renders nothing and leaves the sidebar usable. It changes
 only the sidebar: links, search and alert clicks still open any conversation.
 Focus is the first caller and registers its restriction only while Focus is on.
 
+### Decorating host sidebar rows and adding sort modes
+
+`ctx.reflect.get("sidebarRows")` is an optional version-1 capability for host
+Team channel and direct-message rows, including rows moved into custom groups.
+Solo conversations are not supported yet. Use the reflective lookup rather than
+required `inject` so the plugin still activates on older hosts.
+
+```tsx
+ctx.reflect.get("sidebarRows")?.register({
+  version: 1,
+  id: "row-details",
+  render(row, Default) {
+    return row.id === "chosen-channel-id"
+      ? <div title="Tracked by this plugin">{Default}</div>
+      : Default;
+  },
+});
+```
+
+`row` contains `id`, `kind` (`team` or `dm`), `label`, `sectionKey`, the current
+`channel` summary (including available labels, visibility and activity data), and
+its current `unread` snapshot. Unknown unread counts remain `null`; activity
+fields retain their existing units and unknown values. This is the host's
+currently authorized roster, not a channel discovery API.
+
+`Default` is a React element, not a component constructor: return it, wrap it,
+or return a replacement element. Returning `null` intentionally hides the row;
+the host skips hidden rows when choosing a neighbor after leaving or deleting
+the current conversation.
+Render callbacks must be pure; return a component element if it needs hooks.
+The live host element keeps selection, unread badges, keyboard focus, menus and
+channel dragging without copying their implementation. Replacements and wrappers
+that discard or interfere with that element own the interactions they remove.
+Keep the wrapper shape stable across live row updates; moving `Default` to a
+different tree position remounts it and can discard focus or open menus.
+
+Active contributions compose in lexical plugin-id/contribution-id order, with
+later callbacks receiving the preceding result (possibly `null`). Callback
+throws, invalid return values, and descendant render failures restore the
+original host element for that row only, not a partially decorated result.
+Repeated callback and invalid-result fallbacks retain the host row across live
+updates. Switching between a decoration and fallback, or recovering from a
+descendant error, can remount it and reset an open menu. If the host button had
+focus, the host restores it to the same channel's replacement button anywhere in
+the sidebar, including after a section move, only when the update leaves focus
+on the document body; it never overrides focus moved elsewhere.
+If the row is hidden instead, focus moves to a surviving neighbor in the same
+section, or its heading when no row remains.
+Disabling, replacing or disposing a plugin removes its contributions through its
+Cordis scope. With no active render contribution, the existing host row renders
+without an extra DOM wrapper.
+
+```ts
+ctx.reflect.get("sidebarRows")?.register({
+  version: 1,
+  id: "activity-order",
+  sortModes: [{
+    id: "oldest",
+    label: "Oldest activity first",
+    compare: (a, b) =>
+      (a.channel.lastActivityAt ?? 0) -
+      (b.channel.lastActivityAt ?? 0) || a.id.localeCompare(b.id),
+  }],
+});
+```
+
+Modes appear beside A–Z and Recent in each Team section's existing Sort menu.
+Their persisted values are `plugin:<plugin-id>/<contribution-id>/<mode-id>`;
+ids use lowercase ASCII letters, digits, dots, underscores and hyphens, starting
+with a letter or digit, with a combined value limit of 512 characters. A registration
+with invalid fields or incompatible sort ids is rejected as a whole, including
+its renderer; register render-only contributions separately if needed. Sorting
+only rearranges existing rows. Comparators must be pure and return finite
+numbers; ties preserve host order. A throw or non-finite result restores the
+section's host order. Live unread and channel updates recompute custom sorting.
+Selecting a plugin mode loads the same channel activity history as Recent,
+sharing its request lifetime and cancellation. Activity fields remain unknown
+until that read completes; comparators must handle unknown values.
+If a saved mode is unavailable, the section uses A–Z while retaining the saved
+choice for re-enabling the plugin. Cold sidebar startup includes a saved mode's
+registration in its existing 1.5-second reveal budget; built-in sorts and modes
+already registered do not wait for other plugins. Plugin choices use a separate `pluginSort`
+extension in the existing sort record, leaving built-in fields readable by older
+hosts. For example, the relevant register fields for one section are:
+
+```json
+{
+  "meta": { "v": 1, "g": { "channels": [1, "0123456789abcdef", "alpha"] } },
+  "pluginSort": {
+    "v": 1,
+    "g": { "channels": [1, "0123456789abcdef", "plugin:example/activity-order/oldest"] }
+  }
+}
+```
+
+Each tuple is `[clock, writer, value]`: a nonnegative safe-integer clock and a
+16-character lowercase hexadecimal writer id. A plugin choice applies only when
+its section's `meta.g` register has the same clock and writer and an `alpha`
+value (`null` is also accepted for legacy bindings). Plugin writers use `alpha`
+as the anchor; built-in A–Z writers must instead write the `null` reset with a
+new stamp, and Recent writes `recent`, so either edit supersedes the binding.
+Plugin-aware writers remove that section's extension choice on a built-in edit,
+prune missing or mismatched anchors, and preserve valid choices for other sections.
+The extension has its own 104-entry limit, separate from the 104 projected
+built-in sort groups. Writers must retain the extension when editing other
+sections. There is no automatic reorder-without-menu hook and no insertion hook
+in this version; use `sidebarSections` for new rows.
+
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
@@ -407,7 +556,7 @@ which uploads of local files use. The kit grants nothing `ctx.agents` and
 `ctx.host` do not already give the plugin.
 
 A plugin, bundled or installed, can add a tab to the settings of agents
-running on this device, whatever their type, with
+running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
 `{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
 optional `when(agent)` limits the tab to the agents it returns true for, and an
@@ -415,7 +564,11 @@ optional `subscribe(listener)` tells the host when `when` may answer
 differently, so the tab appears or goes without a reload. A `when` that throws
 hides only its own tab. The tab
 follows Activity and precedes History and Settings, in the agent's Build view and
-its profile panel, and is not offered for hosted or elsewhere agents. It is
+its profile panel. An agent on another device (`elsewhere`) shows no sections,
+so no added tab either. Between here and hosted the host does not filter: a tab
+meant only for agents running here says so in its `when`
+(`agent.place === "here"`), and one offered for hosted agents saves their instructions through
+`ctx.agents.hostedInstructions`, never `save`. It is
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
@@ -1055,6 +1208,42 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
+### Shell backdrops
+
+The shell paints only its own background unless a plugin registers a backdrop.
+Read it with `ctx.reflect.get("backdrops")` and register
+`{ id, component }`, for example a visualizer that runs while music plays:
+
+```ts
+ctx.reflect.get("backdrops")?.register({ id: "visualizer", component: Visualizer });
+```
+
+The component renders in a fixed, full-window layer above the shell's
+background and dot texture and below all of its content. The layer is
+`inert`, `aria-hidden` and ignores the pointer, so the backdrop cannot take
+focus, clicks or title-bar drags. Registration lasts for the plugin's Cordis
+scope. Each backdrop gets its own full-window box and stacking context, so with
+several, later registrations paint above earlier ones whatever `z-index` they
+use inside.
+Render errors remove only the failing backdrop, silently; errors in its own
+animation frames, timers or listeners are the plugin's to catch and clean up.
+Stop painting while the document is hidden, and never flash more than three
+times in any one second (WCAG 2.3.1).
+
+The host keeps the shell usable over any backdrop. While one is present, each
+header control group and the sidebar resize grip keeps a solid `bg-app` floor,
+so controls, their state fills and focus rings stay on the background they were
+designed for. Panes stay opaque. When the user prefers reduced motion or reduced
+transparency, or forced colors are active, the host does not mount backdrops at
+all, which also stops their animation; they return when the preference does.
+
+A backdrop that needs to stay clear of shell controls may read, but not style,
+these layout roles: `.shell-header` and its direct children (each a group of
+controls), `.shell-center-capsule` (centered pages; it moves into the header's
+flow while `.shell-header` has `data-compact-pages`), `.shell-body`, and the
+outermost `.panel` elements inside it (nested panels are content). On macOS the
+native window controls sit in the header's leading inset, outside these roles.
+
 ### Discovery metadata
 
 Plugin manifests may include display-only discovery metadata:
@@ -1691,6 +1880,17 @@ access and reports the previous and updated declarations. Rejected builds leave
 the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
+Agents reach management through the host's own tools: they read the catalog and
+disable directly, and every install, update, enable or removal waits for the person
+to confirm it on a card in the agent's conversation, or in Settings; see
+[managing plugins from a conversation](agents.md#managing-plugins-from-a-conversation).
+The request service is provided on the root context (`pluginRequests`) so agent
+runs can reach it, which also makes it reachable from plugin scopes; plugins remain
+trusted code. The card is a built-in feature (`buzz.plugin-requests`) that registers a
+message renderer for messages with a `plugin-request` tag. Two services,
+`pluginManagement` and `pluginReviewHold`, give the plugin manager and the open-review
+hold to that feature alone, so asking cannot install or delete another plugin's code
+without the review.
 
 Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
@@ -1718,12 +1918,12 @@ requires deleting the plugin and adding it again. Git checks remain explicit in 
 pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
-usernames. On macOS, sources at `ssh://org-49461806@github.com/squareup/…` on
-port 22 use Block's agent when its socket exists at
-`~/Library/Application Support/block-ssh-agent/agent.sock`. Other SSH sources use
-the desktop process's inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with
-interactive prompts and SSH config disabled. For another agent selected by
-`IdentityAgent` in SSH config, launch the app with that socket in `SSH_AUTH_SOCK`.
+usernames. [Repository access rules](repository-access.md) select the SSH user and
+agent socket for matching sources, and can read matching HTTPS sources over SSH; the
+saved source keeps the entered URL. Other SSH sources use the desktop process's
+inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with interactive prompts and SSH
+config disabled. For another agent selected by `IdentityAgent` in SSH config, add a
+rule with that socket, or launch the app with it in `SSH_AUTH_SOCK`.
 Each check reads metadata from its own temporary clone; only Update retains an
 immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
@@ -1965,12 +2165,15 @@ Its `order` is a function: recognised services and Buzz entities claim the defau
 band, the globe case the catch-all band, so a renderer dedicated to one website
 wins it at the default.
 It does not fetch titles. The bundled GitHub plugin contributes a pull request
-renderer at a lower `order` for github.com pull request URLs: the same label
-with the pull request's state (open, draft, merged, closed) as a coloured icon,
-read with the person's `gh` sign-in or the public API and kept current while
-shown. Repositories, issues and commits, and every pull request link when that
-plugin is disabled, keep the Links presentation. If the renderer fails, a pull
-request link shows as a plain link.
+and issue renderer at a lower `order` for github.com pull request and issue
+URLs: the same label with the pull request's state (open, draft, merged,
+closed) or the issue's (open, closed as completed, closed as not planned) as a
+coloured icon, read with the person's `gh` sign-in or the public API and kept
+current while shown. A pasted pull request or issue URL is labelled
+`repo#number`, then `repo#number · title` once its title is read with that
+state; an authored label stays. Repositories and commits, and every
+pull request and issue link when that plugin is disabled, keep the Links
+presentation. If the renderer fails, the link shows as a plain link.
 Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
@@ -2022,7 +2225,7 @@ pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
 Invalid source shows Pele's error with the source.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components, plus `.Tabs` while a plugin provides it. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -2051,6 +2254,22 @@ Channels, showing a thread is one visit to its channel for unread state, and
 that visit lasts across threads of the same channel. The page holds no second
 message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
+
+`conversation.ui.Conversation({ session, scope, channelId, channelName?, threadId?, children })`
+gives a page's own `ui.Message` rows and `ui.Composer` for one channel the host
+behavior Channels rows have, without showing a thread or visiting the channel:
+mounting it never marks anything read, follows a thread or holds the channel's
+roster. `children(interactions)` receives the host's `onOpenLink`, `canOpenLink`
+and `onOpenMediaReview` for those rows. Inside it, rows offer Edit and Delete
+under the usual permissions; Edit fills the `ui.Composer` inside the same
+`ui.Conversation` (pass the rows it may edit as `editMessages`), and a row has
+no Edit without one. Delete asks for confirmation, and a failed edit or deletion
+shows a notice to retry or discard it before `children`. Media review and
+registered panels open over the page and stop opening once its session is no
+longer the ready one. Render one `ui.Conversation` per channel or card, so each
+card's edits and recovery stay its own; `threadId` keeps panels opened from a
+card in that thread. Writes, mark read/unread and follow remain explicit menu
+actions.
 
 `conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
 page's content the first main tab of the host's conversation tab workspace.

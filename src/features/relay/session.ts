@@ -76,6 +76,7 @@ import { agentAudience } from "./audience";
 import type { ChannelList, ChannelSummary } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
+import { sidebarSortNeedsActivity } from "./sidebar-sort";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -170,6 +171,27 @@ function isProfileFilter(filter: ReadFilter) {
 /** Every filter reads profiles only: see isProfileFilter. */
 function isProfileRead(filters: readonly ReadFilter[]) {
   return filters.length > 0 && filters.every(isProfileFilter);
+}
+
+/** Own encrypted read-state is independent of channel membership. */
+function isOwnReadStateFilter(filter: ReadFilter, viewer: string | undefined) {
+  return (
+    !!viewer &&
+    filter.kinds?.length === 1 &&
+    filter.kinds[0] === 30078 &&
+    filter.authors?.length === 1 &&
+    filter.authors[0] === viewer &&
+    (filter["#t"] === undefined ||
+      (filter["#t"].length === 1 && filter["#t"][0] === "read-state")) &&
+    (filter["#d"] === undefined ||
+      (filter["#d"].length > 0 &&
+        filter["#d"].every((coordinate) =>
+          /^read-state:[0-9a-f]{32}$/.test(coordinate),
+        ))) &&
+    Object.keys(filter).every((key) =>
+      ["kinds", "authors", "limit", "#t", "#d"].includes(key),
+    )
+  );
 }
 
 /** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
@@ -420,7 +442,7 @@ export function createRelaySession(
       details.cancel();
       memberAdministration.clear();
       typing.clear();
-      // Saved owner inventory and profiles do not depend on channel access.
+      // Saved owner inventory, read-state and profiles do not depend on channel access.
       // Preserve only those narrow reads; broad, mixed, ID and channel reads
       // must still retire.
       const retired = (filters: readonly ReadFilter[]) =>
@@ -428,6 +450,7 @@ export function createRelaySession(
         filters.some(
           (filter) =>
             !isOwnerInventoryFilter(filter, transport?.viewer) &&
+            !isOwnReadStateFilter(filter, transport?.viewer) &&
             !isProfileFilter(filter),
         );
       requests.invalidate(retired);
@@ -752,7 +775,9 @@ export function createRelaySession(
         }
       : {}),
   };
-  const searchProfiles = createProfileSearch(verified);
+  const searchProfiles = createProfileSearch(verified, Date.now, () =>
+    profiles.queries.verifiedAuthority?.(),
+  );
   /** Directory reads bypass shared profile admission. Retry one access
    * invalidation here, where caller/cache/connection lifetimes are known. */
   function directoryRead<T>(
@@ -1336,17 +1361,37 @@ export function createRelaySession(
       }
     }
   }
+  /** Who a message in the channel addresses without a mention: a one-to-one
+   * DM's other member. */
+  function dmPartners(channelId: string): readonly string[] {
+    const channel = channels.queries
+      .list()
+      .channels.find((item) => item.id === channelId);
+    return channel?.channelType === "dm" &&
+      channel.members?.length === 2 &&
+      transport?.viewer &&
+      channel.members.includes(transport.viewer)
+      ? channel.members.filter((key) => key !== transport.viewer)
+      : [];
+  }
   function validateMentions(channelId: string, pubkeys: readonly string[]) {
     if (!pubkeys.length) return;
     const channel = channels.queries
       .list()
       .channels.find((item) => item.id === channelId);
+    // A one-to-one DM's partner is addressed by every message there, so a
+    // plain message must still queue while the live stream reconnects.
+    // Publication still reads the roster fresh (preflightMentions).
+    const partners = dmPartners(channelId);
+    const addressesPartnerOnly = pubkeys.every((key) => partners.includes(key));
     if (
       closed ||
       !channels.canWrite(channelId) ||
       !channel?.members ||
       channel.archived ||
-      (transport?.subscribe && liveSnapshot.status !== "connected")
+      (transport?.subscribe &&
+        liveSnapshot.status !== "connected" &&
+        !addressesPartnerOnly)
     )
       throw new Error("Refresh channel membership before mentioning anyone");
     if (pubkeys.some((key) => !channel.members?.includes(key)))
@@ -2320,6 +2365,7 @@ export function createRelaySession(
       },
       searchProfiles,
       () => profiles.queries.verifiedAuthority?.(),
+      profiles.queries,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
@@ -2445,17 +2491,7 @@ export function createRelaySession(
           : undefined,
         transport?.archiveAuthority,
         profiles.queries,
-        (channelId) => {
-          const channel = channels.queries
-            .list()
-            .channels.find((item) => item.id === channelId);
-          return channel?.channelType === "dm" &&
-            channel.members?.length === 2 &&
-            transport?.viewer &&
-            channel.members.includes(transport.viewer)
-            ? channel.members.filter((key) => key !== transport.viewer)
-            : [];
-        },
+        dmPartners,
         (id) => [
           ...new Map(
             [
@@ -3581,7 +3617,7 @@ export function createRelaySession(
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
     if (
-      !Object.values(preferences?.sort ?? {}).includes("recent") &&
+      !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
       !Object.values(preferences?.filters ?? {}).includes("active")
     ) {
       channelActivity.cancel();

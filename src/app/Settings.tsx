@@ -33,6 +33,7 @@ import {
   type ReactNode,
   forwardRef,
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -52,6 +53,7 @@ import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { AgentPluginRequests } from "./AgentPluginRequests";
 import { ManagedPluginUpdate, ManagedPlugins } from "./ManagedPlugins";
 import { managedBy, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
@@ -61,7 +63,7 @@ import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
-import { IdentitySettings } from "./IdentitySettings";
+import { IdentitySettings, keyActivity } from "./IdentitySettings";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
 
@@ -302,6 +304,7 @@ function PluginDetails({
   onReviewHandled,
   initialUpdateAvailable,
   holdReview,
+  openUpdateSettings = false,
 }: {
   plugin: PluginInfo;
   managed?: ReturnType<typeof managedBy>;
@@ -321,6 +324,7 @@ function PluginDetails({
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
   holdReview: (() => () => void) | undefined;
+  openUpdateSettings?: boolean;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
@@ -466,6 +470,7 @@ function PluginDetails({
             plugin={plugin}
             plugins={plugins}
             busy={busy}
+            openUpdateSettings={openUpdateSettings}
             {...(updateAvailable
               ? {
                   toggle: {
@@ -622,6 +627,7 @@ export function Settings({
   communities,
   identity,
   federatedIdentity,
+  builderlabIdentity,
   appearance,
   shortcuts,
   shortcutBindings,
@@ -632,6 +638,7 @@ export function Settings({
   onSection,
   onProvider,
   onPluginImportClosed,
+  onPluginDetailsClosed,
   navigationPane = false,
   onDeparturePending,
   onUnsavedChange,
@@ -644,6 +651,8 @@ export function Settings({
   communities: Communities;
   identity?: Identity | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
+  /** The session as the Builderlab plugin's bundled installation, for its account reads. */
+  builderlabIdentity?: FederatedIdentity | undefined;
   appearance: Appearance;
   shortcuts: ShortcutsService;
   shortcutBindings: ShortcutBindings;
@@ -656,6 +665,7 @@ export function Settings({
   onSection?: (section: string) => void;
   onProvider?: ((provider?: string) => void) | undefined;
   onPluginImportClosed?: (() => void) | undefined;
+  onPluginDetailsClosed?: (() => void) | undefined;
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
   onUnsavedChange?: (unsaved: boolean) => void;
@@ -843,6 +853,21 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const addressedPlugin = useRef(false);
+  const requestedPluginId =
+    navigation?.target.kind === "settings"
+      ? navigation.target.pluginId
+      : undefined;
+  useEffect(() => {
+    if (selected !== "plugins" || !navigation?.entryId) return;
+    if (requestedPluginId) {
+      setSelectedPluginId(requestedPluginId);
+      addressedPlugin.current = true;
+    } else if (addressedPlugin.current) {
+      setSelectedPluginId(undefined);
+      addressedPlugin.current = false;
+    }
+  }, [requestedPluginId, navigation?.entryId, selected]);
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -903,6 +928,7 @@ export function Settings({
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     setSelectedPluginId(undefined);
+    if (requestedPluginId) onPluginDetailsClosed?.();
   };
   useLayoutEffect(() => {
     const held = heldPluginRow.current;
@@ -1202,6 +1228,16 @@ export function Settings({
       </PluginListEntry>
     );
   };
+  // A new connection's session reads activity again.
+  const relay = useSyncExternalStore(
+    communities.relay.subscribe,
+    communities.relay.snapshot,
+  );
+  const relaySession = relay.status === "ready" ? relay.session : undefined;
+  const lastActive = useCallback(
+    (pubkey: string) => keyActivity(relaySession, pubkey),
+    [relaySession],
+  );
   const authorizePluginGit = async (repository: string) => {
     const connection = communities.relay.snapshot();
     return connection.status === "ready"
@@ -1336,6 +1372,8 @@ export function Settings({
             viewer={client.viewer}
             identity={identity}
             federatedIdentity={federatedIdentity}
+            builderlabIdentity={builderlabIdentity}
+            lastActive={lastActive}
           />
         )}
         {developerMode && (
@@ -1363,6 +1401,16 @@ export function Settings({
             <AnimatePresence initial={false} mode="popLayout">
               {coreGroup && renderPluginGroup(coreGroup)}
             </AnimatePresence>
+            {catalog && (
+              <AgentPluginRequests
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                authorizeGit={authorizePluginGit}
+                holdReview={installRequests?.holdReview}
+                fallbackFocus={() => pluginSection.current}
+              />
+            )}
             {catalog && (
               <ManagedPlugins
                 plugins={plugins}
@@ -1539,8 +1587,9 @@ export function Settings({
       </div>
       {showingDetails && selectedPlugin && catalog && (
         <PluginDetails
-          key={selectedPlugin.manifest.id}
+          key={`${selectedPlugin.manifest.id}:${requestedPluginId ? navigation?.entryId : ""}`}
           plugin={selectedPlugin}
+          openUpdateSettings={requestedPluginId === selectedPlugin.manifest.id}
           managed={managedBy(managed, selectedPlugin.manifest.id)}
           catalog={catalog}
           initialUpdateAvailable={

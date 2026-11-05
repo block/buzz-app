@@ -3,6 +3,7 @@ import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { agentAudience } from "./audience";
+import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
@@ -21,7 +22,11 @@ import {
   safeMessageUrl,
 } from "./message-content";
 
-import { channelRowKind, membershipChange } from "./membership";
+import {
+  channelRowChannel,
+  channelRowKind,
+  membershipChange,
+} from "./membership";
 import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -281,7 +286,7 @@ export function foldMessages(
       if (
         rootId &&
         pendingReplies?.has(event.id) &&
-        event.tags.some((entry) => entry[0] === "h" && entry[1] === channelId)
+        channelRowChannel(event) === channelId
       ) {
         const list = replies.get(rootId) ?? [];
         list.push(event);
@@ -318,8 +323,7 @@ export function foldMessages(
   const rows: ChannelMessage[] = [];
   for (const event of events) {
     if (!channelRowKind(event.kind)) continue;
-    if (!event.tags.some((entry) => entry[0] === "h" && entry[1] === channelId))
-      continue;
+    if (channelRowChannel(event) !== channelId) continue;
     if (
       !includeReplies &&
       event.tags.some((entry) => entry[0] === "e" && entry[3] === "reply") &&
@@ -404,6 +408,7 @@ export function foldMessages(
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
     const authorId = messageAuthor(event, signingAuthority);
+    const pluginRequest = pluginRequestId(event);
     const summary = parseSummary(summaries.get(event.id));
     const pending = includeReplies
       ? []
@@ -447,6 +452,7 @@ export function foldMessages(
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
+        ...(pluginRequest ? { pluginRequest: { id: pluginRequest } } : {}),
         ...(event.kind === 40008
           ? {
               diff: Object.freeze({

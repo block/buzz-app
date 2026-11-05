@@ -7,22 +7,22 @@ import {
   closeSettings,
 } from "./navigation.mjs";
 
-// Proves the real Inbox menu, remote history owner and conversation tab wiring.
+// Proves the real Activity tabs, remote history owner and conversation tab wiring.
 // Ownership, deletion and access race matrices stay in colocated Vitest tests.
 test.use({
   productionBroker: true,
   historyCounts: { alpha: 1, beta: 0 },
   screenshot: "off",
 });
-test("reaction history opens the original message from Inbox", async ({
+test("reaction history opens the original message from Activity", async ({
   page,
   app,
 }) => {
   const target = app.histories.get("primary/alpha")[0];
   app.serveReaction(target);
   await page.goto(app.origin);
-  await openPage(page, "Inbox");
-  const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+  await openPage(page, "Activity");
+  const inbox = page.getByRole("region", { name: "Activity", exact: true });
   await expect(
     inbox.getByRole("button", { name: /^Open message reacted to by / }),
   ).toHaveCount(1);
@@ -30,12 +30,7 @@ test("reaction history opens the original message from Inbox", async ({
     .getByRole("button", { name: /^Open message reacted to by / })
     .click();
   await expect(inbox.locator(`[data-message-id="${target.id}"]`)).toBeVisible();
-  await inbox
-    .getByRole("button", { name: "Inbox filters", exact: true })
-    .click();
-  await page
-    .getByRole("menuitemradio", { name: "Reactions", exact: true })
-    .click();
+  await inbox.getByRole("tab", { name: "Reactions", exact: true }).click();
   const row = inbox.getByRole("button", {
     name: /^Open message reacted to by /,
   });

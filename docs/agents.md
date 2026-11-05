@@ -76,7 +76,8 @@ permission. **Settings > External apps** shows the connection and **Revoke acces
 Keys stay in Buzz. Closing Settings keeps access active.
 
 Version 1 links contain `version=1`, the requesting `client` display name,
-`callback`, random `state`, `scope` (`read`, `post`, or both), `code_challenge`,
+`callback`, random `state`, `scope` (a space-separated selection of `read`, `post`,
+and `create`), `code_challenge`,
 and `code_challenge_method=S256`. The callback must be exactly
 `http://127.0.0.1:<port>/buzz/authorize`, with a port from 1024 through 65535.
 State and challenge each encode 32 bytes as unpadded base64url. The client name
@@ -103,14 +104,27 @@ stops it. A version 1 client needs new setup after its session ends. Version 2
 can use saved approval to create another session.
 
 The read scope allows `channel_list`, `channel_get`, and `read`. The post scope
-allows `send` and `reply_in_subthread`. Buzz classifies each built-in tool through
+allows `send` and `reply_in_subthread`. The create scope allows only
+`channel_create({name})`: a private Solo with the authenticated owner, connected
+agent and the owner's account-saved Bestie. Buzz derives these identities and
+deduplicates them; the creating agent is an implicit member. A missing, invalid,
+unreadable or unavailable saved Bestie fails before creation with a corrective
+message. It never substitutes an automatic device fallback. The exact saved key
+must be selectable through the session's shared agent choices in this community;
+it need not run on this device. Caller-supplied members, identities, visibility,
+templates and lifecycle operations are not allowed. Publication and confirmation
+use the existing native Solo-create handler and its unconfirmed-result messages.
+Buzz classifies each built-in tool through
 its trusted external-access policy. Unclassified tools cannot run. Runtime plugin
 tools cannot enroll in this policy.
 
 `tools/list` returns all classified tools in one page. It rejects a supplied
 `cursor`. Each tool has `_meta["buzz/requiredScopes"]`. The list result has
 `_meta["buzz/grantedScopes"]` and `_meta["buzz/supportedScopes"]`; the supported
-set is `read` and `post`. Tool discovery does not grant access. Each call checks
+set is `read`, `post`, and `create`. One authorization can request all three.
+Buzz never widens an existing grant: a read/post grant permits creation only after
+the owner approves a request that includes `create`. Tool discovery does not grant
+access. Each call checks
 the grant against the trusted policy. A missing scope returns `isError: true`
 and `_meta["buzz/error"]: {code: "authorization_required", required_scopes: [...]}`.
 `required_scopes` lists the missing scopes. Each approval replaces the previous
@@ -120,11 +134,17 @@ it already has. For example, an app with `read` that needs `post` requests
 The app must not retry the call automatically after approval. New classified tools
 use this same contract.
 
+External clients must accept `create` in `buzz/grantedScopes`,
+`buzz/supportedScopes` and per-tool `buzz/requiredScopes` before this catalog is
+advertised. Older Nexus clients that accept only read/post reject an unknown
+supported scope even when their grant still contains only read/post.
+
 The shared schemas apply with explicit
 targets: `read` needs `channel`, `thread`, or `message_url`. A `message_url` uses
 the linked message's channel and thread; it cannot combine with `channel` or
 `thread`. Searches with `q` need `channel` or `message_url`;
-`channel_get` needs `channel`; `send` needs `channel`, `text`, and `audience`;
+`channel_get` needs `channel`; `channel_create` accepts only `name`;
+`send` needs `channel`, `text`, and `audience`;
 `reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
 `mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
 Unknown fields are rejected. File access, commands, Git credentials, and plugin
@@ -365,7 +385,7 @@ and the owner's other comments wake the agent. A watch is saved in Attention on 
 pull request merges or closes, after 20 wakes, after 30 minutes without a
 successful read, or when the agent calls it with `stop: true`.
 
-Settings → Plugins → GitHub comment authors decides whose feedback wakes agents,
+Settings → Plugins → GitHub decides whose feedback wakes agents,
 since anyone can comment on a public pull request. It holds rules, one per
 line, saved on the device. Each starts with `allow` or `deny`, followed by any
 of these conditions, all of which must hold:
@@ -461,7 +481,8 @@ thread-scoped sessions take only notes addressed to their root. Notes are
 consumed once when the harness is ready to deliver the turn, and restored to
 the same conversation ahead of newer notes if delivery definitely never began.
 They remain in memory only, and the call returns false unless this copy runs
-the agent.
+the agent. Pi agents don't take notes yet: the call still returns true for one,
+but its turns never include the note.
 
 A type marks its primary configuration tab with `role: "settings"`. In the
 Agents build view and profile panel, the host keeps that tab at a stable
@@ -1177,8 +1198,10 @@ not joined here; the transcript shows the agent's ACP output.
 
 The shared Claude, Goose, and Pi turn formatter sends conversation history and
 the triggering event as exact JSON records with escaped markup delimiters, the
-same records Codex sends. Message text and tags therefore cannot create extra
-request sections. The transcript reads those records directly and retains
+same records Codex sends. Beside the author's `pubkey`, each record carries
+their verified `username` when the community verified one, which the agent
+writes after `@` to tag them, and their `display_name`. Message text, names
+and tags therefore cannot create extra request sections. The transcript reads those records directly and retains
 support for the earlier single-object JSON event and older line-based
 `buzz-event` and `buzz-events` records; it never parses decoded message content
 as another prompt.

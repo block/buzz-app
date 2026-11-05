@@ -169,6 +169,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "buzz.channels",
         "buzz.emoji",
         "buzz.github",
+        "buzz.github",
         "buzz.pairing",
       ],
     );
@@ -179,6 +180,27 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .find((card) => card.key === "buzz.channels/templates")?.group,
       "App",
     );
+    // The GitHub plugin keeps rendering and tools while its panel declines URLs.
+    const { setOpenGitHubLinksInBuzz } = await vite.ssrLoadModule(
+      "/src/bundled/github/link-preference.ts",
+    );
+    const githubTargets = [
+      "https://github.com/block/buzz-app",
+      "https://github.com/block/buzz-app/pull/7",
+      "https://github.com/block/buzz-app/issues/7",
+      "https://github.com/block/buzz-app/commit/abcdef1",
+    ];
+    assert.equal(services.settingsCards.has("buzz.github/links"), true);
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target)?.pluginId, "buzz.github");
+    const githubLinks = services.conversation.links.snapshot();
+    setOpenGitHubLinksInBuzz(false);
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target), undefined);
+    assert.deepEqual(services.conversation.links.snapshot(), githubLinks);
+    setOpenGitHubLinksInBuzz(true);
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target)?.pluginId, "buzz.github");
     // Conversation presentation is host-owned in Appearance, not a second plugin page.
     assert.equal(services.settingsCards.has("buzz.channels/messages"), false);
     const pairingCard = services.settingsCards
@@ -240,6 +262,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "block.builderlab",
         "buzz.channels",
         "buzz.emoji",
+        "buzz.github",
         "buzz.github",
         "buzz.pairing",
       ],

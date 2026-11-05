@@ -328,7 +328,7 @@ it.each([
       });
       if (recovery) {
         const sheet = await screen.findByRole("region", {
-          name: "Builderlab access unavailable",
+          name: "Try another Builderlab account",
         });
         const identity = screen.getByRole("complementary", {
           name: "Ada identity",

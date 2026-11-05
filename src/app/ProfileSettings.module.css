@@ -20,6 +20,11 @@
 .about {
   max-width: 32rem;
   white-space: pre-wrap;
+  /* The preview stays bounded; the form below holds the full text. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
 }
 
 /* Keep the actual form geometry, without showing another scope's default data. */

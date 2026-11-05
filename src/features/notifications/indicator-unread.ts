@@ -9,6 +9,107 @@ export type IndicatorGates = Readonly<{
   subscribe(listener: () => void): () => void;
 }>;
 
+export type UnreadScopes = Readonly<{ solo: boolean; team: boolean }>;
+
+/** Projects the session's existing unread evidence into the two sidebar scopes. */
+export function bindUnreadScopes(
+  session: RelaySession,
+  viewer: string,
+  project: (scopes: UnreadScopes) => void,
+  gates?: IndicatorGates,
+  scope?: Readonly<{ viewer: string; communityOrigin: string }>,
+) {
+  let closed = false;
+  let previous: UnreadScopes | undefined;
+  const channels = new Map<
+    string,
+    { scope: keyof UnreadScopes; stop: () => void }
+  >();
+  const publish = (scopes: UnreadScopes) => {
+    if (closed) return;
+    if (scopes.solo === previous?.solo && scopes.team === previous?.team)
+      return;
+    previous = scopes;
+    project(scopes);
+  };
+  const changed = () => {
+    const next = { solo: false, team: false };
+    const preferences = session.sidebarPreferences.snapshot();
+    if (
+      preferences.status !== "ready" &&
+      preferences.status !== "unsupported"
+    ) {
+      publish(Object.freeze(next));
+      return;
+    }
+    const muted = new Set(preferences.data?.muted ?? []);
+    for (const [channelId, channel] of channels) {
+      if (muted.has(channelId)) continue;
+      const snapshot = session.unread.snapshot({
+        kind: "channel",
+        channelId,
+      });
+      if (snapshot.manual !== "none" || (snapshot.observedCount ?? 0) > 0)
+        next[channel.scope] = true;
+    }
+    publish(Object.freeze(next));
+  };
+  const roster = () => {
+    const next = new Map(
+      session.channels
+        .list()
+        .channels.filter(
+          (channel) =>
+            !channel.huddle &&
+            !channel.archived &&
+            !channel.metadataPending &&
+            channel.members?.includes(viewer) &&
+            (!gates ||
+              !scope ||
+              gates.allows({
+                version: 1,
+                kind: "conversation",
+                scope,
+                channelId: channel.id,
+              })),
+        )
+        .map(
+          (channel) =>
+            [
+              channel.id,
+              channel.channelType === "solo" ? "solo" : "team",
+            ] as const,
+        ),
+    );
+    for (const [id, current] of channels) {
+      if (next.get(id) === current.scope) continue;
+      current.stop();
+      channels.delete(id);
+    }
+    for (const [channelId, destination] of next) {
+      if (channels.has(channelId)) continue;
+      channels.set(channelId, {
+        scope: destination,
+        stop: session.unread.subscribe({ kind: "channel", channelId }, changed),
+      });
+    }
+    changed();
+  };
+  const stopRoster = session.channels.subscribeList(roster);
+  const stopGates = gates?.subscribe(roster) ?? (() => {});
+  const stopPreferences = session.sidebarPreferences.subscribe(changed);
+  roster();
+  return () => {
+    if (closed) return;
+    closed = true;
+    stopRoster();
+    stopGates();
+    stopPreferences();
+    for (const channel of channels.values()) channel.stop();
+    channels.clear();
+  };
+}
+
 /** A host projection of existing evidence, never a count or a new read owner. */
 export function bindUnreadIndicator(
   communities: Communities,
@@ -20,9 +121,6 @@ export function bindUnreadIndicator(
   let identity = "";
   let previous: boolean | undefined;
   let stopRoster = () => {};
-  let refresh = () => {};
-  let stopPreferences = () => {};
-  const channels = new Map<string, () => void>();
   const publish = (unread: boolean) => {
     if (unread === previous) return;
     previous = unread;
@@ -30,10 +128,7 @@ export function bindUnreadIndicator(
   };
   const clear = () => {
     stopRoster();
-    stopPreferences();
-    refresh = () => {};
-    for (const stop of channels.values()) stop();
-    channels.clear();
+    stopRoster = () => {};
   };
   const update = () => {
     if (closed) return;
@@ -58,82 +153,25 @@ export function bindUnreadIndicator(
       viewer,
       communityOrigin: communityDestination(client.selected as string).url,
     };
-    const valid = () => !closed && session === owned && identity === next;
-    const changed = () => {
-      if (!valid()) return;
-      const preferences = owned.sidebarPreferences.snapshot();
-      if (
-        preferences.status !== "ready" &&
-        preferences.status !== "unsupported"
-      ) {
-        publish(false);
-        return;
-      }
-      const muted = new Set(preferences.data?.muted ?? []);
-      publish(
-        [...channels.keys()].some((channelId) => {
-          if (muted.has(channelId)) return false;
-          const snapshot = owned.unread.snapshot({
-            kind: "channel",
-            channelId,
-          });
-          return (
-            snapshot.manual !== "none" || (snapshot.observedCount ?? 0) > 0
-          );
-        }),
-      );
-    };
-    stopPreferences = owned.sidebarPreferences.subscribe(changed);
-    changed();
-    const roster = () => {
-      if (!valid()) return;
-      const ids = new Set(
-        owned.channels
-          .list()
-          .channels.filter(
-            (channel) =>
-              !channel.huddle &&
-              !channel.metadataPending &&
-              channel.members?.includes(viewer) &&
-              (!gates ||
-                !scope ||
-                gates.allows({
-                  version: 1,
-                  kind: "conversation",
-                  scope,
-                  channelId: channel.id,
-                })),
-          )
-          .map((channel) => channel.id),
-      );
-      for (const [id, stop] of channels) {
-        if (ids.has(id)) continue;
-        stop();
-        channels.delete(id);
-      }
-      for (const channelId of ids) {
-        if (!channels.has(channelId))
-          channels.set(
-            channelId,
-            owned.unread.subscribe({ kind: "channel", channelId }, changed),
-          );
-      }
-      changed();
-    };
-    stopRoster = owned.channels.subscribeList(roster);
-    refresh = roster;
-    roster();
+    stopRoster = bindUnreadScopes(
+      owned,
+      viewer,
+      (scopes) => {
+        if (!closed && session === owned && identity === next)
+          publish(scopes.solo || scopes.team);
+      },
+      gates,
+      scope,
+    );
   };
   const stop = communities.subscribe(update);
   const stopRelay = communities.relay.subscribe(update);
-  const stopGates = gates?.subscribe(() => refresh()) ?? (() => {});
   update();
   return () => {
     if (closed) return;
     closed = true;
     stop();
     stopRelay();
-    stopGates();
     clear();
     session = undefined;
     publish(false);

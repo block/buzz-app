@@ -342,7 +342,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   and identity; narrow windows use a navigation drawer instead.
 - **Sidebar sections**: in **All**, use the arrow beside **Solo** or **Team** to
   collapse either section independently. Buzz remembers the collapsed sections
-  for that community and identity.
+  for that community and identity. The **Solo** and **Team** filter tabs are bold
+  while their scope contains unread activity in an unmuted conversation.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Inbox list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.

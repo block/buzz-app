@@ -2,6 +2,7 @@ import { soloNavigationFor } from "../../features/channel-navigation/solo-naviga
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -45,6 +46,10 @@ import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
+import {
+  bindUnreadScopes,
+  type UnreadScopes,
+} from "../../features/notifications/indicator-unread";
 
 const noSubscription = () => () => {};
 
@@ -199,12 +204,37 @@ function ScopedSidebar({
   }, [scope, view]);
   const filter = restriction ? "solo" : view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
+  const unreadScopes = useUnreadScopes(connection.session, connection.viewer);
+  const filterItems = useMemo(() => {
+    const named =
+      soloTitle === "Solo"
+        ? filters
+        : [filters[0], filters[2], { ...filters[1], label: soloTitle }];
+    return named.map((item) => {
+      const unread =
+        item.value === "solo"
+          ? unreadScopes.solo
+          : item.value === "team"
+            ? unreadScopes.team
+            : false;
+      return unread
+        ? {
+            ...item,
+            trailing: <span className="sr-only">, unread</span>,
+          }
+        : item;
+    });
+  }, [soloTitle, unreadScopes.solo, unreadScopes.team]);
   // Without the tabs there is no tab to label the panel.
   const panelId = restriction ? undefined : `sidebar-${filter}`;
   const header = (
     <>
       <div className={styles.sidebarControls}>
-        <div className={styles.sidebarScope}>
+        <div
+          className={styles.sidebarScope}
+          data-unread-solo={unreadScopes.solo || undefined}
+          data-unread-team={unreadScopes.team || undefined}
+        >
           {restriction && props.sidebarScope ? (
             <RestrictionBanner
               entry={restriction}
@@ -216,15 +246,7 @@ function ScopedSidebar({
               variant="segmented"
               size="sm"
               value={filter}
-              items={
-                soloTitle === "Solo"
-                  ? filters
-                  : [
-                      filters[0],
-                      filters[2],
-                      { ...filters[1], label: soloTitle },
-                    ]
-              }
+              items={filterItems}
               onValueChange={setFilter}
             />
           )}
@@ -405,6 +427,28 @@ function ScopedSidebar({
       )}
     </SidebarBoundary>
   );
+}
+
+const noUnreadScopes = Object.freeze({ solo: false, team: false });
+
+function useUnreadScopes(
+  session: RelaySession | undefined,
+  viewer: string | undefined,
+): UnreadScopes {
+  const [observed, setObserved] = useState<{
+    session: RelaySession | undefined;
+    viewer: string | undefined;
+    scopes: UnreadScopes;
+  }>({ session, viewer, scopes: noUnreadScopes });
+  useEffect(() => {
+    if (!session || !viewer) return;
+    return bindUnreadScopes(session, viewer, (scopes) =>
+      setObserved({ session, viewer, scopes }),
+    );
+  }, [session, viewer]);
+  return observed.session === session && observed.viewer === viewer
+    ? observed.scopes
+    : noUnreadScopes;
 }
 
 function InventoryGroup({

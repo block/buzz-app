@@ -11,6 +11,13 @@
   flex: 1 1 10rem;
   min-width: 0;
 }
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selectors target the shared Tabs elements. */
+.sidebarScope[data-unread-solo] :global(.buzz-tabs-tab)[data-tab-value="solo"],
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selectors target the shared Tabs elements. */
+.sidebarScope[data-unread-team] :global(.buzz-tabs-tab)[data-tab-value="team"] {
+  color: var(--text-standard);
+  font-weight: var(--type-weight-semibold);
+}
 .sidebarGroup + .sidebarGroup:not([hidden]) {
   margin-block-start: var(--space-6);
 }

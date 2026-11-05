@@ -8,7 +8,12 @@ import type {
   SidebarMuteMutator,
 } from "../relay/sidebar-preferences";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
-import { bindUnreadIndicator, type IndicatorGates } from "./indicator-unread";
+import { SOLO_LABEL } from "../solo/labels";
+import {
+  bindUnreadIndicator,
+  bindUnreadScopes,
+  type IndicatorGates,
+} from "./indicator-unread";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -117,6 +122,35 @@ function setup(
   };
 }
 const target = { kind: "channel", channelId: "room" } as const;
+it("projects unread activity into separate Solo and Team scopes", () => {
+  const h = setup();
+  h.grant("team");
+  h.emit([
+    roster(h.relay, "solo", [h.viewer.pubkey], 11),
+    metadata(h.relay, "solo", "Solo", 11, [
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const project = vi.fn();
+  const stop = bindUnreadScopes(h.session, h.viewer.pubkey, project);
+  cleanups.push(stop);
+  expect(project).toHaveBeenLastCalledWith({ solo: false, team: false });
+  h.emit([message(h.peer, "team", "Team activity", 12)]);
+  expect(project).toHaveBeenLastCalledWith({ solo: false, team: true });
+  h.emit([message(h.peer, "solo", "Solo activity", 13)]);
+  expect(project).toHaveBeenLastCalledWith({ solo: true, team: true });
+  h.emit([metadata(h.relay, "team", "Team", 14, [["archived", "true"]])]);
+  expect(project).toHaveBeenLastCalledWith({ solo: true, team: false });
+  h.emit([
+    metadata(h.relay, "solo", "Solo", 15, [
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+      ["archived", "true"],
+    ]),
+  ]);
+  expect(project).toHaveBeenLastCalledWith({ solo: false, team: false });
+});
 it("starts clear for unknown evidence; projects arrivals and explicit read clearing without new reads", async () => {
   const h = setup();
   h.grant();

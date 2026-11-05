@@ -248,7 +248,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   const user = userEvent.setup();
   const f = fixture(true);
   const all = screen.getByRole("tab", { name: "All" });
-  const solo = screen.getByRole("tab", { name: "Solo" });
+  const solo = screen.getByRole("tab", { name: /^Solo(?:, unread)?$/ });
   const team = screen.getByRole("tab", { name: "Team" });
   expect(all).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("button", { name: "New" })).toBeVisible();
@@ -308,6 +308,18 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   });
 });
 
+it("shows unread activity on its Solo or Team scope until it is read", () => {
+  const f = fixture(true);
+  const solo = screen.getByRole("tab", { name: /Solo.*unread/i });
+  expect(solo).toHaveAccessibleName("Solo, unread");
+  const scope = solo.closest("[data-unread-solo]");
+  expect(scope).toHaveAttribute("data-unread-solo", "true");
+  expect(scope).not.toHaveAttribute("data-unread-team");
+  f.clearUnread();
+  expect(solo.closest("[data-unread-solo]")).toBeNull();
+  expect(screen.getByRole("tab", { name: "Solo" })).toBe(solo);
+});
+
 it("collapses the Solo and Team inventories independently in All", async () => {
   const user = userEvent.setup();
   fixture(true);
@@ -335,7 +347,7 @@ it("collapses the Solo and Team inventories independently in All", async () => {
   expect(solo.panel).toHaveAttribute("hidden");
   expect(team.panel).toHaveAttribute("hidden");
 
-  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  await user.click(screen.getByRole("tab", { name: /^Solo(?:, unread)?$/ }));
   await user.click(screen.getByRole("tab", { name: "All" }));
   expect(section("solo").panel).toHaveAttribute("hidden");
   expect(section("team").panel).toHaveAttribute("hidden");
@@ -520,10 +532,9 @@ it("retains scope across Settings remounts and reveals navigation outside the fi
     "true",
   );
   f.navigate(soloDraftTarget(scope));
-  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(
+    screen.getByRole("tab", { name: /^Solo(?:, unread)?$/ }),
+  ).toHaveAttribute("aria-selected", "true");
   f.navigate({
     version: 1,
     kind: "conversation",
@@ -579,7 +590,7 @@ it("keeps navigation scope preferences partitioned by community", async () => {
     "aria-selected",
     "true",
   );
-  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  await user.click(screen.getByRole("tab", { name: /^Solo(?:, unread)?$/ }));
   f.connection({ scope, session: f.session });
   expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
     "aria-selected",
@@ -637,10 +648,9 @@ it("reveals Solo when New chat reopens the same destination after filtering it o
   );
   await user.click(screen.getByRole("button", { name: "New" }));
   await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
-  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  expect(
+    screen.getByRole("tab", { name: /^Solo(?:, unread)?$/ }),
+  ).toHaveAttribute("aria-selected", "true");
 });
 
 const soloFailure = vi.hoisted(() => ({ active: false }));
@@ -756,7 +766,7 @@ it.each(["empty", "chats", "projects", "both"])(
       await user.click(within(nav).getByRole("button", { name: "New chat" }));
       expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
     }
-    await user.click(screen.getByRole("tab", { name: "Solo" }));
+    await user.click(screen.getByRole("tab", { name: /^Solo(?:, unread)?$/ }));
     const trigger = within(nav).getByRole("button", {
       name: "New chat or workspace",
     });
@@ -802,10 +812,9 @@ it("changes Team to Solo only for a live explicit chip intent and does not repla
     await act(() => h.navigate(current));
     await userEvent.setup().click(screen.getByRole("tab", { name: "Team" }));
     act(() => h.service.reveal("owned"));
-    expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(
+      screen.getByRole("tab", { name: /^Solo(?:, unread)?$/ }),
+    ).toHaveAttribute("aria-selected", "true");
     target = conversationTarget(h.scope, "team");
     await act(() => h.navigate(target));
     view.rerender(tree());

@@ -15,7 +15,7 @@ import { PanelWorkspace } from "../panels/PanelWorkspace";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GaugeIcon } from "../../shared/design-system/icons";
 import { BrowserHostView } from "./BrowserHostView";
-import type { BrowserPlatform } from "./platform";
+import { BrowserAttachError, type BrowserPlatform } from "./platform";
 import { BrowserSessions } from "./sessions";
 
 class TestResizeObserver {
@@ -698,6 +698,63 @@ it("renders attach failures in toolbar space outside native guest bounds", async
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Native browser unavailable");
   expect(alert.parentElement).toHaveAttribute("aria-label", "Browser");
+});
+
+it("shows a refused app as a page in the website's place, with no reason", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  vi.mocked(platform.attach)
+    .mockRejectedValueOnce(
+      new BrowserAttachError(
+        "Your Builderlab account cannot open this app",
+        "denied",
+      ),
+    )
+    .mockResolvedValueOnce("session-1");
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("You can’t open this app");
+  expect(alert).toHaveTextContent(
+    "The link may be wrong, or the app may have been removed. Ask whoever shared it.",
+  );
+  expect(alert).not.toHaveTextContent("Builderlab account");
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  // In the website viewport, not the error bar's toolbar space.
+  expect(alert.parentElement).not.toHaveAttribute("aria-label", "Browser");
+
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() =>
+    expect(platform.status).toHaveBeenCalledWith("session-1"),
+  );
+  expect(platform.attach).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps other attach failures in the error bar", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.attach).mockRejectedValue(
+    new BrowserAttachError("Builderlab sign-in request failed"),
+  );
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Builderlab sign-in request failed");
+  expect(alert.parentElement).toHaveAttribute("aria-label", "Browser");
+  expect(
+    screen.queryByRole("button", { name: "Try again" }),
+  ).not.toBeInTheDocument();
 });
 
 it("routes address and navigation controls to the active session", async () => {

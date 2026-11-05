@@ -107,6 +107,17 @@ export function createProfileSearch(
     }
     return taken;
   }
+  /** Whether a search answered for `pubkey` under `current`, within
+   * {@link PROFILE_SEARCH_HEADS_MS}, and {@link verifiedHeads} has not taken it.
+   * That answer is newer evidence than any earlier lookup. */
+  function answered(pubkey: string, current: VerifiedProfileAuthority) {
+    const answer = answers.get(pubkey);
+    return (
+      !!answer &&
+      answer.authority === current &&
+      now() - answer.at < PROFILE_SEARCH_HEADS_MS
+    );
+  }
   async function searchProfiles(
     query: string,
     { limit, page, signal, priority = "foreground" }: ProfileSearchOptions,
@@ -168,7 +179,7 @@ export function createProfileSearch(
     );
     return events.filter((event) => event.kind === 0);
   }
-  return Object.assign(searchProfiles, { verifiedHeads });
+  return Object.assign(searchProfiles, { verifiedHeads, answered });
 }
 export type ProfileSearch = ReturnType<typeof createProfileSearch>;
 

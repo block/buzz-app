@@ -352,7 +352,9 @@ available rather than silently discarding it.
   its type. Do not assume someone can edit another person's agent.
 - When creating a Builderlab agent, sign in, choose a model from its family menu,
   then choose a supported **Thinking** level. Both choices are required; changing
-  the model clears the thinking choice. Instructions are optional.
+  the model clears the thinking choice. Instructions are optional. **Create agent**
+  stays disabled until its name and required choices are complete; Builderlab
+  also waits for sign-in and its model catalog.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.

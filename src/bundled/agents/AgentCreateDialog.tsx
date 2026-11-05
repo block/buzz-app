@@ -126,6 +126,7 @@ export function AgentCreateDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [configurationReady, setConfigurationReady] = useState(false);
   const avatarRef = useRef<{ prepare(): Promise<string> }>(null);
   const nameField = useRef<HTMLInputElement>(null);
   const namePrompt = useNamePrompt(nameField);
@@ -161,13 +162,20 @@ export function AgentCreateDialog({
       ? undefined
       : type?.carry?.(config).instructions;
     restoreHarnessFocus.current = item.key;
+    setConfigurationReady(false);
     chooseModel(
       item,
       instructions && item.adopt ? item.adopt({ instructions }, next) : next,
     );
   };
   const create = async () => {
-    if (!type || pending || avatarBusy) return;
+    if (
+      !type ||
+      pending ||
+      avatarBusy ||
+      (Configuration && !configurationReady)
+    )
+      return;
     if (!name.trim()) {
       namePrompt.prompt();
       return;
@@ -252,7 +260,13 @@ export function AgentCreateDialog({
           type="submit"
           form={form}
           loading={pending}
-          disabled={avatarBusy || pending || !type}
+          disabled={
+            avatarBusy ||
+            pending ||
+            !type ||
+            !name.trim() ||
+            (!!Configuration && !configurationReady)
+          }
         >
           {update ? "Save changes" : "Create agent"}
         </Button>
@@ -323,6 +337,7 @@ export function AgentCreateDialog({
                 config={config}
                 disabled={pending}
                 harnessControl={harnessControl}
+                onReadyChange={setConfigurationReady}
                 onChange={(next) => chooseModel(type, next)}
               />
             ) : (

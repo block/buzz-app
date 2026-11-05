@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -58,10 +59,18 @@ export function createCreationFields(
     onChange,
     disabled,
     harnessControl,
-  }: AgentCreateProps & { harnessControl: ReactNode }) {
+    onReadyChange,
+  }: AgentCreateProps & {
+    harnessControl: ReactNode;
+    onReadyChange?: (ready: boolean) => void;
+  }) {
     const draft = config as CreationConfig;
     const login = useSyncExternalStore(session.subscribe, session.snapshot);
-    const [models, setModels] = useState<readonly RemoteAgentModel[]>();
+    const [catalog, setCatalog] = useState<{
+      login: typeof login;
+      models: readonly RemoteAgentModel[];
+    }>();
+    const models = catalog?.login === login ? catalog.models : undefined;
     const [error, setError] = useState("");
     const [revision, setRevision] = useState(0);
     const controls = useRef<HTMLDivElement>(null);
@@ -69,11 +78,11 @@ export function createCreationFields(
     useEffect(() => {
       if (login.status !== "signed-in") return;
       const controller = new AbortController();
-      setModels(undefined);
+      setCatalog(undefined);
       setError("");
       void client.modelCatalog(controller.signal).then(
-        (catalog) => {
-          if (!controller.signal.aborted) setModels(catalog);
+        (models) => {
+          if (!controller.signal.aborted) setCatalog({ login, models });
         },
         (reason) => {
           if (!controller.signal.aborted)
@@ -92,6 +101,16 @@ export function createCreationFields(
     );
     const wrongAccount =
       draft.subject && draft.subject !== login.account?.subject;
+    const ready =
+      login.status === "signed-in" &&
+      !login.checking &&
+      !!model &&
+      supported &&
+      draft.subject === login.account?.subject &&
+      validInstructions(draft.instructions);
+    useLayoutEffect(() => {
+      onReadyChange?.(ready);
+    }, [onReadyChange, ready]);
     return (
       <div ref={controls} className="grid gap-4">
         {login.status === "signed-in" && !!models?.length && (

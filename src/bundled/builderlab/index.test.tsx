@@ -960,7 +960,7 @@ it.each([
         });
       });
     }
-    // Creating while signed out starts the same browser login. A failed login
+    // Creation uses the same user-started browser login. A failed login
     // preserves the draft and sends no provisioning request; retry completes it.
     render(<AgentsPage agents={agents} relay={community.relay} />);
     if (
@@ -983,12 +983,18 @@ it.each([
       const create = within(createDialog).getByRole("button", {
         name: "Create agent",
       });
+      expect(create).toBeDisabled();
       await user.type(name, "Browser");
+      expect(create).toBeDisabled();
+      const signIn = () =>
+        within(createDialog).getByRole("button", {
+          name: "Sign in with Builderlab",
+        });
       if (flow === "creation sign-in recovery") {
         const beforeCreateLogin = loginWaits().length;
         loginCallback = deferred();
         try {
-          await user.click(create);
+          await user.click(signIn());
           await waitFor(() =>
             expect(loginWaits()).toHaveLength(beforeCreateLogin + 1),
           );
@@ -998,20 +1004,21 @@ it.each([
           expect(
             await within(createDialog).findByRole("alert"),
           ).toHaveTextContent("Browser could not open.");
-          expect(create).toBeEnabled();
+          expect(create).toBeDisabled();
           expect(name).toHaveValue("Browser");
           // The wait itself can be abandoned from the dialog.
           loginCallback = deferred();
-          await user.click(create);
+          await user.click(signIn());
           await user.click(
             await within(createDialog).findByRole("button", {
               name: "Cancel sign-in",
             }),
           );
-          expect(
-            await within(createDialog).findByRole("alert"),
-          ).toHaveTextContent("Sign-in canceled.");
-          expect(create).toBeEnabled();
+          expect(within(createDialog).getByRole("status")).toHaveTextContent(
+            "Sign in to choose a model and thinking level.",
+          );
+          expect(within(createDialog).queryByRole("alert")).toBeNull();
+          expect(create).toBeDisabled();
           expect(
             within(createDialog).queryByRole("button", {
               name: "Cancel sign-in",
@@ -1027,7 +1034,7 @@ it.each([
           loginCallback.resolve({ parameters: [["code", "one-time"]] });
           loginCallback = undefined;
         }
-        await user.click(create);
+        await user.click(signIn());
         expect(
           await within(createDialog).findByRole("button", {
             name: "Model: Choose a model",
@@ -1036,20 +1043,14 @@ it.each([
         expect(name).toHaveValue("Browser");
         return;
       }
-      await user.click(create);
+      await user.click(signIn());
       const model = await within(createDialog).findByRole("button", {
         name: "Model: Choose a model",
       });
       const createAgent = vi.spyOn(agents, "create");
       await user.click(create);
       expect(createAgent).not.toHaveBeenCalled();
-      // jsdom does not focus invalid inputs as the browser does.
-      within(createDialog)
-        .getByRole("form", { name: "New agent" })
-        .querySelector<HTMLInputElement>('input[name="builderlab-model"]')
-        ?.focus();
-      expect(model).toHaveFocus();
-      expect(create).toBeEnabled();
+      expect(create).toBeDisabled();
       createAgent.mockRestore();
       const group = model.closest(".buzz-settings-group");
       expect(group).toContainElement(
@@ -1092,6 +1093,7 @@ it.each([
       });
       const controls = [model, thinking, instructions];
       for (const control of controls) expect(control).toBeEnabled();
+      expect(create).toBeEnabled();
       instructionsSave = deferred();
       try {
         await user.click(create);
@@ -1110,6 +1112,7 @@ it.each([
           await within(createDialog).findByRole("alert"),
         ).toHaveTextContent("Could not reach Builderlab");
         for (const control of controls) expect(control).toBeEnabled();
+        expect(create).toBeEnabled();
         expect(agents.find(browserKey)?.unfinished).toBe(true);
         expect(
           community.events.filter((event) => event.kind === 30177),

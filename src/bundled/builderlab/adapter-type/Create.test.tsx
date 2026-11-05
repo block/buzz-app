@@ -4,7 +4,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Host } from "../../../features/host/service";
+import type { Host, HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import type { Credential } from "../oauth/browser";
@@ -59,6 +59,7 @@ async function fixture(signedIn = true) {
   const client = createAgentClient(session, null);
   const { Create, CreateConfiguration } = createCreationFields(client, session);
   const submit = vi.fn();
+  const ready = vi.fn();
   let draft = { ...EMPTY_CREATION };
   function Form() {
     const [config, setConfig] = useState(draft);
@@ -76,6 +77,7 @@ async function fixture(signedIn = true) {
           onChange={setConfig}
           disabled={false}
           harnessControl={null}
+          onReadyChange={ready}
         />
         <Create config={config} onChange={setConfig} disabled={false} />
         <button type="submit">Create agent</button>
@@ -89,6 +91,7 @@ async function fixture(signedIn = true) {
     request,
     pending,
     submit,
+    ready,
     draft: () => draft,
     fail: (value: boolean) => {
       fail = value;
@@ -155,6 +158,7 @@ it("keeps the native missing-model message and forwards input focus to Model", a
 
 it("loads the catalog and keeps instructions alongside explicit model and effort choices", async () => {
   const h = await fixture();
+  expect(h.ready).toHaveBeenLastCalledWith(false);
   expect(screen.getByRole("status")).toHaveTextContent("Loading models");
   await act(async () => h.pending.resolve());
   const model = await screen.findByRole("button", {
@@ -171,8 +175,10 @@ it("loads the catalog and keeps instructions alongside explicit model and effort
   await choose("Model", "Sol 6.1");
   await choose("Thinking", "Extra high");
   expect(h.draft().reasoningEffort).toBe("xhigh");
+  expect(h.ready).toHaveBeenLastCalledWith(true);
   await choose("Model", "Model Two");
   expect(h.draft().reasoningEffort).toBe("");
+  expect(h.ready).toHaveBeenLastCalledWith(false);
   expect(
     screen.getByRole("textbox", { name: "Instructions Optional" }),
   ).toHaveValue("Be precise.");
@@ -234,7 +240,9 @@ it("requires new account choices while retaining the draft instructions", async 
       screen.getByRole("textbox", { name: "Instructions Optional" }),
       "Keep this.",
     );
+  expect(h.ready).toHaveBeenLastCalledWith(true);
   act(() => h.session.signOut());
+  expect(h.ready).toHaveBeenLastCalledWith(false);
   h.acquire.mockResolvedValue({
     value: "other-credential",
     account: {
@@ -251,6 +259,7 @@ it("requires new account choices while retaining the draft instructions", async 
   expect(screen.getByRole("status")).toHaveTextContent(
     "another Builderlab account",
   );
+  expect(h.ready).toHaveBeenLastCalledWith(false);
   expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
   await choose("Model", "Model Two");
   await choose("Thinking", "None");
@@ -260,6 +269,68 @@ it("requires new account choices while retaining the draft instructions", async 
     reasoningEffort: "none",
     subject: "other",
   });
+});
+
+it("withdraws readiness for invalid instructions or a failed catalog and restores it after retry", async () => {
+  const h = await fixture();
+  await act(async () => h.pending.resolve());
+  await choose("Model", "Sol 6.1");
+  await choose("Thinking", "High");
+  expect(h.ready).toHaveBeenLastCalledWith(true);
+  const instructions = screen.getByRole("textbox", {
+    name: "Instructions Optional",
+  });
+  await userEvent.setup().type(instructions, "   ");
+  expect(h.ready).toHaveBeenLastCalledWith(false);
+  await userEvent.setup().clear(instructions);
+  expect(h.ready).toHaveBeenLastCalledWith(true);
+  h.fail(true);
+  act(() => h.session.signOut());
+  expect(h.ready).toHaveBeenLastCalledWith(false);
+  await act(async () => {
+    await h.session.signIn();
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+  expect(h.ready).toHaveBeenLastCalledWith(false);
+  h.fail(false);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Retry models" }));
+  await screen.findByRole("button", { name: "Model: Sol 6.1" });
+  expect(h.ready).toHaveBeenLastCalledWith(true);
+});
+
+it("waits for the current login's catalog before restoring ready choices", async () => {
+  const h = await fixture();
+  await act(async () => h.pending.resolve());
+  await choose("Model", "Sol 6.1");
+  await choose("Thinking", "High");
+  expect(h.ready).toHaveBeenLastCalledWith(true);
+  const reload = deferred<HostResponse>();
+  h.request.mockImplementationOnce(() => reload.promise);
+  act(() => h.session.signOut());
+  const before = h.ready.mock.calls.length;
+  try {
+    await act(async () => {
+      await h.session.signIn();
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Loading models");
+    expect(h.ready.mock.calls.slice(before).flat()).not.toContain(true);
+    await act(async () =>
+      reload.resolve({ status: 200, headers: {}, body: '{"models":[]}' }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No models are available",
+    );
+    expect(h.ready).toHaveBeenLastCalledWith(false);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Retry models" }));
+    await screen.findByRole("button", { name: "Model: Sol 6.1" });
+    expect(h.ready).toHaveBeenLastCalledWith(true);
+  } finally {
+    reload.resolve({ status: 200, headers: {}, body: '{"models":[]}' });
+  }
 });
 
 it("waits for explicit sign-in before loading the creation catalog", async () => {

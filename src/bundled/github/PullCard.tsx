@@ -16,7 +16,13 @@ const CHECKS = {
   pending: ["Checks running", "pending"],
 } as const;
 
-function Facts({ record }: { record: PullRecord }) {
+function Facts({
+  record,
+  publisher,
+}: {
+  record: PullRecord;
+  publisher?: string | undefined;
+}) {
   const { pull } = record;
   const approved = Object.entries(pull.reviews)
     .filter(([, verdict]) => verdict === "approved")
@@ -40,23 +46,35 @@ function Facts({ record }: { record: PullRecord }) {
       {open && !!pull.requestedReviewers.length && (
         <span>Awaiting {list(pull.requestedReviewers)}</span>
       )}
+      {publisher && <span>via {publisher}</span>}
     </div>
   );
 }
 
-/** The relay's announcement of a pull request, as a card showing the state
- * the relay keeps for it; the announcement's own words until it has one. */
+/** An announcement of a pull request, as a card showing the state its
+ * writer keeps for it; the announcement's own words until it has one. A
+ * publisher's record shows only on that publisher's own announcement. */
 export function PullCard({
   message,
   sources,
+  nameOf,
   open,
   canOpen,
-}: TargetOpener & { message: ChannelMessage; sources: PullSources }) {
+}: TargetOpener & {
+  message: ChannelMessage;
+  sources: PullSources;
+  nameOf(pubkey: string): string;
+}) {
   const pulls = sources.selected();
   useEffect(() => pulls?.watch(message.channelId), [pulls, message.channelId]);
-  const record = useSyncExternalStore(sources.subscribe, () =>
+  const rooted = useSyncExternalStore(sources.subscribe, () =>
     sources.selected()?.byRoot(message.id),
   );
+  const record =
+    rooted?.publisher &&
+    rooted.publisher !== (message.signerId ?? message.authorId)
+      ? undefined
+      : rooted;
   const url = record?.pull.url ?? announcedUrl(message.content);
   if (!url) return null;
   const Icon = stateIcons[record?.pull.state ?? "open"];
@@ -87,7 +105,12 @@ export function PullCard({
         >
           {title}
         </a>
-        {record && <Facts record={record} />}
+        {record && (
+          <Facts
+            record={record}
+            publisher={record.publisher && nameOf(record.publisher)}
+          />
+        )}
       </div>
     </section>
   );

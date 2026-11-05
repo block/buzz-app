@@ -11,12 +11,14 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import {
   HOOK_EVENTS,
   HOOK_TYPE,
   canSeal,
   follow,
+  followFromDevice,
   parseHook,
   regenerate,
   repositoryOf,
@@ -30,6 +32,7 @@ import {
 const tabIcon = <GithubLogoIcon size="1rem" />;
 
 type Setup = Readonly<{ url: string; repo: string; secret: string }>;
+type Mode = "device" | "relay";
 
 type HookView = ReturnType<RelaySession["artifacts"]["sync"]>;
 const NONE = { status: "loading", events: [] } as const;
@@ -132,7 +135,10 @@ function Hooks({
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState("");
   const [setup, setSetup] = useState<Setup>();
+  const [mode, setMode] = useState<Mode>("device");
   const name = repositoryOf(repo);
+  const viewer = session.viewer;
+  const able = mode === "device" ? !!viewer : !!seal;
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
     setError("");
@@ -158,8 +164,13 @@ function Hooks({
           aria-label="Follow a repository"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!name || !seal || duplicate || busy) return;
+            if (!name || !able || duplicate || busy) return;
             void run("follow", async () => {
+              if (mode === "device" || !seal) {
+                await followFromDevice(session, channel, name);
+                setRepo("");
+                return;
+              }
               const { d, secret } = await follow(
                 session,
                 origin,
@@ -194,17 +205,33 @@ function Hooks({
                 onChange={(event) => setRepo(event.target.value)}
               />
             </Field>
-            {!seal && (
+            <Field label="Publish with">
+              <RadioGroup
+                value={mode}
+                onValueChange={(value) => setMode(value as Mode)}
+              >
+                <Radio
+                  value="device"
+                  label="Publish from this device"
+                  description="Your Buzz reads the repository with gh and posts its pull requests as you, while it is open."
+                />
+                <Radio
+                  value="relay"
+                  label="Relay webhook"
+                  description="GitHub sends the repository's events to the community, which posts them whether or not anyone is online. GitHub must be able to reach the community."
+                />
+              </RadioGroup>
+            </Field>
+            {mode === "relay" && !seal && (
               <p role="status" className="m-0 text-body-sm text-subtle">
-                Following a repository needs the desktop app, which holds your
-                key.
+                A relay webhook needs the desktop app, which holds your key.
               </p>
             )}
             <div className="flex flex-wrap items-center justify-end gap-3">
               <Button
                 type="submit"
                 variant="primary"
-                disabled={!name || !seal || duplicate || !!busy}
+                disabled={!name || !able || duplicate || !!busy}
               >
                 Follow
               </Button>
@@ -234,9 +261,15 @@ function Hooks({
             <PreferenceRow
               key={hook.d}
               title={hook.repo}
+              {...(hook.publisher && {
+                subtitle:
+                  hook.publisher === viewer
+                    ? "Published from your Buzz. Cards update while it is open."
+                    : "Published from a member's Buzz. Cards update while it is open.",
+              })}
               trailing={
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  {seal && (
+                  {seal && !hook.publisher && (
                     <Button
                       type="button"
                       disabled={!!busy}

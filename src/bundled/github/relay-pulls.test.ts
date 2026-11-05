@@ -3,6 +3,7 @@ import type { VerifiedEvent } from "nostr-tools";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import { HOOK_TYPE } from "./hooks";
 import { PULL_TYPE } from "./relay-pull";
 import {
   SYNC_LINGER_MS,
@@ -93,7 +94,7 @@ it("syncs a watched channel's pull requests and indexes the relay's own by URL a
     artifact: "current",
     kinds: [45010],
     "#h": [channel],
-    "#type": [PULL_TYPE],
+    "#type": [PULL_TYPE, HOOK_TYPE],
   });
   expect(pulls.byUrl(url.toLowerCase())).toBeUndefined();
   const forged = head(8, "merged", { pubkey: "9".repeat(64) });
@@ -115,6 +116,57 @@ it("syncs a watched channel's pull requests and indexes the relay's own by URL a
   publish(view, [{ ...head(7, "merged"), id: "e".repeat(64), created_at: 9 }]);
   expect(pulls.byUrl(url.toLowerCase())?.pull.state).toBe("merged");
   expect(changed).toHaveBeenCalledTimes(2);
+});
+
+it("trusts a publisher's card while its hook names them, and prefers the relay's own", () => {
+  const { session, views, publish } = fakeSession();
+  const pulls = createRelayPulls(session);
+  const changed = vi.fn();
+  pulls.subscribe(changed);
+  pulls.watch(channel);
+  const view = views[0];
+  if (!view) throw new Error("no view");
+  const mike = "c".repeat(64);
+  const hook = (author = mike, publisher = mike): VerifiedEvent =>
+    ({
+      id: "1".repeat(64),
+      pubkey: author,
+      sig: "",
+      created_at: 1,
+      kind: 45010,
+      content: JSON.stringify({ version: 1, repo: "block/buzz-app" }),
+      tags: [
+        ["d", "hook-d"],
+        ["h", channel],
+        ["type", HOOK_TYPE],
+        ["repo", "block/buzz-app"],
+        ["publisher", publisher],
+      ],
+    }) as VerifiedEvent;
+  const card = {
+    ...head(7),
+    id: "2".repeat(64),
+    pubkey: mike,
+    created_at: 50,
+    tags: [...head(7).tags, ["hook", "hook-d"]],
+  } as VerifiedEvent;
+
+  publish(view, [card]);
+  expect(pulls.byUrl(url.toLowerCase())).toBeUndefined();
+  publish(view, [card, hook()]);
+  expect(pulls.byUrl(url.toLowerCase())?.publisher).toBe(mike);
+  expect(pulls.byRoot(`${"f".repeat(63)}7`)?.publisher).toBe(mike);
+  const calls = changed.mock.calls.length;
+  publish(view, [card, hook()]);
+  expect(changed).toHaveBeenCalledTimes(calls);
+
+  publish(view, [card, hook("9".repeat(64), mike)]);
+  expect(pulls.byUrl(url.toLowerCase())).toBeUndefined();
+
+  const relayed = { ...head(7, "merged"), id: "3".repeat(64), created_at: 9 };
+  publish(view, [card, hook(), relayed as VerifiedEvent]);
+  expect(pulls.byUrl(url.toLowerCase())?.pull.state).toBe("merged");
+  expect(pulls.byUrl(url.toLowerCase())?.publisher).toBeUndefined();
 });
 
 it("keeps a channel's sync a while after its last reader, and one sync for all readers", () => {

@@ -1,6 +1,8 @@
-// A pull request the relay follows: its `buzz.github.pull` artifact, written
-// only by the relay from GitHub's webhooks, read as the store's own state.
+// A pull request a channel follows: its `buzz.github.pull` artifact, written
+// by the relay from GitHub's webhooks or by the publisher its hook names, read
+// as the store's own state.
 import type { EventData } from "../../features/relay/events";
+import type { Hook } from "./hooks";
 import { summarizeRollup, type RollupContext } from "./checks";
 import { branchLink, type GitHubDetails } from "./data";
 import { keyOf, type PullState } from "./pull-states";
@@ -52,14 +54,21 @@ export type RelayPull = Readonly<{
 }>;
 
 /** One trusted revision: the pull request, the channel that follows it and the
- * relay's announcement it is rooted on. */
+ * announcement it is rooted on. */
 export type PullRecord = Readonly<{
   id: string;
   channel: string;
   root?: string | undefined;
+  /** The hook it was written for. */
+  hook?: string | undefined;
+  /** Who wrote it, when the hook's publisher did rather than the relay. */
+  publisher?: string | undefined;
   createdAt: number;
   pull: RelayPull;
 }>;
+
+/** The live hook `d` in `channel`, as the channel holds it. */
+export type HookOf = (channel: string, d: string) => Hook | undefined;
 
 const tag = (event: EventData, name: string) =>
   event.tags.find((entry) => entry[0] === name)?.[1];
@@ -70,16 +79,42 @@ const count = (value: unknown) =>
     ? value
     : undefined;
 
-/** The record `event` holds, when the relay itself wrote it and its version 1
- * content is well formed; anything else is no one's pull request. */
+/** The record `event` holds, when its version 1 content is well formed and the
+ * relay wrote it, or the publisher of the live hook it names did, for that
+ * hook's repository; anything else is no one's pull request. */
 export function parseRecord(
   event: EventData,
   relayAuthor: string | undefined,
+  hookOf?: HookOf,
 ): PullRecord | undefined {
+  const card = parseCard(event);
+  return card && trust(card, event.pubkey, relayAuthor, hookOf);
+}
+
+/** `card` as `author` vouches for it, or undefined when no one trusted did. */
+export function trust(
+  card: PullRecord,
+  author: string,
+  relayAuthor: string | undefined,
+  hookOf?: HookOf,
+): PullRecord | undefined {
+  if (relayAuthor && author === relayAuthor) return card;
+  const hook = card.hook ? hookOf?.(card.channel, card.hook) : undefined;
+  const repository = parseGitHubReference(card.pull.url)?.repository;
+  if (
+    !hook?.publisher ||
+    hook.publisher !== author ||
+    card.pull.repo.toLowerCase() !== hook.repo ||
+    repository?.toLowerCase() !== hook.repo
+  )
+    return undefined;
+  return { ...card, publisher: author };
+}
+
+/** The well formed version 1 pull request `event` holds, whoever wrote it. */
+export function parseCard(event: EventData): PullRecord | undefined {
   const channel = tag(event, "h");
   if (
-    !relayAuthor ||
-    event.pubkey !== relayAuthor ||
     event.kind !== ARTIFACT_KIND ||
     tag(event, "type") !== PULL_TYPE ||
     !channel
@@ -120,6 +155,7 @@ export function parseRecord(
     id: event.id,
     channel,
     root: root && /^[0-9a-f]{64}$/.test(root) ? root : undefined,
+    hook: tag(event, "hook"),
     createdAt: event.created_at,
     pull: {
       url: reference.url,
@@ -160,6 +196,16 @@ export function parseRecord(
         : [],
     },
   };
+}
+
+const ANNOUNCEMENT = /^#([1-9]\d*) · [^\n]+\n(\S+)$/;
+
+/** Whether `content` is exactly an announcement: "#123 · title" and then the
+ * pull request's URL, as the relay and publishers post one. */
+export function isAnnouncement(content: string) {
+  const [, number, link] = ANNOUNCEMENT.exec(content) ?? [];
+  const reference = link ? parseGitHubReference(link) : undefined;
+  return reference?.kind === "pull" && reference.label === `#${number}`;
 }
 
 /** The pull request URL the relay's announcement links, when it does. */

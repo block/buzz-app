@@ -10,6 +10,8 @@ import type { PullSources, RelayPulls } from "./relay-pulls";
 
 afterEach(cleanup);
 
+const nameOf = (pubkey: string) => (pubkey === "c".repeat(64) ? "Mike" : "?");
+
 const channelId = "11111111-1111-4111-8111-111111111111";
 const url = "https://github.com/block/buzz-app/pull/7";
 const message = {
@@ -48,8 +50,14 @@ function setup(initial?: PullRecord) {
     sources,
     watch,
     stop,
-    update(next: RelayPull) {
-      record = { id: "x", channel: channelId, createdAt: 2, pull: next };
+    update(next: RelayPull, publisher?: string) {
+      record = {
+        id: "x",
+        channel: channelId,
+        createdAt: 2,
+        pull: next,
+        ...(publisher && { publisher }),
+      };
       act(() => {
         for (const listener of listeners) listener();
       });
@@ -63,6 +71,7 @@ it("shows the announcement's own words until the relay has a record, then the pu
     <PullCard
       message={message}
       sources={sources}
+      nameOf={nameOf}
       open={() => false}
       canOpen={() => false}
     />,
@@ -102,6 +111,7 @@ it("opens the pull request in the app when it can", async () => {
     <PullCard
       message={message}
       sources={sources}
+      nameOf={nameOf}
       open={open}
       canOpen={() => true}
     />,
@@ -111,4 +121,35 @@ it("opens the pull request in the app when it can", async () => {
   expect(open).toHaveBeenCalledWith(url);
   unmount();
   expect(stop).toHaveBeenCalled();
+});
+
+it("shows a publisher's record only on that publisher's own announcement, naming them", () => {
+  const publisher = "c".repeat(64);
+  const { sources, update } = setup();
+  const own = { ...message, authorId: publisher } as ChannelMessage;
+  const { unmount } = render(
+    <PullCard
+      message={own}
+      sources={sources}
+      nameOf={nameOf}
+      open={() => false}
+      canOpen={() => false}
+    />,
+  );
+  update(pull(), publisher);
+  expect(screen.getByText("block/buzz-app")).toBeVisible();
+  expect(screen.getByText("via Mike")).toBeVisible();
+  unmount();
+
+  render(
+    <PullCard
+      message={{ ...message, authorId: "d".repeat(64) } as ChannelMessage}
+      sources={sources}
+      nameOf={nameOf}
+      open={() => false}
+      canOpen={() => false}
+    />,
+  );
+  expect(screen.getByRole("link", { name: "#7 · Add the card" })).toBeVisible();
+  expect(screen.queryByText("block/buzz-app")).not.toBeInTheDocument();
 });

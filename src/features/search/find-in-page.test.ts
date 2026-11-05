@@ -64,3 +64,20 @@ it("stops at the match limit", () => {
   document.body.innerHTML = `<p>${"x ".repeat(FIND_LIMIT + 5)}</p>`;
   expect(findRanges(document.body, "x")).toHaveLength(FIND_LIMIT);
 });
+
+it("keeps source offsets when lowercasing changes the text's length", () => {
+  document.body.innerHTML = "<p>İstanbul buzz buzz</p><p>İx</p>";
+  const offsets = (ranges: Range[]) =>
+    ranges.map((range) => [range.startOffset, range.endOffset]);
+  const buzz = findRanges(document.body, "buzz");
+  expect(texts(buzz)).toEqual(["buzz", "buzz"]);
+  expect(offsets(buzz)).toEqual([
+    [9, 13],
+    [14, 18],
+  ]);
+  const x = findRanges(document.body, "x");
+  expect(texts(x)).toEqual(["x"]);
+  expect(offsets(x)).toEqual([[1, 2]]);
+  // A query that is itself the expanded character selects that one character.
+  expect(texts(findRanges(document.body, "İ"))).toEqual(["İ", "İ"]);
+});

@@ -20,6 +20,30 @@ function findable(element: Element, exclude: Element | null | undefined) {
 }
 
 /**
+ * `value` lowercased. Lowercasing can lengthen a character (`İ` becomes `i̇`);
+ * then each lowercased code unit also maps to its character's source bounds.
+ */
+function lower(value: string) {
+  const text = value.toLowerCase();
+  if (text.length === value.length) return { text };
+  let folded = "";
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let start = 0;
+  for (const char of value) {
+    const end = start + char.length;
+    const lowered = char.toLowerCase();
+    folded += lowered;
+    for (let unit = 0; unit < lowered.length; unit++) {
+      starts.push(start);
+      ends.push(end);
+    }
+    start = end;
+  }
+  return { text: folded, starts, ends };
+}
+
+/**
  * Ranges for each case-insensitive occurrence of `query` in the findable text
  * under `root`, in document order. Matches don't span text nodes.
  */
@@ -35,8 +59,7 @@ export function findRanges(
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const ranges: Range[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const value = node.nodeValue ?? "";
-    const text = value.toLowerCase();
+    const { text, starts, ends } = lower(node.nodeValue ?? "");
     let at = text.indexOf(needle);
     // Style checks are the cost; only text that matches pays it.
     const parent = node.parentElement;
@@ -46,9 +69,9 @@ export function findRanges(
     if (!ok) continue;
     for (; at !== -1; at = text.indexOf(needle, at + needle.length)) {
       const range = document.createRange();
-      // Lowercasing can lengthen a few characters (İ); keep offsets in bounds.
-      range.setStart(node, Math.min(at, value.length));
-      range.setEnd(node, Math.min(at + needle.length, value.length));
+      const last = at + needle.length - 1;
+      range.setStart(node, starts?.[at] ?? at);
+      range.setEnd(node, ends?.[last] ?? last + 1);
       ranges.push(range);
       if (ranges.length === FIND_LIMIT) return ranges;
     }

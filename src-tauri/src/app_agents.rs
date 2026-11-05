@@ -2418,7 +2418,7 @@ mod tests {
                     .await
                     .unwrap(),
                 "sign-out" => {
-                    f.tokens.sign_out().await.unwrap();
+                    f.tokens.sign_out(None).await.unwrap();
                 }
                 _ => {
                     tokio::time::pause();
@@ -2630,7 +2630,7 @@ mod tests {
         let query = admission.run(false, read(&agent, &f.key, admission.header(), &filters));
         let retire = async {
             reached.await.unwrap();
-            f.tokens.sign_out().await.unwrap();
+            f.tokens.sign_out(None).await.unwrap();
             release.send(()).unwrap();
         };
         let (result, ()) = tokio::join!(query, retire);

@@ -960,7 +960,7 @@ async fn a_shared_host_replaces_a_token_its_agent_outlived() {
             .unwrap()
             .unwrap();
         if sign_out {
-            fixture.identity.sign_out().await;
+            fixture.identity.sign_out(None).await;
         } else {
             fixture.host.forget_row_for_test(&pubkey, RELAY);
             fixture.host.reopen_row_for_test(&pubkey, RELAY);

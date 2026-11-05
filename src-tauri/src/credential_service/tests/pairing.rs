@@ -581,7 +581,7 @@ async fn a_sign_out_then_a_restart_before_its_revoke_still_revokes() {
     let tokens = AgentTokens::in_memory(fixture.identity.clone());
     let before = fixture.identity.retirements();
     // This fixture has no agents to wipe, which fails after the sign-out.
-    let _ = tokens.sign_out().await;
+    let _ = tokens.sign_out(None).await;
     assert_eq!(fixture.identity.retirements(), before + 1, "signed out");
     assert!(fixture.keychain.owed.load(Ordering::SeqCst));
     assert!(fixture.keychain.value.lock().unwrap().is_some());
@@ -614,7 +614,7 @@ async fn an_unrecorded_revoke_all_is_reported_and_stops_a_sign_out() {
 
     let tokens = AgentTokens::in_memory(fixture.identity.clone());
     let before = fixture.identity.retirements();
-    assert!(tokens.sign_out().await.is_err());
+    assert!(tokens.sign_out(None).await.is_err());
     assert_eq!(fixture.identity.retirements(), before, "nothing signed out");
 
     // With the marker saved, only the records wait.

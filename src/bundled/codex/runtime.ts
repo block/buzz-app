@@ -34,6 +34,7 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { CREDENTIAL_ENV } from "../../features/host/service";
+import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
@@ -92,6 +93,8 @@ type Request = {
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
+  /** Presentation scope, independent of the harness session and reply routing. */
+  activityScope: string;
   /** A plugin's wake, for which `event` is its local anchor. */
   wake?: ConversationWake;
   wakeText?: Delivery["wakeText"];
@@ -1433,6 +1436,10 @@ export class CodexRuntime {
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
       ...(delivery.synced ? { synced: delivery.synced } : {}),
+      activityScope: topLevel
+        ? channelId
+        : (threadReference(event)?.rootId ??
+          (channel?.dm ? channelId : event.id)),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -1787,9 +1794,7 @@ export class CodexRuntime {
    * and a top-level chat is one scope. */
   private acknowledgeActivity(active: Active, request: Request) {
     if (!request.step) return;
-    const scope = request.conversation.topLevel
-      ? request.conversation.channelId
-      : rootOf(request.event);
+    const scope = request.activityScope;
     const prior = active.activity.get(scope);
     if (prior === request) return;
     prior?.superseded?.();

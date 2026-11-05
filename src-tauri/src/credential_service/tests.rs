@@ -519,7 +519,7 @@ async fn deleting_the_agent_revokes_its_tokens_for_good() {
 async fn signing_out_revokes_every_token() {
     let fixture = fixture();
     let (_issued, token) = bound(&fixture).await;
-    fixture.identity.sign_out().await;
+    fixture.identity.sign_out(None).await;
     let reply = ask(&fixture, &token, "get_public_key", &[]).await;
     assert_eq!(error(&reply), (StatusCode::UNAUTHORIZED, "revoked"));
 }
@@ -530,7 +530,7 @@ async fn a_spare_issued_before_sign_out_never_acts() {
     // One asked before it is taken, one taken first: neither binds or acts.
     let (asked, asked_token) = issued(&fixture).await;
     let (taken, taken_token) = issued(&fixture).await;
-    fixture.identity.sign_out().await;
+    fixture.identity.sign_out(None).await;
     let reply = ask(&fixture, &asked_token, "get_public_key", &[]).await;
     assert_eq!(error(&reply), (StatusCode::UNAUTHORIZED, "revoked"));
     assert!(fixture
@@ -607,7 +607,7 @@ async fn revocation_while_a_key_is_read_withholds_the_result() {
                 Revocation::Deletion => fixture
                     .host
                     .forget_row_for_test(&fixture.agent.pubkey, RELAY),
-                Revocation::SignOut => drop(fixture.identity.sign_out().await),
+                Revocation::SignOut => drop(fixture.identity.sign_out(None).await),
             }
             drop(keys);
             let reply = request.await.unwrap();

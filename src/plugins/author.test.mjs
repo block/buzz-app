@@ -1,7 +1,14 @@
 import { test, expect } from "vitest";
-import { mkdtemp, writeFile, symlink, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  stat,
+  writeFile,
+  symlink,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -261,6 +268,88 @@ import type { createServices } from "@buzz/author";
     );
     // Only generated declarations and the external consumer, never host source.
     run("pnpm", ["exec", "tsc", "-p", join(dir, "tsconfig.json")]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 120_000);
+
+// A plugin type-checks only the declarations its `@buzz/author` import reaches.
+async function packagesReachableFrom(entry) {
+  const packages = new Set();
+  const visited = new Set();
+  const pending = [entry];
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (visited.has(file)) continue;
+    visited.add(file);
+    const source = await readFile(file, "utf8");
+    const specifiers = [
+      ...source.matchAll(
+        /\b(?:from\s*|import\s*\(\s*|import\s+)["']([^"']+)["']/g,
+      ),
+    ].map(([, specifier]) => specifier);
+    for (const specifier of specifiers) {
+      if (specifier.startsWith(".")) {
+        pending.push(await declarationFile(file, specifier));
+      } else {
+        // A bare specifier names a package by its first one or two segments.
+        packages.add(
+          specifier
+            .split("/")
+            .slice(0, specifier.startsWith("@") ? 2 : 1)
+            .join("/"),
+        );
+      }
+    }
+  }
+  return packages;
+}
+
+async function declarationFile(importer, specifier) {
+  const base = join(dirname(importer), specifier);
+  const candidates = [
+    base.replace(/\.(?:[cm]?[jt]sx?)$/, ".d.ts"),
+    `${base}.d.ts`,
+    join(base, "index.d.ts"),
+  ];
+  for (const candidate of candidates) {
+    if ((await stat(candidate).catch(() => undefined))?.isFile())
+      return candidate;
+  }
+  throw new Error(
+    `${importer} imports ${specifier}, which has no declaration file`,
+  );
+}
+
+test("generated author package declares every package that its entry declarations reach", async () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const dir = await mkdtemp(join(tmpdir(), "buzz-author-closure-"));
+  try {
+    const result = spawnSync(
+      "node",
+      ["scripts/build-author.mjs", join(dir, "author package")],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: `${resolve(root, "bin")}:${process.env.PATH}`,
+        },
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const generated = join(dir, "author package");
+    const { dependencies } = JSON.parse(
+      await readFile(join(generated, "package.json"), "utf8"),
+    );
+    const reached = await packagesReachableFrom(
+      join(generated, "types", "plugins", "author.d.ts"),
+    );
+    const required = [...reached].map((name) =>
+      name === "react" ? "@types/react" : name,
+    );
+    expect(required.filter((name) => !(name in dependencies))).toEqual([]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

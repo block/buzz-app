@@ -56,6 +56,8 @@ export type BrowserStatus = Readonly<{
   title: string;
   loading: boolean;
   error: string | null;
+  control_granted?: boolean;
+  control_revision?: number;
 }>;
 
 export type BrowserAction = "back" | "forward" | "reload";
@@ -82,6 +84,45 @@ export interface BrowserPlatform {
   action(sessionId: string, action: BrowserAction): Promise<void>;
   status(sessionId: string): Promise<BrowserStatus>;
   detach(sessionId: string): Promise<void>;
+  control?: BrowserControl;
+}
+
+export type BrowserControlRequest =
+  | { action: "observe"; scope?: "page" | "viewport" }
+  | { action: "navigate"; url: string }
+  | { action: "click"; ref: string }
+  | { action: "fill"; ref: string; text: string; submit?: boolean }
+  | { action: "select"; ref: string; value: string }
+  | {
+      action: "press";
+      key:
+        | "Enter"
+        | "Tab"
+        | "Escape"
+        | "Backspace"
+        | "ArrowUp"
+        | "ArrowDown"
+        | "ArrowLeft"
+        | "ArrowRight"
+        | "PageUp"
+        | "PageDown"
+        | "Home"
+        | "End";
+    }
+  | { action: "scroll"; direction: "up" | "down" }
+  | { action: "scroll"; ref: string }
+  | { action: "back" }
+  | { action: "forward" }
+  | { action: "reload" }
+  | { action: "wait"; for: "load" | { ref: string }; timeout_ms?: number };
+
+export type BrowserControlGrant = Readonly<{ token: string; revision: number }>;
+
+export interface BrowserControl {
+  available(): Promise<boolean>;
+  grant(sessionId: string): Promise<BrowserControlGrant>;
+  revoke(sessionId: string): Promise<void>;
+  execute(token: string, request: BrowserControlRequest): Promise<unknown>;
 }
 
 function normalizedUrl(url: string): string {
@@ -149,5 +190,19 @@ export function createBrowserPlatform(): BrowserPlatform {
     status: (sessionId) =>
       invoke<BrowserStatus>("browser_status", { sessionId }),
     detach: (sessionId) => invoke("browser_detach", { sessionId }),
+    control: {
+      available: async () =>
+        available && invoke<boolean>("browser_control_available"),
+      grant: (sessionId) =>
+        invoke<BrowserControlGrant>("browser_control_grant", { sessionId }),
+      revoke: (sessionId) => invoke("browser_control_revoke", { sessionId }),
+      execute: (token, request) =>
+        invoke("browser_control_execute", { token, request }).catch(
+          (error: unknown) => {
+            // Tauri rejects with the native string; callers read the code from `Error.message`.
+            throw typeof error === "string" ? new Error(error) : error;
+          },
+        ),
+    },
   };
 }

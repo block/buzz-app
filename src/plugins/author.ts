@@ -20,7 +20,13 @@ export type {
   NamingPolicy,
 } from "../features/identity-names/service";
 export type { NamingIdentity } from "../features/identity-names/policy";
-export type { Browser, BrowserViewProps } from "../features/browser/api";
+export type {
+  Browser,
+  BrowserViewProps,
+  BrowserToolbarProps,
+} from "../features/browser/api";
+export type { BrowserControlRequest } from "../features/browser/platform";
+export type { BrowserRecipient } from "../features/browser/control-access";
 export type {
   Page,
   PagePreviewProps,

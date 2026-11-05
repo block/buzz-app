@@ -26,6 +26,8 @@ import {
 import type { BrowserSessions } from "./sessions";
 import styles from "./BrowserHostView.module.css";
 
+import { browserToolbarUi } from "./toolbar-ui";
+
 const EMPTY_STATUS: BrowserStatus = {
   url: "",
   title: "",
@@ -35,6 +37,10 @@ const EMPTY_STATUS: BrowserStatus = {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function displayAddress(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
 function boundsFor(element: HTMLElement): BrowserBounds {
@@ -89,6 +95,22 @@ function hostOverlayOpen(viewport: BrowserBounds): boolean {
   return false;
 }
 
+/** Resolves after the next frame. Frames stop while the document is hidden,
+ * as when the Buzz window is behind another app's window, so it resolves at
+ * once then. No menu closes in a hidden document. */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (document.visibilityState === "hidden") return resolve();
+    const done = () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("visibilitychange", done);
+      resolve();
+    };
+    const frame = requestAnimationFrame(done);
+    document.addEventListener("visibilitychange", done);
+  });
+}
+
 export function BrowserHostView({
   url,
   storage: requestedStorage,
@@ -98,19 +120,34 @@ export function BrowserHostView({
   platform,
   sessions,
   pollInterval = 300,
+  toolbar: Toolbar,
+  sessionKey,
+  onControlEnded,
 }: BrowserViewProps & {
   platform: BrowserPlatform;
   sessions: BrowserSessions;
   pollInterval?: number;
+  /** Told that agent control of a session ended because its page stopped
+   * being shown, before the toolbar sees it. `revision` is the status
+   * revision that showed it, absent when the view lets go of the session. */
+  onControlEnded?: ((sessionId: string, revision?: number) => void) | undefined;
 }) {
   const storage = builderlab?.storage ?? requestedStorage;
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef<string | undefined>(undefined);
+  const prepareControl = useRef<(() => Promise<void>) | undefined>(undefined);
+  const [controlError, setControlError] = useState<string>();
   const retryAttach = useRef<(() => void) | undefined>(undefined);
   // Where the guest last was, so a view whose guest was closed to make room
   // reopens there instead of at its starting URL.
   const resumeUrl = useRef(url);
   const editing = useRef(false);
+  const address = useRef<HTMLInputElement>(null);
+  const [addressEditing, setAddressEditing] = useState(false);
+  useLayoutEffect(() => {
+    if (addressEditing) address.current?.select();
+  }, [addressEditing]);
+  const [controlSession, setControlSession] = useState<string>();
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [draft, setDraft] = useState(url);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -118,6 +155,11 @@ export function BrowserHostView({
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
   }, [status.url]);
+
+  const controlEnded = useEffectEvent(
+    (...report: [sessionId: string, revision?: number]) =>
+      onControlEnded?.(...report),
+  );
 
   // macOS mouse back/forward, sent here while this page has focus.
   const historyAction = useEffectEvent((event: Event, value: BrowserAction) => {
@@ -142,7 +184,7 @@ export function BrowserHostView({
   const nameTab = tabHost?.title;
   const tabOwner = tabHost?.owner;
   // The last title the page had names it until it reports another.
-  const titleKey = `${storage ?? ""}\n${url}`;
+  const titleKey = `${storage ?? ""}\n${sessionKey ?? url}`;
   const tabLabel = status.title || sessions.title(titleKey) || label;
   useLayoutEffect(() => {
     if (!nameTab || !tabOwner || !tabLabel) return;
@@ -162,10 +204,12 @@ export function BrowserHostView({
       | { bounds: BrowserBounds; visible: boolean }
       | undefined;
     let writingBounds = false;
-    const park = storage === undefined ? undefined : `${storage}\n${url}`;
+    let positioning: Promise<void> | undefined;
+    const park = storage === undefined ? undefined : titleKey;
 
+    // The Buzz window in the background or behind another app keeps the
+    // guest shown, so an agent can keep working while the person is away.
     const visible = (bounds: BrowserBounds) =>
-      document.visibilityState === "visible" &&
       !hostOverlayOpen(bounds) &&
       !covered(element) &&
       bounds.width > 0 &&
@@ -181,7 +225,9 @@ export function BrowserHostView({
         // shown.
         if (!nextVisible) return;
         setLocalError(null);
+        controlEnded(sessionId);
         session.current = undefined;
+        setControlSession(undefined);
         delete element.dataset.browserSession;
         attachStarted = false;
         lastRequested = undefined;
@@ -208,7 +254,7 @@ export function BrowserHostView({
       desiredPresentation = lastRequested;
       if (writingBounds) return;
       writingBounds = true;
-      void (async () => {
+      positioning = (async () => {
         while (
           !disposed &&
           session.current === sessionId &&
@@ -231,6 +277,28 @@ export function BrowserHostView({
       })();
     };
 
+    prepareControl.current = async () => {
+      // Menu completion precedes its final DOM removal. Wait for that commit,
+      // then join the existing native positioning queue before granting access.
+      await nextFrame();
+      const sessionId = session.current;
+      if (
+        disposed ||
+        !sessionId ||
+        !sessions.owns(sessionId) ||
+        !visible(boundsFor(element))
+      )
+        throw new Error("Keep this browser visible to share it.");
+      syncBounds(true);
+      await positioning;
+      if (
+        disposed ||
+        session.current !== sessionId ||
+        !visible(boundsFor(element))
+      )
+        throw new Error("Browser sharing was cancelled.");
+    };
+
     const poll = async () => {
       const sessionId = session.current;
       if (!sessionId || disposed || !sessions.owns(sessionId)) return;
@@ -246,6 +314,11 @@ export function BrowserHostView({
           )
             resumeUrl.current = next.url;
           sessions.rememberTitle(titleKey, next.title);
+          if (
+            next.control_granted === false &&
+            next.control_revision !== undefined
+          )
+            controlEnded(sessionId, next.control_revision);
           setStatus(next);
         }
       } catch (error) {
@@ -280,6 +353,7 @@ export function BrowserHostView({
         .then((sessionId) => {
           if (!sessionId || disposed) return;
           session.current = sessionId;
+          setControlSession(sessionId);
           element.dataset.browserSession = sessionId;
           syncBounds(true);
           void poll();
@@ -340,7 +414,6 @@ export function BrowserHostView({
     const forceBounds = () => syncBounds(true);
     window.addEventListener("resize", forceBounds);
     window.addEventListener("scroll", updatePresentation, true);
-    document.addEventListener("visibilitychange", updatePresentation);
     window.visualViewport?.addEventListener("resize", forceBounds);
     window.visualViewport?.addEventListener("scroll", updatePresentation);
     // A pane that slid or faded into place has moved without resizing.
@@ -356,19 +429,25 @@ export function BrowserHostView({
     return () => {
       disposed = true;
       retryAttach.current = undefined;
+      prepareControl.current = undefined;
       if (pollTimer) clearTimeout(pollTimer);
       resizeObserver.disconnect();
       mutationObserver.disconnect();
       if (placing !== undefined) cancelAnimationFrame(placing);
       window.removeEventListener("resize", forceBounds);
       window.removeEventListener("scroll", updatePresentation, true);
-      document.removeEventListener("visibilitychange", updatePresentation);
       window.visualViewport?.removeEventListener("resize", forceBounds);
       window.visualViewport?.removeEventListener("scroll", updatePresentation);
       document.removeEventListener("animationend", updatePresentation, true);
       document.removeEventListener("transitionend", updatePresentation, true);
       const sessionId = session.current;
       session.current = undefined;
+      setControlSession(undefined);
+      // Revoke before a persistent guest is parked for reuse.
+      if (sessionId) {
+        controlEnded(sessionId);
+        void platform.control?.revoke(sessionId).catch(() => undefined);
+      }
       delete element.dataset.browserSession;
       // A guest with kept storage waits a while for this page to come back,
       // say from another channel, so work in progress there survives.
@@ -398,7 +477,6 @@ export function BrowserHostView({
 
   function navigate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    editing.current = false;
     const target = addressInputUrl(draft);
     void run((sessionId) =>
       platform.navigate(sessionId, target.url, target.fallbackToHttp),
@@ -413,7 +491,7 @@ export function BrowserHostView({
     void run((sessionId) => platform.action(sessionId, value));
   }
 
-  const error = localError ?? status.error;
+  const error = localError ?? status.error ?? controlError;
   return (
     <section className={styles.browser} aria-label="Browser">
       <div
@@ -423,21 +501,21 @@ export function BrowserHostView({
       >
         <IconButton
           size="toolbar"
-          variant="quiet"
+          variant="ghost"
           aria-label="Back"
           onClick={() => action("back")}
           icon={<CaretLeftIcon size={16} />}
         />
         <IconButton
           size="toolbar"
-          variant="quiet"
+          variant="ghost"
           aria-label="Forward"
           onClick={() => action("forward")}
           icon={<CaretRightIcon size={16} />}
         />
         <IconButton
           size="toolbar"
-          variant="quiet"
+          variant="ghost"
           aria-label="Reload"
           onClick={() => action("reload")}
           icon={
@@ -451,21 +529,34 @@ export function BrowserHostView({
         <form onSubmit={navigate}>
           <Input
             aria-label="Address"
-            value={draft}
+            ref={address}
+            title={status.url || url}
+            value={addressEditing ? draft : displayAddress(status.url || url)}
             onFocus={() => {
               editing.current = true;
+              setAddressEditing(true);
             }}
             onBlur={() => {
               editing.current = false;
+              setAddressEditing(false);
               setDraft(status.url || url);
             }}
             onChange={(event) => setDraft(event.target.value)}
           />
         </form>
-        {status.title ? (
-          <span className={styles.status} title={status.title}>
-            {status.title}
-          </span>
+        {Toolbar && controlSession ? (
+          <Toolbar
+            key={controlSession}
+            sessionId={controlSession}
+            status={status}
+            ui={browserToolbarUi}
+            onError={setControlError}
+            prepare={async () => {
+              if (!prepareControl.current)
+                throw new Error("Browser is not ready yet.");
+              await prepareControl.current();
+            }}
+          />
         ) : null}
       </div>
       {error ? (

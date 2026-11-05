@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PanelWorkspace } from "../panels/PanelWorkspace";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -68,7 +69,18 @@ beforeEach(() => {
   });
 });
 
+/** Sets what `document.visibilityState` reads, as macOS does when the Buzz
+ * window goes behind another app's window. */
+function setDocumentVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => state,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 afterEach(() => {
+  Reflect.deleteProperty(document, "visibilityState");
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -747,7 +759,7 @@ it("keeps Reload keyboard-accessible while the website is loading", async () => 
       pollInterval={50_000}
     />,
   );
-  await screen.findByTitle("Loading page");
+  await waitFor(() => expect(platform.status).toHaveBeenCalled());
   await user.tab();
   expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
   await user.tab();
@@ -867,7 +879,11 @@ it("ignores status from a replaced session", async () => {
     loading: false,
     error: null,
   });
-  await waitFor(() => expect(screen.getByTitle("New page")).toBeVisible());
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+      "new.example",
+    ),
+  );
   expect(screen.queryByText("Old page")).not.toBeInTheDocument();
 });
 
@@ -906,7 +922,8 @@ it.each([false, true])(
     );
     // Establish that polling applied the intermediate navigation before losing this guest.
     await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+      expect(screen.getByRole("textbox", { name: "Address" })).toHaveAttribute(
+        "title",
         login,
       ),
     );
@@ -954,7 +971,8 @@ it("restores the last approved app after eviction instead of a later consent tic
     </div>,
   );
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveAttribute(
+      "title",
       destination,
     ),
   );
@@ -966,7 +984,8 @@ it("restores the last approved app after eviction instead of a later consent tic
     error: null,
   });
   await waitFor(() =>
-    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveAttribute(
+      "title",
       consent,
     ),
   );
@@ -1043,3 +1062,340 @@ it("takes mouse back/forward requests for its page from app navigation", async (
     window.removeEventListener("buzz:history-forward", app);
   }
 });
+
+it("keeps sharing controls off for ordinary browser views on a capable host", async () => {
+  const platform = fakePlatform();
+  platform.control = {
+    available: vi.fn(async () => true),
+    grant: vi.fn(),
+    revoke: vi.fn(async () => {}),
+    execute: vi.fn(),
+  };
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  expect(platform.control.available).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: /Share/ }),
+  ).not.toBeInTheDocument();
+  expect(platform.control.grant).not.toHaveBeenCalled();
+});
+
+it("revokes agent control once when a view with a live session unmounts", async () => {
+  const platform = fakePlatform();
+  platform.control = {
+    available: vi.fn(async () => true),
+    grant: vi.fn(),
+    revoke: vi.fn(async () => {}),
+    execute: vi.fn(),
+  };
+  const view = render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  view.unmount();
+  expect(platform.control.revoke).toHaveBeenCalledTimes(1);
+  expect(platform.control.revoke).toHaveBeenCalledWith("session-1");
+});
+
+it("mounts a plugin toolbar for the active session", async () => {
+  const platform = fakePlatform();
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      toolbar={({ sessionId }) => <button type="button">{sessionId}</button>}
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "session-1" }),
+  ).toBeVisible();
+});
+
+it("shows a readable address and selects the complete URL for editing", async () => {
+  const platform = fakePlatform();
+  const url = "https://example.com/path?q=1#section";
+  vi.mocked(platform.status).mockResolvedValue({
+    url,
+    title: "Example",
+    loading: false,
+    error: null,
+  });
+  const user = userEvent.setup();
+  render(
+    <BrowserHostView
+      url={url}
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  const input = screen.getByRole("textbox", {
+    name: "Address",
+  }) as HTMLInputElement;
+  await waitFor(() =>
+    expect(input).toHaveValue("example.com/path?q=1#section"),
+  );
+  await user.click(input);
+  expect(input).toHaveValue(url);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(url.length);
+  await user.tab();
+  expect(input).toHaveValue("example.com/path?q=1#section");
+});
+
+it("keeps the full URL editable after a rejected navigation without refocusing", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.navigate).mockRejectedValueOnce(
+    new Error("Navigation rejected"),
+  );
+  const user = userEvent.setup();
+  render(
+    <BrowserHostView
+      url="https://example.com/"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() => expect(platform.status).toHaveBeenCalled());
+  const input = screen.getByRole("textbox", { name: "Address" });
+  await user.click(input);
+  await user.clear(input);
+  await user.type(input, "https://bad.example/{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Navigation rejected",
+  );
+  expect(input).toHaveFocus();
+  expect(input).toHaveValue("https://bad.example/");
+  await user.clear(input);
+  await user.type(input, "https://good.example/{Enter}");
+  expect(platform.navigate).toHaveBeenLastCalledWith(
+    "session-1",
+    "https://good.example/",
+    false,
+  );
+  expect(input).toHaveValue("https://good.example/");
+});
+
+it("reports a native revoke of its grant before its toolbar sees the status", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.status).mockResolvedValue({
+    url: "https://example.com/",
+    title: "Example",
+    loading: false,
+    error: null,
+    control_granted: false,
+    control_revision: 2,
+  });
+  const onControlEnded = vi.fn();
+  const reportsSeen: number[] = [];
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      onControlEnded={onControlEnded}
+      toolbar={({ status }) => {
+        if (status.control_revision === 2)
+          reportsSeen.push(onControlEnded.mock.calls.length);
+        return null;
+      }}
+    />,
+  );
+  await waitFor(() => expect(reportsSeen).not.toHaveLength(0));
+  expect(reportsSeen[0]).toBe(1);
+  expect(onControlEnded).toHaveBeenCalledWith("session-1", 2);
+});
+
+it("reports no ended grant while the status shows control granted or no control", async () => {
+  const platform = fakePlatform();
+  vi.mocked(platform.status)
+    .mockResolvedValueOnce({
+      url: "https://example.com/",
+      title: "Example",
+      loading: false,
+      error: null,
+    })
+    .mockResolvedValue({
+      url: "https://example.com/",
+      title: "Example",
+      loading: false,
+      error: null,
+      control_granted: true,
+      control_revision: 1,
+    });
+  const onControlEnded = vi.fn();
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={1}
+      onControlEnded={onControlEnded}
+    />,
+  );
+  await waitFor(() =>
+    expect(vi.mocked(platform.status).mock.calls.length).toBeGreaterThan(2),
+  );
+  expect(onControlEnded).not.toHaveBeenCalled();
+});
+
+it("reports its grant ended when the view closes, before its toolbar cleans up", async () => {
+  const platform = fakePlatform();
+  const onControlEnded = vi.fn();
+  const order: string[] = [];
+  function Toolbar() {
+    useEffect(
+      () => () => {
+        order.push(`toolbar cleanup after ${onControlEnded.mock.calls.length}`);
+      },
+      [],
+    );
+    return null;
+  }
+  const view = render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      onControlEnded={onControlEnded}
+      toolbar={Toolbar}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  view.unmount();
+  expect(onControlEnded).toHaveBeenCalledExactlyOnceWith("session-1");
+  expect(order).toEqual(["toolbar cleanup after 1"]);
+});
+
+it("reports its grant ended when its evicted guest is shown again, before its toolbar cleans up", async () => {
+  const platform = fakePlatform();
+  const sessions = new BrowserSessions(platform);
+  const onControlEnded = vi.fn();
+  const order: string[] = [];
+  function Toolbar() {
+    useEffect(
+      () => () => {
+        order.push(`toolbar cleanup after ${onControlEnded.mock.calls.length}`);
+      },
+      [],
+    );
+    return null;
+  }
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={sessions}
+      onControlEnded={onControlEnded}
+      toolbar={Toolbar}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  vi.mocked(platform.attach).mockResolvedValue("session-2");
+  const owns = sessions.owns.bind(sessions);
+  vi.spyOn(sessions, "owns").mockImplementation(
+    (sessionId) => sessionId !== "session-1" && owns(sessionId),
+  );
+  act(() => {
+    for (const callback of TestResizeObserver.callbacks) callback();
+  });
+  await waitFor(() => expect(order).not.toHaveLength(0));
+  expect(onControlEnded).toHaveBeenCalledExactlyOnceWith("session-1");
+  expect(order[0]).toBe("toolbar cleanup after 1");
+});
+
+it("keeps the guest shown when the Buzz window goes to the background", async () => {
+  const platform = fakePlatform();
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.setBounds).toHaveBeenCalledWith(
+      "session-1",
+      { x: 10, y: 20, width: 400, height: 300 },
+      true,
+    ),
+  );
+  act(() => {
+    setDocumentVisibility("hidden");
+    for (const callback of TestResizeObserver.callbacks) callback();
+    window.dispatchEvent(new Event("resize"));
+  });
+  await waitFor(() =>
+    expect(vi.mocked(platform.setBounds).mock.calls.length).toBeGreaterThan(1),
+  );
+  expect(platform.setBounds).not.toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    false,
+  );
+});
+
+it("opens its page while the Buzz window is in the background", async () => {
+  setDocumentVisibility("hidden");
+  const platform = fakePlatform();
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      toolbar={({ sessionId }) => <button type="button">{sessionId}</button>}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.setBounds).toHaveBeenCalledWith(
+      "session-1",
+      { x: 10, y: 20, width: 400, height: 300 },
+      true,
+    ),
+  );
+  expect(screen.getByRole("button", { name: "session-1" })).toBeVisible();
+});
+
+it.each([
+  { when: "already hidden", hideDuringWait: false },
+  { when: "hidden during the wait", hideDuringWait: true },
+])(
+  "prepares sharing when the document is $when and animation frames stop",
+  async ({ hideDuringWait }) => {
+    if (!hideDuringWait) setDocumentVisibility("hidden");
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn(() => 1),
+    );
+    const platform = fakePlatform();
+    let prepare: (() => Promise<void>) | undefined;
+    render(
+      <BrowserHostView
+        url="https://example.org"
+        platform={platform}
+        sessions={new BrowserSessions(platform)}
+        toolbar={(props) => {
+          prepare = props.prepare;
+          return null;
+        }}
+      />,
+    );
+    await waitFor(() => expect(prepare).toBeDefined());
+    let prepared = false;
+    void prepare?.().then(() => {
+      prepared = true;
+    });
+    if (hideDuringWait) act(() => setDocumentVisibility("hidden"));
+    await waitFor(() => expect(prepared).toBe(true));
+  },
+);

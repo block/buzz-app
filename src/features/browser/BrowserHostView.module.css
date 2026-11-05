@@ -19,14 +19,6 @@
   border-bottom: 1px solid var(--border-standard);
 }
 
-.status {
-  max-width: 30%;
-  overflow: hidden;
-  color: var(--text-subtle);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .error {
   flex: none;
   padding: var(--space-1) var(--space-2);

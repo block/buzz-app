@@ -1,6 +1,8 @@
 //! Remote website content embedded in the main window without a Tauri bridge.
 
 mod builderlab;
+#[cfg(target_os = "macos")]
+pub(crate) mod control;
 mod platform;
 mod policy;
 
@@ -29,6 +31,11 @@ thread_local! {
 const MAX_GUESTS: usize = 8;
 
 static DOCUMENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// One counter for every guest, so a ref from a closed or evicted guest never
+/// names an element in its replacement.
+#[cfg(target_os = "macos")]
+static DOCUMENT_REVISION: AtomicU64 = AtomicU64::new(0);
 
 fn reset_document<Session>(
     label: &str,
@@ -71,6 +78,8 @@ pub struct BrowserSnapshot {
     pub title: String,
     pub loading: bool,
     pub error: Option<String>,
+    pub control_granted: bool,
+    pub control_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -90,9 +99,73 @@ struct BrowserSession {
     navigation: platform::Navigation,
     snapshot: Rc<RefCell<BrowserSnapshot>>,
     policy: NavigationPolicy,
+    visible: std::cell::Cell<bool>,
+    #[cfg(target_os = "macos")]
+    control: RefCell<Option<String>>,
+    #[cfg(target_os = "macos")]
+    control_revision: std::cell::Cell<u64>,
+    #[cfg(target_os = "macos")]
+    document_revision: Rc<std::cell::Cell<u64>>,
+    /// Set while an agent action runs, so a second one fails with `busy`.
+    #[cfg(target_os = "macos")]
+    control_busy: std::cell::Cell<bool>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+enum RevokeReason {
+    Hide,
+    Resize,
+    Command,
+}
+
+#[cfg(target_os = "macos")]
+impl RevokeReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Hide => "hide",
+            Self::Resize => "resize",
+            Self::Command => "command",
+        }
+    }
 }
 
 impl BrowserSession {
+    /// The revision of the document the guest last committed. Wry reports a
+    /// commit as `PageLoadEvent::Started`, so a load in progress keeps the old one.
+    #[cfg(target_os = "macos")]
+    fn document_revision(&self) -> u64 {
+        self.document_revision.get()
+    }
+
+    /// The first 8 characters of the session ID, enough to tell log lines apart.
+    #[cfg(target_os = "macos")]
+    fn log_prefix(&self) -> &str {
+        self.instance.get(..8).unwrap_or(&self.instance)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn revoke_control(&self, reason: RevokeReason) {
+        if self.control.borrow_mut().take().is_some() {
+            self.control_revision.set(self.control_revision.get() + 1);
+            eprintln!(
+                "browser_control revoke reason={} session={}",
+                reason.as_str(),
+                self.log_prefix()
+            );
+        }
+    }
+
+    /// The person's toolbar and agent control share one history path.
+    fn history(&self, action: BrowserAction) -> Result<(), String> {
+        self.snapshot.borrow_mut().error = None;
+        match action {
+            BrowserAction::Reload => self.guest.reload().map_err(|error| error.to_string()),
+            BrowserAction::Back => platform::back(&self.guest),
+            BrowserAction::Forward => platform::forward(&self.guest),
+        }
+    }
+
     fn navigate(&self, target: &str, fallback_to_http: bool) -> Result<(), String> {
         let url = self.policy.validate(target)?;
         let http_fallback = fallback_to_http
@@ -115,6 +188,11 @@ impl BrowserSession {
         {
             snapshot.loading = platform::loading(&self.guest);
         }
+        #[cfg(target_os = "macos")]
+        {
+            snapshot.control_granted = self.control.borrow().is_some();
+            snapshot.control_revision = self.control_revision.get();
+        }
         Ok(snapshot)
     }
 
@@ -122,13 +200,24 @@ impl BrowserSession {
         self.guest
             .set_visible(false)
             .map_err(|error| error.to_string())?;
+        self.visible.set(false);
         if !visible {
+            #[cfg(target_os = "macos")]
+            self.revoke_control(RevokeReason::Hide);
             return Ok(());
         }
-        platform::resize_guest(&self.guest, &self.host, bounds)?;
-        self.guest
-            .set_visible(true)
-            .map_err(|error| error.to_string())
+        let shown = platform::resize_guest(&self.guest, &self.host, bounds).and_then(|()| {
+            self.guest
+                .set_visible(true)
+                .map_err(|error| error.to_string())
+        });
+        #[cfg(target_os = "macos")]
+        if shown.is_err() {
+            self.revoke_control(RevokeReason::Hide);
+        }
+        shown?;
+        self.visible.set(true);
+        Ok(())
     }
 }
 
@@ -186,6 +275,9 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
             BROWSERS.with(|browsers| {
                 for browser in browsers.borrow().iter() {
+                    browser.visible.set(false);
+                    #[cfg(target_os = "macos")]
+                    browser.revoke_control(RevokeReason::Resize);
                     if let Err(error) = browser.guest.set_visible(false) {
                         browser.snapshot.borrow_mut().error = Some(error.to_string());
                     }
@@ -237,6 +329,10 @@ fn build_contents(
     let title_snapshot = snapshot.clone();
     let load_snapshot = snapshot.clone();
     let download_snapshot = snapshot.clone();
+    #[cfg(target_os = "macos")]
+    let document_revision = Rc::new(std::cell::Cell::new(0));
+    #[cfg(target_os = "macos")]
+    let load_revision = document_revision.clone();
     // No URL is loaded until native permission handlers replace Wry's defaults.
     // In particular, this builder receives no IPC handler or host initialization scripts.
     let builder = platform::with_storage(WebViewBuilder::new(), storage)
@@ -255,6 +351,10 @@ fn build_contents(
             title_snapshot.borrow_mut().title = title;
         })
         .with_on_page_load_handler(move |event, url| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, PageLoadEvent::Started) {
+                load_revision.set(DOCUMENT_REVISION.fetch_add(1, Ordering::SeqCst) + 1);
+            }
             let mut snapshot = load_snapshot.borrow_mut();
             snapshot.url = url;
             snapshot.loading = matches!(event, PageLoadEvent::Started);
@@ -276,6 +376,15 @@ fn build_contents(
         navigation,
         snapshot,
         policy,
+        visible: std::cell::Cell::new(false),
+        #[cfg(target_os = "macos")]
+        control: RefCell::new(None),
+        #[cfg(target_os = "macos")]
+        control_revision: std::cell::Cell::new(0),
+        #[cfg(target_os = "macos")]
+        document_revision,
+        #[cfg(target_os = "macos")]
+        control_busy: std::cell::Cell::new(false),
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     if !defer_navigation {
@@ -397,14 +506,7 @@ pub async fn browser_action(
     action: BrowserAction,
 ) -> Result<(), String> {
     on_main_thread(&app, move || {
-        with_browser(&session_id, |browser| {
-            browser.snapshot.borrow_mut().error = None;
-            match action {
-                BrowserAction::Reload => browser.guest.reload().map_err(|error| error.to_string()),
-                BrowserAction::Back => platform::back(&browser.guest),
-                BrowserAction::Forward => platform::forward(&browser.guest),
-            }
-        })
+        with_browser(&session_id, |browser| browser.history(action))
     })
     .await
 }
@@ -530,4 +632,9 @@ mod lifecycle_tests {
         assert_eq!(session.borrow().len(), 1);
         assert_eq!(drops.borrow().len(), 1);
     }
+}
+
+#[tauri::command]
+pub fn browser_control_available() -> bool {
+    cfg!(target_os = "macos")
 }

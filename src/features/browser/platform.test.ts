@@ -206,6 +206,15 @@ describe("createBrowserPlatform", () => {
     ]);
   });
 
+  it("rejects a native control failure as an Error that keeps the coded message", async () => {
+    sdk.invoke.mockRejectedValueOnce("busy: Another action is running.");
+    const failure = await createBrowserPlatform()
+      .control?.execute("token-1", { action: "observe" })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("busy: Another action is running.");
+  });
+
   it("rejects an invalid URL before native invocation", async () => {
     const platform = createBrowserPlatform();
     await expect(

@@ -2501,6 +2501,25 @@ media response. Native microphone permissions were exercised in the staging app.
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
 
+A browser view can accept a plugin `toolbar` component and an optional `sessionKey`
+for independent pages at the same URL. The toolbar receives `sessionId`, `status`,
+`prepare()`, `onError()`, and the existing shared Button/Menu/icon primitives in
+`ui`. `prepare()` waits until native presentation has settled and requires a visible
+website; call it after dismissing a popup and before requesting control. The host
+unmounts the toolbar when its native session changes. The plugin owns toolbar
+state and must revoke its grant on unmount. The host also revokes when the view
+unmounts or its URL, storage, or session key changes, but not when only
+`toolbar` changes.
+
+The optional `browser.control` capability exposes availability, host-checked
+recipient eligibility, `forRecipient()` grant/revoke operations, and `execute()`
+using authenticated tool caller context. `forRecipient().grant()` resolves the
+grant revision only, never the token, and replaces that recipient's grants on
+other pages.
+It supplies no sharing component or agent-opening workflow. The
+[Browser plugin](https://github.com/squareup/buzz-plugin-browser) packages
+those behaviors as one independently updateable module.
+
 ## Decisions
 
 The host composes one `DecisionsService` in `app/services.ts`. Plugins, bundled

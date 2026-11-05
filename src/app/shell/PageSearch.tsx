@@ -38,6 +38,7 @@ import { ChannelDirectoryResults } from "./ChannelDirectoryResults";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import { usageScope } from "../../features/search/usage";
+import { unreadFirstPreference } from "../../features/search/unread-first-preference";
 
 export type SearchServices = Pick<
   AppServices,
@@ -87,7 +88,7 @@ export function PageSearch({
   const [scopedChannelId, setScopedChannelId] = useState<string>();
   // Search reopens where it was left, so someone checking channels one by
   // one returns to the same list. Escape, or a while away, starts fresh, as
-  // does an empty All view: it leads with whatever is unread now.
+  // does an empty All view leading with unread: it shows what is unread now.
   const place = useRef<SearchPlace>({ top: 0, key: "" });
   const escaped = useRef(false);
   const remembered = useRef<{
@@ -113,7 +114,9 @@ export function PageSearch({
     if (!next && openRef.current) {
       const { query, tab, scopedChannelId } = latest.current;
       remembered.current =
-        escaped.current || scopedChannelId || (tab === "all" && !query.trim())
+        escaped.current ||
+        scopedChannelId ||
+        (tab === "all" && !query.trim() && unreadFirstPreference())
           ? undefined
           : { query, tab, place: { ...place.current }, at: Date.now() };
       escaped.current = false;

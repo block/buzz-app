@@ -189,7 +189,8 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
   nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it. Muted
-  conversations are left out.
+  conversations are left out. Turn this off with **Show unread first in
+  search** in Settings → Appearance → Conversations.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.

@@ -38,6 +38,7 @@ import {
 } from "../../features/relay/read-state-storage";
 import type { AppServices } from "../services";
 import type { SearchGroup } from "./SearchChoices";
+import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { SearchResults } from "./SearchResults";
 import { useSearchSettings } from "./SearchSettings";
 import {
@@ -286,7 +287,14 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
     mounted.rerender(<SearchResults {...props} query="other" />);
     await screen.findByRole("group", { name: "Channels" });
     expect(screen.queryByRole("group", { name: "Unread" })).toBeNull();
+    // Turned off in Settings, an empty search is unread-blind again.
+    act(() => setUnreadFirstPreference(false));
+    mounted.rerender(<SearchResults {...props} query="" />);
+    await waitFor(() => expect(rowsOf("Recent activity")).toHaveLength(4));
+    expect(screen.queryByRole("group", { name: "Unread" })).toBeNull();
+    expect(input).not.toHaveAttribute("aria-activedescendant");
   } finally {
+    setUnreadFirstPreference(true);
     cleanup();
     owner.dispose();
   }

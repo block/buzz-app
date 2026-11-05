@@ -48,6 +48,7 @@ import type {
 } from "./SearchChoices";
 import { type SearchChip, SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
+import { useUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import {
   noSearchUsage,
   readSearchUsage,
@@ -1279,7 +1280,9 @@ export function SearchResults({
         (a.lastActivityAt ?? a.updatedAt ?? 0),
     );
   // Other unread conversations lead an empty search, so Enter opens the
-  // latest. Muted ones stay quiet, as in the app's unread indicator.
+  // latest, unless turned off. Muted ones stay quiet, as in the app's unread
+  // indicator.
+  const unreadFirst = useUnreadFirstPreference().enabled;
   const unreadIds = useUnreadChannelIds(
     session.unread,
     JSON.stringify(suggestions.map(({ id }) => id)),
@@ -1290,7 +1293,10 @@ export function SearchResults({
     () => confirmedMutes(session.sidebarPreferences.snapshot()),
   );
   const isUnread = ({ id }: ChannelSummary) =>
-    id !== currentChannelId && unreadIds.has(id) && !muted.includes(id);
+    unreadFirst &&
+    id !== currentChannelId &&
+    unreadIds.has(id) &&
+    !muted.includes(id);
   const suggestion = (channel: ChannelSummary): SearchDestination => ({
     ...conversationDestination(channel),
     ...(channel.preview ? { detail: channel.preview } : {}),

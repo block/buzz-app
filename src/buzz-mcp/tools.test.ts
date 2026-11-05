@@ -8,6 +8,8 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { expect, it, vi } from "vitest";
+import { eventDto } from "../features/relay/events";
+import { keypair, signed } from "../features/relay/testing";
 import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
@@ -474,18 +476,32 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
 });
 
 it("tags a member by the names the relay verified, ahead of names people gave themselves", async () => {
-  const relay = "d".repeat(64);
+  const relay = keypair();
+  // Signed and admitted, as a connection's query returns them.
   const verified = (
     subject: string,
-    tags: readonly string[][],
-    fields: Partial<BuzzEvent> = {},
-  ) =>
-    event({
-      kind: 30382,
-      pubkey: relay,
-      tags: [["d", subject], ["p", subject], ["active", "true"], ...tags],
-      ...fields,
-    });
+    names: readonly string[][],
+    { by = relay, at = 100, active = true } = {},
+  ): BuzzEvent =>
+    eventDto(
+      signed(by, {
+        kind: 30382,
+        content: "",
+        created_at: at,
+        tags: [
+          ["d", subject],
+          ["p", subject],
+          ["active", String(active)],
+          ...(active
+            ? [
+                ["issuer_label", "Example"],
+                ["verified_at", String(at)],
+              ]
+            : []),
+          ...names,
+        ],
+      }),
+    );
   const { client, published } = fake([
     ...community,
     verified(alice, [
@@ -501,12 +517,35 @@ it("tags a member by the names the relay verified, ahead of names people gave th
       created_at: 101,
       content: JSON.stringify({ display_name: "Alice S", name: "asmith" }),
     }),
-    // A name the relay did not sign, and one it retracted, give nobody.
-    verified(bob, [["username", "forged"]], { pubkey: me }),
-    verified(bob, [["username", "bobby"]], { created_at: 90 }),
-    verified(bob, [["active", "false"]], { created_at: 95 }),
+    // A name another key signed, one the relay retracted, and one the app
+    // would reject give nobody.
+    verified(
+      bob,
+      [
+        ["display_name", "Forged"],
+        ["username", "forged"],
+      ],
+      {
+        by: keypair(),
+      },
+    ),
+    verified(
+      bob,
+      [
+        ["display_name", "Bobby"],
+        ["username", "bobby"],
+      ],
+      {
+        at: 90,
+      },
+    ),
+    verified(bob, [], { at: 95, active: false }),
+    verified(me, [
+      ["display_name", "Bad"],
+      ["username", "Not A Handle"],
+    ]),
   ]);
-  const tagged = { ...client, relayAuthor: relay };
+  const tagged = { ...client, relayAuthor: relay.pubkey };
   const context = { channel: "chan", root };
   for (const text of [
     "@Alice S see this",
@@ -520,7 +559,7 @@ it("tags a member by the names the relay verified, ahead of names people gave th
       ["p", alice],
     ]);
   }
-  for (const name of ["forged", "bobby"])
+  for (const name of ["forged", "bobby", "bad"])
     await expect(
       callTool(tagged, context, "send", {
         audience: "everyone",

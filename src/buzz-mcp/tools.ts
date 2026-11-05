@@ -30,7 +30,10 @@ import {
 import { newer } from "../features/relay/events";
 import {
   VERIFIED_PROFILE_BATCH,
-  VERIFIED_PROFILE_KIND,
+  type VerifiedProfile,
+  verifiedProfile,
+  verifiedProfileFilter,
+  verifiedProfileSubject,
 } from "../features/relay/verified-profile";
 import { imageType } from "../features/relay/attachment-limits";
 import { LIVE_CANVAS_BYTES } from "../features/channel-templates/model";
@@ -1981,58 +1984,41 @@ class Tools {
     return aliases;
   }
 
-  /** The relay's verified names (kind 30382) for `pubkeys`. Only events the
-   * connection's relay signed count; none without that key. */
+  /** The relay's verified names (kind 30382) for `pubkeys`, read as the app
+   * reads them, so `send` and the app agree on who is verified. None without
+   * the connection's relay key. */
   async verifiedNames(pubkeys: readonly string[]) {
-    const names = new Map<
-      string,
-      {
-        displayName: string | undefined;
-        username: string | undefined;
-        fullName: string | undefined;
-      }
-    >();
+    const names = new Map<string, VerifiedProfile>();
     const relay = this.client.relayAuthor;
-    if (!relay) return names;
+    if (!relay || !HEX_KEY.test(relay)) return names;
+    const authority = { pubkey: relay, multipleIssuers: false };
+    const subjects = [...new Set(pubkeys)].filter((key) => HEX_KEY.test(key));
     const batches: string[][] = [];
-    for (let at = 0; at < pubkeys.length; at += VERIFIED_PROFILE_BATCH)
-      batches.push(pubkeys.slice(at, at + VERIFIED_PROFILE_BATCH));
+    for (let at = 0; at < subjects.length; at += VERIFIED_PROFILE_BATCH)
+      batches.push(subjects.slice(at, at + VERIFIED_PROFILE_BATCH));
     const found = (
       await Promise.all(
         batches.map((batch) =>
           this.client
-            .query([
-              {
-                kinds: [VERIFIED_PROFILE_KIND],
-                authors: [relay],
-                "#d": batch,
-                limit: batch.length,
-              },
-            ])
+            .query([verifiedProfileFilter(relay, batch)])
             .catch(() => []),
         ),
       )
     ).flat();
-    const latest = new Map<string, BuzzEvent>();
-    for (const event of found) {
-      if (event.pubkey !== relay || event.kind !== VERIFIED_PROFILE_KIND)
-        continue;
-      const subject = event.tags.find((t) => t[0] === "d")?.[1];
-      if (!subject || !pubkeys.includes(subject)) continue;
-      const seen = latest.get(subject);
-      if (!seen || seen.created_at < event.created_at)
-        latest.set(subject, event);
+    // The newest event at each address decides; a newer malformed or
+    // retracted one leaves the person unverified, as in the app.
+    const latest = new Map<string, RelayEvent>();
+    for (const item of found) {
+      // Queries admit the events whose signatures they checked; the app's
+      // projection takes only those.
+      const event = item as unknown as RelayEvent;
+      const subject = verifiedProfileSubject(event, authority);
+      if (!subject || !subjects.includes(subject)) continue;
+      latest.set(subject, newer(latest.get(subject), event));
     }
     for (const [subject, event] of latest) {
-      const value = (name: string) =>
-        event.tags.find((t) => t[0] === name)?.[1];
-      // A retracted name stays at its address with the names removed.
-      if (value("active") !== "true" || value("p") !== subject) continue;
-      names.set(subject, {
-        displayName: value("display_name"),
-        username: value("username"),
-        fullName: value("full_name"),
-      });
+      const verified = verifiedProfile(event, authority, true);
+      if (verified) names.set(subject, verified);
     }
     return names;
   }
@@ -2367,6 +2353,8 @@ const NAME_WEIGHT = {
   displayName: 3,
   name: 4,
 } as const;
+
+const HEX_KEY = /^[0-9a-f]{64}$/;
 
 /** Who a name tags: everyone holding it in its strongest form. */
 function bestNamed(holders: ReadonlyMap<string, number> | undefined) {

@@ -8,7 +8,7 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
 3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab** under **Remote** in the **Harness** menu. It can answer while your desktop is off, but cannot open files on your computer.
 4. If signed out, choose the small **Sign in** button beside Harness. Model, Thinking and Create agent stay disabled until sign-in completes. Choose a model and thinking level, optionally add instructions, then choose **Create agent**. Review the introduction and choose **Let’s go** to create it.
-5. Edit model settings and instructions later in **Identity**. Opening it attempts sign-in automatically if needed. The compact action beside Harness shows a spinner that cancels browser sign-in on click. The resting signed-out hint explains that sign-in enables editing while messaging still works. Cancellation, timeout and login failures wait for an explicit inline retry. Sheets are reserved for settings or account-access errors. Instructions appear after sign-in. Account-access errors offer **Use another account**, which ends the Builderlab session and opens `/logout` in your browser. In FI builds this also ends the shared organization sign-in. After Use another account, a cancellable spinner waits three seconds before showing **Retry** beside Harness. Sign in with the other account in the browser, return to Buzz, then click Retry to check access.
+5. Edit model settings and instructions later in **Identity**. Opening it attempts sign-in automatically if needed. The compact action beside Harness shows a spinner that cancels browser sign-in on click. The resting signed-out hint explains that sign-in enables editing while messaging still works. Cancellation, timeout and login failures wait for an explicit inline retry. Sheets are reserved for settings or account-access errors. Instructions appear after sign-in. Native account-access errors open **Identity → Organization sign-in** without ending the shared session. In live development, **Use another account** ends the broker session and opens `/logout` in your browser. A cancellable spinner then waits three seconds before showing **Retry** beside Harness. Sign in with the other account in the browser, return to Buzz, then click Retry to check broker access.
 
 While signed in, Identity shows a cloud beside “Remote agent”, with “Runs on a
 Builderlab machine” underneath. Workspace in Settings explains that the remote
@@ -115,7 +115,10 @@ Builderlab sign-in. Opening Identity attempts sign-in once if needed. Click the
 compact spinner beside Harness to cancel browser sign-in; its tooltip and
 accessible name are “Cancel sign-in”. Cancellation and failures leave an explicit
 Sign in action instead of starting another attempt. Account recovery and
-settings failures retain the host-owned notice surface. If an agent is missing
+settings failures retain the host-owned notice surface. Native account recovery
+opens Identity → Organization sign-in without ending the shared session. In live
+development, Use another account signs out the broker before opening browser
+logout. If an agent is missing
 from the current list, Retry reloads it without signing out. Slow settings/catalog
 reads offer a scoped retry after three seconds.
 The Identity tab also loads a separate model catalog from Builderlab. Choose a

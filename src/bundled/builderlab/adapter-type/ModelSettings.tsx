@@ -55,9 +55,11 @@ export function ModelSettings({
   session,
   settings,
   harnessControl,
+  openIdentity,
 }: {
   client: AgentClient;
   session: BuilderlabSession;
+  openIdentity?: (() => void) | undefined;
   harnessControl?: (action: ReactNode) => ReactNode;
   settings:
     | { agent: RemoteAgent; subject: string; email?: string }
@@ -72,7 +74,7 @@ export function ModelSettings({
   const waitingToRetry =
     retrySignIn === "switching" || retrySignIn === "waiting";
   useEffect(() => {
-    // Native sign-out completes asynchronously; only its published state
+    // Account sign-out may finish asynchronously; only its published state
     // starts the browser account-switch wait.
     if (retrySignIn === "switching") {
       if (login.status === "signed-out") setRetrySignIn("waiting");
@@ -265,6 +267,7 @@ export function ModelSettings({
     >
       <AccountRecoverySheet
         session={session}
+        openIdentity={openIdentity}
         active={accountProblem}
         onSwitchAccount={() => setRetrySignIn("switching")}
         email={email}

@@ -1334,7 +1334,7 @@ it.for([
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
     await user.click(
-      await screen.findByRole("button", { name: "Sign in to Builderlab" }),
+      screen.getByRole("button", { name: "Sign in to Builderlab" }),
     );
     await waitFor(() =>
       expect(identity.service.snapshot().status).toBe("signed-in"),

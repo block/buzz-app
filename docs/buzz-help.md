@@ -494,11 +494,12 @@ available rather than silently discarding it.
   and sign-in enables editing. Model and Thinking stay disabled, and
   Instructions appear after sign-in. Sheets appear for settings or account-access
   errors. If the agent cannot be found, **Retry** reloads it without signing you out.
-  Account-access errors offer **Use another account**, which ends
-  the Builderlab sign-in and opens its browser logout page; FI builds also end
-  the shared organization sign-in. After signing in with another account in the
-  browser, return to Buzz and click **Retry** beside Harness. A spinner appears
-  for three seconds before Retry becomes available; click it to end the wait early.
+  Native account-access errors open **Identity → Organization sign-in** without
+  ending the shared session. In live development, **Use another account** ends
+  the broker sign-in and opens its browser logout page. After signing in with
+  another account in the browser, return to Buzz and click **Retry** beside
+  Harness. A spinner appears for three seconds before Retry becomes available;
+  click it to end the wait early.
   Chat, Memory and Activity use your Buzz community connection and do not require this Builderlab sign-in.
   Builderlab agents work from your phone even when your desktop is off, and
   cannot open files on your computer. Their Settings hint appears only while

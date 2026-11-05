@@ -18,6 +18,7 @@ import { ModelSettings } from "./ModelSettings";
 export function createSettingsTab(
   client: AgentClient,
   session: BuilderlabSession,
+  openIdentity?: () => void,
 ) {
   function Editor({
     pubkey,
@@ -75,6 +76,7 @@ export function createSettingsTab(
       <ModelSettings
         client={client}
         session={session}
+        openIdentity={openIdentity}
         settings={
           loaded ?? {
             pending: busy && login.status === "signed-in",

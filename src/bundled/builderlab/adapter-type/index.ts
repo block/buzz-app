@@ -32,6 +32,7 @@ export function builderlabType(
   client: AgentClient,
   session: BuilderlabSession,
   relay: RelayData,
+  openIdentity?: () => void,
   openSettings?: (section: string) => void,
 ): AgentType {
   const scope = () => ({
@@ -134,7 +135,7 @@ export function builderlabType(
         title: "Settings",
         role: "settings",
         splitSettings: true,
-        component: createSettingsTab(client, session),
+        component: createSettingsTab(client, session, openIdentity),
       },
       {
         id: "activity",

@@ -20,8 +20,6 @@ import {
 import { ModelSettings } from "./ModelSettings";
 import { deferred, createTestSession } from "../test-helpers";
 import { ToastProvider } from "../../../shared/design-system/ui/Toast";
-import { federatedFixture } from "../../../features/federated-identity/testing";
-import { createNativeSession } from "../session";
 
 beforeEach(() =>
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
@@ -32,26 +30,32 @@ afterEach(() => {
 });
 
 it.each(["deadline", "cancel"] as const)(
-  "waits for native sign-out before the account-switch spinner and Retry (%s)",
+  "waits for broker sign-out before the account-switch spinner and Retry (%s)",
   async (finish) => {
-    vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
-    const identity = federatedFixture();
+    vi.stubEnv("VITE_BUZZ_LIVE", "1");
+    vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "0");
     let allowed = false;
-    identity.request.mockImplementation(async ({ path }) => ({
-      status: 200,
-      headers: {},
-      body: JSON.stringify(
-        path.endsWith("/me")
-          ? {
-              subject: "user",
-              email: "a@example.com",
-              capabilities: { can_use_remote_agents: allowed },
-            }
-          : { models: [] },
-      ),
-    }));
-    identity.publish({ status: "signed-in", revision: "user:1" });
-    const session = createNativeSession(identity.service);
+    const session = createTestSession(
+      async () => ({
+        revision: crypto.randomUUID(),
+        account: {
+          subject: "user",
+          email: "a@example.com",
+          canUseRemoteAgents: allowed,
+          canUseBuilderlabDecisions: false,
+        },
+      }),
+      undefined,
+      {
+        request: vi.fn(async () => ({
+          status: 200,
+          headers: {},
+          body: '{"models":[]}',
+        })),
+      },
+    );
+    await session.signIn();
+    const signIn = vi.spyOn(session, "signIn");
     const signedOutCommits: { action: string | null; hint: boolean }[] = [];
     function ObserveCommit({ children }: { children: ReactNode }) {
       const control = useRef<HTMLDivElement>(null);
@@ -72,11 +76,13 @@ it.each(["deadline", "cancel"] as const)(
       return <div ref={control}>{children}</div>;
     }
     const signedOut = deferred<void>();
-    const signOut = vi.mocked(identity.service.signOut).getMockImplementation();
-    if (!signOut) throw new Error("Missing native sign-out fixture");
-    vi.mocked(identity.service.signOut).mockImplementationOnce(async () => {
+    const signOut = session.signOut;
+    const pendingSignOut = vi.fn(async () => {
       await signedOut.promise;
-      await signOut();
+      signOut();
+    });
+    vi.spyOn(session, "signOut").mockImplementation(() => {
+      void pendingSignOut();
     });
     try {
       render(
@@ -101,7 +107,7 @@ it.each(["deadline", "cancel"] as const)(
       });
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       fireEvent.click(recovery);
-      expect(identity.service.signOut).toHaveBeenCalledOnce();
+      expect(pendingSignOut).toHaveBeenCalledOnce();
       await act(() => vi.advanceTimersByTimeAsync(5000));
       expect(session.snapshot().status).toBe("signed-in");
       expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
@@ -119,14 +125,14 @@ it.each(["deadline", "cancel"] as const)(
       else await act(() => vi.advanceTimersByTimeAsync(1));
       const retry = screen.getByRole("button", { name: "Retry" });
       expect(retry).toBeEnabled();
-      expect(identity.service.signIn).not.toHaveBeenCalled();
+      expect(signIn).not.toHaveBeenCalled();
       vi.useRealTimers();
       allowed = true;
       fireEvent.click(retry);
       await waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
-      expect(identity.service.signIn).toHaveBeenCalledOnce();
+      expect(signIn).toHaveBeenCalledOnce();
       expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-      act(() => identity.publish({ status: "signed-out" }));
+      act(() => signOut());
       expect(
         screen.getByRole("button", { name: "Sign in to Builderlab" }),
       ).toBeEnabled();
@@ -551,6 +557,7 @@ it("checks the live credential before saving even when the displayed session has
 it.each(["save", "catalog"])(
   "recovers from a forbidden %s request through another account without losing the draft",
   async (operation) => {
+    vi.stubEnv("VITE_BUZZ_LIVE", "1");
     const h = await fixture({
       modelId: "model-one",
       reasoningEffort: "high",

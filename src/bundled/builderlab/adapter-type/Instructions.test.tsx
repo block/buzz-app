@@ -75,7 +75,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
-async function fixture(signedIn = true) {
+async function fixture(signedIn = true, openIdentity?: () => void) {
   let subject = "account-a";
   let email = "a@example.com";
   let canUseRemoteAgents = true;
@@ -128,10 +128,15 @@ async function fixture(signedIn = true) {
   const client = createAgentClient(session);
   const disconnected = { status: "disconnected", generation: 0 };
   const type = {
-    ...builderlabType(client, session, {
-      snapshot: () => disconnected,
-      subscribe: () => () => {},
-    } as unknown as RelayData),
+    ...builderlabType(
+      client,
+      session,
+      {
+        snapshot: () => disconnected,
+        subscribe: () => () => {},
+      } as unknown as RelayData,
+      openIdentity,
+    ),
     key: "block.builderlab/builderlab",
     pluginId: "block.builderlab",
     revision: "test",
@@ -267,7 +272,7 @@ it.each(["cancel", "timeout"] as const)(
       ).toBeNull();
     } finally {
       held.resolve({
-        value: "late-credential",
+        revision: "late-credential",
         account: {
           subject: "account-a",
           email: "a@example.com",
@@ -566,6 +571,7 @@ it.each([
 it.each(["deadline", "cancel"] as const)(
   "shows a spinner after browser logout, then Retry on %s before checking the new account",
   async (finish) => {
+    vi.stubEnv("VITE_BUZZ_LIVE", "1");
     const h = await fixture(false);
     h.prepareAccount({
       subject: "wrong",
@@ -719,6 +725,7 @@ it("recovers an unloaded no-access account through logout and normal sign-in, re
 });
 
 it("offers account recovery instead of Retry when settings return HTTP 403", async () => {
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
   const h = await fixture();
   h.request.mockResolvedValueOnce({ status: 403, headers: {}, body: "{}" });
   render(<h.Tab agent={agent()} save={vi.fn()} />);
@@ -744,6 +751,28 @@ it("offers account recovery instead of Retry when settings return HTTP 403", asy
     browser.stop();
     h.session.dispose();
   }
+});
+
+it("opens Identity for native account recovery without ending the shared sign-in", async () => {
+  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
+  const openIdentity = vi.fn();
+  const h = await fixture(true, openIdentity);
+  const signOut = vi.spyOn(h.session, "signOut");
+  h.request.mockResolvedValueOnce({ status: 403, headers: {}, body: "{}" });
+  render(<h.Tab agent={agent()} save={vi.fn()} />);
+  const action = await screen.findByRole("button", {
+    name: "Identity → Organization sign-in",
+  });
+  expect(action).not.toHaveAttribute("href");
+  await userEvent.setup().click(action);
+  expect(openIdentity).toHaveBeenCalledOnce();
+  expect(signOut).not.toHaveBeenCalled();
+  expect(h.session.snapshot().status).toBe("signed-in");
+  expect(
+    screen.queryByRole("button", { name: "Use another account" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
+  h.session.dispose();
 });
 
 it("retries an agent missing from the list without ending the account session", async () => {

@@ -170,7 +170,8 @@ p:empty {
 }
 
 [data-provider="Buzz"] main {
-  padding-inline: min(var(--space-panel-inset), 4vw);
+  padding: min(var(--space-panel-inset), 4vw);
+  border-radius: min(var(--radius-container), 4vw);
 }
 
 [data-provider="Buzz"] .brand {

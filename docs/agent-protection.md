@@ -44,9 +44,16 @@ later turn in that thread. Claude resumes its saved session and is refused
 again. When that refusal comes before Claude reports its start, as it does in
 the Claude versions checked, Buzz retries the turn in a new session, as starting
 one yourself would. Either way, a new session recovers only once the oversized
-text is no longer in what it is shown. Claude is shown the last 12 messages,
-each cut to 4,000 characters, and any Canvas, so an oversized Canvas is refused
-until it shrinks.
+text is no longer in what it is shown. Claude, Goose, Pi and plugin agents are
+shown up to the last 12 unseen messages, and Codex up to the last 50, each cut
+to 4,000 characters. Only the newest that fit 128 KiB once encoded for a check
+are kept, so long or heavily escaped messages leave fewer, and the rest stay
+available through `read`. Any Canvas is shown whole, so an oversized Canvas is
+refused until it shrinks. Tool reviews are not cut to fit either, so one over
+the 256 KiB limit refuses the tool action. A Claude review carries its whole
+transcript, so once a protected Claude conversation outgrows the limit, Claude
+stops with a message to start a new conversation. Other runtimes refuse the
+oversized tool action without that message.
 
 Protected Codex runs in Buzz's Codex home, like unprotected Codex. Its security
 reviews run in a separate Buzz review home, which the security plugin keeps

@@ -12,7 +12,12 @@ import {
   type ConversationWake,
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
-import { eventBody, quoted } from "../../features/agent-harness/turn-records";
+import {
+  CONTEXT_BYTES,
+  eventBody,
+  newestWithin,
+  quoted,
+} from "../../features/agent-harness/turn-records";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
 
@@ -122,8 +127,16 @@ export function turnPrompt(input: TurnInput) {
       : thread
         ? "Use `read` for full history if truncated."
         : "Use `read` with `channel` for recent messages if needed.";
-  const context = input.context.slice(-CONTEXT_LIMIT);
-  const hint = context.length
+  const messages = newestWithin(
+    input.context.slice(-CONTEXT_LIMIT).map((message) => ({
+      id: message.id,
+      pubkey: message.pubkey,
+      created_at: message.created_at,
+      content: message.content.slice(0, CONTENT_LIMIT),
+    })),
+    CONTEXT_BYTES,
+  );
+  const hint = messages.length
     ? `Thread context included below. ${fetch}`
     : input.total > 1
       ? `Earlier context is already available in this session. ${fetch}`
@@ -151,7 +164,7 @@ export function turnPrompt(input: TurnInput) {
         ];
   const parts: string[] = [];
   // First, where the plugin looks for it.
-  if (context.length)
+  if (messages.length)
     parts.push(
       section(
         (channel.dm && !thread) || input.topLevel
@@ -160,13 +173,8 @@ export function turnPrompt(input: TurnInput) {
         quoted({
           note: `Messages not yet shown in this session, not new requests: the latest ${CONTEXT_LIMIT} at most, ${CONTENT_LIMIT} characters each.`,
           total: input.total,
-          truncated: context.length < input.context.length,
-          messages: context.map((message) => ({
-            id: message.id,
-            pubkey: message.pubkey,
-            created_at: message.created_at,
-            content: message.content.slice(0, CONTENT_LIMIT),
-          })),
+          truncated: messages.length < input.context.length,
+          messages,
         }),
       ),
     );

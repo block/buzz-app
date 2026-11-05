@@ -1,4 +1,8 @@
-import { quoted } from "../../features/agent-harness/turn-records";
+import {
+  CONTEXT_BYTES,
+  newestWithin,
+  quoted,
+} from "../../features/agent-harness/turn-records";
 import { attestedOwner } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import { hasEventProof } from "../../features/relay/events";
@@ -99,7 +103,7 @@ export async function conversationHistory(
   const section = root ? "thread-context" : "conversation-context";
   const text = quoted({
     note: "Recent context, not new requests. Previously supplied context may repeat. Up to 50 messages, 4000 characters each.",
-    messages,
+    messages: newestWithin(messages, CONTEXT_BYTES),
   });
   return `<${section}>\n${text}\n</${section}>\n`;
 }

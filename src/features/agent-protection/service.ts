@@ -451,7 +451,11 @@ export class AgentProtectionService extends Service {
           new TextEncoder().encode(JSON.stringify(request)).length >
           256 * 1024
         )
-          throw new Error("Protected action is too large");
+          throw new Error(
+            action.kind === "tool"
+              ? "This conversation is too large to review its next action; start a new conversation"
+              : "Protected action is too large",
+          );
         let stop!: () => void;
         const cancelled = new Promise<never>((_, reject) => {
           stop = () => reject(new Error("Protected action was cancelled"));

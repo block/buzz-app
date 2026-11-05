@@ -7,6 +7,22 @@ import type { EventData } from "../relay/events";
 export const quoted = (value: unknown) =>
   JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 
+/** Encoded bytes of the records a turn shows: half the host's 256 KiB check
+ * limit, leaving the rest for the event, Canvas, notes and policy. */
+export const CONTEXT_BYTES = 128 * 1024;
+
+/** The newest records whose cost fits `budget`. A record costs its `quoted`
+ * JSON once a check request encodes the prompt holding it as a string. */
+export function newestWithin<T>(records: readonly T[], budget: number) {
+  const encoder = new TextEncoder();
+  let start = records.length;
+  for (let used = 0; start > 0; start--) {
+    used += encoder.encode(JSON.stringify(quoted(records[start - 1]))).length;
+    if (used > budget) break;
+  }
+  return records.slice(start);
+}
+
 /** The event a turn is for, then what it asks of the agent. */
 export const eventBody = (event: EventData, request: string) =>
   `${quoted(event)}\nRequest: ${quoted(request)}`;

@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { quoted } from "../../features/agent-harness/turn-records";
+import {
+  CONTEXT_BYTES,
+  quoted,
+} from "../../features/agent-harness/turn-records";
 import type { ConversationWake } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
@@ -261,6 +264,58 @@ it("keeps the latest context messages, each cut to a record's limit", () => {
     JSON.parse(/^<thread-context>\n(.*)\n/.exec(long)?.[1] ?? "null")
       .messages[0].content,
   ).toHaveLength(4000);
+});
+
+it("keeps the newest context messages that fit the check request's budget", () => {
+  // The bytes a context check sends for a turn, as the host measures them.
+  const request = (prompt: string) =>
+    new TextEncoder().encode(
+      JSON.stringify({
+        kind: "context",
+        session: "s",
+        content: {
+          source: "message",
+          value: { role: "user", content: prompt },
+        },
+      }),
+    ).length;
+  const turn = (content: string) => {
+    const context = Array.from({ length: 12 }, (_, index) =>
+      event(index.toString(16), content, {
+        created_at: 1_800_000_000 + index,
+      }),
+    );
+    const prompt = turnPrompt({
+      agent,
+      event: event("f", "now"),
+      channel: { id: "chan" },
+      scope: "thread",
+      context,
+      total: 13,
+    });
+    const history = JSON.parse(
+      /^<thread-context>\n(.*)\n/.exec(prompt)?.[1] ?? "null",
+    );
+    return { context, prompt, history };
+  };
+  // Ordinary prose fits whole.
+  const prose = turn("x".repeat(4000));
+  expect(prose.history.truncated).toBe(false);
+  expect(prose.history.messages).toHaveLength(12);
+  // Each `<` is escaped in the prompt and again in the request, so only the
+  // newest messages that fit are shown, marked as truncated.
+  const { context, prompt, history } = turn("<".repeat(4000));
+  expect(history.truncated).toBe(true);
+  expect(history.messages.map((message: EventData) => message.id)).toEqual(
+    context.slice(-4).map((message) => message.id),
+  );
+  // What they cost in the real request: they fit, and one more would not.
+  const shown = quoted(history.messages);
+  expect(prompt).toContain(shown);
+  const each = (request(prompt) - request(prompt.replace(shown, "[]"))) / 4;
+  expect(4 * each).toBeLessThanOrEqual(CONTEXT_BYTES);
+  expect(5 * each).toBeGreaterThan(CONTEXT_BYTES);
+  expect(request(prompt)).toBeLessThan(256 * 1024);
 });
 
 it("says earlier context is already in the session when none is new", () => {

@@ -8,6 +8,7 @@ import {
 import { AgentInstructions } from "../../../features/agents/AgentInstructions";
 import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
 import type { AgentCreateProps } from "../../../features/agents/service";
+import { focusWithKeyboard } from "../../../shared/design-system/useKeyboardFocusVisibility";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Select } from "../../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
@@ -104,14 +105,11 @@ export function createCreationFields(
             aria-hidden="true"
             onChange={() => {}}
             onFocus={() => {
-              const options: FocusOptions & { focusVisible: boolean } = {
-                focusVisible: true,
-              };
-              controls.current
-                ?.querySelector<HTMLButtonElement>(
+              const trigger =
+                controls.current?.querySelector<HTMLButtonElement>(
                   'button[aria-haspopup="menu"]',
-                )
-                ?.focus(options);
+                );
+              if (trigger) focusWithKeyboard(trigger);
             }}
           />
         )}

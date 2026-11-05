@@ -17,6 +17,7 @@ beforeEach(() =>
 afterEach(() => {
   cleanup();
   vi.unstubAllEnvs();
+  delete document.documentElement.dataset.keyboardNavigation;
 });
 const catalog = [
   {
@@ -133,8 +134,10 @@ it("keeps the native missing-model message and forwards input focus to Model", a
   const message = input.validationMessage;
   expect(message).not.toBe("");
   // jsdom dispatches invalid but does not perform the browser's native focus step.
+  delete document.documentElement.dataset.keyboardNavigation;
   input.focus();
   expect(model).toHaveFocus();
+  expect(document.documentElement).toHaveAttribute("data-keyboard-navigation");
   await choose("Model", "Sol 6.1");
   expect(input.validationMessage).toBe("");
   expect(

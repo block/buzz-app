@@ -165,8 +165,12 @@ p:empty {
 }
 
 [data-provider="Buzz"] .page {
-  padding: 1.5rem;
+  padding: min(1.5rem, 4vw);
   align-items: center;
+}
+
+[data-provider="Buzz"] main {
+  padding-inline: min(var(--space-panel-inset), 4vw);
 }
 
 [data-provider="Buzz"] .brand {

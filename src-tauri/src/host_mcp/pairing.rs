@@ -292,11 +292,11 @@ pub(super) fn authorize<R: tauri::Runtime>(
                 || approval.agent.len() > 600
                 || !approval.agent.get(..64).is_some_and(pubkey)
                 || approval.scopes.is_empty()
-                || approval.scopes.len() > 2
+                || approval.scopes.len() > 3
                 || approval
                     .scopes
                     .iter()
-                    .any(|scope| scope != "read" && scope != "post")
+                    .any(|scope| !matches!(scope.as_str(), "read" | "post" | "create"))
                 || approval
                     .scopes
                     .iter()

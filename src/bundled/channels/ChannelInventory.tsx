@@ -888,11 +888,6 @@ export function ChannelInventory({
     },
     [viewer, relay, queries, activityThread, sidebar.list, navigator, scope],
   );
-  const openActivityThread = useCallback(
-    (channelId: string, rootId: string) =>
-      openActivityMessage(channelId, rootId, rootId),
-    [openActivityMessage],
-  );
   const openWorkingAgent = useCallback(
     (channelId: string, _agent: string, messageId: string | undefined) => {
       const root =
@@ -2299,7 +2294,7 @@ export function ChannelInventory({
                                       ? renameChat
                                       : undefined
                                   }
-                                  onOpenThread={openActivityThread}
+                                  onOpenThread={openActivityMessage}
                                   onOpenMessage={openActivityMessage}
                                   onOpenWorkingAgent={openWorkingAgent}
                                   onOpenAgentActivity={openAgentActivity}

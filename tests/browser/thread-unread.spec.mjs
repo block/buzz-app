@@ -427,6 +427,52 @@ test.describe("mentioned reply priority", () => {
   });
 });
 
+// Browser-only: a collapsed branch mounts no rows, so real layout and focus
+// show whether Activity's nested reply is revealed in view and then read.
+test("opening a nested reply from Activity reveals it in its collapsed branch, then reads it", async ({
+  page,
+  app,
+}) => {
+  await holdReadingFocus(page);
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  const previews = () =>
+    page.evaluate(() =>
+      window.fixtureRelay
+        .snapshot()
+        .session.unread.activity("alpha")
+        .items?.map((item) => item.preview),
+    );
+  await alpha.hover();
+  const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+  const item = (text) =>
+    popover
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: text });
+  // Nested under the top-level "Broadcast reply", whose branch starts collapsed.
+  await expect(item("Broadcast descendant")).toBeVisible();
+  await releaseReadingFocus(page);
+  await item("Broadcast descendant").click();
+  const target = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().entry.target,
+  );
+  expect(target).toMatchObject({ channelId: "alpha", threadRootId: root.id });
+  expect(target.messageId).not.toBe(root.id);
+  const reply = page
+    .getByRole("complementary", { name: "Thread", exact: true })
+    .locator(`[data-message-id="${target.messageId}"]`);
+  await expect(reply).toContainText("Broadcast descendant");
+  await expect(reply).toBeInViewport();
+  await expect(reply).toBeFocused();
+  await expect.poll(previews).not.toContain("Broadcast descendant");
+  await alpha.hover();
+  await expect(item("Unread reply 1")).toBeVisible();
+  await expect(item("Broadcast descendant")).toHaveCount(0);
+});
+
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({
   page,
   app,
@@ -756,8 +802,8 @@ test("thread buttons show observed unread independently, clear only after readin
   ).toEqual([]);
 });
 
-// Browser focus plus actual controller/React wiring: a same-target open must not
-// leave the timeline's trigger installed merely because the history entry is reused.
+// Browser focus plus actual controller/React wiring: Activity retargeting the
+// thread the timeline is still opening must not leave the timeline's trigger.
 test("same-thread sidebar activity replaces timeline focus return", async ({
   page,
   app,
@@ -797,10 +843,9 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
     await releaseReadingFocus(page);
     await trigger.click();
     await expect.poll(() => requested).toBe(true);
-    const before = await page.evaluate(() => {
-      const { entry, attempt } = window.fixtureNavigation.snapshot();
-      return { entry: entry.id, attempt: attempt.id };
-    });
+    const before = await page.evaluate(
+      () => window.fixtureNavigation.snapshot().attempt.id,
+    );
     await alpha.hover();
     const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
     await activity
@@ -808,17 +853,23 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
         name: /Open unread thread from.*Broadcast descendant/,
       })
       .click();
+    // Activity addresses its nested reply, in the same thread.
     await expect
       .poll(() =>
-        page.evaluate((before) => {
-          const { entry, attempt } = window.fixtureNavigation.snapshot();
-          return {
-            sameEntry: entry.id === before.entry,
-            freshAttempt: attempt.id !== before.attempt,
-          };
-        }, before),
+        page.evaluate(
+          ({ before, rootId }) => {
+            const { entry, attempt } = window.fixtureNavigation.snapshot();
+            return {
+              reply:
+                entry.target.messageId !== rootId &&
+                entry.target.threadRootId === rootId,
+              freshAttempt: attempt.id !== before,
+            };
+          },
+          { before, rootId: root.id },
+        ),
       )
-      .toEqual({ sameEntry: true, freshAttempt: true });
+      .toEqual({ reply: true, freshAttempt: true });
     release();
     await expect
       .poll(() =>

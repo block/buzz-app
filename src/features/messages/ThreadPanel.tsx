@@ -72,7 +72,7 @@ import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useTrailingSheet } from "./use-trailing-sheet";
-import { useMessageReveal } from "./use-message-reveal";
+import { beginReveal, useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
 import {
   replyTarget,
@@ -348,7 +348,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         return;
       }
       if (prior?.view.snapshot().root) {
-        if (navigation) setRouting(navigation);
+        if (navigation) {
+          setRouting(navigation);
+          // The request starts now; its reveal waits for the retarget.
+          beginReveal(navigation.signal);
+        }
         let result: ThreadRetarget;
         try {
           result = await prior.view.retarget(messageId, signal);

@@ -2,6 +2,30 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 import { highlightWhenSettled, onScreen } from "./message-highlight";
 import { readingPositioned } from "./use-reading";
 
+// Presses and clicks, counted from the first request. An opening may move
+// focus itself; a move the person makes while the target loads is theirs.
+let inputs = 0;
+let counting = false;
+const countInput = () => {
+  inputs++;
+};
+const requests = new WeakMap<
+  AbortSignal,
+  { focus: Element | null; inputs: number }
+>();
+
+/** Records where focus was when a reveal request began. Owners that wait
+ * before passing a request on call this when they first receive it. */
+export function beginReveal(signal: AbortSignal) {
+  if (!counting) {
+    counting = true;
+    document.addEventListener("pointerdown", countInput, true);
+    document.addEventListener("keydown", countInput, true);
+  }
+  if (!requests.has(signal))
+    requests.set(signal, { focus: document.activeElement, inputs });
+}
+
 /** One reveal per request signal, never per row/profile/image update. */
 export function useMessageReveal({
   scroller,
@@ -54,6 +78,7 @@ export function useMessageReveal({
     [],
   );
   useLayoutEffect(() => {
+    if (signal && !signal.aborted) beginReveal(signal);
     if (
       !ready ||
       !messageId ||
@@ -92,10 +117,20 @@ export function useMessageReveal({
       placed?.();
       settled.current = true;
       // A replacement may recover lost focus, but must not take it from another
-      // control after this request already focused a row successfully.
+      // control after this request already focused a row successfully. Nor
+      // does the first reveal take focus the person moved since the request.
+      const start = requests.get(signal);
+      const active = document.activeElement;
+      const moved =
+        !!start &&
+        inputs > start.inputs &&
+        !!active &&
+        active !== document.body &&
+        active !== start.focus;
       let focusPending = false;
       if (
         focus &&
+        !moved &&
         (focused.current?.signal !== signal ||
           (focused.current.row !== row &&
             (!document.activeElement ||

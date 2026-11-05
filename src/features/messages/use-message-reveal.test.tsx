@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import styles from "./Messages.module.css";
 import { HIGHLIGHT_MAX_WAIT_MS, HIGHLIGHT_QUIET_MS } from "./message-highlight";
-import { useMessageReveal } from "./use-message-reveal";
+import { beginReveal, useMessageReveal } from "./use-message-reveal";
 
 // Control frame/mutation ordering; browser journeys own real layout and inert focus.
 const frames = new Map<number, FrameRequestCallback>();
@@ -112,8 +118,8 @@ function mount(
     outside,
     restart: () => result.rerender(<Surface prepare={() => {}} />),
     remountRow: () => result.rerender(<Surface rowKey={1} />),
-    next: () =>
-      result.rerender(<Surface signal={new AbortController().signal} />),
+    next: (signal = new AbortController().signal) =>
+      result.rerender(<Surface signal={signal} />),
     other: () =>
       result.rerender(
         <Surface signal={new AbortController().signal} messageId="other" />,
@@ -260,6 +266,46 @@ it("preserves focus ownership through an effect restart, but a new request can f
   await frame();
   await frame();
   expect(document.activeElement).toBe(row);
+  expect(complete).toHaveBeenCalledTimes(2);
+});
+
+it.each(["pointerDown", "keyDown"] as const)(
+  "leaves focus the person moves before the first reveal (%s)",
+  async (input) => {
+    const { outside, complete } = mount();
+    fireEvent[input](outside);
+    outside.focus();
+    await frame();
+    await frame();
+    await frame();
+    expect(document.activeElement).toBe(outside);
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+it("takes focus an opening moved before the first reveal", async () => {
+  const { row, outside, complete } = mount();
+  outside.focus();
+  await frame();
+  await frame();
+  await frame();
+  expect(document.activeElement).toBe(row);
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+it("counts the person's move from when the request began, before the hook receives it", async () => {
+  const { outside, complete, next } = mount();
+  await idle();
+  // An owner that waits before passing the request on, as a thread retarget does.
+  const request = new AbortController();
+  beginReveal(request.signal);
+  fireEvent.pointerDown(outside);
+  outside.focus();
+  next(request.signal);
+  await frame();
+  await frame();
+  await frame();
+  expect(document.activeElement).toBe(outside);
   expect(complete).toHaveBeenCalledTimes(2);
 });
 

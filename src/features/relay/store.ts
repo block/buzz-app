@@ -23,7 +23,12 @@ import {
 } from "./channel-labels";
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
-import type { RelayReader, ReadOptions, Priority } from "./reader";
+import {
+  LARGE_READ_DEADLINE_MS,
+  type RelayReader,
+  type ReadOptions,
+  type Priority,
+} from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import {
   NOTICE_PAGE_SIZE,
@@ -1689,7 +1694,7 @@ export function createChannelStore(
                   : {}),
               },
             ],
-            { signal: controller.signal },
+            { signal: controller.signal, deadlineMs: LARGE_READ_DEADLINE_MS },
           );
           if (disposed || generation !== epoch) return;
           scannedBytes += listByteSize(rosters);
@@ -1746,7 +1751,8 @@ export function createChannelStore(
                 : {}),
             },
           ],
-          { signal: controller.signal },
+          // A page of full rosters can approach the read budget.
+          { signal: controller.signal, deadlineMs: LARGE_READ_DEADLINE_MS },
         );
         if (disposed || generation !== epoch) return;
         scannedBytes += listByteSize(rosters);

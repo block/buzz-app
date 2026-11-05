@@ -508,7 +508,10 @@ The timeline, channel-list preview and filtered plugin views share that operatio
 
 - Reads: three active slots, at most one background request, 128 pending distinct
   requests, ten-second deadlines including queue time, four filters per request,
-  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget.
+  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget. Full roster scan
+  pages and the read-state snapshot, whose results can approach that budget, get
+  30 seconds (`LARGE_READ_DEADLINE_MS`, the native per-request ceiling) so a slow
+  link finishes them instead of failing and retrying them indefinitely.
 - Outbox: at most 256 operations / 2 MiB persisted, 32 KiB per submitted payload,
   three concurrent deliveries, ten-second delivery deadlines including queue time. Only outstanding
   operations count toward capacity; completed events move to a separate 2,048-event /

@@ -183,6 +183,41 @@ Attention itself (the runtime, tools, storage and sources) is core, but it runs 
 
 ## Agent types and providers
 
+### Plugin execution (preview)
+
+A native harness can opt into plugin execution with `execution: true` and a
+per-agent `retire` hook. A plugin declares `host.agentExecution` with the harness
+keys and calls `agents.registerExecution`. Its provider supplies `connect`, an
+absolute `workspace`, process I/O, file reads, directory resolution, and
+idempotent cleanup. The adapter owns transport, target credentials, allocation,
+reuse, expiry, and file access limits.
+
+The adapter selects itself with `agents.bindExecution(agent.key, { id, config })`.
+This write-once choice belongs to the agent's membership. It does not name a
+fixed workstation. The runner requires native custody and idle turns, then
+retires the current harness before it saves the choice. Admission reads durable
+state so another window's remote choice cannot start local work. Protected
+agents cannot use plugin execution.
+Agent snapshots include `executionBinding` so mounted controls observe a saved choice.
+
+The harness saves a session key before it calls
+`agents.execution(agent.key, { key, intent, signal })`. The first successful open
+changes `intent` from `new` to `existing`. Retries and app restarts keep the key.
+The adapter receives the trusted agent identity, key, intent, and abort signal.
+Repeated opens with the same key must use the same allocation.
+
+Buzz keeps identity, tools, hooks, and session controls with their existing
+owners. Adapter unload or session abort stops owned processes and rejects new
+work. Cleanup preserves the adapter's saved target mapping. A missing target
+returns `code: "EXECUTION_SESSION_RESET_REQUIRED"`; the harness must not resume
+old state in an empty replacement.
+
+Codex uses this contract to run `codex app-server` on the target. Each conversation
+session keeps its key and workspace across later turns and app restarts. **Start
+a new session** requests another allocation. **Interrupt** stops pending setup
+and keeps the key for retry. Activity reads the saved session inventory. Remote
+usage is unavailable. Settings and model discovery do not create targets.
+
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. Plugins can add a tab to every local agent with
@@ -386,7 +421,15 @@ in its profile panel.
 In completed owned-agent panes, inactive sections unmount. Switching sections
 with an unsaved draft asks for confirmation; a confirmed discard also clears a
 pending provider choice. Pending saves keep their section mounted until they
-settle, so failures remain visible.
+settle, so failures remain visible. On the Agents page, choosing another agent
+(from the grid, a card's menu, Create or the marketplace) or closing the panel
+asks the same way, including for an unsaved name or a staged harness change.
+While a save is pending, the selection stays: the agents grid is marked busy,
+and its other cards grey as the panel's other section tabs do. Focus in the
+grid follows the answer: it returns to the kept card, or goes to the card
+chosen or closed. Closing the panel while focus is inside it, with or without a
+prompt, moves focus to the closed agent's card. Import opens as a dialog over the page, so the open agent and
+its draft stay. Deleting an agent closes only its own panel, without asking.
 
 A reviewed provider choice remains a host-owned draft until the form's Save
 action succeeds or the owner confirms discarding it. While it is pending, the
@@ -1276,6 +1319,13 @@ guidance. Keep the selected model and effort accessible, preserve compact chip
 appearance and truncation, and offer a trailing action to restore inheritance
 without duplicating the current model as the first option. Provider selection
 continues to use a searchable Combobox.
+
+Builderlab Identity and creation reuse the shared family → model menu, with a
+separate compact Thinking selector. Builderlab requires an explicit supported
+model/thinking pair rather than an inherited default. Its plugin owns catalog
+family aliases; changing the model clears the thinking choice. Creation places
+these controls beside the host-owned Harness row in one SettingsGroup, while
+keeping sign-in/recovery and Instructions outside the group.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,

@@ -163,7 +163,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   until you add one or turn worktree mode off.
 - **Inbox** collects DMs, ordinary responses in Solo chats, mentions of you, and replies in threads you started,
   replied in, or follow. Solo chats appear under All, not DMs; their nested threads stay separate. Agent-only
-  coordination stays out.
+  coordination stays out. If loading fails, use **Retry inbox** on the page or
+  preview to retry; recovered activity clears the loading error.
 - **New messages** marks the first known unread incoming channel message when
   you enter. Once established, the divider stays in place for that visit as you
   read, reveal another message, or receive new messages. It is absent for a visit
@@ -190,6 +191,15 @@ that agent in Buzz; they do not notify the external app through this connection.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
+- **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
+  of the sidebar without leaving it. To find one again, start a **New message**
+  to exactly the same people. Its earlier messages appear before you send,
+  without being marked read. Sending a message reopens the DM and brings it
+  back to the sidebar. For a one-to-one DM, choosing the person in search is
+  quicker and brings it back the same way. After **Hide conversation**, the row
+  can take until the channel list next refreshes to return. If this connection
+  can't start DMs, New message still shows the earlier messages but Send is
+  disabled, and search opens a one-to-one DM without bringing it back.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
@@ -220,7 +230,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
   one to make it a chip. Click a chip to remove it, or press Backspace at the
   start of the text to edit the last one. With a filter, search shows only
-  messages.
+  messages. Each message result's conversation name starts with the icon its
+  channel header shows: a hash for a public channel, a lock for a private
+  channel, or a chat bubble for a direct message or chat. Screen readers
+  announce the type before the name.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
@@ -231,9 +244,15 @@ that agent in Buzz; they do not notify the external app through this connection.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
+- In a channel, typing `/leave` by itself opens the same **Leave channel**
+  confirmation. The command is not posted as a message.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
+- In the composer, Enter sends and Shift+Enter adds a new line by default.
+  **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
+  outside Apple platforms) swaps that on this device: Enter adds a line and
+  ⌘/Ctrl+Enter sends. It starts off.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. If an upload fails, its attachment shows the reason, **Retry**, and
@@ -361,6 +380,15 @@ available rather than silently discarding it.
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Do not assume someone can edit another person's agent.
+- A desktop plugin can run native Codex on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
+  remote choice stays remote after an app restart. If the target cannot be
+  restored, Buzz shows an error and requires a new session.
+  The model control on a remote Codex card opens that agent's Settings.
+- When creating a Builderlab agent, sign in, choose a model from its family menu,
+  then choose a supported **Thinking** level. Both choices are required; changing
+  the model clears the thinking choice. Instructions are optional. **Create agent**
+  stays disabled until its name and required choices are complete; Builderlab
+  also waits for sign-in and its model catalog.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
@@ -443,6 +471,21 @@ confirmation.
   A saved plugin sort can briefly wait for its plugin at startup, within the
   sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z
   without forgetting the saved choice.
+- On desktop, plugins can support update checks and set them on or off by default.
+  Use **Check for updates automatically** in the plugin's actions menu to change
+  this choice. Buzz saves your choice across updates and restarts. Plugins without
+  update support keep their existing manual import flow. Buzz checks eligible Git
+  sources at startup and once per hour while the app is visible. Checks do not
+  install or reload plugins. A notice
+  offers **Update and reload**, or **Review permissions** when access increases.
+  Click the notice body to open that plugin’s update checkbox in Manage plugins.
+  Its Update, Later, and Dismiss controls keep their own actions.
+  Save unfinished forms and stop active plugin workers before you update.
+  **Later** hides the notice for this candidate until the next app run. The
+  update stays in the profile menu under **Plugins**. A newer candidate can show
+  a notice again. Failed checks offer **Retry**. If the updated plugin cannot
+  start, use **Retry activation** or its recovery menu to **Roll back**, when
+  available. Checks, review, Later, and cancellation keep plugin work running.
 - **Reminders**, **Workflows** and **Pins** start off on fresh installs. Upgrades preserve
   their previous state, including when no choice was saved. Enable or disable
   them in **Manage plugins**; saved choices persist.

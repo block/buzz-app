@@ -192,6 +192,44 @@ Browser installation is not supported; the browser shows a desktop-only explanat
 An organization can recommend plugin sources through a policy file next to the profile
 folders; see [managed plugin sources](managed-plugins.md).
 
+## Git plugin updates
+
+A plugin declares support in its installed `manifest.json`:
+
+```json
+"updates": { "defaultEnabled": true }
+```
+
+`true` enables background checks by default. `false` requires the user to enable
+them. An absent `updates` declaration excludes the plugin from this mechanism.
+The user can change **Check for updates automatically** in the plugin's actions
+menu. Buzz saves the choice per installed plugin and preserves it across updates,
+rollback, and restart. A saved choice overrides the plugin default.
+
+The desktop shell checks eligible saved Git sources at startup and once per hour
+while Buzz is visible. `imports.checkGit` reads metadata without taking the import
+preview slot. Checks do not install, reload, or stop a plugin. Folder sources
+keep their existing update flow.
+
+A shell notice offers **Update and reload** when access does not increase.
+An increase in declared host access requires **Review permissions** and explicit
+confirmation in the existing access review. A publisher change also requires
+review and remains subject to native signing rules. **Later** hides the notice
+for the current app run and candidate. The update stays in the profile menu's
+**Plugins** submenu. A newer candidate can show a notice again.
+
+An update action fetches a fresh immutable preview. The importer checks access
+and publisher data from that preview before it applies the update. It checks
+the live source again before installation. A managed source retains its commit
+pin. A changed source or recommendation retires the pending action.
+
+Save unfinished forms and stop active plugin workers before confirmation.
+Installation preserves the enabled state. An enabled plugin reloads immediately
+through the existing manager. Checks, review, Later, and cancellation leave
+plugin work running. Failed checks and imports offer retry. An activation
+failure offers **Retry activation** and the existing plugin menu for rollback.
+The rollback confirmation and signing limits still apply.
+
 ## Emoji and reusable conversation UI
 
 Emoji and Mentions are built-in conversation features, always loaded by the app
@@ -2086,12 +2124,15 @@ Its `order` is a function: recognised services and Buzz entities claim the defau
 band, the globe case the catch-all band, so a renderer dedicated to one website
 wins it at the default.
 It does not fetch titles. The bundled GitHub plugin contributes a pull request
-renderer at a lower `order` for github.com pull request URLs: the same label
-with the pull request's state (open, draft, merged, closed) as a coloured icon,
-read with the person's `gh` sign-in or the public API and kept current while
-shown. Repositories, issues and commits, and every pull request link when that
-plugin is disabled, keep the Links presentation. If the renderer fails, a pull
-request link shows as a plain link.
+and issue renderer at a lower `order` for github.com pull request and issue
+URLs: the same label with the pull request's state (open, draft, merged,
+closed) or the issue's (open, closed as completed, closed as not planned) as a
+coloured icon, read with the person's `gh` sign-in or the public API and kept
+current while shown. A pasted pull request or issue URL is labelled
+`repo#number`, then `repo#number · title` once its title is read with that
+state; an authored label stays. Repositories and commits, and every
+pull request and issue link when that plugin is disabled, keep the Links
+presentation. If the renderer fails, the link shows as a plain link.
 Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`

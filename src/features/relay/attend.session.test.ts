@@ -1337,3 +1337,52 @@ it("keeps a suspended preview the viewer looked up heard for the viewer when a r
   expect(h.owner.session.unattended(OPEN, false)).toBe(true);
   stop();
 });
+
+it("stops counting an attended preview's saved grant once a read after a drop omits it, and hears it once a later lookup finds it public again", async () => {
+  for (const continuous of [false, true]) {
+    const h = harness();
+    const summary = () => h.owner.session.channels.get?.(OPEN);
+    const lookup = () =>
+      h.wire.pending.findIndex(
+        (entry) => !entry.signal?.aborted && asks(entry.filters, OPEN),
+      );
+    const answer = (events: readonly unknown[]) => {
+      const index = lookup();
+      if (index === -1) throw new Error("No metadata read");
+      h.wire.pending.splice(index, 1)[0]?.respond(events as RelayEvent[]);
+    };
+    await h.discover();
+    const stop = h.owner.session.attend([OPEN]);
+    await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+    answer(channel(OPEN, "public"));
+    await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
+    // Private while the stream is down: the read after it omits it.
+    if (continuous) {
+      h.state({ status: "retrying", routes: [] });
+      h.state({ status: "connected", routes: [] });
+      h.establish(undefined, { route: "membership", continuous: true });
+    } else await h.reconnect();
+    await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+    expect(summary()?.metadataCached).toBe(true);
+    answer([]);
+    // Missing evidence keeps no saved grant: unknown, so attendance reads
+    // it again, at once or after its wait.
+    await vi.waitFor(() => expect(summary()).toBeUndefined());
+    expect(h.owner.session.attendPending(OPEN)).toBe(true);
+    await flush();
+    if (lookup() === -1) {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await vi.advanceTimersByTimeAsync(30_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+    await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+    answer(channel(OPEN, "public", 12));
+    await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
+    expect(summary()?.metadataCached).toBeUndefined();
+    stop();
+    h.owner.dispose();
+  }
+});

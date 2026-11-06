@@ -854,6 +854,29 @@ export function createChannelStore(
     void persistence.write(record).catch(() => {});
     return signature;
   }
+  /** Missing evidence cannot keep an earlier public preview readable: an
+   * exact metadata read that omits a preview's metadata, with no newer
+   * version arriving since `started`, denies it until a lookup finds it
+   * public again (attendance's retry, a link or a search). */
+  function omittedPreview(
+    id: string,
+    events: readonly RelayEvent[],
+    started: ReadonlyMap<string, RelayEvent | undefined>,
+  ) {
+    return (
+      !!discovery &&
+      !!transport &&
+      !events.some(
+        (event) =>
+          event.kind === 39000 &&
+          event.pubkey === transport.relayAuthor &&
+          tag(event, "d") === id,
+      ) &&
+      (!!discovery.get(id)?.readOnly ||
+        discovery.suspendedChannels().includes(id)) &&
+      started.get(id) === discovery.metadataVersion(id)
+    );
+  }
   function denyChannel(channelId: string, error: unknown) {
     // A chat still starting is not there to deny yet; only a refused or
     // missing create ends it (see channelWrites.start).
@@ -1749,6 +1772,9 @@ export function createChannelStore(
     let readingRoster = true;
     let denyAllOnFailure = true;
     let outcome: RosterRefresh = { state: "deferred" };
+    /** Previews whose exact metadata read omitted them: denied once the
+     * pass ends, so their revocation does not restart it. */
+    const omitted = new Map<string, RelayEvent | undefined>();
     try {
       const ids = new Set<string>();
       let scannedBytes = 0;
@@ -1943,18 +1969,17 @@ export function createChannelStore(
       if (complete) transport.rosterComplete?.();
       // Saved metadata of a channel the viewer has not joined, as a public
       // preview's, is read again here too: the roster read never returns it.
+      const outsideRoster = [...pendingMetadata].filter(
+        (id) => !ids.has(id) && authorized(id),
+      );
       const wanted = [
-        ...new Set([
-          ...[...ids].filter(
-            (id) =>
-              discovery.authorized(id) &&
-              !named.has(id) &&
-              (force || pendingMetadata.has(id) || !discovery.named(id)),
-          ),
-          ...[...pendingMetadata].filter(
-            (id) => !ids.has(id) && authorized(id),
-          ),
-        ]),
+        ...[...ids].filter(
+          (id) =>
+            discovery.authorized(id) &&
+            !named.has(id) &&
+            (force || pendingMetadata.has(id) || !discovery.named(id)),
+        ),
+        ...outsideRoster,
       ];
       generation = epoch;
       readingRoster = false;
@@ -1965,21 +1990,30 @@ export function createChannelStore(
       controller = new AbortController();
       controllers.add(controller);
       for (let offset = 0; offset < wanted.length; offset += DISCOVERY_LIMIT) {
+        const batch = wanted.slice(offset, offset + DISCOVERY_LIMIT);
+        const versions = new Map(
+          batch.map((id) => [id, discovery.metadataVersion(id)]),
+        );
         const metadata = await transport.read(
           [
             {
               kinds: [39000],
               ...consistency,
-              "#d": wanted.slice(offset, offset + DISCOVERY_LIMIT),
+              "#d": batch,
               limit: DISCOVERY_LIMIT,
             },
           ],
           { signal: controller.signal },
         );
         if (disposed || generation !== epoch) return;
-        for (const id of wanted.slice(offset, offset + DISCOVERY_LIMIT))
-          checkedMetadata.add(id);
+        for (const id of batch) checkedMetadata.add(id);
         applyDiscovery(metadata);
+        for (const id of batch)
+          if (
+            !discovery.authorized(id) &&
+            omittedPreview(id, metadata, versions)
+          )
+            omitted.set(id, versions.get(id));
         if (disposed || generation !== epoch) return;
       }
       if (!disposed && generation === epoch) {
@@ -2051,6 +2085,9 @@ export function createChannelStore(
         else transport.rosterChanged?.();
         if (outcome.state === "verified")
           for (const id of windows.keys()) revalidateCached(id);
+        for (const [id, version] of omitted)
+          if (discovery.metadataVersion(id) === version)
+            denyChannel(id, new Error("Conversation is unavailable"));
       }
     }
   }
@@ -2207,7 +2244,6 @@ export function createChannelStore(
         )
       )
         denyChannel(id, new Error("Conversation is unavailable"));
-      // Missing evidence cannot keep an earlier public preview readable.
       if (
         !events.some(
           (event) =>
@@ -2216,11 +2252,7 @@ export function createChannelStore(
             tag(event, "d") === id,
         )
       ) {
-        if (
-          (discovery.get(id)?.readOnly ||
-            discovery.suspendedChannels().includes(id)) &&
-          started.get(id) === discovery.metadataVersion(id)
-        )
+        if (omittedPreview(id, events, started))
           denyChannel(id, new Error("Conversation is unavailable"));
       } else if (!discovery.named(id))
         throw new Error("Channel metadata capacity unavailable");
@@ -4086,14 +4118,19 @@ export function createChannelStore(
       controllers.add(controller);
       confirmingMetadata = true;
       let finished = false;
+      const omitted: string[] = [];
       try {
         for (let offset = 0; offset < ids.length; offset += DISCOVERY_LIMIT) {
+          const batch = ids.slice(offset, offset + DISCOVERY_LIMIT);
+          const versions = new Map(
+            batch.map((id) => [id, discovery.metadataVersion(id)]),
+          );
           const metadata = await transport.read(
             [
               {
                 kinds: [39000],
                 authors: [transport.relayAuthor],
-                "#d": ids.slice(offset, offset + DISCOVERY_LIMIT),
+                "#d": batch,
                 limit: DISCOVERY_LIMIT,
               },
             ],
@@ -4101,8 +4138,16 @@ export function createChannelStore(
           );
           if (disposed || generation !== epoch) return;
           applyDiscovery(metadata);
+          for (const id of batch)
+            if (
+              !discovery.authorized(id) &&
+              omittedPreview(id, metadata, versions)
+            )
+              omitted.push(id);
         }
         finished = true;
+        for (const id of omitted)
+          denyChannel(id, new Error("Conversation is unavailable"));
       } catch (error) {
         if (
           !disposed &&

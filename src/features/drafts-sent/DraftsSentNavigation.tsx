@@ -1,12 +1,26 @@
 import type { RelayData } from "../relay/service";
 import type { Navigation } from "../navigation/controller";
-import type { OpenTarget } from "../navigation/targets";
+import type { NavigationScope, OpenTarget } from "../navigation/targets";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SendIcon } from "../../shared/design-system/icons";
 import { useDrafts } from "./drafts";
 import { listed, scopeOf } from "./scope";
 import styles from "./DraftsSent.module.css";
+
+/** The host's Drafts & sent destination, shared by sidebar and global search. */
+export function draftsSentTarget(
+  scope?: NavigationScope,
+): Extract<OpenTarget, { kind: "page" }> {
+  return {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    ...(scope ? { scope } : {}),
+    route: { version: 1, params: "drafts-sent" },
+  };
+}
 
 /** A Messages destination, independent of the optional plugin inventory. */
 export function DraftsSentNavigation({
@@ -32,14 +46,7 @@ export function DraftsSentNavigation({
       }
       trailing={<DraftsSentBadge relay={relay} />}
       onClick={() => {
-        void navigator.open({
-          version: 1,
-          kind: "page",
-          pluginId: "buzz.channels",
-          pageId: "channels",
-          ...(scope ? { scope } : {}),
-          route: { version: 1, params: "drafts-sent" },
-        });
+        void navigator.open(draftsSentTarget(scope));
         document.getElementById("main-content")?.focus({ preventScroll: true });
       }}
     />

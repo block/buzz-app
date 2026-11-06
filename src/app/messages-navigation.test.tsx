@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -13,11 +20,25 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/channels"),
       enabledByDefault: true,
     },
+    {
+      manifest: { id: "test.sidebar", name: "Sidebar fixture", apiVersion: 1 },
+      module: await import("./sidebar-plugin.fixture"),
+      enabledByDefault: true,
+    },
   ],
 }));
 
 let services: AppServices | undefined;
+const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "scrollIntoView",
+);
 beforeEach(() => {
+  // jsdom has no layout scrolling; search reveals its selected result.
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -33,11 +54,72 @@ beforeEach(() => {
     removeEventListener() {},
   }));
 });
+
+it("opens the host Drafts & sent destination from global search", async () => {
+  services = createServices();
+  render(<App services={services} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Search Buzz" }));
+  const search = await screen.findByRole("combobox", { name: "Search Buzz" });
+  await user.type(search, "drafts");
+  await user.click(
+    await screen.findByRole("option", { name: "Drafts & sent" }),
+  );
+  expect(
+    await screen.findByRole("region", { name: "Drafts & sent" }),
+  ).toBeVisible();
+  expect(services.navigation.snapshot().entry.target).toMatchObject({
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    route: { version: 1, params: "drafts-sent" },
+  });
+  expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it("opens Drafts & sent from a plugin-owned sidebar's shared Pages navigation", async () => {
+  services = createServices();
+  render(<App services={services} />);
+  await waitFor(() =>
+    expect(services?.navigation.snapshot().status).toBe("opened"),
+  );
+  act(() => {
+    void services?.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "test.sidebar",
+      pageId: "main",
+    });
+  });
+  const sidebar = await screen.findByRole("complementary", {
+    name: "Beacon sidebar",
+  });
+  const pages = within(sidebar).getByRole("navigation", { name: "Pages" });
+  await userEvent.click(
+    within(pages).getByRole("button", { name: "Drafts & sent" }),
+  );
+  expect(
+    await screen.findByRole("region", { name: "Drafts & sent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("navigation", { name: "Pages" })).toContainElement(
+    screen.getByRole("button", { name: "Drafts & sent" }),
+  );
+});
 afterEach(async () => {
   cleanup();
   await services?.dispose();
   services = undefined;
   vi.unstubAllGlobals();
+  if (scrollIntoViewDescriptor)
+    Object.defineProperty(
+      HTMLElement.prototype,
+      "scrollIntoView",
+      scrollIntoViewDescriptor,
+    );
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   localStorage.clear();
   window.history.replaceState(null, "", "/");
 });
@@ -60,6 +142,22 @@ it("opens Drafts & sent inside Messages and retains the sidebar through Back/For
   expect(document.getElementById("shell-navigation")).toHaveAttribute(
     "aria-hidden",
     "false",
+  );
+  expect(drafts).toHaveAttribute("aria-current", "page");
+  act(() => {
+    void services?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+    });
+  });
+  await screen.findByRole("dialog", { name: "Settings" });
+  expect(drafts).toHaveAttribute("aria-current", "page");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Close Settings", exact: true }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
   );
   expect(drafts).toHaveAttribute("aria-current", "page");
   await waitFor(() =>

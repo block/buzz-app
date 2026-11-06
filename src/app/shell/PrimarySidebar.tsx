@@ -1,5 +1,4 @@
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
-import { DraftsSentNavigation } from "../../features/drafts-sent/DraftsSentNavigation";
 import {
   useEffect,
   useLayoutEffect,
@@ -237,15 +236,8 @@ function ScopedSidebar({
         </div>
         {props.creationAction}
       </div>
-      {!restriction && (
-        <div className={styles.destinations}>
-          <DraftsSentNavigation
-            relay={props.relay}
-            navigator={props.navigator}
-            target={target}
-          />
-          {props.children}
-        </div>
+      {props.children && !restriction && (
+        <div className={styles.destinations}>{props.children}</div>
       )}
     </>
   );

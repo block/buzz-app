@@ -8,7 +8,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
+import {
+  MagnifyingGlassIcon,
+  SendIcon,
+} from "../../shared/design-system/icons/index";
+import { draftsSentTarget } from "../../features/drafts-sent/DraftsSentNavigation";
+import { scopeOf } from "../../features/drafts-sent/scope";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -214,8 +219,29 @@ export function PageSearch({
     ...orderPages(pages).map((page) => ({
       key: page.key,
       ...pagePresentation(page),
+      open: () => onSelect(page.key),
     })),
-    { key: "settings", ...shellPresentation.settings },
+    ...(services && pages.some((page) => page.key === "buzz.channels/channels")
+      ? [
+          {
+            key: "drafts-sent",
+            label: "Drafts & sent",
+            icon: SendIcon,
+            open: () => {
+              void services.navigation.open(
+                draftsSentTarget(
+                  scopeOf(services.communities.relay.snapshot()),
+                ),
+              );
+            },
+          },
+        ]
+      : []),
+    {
+      key: "settings",
+      ...shellPresentation.settings,
+      open: () => onSelect("settings"),
+    },
   ]
     .flatMap((page) => {
       if (!needle) return [{ page, rank: 0 }];
@@ -244,7 +270,7 @@ export function PageSearch({
       ...page,
       run: () => {
         returnFocus.current = document.getElementById("main-content");
-        onSelect(page.key);
+        page.open();
         setSearchOpen(false);
       },
     }));

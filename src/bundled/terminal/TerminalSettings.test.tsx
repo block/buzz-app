@@ -289,7 +289,8 @@ it("keeps failed saves active, hides recovery while inactive, and retries the ac
   );
 });
 
-function setupOptionMeta(optionMetaAvailable = true) {
+function setupOptionMeta(platform = "MacIntel") {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
   const font = createTerminalFontPreference();
   stores.push(font);
   render(
@@ -298,7 +299,6 @@ function setupOptionMeta(optionMetaAvailable = true) {
         font={font}
         drafts={createTerminalSettingsDraft()}
         active={() => true}
-        optionMetaAvailable={optionMetaAvailable}
       />
     </ToastProvider>,
   );
@@ -314,7 +314,7 @@ it("switches Option as Meta immediately on a Mac", async () => {
 });
 
 it("offers Option as Meta only on a Mac", () => {
-  setupOptionMeta(false);
+  setupOptionMeta("Linux x86_64");
   expect(
     screen.queryByRole("switch", { name: "Use Option as Meta key" }),
   ).not.toBeInTheDocument();

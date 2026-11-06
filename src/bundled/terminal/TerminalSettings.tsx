@@ -45,13 +45,10 @@ export function TerminalSettings({
   font,
   drafts,
   active,
-  optionMetaAvailable = isApplePlatform(navigator.platform),
 }: {
   font: TerminalFontPreference;
   drafts: ReturnType<typeof createTerminalSettingsDraft>;
   active(): boolean;
-  /** Only macOS keyboards choose between Option characters and Meta. */
-  optionMetaAvailable?: boolean;
 }) {
   const { family, size, error } = useSyncExternalStore(
     font.subscribe,
@@ -200,7 +197,8 @@ export function TerminalSettings({
           </div>
         </form>
       </SettingsGroup>
-      {optionMetaAvailable && <OptionMetaSetting />}
+      {/* Only macOS keyboards choose between Option characters and Meta. */}
+      {isApplePlatform(navigator.platform) && <OptionMetaSetting />}
       {active() && error && (
         <ToastNotice
           title="Terminal font preference needs attention"

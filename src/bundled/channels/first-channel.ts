@@ -78,9 +78,8 @@ export async function ensureFirstChannel(queries: RelaySession) {
   if (!channels.anyChannel || !channelCreation.available) return false;
   // Any stream or forum the relay knows of, open, private or archived, means
   // the community is not new. DMs and Solo chats (the Bestie tab opens one)
-  // do not count; an inconclusive check creates nothing.
-  const exists = await channels.anyChannel();
-  if (exists !== false) return exists === true;
+  // do not count, unless a full batch of 20 comes back.
+  if (await channels.anyChannel()) return true;
   const id = await channelCreation.create({
     name: FIRST_CHANNEL_NAME,
     visibility: "open",

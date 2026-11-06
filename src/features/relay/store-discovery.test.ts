@@ -1444,10 +1444,10 @@ it("checks for any stream or forum in one capped read, skipping Solo chats", asy
       ]),
     ]),
   ).toBe(true);
-  // A full batch of Solo chats cannot tell.
-  expect(
-    await check(Array.from({ length: 20 }, (_, n) => solo(10 + n))),
-  ).toBeUndefined();
+  // A full batch of Solo chats is not an empty community either.
+  expect(await check(Array.from({ length: 20 }, (_, n) => solo(10 + n)))).toBe(
+    true,
+  );
   expect(h.pending).toHaveLength(0);
 });
 

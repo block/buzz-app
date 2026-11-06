@@ -2551,10 +2551,10 @@ export function createChannelStore(
   }
   /** Whether the relay holds any stream or forum channel, Solo chats left
    * out, from one small capped read. Cheaper than the directory when only
-   * existence matters; undefined when a full batch was all Solo chats. */
+   * existence matters. A full batch of Solo chats counts as not new. */
   async function anyChannel(settings?: {
     signal?: AbortSignal | undefined;
-  }): Promise<boolean | undefined> {
+  }): Promise<boolean> {
     if (disposed || !transport || options.cachedOnly)
       throw new Error("Relay is unavailable");
     const relay = transport;
@@ -2587,7 +2587,9 @@ export function createChannelStore(
       )
     )
       return true;
-    return events.length < ANY_CHANNEL_BATCH ? false : undefined;
+    // A full batch of Solo chats is not an empty community either: settle
+    // rather than read again on every launch.
+    return events.length >= ANY_CHANNEL_BATCH;
   }
   /** Recent member counts, by channel, for this epoch. */
   let memberCounts:

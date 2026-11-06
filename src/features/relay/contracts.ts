@@ -325,11 +325,9 @@ export interface ChannelQueries {
   }): Promise<{ partial: boolean }>;
   /** Whether the relay holds any stream or forum channel this viewer can
    * see, open, private or archived; DMs, Solo chats and system channels do
-   * not count. One read of a few events; undefined when it cannot tell (a
-   * full batch held only Solo chats). Names no channel, never grants access. */
-  anyChannel?(options?: {
-    signal?: AbortSignal | undefined;
-  }): Promise<boolean | undefined>;
+   * not count, though a full batch of only Solo chats counts as not empty.
+   * One read of a few events. Names no channel, never grants access. */
+  anyChannel?(options?: { signal?: AbortSignal | undefined }): Promise<boolean>;
   /** Member counts for browsing, from a joined channel's roster or an open
    * channel's relay-signed one, kept a few minutes. A channel without a
    * roster is left out of `counts`; `failed` names the ids whose read

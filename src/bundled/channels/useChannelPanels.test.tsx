@@ -216,6 +216,8 @@ it("keeps a side panel with its channel until closed, while bottom drawers close
   const view = render(<Harness key="alpha" channel="alpha" />);
   await user.click(launcher("Huddle"));
   expect(side()).toBeVisible();
+  // The session store keeps no DOM elements; the trigger stays with the page.
+  expect(retained.alpha).not.toHaveProperty("trigger");
   view.rerender(<Harness key="beta" channel="beta" />);
   expect(side()).not.toBeInTheDocument();
   expect(launcher("Huddle")).toHaveAttribute("aria-pressed", "false");

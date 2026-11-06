@@ -19,13 +19,15 @@ import styles from "./Channels.module.css";
 const launcherOrder = (key: string) =>
   key === "buzz.huddles/huddles" ? 2 : key === "buzz.github/object" ? 1 : 0;
 
+/** A retained side panel opening; it holds no DOM elements. */
 export type ChannelDrawerOpening = Readonly<{
   panel: RegisteredPanel;
   context: ChannelPanelContext;
   target: string;
-  trigger: HTMLElement | null;
 }>;
-type Opening = ChannelDrawerOpening;
+type Opening = ChannelDrawerOpening & {
+  readonly trigger?: HTMLElement | null;
+};
 /** The page's tab workspace, which owns `channelPlacement: "tab"` panels. */
 export type ChannelPanelTabs = {
   pressed(panel: RegisteredPanel, context: ChannelPanelContext): boolean;
@@ -63,12 +65,19 @@ export function useChannelPanels(
   // Bottom drawers belong to this mount and channel. Side-column panels stay
   // with their channel in `side`, so returning shows them until closed.
   const [local, setLocal] = useState<Opening>();
+  // A retained opening's trigger stays with this mount, never in the store.
+  const triggers = useRef(new WeakMap<ChannelDrawerOpening, HTMLElement>());
   const opened = side?.opening ?? local;
   const setOpened = (next: Opening | undefined) => {
-    const retained = !!side && next?.panel.channelPlacement === "side";
-    setLocal(retained ? undefined : next);
-    if (side && (retained || side.opening))
-      side.set(retained ? next : undefined);
+    if (side && next?.panel.channelPlacement === "side") {
+      const { trigger, ...retained } = next;
+      if (trigger) triggers.current.set(retained, trigger);
+      setLocal(undefined);
+      side.set(retained);
+      return;
+    }
+    setLocal(next);
+    if (side?.opening) side.set(undefined);
   };
   const mounted = useRef<ChannelPanelContext>(undefined);
   useLayoutEffect(() => {
@@ -104,8 +113,9 @@ export function useChannelPanels(
   const hide = (opening: Opening) => {
     if (activeOpening.current !== opening) return;
     setOpened(undefined);
-    const target = opening.trigger?.isConnected
-      ? opening.trigger
+    const trigger = opening.trigger ?? triggers.current.get(opening);
+    const target = trigger?.isConnected
+      ? trigger
       : side?.fallbackFocus?.current;
     target?.focus();
   };

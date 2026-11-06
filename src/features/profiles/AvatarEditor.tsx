@@ -15,6 +15,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { InputGroup } from "../../shared/design-system/ui/InputGroup";
+import { ScrollEdgeMaterial } from "../../shared/design-system/ui/ScrollEdgeMaterial";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   avatarPictureError,
@@ -29,6 +30,7 @@ import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
 
 type Props = {
   triggerStyle?: "dotted-squircle";
+  emptyStyle?: "dotted-circle" | undefined;
   inlinePicker?: boolean;
   triggerLabel?: string;
   actionTarget?: HTMLElement | null | undefined;
@@ -82,6 +84,7 @@ const colors = [
 
 /** One draft editor for humans and agents; the enclosing form owns profile Save. */
 export function AvatarEditor(props: Props) {
+  const setupAnchor = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(!!props.inlinePicker);
   const [draftPreview, setDraftPreview] = useState<DraftPreview | null>(null);
   const [sizeTarget, setSizeTarget] = useState<HTMLElement | null>(null);
@@ -117,6 +120,7 @@ export function AvatarEditor(props: Props) {
     <div
       className={props.inlinePicker ? styles.inlineEditor : undefined}
       data-editing={open || undefined}
+      ref={setupAnchor}
     >
       <Popover.Root
         open={open}
@@ -139,7 +143,39 @@ export function AvatarEditor(props: Props) {
           if (!props.inlinePicker || next) setOpen(next);
         }}
       >
-        {props.triggerStyle === "dotted-squircle" ? (
+        {props.emptyStyle === "dotted-circle" &&
+        !props.value &&
+        !draftPreview?.picture &&
+        !draftPreview?.emoji ? (
+          <div className={styles.avatarFrame}>
+            <Popover.Trigger
+              render={
+                <button
+                  type="button"
+                  className={`${styles.dottedTrigger} ${styles.emptyCircle}`}
+                  aria-label="Add avatar"
+                  disabled={props.disabled}
+                />
+              }
+            >
+              <svg
+                className={styles.dottedOutline}
+                viewBox="0 0 220 220"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="110"
+                  cy="110"
+                  r="108"
+                  pathLength="288"
+                  strokeWidth="3"
+                  strokeDasharray="4 5"
+                />
+              </svg>
+              <PlusIcon size={40} aria-hidden="true" />
+            </Popover.Trigger>
+          </div>
+        ) : props.triggerStyle === "dotted-squircle" ? (
           <div className={styles.dottedFrame}>
             <Popover.Trigger
               render={
@@ -230,7 +266,8 @@ export function AvatarEditor(props: Props) {
                     aria-label="Edit avatar"
                     aria-describedby={pictureError ? errorId : undefined}
                     icon={
-                      props.value ? (
+                      (draftPreview?.picture ?? props.value) ||
+                      draftPreview?.emoji ? (
                         <PencilSimpleIcon size={16} />
                       ) : (
                         <PlusIcon size={16} />
@@ -253,12 +290,15 @@ export function AvatarEditor(props: Props) {
         ) : (
           <Popover.Portal>
             <Popover.Positioner
+              anchor={
+                props.emptyStyle === "dotted-circle" ? setupAnchor : undefined
+              }
               side="bottom"
               align="center"
               sideOffset={8}
               collisionPadding={12}
               collisionAvoidance={{
-                side: "shift",
+                side: props.emptyStyle === "dotted-circle" ? "none" : "shift",
                 align: "shift",
                 fallbackAxisSide: "none",
               }}
@@ -438,6 +478,22 @@ function AvatarDraft({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  // Focus scrolling stops above the sticky footer, however its actions wrap.
+  const [footer, setFooter] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const popup = footer?.closest<HTMLElement>(`.${styles.popup}`);
+    if (!footer || !popup) return;
+    const measure = () => {
+      popup.style.scrollPaddingBlockEnd = `${footer.offsetHeight}px`;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      popup.style.removeProperty("scroll-padding-block-end");
+    };
+  }, [footer]);
   const [picture, setPicture] = useState(value);
   const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
   const [emoji, setEmoji] = useState("😀");
@@ -734,17 +790,23 @@ function AvatarDraft({
           </p>
         )}
         {!(mode === "background" && customColorOpen) && (
-          <div className="flex flex-wrap justify-between gap-2">
-            {!inlinePicker && (
-              <Button
-                variant="destructive"
-                disabled={(!value && !picture) || disabled || busy}
-                onClick={() => done("")}
-              >
-                Remove avatar
-              </Button>
-            )}
-            {actionTarget ? createPortal(doneButton, actionTarget) : doneButton}
+          <div ref={setFooter} className={styles.footer}>
+            {/* A short popup scrolls beneath its actions; inline, they sit in flow. */}
+            {!inlinePicker && <ScrollEdgeMaterial edge="bottom" />}
+            <div className={styles.footerActions}>
+              {!inlinePicker && (
+                <Button
+                  variant="destructive"
+                  disabled={(!value && !picture) || disabled || busy}
+                  onClick={() => done("")}
+                >
+                  Remove avatar
+                </Button>
+              )}
+              {actionTarget
+                ? createPortal(doneButton, actionTarget)
+                : doneButton}
+            </div>
           </div>
         )}
       </fieldset>

@@ -57,6 +57,7 @@ test("the header cancels a pending Huddle and ignores late connection events", a
     header.getByRole("button", { name: "Start or join a huddle" }),
   ).toBeVisible();
   await header.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
     .toBe(2);
@@ -227,9 +228,8 @@ test("connected Huddles keep compact controls beside the default window", async 
   expect(
     await page.evaluate(() => window.huddleFixture.stats.audioClosed),
   ).toBe(1);
-  await header
-    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
-    .click();
+  await header.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await page.evaluate(() => window.huddleFixture.disconnect());
   const notifications = page.getByRole("region", { name: "App notifications" });
   await expect(notifications).toContainText("Huddle disconnected");
@@ -238,9 +238,8 @@ test("connected Huddles keep compact controls beside the default window", async 
     .getByRole("button", { name: "Dismiss Huddle error" })
     .click();
   await expect(notifications.getByRole("dialog")).toHaveCount(0);
-  await header
-    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
-    .click();
+  await header.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await expect
     .poll(() => page.evaluate(() => window.huddleFixture.stats.opens))
     .toBe(3);
@@ -424,46 +423,55 @@ test("capsule and companion presentation share mute and leave", async ({
           .map((animation) => animation.finished),
       );
     });
-    // A spring can briefly cross its final size before overshooting. Wait for
-    // Motion to remove the arrival/layout transform, not that transient crossing.
+    // A spring can briefly cross its final size before overshooting, and
+    // Motion can put a sub-pixel transform back on a settled avatar for a
+    // frame or two. Measure in the frame that shows no avatar transform, not
+    // a later one; a separate poll could pass and the snapshot still land on
+    // such a frame.
+    let geometry;
     await expect
-      .poll(() =>
-        roster.evaluate((el) =>
-          [...el.querySelectorAll("[data-huddle-avatar]")].every(
-            (avatar) => getComputedStyle(avatar).transform === "none",
-          ),
-        ),
+      .poll(
+        async () => {
+          geometry = await roster.evaluate((el) => {
+            if (
+              [...el.querySelectorAll("[data-huddle-avatar]")].some(
+                (avatar) => getComputedStyle(avatar).transform !== "none",
+              )
+            )
+              return null;
+            const area = el.getBoundingClientRect();
+            const bounds = (node) => {
+              const rect = node.getBoundingClientRect();
+              return {
+                left: rect.left - area.left,
+                top: rect.top - area.top,
+                right: rect.right - area.left,
+                bottom: rect.bottom - area.top,
+                center: rect.left + rect.width / 2 - area.left,
+              };
+            };
+            return {
+              width: area.width,
+              height: area.height,
+              self: bounds(el.querySelector("[data-self]")),
+              portraitGaps: [
+                ...el.querySelectorAll("[data-self], [data-participant]"),
+              ].map((person) =>
+                Math.abs(
+                  person.getBoundingClientRect().height -
+                    person
+                      .querySelector("[data-huddle-avatar]")
+                      .getBoundingClientRect().height,
+                ),
+              ),
+              peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
+            };
+          });
+          return geometry !== null;
+        },
+        { message: "every huddle avatar settles with no transform" },
       )
       .toBe(true);
-    const geometry = await roster.evaluate((el) => {
-      const area = el.getBoundingClientRect();
-      const bounds = (node) => {
-        const rect = node.getBoundingClientRect();
-        return {
-          left: rect.left - area.left,
-          top: rect.top - area.top,
-          right: rect.right - area.left,
-          bottom: rect.bottom - area.top,
-          center: rect.left + rect.width / 2 - area.left,
-        };
-      };
-      return {
-        width: area.width,
-        height: area.height,
-        self: bounds(el.querySelector("[data-self]")),
-        portraitGaps: [
-          ...el.querySelectorAll("[data-self], [data-participant]"),
-        ].map((person) =>
-          Math.abs(
-            person.getBoundingClientRect().height -
-              person
-                .querySelector("[data-huddle-avatar]")
-                .getBoundingClientRect().height,
-          ),
-        ),
-        peers: [...el.querySelectorAll("[data-participant]")].map(bounds),
-      };
-    });
     const portraits = [geometry.self, ...geometry.peers];
     if (portraits.length > 3) {
       expect(geometry.self.center).toBeCloseTo(geometry.width / 2, 0);
@@ -839,9 +847,8 @@ test("active chat has a split Huddle menu for members and a join-path link", asy
   ).toBe(1);
   // A DM call opens the room picker, leaving DM membership unchanged.
   await page.getByRole("button", { name: "Switch conversation" }).click();
-  await page
-    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
-    .click();
+  await page.getByRole("button", { name: "Start or join a huddle" }).click();
+  await page.getByRole("button", { name: "Start huddle" }).click();
   await page.getByRole("button", { name: "Close Huddle window" }).click();
   await active.getByRole("button", { name: "Huddle options" }).click();
   await page.getByRole("menuitem", { name: "Add someone" }).click();
@@ -1191,7 +1198,8 @@ test("detached regular composer keeps failed drafts, uploads real file bytes and
     }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: `Alex ${"cd".repeat(32)}`, exact: true })
+    .getByRole("button")
+    .and(page.locator(`[data-mention-choice="${"cd".repeat(32)}"]`))
     .click();
   // The host picker delivers the selection to the companion asynchronously.
   await expect(
@@ -1697,7 +1705,16 @@ test("audio settings mirror device choices between compact and window controls",
     page.getByRole("combobox", { name: "Microphone", exact: true }),
   ).toContainText("USB microphone");
   await page.getByRole("combobox", { name: "Speakers", exact: true }).click();
-  await page.getByRole("option", { name: "Headphones", exact: true }).click();
+  // The popup can flip between a pointer pick's press and release, and Base UI
+  // ignores that split click. The microphone pick above covers the pointer.
+  await expect(
+    page.getByRole("option", { name: "System default", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("option", { name: "Headphones", exact: true }),
+  ).toHaveAttribute("data-highlighted", "");
+  await page.keyboard.press("Enter");
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "Audio settings", exact: true }),

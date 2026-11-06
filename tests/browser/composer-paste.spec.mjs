@@ -298,22 +298,22 @@ test("external linked text stays linked in the composer and sent message", async
   });
   await input.click();
   await pasteInto(input, {
-    text: "Read the guide",
-    html: '<p>Read <a href="https://example.com/guide">the guide</a></p>',
+    text: "Read :wave: the guide",
+    html: '<p>Read <img alt=":wave:" src="https://example.com/emoji.png"> <a href="https://example.com/guide">the guide</a></p>',
   });
   await expect(input).toHaveJSProperty(
     "value",
-    "Read [the guide](https://example.com/guide)",
+    "Read :wave: [the guide](https://example.com/guide)",
   );
   await expect(input.locator("[data-link-renderer]")).toHaveText("the guide");
   await input.press("Enter");
   await expect.poll(() => app.report.publications.length).toBe(1);
   expect(app.report.publications[0].event.content).toBe(
-    "Read [the guide](https://example.com/guide)",
+    "Read :wave: [the guide](https://example.com/guide)",
   );
 });
 
-// Browser integration: a native paste event over a keyboard selection reaches
+// Browser integration: a native paste event over a selection reaches
 // the editor's link path, renders the anchor and publishes the linked label.
 test("pasting a URL over selected text links it in the composer and sent message", async ({
   page,
@@ -326,8 +326,7 @@ test("pasting a URL over selected text links it in the composer and sent message
   });
   await input.click();
   await input.pressSequentially("Check the release notes before Friday");
-  for (let i = 0; i < 14; i++) await input.press("ArrowLeft");
-  for (let i = 0; i < 13; i++) await input.press("Shift+ArrowLeft");
+  await input.evaluate((element) => element.setSelectionRange(10, 23));
   await expect
     .poll(() =>
       input.evaluate((element) =>

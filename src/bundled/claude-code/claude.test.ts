@@ -56,6 +56,41 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
   expect(claude.started).toBe(false);
 });
 
+it("lets its Buzz credential act as its agent before it initializes", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const agent = { pubkey: "ab".repeat(32), relay: "wss://relay.example" };
+  await ClaudeProcess.start(spawn, { ...launch, agent });
+  const [fake] = processes;
+  expect(fake?.options.agentCredential).toBe(true);
+  expect(fake?.actedAs).toEqual([agent]);
+  expect(fake?.received[0]).toMatchObject({
+    request: { subtype: "initialize" },
+  });
+});
+
+it("fails to start, and stops, when its credential cannot act as its agent", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await expect(
+    ClaudeProcess.start(
+      async (id, options) => ({
+        ...(await spawn(id, options)),
+        actAs: async () => {
+          throw new Error("revoked");
+        },
+      }),
+      { ...launch, agent: { pubkey: "ab".repeat(32), relay: "wss://r" } },
+    ),
+  ).rejects.toThrow("revoked");
+  expect(processes[0]?.killed).toBe(true);
+  expect(processes[0]?.received).toEqual([]);
+});
+
+it("asks no credential for a discovery probe", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, { ...launch, discovery: true });
+  expect(processes[0]?.options.agentCredential).toBe(false);
+});
+
 it("resolves a message once the session is idle, and keeps the process for the next", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {
@@ -492,6 +527,33 @@ it("allows tool use and acknowledges hooks it is asked about", async () => {
   ]);
 });
 
+it("cancels a Buzz tool that is still running when its process stops", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const signals: AbortSignal[] = [];
+  const tools = vi.fn(
+    (_conversation: unknown, _message: unknown, signal: AbortSignal) => {
+      signals.push(signal);
+      return new Promise<never>(() => {});
+    },
+  );
+  const claude = await ClaudeProcess.start(spawn, { ...launch, tools });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.emit({
+    type: "control_request",
+    request_id: "r1",
+    request: {
+      subtype: "mcp_message",
+      server_name: "buzz",
+      message: { jsonrpc: "2.0", id: 3, method: "tools/call" },
+    },
+  });
+  await vi.waitFor(() => expect(signals).toHaveLength(1));
+  expect(signals[0]?.aborted).toBe(false);
+  await claude.kill();
+  expect(signals[0]?.aborted).toBe(true);
+});
+
 it("serves the Buzz tools over the pipe and ends a turn on a final send or subthread reply", async () => {
   const { spawn, processes } = fakeSpawn();
   const tools = vi.fn(async (_conversation: unknown, message: unknown) => ({
@@ -552,7 +614,11 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send or subth
   fake.emit(hook(true));
   fake.emit(hook(true, "reply_in_subthread"));
   await flush();
-  expect(tools).toHaveBeenCalledWith("chan/root", call);
+  expect(tools).toHaveBeenCalledWith(
+    "chan/root",
+    call,
+    expect.any(AbortSignal),
+  );
   const responses = fake.received
     .filter((message) => message.type === "control_response")
     .map((message) => message.response);

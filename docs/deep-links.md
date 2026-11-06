@@ -17,7 +17,9 @@ its `#buzz=` address form.
 
 The OS ingress accepts the Buzz link forms and nothing else:
 
+- `buzz://mcp-authorize?version=1&client=<name>&callback=<loopback-url>&state=<state>&scope=<scopes>&code_challenge=<challenge>&code_challenge_method=S256`
 - `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
+- `buzz://plugin-install?repository=<encoded-https-or-ssh-url>[&ref=<encoded-branch-or-tag>][&path=<encoded-folder>][&commit=<40-or-64-hex>]`
 - `buzz://channel/<id>`
 - `buzz://channel/<id>/<event>` (the original desktop message alias)
 - `buzz://repo?owner=<64-hex key>&d=<identifier>[&tab=<section>]`
@@ -27,10 +29,41 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://connect?relay=<wss-url>`
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
 - `buzz://plugin?id=<plugin id>[&page=<page id>][&route.<key>=<value>...]`
+- `buzz://agent/new?card=<id>`
+
+External authorization links show owner consent. They never grant access on arrival. The [external app protocol](agents.md#external-app-authorization) defines the callback, S256 exchange, scopes, and expiry. Handshake values stay outside navigation history.
+
+Plugin install links open **Settings > Plugins > Manage plugins** and fetch a
+preview from the Git repository and optional branch or tag. The repository accepts
+HTTPS, `ssh://`, `git@host:path`, `github.com/owner/repo`, or `owner/repo`.
+Percent-encode each query value. `path` selects the plugin folder inside the
+repository (relative, `/`-separated; no `..`, backslashes or absolute paths). `commit`
+pins the install to that exact commit: nothing installs unless the fetched repository
+matches it. Repeating any of the four keys makes the link invalid. Review the plugin
+and computer access, then select **Install plugin**. Opening the link does not install, enable, or grant access.
+You can close a linked preview while Git loads; its late result is discarded.
+An omitted `ref` uses the repository default. Duplicate known parameters and
+repository credentials are rejected.
+
+The Settings target has no community scope. A new installation completes identity
+setup before the app can show it. Repositories hosted by a Buzz community require
+that community to be selected and connected for authentication. See
+[Git imports and SSH agents](plugin-architecture.md#open-a-git-import-from-a-link).
 
 Query-based invite, message and plugin links also accept a single `/` before `?`,
 as supplied by Windows URL activation (for example, `buzz://join/?relay=…&code=…`).
 Non-root paths remain unsupported for these forms; channel paths are unchanged.
+
+Agent card links open **Agents** with **Create agent** filled in from a
+published Builderlab agent card, as Buzz mobile does. `card` is 1-64 ASCII
+letters, digits, `_` or `-`. The app reads `<id>/agent.json` from this build's
+avatars CDN (staging for a `https://app.builderlabstaging.xyz` build, production
+otherwise), never from a host the link names: `id` must match, `name` and an
+HTTPS `avatarUrl` are required, and `instructions` is optional. The card's
+`model` is not applied. Instructions are filled in for harnesses that keep
+them. Opening the link creates nothing; Close retires it. A card that can't be
+loaded says why and offers **Try again**. Like the other navigation forms, it
+binds to the selected community and viewer.
 
 Plugin page links open a page contributed by an installed, enabled plugin. `id` and
 `page` use the same 1-128 character lowercase token as plugin and page IDs (letters
@@ -64,7 +97,9 @@ selected or no identity is known. `buzz://join` is the separate invitation form.
 It holds through identity setup and opens the
 existing join dialog with the relay and code prefilled; it never claims or saves
 membership until the user completes discovery, policy acceptance, claim and profile
-confirmation. The relay's HTTPS `/invite/<code>` page supplies that `buzz://join`
+confirmation. The first-run welcome screen hands an address (and invite code)
+typed there to the same intent when it enters the app on a restored community
+instead ([identity](identity.md)), so one dialog serves both. The relay's HTTPS `/invite/<code>` page supplies that `buzz://join`
 link; HTTPS itself is not registered as an OS handler. `buzz://connect`
 (the relay website's **Open in Buzz**) and `buzz://add-community` (hosted
 community **Open in Buzz**; `name` is ignored) are the same form without a code:
@@ -151,8 +186,7 @@ For warm delivery, the bundle selected by Launch Services must itself be running
 forwarding an OS URL from that bundle to a different running copy is not supported:
 
 ```sh
-just desktop-bundle
-open "target/debug/bundle/macos/Buzz.app"
+just desktop-bundle --launch
 open "buzz://channel/general"
 ```
 

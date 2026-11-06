@@ -62,6 +62,9 @@
    step 10 and pressed: each accent's hover and press, retuned to move clearly
    off step 9 while staying clean rather than muddy. */
 :root {
+  /* Branded onboarding palette; dark mode adds the approved 30% black tint. */
+  --brand-chartreuse: #d7d72e;
+  --brand-chartreuse-dimmed: color-mix(in srgb, #d7d72e 70%, black);
   --magenta-1-light: #fffbfc;
   --magenta-2-light: #fff7fa;
   --magenta-3-light: #ffeef3;
@@ -867,6 +870,7 @@
   --blur-lg: 32px;
 
   /* --- Elevation. Controls, floating surfaces and workspace panels. --- */
+  --shadow-card: 0 16px 40px rgba(35, 30, 30, 0.06);
   --shadow-panel:
     0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
     0 2px 4px rgba(0, 0, 0, 0.04);
@@ -1098,6 +1102,10 @@
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --affordance-message-own-hover: var(--shade-quiet-fill);
+  /* Arriving at a message lays the regular step across its bubble, about
+     twice hover, so the cue never reads as the pointer. */
+  --affordance-message-highlight: var(--shade-fill);
+  --affordance-message-own-highlight: var(--affordance-message-highlight);
   --affordance-reaction: var(--shade-soft-fill);
   --affordance-reaction-own: var(--affordance-reaction);
   /* Mentions are people, not links. Ordinary mentions stay neutral; a mention
@@ -1206,7 +1214,8 @@
   --affordance-floating-selected: var(--affordance-subtle-pressed);
   --border-floating-control: var(--border-prominent);
   --affordance-selected: var(--neutral-3);
-  --affordance-disabled: var(--neutral-3);
+  --affordance-disabled: var(--neutral-4);
+  --surface-onboarding: var(--brand-chartreuse);
   --affordance-danger: var(--red-3);
   --affordance-danger-hover: var(--red-4);
   --affordance-danger-pressed: var(--red-5);
@@ -1233,6 +1242,8 @@
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --affordance-message-own-hover: var(--tint-quiet-fill);
+  --affordance-message-highlight: var(--tint-fill);
+  --affordance-message-own-highlight: var(--affordance-message-highlight);
   --affordance-reaction: var(--tint-soft-fill);
   --affordance-reaction-own: var(--affordance-reaction);
   /* Ordinary mentions tint the dark fill they sit on. A mention of you takes
@@ -1246,6 +1257,7 @@
   --affordance-mention-own: var(--affordance-mention);
   --affordance-mention-own-hover: var(--affordance-mention-hover);
   --text-mention-own: var(--text-mention);
+  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
@@ -1347,7 +1359,8 @@
   --affordance-floating-selected: var(--neutral-6);
   --border-floating-control: var(--neutral-9);
   --affordance-selected: var(--neutral-5);
-  --affordance-disabled: var(--neutral-3);
+  --affordance-disabled: var(--neutral-5);
+  --surface-onboarding: var(--brand-chartreuse-dimmed);
   --affordance-danger: var(--red-3);
   --affordance-danger-hover: var(--red-4);
   --affordance-danger-pressed: var(--red-5);
@@ -1460,6 +1473,7 @@
   --size-resize-seam: 0.875rem;
   --radius-panel: var(--corner-panel);
   --radius-control: var(--corner-control);
+  --radius-card: 2rem;
   --radius-container: var(--corner-container);
   --radius-row: var(--corner-row);
   /* Independent icon controls use an even contour on all four corners. */
@@ -1587,11 +1601,18 @@
   --accent-overlay-hover: var(--accent-overlay-hover-light);
   --accent-overlay-soft: var(--accent-overlay-soft-light);
   --accent-overlay-quiet: var(--accent-overlay-quiet-light);
+  --accent-overlay-highlight: var(--accent-overlay-highlight-light);
   --text-accent: var(--text-standard);
   --border-accent: var(--border-focus);
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1626,11 +1647,18 @@
   --accent-overlay-hover: var(--accent-overlay-hover-dark);
   --accent-overlay-soft: var(--accent-overlay-soft-dark);
   --accent-overlay-quiet: var(--accent-overlay-quiet-dark);
+  --accent-overlay-highlight: var(--accent-overlay-highlight-dark);
   --text-accent: var(--text-standard);
   --border-accent: var(--border-focus);
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1665,6 +1693,7 @@
   --accent-overlay-hover-light: var(--shade-strong-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
+  --accent-overlay-highlight-light: var(--shade-fill);
   --accent-1-dark: var(--magenta-1-dark);
   --accent-2-dark: var(--magenta-2-dark);
   --accent-3-dark: var(--magenta-3-dark);
@@ -1686,6 +1715,7 @@
   --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
+  --accent-overlay-highlight-dark: var(--shade-fill);
 }
 :root[data-accent="iris"],
 [data-accent="iris"] {
@@ -1710,6 +1740,7 @@
   --accent-overlay-hover-light: var(--shade-strong-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
+  --accent-overlay-highlight-light: var(--shade-fill);
   --accent-1-dark: var(--iris-1-dark);
   --accent-2-dark: var(--iris-2-dark);
   --accent-3-dark: var(--iris-3-dark);
@@ -1731,6 +1762,7 @@
   --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
+  --accent-overlay-highlight-dark: var(--shade-fill);
 }
 :root[data-accent="cobalt"],
 [data-accent="cobalt"] {
@@ -1755,6 +1787,7 @@
   --accent-overlay-hover-light: var(--shade-strong-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
+  --accent-overlay-highlight-light: var(--shade-fill);
   --accent-1-dark: var(--cobalt-1-dark);
   --accent-2-dark: var(--cobalt-2-dark);
   --accent-3-dark: var(--cobalt-3-dark);
@@ -1776,6 +1809,7 @@
   --accent-overlay-hover-dark: var(--shade-strong-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
+  --accent-overlay-highlight-dark: var(--shade-fill);
 }
 :root[data-accent="bee"],
 [data-accent="bee"] {
@@ -1800,6 +1834,7 @@
   --accent-overlay-hover-light: var(--shade-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
+  --accent-overlay-highlight-light: var(--shade-fill);
   --accent-1-dark: var(--bee-1-dark);
   --accent-2-dark: var(--bee-2-dark);
   --accent-3-dark: var(--bee-3-dark);
@@ -1821,6 +1856,7 @@
   --accent-overlay-hover-dark: var(--shade-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
+  --accent-overlay-highlight-dark: var(--shade-fill);
 }
 :root[data-accent="citrus"],
 [data-accent="citrus"],
@@ -1846,6 +1882,7 @@
   --accent-overlay-hover-light: var(--shade-hover-fill);
   --accent-overlay-soft-light: var(--shade-soft-fill);
   --accent-overlay-quiet-light: var(--shade-quiet-fill);
+  --accent-overlay-highlight-light: var(--shade-fill);
   --accent-1-dark: var(--citrus-1-dark);
   --accent-2-dark: var(--citrus-2-dark);
   --accent-3-dark: var(--citrus-3-dark);
@@ -1867,6 +1904,7 @@
   --accent-overlay-hover-dark: var(--shade-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
+  --accent-overlay-highlight-dark: var(--shade-fill);
 }
 :root[data-accent="mono"],
 [data-accent="mono"] {
@@ -1891,6 +1929,7 @@
   --accent-overlay-hover-light: var(--tint-hover-fill);
   --accent-overlay-soft-light: var(--tint-soft-fill);
   --accent-overlay-quiet-light: var(--tint-quiet-fill);
+  --accent-overlay-highlight-light: var(--tint-fill);
   --accent-1-dark: var(--mono-1-dark);
   --accent-2-dark: var(--mono-2-dark);
   --accent-3-dark: var(--mono-3-dark);
@@ -1912,6 +1951,7 @@
   --accent-overlay-hover-dark: var(--shade-hover-fill);
   --accent-overlay-soft-dark: var(--shade-soft-fill);
   --accent-overlay-quiet-dark: var(--shade-quiet-fill);
+  --accent-overlay-highlight-dark: var(--shade-fill);
 }
 
 /* Vibe changes bubble contrast only. Shared controls retain their neutral roles. */
@@ -1934,7 +1974,11 @@
   --affordance-mention-own: var(--accent-overlay);
   --affordance-mention-own-hover: var(--accent-overlay-hover);
   --affordance-message-own-hover: var(--accent-overlay-quiet);
+  --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -1952,7 +1996,11 @@
   --affordance-mention-own: var(--accent-overlay);
   --affordance-mention-own-hover: var(--accent-overlay-hover);
   --affordance-message-own-hover: var(--accent-overlay-quiet);
+  --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -2087,6 +2135,8 @@
     --affordance-accent-prominent-hover
   );
   --border-color-accent: var(--border-accent);
+  --border-color-reaction-self: var(--border-reaction-self);
+  --border-color-reaction-self-own: var(--border-reaction-self-own);
 
   /* Palette utilities remain for the palette viewer and staged migration. */
   /* neutral */

@@ -35,6 +35,7 @@ import type { PluginInfo } from "../../plugins/types";
 import * as builderlab from "../builderlab/index";
 import builderlabManifest from "../builderlab/manifest.json";
 import { deferred } from "../builderlab/test-helpers";
+import { federatedFixture } from "../../features/federated-identity/testing";
 import * as bestiePlugin from "./index";
 import bestieManifest from "./manifest.json";
 import {
@@ -69,7 +70,15 @@ type Reply = { status: number; body: unknown };
 /** Real Builderlab and Bestie plugins, Agents service, relay session and
  * Outbox. Only the native bridge (Beekeeper HTTP, login, owner signing) and the
  * relay wire are simulated. `invoke` is the test file's mocked Tauri invoke. */
-export async function bestieFixture(invoke: Mock) {
+export async function bestieFixture(
+  invoke: Mock,
+  options: {
+    mainAgent?: {
+      read(signal: AbortSignal): Promise<string | undefined>;
+      write(agent: string | null, signal: AbortSignal): Promise<void>;
+    };
+  } = {},
+) {
   const identity = keypair();
   const authority = keypair();
   const remote = keypair();
@@ -79,113 +88,107 @@ export async function bestieFixture(invoke: Mock) {
   const holds = new Map<string, Promise<void>>();
   let signInCanceled = false;
   let registered = 0;
-  invoke.mockImplementation(
-    async (command: string, input: Record<string, unknown>) => {
-      if (command === "oauth_callback_begin")
-        return {
-          id: "attempt",
-          callbackUrl: `http://127.0.0.1:12345${input.callbackPath}`,
-        };
-      if (command === "oauth_callback_wait") {
-        if (signInCanceled) {
-          signInCanceled = false;
-          throw new Error("Sign-in canceled.");
-        }
-        return { parameters: [["code", "one-time"]] };
-      }
-      if (command === "oauth_callback_cancel") return;
-      if (command === "identity_restore") return identity.pubkey;
-      if (command === "identity_prepare_remote_agent_authorization")
-        return ["auth", identity.pubkey, "", "ef".repeat(64)];
-      if (command !== "plugin_host_request")
-        throw new Error(`Unexpected command ${command}`);
-      const { request } = input as { request: { url: string; body: string } };
-      const path = new URL(request.url).pathname.split("/").at(-1) ?? "";
-      const body = JSON.parse(request.body || "{}");
-      const hold = holds.get(path);
-      holds.delete(path);
-      if (hold) await hold;
-      const reply = replies.get(path);
-      replies.delete(path);
-      if (reply)
-        return {
-          status: reply.status,
-          headers: {},
-          body: JSON.stringify(reply.body),
-        };
-      let result: unknown;
-      if (path === "exchange") result = { session_credential: "token" };
-      else if (path === "me")
-        result = {
-          subject: "owner",
-          email: "owner@example.com",
-          capabilities: { can_use_remote_agents: true },
-        };
-      // The owner's key is already linked, so setup skips binding it.
-      else if (path === "current")
-        result = { identity: { pubkey_hex: identity.pubkey } };
-      else if (path === "list-agents") result = { status: 1, agents: rows };
-      else if (path === "get-model-catalog")
-        result = {
-          models: [
-            {
-              id: "model-a",
-              display_name: "Model A",
-              supported_reasoning_efforts: ["low", "high"],
-            },
-          ],
-        };
-      // Builderlab's known-communities sync, which signing in starts.
-      else if (request.url.endsWith("/known-communities/list"))
-        result = { communities: [] };
-      else if (path === "register-agent") {
-        // Beekeeper replays a registration by its idempotency key.
-        let row = rows.find((item) => item.key === body.idempotency_key);
-        if (!row) {
-          row = {
-            key: body.idempotency_key,
-            agent_id: `id-${registered}`,
-            agent_name: body.agent_name,
-            agent_picture_url: body.agent_picture_url,
-            agent_pubkey: registered++ ? keypair().pubkey : remote.pubkey,
-            status: 1,
-          };
-          rows.push(row);
-        }
-        result = {
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "identity_restore") return identity.pubkey;
+    if (command === "identity_prepare_remote_agent_authorization")
+      return ["auth", identity.pubkey, "", "ef".repeat(64)];
+    if (command === "nsec_backup_session" || command === "nsec_backup_retry")
+      return;
+    throw new Error(`Unexpected command ${command}`);
+  });
+  // An FI build: Builderlab signs in with the native NIP-FI session.
+  vi.stubEnv("VITE_BUZZ_FEDERATED_IDENTITY", "1");
+  vi.stubEnv("VITE_BUZZ_LIVE", "0");
+  const federated = federatedFixture("owner", "owner@example.com");
+  const signIn = vi.mocked(federated.service.signIn);
+  const signedIn = signIn.getMockImplementation();
+  signIn.mockImplementation(async () => {
+    if (!signInCanceled && signedIn) return signedIn();
+    signInCanceled = false;
+    return federated.service.snapshot();
+  });
+  federated.request.mockImplementation(async ({ path: route, body: sent }) => {
+    const url = `https://builderlab.example${route}`;
+    const path = route.split("/").at(-1) ?? "";
+    const body = JSON.parse(sent || "{}");
+    const hold = holds.get(path);
+    holds.delete(path);
+    if (hold) await hold;
+    const reply = replies.get(path);
+    replies.delete(path);
+    if (reply)
+      return {
+        status: reply.status,
+        headers: {},
+        body: JSON.stringify(reply.body),
+      };
+    let result: unknown;
+    if (path === "me")
+      result = {
+        subject: "owner",
+        email: "owner@example.com",
+        capabilities: { can_use_remote_agents: true },
+      };
+    // The owner's key is already linked, so setup skips binding it.
+    else if (path === "current")
+      result = { identity: { pubkey_hex: identity.pubkey } };
+    else if (path === "list-agents") result = { status: 1, agents: rows };
+    else if (path === "get-model-catalog")
+      result = {
+        models: [
+          {
+            id: "model-a",
+            display_name: "Model A",
+            supported_reasoning_efforts: ["low", "high"],
+          },
+        ],
+      };
+    // Builderlab's known-communities sync, which signing in starts.
+    else if (url.endsWith("/known-communities/list"))
+      result = { communities: [] };
+    else if (path === "register-agent") {
+      // Beekeeper replays a registration by its idempotency key.
+      let row = rows.find((item) => item.key === body.idempotency_key);
+      if (!row) {
+        row = {
+          key: body.idempotency_key,
+          agent_id: `id-${registered}`,
+          agent_name: body.agent_name,
+          agent_picture_url: body.agent_picture_url,
+          agent_pubkey: registered++ ? keypair().pubkey : remote.pubkey,
           status: 1,
-          agent_id: row.agent_id,
-          agent_pubkey: row.agent_pubkey,
         };
-      } else if (path === "attest-agent") {
-        const row = rows.find(
-          (item) => item.agent_pubkey === body.agent_pubkey,
-        );
-        if (!row) throw new Error("No registered agent");
-        row.status = 2;
-        result = { status: 1 };
-      } else if (path === "update-agent") {
-        const row = rows.find(
-          (item) => item.agent_pubkey === body.agent_pubkey,
-        );
-        if (row) {
-          if (body.agent_instructions !== undefined)
-            row.agent_instructions = body.agent_instructions;
-          if (body.model_id) {
-            row.model_id = body.model_id;
-            row.reasoning_effort = body.reasoning_effort;
-            row.model_selection_status = 1;
-          }
+        rows.push(row);
+      }
+      result = {
+        status: 1,
+        agent_id: row.agent_id,
+        agent_pubkey: row.agent_pubkey,
+      };
+    } else if (path === "attest-agent") {
+      const row = rows.find((item) => item.agent_pubkey === body.agent_pubkey);
+      if (!row) throw new Error("No registered agent");
+      row.status = 2;
+      result = { status: 1 };
+    } else if (path === "update-agent") {
+      const row = rows.find((item) => item.agent_pubkey === body.agent_pubkey);
+      if (row) {
+        if (body.agent_instructions !== undefined)
+          row.agent_instructions = body.agent_instructions;
+        if (body.model_id) {
+          row.model_id = body.model_id;
+          row.reasoning_effort = body.reasoning_effort;
+          row.model_selection_status = 1;
         }
-        result = {};
-      } else if (path === "delete-agent") {
-        const index = rows.findIndex((item) => item.agent_id === body.agent_id);
-        if (index >= 0) rows.splice(index, 1);
-        result = { status: index >= 0 ? 1 : 3 };
-      } else throw new Error(`Unexpected Builderlab endpoint: ${path}`);
-      return { status: 200, headers: {}, body: JSON.stringify(result) };
-    },
-  );
+      }
+      result = {};
+    } else if (path === "delete-agent") {
+      const index = rows.findIndex((item) => item.agent_id === body.agent_id);
+      if (index >= 0) rows.splice(index, 1);
+      result = { status: index >= 0 ? 1 : 3 };
+    } else throw new Error(`Unexpected Builderlab endpoint: ${path}`);
+    return { status: 200, headers: {}, body: JSON.stringify(result) };
+  });
 
   // Relay wire: channel commands become relay-signed metadata and rosters.
   const channels = new Map<
@@ -274,6 +277,12 @@ export async function bestieFixture(invoke: Mock) {
           publish,
         },
         workflows: { runs: async () => ({ runs: [], next: null }) },
+        ...(options.mainAgent
+          ? {
+              readMainAgent: options.mainAgent.read,
+              writeMainAgent: options.mainAgent.write,
+            }
+          : {}),
       },
       {
         outboxStorage: {
@@ -291,6 +300,7 @@ export async function bestieFixture(invoke: Mock) {
     );
   };
   let owner = start();
+  const temporarySessions: ReturnType<typeof createRelaySession>[] = [];
   let snapshot: RelaySnapshot = {
     status: "ready",
     generation: 1,
@@ -327,8 +337,12 @@ export async function bestieFixture(invoke: Mock) {
   const reader = { snapshot: () => community, subscribe: relay.subscribe };
 
   const root = new Context();
+  // The build adds the native session to `inject`; this module loaded
+  // without it.
   const runtime = new PluginRuntime(root, async (plugin) =>
-    plugin.manifest.id === builderlabManifest.id ? builderlab : bestiePlugin,
+    plugin.manifest.id === builderlabManifest.id
+      ? { ...builderlab, inject: [...builderlab.inject, "federatedIdentity"] }
+      : bestiePlugin,
   );
   new HostService(root);
   new SettingsCardsService(root);
@@ -346,6 +360,7 @@ export async function bestieFixture(invoke: Mock) {
   const open = vi.fn(async () => ({ status: "opened" }));
   const navigation = { open } as unknown as Navigation;
   root.provide("relay", relay);
+  root.provide("federatedIdentity", federated.service);
   root.provide("navigation", navigation);
   const agents = new AgentsService(
     root,
@@ -411,6 +426,7 @@ export async function bestieFixture(invoke: Mock) {
     await runtime.dispose();
     await root.fiber.dispose();
     owner.dispose();
+    for (const temporary of temporarySessions) temporary.dispose();
     await closed.promise;
     listeners.clear();
   });
@@ -429,14 +445,13 @@ export async function bestieFixture(invoke: Mock) {
     query,
     viewer: identity.pubkey,
     agent: remote.pubkey,
+    /** Each request the native session forwarded to Builderlab. */
+    forwarded: federated.request,
+    /** The bodies of what Builderlab was sent at `path`, in order. */
     requests: (path: string) =>
-      invoke.mock.calls.filter(
-        ([command, input]) =>
-          command === "plugin_host_request" &&
-          (input as { request: { url: string } }).request.url.endsWith(
-            `/${path}`,
-          ),
-      ),
+      federated.request.mock.calls
+        .filter(([input]) => input.path.endsWith(`/${path}`))
+        .map(([input]) => input.body ?? ""),
     reply(path: string, status: number, body: unknown) {
       replies.set(path, { status, body });
     },
@@ -449,6 +464,16 @@ export async function bestieFixture(invoke: Mock) {
       signInCanceled = true;
     },
     session: () => owner.session,
+    replaceWithConnectingSession() {
+      const temporary = createRelaySession(null);
+      temporarySessions.push(temporary);
+      snapshot = {
+        status: "connecting",
+        generation: snapshot.generation + 1,
+        session: temporary.session,
+      };
+      notify();
+    },
     ignoreCreateMembers() {
       createMembers = false;
     },

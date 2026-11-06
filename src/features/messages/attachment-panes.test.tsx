@@ -206,7 +206,10 @@ it.each([false, true])(
         "11111111-1111-4111-8111-111111111111",
       ),
       signal: new AbortController().signal,
+      position: () => undefined,
+      savePosition() {},
       forSession: () => navigation,
+      passThrough: () => () => {},
       complete: () => true,
       resolve: () => true,
     };
@@ -368,14 +371,14 @@ it("announces eager preparation, then background upload after Send, while editor
   // The file leaves the composer; the background pill announces its phases.
   await waitFor(() => expect(status).not.toBeInTheDocument());
   expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
-    "Preparing",
+    /^Preparing upload to Work$/,
   );
   expect(editor).toHaveFocus();
   await act(async () => {
     header.resolve(new ArrayBuffer(0));
   });
   expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
-    /^Uploading$/,
+    /^Uploading to Work$/,
   );
   expect(editor).toHaveFocus();
   await act(async () => {

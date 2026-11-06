@@ -23,7 +23,12 @@ import {
 } from "./channel-labels";
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
-import type { RelayReader, ReadOptions, Priority } from "./reader";
+import {
+  LARGE_READ_DEADLINE_MS,
+  type RelayReader,
+  type ReadOptions,
+  type Priority,
+} from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import {
   NOTICE_PAGE_SIZE,
@@ -33,13 +38,15 @@ import {
   windowFilter,
   type WindowCursor,
 } from "./window";
-import { ByteLru, byteSize, listByteSize } from "./budget";
+import { ByteLru, byteSize, listByteSize, PROFILE_CACHE_BASE } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
+import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
+import type { WindowPage } from "./window";
 import { MatchRank, matchRank } from "../search/match";
 
 type Listener = () => void;
@@ -51,10 +58,23 @@ type WindowState = {
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
   atHead: boolean;
+  /** Detached: rows created at or after this (unix seconds) are not loaded;
+   * the window holds a seek segment below it. Undefined at the head. */
+  ceiling?: number | undefined;
+  /** Live rows above the ceiling that arrived while a newer page loads: the
+   * page that reaches the head may predate them. */
+  above?: Map<string, RelayEvent> | undefined;
+  /** The channel's latest message as of the last attached snapshot: a
+   * detached segment is old history, not the channel's latest. */
+  preview?: string | undefined;
   /** Oldest point any page read reached, in created_at seconds; 0 once a read
    * reached the start. Only falls while the window lives: a catch-up head can
    * move `cursor` past rows the reader already has, and those must stay. */
   floor?: number | undefined;
+  /** The viewer's sends this window saw unconfirmed. They show whatever
+   * their date, as they did while sending; confirmed sends from before the
+   * window wait for their page. */
+  sent: Set<string>;
   generation: number;
   controller?: AbortController | undefined;
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
@@ -95,12 +115,15 @@ export type ChannelStoreOptions = {
   /** Warm every roster channel's head in the background before it is opened. */
   warm?: boolean;
   persistence?: HeadPersistence;
+  maxDiscoveryBytes?: number;
   maxHeadBytes?: number;
   maxHeads?: number;
   maxHistoryRows?: number;
   maxHistoryBytes?: number;
-  /** Public directory budget in pages of 500; at most the default 20,000. */
+  /** Public directory budget in whole pages; at most the default 20,000. */
   maxPublicDirectory?: number;
+  /** Public directory page size, at most the default 500. */
+  publicDirectoryPage?: number;
   now?: () => number;
   local?: Pick<Outbox, "snapshot" | "subscribe">;
   /** The session's send clock; rendered windows raise its channel watermarks. */
@@ -108,11 +131,24 @@ export type ChannelStoreOptions = {
   notifyListener?: (listener: () => void) => void;
 };
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
+
+const sameKeys = (a?: readonly string[], b?: readonly string[]) =>
+  a === b ||
+  (a?.length === b?.length &&
+    (a ?? []).every((key, index) => key === b?.[index]));
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
+/** Channels one creator-proof filter names. Each has one creation, so a limit
+ * of twice this, the relay's maximum, leaves room for strays; a filter that
+ * reaches it proves only the channels whose creation arrived. */
+const CREATION_READ_CHANNELS = 250;
 // Public channel metadata for name search, read a page at a time up to a
 // bound; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
+/** Rosters per member-count read: one can run to hundreds of KB. */
+const MEMBER_COUNT_CHUNK = 10;
+// One exact resolution can consume the reader's full response byte budget.
+const PUBLIC_CHANNEL_RESERVE_BYTES = 8 * 1024 * 1024;
 const PUBLIC_CHANNEL_DIRECTORY = 20_000;
 /** One creator's channels with one label: a small answer, within one `resolve`. */
 const LABELED_CHANNEL_PAGE = 100;
@@ -173,6 +209,9 @@ export function createChannelStore(
         media(url: string, size?: "small"): string | undefined;
         /** `ids` names the channels that lost access when known; omitted means any. */
         revokeAccess(commit: () => void, ids?: readonly string[]): void;
+        /** A complete roster read applied. A replica can lag, so a channel it
+         * left out may still list the viewer; `unlisted` asks the writer. */
+        rosterComplete?(): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
@@ -186,19 +225,39 @@ export function createChannelStore(
   directory: ProfileDirectory,
   options: ChannelStoreOptions = {},
 ) {
+  // A fold reads the profile directory only through attested agent owners.
+  // Keep the answers each fold received: a profile change that leaves them
+  // all alone cannot change its rows.
+  const foldOwners = new WeakMap<
+    readonly ChannelMessage[],
+    ReadonlyMap<string, string | undefined>
+  >();
   const foldChannelMessages = (
     channelId: string,
     author: string,
     events: readonly import("./events").EventData[],
   ) => {
     const started = performance.now();
+    const owners = new Map<string, string | undefined>();
     const rows = foldMessages(channelId, author, events, {
       signingAuthority: transport?.archiveAuthority,
-      agentOwner: directory.queries.owner,
+      agentOwner: (pubkey) => {
+        const owner = directory.queries.owner?.(pubkey);
+        owners.set(pubkey, owner);
+        return owner;
+      },
     });
+    foldOwners.set(rows, owners);
     clientMetrics.cpu("fold", performance.now() - started, events.length);
     return rows;
   };
+  const ownersChanged = (
+    owners: ReadonlyMap<string, string | undefined> | undefined,
+  ) =>
+    !owners ||
+    [...owners].some(
+      ([pubkey, owner]) => directory.queries.owner?.(pubkey) !== owner,
+    );
   const {
     maxWindows = 3,
     unavailableReason,
@@ -209,6 +268,7 @@ export function createChannelStore(
     maxHistoryRows = 2400,
     maxHistoryBytes = 8 * 1024 * 1024,
     maxPublicDirectory = PUBLIC_CHANNEL_DIRECTORY,
+    publicDirectoryPage = PUBLIC_CHANNEL_PAGE,
     now = Date.now,
     local,
     clock = new MessageClock(),
@@ -218,15 +278,21 @@ export function createChannelStore(
   if (!Number.isInteger(maxWindows) || maxWindows < 1)
     throw new Error("Invalid window capacity");
   if (
+    !Number.isInteger(publicDirectoryPage) ||
+    publicDirectoryPage < 1 ||
+    publicDirectoryPage > PUBLIC_CHANNEL_PAGE ||
     !Number.isInteger(maxPublicDirectory) ||
-    maxPublicDirectory % PUBLIC_CHANNEL_PAGE !== 0 ||
-    maxPublicDirectory < PUBLIC_CHANNEL_PAGE ||
+    maxPublicDirectory % publicDirectoryPage !== 0 ||
+    maxPublicDirectory < publicDirectoryPage ||
     maxPublicDirectory > PUBLIC_CHANNEL_DIRECTORY
   )
     throw new Error("Invalid public directory capacity");
   let disposed = false,
     epoch = 0,
     listBusy = false;
+  // Full cache clears. Profiles outlive access purges (which move `epoch`),
+  // so only a clear or disposal fences a profile restore.
+  let cleared = 0;
   let listAgain = false;
   // Epoch of the latest access revocation. When that revocation is what made a
   // full read stale, it interrupted rather than failed it: a pass is still owed.
@@ -248,7 +314,11 @@ export function createChannelStore(
   let allowed: Set<string> | undefined;
   let coverage: "partial" | undefined;
   const discovery = transport
-    ? new DiscoveryState(transport.viewer, transport.relayAuthor)
+    ? new DiscoveryState(
+        transport.viewer,
+        transport.relayAuthor,
+        options.maxDiscoveryBytes,
+      )
     : null;
   // Restored metadata needs confirmation independently of roster progress/retries.
   const pendingMetadata = new Set<string>();
@@ -272,6 +342,8 @@ export function createChannelStore(
   let dropped = true;
   const accessVersions = new Map<string, number>();
   const listListeners = new Set<Listener>();
+  /** Directory pages and finished reads, for browsing. */
+  const directoryListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
   let intent: string | undefined = options.initialChannelId;
   let current: string | undefined;
@@ -283,8 +355,14 @@ export function createChannelStore(
   });
   let startup: Promise<void> | undefined;
   let discoveryObserved = false;
-  // Profile bursts rewrite the whole startup record; save at most once per 500ms.
+  // Catch-up bursts rewrite the whole startup record; save at most once per 500ms.
   let discoverySave: ReturnType<typeof setTimeout> | undefined;
+  // Directory bursts rewrite the whole profile mirror; save at most once per second.
+  let profileSave: ReturnType<typeof setTimeout> | undefined;
+  // Never mirror before restore has read the saved profiles.
+  let profilesRestored = false;
+  // Event ids last written to the mirror; undefined when the disk copy is unknown.
+  let mirrored: string | undefined;
   let preparing = false;
   let warming = false;
   const notify = (listeners: Iterable<Listener> | undefined) => {
@@ -317,7 +395,7 @@ export function createChannelStore(
     const channels = next.channels.map((channel) => {
       const pending = metadataPending(channel.id);
       const preview =
-        messagePreview(windows.get(channel.id)?.snapshot.rows) ??
+        windows.get(channel.id)?.preview ??
         tails.peek(channel.id)?.preview ??
         messagePreview(heads.peek(channel.id)?.rows);
       const old = previous.get(channel.id);
@@ -331,6 +409,7 @@ export function createChannelStore(
         old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
+        old.autoJoin === channel.autoJoin &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
         old.huddle === channel.huddle &&
@@ -340,16 +419,9 @@ export function createChannelStore(
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
         old.pending === channel.pending &&
-        (old.members === channel.members ||
-          (old.members?.length === channel.members?.length &&
-            (old.members ?? []).every(
-              (id, index) => id === channel.members?.[index],
-            ))) &&
-        (old.participants === channel.participants ||
-          (old.participants?.length === channel.participants?.length &&
-            (old.participants ?? []).every(
-              (id, index) => id === channel.participants?.[index],
-            )))
+        sameKeys(old.members, channel.members) &&
+        sameKeys(old.owners, channel.owners) &&
+        sameKeys(old.participants, channel.participants)
         ? old
         : Object.freeze({ ...channel, metadataPending: pending, preview });
     });
@@ -369,7 +441,28 @@ export function createChannelStore(
       ...next,
       channels: sameChannels ? list.channels : Object.freeze(channels),
     });
+    if (!sameChannels)
+      directory.protect(
+        list.channels.flatMap((channel) => channel.participants ?? []),
+      );
     notify(listListeners);
+  }
+  /** A head read replaces a detached segment: its rows and floor go with it.
+   * Live rows that arrived above it during the read join the head. */
+  function attached(state: WindowState) {
+    if (state.ceiling === undefined) return;
+    state.ceiling = undefined;
+    state.floor = undefined;
+    if (state.above?.size)
+      state.events = [
+        ...new Map(
+          [...state.events, ...state.above.values()].map((event) => [
+            event.id,
+            event,
+          ]),
+        ).values(),
+      ];
+    state.above = undefined;
   }
   function moveCursor(state: WindowState, cursor: WindowCursor | null) {
     state.cursor = cursor;
@@ -378,24 +471,43 @@ export function createChannelStore(
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
-      // Session reads (agents, search, previews) and the live tail can carry
-      // rows from before the loaded history. Showing one leaves a gap that a
-      // later page fills mid-list, where the timeline can neither anchor the
-      // reader nor tell it from new arrivals. That page shows them instead.
-      const floor =
-        (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
+      // Session reads (agents, search, previews), the live tail and the
+      // viewer's own confirmed sends can carry rows from before the loaded
+      // history. Showing one leaves a gap that a later page fills mid-list,
+      // where the timeline can neither anchor the reader nor tell it from new
+      // arrivals. That page shows them instead.
+      const more = patch.hasMore ?? state.snapshot.hasMore;
+      const shown =
+        (floor: number | undefined) => (event: import("./events").EventData) =>
+          !channelRowKind(event.kind) ||
+          ((floor === undefined || event.created_at >= floor) &&
+            (state.ceiling === undefined || event.created_at < state.ceiling));
       const combined = new Map(
         [...state.events, ...state.notices.values(), ...state.traffic.values()]
-          .filter(
-            (event) =>
-              floor === undefined ||
-              event.created_at >= floor ||
-              !channelRowKind(event.kind),
-          )
+          .filter(shown(more ? state.floor : undefined))
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
-      for (const item of local?.snapshot() ?? [])
+      const outbox = local?.snapshot() ?? [];
+      // An unconfirmed send's row is the only place that offers Retry. Only
+      // rows the outbox still holds need the exemption.
+      state.sent = new Set(
+        outbox
+          .filter(
+            ({ event, delivery }) =>
+              state.sent.has(event.id) ||
+              (delivery !== "seen" && channelRowKind(event.kind)),
+          )
+          .map(({ event }) => event.id),
+      );
+      // Until a page sets the floor, history's extent is unknown, not
+      // unbounded: a confirmed send waits for the page that holds it.
+      const own = outbox.filter(
+        ({ event }) =>
+          state.sent.has(event.id) ||
+          shown(more ? (state.floor ?? Infinity) : undefined)(event),
+      );
+      for (const item of own)
         if (
           [9, 40002, 40008].includes(item.event.kind) &&
           item.event.tags.some(
@@ -403,7 +515,7 @@ export function createChannelStore(
           )
         )
           ids.add(item.event.id);
-      const operations = (local?.snapshot() ?? []).filter((item) =>
+      const operations = own.filter((item) =>
         item.event.tags.some(
           (tag) =>
             (tag[0] === "h" && tag[1] === state.channelId) ||
@@ -422,14 +534,19 @@ export function createChannelStore(
         state.projection.reconcile([...combined.values()], operations),
       );
     }
-    const next = { ...state.snapshot, ...patch, rows };
+    const next = {
+      ...state.snapshot,
+      ...patch,
+      rows,
+      hasNewer: state.ceiling !== undefined || undefined,
+    };
     if (
       Object.entries(next).every(
         ([key, value]) => value === state.snapshot[key as keyof ChannelWindow],
       )
     )
       return;
-    const previousPreview = messagePreview(state.snapshot.rows);
+    const previousPreview = state.preview;
     if (rows.length && !state.snapshot.rows.length)
       clientMetrics.channelData(
         state.channelId,
@@ -437,7 +554,8 @@ export function createChannelStore(
       );
     state.snapshot = Object.freeze(next);
     notify(windowListeners.get(state.channelId));
-    if (previousPreview !== messagePreview(rows)) setList(list);
+    if (state.ceiling === undefined) state.preview = messagePreview(rows);
+    if (previousPreview !== state.preview) setList(list);
   }
   const idleWindows = new Map<string, ChannelWindow>();
   function idleWindow(channelId: string): ChannelWindow {
@@ -511,6 +629,7 @@ export function createChannelStore(
       events: [],
       notices: new Map(),
       atHead: true,
+      sent: new Set(),
       generation: 0,
     };
     windows.set(channelId, state);
@@ -580,8 +699,9 @@ export function createChannelStore(
    * than any gap, not overlap with it. The head replaces the rows, so it
    * replaces the snapshot too (a cached head adopted on revisit is re-read). */
   function adoptHead(state: WindowState, head: Head) {
-    moveCursor(state, head.cursor);
     state.events = head.events;
+    attached(state);
+    moveCursor(state, head.cursor);
     state.atHead = true;
     state.restored = head.restored === true;
     if (dropped) state.kept = rowIds(state);
@@ -595,6 +715,8 @@ export function createChannelStore(
    * over from them. A failed read only leaves notices out until the next page
    * or head read. */
   async function fillNotices(state: WindowState, head: boolean) {
+    // Notices are read down from the head; a detached segment shows none.
+    if (state.ceiling !== undefined) return;
     if (head) state.noticeHead = true;
     const reading = state.noticeRead;
     if (
@@ -740,9 +862,6 @@ export function createChannelStore(
           loadingOlder: false,
         });
       }
-      // Profiles may be shared by several windows; clearing this bounded private projection
-      // is conservative, and prevents denied-channel-only names from surviving visibly.
-      directory.clear();
       setList(
         {
           ...list,
@@ -883,7 +1002,7 @@ export function createChannelStore(
       );
       if (
         rows.length > maxHistoryRows ||
-        byteSize(retained) > maxHistoryBytes
+        listByteSize(retained) > maxHistoryBytes
       ) {
         setWindow(state, {
           loadingOlder: false,
@@ -894,6 +1013,7 @@ export function createChannelStore(
       }
       state.events = retained;
       state.atHead = !cursor;
+      if (!cursor) attached(state);
       moveCursor(state, page.cursor);
       state.restored = false;
       if (dropped && !cursor) state.kept = rowIds(state);
@@ -937,6 +1057,99 @@ export function createChannelStore(
       )
         setWindow(state, { refreshing: undefined });
     }
+  }
+  /** Seek reads: window pages of `SEEK_PAGE` rows, bare for probes. */
+  const seekRead =
+    (channelId: string, signal: AbortSignal): SeekRead =>
+    async (cursor, full) => {
+      if (!transport) throw new Error("Relay is unavailable");
+      const source = transport;
+      const events = await retryRead(
+        (attempt) =>
+          source.read([windowFilter(channelId, cursor, SEEK_PAGE, full)], {
+            signal: attempt,
+          }),
+        signal,
+      );
+      return parseWindow(channelId, cursor, source.relayAuthor, events);
+    };
+  const nowSeconds = () => Math.floor(now() / 1000);
+  /** Message rows, oldest first; the first at or after `from`, else the newest. */
+  function landing(state: WindowState, from: number) {
+    const rows = state.snapshot.rows.filter((row) => !row.membership);
+    return (rows.find((row) => row.createdAt >= from) ?? rows.at(-1))?.id;
+  }
+  /** Replace a detached window with the head, cancelling its reads. The
+   * segment stays until the head page lands; live rows wait for it. */
+  function reattach(state: WindowState) {
+    state.controller?.abort();
+    state.controller = undefined;
+    const above = new Map<string, RelayEvent>();
+    state.above = above;
+    state.generation++;
+    setWindow(state, { loadingOlder: false, loadingNewer: undefined });
+    // A failed read leaves the segment; the next head read has these rows.
+    return loadPage(state, null).finally(() => {
+      if (state.above === above) state.above = undefined;
+    });
+  }
+  /** Replace the window with a seek page; a null ceiling is the head page. */
+  function install(
+    state: WindowState,
+    page: WindowPage,
+    ceiling: number | null,
+  ) {
+    state.controller?.abort();
+    state.controller = undefined;
+    state.generation++;
+    state.events = page.events;
+    state.atHead = ceiling === null;
+    state.ceiling = ceiling ?? undefined;
+    state.floor = undefined;
+    state.kept = undefined;
+    state.restored = false;
+    moveCursor(state, page.cursor);
+    setWindow(state, {
+      status: "ready",
+      hasMore: page.hasMore && page.cursor !== null,
+      loadingOlder: false,
+      loadingNewer: undefined,
+      refreshing: undefined,
+      historyLimited: false,
+      error: undefined,
+      freshness: "verified",
+    });
+    void fetchProfiles(state.snapshot.rows);
+  }
+  /** Keep a detached window within the history budget by dropping its oldest
+   * rows: the next older page continues from the oldest row kept. */
+  function trimOldest(state: WindowState, events: readonly RelayEvent[]) {
+    const rows = events
+      .filter((event) => channelRowKind(event.kind))
+      .sort(newestFirst);
+    if (
+      rows.length <= maxHistoryRows &&
+      listByteSize(events) <= maxHistoryBytes
+    )
+      return events;
+    let kept = rows.slice(0, maxHistoryRows);
+    const retain = (ids: ReadonlySet<string>) =>
+      events.filter(
+        (event) =>
+          ids.has(event.id) ||
+          (!channelRowKind(event.kind) &&
+            event.tags.some((tag) => tag[0] === "e" && ids.has(tag[1] ?? ""))),
+      );
+    let retained = retain(new Set(kept.map((event) => event.id)));
+    while (kept.length > 1 && listByteSize(retained) > maxHistoryBytes) {
+      kept = kept.slice(0, -Math.max(1, Math.ceil(kept.length / 4)));
+      retained = retain(new Set(kept.map((event) => event.id)));
+    }
+    const oldest = kept.at(-1);
+    state.floor = undefined;
+    if (oldest)
+      moveCursor(state, { createdAt: oldest.created_at, eventId: oldest.id });
+    return retained;
   }
   async function hydrate() {
     const reveal = revealHydration;
@@ -1081,26 +1294,74 @@ export function createChannelStore(
           savedAt: now(),
           relayAuthor: transport.relayAuthor,
           events: discovery.savedEvents(),
-          profiles: [
-            ...new Set(
-              discovery
-                .channels()
-                .filter((channel) => !channel.cached)
-                .flatMap((channel) => channel.participants ?? []),
-            ),
-          ]
-            .slice(0, 1024)
-            .flatMap((id) => {
-              const event = directory.event(id);
-              return event ? [event] : [];
-            }),
         },
       })
       .catch(() => {});
   }
+  /** Mirror the most recently used profiles so the next session starts with
+   * their names. Like the directory, only a full cache clear empties it. */
+  function saveProfiles() {
+    clearTimeout(profileSave);
+    profileSave = undefined;
+    if (!persistence?.writeProfiles || !profilesRestored || disposed) return;
+    const events = directory.recent(PROFILE_CACHE_BASE);
+    const signature = events.map((event) => event.id).join(":");
+    if (signature === mirrored) return;
+    mirrored = signature;
+    void persistence.writeProfiles(events).catch(() => {
+      mirrored = undefined;
+    });
+  }
+  /** Show the saved names at once, then reread them in the background: the
+   * newer kind 0 wins, and the directory change saves it back. */
+  async function restoreProfiles() {
+    const generation = cleared;
+    let saved: unknown[] | undefined;
+    try {
+      saved = await persistence?.readProfiles?.();
+    } catch {
+      // An unreadable copy may still be good: never overwrite it this session.
+      return;
+    }
+    try {
+      if (!Array.isArray(saved) || saved.length > PROFILE_CACHE_BASE) return;
+      const profiles: RelayEvent[] = [];
+      for (let index = 0; index < saved.length; index += 12) {
+        for (const value of saved.slice(index, index + 12)) {
+          try {
+            const event = eventDto(JSON.parse(JSON.stringify(value)));
+            if (event.kind === 0) profiles.push(event);
+          } catch {
+            /* One bad record cannot discard the other names. */
+          }
+        }
+        await yieldToHost();
+        if (disposed || generation !== cleared) return;
+      }
+      directory.accept(profiles);
+      if (!options.cachedOnly && profiles.length)
+        void directory
+          .ensure(
+            profiles.map((event) => event.pubkey),
+            "background",
+            true,
+          )
+          .catch(() => {});
+    } catch {
+      // A corrupt copy never blocks fresh reads; the next save replaces it.
+    } finally {
+      // After a clear the disk copy is gone, so saving the directory is right.
+      if (!disposed) {
+        profilesRestored = true;
+        saveProfiles();
+      }
+    }
+  }
   async function restoreStartup() {
     if (!persistence?.readStartup || !transport || !discovery) return;
     const generation = epoch;
+    // Names do not depend on the saved roster: restore them alongside it.
+    const profiles = restoreProfiles();
     try {
       const saved = (await persistence.readStartup())?.discovery;
       if (
@@ -1110,7 +1371,6 @@ export function createChannelStore(
         saved.savedAt > now() ||
         now() - saved.savedAt > 86_400_000 ||
         !Array.isArray(saved.events) ||
-        saved.events.length > 3072 ||
         byteSize(saved) > 8 * 1024 * 1024
       )
         return;
@@ -1124,43 +1384,25 @@ export function createChannelStore(
         await yieldToHost();
         if (disposed || generation !== epoch || discoveryObserved) return;
       }
-      const profiles: RelayEvent[] = [];
-      if (Array.isArray(saved.profiles) && saved.profiles.length <= 1024) {
-        for (let index = 0; index < saved.profiles.length; index += 12) {
-          for (const value of saved.profiles.slice(index, index + 12)) {
-            try {
-              profiles.push(eventDto(JSON.parse(JSON.stringify(value))));
-            } catch {
-              /* A bad optional label cannot discard valid conversation history. */
-            }
-          }
-          await yieldToHost();
-          if (disposed || generation !== epoch || discoveryObserved) return;
-        }
-      }
       if (disposed || generation !== epoch || discoveryObserved) return;
       applyDiscovery(events, undefined, undefined, true);
-      const participants = new Set(
-        discovery.channels().flatMap((channel) => channel.participants ?? []),
-      );
-      directory.accept(
-        profiles.filter(
-          (event) => event.kind === 0 && participants.has(event.pubkey),
-        ),
-      );
       await (options.initialChannelId ? initialHydration : hydration);
     } catch {
       // Missing, corrupt or unavailable device storage never blocks fresh reads.
+    } finally {
+      await profiles;
     }
   }
   // Background reads deduplicate metadata versions; strong resolution revisits proof.
-  const creationReads = new Map<string, string>();
+  type CreationRead = { version: string; complete: boolean };
+  const creationReads = new Map<string, CreationRead>();
   async function readCreations(
     events: readonly RelayEvent[],
     settings?: ChannelReadOptions,
   ) {
     if (!transport || !discovery || options.cachedOnly) return;
-    const filters = events.flatMap((event) => {
+    const pending = new Map<string, CreationRead>();
+    const wanted = events.flatMap((event) => {
       const id = tag(event, "d");
       const identity = channelIdentity(event);
       if (
@@ -1172,23 +1414,33 @@ export function createChannelStore(
         discovery.get(id)?.parentChannelId ||
         !identity.creator ||
         (settings?.consistency !== "strong" &&
-          creationReads.get(id) === event.id)
+          creationReads.get(id)?.version === event.id)
       )
         return [];
-      creationReads.set(id, event.id);
-      return [
-        {
-          kinds: [9007],
-          ...(settings?.consistency
-            ? { consistency: settings.consistency }
-            : {}),
-          authors: [identity.creator],
-          "#h": [id],
-          limit: 1,
-        },
-      ];
+      const read = { version: event.id, complete: false };
+      creationReads.set(id, read);
+      pending.set(id, read);
+      return [{ id, creator: identity.creator }];
     });
-    if (!filters.length) return;
+    if (!wanted.length) return;
+    const creators = new Map(wanted.map(({ id, creator }) => [id, creator]));
+    // One filter names many channels and their creators. Discovery accepts a
+    // creation only from its own channel's creator, so a cross match is ignored.
+    const filters = [];
+    for (
+      let offset = 0;
+      offset < wanted.length;
+      offset += CREATION_READ_CHANNELS
+    ) {
+      const chunk = wanted.slice(offset, offset + CREATION_READ_CHANNELS);
+      filters.push({
+        kinds: [9007],
+        ...(settings?.consistency ? { consistency: settings.consistency } : {}),
+        authors: [...new Set(chunk.map(({ creator }) => creator))],
+        "#h": chunk.map(({ id }) => id),
+        limit: 2 * chunk.length,
+      });
+    }
     const generation = epoch;
     const controller = new AbortController();
     controllers.add(controller);
@@ -1208,17 +1460,46 @@ export function createChannelStore(
         settings?.signal?.throwIfAborted();
         if (disposed || generation !== epoch || controller.signal.aborted)
           throw new DOMException("Stale creation resolution", "AbortError");
-        applyDiscovery(receipts.filter((event) => event.kind === 9007));
+        const creations = receipts.filter((event) => event.kind === 9007);
+        const proved = new Set(
+          creations.flatMap((event) => {
+            const coordinates = event.tags.filter(([name]) => name === "h");
+            const id =
+              coordinates.length === 1 && coordinates[0]?.length === 2
+                ? coordinates[0][1]
+                : undefined;
+            return id && event.pubkey === creators.get(id) ? [id] : [];
+          }),
+        );
+        for (const filter of filters.slice(offset, offset + 4)) {
+          // A filter cut at its limit may have left a channel's creation out.
+          const cut =
+            creations.filter((event) =>
+              event.tags.some(
+                ([name, id]) => name === "h" && filter["#h"].includes(id ?? ""),
+              ),
+            ).length >= filter.limit;
+          for (const id of filter["#h"]) {
+            const read = pending.get(id);
+            if (
+              read &&
+              creationReads.get(id) === read &&
+              (!cut || proved.has(id))
+            )
+              read.complete = true;
+            else if (read && creationReads.get(id) === read)
+              creationReads.delete(id);
+          }
+        }
+        applyDiscovery(creations);
       }
     })()
       .catch((error) => {
         // Unavailable proof leaves an ordinary channel. A later metadata refresh
         // may retry; never turn a failed proof read into loss of channel access.
-        for (const event of events) {
-          const id = tag(event, "d");
-          if (id && creationReads.get(id) === event.id)
+        for (const [id, read] of pending)
+          if (!read.complete && creationReads.get(id) === read)
             creationReads.delete(id);
-        }
         throw error;
       })
       .finally(() => controllers.delete(controller));
@@ -1276,8 +1557,10 @@ export function createChannelStore(
       ...heads.keys(),
       ...tails.keys(),
     ]);
+    let revoked = false;
     for (const id of known)
       if (!authorized(id)) {
+        revoked = true;
         accessVersions.set(id, (accessVersions.get(id) ?? 0) + 1);
         void persistence?.remove(id).catch(() => {});
       }
@@ -1319,7 +1602,10 @@ export function createChannelStore(
       if (current === id) queries.ensure(id);
     }
     if (!cached) {
-      saveDiscovery();
+      // Catch-up delivers many batches: coalesce them into one snapshot write,
+      // except revocation, which must not leave denied content on disk.
+      if (revoked) saveDiscovery();
+      else discoverySave ??= setTimeout(saveDiscovery, 500);
       for (const channel of confirmed) {
         // Disk rows were display-only during hydration. Fresh membership now
         // makes that verified evidence usable for explicit read intent too.
@@ -1331,6 +1617,58 @@ export function createChannelStore(
     if (!cached && !disposed && readProof)
       void readCreations(events).catch(() => {});
     return !disposed && appliedEpoch === epoch;
+  }
+  /** The viewer's signed rosters among `batch`, at most DISCOVERY_CONFIRM_LIMIT
+   * ids, by one exact viewer-scoped read. */
+  async function readListed(
+    batch: readonly string[],
+    strong: boolean,
+    signal: AbortSignal,
+  ) {
+    if (!transport) throw new Error("Relay is unavailable");
+    const events = await transport.read(
+      [
+        {
+          kinds: [39002],
+          ...(strong ? { consistency: "strong" as const } : {}),
+          authors: [transport.relayAuthor],
+          "#d": batch,
+          "#p": [transport.viewer],
+          limit: batch.length + 1,
+        },
+      ],
+      // Up to DISCOVERY_CONFIRM_LIMIT full rosters: a large read too.
+      { signal, fresh: true, deadlineMs: LARGE_READ_DEADLINE_MS },
+    );
+    if (
+      events.length > batch.length ||
+      events.some(
+        (event) =>
+          event.kind !== 39002 ||
+          event.pubkey !== transport.relayAuthor ||
+          !hasTag(event, "p", transport.viewer) ||
+          !batch.includes(tag(event, "d") ?? ""),
+      )
+    )
+      throw new ReadError(
+        "invalid-response",
+        "Channel discovery confirmation exceeded its read budget",
+      );
+    return events;
+  }
+  /** Of `ids`, those the writer's signed rosters do not list the viewer in.
+   * Reads only: it confirms an omission before irreversible cleanup. */
+  async function unlisted(ids: readonly string[], signal: AbortSignal) {
+    if (disposed || options.cachedOnly) throw new Error("Relay is unavailable");
+    const listed = new Set<string>();
+    for (let offset = 0; offset < ids.length; offset += DISCOVERY_CONFIRM_LIMIT)
+      for (const event of await readListed(
+        ids.slice(offset, offset + DISCOVERY_CONFIRM_LIMIT),
+        true,
+        signal,
+      ))
+        listed.add(tag(event, "d") ?? "");
+    return ids.filter((id) => !listed.has(id));
   }
   /** Apply roster authority as soon as it succeeds; names are a separate,
    * optional read and cannot delay revocation or overwrite newer live grants. */
@@ -1384,6 +1722,7 @@ export function createChannelStore(
     let outcome: RosterRefresh = { state: "deferred" };
     try {
       const ids = new Set<string>();
+      let scannedBytes = 0;
       const named = new Set<string | undefined>();
       let cursor: RelayEvent | undefined;
       let complete: Set<string> | undefined;
@@ -1397,8 +1736,8 @@ export function createChannelStore(
       let system: RelayEvent[] = [];
       if (transport.channelIdentity) {
         let systemCursor: RelayEvent | undefined;
-        for (let page = 0; ; page++) {
-          if (page > discovery.capacity / DISCOVERY_LIMIT)
+        for (;;) {
+          if (scannedBytes >= discovery.maxBytes)
             throw new ReadError(
               "invalid-response",
               "System channel discovery exceeded its read budget",
@@ -1419,9 +1758,10 @@ export function createChannelStore(
                   : {}),
               },
             ],
-            { signal: controller.signal },
+            { signal: controller.signal, deadlineMs: LARGE_READ_DEADLINE_MS },
           );
           if (disposed || generation !== epoch) return;
+          scannedBytes += listByteSize(rosters);
           const members = rosters
             .filter(
               (event) =>
@@ -1461,9 +1801,8 @@ export function createChannelStore(
           paged = true;
         }
       }
-      // At most the retained roster budget plus its final exhaustion read.
-      // This also bounds a relay returning repeated coordinates with new versions.
-      for (let page = 0; page <= discovery.capacity / DISCOVERY_LIMIT; page++) {
+      // Bound scanned bytes as well as retained evidence, including repeated versions.
+      for (;;) {
         const rosters = await transport.read(
           [
             {
@@ -1476,9 +1815,11 @@ export function createChannelStore(
                 : {}),
             },
           ],
-          { signal: controller.signal },
+          // A page of full rosters can approach the read budget.
+          { signal: controller.signal, deadlineMs: LARGE_READ_DEADLINE_MS },
         );
         if (disposed || generation !== epoch) return;
+        scannedBytes += listByteSize(rosters);
         const members = rosters
           .filter(
             (event) =>
@@ -1531,7 +1872,7 @@ export function createChannelStore(
           retainedComplete = !paged;
           break;
         }
-        if (overflowed) break;
+        if (overflowed || scannedBytes >= discovery.maxBytes) break;
         cursor = last;
         paged = true;
       }
@@ -1553,35 +1894,12 @@ export function createChannelStore(
           offset < omitted.length;
           offset += DISCOVERY_CONFIRM_LIMIT
         ) {
-          const batch = omitted.slice(offset, offset + DISCOVERY_CONFIRM_LIMIT);
-          const confirmations = await transport.read(
-            [
-              {
-                kinds: [39002],
-                ...consistency,
-                authors: [transport.relayAuthor],
-                "#d": batch,
-                "#p": [transport.viewer],
-                limit: batch.length + 1,
-              },
-            ],
-            { signal: controller.signal, fresh: true },
+          const confirmations = await readListed(
+            omitted.slice(offset, offset + DISCOVERY_CONFIRM_LIMIT),
+            consistency.consistency === "strong",
+            controller.signal,
           );
           if (disposed || generation !== epoch) return;
-          if (
-            confirmations.length > batch.length ||
-            confirmations.some(
-              (event) =>
-                event.kind !== 39002 ||
-                event.pubkey !== transport.relayAuthor ||
-                !hasTag(event, "p", transport.viewer) ||
-                !batch.includes(tag(event, "d") ?? ""),
-            )
-          )
-            throw new ReadError(
-              "invalid-response",
-              "Channel discovery confirmation exceeded its read budget",
-            );
           for (const event of confirmations) {
             const id = tag(event, "d");
             if (id) complete.add(id);
@@ -1593,6 +1911,7 @@ export function createChannelStore(
           complete = undefined;
         if (complete && !applyDiscovery([], complete, started)) return;
       }
+      if (complete) transport.rosterComplete?.();
       const wanted = [...ids].filter(
         (id) =>
           discovery.authorized(id) &&
@@ -1646,9 +1965,11 @@ export function createChannelStore(
           for (const state of [...windows.values()]) evict(state);
           heads.clear();
           tails.clear();
-          directory.clear();
           clearTimeout(discoverySave);
           discoverySave = undefined;
+          // The kept directory is saved again after the clear.
+          mirrored = undefined;
+          profileSave ??= setTimeout(saveProfiles, 1000);
           void persistence?.clear().catch(() => {});
           setList({
             status: "error",
@@ -1896,8 +2217,13 @@ export function createChannelStore(
         /** Settles when the next page lands or the read ends. */
         page: Promise<void>;
         read: Promise<{ partial: boolean }>;
-        /** The finished read's open channels, newest metadata per channel. */
+        /** A refresh of a finished read, whose names it keeps meanwhile. */
+        refresh: boolean;
+        /** The finished read's open channels (the prior read's during a
+         * refresh), newest metadata per channel. */
         open?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
+        /** A first read's open channels so far, for browsing only. */
+        pages?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
       }
     | undefined;
   const noOpenDirectory: ReturnType<
@@ -1914,26 +2240,55 @@ export function createChannelStore(
     }
     return latest;
   }
+  type DirectoryChannel = ReturnType<
+    NonNullable<ChannelQueries["openDirectory"]>
+  >[number];
+  function directoryChannel(
+    id: string,
+    event: RelayEvent,
+  ): DirectoryChannel | undefined {
+    const name = openMetadata(event) && metadataName(event);
+    if (!name) return undefined;
+    const type = tag(event, "t");
+    return Object.freeze({
+      id,
+      name,
+      ...(type === "stream" || type === "forum" ? { channelType: type } : {}),
+      ...(tag(event, "about") ? { description: tag(event, "about") } : {}),
+      ...(hasTag(event, "archived", "true") ? { archived: true as const } : {}),
+    });
+  }
   function openDirectoryChannels(events: readonly RelayEvent[]) {
     return Object.freeze(
       [...latestPublicMetadata(events).entries()].flatMap(([id, event]) => {
-        const name = openMetadata(event) && metadataName(event);
-        if (!name) return [];
-        const type = tag(event, "t");
-        return [
-          Object.freeze({
-            id,
-            name,
-            ...(type === "stream" || type === "forum"
-              ? { channelType: type }
-              : {}),
-            ...(hasTag(event, "archived", "true")
-              ? { archived: true as const }
-              : {}),
-          }),
-        ];
+        const channel = directoryChannel(id, event);
+        return channel ? [channel] : [];
       }),
     );
+  }
+  /** A first read's channels, folded a page at a time: each page projects
+   * only its own events, in the order the relay sent them. */
+  function directoryPages() {
+    const latest = new Map<string, RelayEvent>();
+    const channels = new Map<string, DirectoryChannel | undefined>();
+    let folded = 0;
+    return (events: readonly RelayEvent[]) => {
+      for (const event of events.slice(folded)) {
+        const id = tag(event, "d");
+        if (!id) continue;
+        const previous = latest.get(id);
+        const next = newer(previous, event);
+        if (next === previous) continue;
+        latest.set(id, next);
+        channels.set(id, directoryChannel(id, next));
+      }
+      folded = events.length;
+      return Object.freeze(
+        [...channels.values()].filter(
+          (channel): channel is DirectoryChannel => !!channel,
+        ),
+      );
+    };
   }
   /** All open channels' metadata, newest first, through the relay's
    * `(until, before_id)` cursor. One read serves every keystroke: a caller
@@ -1953,7 +2308,7 @@ export function createChannelStore(
           {
             kinds: [39000],
             authors: [relay.relayAuthor],
-            limit: PUBLIC_CHANNEL_PAGE,
+            limit: publicDirectoryPage,
             ...(since !== undefined ? { since } : {}),
             ...cursor,
           },
@@ -1968,7 +2323,7 @@ export function createChannelStore(
           (event) => event.kind === 39000 && event.pubkey === relay.relayAuthor,
         ),
       );
-      if (page.length < PUBLIC_CHANNEL_PAGE) return { partial: false };
+      if (page.length < publicDirectoryPage) return { partial: false };
       if (events.length >= maxPublicDirectory) return { partial: true };
       landed();
       // Relay query order is time descending, then ID ascending (also at ties).
@@ -1985,24 +2340,13 @@ export function createChannelStore(
       cursor = { until: last.created_at, before_id: last.id };
     }
   }
-  async function searchPublic(
-    query: string,
-    settings?: ReadOptions & {
-      limit?: number;
-      exact?: boolean;
-      progress?: ((found: PublicChannelSearch) => void) | undefined;
-    },
-    recover = true,
-  ): Promise<PublicChannelSearch> {
-    if (disposed || !transport || !discovery || options.cachedOnly)
-      throw new Error("Relay is unavailable");
-    const needle = query.trim().toLowerCase().replace(/^#/, "");
-    if (!needle) return { channels: [], partial: false };
-    if (list.status !== "ready")
-      throw new Error("Channel list is not ready for channel search");
-    const generation = epoch;
-    // Candidates only: `resolve` below re-reads each match, so a reused page
-    // never grants access by itself.
+  /** The shared directory read for this epoch: the one in flight, a
+   * finished one still fresh, or a new full read or delta. Candidates only:
+   * a page never grants access by itself. */
+  function currentPublicDirectory(
+    relay: RelayReader & { relayAuthor: string },
+    generation: number,
+  ): NonNullable<typeof publicDirectory> {
     if (
       publicDirectory?.generation !== generation ||
       (publicDirectory.at !== undefined &&
@@ -2035,9 +2379,10 @@ export function createChannelStore(
         : undefined;
       let land = () => {};
       const next = () => new Promise<void>((settle) => (land = settle));
+      const fold = directoryPages();
       const read = (since?: number) =>
         readPublicDirectory(
-          transport,
+          relay,
           generation,
           controller.signal,
           events,
@@ -2045,11 +2390,19 @@ export function createChannelStore(
             const landed = land;
             entry.page = next();
             landed();
+            // A first read shows its channels a page at a time, so browsing
+            // starts on the first page; a refresh keeps the prior ones whole.
+            // Only browsing hears pages: name references wait for the end.
+            if (!entry.refresh) {
+              entry.pages = fold(events);
+              notify(directoryListeners);
+            }
           },
           since,
         );
       const entry: NonNullable<typeof publicDirectory> = {
         generation,
+        refresh: !!prior?.open,
         started,
         fullAt: incremental ? prior.fullAt : started,
         incremental,
@@ -2083,20 +2436,174 @@ export function createChannelStore(
           entry.at = now();
           entry.partial = partial;
           delete entry.previous;
+          delete entry.pages;
           // Name references in mounted rows read the directory through the
           // list subscription; the list itself is unchanged.
           entry.open = openDirectoryChannels(entry.events);
           notify(listListeners);
+          notify(directoryListeners);
           land();
         },
         () => {
           controllers.delete(controller);
-          if (publicDirectory === entry) publicDirectory = prior;
+          if (publicDirectory === entry) {
+            publicDirectory = prior;
+            if (entry.pages) notify(directoryListeners);
+          }
           land();
         },
       );
     }
-    const entry = publicDirectory;
+    return publicDirectory;
+  }
+  /** Read the whole open-channel directory, for browsing. Shares the search
+   * read; `openDirectory` then names its channels. Never resolves them. */
+  async function readDirectory(
+    settings?: { signal?: AbortSignal | undefined },
+    recover = true,
+  ): Promise<{ partial: boolean }> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    if (list.status !== "ready")
+      throw new Error("Channel list is not ready for channel browsing");
+    const generation = epoch;
+    const signal = settings?.signal;
+    signal?.throwIfAborted();
+    const read = currentPublicDirectory(transport, generation).read;
+    const stale = new DOMException("Stale channel directory", "AbortError");
+    try {
+      const result = await (signal
+        ? Promise.race([
+            read,
+            new Promise<never>((_, reject) =>
+              signal.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              }),
+            ),
+          ])
+        : read);
+      if (disposed || generation !== epoch) throw stale;
+      return result;
+    } catch (error) {
+      // An access change since this read began voids whatever it settled
+      // with. One restarts it, as searchPublic does; further changes and
+      // network failures keep the caller's retry.
+      if (
+        recover &&
+        !disposed &&
+        !signal?.aborted &&
+        generation !== epoch &&
+        revokedEpoch === epoch
+      )
+        return readDirectory(settings, false);
+      throw error;
+    }
+  }
+  /** Recent member counts, by channel, for this epoch. */
+  let memberCounts:
+    | { generation: number; counts: Map<string, { count: number; at: number }> }
+    | undefined;
+  /** How many members each open channel has, for browsing. Joined channels
+   * answer from their roster; others read the relay-signed roster, which an
+   * open channel publishes to anyone. Display only: never grants access. */
+  async function readMemberCounts(
+    channelIds: readonly string[],
+    settings?: { signal?: AbortSignal | undefined },
+  ): Promise<{
+    counts: ReadonlyMap<string, number>;
+    failed: readonly string[];
+  }> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const relay = transport;
+    const generation = epoch;
+    if (memberCounts?.generation !== generation)
+      memberCounts = { generation, counts: new Map() };
+    const { counts } = memberCounts;
+    const answer = new Map<string, number>();
+    const missing: string[] = [];
+    for (const id of new Set(channelIds)) {
+      const members = discovery.authorized(id)
+        ? discovery.get(id)?.members?.length
+        : undefined;
+      const known = counts.get(id);
+      if (members !== undefined) answer.set(id, members);
+      else if (known && now() - known.at < REFERENCE_TTL)
+        answer.set(id, known.count);
+      else missing.push(id);
+    }
+    // A roster can run to hundreds of KB, so reads stay small and run side
+    // by side. Each keeps what it found even when another fails.
+    const failed: string[] = [];
+    const chunks: string[][] = [];
+    for (let start = 0; start < missing.length; start += MEMBER_COUNT_CHUNK)
+      chunks.push(missing.slice(start, start + MEMBER_COUNT_CHUNK));
+    const read = async (ids: string[]) => {
+      const events = await relay.read(
+        [
+          {
+            kinds: [39002],
+            authors: [relay.relayAuthor],
+            "#d": ids,
+            limit: ids.length,
+          },
+        ],
+        {
+          ...(settings?.signal ? { signal: settings.signal } : {}),
+          // On screen now, so it doesn't queue behind background lookups.
+          priority: "foreground",
+          fresh: true,
+        },
+      );
+      if (settings?.signal?.aborted || disposed || generation !== epoch) return;
+      const latest = new Map<string, RelayEvent>();
+      for (const event of events) {
+        const id = tag(event, "d");
+        if (
+          event.kind === 39002 &&
+          event.pubkey === relay.relayAuthor &&
+          id &&
+          ids.includes(id)
+        )
+          latest.set(id, newer(latest.get(id), event));
+      }
+      for (const [id, event] of latest) {
+        const count = new Set(
+          event.tags.flatMap(([name, value]) =>
+            name === "p" && value ? [value] : [],
+          ),
+        ).size;
+        counts.set(id, { count, at: now() });
+        answer.set(id, count);
+      }
+    };
+    await Promise.all(
+      chunks.map((ids) => read(ids).catch(() => failed.push(...ids))),
+    );
+    settings?.signal?.throwIfAborted();
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale member counts", "AbortError");
+    return { counts: answer, failed };
+  }
+  async function searchPublic(
+    query: string,
+    settings?: ReadOptions & {
+      limit?: number;
+      exact?: boolean;
+      progress?: ((found: PublicChannelSearch) => void) | undefined;
+    },
+    recover = true,
+  ): Promise<PublicChannelSearch> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle) return { channels: [], partial: false };
+    if (list.status !== "ready")
+      throw new Error("Channel list is not ready for channel search");
+    const generation = epoch;
+    // Candidates only: `resolve` below re-reads each match, so a reused page
+    // never grants access by itself.
+    const entry = currentPublicDirectory(transport, generation);
     const signal = settings?.signal;
     const limit = settings?.limit ?? 8;
     const resolved = new Set<string>();
@@ -2109,7 +2616,7 @@ export function createChannelStore(
     // before granting a preview. The final answer re-reads every match; pages
     // in flight resolve at most `limit` channels in all and leave every
     // search in flight, and one that joins later (`in:team data` runs two),
-    // `limit` free discovery slots for its final answer, so a long read
+    // one response byte budget for its final answer, so a long read
     // cannot fill discovery or crowd out a better match on a later page.
     const answer = async (final: boolean, readSignal?: AbortSignal) => {
       // Saved names are candidates only: each match still resolves freshly.
@@ -2147,13 +2654,10 @@ export function createChannelStore(
             .filter((id) => !resolved.has(id))
             .slice(
               0,
-              Math.max(
-                0,
-                Math.min(
-                  limit - resolved.size,
-                  discovery.headroom() - publicSearchReserve - limit,
-                ),
-              ),
+              discovery.byteHeadroom() - publicSearchReserve >=
+                PUBLIC_CHANNEL_RESERVE_BYTES * 2
+                ? Math.max(0, limit - resolved.size)
+                : 0,
             );
       if (unresolved.length) {
         await resolve(
@@ -2223,7 +2727,7 @@ export function createChannelStore(
       entry.events.length || entry.previous?.size
         ? Promise.resolve()
         : entry.page;
-    publicSearchReserve += limit;
+    publicSearchReserve += PUBLIC_CHANNEL_RESERVE_BYTES;
     try {
       for (;;) {
         const result = await Promise.race([
@@ -2283,7 +2787,7 @@ export function createChannelStore(
       }
       throw error;
     } finally {
-      publicSearchReserve -= limit;
+      publicSearchReserve -= PUBLIC_CHANNEL_RESERVE_BYTES;
     }
   }
   /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
@@ -2488,6 +2992,7 @@ export function createChannelStore(
   }
   async function clearCache() {
     epoch++;
+    cleared++;
     creationReads.clear();
     hydration = undefined;
     revealHydration?.();
@@ -2510,6 +3015,9 @@ export function createChannelStore(
     resetReferences();
     clearTimeout(discoverySave);
     discoverySave = undefined;
+    clearTimeout(profileSave);
+    profileSave = undefined;
+    mirrored = undefined;
     await persistence?.clear().catch(() => {});
   }
   /** One background head read at a time; warm never competes with demand reads
@@ -2557,8 +3065,10 @@ export function createChannelStore(
       warming = false;
     }
   }
-  /** Channel-link lookups. `withheld` answers are kept for a while (and
-   * shown while rechecked); failures back off. Both reset with the epoch.
+  /** Channel-link lookups. `withheld` keeps a lookup that admitted nothing (a
+   * withheld answer, or a left channel still unreadable) for a while, and its
+   * answer is shown while rechecked; failures back off. Both reset with the
+   * epoch.
    * `demand` counts mounted links per channel; a timer rechecks them when
    * their answer expires or their backoff ends. */
   const references = {
@@ -2612,8 +3122,11 @@ export function createChannelStore(
         ...(channel.members?.length ? { members: channel.members.length } : {}),
       };
     }
+    const state = currentReferences();
+    const looking = state.queue.has(id) || state.pending.has(id);
     // A public channel the viewer has left: its signed open metadata stays
-    // public even while discovery denies reading it as a member.
+    // public even while discovery denies reading it as a member, until a
+    // lookup confirms it is still open.
     const event = discovery?.metadataVersion(id);
     const name = event && openMetadata(event) && metadataName(event);
     if (event && name) {
@@ -2628,11 +3141,15 @@ export function createChannelStore(
         hidden: false,
         archived: hasTag(event, "archived", "true"),
         joined: false,
+        readable: false,
+        ...(looking ? { looking: true as const } : {}),
       };
     }
-    return currentReferences().withheld.has(id)
+    return state.withheld.has(id)
       ? { state: "withheld" }
-      : { state: "unknown" };
+      : looking
+        ? { state: "looking" }
+        : { state: "unknown" };
   }
   /** When a demanded reference may be looked up again: its withheld answer
    * expires, or its backoff ends. */
@@ -2667,8 +3184,9 @@ export function createChannelStore(
   }
   function lookUpReference(id: string) {
     if (disposed || !transport || !discovery || options.cachedOnly) return;
-    if (list.status !== "ready" || describeReference(id).state === "found")
-      return;
+    // Discovery's admission, not a found name, decides: a left channel's
+    // messages need a fresh lookup.
+    if (list.status !== "ready" || discovery.get(id)) return;
     const state = currentReferences();
     if (
       state.queue.has(id) ||
@@ -2696,8 +3214,7 @@ export function createChannelStore(
             for (const id of batch) {
               state.pending.delete(id);
               state.retryAt.delete(id);
-              if (describeReference(id).state === "found")
-                state.withheld.delete(id);
+              if (discovery?.get(id)) state.withheld.delete(id);
               else state.withheld.set(id, now());
             }
             setList(list, true);
@@ -2713,10 +3230,16 @@ export function createChannelStore(
               state.pending.delete(id);
               state.retryAt.set(id, now() + wait);
             }
+            // Arm the retry first, so a throwing listener can't skip it.
             wakeReferences();
+            // Its links stop waiting through the backoff.
+            notify(listListeners);
           },
         );
       }
+      // Their links now wait for these answers, once per batch and after the
+      // reads start. A withheld answer stays on screen while it is rechecked.
+      if (ids.some((id) => !state.withheld.has(id))) notify(listListeners);
     });
   }
   function referChannel(id: string) {
@@ -2775,12 +3298,24 @@ export function createChannelStore(
     searchPublic,
     findLabeled,
     matchPublic,
+    readDirectory,
+    readMemberCounts,
+    directoryComplete: () =>
+      publicDirectory?.generation === epoch &&
+      (publicDirectory.refresh || publicDirectory.at !== undefined),
     openDirectory: () =>
       publicDirectory?.generation === epoch
         ? (publicDirectory.open ?? noOpenDirectory)
         : noOpenDirectory,
+    browseDirectory: () =>
+      publicDirectory?.generation === epoch
+        ? (publicDirectory.pages ?? publicDirectory.open ?? noOpenDirectory)
+        : noOpenDirectory,
+    subscribeDirectory: (listener: Listener) =>
+      subscribe(directoryListeners, listener),
     describe: describeReference,
-    refer: referChannel,
+    // A cached-only store never looks a reference up, so it offers no lookup.
+    ...(options.cachedOnly ? {} : { refer: referChannel }),
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>
@@ -2956,35 +3491,164 @@ export function createChannelStore(
       setWindow(state, { loadingOlder: true, error: undefined });
       void loadPage(state, state.cursor);
     },
+    async seek(channelId: string, from: number, signal: AbortSignal) {
+      const state = windows.get(channelId);
+      if (
+        disposed ||
+        !transport ||
+        !state ||
+        state.snapshot.status !== "ready" ||
+        !canReadRemote(channelId)
+      )
+        throw new Error("Channel history is unavailable");
+      const rows = state.snapshot.rows.filter((row) => !row.membership);
+      // Held rows answer when they reach below `from` and either hold a row
+      // at or after it or end at the head.
+      if (
+        (!state.snapshot.hasMore || rows.some((row) => row.createdAt < from)) &&
+        (state.ceiling === undefined ||
+          rows.some((row) => row.createdAt >= from))
+      )
+        return landing(state, from);
+      const generation = state.generation;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      controllers.add(controller);
+      try {
+        signal.throwIfAborted();
+        const read = seekRead(channelId, controller.signal);
+        let located = await locate(read, from, nowSeconds(), from > 0);
+        if (located.kind === "newest" && state.ceiling !== undefined)
+          located = {
+            kind: "segment",
+            page: await read(null, true),
+            ceiling: null,
+          };
+        controller.signal.throwIfAborted();
+        if (!live(state, generation))
+          throw new DOMException("Stale history seek", "AbortError");
+        if (located.kind === "segment")
+          install(state, located.page, located.ceiling);
+        return landing(state, from);
+      } finally {
+        signal.removeEventListener("abort", abort);
+        controllers.delete(controller);
+      }
+    },
+    loadNewer(channelId: string) {
+      const state = windows.get(channelId);
+      const from = state?.ceiling;
+      if (
+        disposed ||
+        !transport ||
+        !state ||
+        from === undefined ||
+        state.controller ||
+        !canReadRemote(channelId)
+      )
+        return;
+      const generation = state.generation;
+      const controller = new AbortController();
+      state.controller = controller;
+      state.above = new Map();
+      setWindow(state, { loadingNewer: true, error: undefined });
+      void (async () => {
+        try {
+          const located = await locate(
+            seekRead(state.channelId, controller.signal),
+            from,
+            nowSeconds(),
+            true,
+          );
+          if (!live(state, generation) || controller.signal.aborted) return;
+          // Nothing at or after the ceiling: the segment already ends at the head.
+          const page = located.kind === "segment" ? located.page : undefined;
+          const merged = new Map(
+            state.events.map((event) => [event.id, event]),
+          );
+          for (const event of page?.events ?? []) merged.set(event.id, event);
+          const head = located.kind !== "segment" || located.ceiling === null;
+          if (head)
+            for (const event of state.above?.values() ?? [])
+              merged.set(event.id, event);
+          const trimmed = trimOldest(state, [...merged.values()]);
+          const dropped = trimmed.length < merged.size;
+          state.events = trimmed;
+          state.ceiling = head ? undefined : (located.ceiling ?? undefined);
+          setWindow(state, {
+            loadingNewer: undefined,
+            freshness: "verified",
+            ...(dropped ? { hasMore: true, historyLimited: false } : {}),
+          });
+          void fetchProfiles(state.snapshot.rows);
+        } catch (error) {
+          if (isAbort(error) || !live(state, generation)) return;
+          setWindow(state, { loadingNewer: undefined, error: describe(error) });
+        } finally {
+          if (state.controller === controller) {
+            state.controller = undefined;
+            state.above = undefined;
+          }
+        }
+      })();
+    },
+    attach(channelId: string) {
+      const state = windows.get(channelId);
+      if (disposed || !transport || state?.ceiling === undefined) return;
+      void reattach(state);
+    },
   });
   let previousLocal = new Map(
     (local?.snapshot() ?? []).map((item) => [item.event.id, item]),
   );
+  // What each tail preview this listener computed depended on: its fold's
+  // owner answers and which head events it included. Marks, not the events,
+  // so a tail does not keep an evicted head alive.
+  const previewFolds = new WeakMap<
+    object,
+    {
+      owners: ReadonlyMap<string, string | undefined> | undefined;
+      head: number | undefined;
+    }
+  >();
+  const headMarks = new WeakMap<readonly RelayEvent[], number>();
+  let headMark = 0;
+  const markHead = (events: readonly RelayEvent[] | undefined) => {
+    if (!events) return;
+    const mark = headMarks.get(events) ?? ++headMark;
+    headMarks.set(events, mark);
+    return mark;
+  };
   const unsubscribeProfiles = directory.queries.subscribe(() => {
     if (disposed || !transport) return;
     for (const [id, head] of heads.entries())
-      heads.set(id, {
-        ...head,
-        rows: Object.freeze(
-          foldChannelMessages(id, transport.relayAuthor, head.events),
-        ),
-      });
+      if (ownersChanged(foldOwners.get(head.rows)))
+        heads.replace(id, {
+          ...head,
+          rows: Object.freeze(
+            foldChannelMessages(id, transport.relayAuthor, head.events),
+          ),
+        });
     for (const [id, tail] of tails.entries()) {
-      const next = {
-        ...tail,
-        preview: messagePreview(
-          foldChannelMessages(id, transport.relayAuthor, [
-            ...(heads.peek(id)?.events ?? []),
-            ...tail.events,
-          ]),
-        ),
-      };
-      tails.set(id, next, tailBytes(next));
+      const head = heads.peek(id)?.events;
+      const folded = previewFolds.get(tail);
+      if (folded?.head === markHead(head) && !ownersChanged(folded?.owners))
+        continue;
+      const rows = foldChannelMessages(id, transport.relayAuthor, [
+        ...(head ?? []),
+        ...tail.events,
+      ]);
+      const next = { ...tail, preview: messagePreview(rows) };
+      previewFolds.set(next, {
+        owners: foldOwners.get(rows),
+        head: markHead(head),
+      });
+      tails.replace(id, next, tailBytes(next));
     }
     for (const state of windows.values()) setWindow(state, {});
     setList(list);
-    if (discoveryObserved && !discoverySave)
-      discoverySave = setTimeout(saveDiscovery, 500);
+    profileSave ??= setTimeout(saveProfiles, 1000);
   });
   const unsubscribeLocal = local?.subscribe(() => {
     if (disposed) return;
@@ -3102,6 +3766,15 @@ export function createChannelStore(
             )
           )
             continue;
+          // Rows above a detached segment would show past its gap.
+          if (
+            state.ceiling !== undefined &&
+            channelRowKind(event.kind) &&
+            event.created_at >= state.ceiling
+          ) {
+            state.above?.set(event.id, event);
+            continue;
+          }
           incoming.push(event);
           incomingIds.add(event.id);
           changed = true;
@@ -3155,7 +3828,17 @@ export function createChannelStore(
       const tail = tails.peek(channelId);
       const state = windows.get(channelId);
       if (tail && state) {
-        const next = { ...tail, preview: messagePreview(state.snapshot.rows) };
+        // A detached window shows an older segment; live messages still
+        // move its preview.
+        if (state.ceiling !== undefined)
+          state.preview =
+            messagePreview(
+              foldChannelMessages(channelId, transport.relayAuthor, [
+                ...(heads.peek(channelId)?.events ?? []),
+                ...tail.events,
+              ]),
+            ) ?? state.preview;
+        const next = { ...tail, preview: state.preview };
         tails.set(channelId, next, tailBytes(next));
       }
     }
@@ -3168,7 +3851,8 @@ export function createChannelStore(
   ) {
     const hadHydration = hydration !== undefined;
     epoch++;
-    creationReads.clear();
+    for (const [id, read] of creationReads)
+      if (!read.complete || !authorized(id)) creationReads.delete(id);
     revokedEpoch = epoch;
     hydration = undefined;
     revealHydration?.();
@@ -3252,6 +3936,7 @@ export function createChannelStore(
   function dispose() {
     disposed = true;
     clearTimeout(discoverySave);
+    clearTimeout(profileSave);
     if (referenceWake) clearTimeout(referenceWake.timer);
     referenceWake = undefined;
     unsubscribeLocal?.();
@@ -3272,6 +3957,9 @@ export function createChannelStore(
   return {
     queries,
     roster: () => rosterRefresh,
+    /** A full roster read is still due: the last one did not verify, or a
+     * retired exact confirmation left a strong read owed. */
+    rosterOwed: () => rosterRefresh.state !== "verified" || strongListAgain,
     /** Preserve a retired exact confirmation's routing without scheduling work.
      * The next refresh/Retry owns dispatch and the existing cooldown. */
     requireStrongListRead() {
@@ -3285,14 +3973,8 @@ export function createChannelStore(
     canAccess: authorized,
     canParticipate: (id: string) => discovery?.canParticipate(id) ?? false,
     canWrite: (id: string) => discovery?.canWrite(id) ?? false,
+    unlisted,
     purgeAccess,
-    /** After an access purge's commit, reread names for retained authorized rows.
-     * One ensure per window, so one window over the directory budget spares the others. */
-    refetchWindowProfiles() {
-      for (const state of windows.values())
-        if (authorized(state.channelId))
-          void fetchProfiles(state.snapshot.rows);
-    },
     denyChannel,
     suspendPreviews(ids: readonly string[]) {
       let changed = false;
@@ -3342,6 +4024,12 @@ export function createChannelStore(
       if (cached) heads.set(channelId, { ...cached, cached: true });
       const retained = windows.get(channelId);
       if (!retained) return false;
+      // A detached segment is not what the head reaches: return to the head,
+      // keeping the segment until the head lands.
+      if (retained.ceiling !== undefined) {
+        await reattach(retained);
+        return retained.ceiling === undefined;
+      }
       const epochAtStart = epoch;
       const generation = retained.generation;
       const valid = () => epoch === epochAtStart && live(retained, generation);

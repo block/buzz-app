@@ -57,10 +57,13 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
         writerReads++;
         if (failWriterRead) {
           failWriterRead = false;
-          app.report.sidebarPreferenceFailures ??= [];
-          app.report.sidebarPreferenceFailures.push(route.request().url());
+          // Relay recovery retries a transient failure such as a 502 about a
+          // second later, which can remove Retry preferences while a slow
+          // click is still landing. A denial leaves the retry to the user.
+          app.report.relayFailures ??= [];
+          app.report.relayFailures.push(route.request().url());
           await route.fulfill({
-            status: 502,
+            status: 403,
             contentType: "application/json",
             body: JSON.stringify({ error: "Preference read unavailable" }),
           });
@@ -162,7 +165,7 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   await expect(
     dialog.getByRole("button", { name: "Create", exact: true }),
   ).toBeDisabled();
-  await expect(dialog.getByRole("alert")).not.toContainText("502");
+  await expect(dialog.getByRole("alert")).not.toContainText("403");
   // Recover preferences without replaying creation, then Cancel/reopen.
   await dialog.getByRole("button", { name: "Retry preferences" }).click();
   await expect(field).toBeFocused();
@@ -407,8 +410,66 @@ test.describe("without saved sections", () => {
     await expect(page.locator('[data-sidebar-section^="group:"]')).toHaveCount(
       0,
     );
-    await startDrag(page, page.locator('[data-channel-id="alpha"]'));
-    await dropOnCreate(page);
+    // Coalesce the hit area's initial observer delivery with the immediate
+    // reveal. dnd-kit ignores that first delivery; the completed reveal must
+    // establish its expanded collision geometry independently.
+    const resizeGate = await page.evaluateHandle(() => {
+      const NativeResizeObserver = window.ResizeObserver;
+      const pending = new Map();
+      let released = false;
+      window.ResizeObserver = class extends NativeResizeObserver {
+        constructor(callback) {
+          super((entries, observer) => {
+            const create = entries.filter(({ target }) =>
+              target.hasAttribute("data-create-section-trigger"),
+            );
+            const rest = entries.filter(
+              ({ target }) =>
+                !target.hasAttribute("data-create-section-trigger"),
+            );
+            if (rest.length) callback(rest, observer);
+            if (create.length) {
+              if (released) callback(create, observer);
+              else
+                pending.set(observer, {
+                  entries: create,
+                  notify: () => callback(create, observer),
+                });
+            }
+          });
+        }
+      };
+      return {
+        ready: () =>
+          pending.size > 0 &&
+          [...pending.values()].every(({ entries }) =>
+            entries.every(
+              ({ target, contentRect }) =>
+                contentRect.height === target.clientHeight,
+            ),
+          ),
+        release: () => {
+          released = true;
+          for (const { notify } of pending.values()) notify();
+          pending.clear();
+          window.ResizeObserver = NativeResizeObserver;
+        },
+      };
+    });
+    try {
+      await startDrag(page, page.locator('[data-channel-id="alpha"]'));
+      await revealCreate(page);
+      await expect
+        .poll(() => resizeGate.evaluate((gate) => gate.ready()))
+        .toBe(true);
+    } finally {
+      await resizeGate.evaluate((gate) => gate.release());
+      await resizeGate.dispose();
+    }
+    const target = page.locator("[data-create-section-drop]");
+    await target.hover();
+    await expect(page.locator('[class*="channelDragOverlay"]')).toBeHidden();
+    await page.mouse.up();
     const dialog = page.getByRole("dialog", { name: "Move to new section" });
     await expect(
       dialog.getByRole("textbox", { name: "Section name" }),

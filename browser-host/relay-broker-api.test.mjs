@@ -22,6 +22,10 @@ import {
   generateSecretKey,
 } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
+import {
+  CANVAS_MAX_EVENT_BYTES,
+  LIVE_CANVAS_BYTES,
+} from "../src/features/channel-templates/canvas-limits.ts";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 import { createRelaySession } from "../src/features/relay/session.ts";
@@ -168,6 +172,7 @@ test.each([
           });
         if (path.endsWith("/v1/auth/me"))
           return Response.json({
+            subject: "auth0|owner",
             email: "fixture@example.com",
             expires_at: "2030",
           });
@@ -185,9 +190,15 @@ test.each([
         body: "{}",
       });
       const opened = new URL(await loginOpened);
-      const callback = opened.searchParams.get("returnTo");
+      const callback = opened.searchParams.get("redirect_uri");
       expect(callback).toBeTruthy();
-      expect((await fetch(`${callback}?code=fixture`)).status).toBe(200);
+      expect(
+        (
+          await fetch(
+            `${callback}?state=${opened.searchParams.get("state")}&code=fixture`,
+          )
+        ).status,
+      ).toBe(200);
       expect((await login).status).toBe(200);
       const response = await fetch(`${h.base}/api/builderlab/delete`, {
         method: "POST",
@@ -1022,6 +1033,26 @@ test("media proxy rejects malformed ranges before upstream I/O", async () => {
   }
 });
 
+test("media proxy falls back to the JPEG thumbnail an older relay has", async () => {
+  const webp = `${fixtureRelayUrl}/media/${blob}.thumb.webp`;
+  const jpeg = `${fixtureRelayUrl}/media/${blob}.thumb.jpg`;
+  const h = await harness((call) =>
+    call.url.endsWith(".thumb.webp")
+      ? new Response("missing", { status: 404 })
+      : new Response("jpeg", { headers: { "Content-Type": "image/jpeg" } }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(webp)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("jpeg");
+    expect(h.calls.map((call) => call.url)).toEqual([webp, jpeg]);
+  } finally {
+    await h.close();
+  }
+});
+
 test("media proxy accepts only the media URLs the native proxy accepts", async () => {
   const relayHost = new URL(fixtureRelayUrl).host;
   const scheme = new URL(fixtureRelayUrl).protocol;
@@ -1040,6 +1071,7 @@ test("media proxy accepts only the media URLs the native proxy accepts", async (
     `${fixtureRelayUrl}/media/${blob}.PNG`,
     `${fixtureRelayUrl}/media/${blob}.toolongext`,
     `${fixtureRelayUrl}/media/${blob}.tar.gz`,
+    `${fixtureRelayUrl}/media/${blob}.thumb.png`,
     `${fixtureRelayUrl}/media/${blob}/nested.png`,
     `${fixtureRelayUrl}/other/${blob}.png`,
   ];
@@ -1047,6 +1079,7 @@ test("media proxy accepts only the media URLs the native proxy accepts", async (
     `${fixtureRelayUrl}/media/${blob}`,
     still,
     `${fixtureRelayUrl}/media/${blob}.thumb.jpg`,
+    `${fixtureRelayUrl}/media/${blob}.thumb.webp`,
   ];
   const h = await harness(
     () => new Response("ok", { headers: { "Content-Type": "image/png" } }),
@@ -1232,7 +1265,7 @@ test.each([
   ],
   ["/api/relay/archive", 4096, "bytes", "Archive request too large"],
   ["/api/relay/stream-presence", 256, "bytes", "Live control too large"],
-  ["/api/relay/stream", 300000, "bytes", "Live interests too large"],
+  ["/api/relay/stream", 64 * 1024 * 1024, "bytes", "Live interests too large"],
   ["/api/relay/query", 65536, "chars", "Filter body too large"],
   ["/api/relay/presence-snapshot", 20 * 1024, "bytes", "Filter body too large"],
 ])(
@@ -1416,6 +1449,58 @@ test("query keeps relay 403 refusals but turns an edge 403 page into a gateway f
   }
 });
 
+test("Canvas sign and publish bound content and the complete signed event", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const template = {
+      kind: 40100,
+      created_at: 1700000000,
+      tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+    };
+    const sign = (content) => h.post("sign", { ...template, content });
+    const size = (event) => Buffer.byteLength(JSON.stringify(event));
+    const largest = await sign("x".repeat(LIVE_CANVAS_BYTES));
+    expect(largest.status).toBe(200);
+    const event = await largest.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toHaveLength(1);
+    expect((await sign("x".repeat(LIVE_CANVAS_BYTES + 1))).status).toBe(400);
+
+    // Quotes escape to two bytes, so in-limit content can make a complete
+    // event exactly at, then one byte over, the relay's bound.
+    const overhead = size(await (await sign("")).json());
+    const quotes = CANVAS_MAX_EVENT_BYTES - overhead - LIVE_CANVAS_BYTES;
+    const escaped = (extra) =>
+      `${'"'.repeat(quotes + extra)}${"x".repeat(LIVE_CANVAS_BYTES - quotes - extra)}`;
+    const atBound = await sign(escaped(0));
+    expect(atBound.status).toBe(200);
+    const boundary = await atBound.json();
+    expect(size(boundary)).toBe(CANVAS_MAX_EVENT_BYTES);
+    expect((await h.post("publish", boundary)).status).toBe(200);
+    const over = await sign(escaped(1));
+    expect(over.status).toBe(400);
+    expect(await over.json()).toEqual({
+      error: "Relay event is too large",
+      sent: false,
+    });
+    // An event signed elsewhere is held to the same bound before publication;
+    // its request body is the event, so the body bound refuses it first.
+    const outside = finalizeEvent(
+      { ...template, content: escaped(1) },
+      generateSecretKey(),
+    );
+    expect(size(outside)).toBe(CANVAS_MAX_EVENT_BYTES + 1);
+    expect((await h.post("publish", outside)).status).toBe(413);
+    expect(h.publications).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
 test("reaction sign and publish preserve kind 7 and reject malformed targets before upstream I/O", async () => {
   const h = await harness((call) =>
     Response.json({ accepted: true, event_id: call.body.id }),
@@ -1429,6 +1514,7 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
       tags: [
         ["h", "c"],
         ["e", "a".repeat(64)],
+        ["p", "b".repeat(64)],
         ["emoji", "party", "https://a.test/party.png"],
       ],
     };
@@ -1746,7 +1832,7 @@ test("real outbox creates, invites and sends", async () => {
   }
 });
 
-test("member addition works without channel creation, while role elevation remains rejected", async () => {
+test("member and guest additions work without channel creation, while role elevation remains rejected", async () => {
   const h = await harness(success);
   let traffic;
   let owner;
@@ -1782,14 +1868,57 @@ test("member addition works without channel creation, while role elevation remai
       ).toBe("accepted"),
     );
     expect(h.publications).toHaveLength(2);
-    for (const role of ["owner", "admin", "guest"]) {
-      const denied = await h.post("sign", {
+    // Bestie joins a private channel as a guest: the same template through
+    // the outbox, with its trailing client-id, is signed and published.
+    const guestId = owner.outbox.send({
+      kind: 9000,
+      content: "",
+      tags: [...tags, ["role", "guest"]],
+    });
+    await vi.waitFor(() =>
+      expect(
+        owner.local.snapshot().find((row) => row.event.id === guestId)
+          ?.delivery,
+      ).toBe("accepted"),
+    );
+    expect(h.publications).toHaveLength(3);
+    expect(h.publications[2].tags).toEqual(
+      expect.arrayContaining([["role", "guest"]]),
+    );
+    // block/buzz#8575: one addition may name several people.
+    const people = [
+      ["p", "b".repeat(64)],
+      ["p", "c".repeat(64)],
+    ];
+    for (const role of [
+      [],
+      [["role", "member"]],
+      [["role", "guest"]],
+      [["role", "bot"]],
+    ]) {
+      const batchId = owner.outbox.send({
         kind: 9000,
         content: "",
-        created_at: 1700000000,
-        tags: [...tags, ["role", role]],
+        tags: [...tags, ...people, ...role],
       });
-      expect(denied.status).toBe(400);
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === batchId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+    }
+    expect(h.publications).toHaveLength(7);
+    for (const role of ["owner", "admin"]) {
+      for (const named of [tags, [...tags, ...people]]) {
+        const denied = await h.post("sign", {
+          kind: 9000,
+          content: "",
+          created_at: 1700000000,
+          tags: [...named, ["role", role]],
+        });
+        expect(denied.status).toBe(400);
+      }
     }
   } finally {
     owner?.dispose();
@@ -3185,6 +3314,24 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
           ["name", "rename"],
         ],
       },
+      { ...template, kind: 9002, tags: [["h", id], ["auto_join"]] },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["auto_join", "maybe"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["archived", "true"],
+          ["auto_join", "true"],
+        ],
+      },
       {
         ...template,
         kind: 9022,
@@ -3243,7 +3390,23 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
     expect(restore).toMatchObject(unarchive);
     expect((await h.post("publish", restore)).status).toBe(400);
     await transport.channelLifecycle.publish(restore, signal);
-    expect(h.publications).toHaveLength(2);
+    for (const value of ["true", "false"]) {
+      const flag = {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["auto_join", value],
+        ],
+      };
+      expect((await h.post("sign", flag)).status).toBe(400);
+      expect((await h.post("channel-details-sign", flag)).status).toBe(400);
+      const flagged = await transport.channelLifecycle.sign(flag, signal);
+      expect(verifyEvent(flagged)).toBe(true);
+      expect(flagged).toMatchObject(flag);
+      await transport.channelLifecycle.publish(flagged, signal);
+    }
+    expect(h.publications).toHaveLength(4);
   } finally {
     live?.dispose();
     await h.close();
@@ -3907,6 +4070,226 @@ test("inventory rejects foreign pages, ignores invalid heads and follows exact-k
     });
     expect(h.publications).toHaveLength(0);
   } finally {
+    await h.close();
+  }
+});
+
+test.each([[], [1, 42], [1, 42, 43]])(
+  "join discovery exposes membership enforcement for %j",
+  async (...nips) => {
+    const h = await harness((call) =>
+      Response.json(
+        call.url === fixtureRelayUrl
+          ? { name: "Community", supported_nips: nips }
+          : { policy: null },
+      ),
+    );
+    try {
+      expect(await (await h.get("info")).json()).toMatchObject({
+        membershipRequired: nips.includes(43),
+      });
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test("Builderlab HTTP accepts full agent instructions and isolates the fixed native routes", async () => {
+  let openLogin;
+  const opened = new Promise((resolve) => {
+    openLogin = resolve;
+  });
+  const instructions = "\\".repeat(20_000);
+  let received;
+  const nativeCalls = [];
+  const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+    open: async (url) => openLogin(new URL(url)),
+    fetch: async (url, init) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/v1/auth/login/exchange"))
+        return Response.json({
+          session_credential: "fixture-only",
+          expires_at: "2030",
+        });
+      if (path.endsWith("/v1/auth/me"))
+        return Response.json({
+          subject: "fixture-account",
+          expires_at: "2030",
+          capabilities: { can_use_remote_agents: true },
+        });
+      if (path.endsWith("/nostr-identities/challenge"))
+        return Response.json({
+          error: { code: "missing_mapping", setup_needed: true },
+        });
+      if (path.endsWith("/v3/beekeeper/update-agent")) {
+        received = JSON.parse(init.body);
+        return Response.json({ status: 1 });
+      }
+      if (
+        path.endsWith("/v3/builderlab/decisions") ||
+        path.endsWith("/v1/auth/hosted-site/native-session")
+      ) {
+        nativeCalls.push({
+          path,
+          body: JSON.parse(init.body),
+          headers: init.headers,
+        });
+        return Response.json({ fixture: "native reply" });
+      }
+      throw new Error(`Unexpected Builderlab request ${path}`);
+    },
+  });
+  try {
+    const login = fetch(`${h.base}/api/builderlab/login`, {
+      method: "POST",
+      body: "{}",
+    });
+    const authorization = await opened;
+    await fetch(
+      `${authorization.searchParams.get("redirect_uri")}?code=fixture&state=${authorization.searchParams.get("state")}`,
+    );
+    expect((await login).status).toBe(200);
+    const stream = await fetch(`${h.base}/api/builderlab/events`);
+    const reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+    let event = "";
+    try {
+      while (!event.includes("\n\n")) {
+        const part = await reader.read();
+        if (part.done) throw new Error("Missing development session metadata");
+        event += decoder.decode(part.value, { stream: true });
+      }
+    } finally {
+      await reader.cancel();
+    }
+    const { revision } = JSON.parse(
+      event.slice("data: ".length).split("\n\n")[0],
+    );
+    const body = JSON.stringify({
+      agent_pubkey: "a".repeat(64),
+      agent_instructions: instructions,
+    });
+    const envelope = JSON.stringify({
+      revision,
+      path: "/v3/beekeeper/update-agent",
+      method: "POST",
+      body,
+    });
+    expect(envelope.length).toBeGreaterThan(64 * 1024);
+    const response = await fetch(`${h.base}/api/builderlab/request`, {
+      method: "POST",
+      body: envelope,
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).status).toBe(200);
+    expect(received.agent_instructions).toBe(instructions);
+    for (const [action, path, header] of [
+      ["decisions", "/v3/builderlab/decisions", "X-BB-Session-Credential"],
+      [
+        "viewer",
+        "/v1/auth/hosted-site/native-session",
+        "X-Buzz-Builderlab-Revision",
+      ],
+    ]) {
+      const refused = await fetch(`${h.base}/api/builderlab/request`, {
+        method: "POST",
+        body: JSON.stringify({ revision, path, method: "POST", body: "{}" }),
+      });
+      expect(await refused.json()).toEqual({
+        error: "Unsupported Builderlab request",
+      });
+      const forwarded = await fetch(`${h.base}/api/builderlab/${action}`, {
+        method: "POST",
+        headers: { [header]: revision, "X-Buzz-Community": "buzz.example" },
+        body: JSON.stringify({ fixture: action }),
+      });
+      expect(forwarded.status).toBe(200);
+      expect(await forwarded.json()).toEqual({ fixture: "native reply" });
+      expect(nativeCalls.at(-1)).toMatchObject({
+        path: `/api/goose${path}`,
+        body: { fixture: action },
+        headers: { "X-BB-Session-Credential": "fixture-only" },
+      });
+    }
+    expect(nativeCalls).toHaveLength(2);
+    expect(nativeCalls[0].headers["X-Buzz-Community"]).toBe("buzz.example");
+  } finally {
+    await h.close();
+  }
+});
+
+test("Builderlab pending sign-in survives its initiating page disconnecting", async () => {
+  let openLogin;
+  const opened = new Promise((resolve) => {
+    openLogin = resolve;
+  });
+  const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+    open: async (url) => openLogin(new URL(url)),
+    fetch: async (url) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/v1/auth/login/exchange"))
+        return Response.json({
+          session_credential: "fixture-only",
+          expires_at: "2030",
+        });
+      if (path.endsWith("/v1/auth/me"))
+        return Response.json({
+          subject: "fixture-account",
+          expires_at: "2030",
+        });
+      if (path.endsWith("/nostr-identities/challenge"))
+        return Response.json({
+          error: { code: "missing_mapping", setup_needed: true },
+        });
+      throw new Error(`Unexpected Builderlab request ${path}`);
+    },
+  });
+  const disconnected = new Promise((resolve) => {
+    h.server.on("request", (req, res) => {
+      if (req.url === "/api/builderlab/login") res.once("close", resolve);
+    });
+  });
+  const abort = new AbortController();
+  let reader;
+  try {
+    const login = fetch(`${h.base}/api/builderlab/login`, {
+      method: "POST",
+      body: "{}",
+      signal: abort.signal,
+    }).catch((error) => error);
+    const authorization = await opened;
+    abort.abort();
+    await login;
+    await disconnected;
+    const stream = await fetch(`${h.base}/api/builderlab/events`);
+    reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const next = async () => {
+      while (!buffered.includes("\n\n")) {
+        const part = await reader.read();
+        if (part.done) throw new Error("Development session stream ended");
+        buffered += decoder.decode(part.value, { stream: true });
+      }
+      const end = buffered.indexOf("\n\n");
+      const event = JSON.parse(buffered.slice("data: ".length, end));
+      buffered = buffered.slice(end + 2);
+      return event;
+    };
+    expect(await next()).toMatchObject({ pending: true, auth: null });
+    await fetch(
+      `${authorization.searchParams.get("redirect_uri")}?code=fixture&state=${authorization.searchParams.get("state")}`,
+    );
+    let signedIn;
+    do {
+      signedIn = await next();
+    } while (signedIn.pending);
+    expect(signedIn.auth).toMatchObject({ subject: "fixture-account" });
+    const auth = await (await fetch(`${h.base}/api/builderlab/auth`)).json();
+    expect(auth.auth).toMatchObject({ subject: "fixture-account" });
+  } finally {
+    abort.abort();
+    await reader?.cancel();
     await h.close();
   }
 });

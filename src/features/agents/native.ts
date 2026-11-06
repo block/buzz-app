@@ -41,8 +41,15 @@ export type Membership = Readonly<{ pubkey: string; relay: string }>;
  * harness agents, or the installed or development build of old Buzz. */
 export type PortSource = "harness" | "installed" | "development";
 /** An identity an earlier agent system saved, which Agents can take over. */
+export type SavedConnection = Readonly<{
+  runtime: string;
+  provider?: string;
+  model?: string;
+  effort?: string;
+}>;
 export type PortableAgent = Readonly<{
   source: PortSource;
+  connection?: SavedConnection;
   pubkey: string;
   name: string;
   picture?: string;
@@ -76,6 +83,13 @@ export type PortableAgents = Readonly<{
   /** A store that could not be read; the others are still listed. */
   warnings: readonly string[];
 }>;
+const UNCONFIRMED_EVENT =
+  /^Agent event ([0-9a-f]{64}) unconfirmed; it may or may not have been accepted$/;
+export function unconfirmedAgentEvent(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return UNCONFIRMED_EVENT.exec(message)?.[1];
+}
+
 export type AgentEventTemplate = Readonly<{
   kind: number;
   content: string;

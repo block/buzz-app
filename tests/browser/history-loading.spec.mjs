@@ -10,6 +10,7 @@ import {
 } from "./timeline.mjs";
 
 test.use({
+  enabledPlugins: ["buzz.workflows"],
   productionBroker: true,
   historyCounts: { alpha: 640, beta: 20 },
 });
@@ -102,7 +103,17 @@ test("saved top resumes automatic history on an upward gesture after remount", a
     }),
   ).toHaveCount(0);
   await history(page).hover();
-  await page.mouse.wheel(0, -100000);
+  // Establish the saved top with real input; remeasurement can consume part
+  // of a gesture. Each settled gesture must make progress toward the top.
+  while (true) {
+    const before = await history(page).evaluate((e) => e.scrollTop);
+    if (before <= 0) break;
+    await wheel(page, -before);
+    expect(
+      await history(page).evaluate((e) => e.scrollTop),
+      "saved-top setup retains upward progress",
+    ).toBeLessThan(before);
+  }
   await expect.poll(() => app.pending.length).toBe(1);
   await settle(page);
   await expect.poll(() => history(page).evaluate((e) => e.scrollTop)).toBe(0);
@@ -306,33 +317,56 @@ test.describe("pages inside one second", () => {
     page,
     app,
   }) => {
+    // A shorter scroller lets the drag carry the held row out of view even
+    // when the randomized page leaves little loaded history above the reader.
+    await page.setViewportSize({ width: 1440, height: 600 });
     const pending = await reading(page, app, 1400);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     try {
+      // The press records the topmost whole paragraph as the reading anchor.
+      // The timeline holds that row in place while any part of it stays in
+      // view, even as rows above it measure and move.
+      let held = await anchor(page);
       const height = await history(page).evaluate((e) => e.scrollHeight);
       pending.release();
       await expect
         .poll(() => history(page).evaluate((e) => e.scrollHeight))
         .toBeGreaterThan(height);
       await settle(page);
+      await expectAnchor(page, held);
+      // Keep enough gesture samples even when the randomized page is short.
+      const distance = Math.min(
+        150,
+        Math.floor((await history(page).evaluate((e) => e.scrollTop)) / 12),
+      );
+      expect(distance).toBeGreaterThan(0);
       // A scrollbar drag moves the scroller with no further input events,
       // into older rows that measure as they mount, short of the loaded top.
+      // Once a step carries the held row out of view, the timeline holds the
+      // row it reads at that scroll instead. Reading after the step settles
+      // could pick another row once rows above it measure.
       let step = 0;
+      let handOvers = 0;
       for (
         ;
-        step < 10 && (await history(page).evaluate((e) => e.scrollTop)) >= 150;
+        step < 10 &&
+        (await history(page).evaluate((e) => e.scrollTop)) >= distance;
         step++
       ) {
-        const before = await anchor(page);
-        await history(page).evaluate((e) => {
-          e.scrollTop -= 150;
-        });
+        const read = await anchor(page, held.id, -distance);
+        if (read.id === held.id) held = { ...held, y: held.y + distance };
+        else {
+          held = read;
+          handOvers++;
+        }
         await settle(page);
-        await expectAnchor(page, { ...before, y: before.y + 150 });
+        await expectAnchor(page, held);
       }
-      expect(step).toBeGreaterThanOrEqual(3);
+      // The drag hands over at least once and keeps asserting after it.
+      expect(step).toBeGreaterThanOrEqual(6);
+      expect(handOvers).toBeGreaterThan(0);
     } finally {
       await page.mouse.up();
     }

@@ -131,6 +131,10 @@ other.
   update keeps the plugin's enabled state.
 - **Pending recommendations** show as a small count beside **Plugins** in the profile
   menu and beside **Manage plugins** in Settings. There is no startup prompt or modal.
+- **Shell update notices** also check installed Git plugins. For a managed plugin,
+  the check and update use the recommended reference, path, and commit pin. A
+  reference at another commit cannot install. Missing recommendations keep their
+  existing review flow. The Plugins menu keeps updates available after **Later**.
 - **Details of a managed plugin** do not offer the generic update check, which would
   install the reference's tip instead of the pinned commit. They show the same
   **Review update** as the group above when the plugin is Outdated.
@@ -151,8 +155,8 @@ open, the review reads the new entry again, and it closes if the entry is remove
 entry's `commit` when you intend a branch to advance. Because only the reference's tip is
 fetched, a commit that is no longer the tip of its reference cannot be installed.
 
-Only an install or update from a recommendation records `commit` in the plugin's saved
-source in the profile registry. Older Buzz versions reject that field and offer settings
+Only an install or update from a recommendation or an agent's request records `commit`
+in the plugin's saved source in the profile registry. Older Buzz versions reject that field and offer settings
 recovery, so downgrading after installing from a recommendation is not supported, as
 with other registry additions. Plugins added through the Add dialog are unaffected.
 

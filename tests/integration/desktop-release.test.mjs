@@ -27,10 +27,15 @@ const version = `${baseVersion}-preview.42.2`;
 const sha = "a".repeat(40);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const assets = {
-  macos: [
+  "macos-aarch64": [
     `Buzz_${version}_aarch64.dmg`,
     `Buzz_${version}_aarch64.app.tar.gz`,
     `Buzz_${version}_aarch64.app.tar.gz.sig`,
+  ],
+  "macos-x64": [
+    `Buzz_${version}_x64.dmg`,
+    `Buzz_${version}_x64.app.tar.gz`,
+    `Buzz_${version}_x64.app.tar.gz.sig`,
   ],
   windows: [`Buzz_${version}_x64_unsigned.exe`],
   linux: [`Buzz_${version}_amd64.deb`, `Buzz_${version}_x86_64.AppImage`],
@@ -143,7 +148,7 @@ function fixture(t) {
   };
 }
 
-test("actual assembly command collects all nine assets and emits one complete checksum file", (t) => {
+test("actual assembly command collects all twelve assets and emits one complete checksum file", (t) => {
   const { dir, run } = fixture(t);
   const result = run();
   assert.equal(result.status, 0, result.stderr);
@@ -169,6 +174,7 @@ for (const failure of [
   "corrupt",
   "mixed version",
   "missing platform",
+  "missing Intel macOS",
   "missing signature",
 ]) {
   test(`actual assembly refuses ${failure} before publication`, (t) => {
@@ -182,8 +188,90 @@ for (const failure of [
       writeFileSync(join(windows, "SHA256SUMS"), `${hash(file)}  ./${older}\n`);
     }
     if (failure === "missing platform") rmSync(windows, { recursive: true });
+    if (failure === "missing Intel macOS")
+      rmSync(join(dir, "build-assets/macos-x64"), { recursive: true });
     if (failure === "missing signature")
       rmSync(join(dir, "build-assets/signatures", assets.signatures[2]));
     assert.notEqual(run().status, 0);
   });
 }
+
+test("actual publication retries a failed create, deleting only a draft it left", (t) => {
+  const publication = jobs.publish.steps.find(
+    (step) => step.name === "Publish desktop previews",
+  ).run;
+  const tag = `v${version}`;
+  // Fake gh fails `release create` until its SUCCEED_ON-th call and reports
+  // LEFT ("true" for a draft, "false" for a published release, empty for
+  // none) as the release's isDraft; the fakes log every call so the test sees
+  // what ran between tries.
+  const publish = (succeedOn, left = "", deleteStatus = 0) => {
+    const dir = temp(t);
+    mkdirSync(join(dir, "bin"));
+    mkdirSync(join(dir, "release-assets"));
+    writeFileSync(join(dir, "release-assets", "SHA256SUMS"), "");
+    writeFileSync(
+      join(dir, "bin", "gh"),
+      `#!/bin/bash
+case "$1 $2" in
+  "release create")
+    echo "create $3" >> "$DIR/calls"
+    n=$(grep -c ^create "$DIR/calls")
+    [ "$n" -ge "$SUCCEED_ON" ] ;;
+  "release view")
+    echo "view \${*:3}" >> "$DIR/calls"
+    [ -n "$LEFT" ] || { echo "release not found" >&2; exit 1; }
+    echo "$LEFT" ;;
+  "release delete")
+    echo "delete \${*:3}" >> "$DIR/calls"
+    exit "$DELETE_STATUS" ;;
+  *) exit 64 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(dir, "bin", "sleep"),
+      '#!/bin/sh\necho "sleep $1" >> "$DIR/calls"\n',
+      { mode: 0o755 },
+    );
+    const result = spawnSync("bash", ["-eo", "pipefail", "-c", publication], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+        DIR: dir,
+        SUCCEED_ON: String(succeedOn),
+        LEFT: left,
+        DELETE_STATUS: String(deleteStatus),
+        VERSION: version,
+        SOURCE_SHA: sha,
+        GITHUB_RUN_ID: "42",
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
+    return { status: result.status, calls };
+  };
+  const create = `create ${tag}`;
+  const view = `view ${tag} --json isDraft --jq .isDraft`;
+
+  assert.deepEqual(publish(1), { status: 0, calls: [create] });
+  // A failed try may leave nothing to delete; that must not stop the retry.
+  assert.deepEqual(publish(3), {
+    status: 0,
+    calls: [create, view, "sleep 15", create, view, "sleep 30", create],
+  });
+  // A draft is deleted before the next try, which runs even if that fails.
+  assert.deepEqual(publish(2, "true", 1), {
+    status: 0,
+    calls: [create, view, `delete ${tag} --yes`, "sleep 15", create],
+  });
+  assert.deepEqual(publish(4), {
+    status: 1,
+    calls: [create, view, "sleep 15", create, view, "sleep 30", create],
+  });
+  // A published release, as a publish-only re-run finds, stays in place.
+  assert.deepEqual(publish(4, "false"), { status: 1, calls: [create, view] });
+});

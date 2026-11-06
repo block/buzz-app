@@ -7,7 +7,7 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
-test.use({ pluginFixtures: true });
+test.use({ enabledPlugins: ["buzz.workflows"], pluginFixtures: true });
 
 const home = { version: 1, kind: "home" };
 const settings = { version: 1, kind: "settings" };
@@ -89,7 +89,7 @@ test("launch opens Messages without exposing Home across responsive navigation, 
       .toBe(true);
   }
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: /^Manage members of /, exact: true })
     .click();
   await expect(
     page.getByRole("dialog", { name: "Manage members", exact: true }),
@@ -189,7 +189,7 @@ test("default navigation retries failed metadata and accepts a completed empty l
     page.getByRole("button", { name: "alpha", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: /^Manage members of /, exact: true })
     .click();
   await expect(
     page.getByRole("dialog", { name: "Manage members", exact: true }),

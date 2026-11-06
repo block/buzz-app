@@ -37,6 +37,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import { useChannelPanels } from "./useChannelPanels";
 import {
   entryPane,
+  panelContentTarget,
   panelTabId,
   rootOfTab,
   selectedTabId,
@@ -881,6 +882,7 @@ export function useConversationTabs({
         !entry.panel.deferUntilShown || visitTab.shown.has(id) ? (
           <PanelCard
             panel={entry.panel}
+            contentKey={panelContentTarget(entry)}
             target={entry.target}
             context={panelContext(entry)}
             channelContext={entry.channelContext}
@@ -995,6 +997,8 @@ export function useConversationTabs({
             onKeyDown={(event) => {
               if (
                 event.key === "Escape" &&
+                // Shift+Escape is Mark all as read, not a dismissal.
+                !event.shiftKey &&
                 !event.nativeEvent.isComposing &&
                 event.nativeEvent.keyCode !== 229 &&
                 !event.defaultPrevented &&

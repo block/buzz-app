@@ -1,10 +1,12 @@
 import type { LocalAgentSource, LocalWork } from "./local-activity";
+import { activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
 import {
   ACTIVITY_HISTORY_AGE_MS,
   observerFrame,
+  terminalOutcome,
   type ObserverFrame,
 } from "./observer";
 
@@ -22,9 +24,16 @@ type RawRecord = ObserverFrame &
 export type ActivityTurn = Readonly<{
   agent: string;
   turnId: string;
+  sessionId?: string;
+  threadRootId?: string;
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  /** Retained independently of the bounded raw activity buffer. */
+  outcome?: ReturnType<typeof terminalOutcome>;
+  triggeringEventIds?: readonly string[];
+  /** Multiple distinct starts reused this turn ID; request identity is ambiguous. */
+  ambiguous?: boolean;
   /** Roots established from retained signed triggering messages, not typing. */
   requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
@@ -38,6 +47,8 @@ type Typing = Readonly<{
   working: boolean;
   expiresAt: number;
 }>;
+/** Published typing: a pulse that only refreshes its clock changes nothing. */
+type TypingEntry = Omit<Typing, "timestamp" | "expiresAt">;
 const TYPING_FRESH_MS = 8000;
 type Snapshot = Readonly<{
   status:
@@ -49,8 +60,10 @@ type Snapshot = Readonly<{
   records: readonly RawRecord[];
   turns: readonly ActivityTurn[];
   local?: readonly LocalWork[];
-  typing: readonly Typing[];
+  typing: readonly TypingEntry[];
   trimmed: number;
+  /** Unlike raw-record trimming, losing a turn can lose request completeness. */
+  turnsTrimmed?: boolean;
 }>;
 type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   requests?: ActivityTurn["requests"];
@@ -93,6 +106,7 @@ export function createAgentActivity(
     bytes = 0,
     trimmed = 0,
     evidenceFloor = 0;
+  let turnsTrimmed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   const turns = new Map<string, Turn>();
   const typing = new Map<string, Typing>();
@@ -131,6 +145,9 @@ export function createAgentActivity(
     turn.unresolvedTriggers = unresolved;
     turn.requests = Object.freeze(requests);
   }
+  function typingKey(entries: readonly TypingEntry[]) {
+    return JSON.stringify(entries.map((entry) => JSON.stringify(entry)).sort());
+  }
   function publish() {
     const localWork =
       local && !closed
@@ -159,14 +176,26 @@ export function createAgentActivity(
     const known = liveAgents;
     for (const [key, entry] of typing)
       if (now >= entry.expiresAt || !known.has(entry.agent)) typing.delete(key);
-    const typers = [...typing.values()].filter((entry) => entry.working);
+    const typers = [...typing.values()]
+      .filter((entry) => entry.working)
+      .map(
+        ({ agent, channelId, threadRootId, startedAt, working }): TypingEntry =>
+          Object.freeze({ agent, channelId, threadRootId, startedAt, working }),
+      );
     const visible = [...turns.values()].map(
       (turn): ActivityTurn =>
         Object.freeze({
           agent: turn.agent,
           turnId: turn.turnId,
+          ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
+          ...(turn.threadRootId ? { threadRootId: turn.threadRootId } : {}),
+          ...(turn.ambiguous ? { ambiguous: true } : {}),
           channelId: turn.channelId,
           timestamp: turn.timestamp,
+          ...(turn.outcome ? { outcome: turn.outcome } : {}),
+          ...(turn.triggeringEventIds
+            ? { triggeringEventIds: turn.triggeringEventIds }
+            : {}),
           ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
           state: turn.ended
             ? "ended"
@@ -206,7 +235,8 @@ export function createAgentActivity(
       snapshot.records === records &&
       snapshot.trimmed === trimmed &&
       JSON.stringify(snapshot.turns) === JSON.stringify(visible) &&
-      JSON.stringify(snapshot.typing) === JSON.stringify(typers)
+      // Each pulse re-inserts its key for eviction recency: compare as a set.
+      typingKey(snapshot.typing) === typingKey(typers)
     )
       return;
     snapshot = Object.freeze({
@@ -216,6 +246,7 @@ export function createAgentActivity(
       local: Object.freeze(localWork),
       typing: Object.freeze(typers),
       trimmed,
+      turnsTrimmed,
     });
     for (const listener of listeners) notify(listener);
     if (workingChanged)
@@ -226,6 +257,7 @@ export function createAgentActivity(
     bytes = 0;
     trimmed = 0;
     evidenceFloor = 0;
+    turnsTrimmed = false;
     turns.clear();
     typing.clear();
     liveAgents.clear();
@@ -263,9 +295,19 @@ export function createAgentActivity(
     )
       return;
     if (!previous && timestamp <= evidenceFloor) return;
+    const payload = object(item.payload);
+    const root = payload?.threadRootEventId;
+    const legacyRoot =
+      item.kind === "acp_write" && !previous?.threadRootId
+        ? activityPromptThread(payload)
+        : undefined;
+    const sessionId =
+      item.kind === "session_resolved" && text(payload?.sessionId)
+        ? payload.sessionId
+        : item.sessionId;
     const triggers =
       item.kind === "turn_started"
-        ? object(item.payload)?.triggeringEventIds
+        ? payload?.triggeringEventIds
         : previous?.triggeringEventIds;
     const triggeringEventIds =
       Array.isArray(triggers) &&
@@ -286,11 +328,29 @@ export function createAgentActivity(
         : {}),
       agent,
       turnId: item.turnId,
+      ...(previous?.ambiguous ||
+      (item.kind === "turn_started" &&
+        previous?.triggeringEventIds !== undefined)
+        ? { ambiguous: true }
+        : {}),
+      ...(typeof root === "string" && /^[0-9a-f]{64}$/.test(root)
+        ? { threadRootId: root }
+        : previous?.threadRootId
+          ? { threadRootId: previous.threadRootId }
+          : typeof legacyRoot === "string"
+            ? { threadRootId: legacyRoot }
+            : {}),
+      ...(text(sessionId)
+        ? { sessionId }
+        : previous?.sessionId
+          ? { sessionId: previous.sessionId }
+          : {}),
       channelId: item.channelId,
       // Completion may precede liveness on a rolled-back producer clock. Keep
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
+      outcome: terminalOutcome(item.kind, payload?.outcome),
       epoch,
     };
     associate(turn);
@@ -303,6 +363,7 @@ export function createAgentActivity(
         turns.delete(oldest[0]);
         // Forgetting a tombstone must not let older evidence resurrect that turn.
         evidenceFloor = Math.max(evidenceFloor, oldest[1].timestamp);
+        turnsTrimmed = true;
         trimmed++;
       }
     }
@@ -339,12 +400,12 @@ export function createAgentActivity(
     const items = Array.isArray(children) ? children : [raw];
     // A denied child cannot leak through an otherwise visible raw batch.
     if (!channelsAllowed(raw, canAccess)) return;
-    liveAgents.add(frame.agent);
-    for (const item of items) fold(frame.agent, item);
     if (records.some((record) => record.id === frame.id)) {
       publish();
       return;
     }
+    liveAgents.add(frame.agent);
+    for (const item of items) fold(frame.agent, item);
     const record = Object.freeze({
       id: frame.id,
       agent: frame.agent,
@@ -378,6 +439,27 @@ export function createAgentActivity(
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
+      /** Owner-authorized status readback for an exact retained remote task.
+       * Never invent raw telemetry or replace an already received terminal. */
+      reconcile(turn: ActivityTurn, outcome: "ended" | "error" | "stopped") {
+        if (closed || !leases || !turn.channelId || !canAccess(turn.channelId))
+          return;
+        const current = turns.get(`${turn.agent}:${turn.turnId}`);
+        if (
+          !current ||
+          current.ended ||
+          !turn.sessionId ||
+          current.sessionId !== turn.sessionId ||
+          current.channelId !== turn.channelId
+        )
+          return;
+        turns.set(`${turn.agent}:${turn.turnId}`, {
+          ...current,
+          ended: true,
+          outcome,
+        });
+        publish();
+      },
       /** Display-only local acknowledgement, scoped to this session and access. */
       dismissError(agent: string, channelId: string, messageId: string) {
         if (!local || closed || !canAccess(channelId)) return false;
@@ -393,6 +475,12 @@ export function createAgentActivity(
           agent,
           messageId,
         });
+      },
+      /** Asks again for a failed local request, scoped to this session and access. */
+      retry(agent: string, channelId: string, messageId: string) {
+        if (!local?.source.retry || closed || !canAccess(channelId))
+          throw new Error("This request can't be retried here");
+        local.source.retry({ scope: local.scope, agent, messageId });
       },
       workingSnapshot: () => workingChannels,
       subscribeWorking(listener: () => void) {
@@ -469,6 +557,7 @@ export function createAgentActivity(
       if (closed || !leases || status !== "listening") return;
       const known = liveAgents;
       const now = Date.now();
+      let changed = false;
       for (const event of events) {
         if (![9, 20002].includes(event.kind) || !known.has(event.pubkey))
           continue;
@@ -498,6 +587,7 @@ export function createAgentActivity(
               timestamp <= previous.timestamp + 2000))
         )
           continue;
+        changed = true;
         typing.delete(key);
         typing.set(
           key,
@@ -519,7 +609,8 @@ export function createAgentActivity(
           if (oldest) typing.delete(oldest);
         }
       }
-      publish();
+      // Expiry and freshness ride the publish timer; other traffic changes nothing.
+      if (changed) publish();
     },
     state(live: LiveSnapshot) {
       if (closed || !available || !leases) return;

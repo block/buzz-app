@@ -1,6 +1,44 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
+// Real Members -> Profiles wiring must retain a visible distinction after the
+// browser collapses trailing whitespace, without changing the clicked key.
+test("qualifies a whitespace namesake in Members and opens its exact profile", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/profiles.html?verified-name&name-collision");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const { key, npub } = await page.evaluate(() => ({
+    key: window.profilesFixture.keys.mic,
+    npub: window.profilesFixture.npubs.mic,
+  }));
+  const name = `Viewer (${key.slice(0, 10)})`;
+  await page.getByRole("button", { name: /^Manage members of / }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Manage members",
+    exact: true,
+  });
+  const label = dialog.getByText(name, { exact: true });
+  await expect(label).toBeVisible();
+  const row = dialog.getByRole("button", {
+    name: new RegExp(`^Open profile for Viewer \\(${key.slice(0, 10)}\\)`),
+  });
+  await row.focus();
+  await row.press("Enter");
+  const panel = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  await expect(panel.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(panel.locator("code")).toHaveText(npub);
+  await expect(panel.getByText("Mic biography", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(() => window.profilesFixture.report.publications),
+  ).toBe(0);
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("transient profiles replace without retiring Back/Forward return paths", async ({
   page,
 }) => {
@@ -257,7 +295,7 @@ test("profile visits survive passive traversal and X retires active and inactive
   // Members composes above a content visit without replacing that content.
   const reopened = (await read()).entry.id;
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage members of One", exact: true })
     .click();
   const members = page.getByRole("dialog", {
     name: "Manage members",
@@ -316,6 +354,145 @@ test("closing a profile beside a main thread preserves the thread destination", 
       ),
     )
     .toBe(true);
+});
+
+// Close returns through native history, which lands a task or more later, and
+// the dock keeps its exit motion. Hold both so a reopen arrives before them.
+async function holdCloseReturn(page) {
+  await page.evaluate(() => {
+    const go = history.go.bind(history);
+    const held = [];
+    history.go = (delta) => held.push(delta);
+    // Pause the exit while it is still pending, so it cannot finish first.
+    const exit = new MutationObserver(() => {
+      const dock = document.querySelector("[data-panel-dock][data-closing]");
+      for (const animation of [
+        ...(dock?.getAnimations() ?? []),
+        ...(dock?.parentElement?.getAnimations() ?? []),
+      ])
+        animation.pause();
+    });
+    exit.observe(document.body, {
+      subtree: true,
+      attributeFilter: ["data-closing"],
+    });
+    window.releaseReturn = () => {
+      exit.disconnect();
+      history.go = go;
+      for (const delta of held) go(delta);
+      return held.length;
+    };
+  });
+  return () => page.evaluate(() => window.releaseReturn());
+}
+
+async function openReturnFixture(page) {
+  await page.goto("/tests/fixtures/profiles.html");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const read = async () =>
+    (await page.evaluate(() => window.profilesFixture.navigation.snapshot()))
+      .entry;
+  return {
+    read,
+    ...(await page.evaluate(() => ({
+      npubs: window.profilesFixture.npubs,
+      targets: window.profilesFixture.targets,
+    }))),
+    channel: (await read()).id,
+    panel: page.getByRole("complementary", { name: "Profile", exact: true }),
+    mention: page.getByRole("button", {
+      name: "View Mic profile",
+      exact: true,
+    }),
+    closing: page.locator("[data-panel-dock][data-closing]:not([hidden])"),
+  };
+}
+
+test("a Profile reopened before its close returns stays open with a fresh visit", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const { read, npubs, targets, channel, panel, mention, closing } =
+    await openReturnFixture(page);
+  for (const activation of ["click", "Space"]) {
+    await mention.click();
+    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    const closed = (await read()).id;
+    const release = await holdCloseReturn(page);
+    let held;
+    try {
+      await page
+        .getByRole("tablist", { name: "Panel tabs" })
+        .getByRole("button", { name: "Close Mic tab", exact: true })
+        .click();
+      await expect(panel).toHaveCount(0);
+      await expect(closing).toHaveCount(1);
+      if (activation === "click") await mention.click();
+      else await mention.press(activation);
+      await expect(panel.locator("code")).toHaveText(npubs.mic);
+      expect((await read()).id).toBe(closed);
+    } finally {
+      held = await release();
+    }
+    expect(held).toBe(1);
+    // The return lands; the reopened Profile then needs its own visit.
+    await expect
+      .poll(async () => {
+        const entry = await read();
+        return entry.id !== closed && entry.target.detail?.target;
+      })
+      .toBe(targets.mic);
+    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    await page.goBack();
+    await expect.poll(async () => (await read()).id).toBe(channel);
+    await expect(panel).toHaveCount(0);
+  }
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("a Profile opened after closing a thread and its Profile stays open with a fresh visit", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const { read, npubs, targets, channel, panel, mention, closing } =
+    await openReturnFixture(page);
+  await page
+    .getByRole("button", { name: "View thread: 1 reply", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "View Pinky profile", exact: true })
+    .click();
+  await expect(panel.locator("code")).toHaveText(npubs.pinky);
+  const closed = (await read()).id;
+  const tabs = page.getByRole("tablist", { name: "Panel tabs" });
+  const release = await holdCloseReturn(page);
+  let held;
+  try {
+    await tabs
+      .getByRole("button", { name: "Close Pinky tab", exact: true })
+      .click();
+    // The second close retires the thread under the pending return, which
+    // then lands on the channel instead.
+    await tabs.getByRole("button", { name: /^Close .* tab$/ }).click();
+    await expect(closing).toHaveCount(1);
+    await mention.click();
+    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    expect((await read()).id).toBe(closed);
+  } finally {
+    held = await release();
+  }
+  expect(held).toBe(1);
+  await expect
+    .poll(async () => {
+      const entry = await read();
+      return entry.id !== closed && entry.target.detail?.target;
+    })
+    .toBe(targets.mic);
+  await expect(panel.locator("code")).toHaveText(npubs.mic);
+  await page.goBack();
+  await expect.poll(async () => (await read()).id).toBe(channel);
+  await expect(panel).toHaveCount(0);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecycle and recovery", async ({
@@ -430,8 +607,9 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     await expect(key).toHaveText(npubs.viewer);
     if (pointerVisit !== "stationary") await page.mouse.move(0, 0);
     if (pointerVisit === "back") {
-      const rect = await avatar.boundingBox();
-      await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      // Profile pushes the avatar aside. Hover waits for it to settle, so the
+      // pointer rests on the pushed avatar, not where Escape puts it back.
+      await avatar.hover();
       // Complete this hover while Profile is still open. Otherwise its timer
       // can fire after Escape and legitimately count as a fresh hover visit.
       await page.clock.runFor(300);
@@ -470,7 +648,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   );
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   await expect(mention).toBeFocused();
@@ -548,7 +726,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   );
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   await expect(
@@ -558,7 +736,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   ).toBeFocused();
   await page
     .locator(
-      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "]',
     )
     .click();
   const missingKey = await page.evaluate(
@@ -682,7 +860,7 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   expect(await invoke()).toBe(false);
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   await capture();
@@ -765,7 +943,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html");
   const members = page.getByRole("button", {
-    name: "Manage members",
+    name: "Manage members of One",
     exact: true,
   });
   await members.click();
@@ -829,26 +1007,12 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       const member = group.getByRole("listitem").first();
       await expect(member).toHaveCSS("padding-inline-end", "0px");
       const header = dialog.locator(".buzz-dialog-header");
-      const refresh = header.getByRole("button", {
-        name: "Refresh member data",
-      });
-      const close = header.getByRole("button", {
-        name: "Close",
-      });
-      await expect(refresh).toHaveAttribute("data-variant", "ghost");
-      await expect(refresh).toHaveAttribute("data-icon-size", "compact");
-      const refreshBounds = await refresh.boundingBox();
-      const closeBounds = await close.boundingBox();
-      expect(refreshBounds.x + refreshBounds.width).toBeLessThanOrEqual(
-        closeBounds.x,
-      );
-      expect(refreshBounds.y).toBe(closeBounds.y);
-      expect(refreshBounds.width).toBe(closeBounds.width);
-      expect(refreshBounds.height).toBe(closeBounds.height);
-      for (const button of [refresh, close]) {
-        await expect(button.locator("svg")).toHaveCSS("width", "16px");
-        await expect(button.locator("svg")).toHaveCSS("height", "16px");
-      }
+      await expect(
+        dialog.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveCount(0);
+      const close = header.getByRole("button", { name: "Close" });
+      await expect(close.locator("svg")).toHaveCSS("width", "16px");
+      await expect(close.locator("svg")).toHaveCSS("height", "16px");
       expect(await body.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
@@ -922,13 +1086,32 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       });
       // With room for a heading and its rows, the heading still pins as soon
       // as the preceding notice scrolls out, without an extra padding slide.
-      await page.setViewportSize({ width, height: 460 });
+      await page.setViewportSize({ width, height: 530 });
+      // Give the collection 9rem: above the 8rem sticky-heading threshold,
+      // while retaining scroll range past its notice. Derive viewport height
+      // from native layout so wrapped recovery content cannot change the state.
+      const contentHeight = () =>
+        list.evaluate((el) => {
+          const style = getComputedStyle(el);
+          return (
+            el.clientHeight -
+            parseFloat(style.paddingTop) -
+            parseFloat(style.paddingBottom)
+          );
+        });
+      const measuredHeight = await contentHeight();
+      await page.setViewportSize({ width, height: 530 + 144 - measuredHeight });
+      await expect.poll(contentHeight).toBe(144);
       await expect(firstHeading).toHaveCSS("position", "sticky");
       const roomyListBounds = await list.boundingBox();
       const roomyHeadingBounds = await firstHeading.boundingBox();
       const roomyLeadingContent = Math.round(
         roomyHeadingBounds.y - roomyListBounds.y,
       );
+      // Prove the fixture can scroll past its notice and exercise pinning.
+      expect(
+        await list.evaluate((el) => el.scrollHeight - el.clientHeight),
+      ).toBeGreaterThanOrEqual(roomyLeadingContent + 16);
       for (const scrollTop of [0, 1, 8, 16]) {
         await list.evaluate((el, top) => {
           el.scrollTop = top;
@@ -949,7 +1132,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await page.setViewportSize({ width, height: 900 });
       await expect
         .poll(() => list.evaluate((el) => el.clientHeight))
-        .toBeGreaterThan(300);
+        .toBeGreaterThan(roomyListBounds.height);
       await expect(group).toHaveCSS("flex-grow", "0");
       expect((await group.boundingBox()).height).toBeLessThan(
         (await list.boundingBox()).height,
@@ -1093,7 +1276,7 @@ test.describe("touch member actions", () => {
   test("keeps the ellipsis available without hover", async ({ page }) => {
     await page.goto("/tests/fixtures/profiles.html");
     const members = page.getByRole("button", {
-      name: "Manage members",
+      name: "Manage members of One",
       exact: true,
     });
     await members.tap();
@@ -1123,7 +1306,7 @@ test("member Send message navigates a human DM without sending or returning focu
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html?member-message");
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage members of One", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
     name: "Manage members",
@@ -1148,13 +1331,13 @@ test("member Send message navigates a human DM without sending or returning focu
     .poll(() => page.evaluate(() => window.profilesFixture.dmOpens))
     .toEqual([[await page.evaluate(() => window.profilesFixture.keys.mic)]]);
   await expect(
-    page.getByRole("tab", { name: "Mic", exact: true }),
+    page.getByRole("button", { name: "Manage members of Mic", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message #Mic", exact: true }),
   ).toBeFocused();
   await expect(
-    page.getByRole("button", { name: "Manage members", exact: true }),
+    page.getByRole("button", { name: "Manage members of Mic", exact: true }),
   ).not.toBeFocused();
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),
@@ -1163,7 +1346,7 @@ test("member Send message navigates a human DM without sending or returning focu
   // the DM open or send.
   await page.evaluate(() => window.profilesFixture.navigation.back());
   await expect(
-    page.getByRole("button", { name: "Manage members", exact: true }),
+    page.getByRole("button", { name: "Manage members of One", exact: true }),
   ).toBeVisible();
   await expect(dialog).toHaveCount(0);
   expect(
@@ -1193,7 +1376,7 @@ test("profile preview stays inside a Solo conversation beside another pane", asy
   await page.goto("/tests/fixtures/profiles.html?solo");
   await page.getByRole("button", { name: "One", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "One", exact: true }),
+    page.getByRole("button", { name: "Share access to One", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "View Viewer profile", exact: true })
@@ -1266,7 +1449,82 @@ test("profile preview fits enlarged text and stops its status with reduced motio
   await expect(profileAction).toBeFocused();
   await expect(profileAction).toBeInViewport({ ratio: 1 });
   await profileAction.click();
-  await expect(
-    page.getByRole("complementary", { name: "Profile", exact: true }),
-  ).toBeVisible();
+  const panel = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  await expect(panel).toBeVisible();
+  // At 390 px the hero column fits only the emoji. Widen it so the long status
+  // shows and ends in an ellipsis inside the hero.
+  await page.setViewportSize({ width: 600, height: 600 });
+  const status = panel.getByText("Working EST hours until Oct 23", {
+    exact: true,
+  });
+  const hero = panel
+    .getByRole("heading", { name: "Viewer", exact: true })
+    .locator("xpath=../..");
+  await expect(status).toBeVisible();
+  await expect
+    .poll(async () =>
+      status.evaluate(
+        (text, hero) => ({
+          inside:
+            text.getBoundingClientRect().right <=
+            hero.getBoundingClientRect().right,
+          truncated: text.scrollWidth > text.clientWidth,
+        }),
+        await hero.elementHandle(),
+      ),
+    )
+    .toEqual({ inside: true, truncated: true });
+});
+
+// Browser-only: the preview paints in the native top layer, above any z-index,
+// so only a rendering engine shows whether its hints paint above it.
+test("profile preview names its status emoji above the card and stays open over the hint", async ({
+  page,
+}) => {
+  // Hold the status ticker still under the pointer.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/tests/fixtures/profiles.html?long-status");
+  const avatar = page.getByRole("button", {
+    name: "View Viewer profile",
+    exact: true,
+  });
+  await expect(avatar).toBeVisible();
+  await page.clock.install();
+  await avatar.hover();
+  await page.clock.runFor(600);
+  const preview = page.getByRole("dialog", { name: "Viewer profile preview" });
+  await expect(preview).toBeVisible();
+  await preview.getByText("🇺🇸", { exact: true }).first().hover();
+  await page.clock.runFor(300);
+  const hint = page.locator(".buzz-tooltip[data-open]");
+  await expect(hint).toHaveText(":us:");
+  // The hint covers the card's name row. Assert paint order, not visibility:
+  // Base UI makes a non-hoverable hint pass the pointer through, so restore
+  // hit testing only to ask what is topmost at the hint's center.
+  await expect
+    .poll(() =>
+      hint.evaluate((tip) => {
+        const positioner = tip.parentElement;
+        const rect = tip.getBoundingClientRect();
+        const pointerEvents = positioner.style.pointerEvents;
+        positioner.style.pointerEvents = "auto";
+        const hit = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
+        );
+        positioner.style.pointerEvents = pointerEvents;
+        return tip.contains(hit);
+      }),
+    )
+    .toBe(true);
+  // Moving onto the hint stays over the card, so the preview does not close.
+  const box = await hint.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
+    steps: 4,
+  });
+  await page.clock.runFor(600);
+  await expect(preview).toHaveAttribute("data-open", "");
 });

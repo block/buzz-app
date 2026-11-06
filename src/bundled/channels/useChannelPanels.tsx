@@ -11,7 +11,7 @@ import { PanelView } from "../../features/panels/PanelView";
 import styles from "./Channels.module.css";
 
 const launcherOrder = (key: string) =>
-  key === "buzz.huddles/huddles" ? 0 : key === "buzz.github/object" ? 1 : 2;
+  key === "buzz.huddles/huddles" ? 2 : key === "buzz.github/object" ? 1 : 0;
 
 type Opening = {
   panel: RegisteredPanel;
@@ -148,7 +148,8 @@ export function useChannelPanels(
       <Panel
         aria-label={`${selected.panel.title} panel`}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          // Shift+Escape is Mark all as read, not a dismissal.
+          if (event.key === "Escape" && !event.shiftKey) {
             event.stopPropagation();
             hide(selected);
           }

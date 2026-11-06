@@ -51,6 +51,15 @@
     min-width: 0;
     gap: var(--space-row-gap);
   }
+  /* Profile choices need a full-width label with comfortable side insets. */
+  .buzz-button[data-size="row"] {
+    padding: var(--space-2) var(--space-4);
+  }
+  .buzz-button[data-size="row"] > .buzz-button-label {
+    flex: 1;
+    justify-content: flex-start;
+    text-align: left;
+  }
   .buzz-button-label > svg,
   .buzz-button-spinner {
     width: var(--space-6);
@@ -393,9 +402,33 @@
     flex: 0 0 auto;
     padding: 0;
   }
+  /* Message hover actions are quiet until an individual control is engaged. */
+  [data-message-actions]
+  .buzz-button[data-icon-variant]:not(
+    [data-disabled],
+    :disabled,
+    :hover,
+    :focus-visible,
+    :active
+  ) {
+    color: var(--text-subtle);
+  }
   .buzz-button[data-icon-variant][data-size="sm"] {
     width: var(--size-control-sm);
     height: var(--size-control-sm);
+  }
+  /* Opt-in compact control group: one geometry for labelled and icon actions. */
+  .buzz-compact-controls {
+    --compact-control-size: calc(var(--space-6) + var(--space-half));
+  }
+  .buzz-compact-controls .buzz-button:not([data-icon-variant]) {
+    min-height: var(--compact-control-size);
+    padding: calc(var(--space-1) + var(--space-half) / 2)
+      calc(var(--space-1h) + var(--space-half) / 2);
+  }
+  .buzz-compact-controls .buzz-button[data-icon-variant] {
+    width: var(--compact-control-size);
+    height: var(--compact-control-size);
   }
   /* Compact icon actions: 20px control with 12px artwork. */
   .buzz-button[data-icon-variant][data-icon-size="xs"] {
@@ -661,6 +694,7 @@
   ) {
     background: transparent;
   }
+  .buzz-button[data-variant="prominent"][data-disabled]:not([data-loading]),
   .buzz-button[data-variant="outline"][data-disabled]:not([data-loading]) {
     box-shadow: inset 0 0 0 1px var(--border-standard);
   }
@@ -668,6 +702,8 @@
   /* A preview is supplemental context; destination cards can also open it.
      It is portal-rendered by Base UI so a clipped parent cannot hide it. */
   .buzz-preview-card-positioner[popover] {
+    /* Only interactive popup content owns hit-testing, never its empty shell. */
+    pointer-events: none;
     margin: 0;
     padding: 0;
     border: 0;
@@ -765,6 +801,11 @@
     place-content: center;
   }
 
+  .buzz-avatar[data-fallback-surface="panel"]:has([data-avatar-fallback]) {
+    background: var(--surface-panel);
+    color: var(--text-standard);
+  }
+
   /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
   .buzz-avatar[data-size="compact"] {
     @apply text-caption;
@@ -776,6 +817,12 @@
     @apply text-caption;
     width: 1.5rem;
     height: 1.5rem;
+  }
+
+  .buzz-avatar[data-size="tiny"] {
+    @apply text-caption;
+    width: var(--space-4);
+    height: var(--space-4);
   }
 
   .buzz-avatar[data-size="large"] {
@@ -879,6 +926,13 @@
     border-radius: var(--radius-container);
     background: var(--surface-panel);
     box-shadow: var(--shadow-panel);
+  }
+
+  /* Shared with Builderlab/Auth0 standalone account setup cards. */
+  .panel[data-shape="card"] {
+    height: auto;
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
   }
 
   .panel[data-shape="capsule"] {
@@ -1089,6 +1143,53 @@
     box-shadow: var(--shadow-xs);
   }
 
+  /* Dock destinations retain tab behavior, with independent icon tiles. */
+  .buzz-tabs[data-variant="dock"] {
+    display: inline-flex;
+  }
+  .buzz-tabs[data-variant="dock"] .buzz-tabs-list {
+    gap: var(--space-2);
+  }
+  .buzz-tabs[data-variant="dock"] .buzz-tabs-tab {
+    flex: none;
+    width: var(--size-control);
+    height: var(--size-control);
+    padding: 0;
+    border-radius: calc(var(--radius-row) - var(--space-1));
+    corner-shape: squircle;
+    color: var(--text-chrome-subtle);
+    background: transparent;
+  }
+  .buzz-tabs[data-variant="dock"]
+    .buzz-tabs-tab:hover:not([data-selected], [data-disabled]) {
+    background: var(--affordance-backdrop-hover);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="dock"]
+    .buzz-tabs-tab:active:not([data-selected], [data-disabled]) {
+    background: var(--affordance-backdrop-pressed);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="dock"] .buzz-tabs-tab[data-selected] {
+    background: var(--surface-sidebar-selected);
+    color: var(--text-sidebar-selected);
+  }
+  .buzz-tabs[data-variant="dock"] .buzz-tabs-badge {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: 0;
+    max-width: var(--space-8);
+    max-height: var(--space-4);
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .buzz-tabs[data-variant="dock"]:where([data-orientation="vertical"])
+    .buzz-tabs-list {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
   /* Segmented filters on opaque surfaces, as used by sidebar scope. */
   .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"]) {
     display: flex;
@@ -1133,6 +1234,11 @@
     border-radius: var(--radius-pill);
     background: var(--surface-control-selected);
     box-shadow: var(--shadow-xs);
+  }
+  /* Only a new selection travels; resizing the selected tab follows layout. */
+  .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
+  .buzz-tabs-indicator:not([data-selection-change]) {
+    transition: none;
   }
 
   /* --- panel: an underline on a plain surface ---------------- */
@@ -1207,6 +1313,7 @@
   }
 
   .panel-header {
+    border-block-end: 1px solid var(--border-standard);
     position: relative;
     display: flex;
     min-height: var(--size-panel-header);
@@ -1220,24 +1327,9 @@
     padding-inline: var(--space-1);
   }
 
-  /* The painted band includes the outer rim above and excludes the separator
-     below. Center its controls one hairline above the layout box's center. */
-  .panel-header > * {
+  /* Borderless floating cards retain their established optical alignment. */
+  .panel-header[data-variant="card"] > * {
     translate: 0 -1px;
-  }
-
-  .panel-header::after {
-    position: absolute;
-    inset-block-end: 0;
-    inset-inline: var(--space-1);
-    height: 1px;
-    background: var(--border-standard);
-    content: "";
-    pointer-events: none;
-  }
-
-  .panel[data-joined] .panel-header::after {
-    inset-inline: 0;
   }
 
   .panel-header[data-variant="compact"] {
@@ -1264,13 +1356,20 @@
     margin-inline-start: auto;
   }
 
+  .panel-header-actions
+    .buzz-button[data-icon-variant="ghost"]:not(
+      [data-disabled],
+      [aria-pressed="true"],
+      [aria-expanded="true"]
+    ) {
+    color: var(--text-metadata);
+  }
+
   /* Floating agent cards keep actions beside a truncating title. */
   .panel-header[data-variant="card"] {
+    border-block-end: 0;
     min-width: 0;
     flex-wrap: nowrap;
-  }
-  .panel-header[data-variant="card"]::after {
-    display: none;
   }
   .panel-header[data-variant="card"] .panel-header-title {
     flex: 1 1 0;
@@ -1793,6 +1892,16 @@
   .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-selected] {
     --navigation-item-text: var(--text-row-selected);
   }
+  /* Pressing an unselected sidebar row keeps its quiet fill and matching ink. */
+  .buzz-sidebar-navigation
+  .navigation-item[data-variant="row"]:active:not(
+    [data-selected],
+    [data-disabled],
+    :disabled
+  ) {
+    --text-subtle: var(--text-sidebar-hover);
+    --text-metadata: var(--text-sidebar-hover);
+  }
   .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-inset] {
     padding-inline-start: calc(var(--space-2) + var(--space-6));
   }
@@ -1847,13 +1956,15 @@
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-list {
     min-width: 0;
-    height: var(--size-panel-header);
+    /* The shared header's bottom border is part of its total height. */
+    height: calc(var(--size-panel-header) - 1px);
     align-items: flex-start;
     overflow-x: auto;
     overflow-y: hidden;
     gap: var(--space-1);
-    /* The scrollbar uses the bottom inset without moving the tab row. */
-    padding-block: var(--space-1) 0;
+    /* Split the header’s separator evenly to keep controls centered.
+       The scrollbar track reserves that separator pixel in scrollbars.css. */
+    padding-block: calc(var(--space-1) - 0.5px) 0;
   }
   .buzz-tabs[data-variant="navigation"] .buzz-tabs-item {
     display: flex;
@@ -1932,6 +2043,12 @@
     @apply text-caption;
     align-items: center;
     justify-content: center;
+  }
+
+  .buzz-tabs[data-variant="dock"] .buzz-tabs-icon {
+    flex-basis: var(--space-5);
+    width: var(--space-5);
+    height: var(--space-5);
   }
 
   html[data-keyboard-navigation] .buzz-surface-button:focus-visible,
@@ -2068,7 +2185,8 @@
   .buzz-menu-group-label[data-emphasis="quiet"] {
     color: var(--text-metadata);
   }
-  .buzz-menu-separator {
+  .buzz-menu-separator,
+  .buzz-select-separator {
     height: 1px;
     margin: var(--space-1) 0;
     background: var(--border-standard);

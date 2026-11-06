@@ -11,6 +11,12 @@ export type NavigationScope = Readonly<{
   viewer: string;
   communityOrigin: string;
 }>;
+export type GitPluginSource = Readonly<{
+  repository: string;
+  reference: string;
+  path?: string;
+  commit?: string;
+}>;
 export type OpenTarget =
   | Readonly<{ version: 1; kind: "home" }>
   | Readonly<{
@@ -20,6 +26,8 @@ export type OpenTarget =
       /** Nested provider controls within Agent setup; presentation only. */
       provider?: string;
       scope?: NavigationScope | null;
+      pluginImport?: GitPluginSource;
+      pluginId?: string;
     }>
   | Readonly<{
       version: 1;
@@ -51,6 +59,8 @@ export type OpenTarget =
       threadRootId?: string;
       /** Presentation within this conversation; never mutation or confirmation state. */
       panel?: "members";
+      /** Message selected for the forwarding dialog; never submission state. */
+      forward?: string;
       /** Read-only content selected beside this conversation; never an action. */
       detail?: Readonly<{ target: string; rootId?: string }>;
     }>;
@@ -62,6 +72,7 @@ const section = /^[a-z0-9][a-z0-9._-]{0,127}(?:\/[a-z0-9][a-z0-9._-]{0,127})?$/;
 const provider = /^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9][a-z0-9._-]{0,127}$/;
 const hex = /^[a-f0-9]{64}$/i;
 const paramKey = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+const gitCommit = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const MAX_PARAMS = 16;
 const MAX_PARAM_LENGTH = 1024;
 const invalid = () => new Error("Invalid or unsupported navigation target");
@@ -87,6 +98,73 @@ function fields(value: Record<string, unknown>, allowed: readonly string[]) {
 function text(value: unknown, pattern = token): string {
   if (typeof value !== "string" || !pattern.test(value)) throw invalid();
   return value;
+}
+function pluginFolder(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length > 512 ||
+    /[\p{Cc}\\]/u.test(value)
+  )
+    throw invalid();
+  if (value === "" || value === ".") return ".";
+  if (value.split("/").some((part) => !part || part === "." || part === ".."))
+    throw invalid();
+  return value;
+}
+export function parseGitPluginSource(input: unknown): GitPluginSource {
+  const value = record(input);
+  fields(value, ["repository", "reference", "path", "commit"]);
+  if (
+    typeof value.repository !== "string" ||
+    value.repository.length > 2048 ||
+    typeof value.reference !== "string" ||
+    value.reference.length > 256
+  )
+    throw invalid();
+  if (
+    /\s/.test(value.repository) ||
+    [...(value.repository + value.reference)].some(
+      (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+    )
+  )
+    throw invalid();
+  const repositoryText = value.repository;
+  const scp = /^([^/@:]+@[^/:]+):(.+)$/.exec(repositoryText);
+  const expanded =
+    !repositoryText.includes("://") && scp
+      ? `ssh://${scp[1]}/${scp[2]}`
+      : repositoryText.startsWith("github.com/")
+        ? `https://${repositoryText}`
+        : !repositoryText.includes(":") &&
+            repositoryText.split("/").length === 2
+          ? `https://github.com/${repositoryText}`
+          : repositoryText;
+  const repository = new URL(expanded);
+  if (
+    !["https:", "ssh:"].includes(repository.protocol) ||
+    !repository.hostname ||
+    repository.hostname.startsWith("-") ||
+    repository.username.startsWith("-") ||
+    !repository.pathname.replaceAll("/", "") ||
+    repository.password ||
+    (repository.protocol === "https:" && repository.username) ||
+    repository.search ||
+    repository.hash
+  )
+    throw invalid();
+  if (
+    value.commit !== undefined &&
+    (typeof value.commit !== "string" || !gitCommit.test(value.commit))
+  )
+    throw invalid();
+  return Object.freeze({
+    repository: repository.href,
+    reference: value.reference,
+    ...(value.path !== undefined ? { path: pluginFolder(value.path) } : {}),
+    ...(value.commit !== undefined
+      ? { commit: value.commit.toLowerCase() }
+      : {}),
+  });
 }
 function boundScope(input: unknown): NavigationScope {
   const value = record(input);
@@ -158,8 +236,22 @@ export function parseOpenTarget(input: unknown): OpenTarget {
         target = { version: 1, kind: "home" };
         break;
       case "settings":
-        fields(value, ["version", "kind", "section", "provider", "scope"]);
+        fields(value, [
+          "version",
+          "kind",
+          "section",
+          "provider",
+          "scope",
+          "pluginImport",
+          "pluginId",
+        ]);
         if (value.provider !== undefined && value.section !== "agents")
+          throw invalid();
+        if (value.pluginImport !== undefined && value.section !== "plugins")
+          throw invalid();
+        if (value.pluginId !== undefined && value.section !== "plugins")
+          throw invalid();
+        if (value.pluginId !== undefined && value.pluginImport !== undefined)
           throw invalid();
         target = {
           version: 1,
@@ -172,6 +264,12 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             : {}),
           ...(value.scope !== undefined
             ? { scope: value.scope === null ? null : boundScope(value.scope) }
+            : {}),
+          ...(value.pluginImport !== undefined
+            ? { pluginImport: parseGitPluginSource(value.pluginImport) }
+            : {}),
+          ...(value.pluginId !== undefined
+            ? { pluginId: text(value.pluginId) }
             : {}),
         };
         break;
@@ -238,6 +336,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "messageId",
           "threadRootId",
           "panel",
+          "forward",
           "detail",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
@@ -275,6 +374,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),
+          ...(value.forward !== undefined
+            ? { forward: text(value.forward, hex).toLowerCase() }
+            : {}),
           ...(detail ? { detail } : {}),
         };
         break;

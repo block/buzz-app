@@ -288,7 +288,7 @@ it("resolves missing metadata for an already authorized Huddle", async () => {
   }
 });
 
-it("fetches creation evidence in bounded batches after startup membership commits", async () => {
+it("fetches creation evidence for many channels in one filter after startup membership commits", async () => {
   const wire = scriptedTransport(author.pubkey, relay.pubkey);
   const owner = createRelaySession(wire.transport);
   const rooms = Array.from(
@@ -310,34 +310,37 @@ it("fetches creation evidence in bounded batches after startup membership commit
           ]),
         ]),
       );
-    for (const count of [4, 1]) {
-      await vi.waitFor(() =>
-        expect(
-          wire.pending.some((r) => r.filters[0]?.kinds?.includes(9007)),
-        ).toBe(true),
-      );
-      const index = wire.pending.findIndex((r) =>
-        r.filters[0]?.kinds?.includes(9007),
-      );
-      const request = wire.pending.splice(index, 1)[0];
-      if (!request) throw new Error("Missing receipt request");
-      expect(request.filters).toHaveLength(count);
-      request.respond(
-        request.filters.map((filter) =>
-          signed(author, {
-            kind: 9007,
-            created_at: 10,
-            content: "",
-            tags: [
-              ["h", filter["#h"]?.[0] ?? ""],
-              ["visibility", "private"],
-              ["channel_type", "stream"],
-              ["about", huddleDescription(parent)],
-            ],
-          }),
-        ),
-      );
-    }
+    await vi.waitFor(() =>
+      expect(
+        wire.pending.some((r) => r.filters[0]?.kinds?.includes(9007)),
+      ).toBe(true),
+    );
+    const index = wire.pending.findIndex((r) =>
+      r.filters[0]?.kinds?.includes(9007),
+    );
+    const request = wire.pending.splice(index, 1)[0];
+    if (!request) throw new Error("Missing receipt request");
+    expect(request.filters).toHaveLength(1);
+    expect(request.filters[0]).toMatchObject({
+      authors: [author.pubkey],
+      limit: 10,
+    });
+    expect(new Set(request.filters[0]?.["#h"])).toEqual(new Set(rooms));
+    request.respond(
+      rooms.map((id) =>
+        signed(author, {
+          kind: 9007,
+          created_at: 10,
+          content: "",
+          tags: [
+            ["h", id],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ["about", huddleDescription(parent)],
+          ],
+        }),
+      ),
+    );
     await vi.waitFor(() =>
       expect(
         owner.session.channels.list().channels.filter((c) => c.huddle),
@@ -586,7 +589,7 @@ it("limits advisory creation proof to streams in the background and keeps writer
       query.mock.calls.filter(([filters]) => filters[0]?.kinds?.includes(9007));
     expect(proofs()).toHaveLength(1);
     expect(proofs()[0]?.[0]).toEqual([
-      { kinds: [9007], authors: [author.pubkey], "#h": ["stream"], limit: 1 },
+      { kinds: [9007], authors: [author.pubkey], "#h": ["stream"], limit: 2 },
     ]);
     expect(proofs()[0]?.[3]).toBe("background");
     await owner.session.channels.resolve?.(["stream"], {
@@ -596,6 +599,75 @@ it("limits advisory creation proof to streams in the background and keeps writer
     expect(proofs()[1]?.[0][0]?.consistency).toBe("strong");
     expect(proofs()[1]?.[3]).toBe("foreground");
     expect(owner.session.channels.get?.("stream")?.huddle).toBeUndefined();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("keeps completed creation reads for retained channels while retrying aborted proof work", async () => {
+  const wire = scriptedTransport(author.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const ids = Array.from({ length: 5 }, (_, i) => `proof-${i}`);
+  const records = ids.map((id) =>
+    metadata(relay, id, id, 30, [
+      ["t", "stream"],
+      ["P", author.pubkey],
+      ["private"],
+    ]),
+  );
+  const proof = async () => {
+    await vi.waitFor(() =>
+      expect(
+        wire.pending.some((r) => r.filters[0]?.kinds?.includes(9007)),
+      ).toBe(true),
+    );
+    const index = wire.pending.findIndex((r) =>
+      r.filters[0]?.kinds?.includes(9007),
+    );
+    const request = wire.pending.splice(index, 1)[0];
+    if (!request) throw new Error("Missing proof read");
+    return request;
+  };
+  try {
+    live.receive([
+      ...ids.map((id) => roster(relay, id, [author.pubkey], 20)),
+      ...records.slice(0, 4),
+    ]);
+    const complete = await proof();
+    expect(complete.filters.map((f) => f["#h"])).toEqual([ids.slice(0, 4)]);
+    complete.respond([]);
+    await flush();
+    live.receive(records.slice(4));
+    const pending = await proof();
+    expect(pending.filters[0]?.["#h"]).toEqual(["proof-4"]);
+    live.receive([roster(relay, "proof-0", [], 40)]);
+    await flush();
+    expect(owner.session.channels.get?.("proof-0")).toBeUndefined();
+    expect(pending.signal?.aborted).toBe(true);
+    live.receive(records.slice(1));
+    const retry = await proof();
+    expect(retry.filters.map((f) => f["#h"])).toEqual([["proof-4"]]);
+    retry.respond([]);
+    await flush();
+    live.receive(records.slice(1));
+    await flush();
+    expect(
+      wire.pending.filter((r) => r.filters[0]?.kinds?.includes(9007)),
+    ).toHaveLength(0);
+    live.receive([
+      roster(relay, "proof-0", [author.pubkey], 41),
+      ...records.slice(0, 1),
+    ]);
+    const rejoined = await proof();
+    expect(rejoined.filters.map((f) => f["#h"])).toEqual([["proof-0"]]);
+    rejoined.respond([]);
   } finally {
     owner.dispose();
   }

@@ -5,7 +5,7 @@ import {
   flush,
 } from "../../../bundled/goose/goose-testing";
 import { GOOSE } from "../../../bundled/goose/goose";
-import { SharedProcess } from "../../../bundled/goose/sessions";
+import { AgentProcess } from "../../../bundled/goose/sessions";
 import type {
   HostMcpServer,
   HostProcess,
@@ -229,6 +229,31 @@ describe("starting a harness", () => {
       );
       expect(harness.started[0]?.killed).toBe(true);
     }
+  });
+
+  it("still fails a start at its time limit when the harness never exits, and gives the caller the harness", async () => {
+    vi.useFakeTimers();
+    const harness = fakeHarness({
+      capabilities: { mcpCapabilities: { http: false } },
+      holdExit: true,
+    });
+    let given: AcpProcess | undefined;
+    let failure: unknown;
+    const starting = start(harness, {
+      onProcess: (acp) => (given = acp),
+    }).catch((error: unknown) => {
+      failure = error;
+    });
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(harness.started[0]?.killed).toBe(true);
+    expect(given?.running).toBe(true);
+    expect(failure).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await starting;
+    expect(failure).toEqual(
+      new Error("This Harness cannot reach Buzz tools (no HTTP MCP support)"),
+    );
+    expect(given?.running).toBe(true);
   });
 
   const diagnosing: AcpHooks = { ...HOOKS, diagnoseStartup: true };
@@ -580,7 +605,7 @@ describe("the shared server pool", () => {
       label: "goose",
       resolveDirectory: goose.resolveDirectory,
       tools,
-      process: new SharedProcess(goose, goose.serve),
+      process: new AgentProcess(goose, goose.serve),
       pool,
       launch,
       choice,

@@ -385,6 +385,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--affordance-message-highlight",
+        variable: "--affordance-message-highlight",
+        pointsAt: "black 10% light / white 16% dark",
+        use: "Temporary arrival cue across a received bubble; replaces hover while it shows.",
+        status: "core",
+      },
+      {
+        token: "--affordance-message-own-highlight",
+        variable: "--affordance-message-own-highlight",
+        pointsAt:
+          "affordance-message-highlight; at Buzzin’, the accent's regular overlay step on its fill (black 10%, white 16% on Mono in light mode)",
+        use: "Temporary arrival cue across your own bubble. It follows the bubble's lightness, as its chips do.",
+        status: "core",
+      },
+      {
         token: "--affordance-reaction",
         variable: "--affordance-reaction",
         pointsAt: "black 6% light / white 10% dark",
@@ -400,10 +415,25 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--affordance-reaction-self",
+        variable: "--affordance-reaction-self",
+        pointsAt: "accent step 3",
+        use: "A reaction you made, on received bubbles and the panel, paired with --border-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "--affordance-reaction-self-own",
+        variable: "--affordance-reaction-self-own",
+        pointsAt:
+          "affordance-reaction-self; at Buzzin’, the accent's strong overlay on its fill",
+        use: "A reaction you made inside your own bubble, paired with --border-reaction-self-own.",
+        status: "core",
+      },
+      {
         token: "bg-surface-message-highlight",
         variable: "--surface-message-highlight",
         pointsAt: "accent step 3",
-        use: "Temporary return-to-message cue; follows the accent color.",
+        use: "Temporary arrival cue on a message without a filled bubble; follows the accent color.",
         status: "core",
       },
       {
@@ -877,6 +907,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--border-accent",
         pointsAt: "border-focus (neutral compatibility role)",
         use: "An identity accent boundary.",
+        status: "core",
+      },
+      {
+        token: "border-reaction-self",
+        variable: "--border-reaction-self",
+        pointsAt: "accent-link",
+        use: "Ring around a reaction you made, on received bubbles and the panel. It clears 3:1 on the tint and its host.",
+        status: "core",
+      },
+      {
+        token: "border-reaction-self-own",
+        variable: "--border-reaction-self-own",
+        pointsAt: "border-reaction-self; at Buzzin’, text-message-own",
+        use: "Ring around a reaction you made inside your own bubble, where the accent ring would vanish at Buzzin’.",
         status: "core",
       },
     ],
@@ -1616,10 +1660,10 @@ export const TYPE_ROLES: TypeRole[] = [
     token: "text-message",
     pointsAt: "body/message",
     size: "14px",
-    lineHeight: "1.625 (22.75px at default)",
+    lineHeight: "1.5714285714285714 (22px at default)",
     tracking: "-0.0025em",
     weight: "400",
-    use: "Sent and received message prose, with relaxed line spacing.",
+    use: "Sent and received message prose, with compact line spacing.",
     status: "core",
   },
   {

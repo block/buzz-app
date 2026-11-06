@@ -115,13 +115,20 @@ need their own validation.
   path, which opens in Instruments. Use `just profile-clean` to remove all generated
   web and desktop captures.
 - `just desktop-bundle [args...]`: bundle a debug desktop app for testing OS deep
-  links on macOS, where the OS routes a scheme only to a bundled application. It
-  defaults to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise,
-  and passes everything else to `tauri build`. The bundle uses `buzz`, as does
-  release bundling with `pnpm tauri build`.
+  links and notifications on macOS, where those APIs require a bundled application.
+  Pass `--launch` to build and open the `.app` in one command; quit every other Buzz
+  copy first. `--launch` is macOS-only and requires the default app name and target
+  path, so it rejects bundle, target, runner, config, and Cargo/Tauri artifact-path
+  overrides rather than risk opening a stale build. Without it, the recipe defaults
+  to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise, and passes
+  everything else to `tauri build`.
+  The bundle uses `buzz`, as does release bundling with `pnpm tauri build`.
 - On macOS, set `BUZZ_DEV_SIGNING_IDENTITY` in `.env.local` to an installed code
   signing certificate name or SHA-1 hash (`security find-identity -v -p codesigning`
-  lists them). `just desktop-bundle` passes it to Tauri's macOS signer; the process
+  lists them). A stable certificate-backed identity is required to test macOS
+  notifications across rebuilds; Tauri's default ad-hoc signature changes with the
+  binary and can be rejected with `UNErrorDomain error 1`. `just desktop-bundle`
+  passes the identity to Tauri's macOS signer; the process
   environment takes precedence, including an empty value to disable this setting.
   Keep the same certificate and development app identifier across rebuilds. After
   the first signed build, enter your login Keychain password and choose **Always
@@ -130,7 +137,7 @@ need their own validation.
   An unavailable certificate fails the build rather than silently signing ad-hoc.
   This setting leaves `just desktop` and release builds unchanged. Explicit Tauri
   `--config` arguments still merge after the local defaults.
-- For opt-in automation of a disposable macOS native webview, see
+- For opt-in agent automation of the macOS native webview, see
   [Native webview automation](native-mcp.md).
 - `just design [args...]`: install locked dependencies, start the standalone
   design-system viewer, and open it in your browser. Arguments pass through to
@@ -423,13 +430,15 @@ files. Browser Blobs still retain complete prepared payloads; only the broker's
 transfer buffers are streaming. Private spool files and conversion children are
 request-owned, cancelled on disconnect and cleaned before admission is released.
 
-Picker/paste/drop share the same tab-local draft. Files must finish uploading
-before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
-unsent files. Background Send, attachment-first new chats and UX polish are
-separate work. Live uploads use the development broker in dev runs and the
-native `relay_upload` path in packaged desktop builds. The native host prepares
-HEIC and supported video/voice-note inputs with fixed demuxers and bounded child
-processes before upload; it requires ffmpeg installed on the host.
+Picker/paste/drop share the same tab-local draft. In the main window, Send hands
+unfinished uploads to a background send that keeps uploading across navigation and
+returns the draft and files to their conversation if it fails or is cancelled;
+other composers wait for uploads before sending. Navigation pauses a draft's
+unfinished uploads until its composer returns. Reload loses unsent files. Live
+uploads use the development broker in dev runs and the native `relay_upload` path
+in packaged desktop builds. The native host prepares HEIC and supported
+video/voice-note inputs with fixed demuxers and bounded child processes before
+upload; it requires ffmpeg installed on the host.
 
 The broker supports reads, live traffic and basic message sending **as your real
 account**. Profile changes and invite admission can also write to real communities.
@@ -786,7 +795,7 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete correctness suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** three runners, each with Biome, one TypeScript check and a frontend
+- **JavaScript:** four runners, each with Biome, one TypeScript check and a frontend
   build. Vitest splits all test files across the runners, with two workers each;
   every shard must succeed. Timing artifacts include the shard number.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
@@ -795,13 +804,14 @@ the complete correctness suite still runs with `pnpm test` / `just scan`:
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
   It also runs all [perf scenarios](performance.md) once in Chromium.
-- **Browser journeys:** twenty-one runners (nine Chromium and twelve WebKit
+- **Browser journeys:** twenty-three runners (nine Chromium and fourteen WebKit
   file-level shards), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. A separate required Ubuntu
   job builds the native plugin-manager fixture once with Hermit's pinned Cargo.
   It uploads a tar with executable permission, checkout revision and SHA-256
   checksum; shards download by exact same-run artifact ID and verify all three
-  before running. A missing artifact fails CI rather than rebuilding. Local
+  before running. A missing artifact fails CI rather than rebuilding; the artifact
+  is kept for seven days, so failed shards can be re-run within that window. Local
   non-CI journeys retain the locked Cargo build. Each browser test uses its own
   mutable fixture home. No measurements are repeated on shards and no retries
   hide failures.
@@ -821,11 +831,27 @@ the complete correctness suite still runs with `pnpm test` / `just scan`:
   journeys it changed (`file:line` for hunks inside a test body; the whole file
   when the diff touches any line outside one, such as imports, helpers or hooks
   before, between or after tests, or the file is new; removed lines are judged
-  against the base revision's test bodies). `flake_vitest`
+  against the base revision's test bodies). Those always run. It then adds
+  whole test files that the diff's other source, helper, fixture-page or patch
+  changes reach, most specific first, while each lane's predicted wall time
+  stays within nine minutes and the additions stay near 40 journeys and 20
+  Vitest files. A Vitest file that would overrun the time is skipped, and
+  files after it can still join; the step summary names the highest-ranked
+  skipped files.
+  Journeys run as the longest run in rank order that fits, since more
+  journeys can mean more shards and a shorter lane. Two gaps remain: a journey
+  that loads the full app (`page.goto(app.origin)`) is reached only through
+  modules its own imports reach, such as helpers, not through the app's module
+  graph; and a patch under `patches/` reaches browser specs but no Vitest
+  files. When a change touches such code, run the related tests yourself.
+  The prediction reads
+  per-journey and per-file durations from
+  `scripts/flake-check-costs.json`; `scripts/flake-check.mjs costs` regenerates
+  it from recent green `main` runs. `flake_vitest`
   then runs that selection ten times with the JavaScript lane's two workers, and
   `flake_browser` runs `--repeat-each=10` per engine (Chromium and WebKit)
   on the shard container with the same native fixture, spreading the
-  repetitions over one shard per five journeys (at most eight) so a whole-file
+  repetitions over one shard per five journeys (at most sixteen) so a whole-file
   selection fits the job timeout. Measurement specs and
   journeys tagged `@classic-scrollbars`, `@local-webkit` or `@media-recorder`
   are excluded; their own lanes cover them. The step summary shows a test ×

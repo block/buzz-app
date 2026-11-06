@@ -20,6 +20,12 @@ export type PageSidebarProps = {
   children?: ReactNode | undefined;
 };
 
+/** Props for a primary page's navigation hover preview. */
+export type PagePreviewProps = {
+  /** Close the preview, for example after its content opened something. */
+  close(): void;
+};
+
 export type Page = Readonly<{
   id: string;
   title: string;
@@ -42,7 +48,7 @@ export type Page = Readonly<{
    */
   primary?: boolean;
   /** Preferred navigation location for a primary page; omitted means sidebar.
-   * The host may move header entries into an overflow menu when space is tight.
+   * The host renders topbar and toolbar entries in its app dock.
    */
   placement?: "sidebar" | "topbar" | "toolbar";
   /**
@@ -56,6 +62,12 @@ export type Page = Readonly<{
    * compact corner badge; prefer a short count or dot there.
    */
   badge?: ComponentType;
+  /**
+   * Supplemental content the shell shows while a pointer rests on this page's
+   * sidebar or app-dock entry. It is never shown without hover or while the
+   * page is selected, so the page must stay complete without it.
+   */
+  preview?: ComponentType<PagePreviewProps>;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -93,7 +105,8 @@ export class PagesService extends Service implements Pages {
         page.layout !== "workspace") ||
       (page.companion !== undefined && typeof page.companion !== "boolean") ||
       (page.primary !== undefined && typeof page.primary !== "boolean") ||
-      (page.badge !== undefined && typeof page.badge !== "function")
+      (page.badge !== undefined && typeof page.badge !== "function") ||
+      (page.preview !== undefined && typeof page.preview !== "function")
     ) {
       throw new Error(
         "A page needs an id, a title, and a React component function",

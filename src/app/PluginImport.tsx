@@ -17,9 +17,32 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { FolderOpenIcon } from "../shared/design-system/icons/index";
-import { PluginAccessReview } from "./PluginAccessReview";
+import {
+  PluginAccessReview,
+  pluginAccessIncreases,
+} from "./PluginAccessReview";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+import {
+  pluginUpdateSource,
+  updateSourceKey,
+  type GitUpdateSource,
+} from "../plugins/updates";
+import type { GitPluginSource } from "../features/navigation/targets";
+
+// The native importer has one slot, shared by successive dialogs.
+const importOperations = new WeakMap<object, Promise<void>>();
+import type {
+  PluginInstallOutcome,
+  PluginInstallRequest,
+} from "../plugins/installer";
+
+const shortCommit = (commit: string) => commit.slice(0, 12);
+const sourceLabel = (repository: string, path: string) =>
+  path === "." ? repository : `${repository} · ${path}`;
+const trimSlash = (value: string) => value.replace(/\/+$/, "");
+const requester = ({ id, name }: PluginInstallRequest["origin"]) =>
+  name === id ? id : `${name} (${id})`;
 
 function importLocation(
   preview: Pick<ImportPreview, "source" | "commit">,
@@ -46,6 +69,9 @@ export function importRollbackWarning(
 }
 
 export function PluginImport({
+  initialGit,
+  updateAction,
+  requestSignal,
   initialUpdateAvailable = false,
   plugins,
   catalog,
@@ -60,7 +86,16 @@ export function PluginImport({
   reviewRequested = false,
   onReviewHandled,
   returnFocus,
+  request,
+  onRequestSettled,
+  onRequestClaimed,
+  onRequestConfirmed,
+  onRequestEnded,
+  holdReview,
 }: {
+  initialGit?: GitPluginSource | undefined;
+  updateAction?: { source: GitUpdateSource; apply: boolean } | undefined;
+  requestSignal?: AbortSignal | undefined;
   initialUpdateAvailable?: boolean;
   plugins: PluginManager;
   catalog: Catalog;
@@ -74,30 +109,61 @@ export function PluginImport({
   reviewRequested?: boolean;
   onReviewHandled?: () => void;
   returnFocus?: () => HTMLElement | null;
+  /** A source to review, prefilled; the user still finds, reviews and confirms it. */
+  request?: PluginInstallRequest | undefined;
+  onRequestSettled?:
+    | ((id: number, outcome: PluginInstallOutcome) => void)
+    | undefined;
+  onRequestClaimed?: ((id: number) => boolean) | undefined;
+  onRequestConfirmed?: ((id: number) => () => void) | undefined;
+  /** The review went away; a confirmed install still settles its own outcome. */
+  onRequestEnded?: ((id: number) => void) | undefined;
+  /** Marks a review dialog as open so a plugin request cannot open a second one. */
+  holdReview?: (() => () => void) | undefined;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
   authorizeGit?: (
     repository: string,
   ) => Promise<{ repository: string; token: string } | null>;
 }) {
   const imports = plugins.imports;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!initialGit);
   const [dragging, setDragging] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const checkAgain = useRef<HTMLButtonElement>(null);
   const currentPlugin = catalog.plugins.find(
     (item) => item.manifest.id === updateId,
   );
-  const savedSource = currentPlugin?.updateSource;
+  const savedSource = updateAction?.source ?? currentPlugin?.updateSource;
   const [repository, setRepository] = useState(
-    savedSource && "repository" in savedSource ? savedSource.repository : "",
+    initialGit?.repository ??
+      (savedSource && "repository" in savedSource
+        ? savedSource.repository
+        : ""),
   );
   const [reference, setReference] = useState(
-    savedSource && "reference" in savedSource ? savedSource.reference : "",
+    initialGit?.reference ??
+      (savedSource && "reference" in savedSource ? savedSource.reference : ""),
   );
+  // A link is newer than a plugin's request, so it replaces it rather than
+  // inheriting the request's pinned commit and folder.
+  const dropRequestForLink = useEffectEvent(() => {
+    if (bound) releaseRequest("cancelled");
+  });
+  useEffect(() => {
+    if (!initialGit || requestSignal?.aborted) return;
+    dropRequestForLink();
+    setRepository(initialGit.repository);
+    setReference(initialGit.reference);
+    setOpen(true);
+  }, [initialGit, requestSignal]);
   // Snapshot at review entry: our own install catalog refresh must not turn a
   // new install into an update while its enable operation is still pending.
   const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
+  const [abandonable, setAbandonable] = useState(false);
+  const mounted = useRef(true);
+  const [bound, setBound] = useState<PluginInstallRequest>();
+  const requested = !!bound && !updateId;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [checkedRevision, setCheckedRevision] = useState<string>();
   const [checking, setChecking] = useState(false);
@@ -163,8 +229,59 @@ export function PluginImport({
     setError(String(reason));
   }
   const [enableOnInstall, setEnableOnInstall] = useState(true);
-  const lifetime = useRef({ active: true, token: "" });
+  const lifetime = useRef({ active: true, token: "", installing: false });
   const pending = useRef(false);
+  const lastClaimed = useRef(0);
+  const boundId = useRef<number>(undefined);
+  const settleRequest = useRef(onRequestSettled);
+  const endRequest = useRef(onRequestEnded);
+  useEffect(() => {
+    settleRequest.current = onRequestSettled;
+    endRequest.current = onRequestEnded;
+  });
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      queueMicrotask(() => {
+        const id = boundId.current;
+        if (mounted.current || id === undefined) return;
+        if (endRequest.current) endRequest.current(id);
+        else settleRequest.current?.(id, "cancelled");
+      });
+    };
+  }, []);
+  useEffect(() => {
+    if (!open || !holdReview) return;
+    return holdReview();
+  }, [open, holdReview]);
+  const claimRequest = useEffectEvent((next: PluginInstallRequest) => {
+    // The store refuses a confirmed request first: its install, perhaps in a
+    // replaced importer, still reports the outcome.
+    if (onRequestClaimed && !onRequestClaimed(next.id)) return;
+    if (open || loading || discarding || preview || pending.current) {
+      onRequestSettled?.(next.id, "unavailable");
+      return;
+    }
+    boundId.current = next.id;
+    setBound(next);
+    setRepository(next.source.repository);
+    setReference(next.source.reference);
+    setOpen(true);
+  });
+  useEffect(() => {
+    if (updateId || !request || request.id <= lastClaimed.current) return;
+    lastClaimed.current = request.id;
+    claimRequest(request);
+  }, [request, updateId]);
+  function releaseRequest(outcome: PluginInstallOutcome) {
+    if (!bound) return;
+    onRequestSettled?.(bound.id, outcome);
+    boundId.current = undefined;
+    setBound(undefined);
+    setRepository("");
+    setReference("");
+  }
   async function checkSource(operation: () => Promise<string>) {
     if (checkPending.current) return;
     checkPending.current = true;
@@ -196,7 +313,7 @@ export function PluginImport({
       void checkSource(() => imports.checkFolder(updateId));
   });
   useEffect(() => {
-    const current = { active: true, token: "" };
+    const current = { active: true, token: "", installing: false };
     lifetime.current = current;
     // Defer until effects settle so Strict Mode's retired mount never acquires.
     queueMicrotask(() => {
@@ -204,7 +321,8 @@ export function PluginImport({
     });
     return () => {
       current.active = false;
-      if (current.token) void imports?.discard(current.token).catch(() => {});
+      if (current.token && !current.installing)
+        void imports?.discard(current.token).catch(() => {});
     };
   }, [imports]);
 
@@ -224,8 +342,42 @@ export function PluginImport({
 
   const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;
-  const duplicate = updating && !updateId;
+  const installedSource = existing?.updateSource;
+  const conflict =
+    requested &&
+    existing?.source === "external" &&
+    candidate &&
+    preview &&
+    !(
+      installedSource &&
+      "repository" in installedSource &&
+      trimSlash(installedSource.repository) === trimSlash(preview.source) &&
+      installedSource.path === candidate.path
+    )
+      ? `${existing.manifest.name} is already installed from ${
+          installedSource && "repository" in installedSource
+            ? sourceLabel(installedSource.repository, installedSource.path)
+            : installedSource
+              ? sourceLabel(installedSource.root, installedSource.path)
+              : "an unknown source"
+        }; remove it first to install it from ${sourceLabel(preview.source, candidate.path)}.`
+      : null;
+  const constraint =
+    updateAction?.source ?? (bound ? bound.source : initialGit);
+  const linkConstrained = !bound && !!(constraint?.commit || constraint?.path);
+  const pinned = bound
+    ? requested
+      ? bound.source.commit
+      : undefined
+    : constraint?.commit;
+  const pinError =
+    pinned && preview && preview.commit?.toLowerCase() !== pinned
+      ? "This repository is not at the commit that was requested. Nothing was installed."
+      : null;
+  const duplicate = updating && !updateId && (!requested || !!conflict);
   const upToDate =
+    !conflict &&
+    !pinError &&
     // An identical package can still establish a missing source. Native keeps
     // its enabled state and existing rollback target for the same revision.
     !(updateId && !savedSource) &&
@@ -276,22 +428,81 @@ export function PluginImport({
     });
   }, [reviewRequested]);
 
-  const blocked = busy || loading || discarding;
-  if (!imports) return null;
+  const linkedRequest = useRef<AbortSignal | GitPluginSource>(undefined);
+  const startLinkedGit = useEffectEvent(() => {
+    if (!initialGit || requestSignal?.aborted || !imports || busy) return;
+    const request = requestSignal ?? initialGit;
+    if (linkedRequest.current === request) return;
+    linkedRequest.current = request;
+    void loadGit(initialGit.repository, initialGit.reference, true);
+  });
+  useEffect(() => {
+    if (!initialGit || requestSignal?.aborted || !imports || busy) return;
+    const current = lifetime.current;
+    queueMicrotask(() => {
+      if (current.active) startLinkedGit();
+    });
+  }, [initialGit, requestSignal, imports, busy]);
 
-  async function load(operation: () => Promise<ImportPreview | null>) {
-    if (pending.current || blocked) return;
+  // A request retired by its requester while Find or an install is in flight is
+  // released once that settles; until then it can't be confirmed. Release is
+  // attempted once per request: if discard fails, the error stays up and
+  // closing the dialog retries.
+  const retired = !!bound && request?.id !== bound.id;
+  const releaseAttempted = useRef<number>(undefined);
+  const releaseExternally = useEffectEvent(() => {
+    if (!bound || pending.current || releaseAttempted.current === bound.id)
+      return;
+    releaseAttempted.current = bound.id;
+    void close();
+  });
+  useEffect(() => {
+    if (retired && !busy && !loading && !discarding) releaseExternally();
+  }, [retired, busy, loading, discarding]);
+
+  const blocked = busy || loading || discarding;
+  const canAbandonPreview =
+    abandonable &&
+    loading &&
+    !busy &&
+    !discarding &&
+    !lifetime.current.installing;
+
+  async function load(
+    operation: () => Promise<ImportPreview | null>,
+    linked = false,
+  ) {
+    if (!imports || pending.current || blocked) return;
     const returnTo = document.activeElement as HTMLElement | null;
     sourceTrigger.current = returnTo;
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
+    setAbandonable(linked);
     if (!savedSource) setError(null);
     setPreview(null);
     setShowUnchanged(false);
     setEnableOnInstall(true);
-    try {
+    const previous = importOperations.get(imports);
+    const acquisition = (async () => {
+      if (previous) await previous;
+      if (!current.active) return null;
       const result = await operation();
+      if (!current.active && result) {
+        await imports?.discard(result.token);
+        return null;
+      }
+      return result;
+    })();
+    importOperations.set(
+      imports,
+      acquisition.then(
+        () => {},
+        () => {},
+      ),
+    );
+    try {
+      const result = await acquisition;
       if (!result && updateId && savedSource)
         throw new Error("No update source found. Try again.");
       const next =
@@ -353,6 +564,40 @@ export function PluginImport({
       }
     }
   }
+  async function loadGit(
+    repository: string,
+    reference: string,
+    linked = false,
+  ) {
+    if (!imports) return;
+    const { commit, path } = (linked ? initialGit : constraint) ?? {};
+    await load(async () => {
+      const signed = await authorizeGit?.(repository);
+      const result = signed
+        ? await imports.git(
+            signed.repository,
+            reference,
+            signed.token,
+            ...(commit ? [commit] : []),
+          )
+        : commit
+          ? await imports.git(repository, reference, undefined, commit)
+          : await imports.git(repository, reference);
+      return requestedFolder(result, path);
+    }, linked);
+  }
+  async function requestedFolder(
+    result: ImportPreview | null,
+    path: string | undefined,
+  ) {
+    if (!result || path === undefined) return result;
+    const candidates = result.candidates.filter((item) => item.path === path);
+    if (candidates.length) return { ...result, candidates };
+    await imports?.discard(result.token).catch(() => {});
+    throw new Error(
+      `This repository has no plugin at ${path}. Nothing was installed.`,
+    );
+  }
   async function dismiss() {
     if (blocked || pending.current || !preview) return;
     pending.current = true;
@@ -370,28 +615,40 @@ export function PluginImport({
     }
   }
   async function close() {
+    if (canAbandonPreview) {
+      lifetime.current.active = false;
+      setOpen(false);
+      onClosed?.();
+      return true;
+    }
     if (blocked || pending.current) return false;
+    const current = lifetime.current;
     const returnTo = document.activeElement;
     pending.current = true;
     setDiscarding(true);
     try {
       if (lifetime.current.token)
         await imports?.discard(lifetime.current.token);
-      lifetime.current.token = "";
+      current.token = "";
+      if (!current.active) {
+        onClosed?.();
+        return false;
+      }
       setPreview(null);
       errorTrigger.current = null;
       setError(null);
       setDragging(false);
       setShowUnchanged(false);
+      releaseRequest("cancelled");
       setOpen(false);
       onClosed?.();
       return true;
     } catch (reason) {
-      showError(reason, returnTo);
+      if (current.active) showError(reason, returnTo);
       return false;
     } finally {
       pending.current = false;
-      setDiscarding(false);
+      if (current.active) setDiscarding(false);
     }
   }
   const rollbackWarning = importRollbackWarning(candidate, existing);
@@ -417,10 +674,13 @@ export function PluginImport({
         signed?.repository ?? source.repository,
         source.reference,
         signed?.token,
+        ...(!checkOnly && updateAction?.source.commit
+          ? [updateAction.source.commit]
+          : []),
       );
     };
     if (!checkOnly) {
-      void load(acquire);
+      void load(acquire, !!updateAction);
       return;
     }
     void checkSource(async () => {
@@ -441,6 +701,139 @@ export function PluginImport({
       return candidate.revision;
     });
   }
+  async function installCandidate() {
+    if (
+      !imports ||
+      !preview ||
+      !candidate ||
+      blocked ||
+      retired ||
+      pending.current ||
+      pinError
+    )
+      return;
+    if (updateAction && updateId) {
+      const source = pluginUpdateSource(plugins, updateId);
+      if (
+        !source ||
+        updateSourceKey(source) !== updateSourceKey(updateAction.source)
+      ) {
+        showError(
+          "The plugin source changed. Close this review and check again.",
+          installButton.current,
+        );
+        return;
+      }
+    }
+    const current = lifetime.current;
+    current.installing = true;
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    importOperations.set(imports, settled);
+    pending.current = true;
+    setLoading(true);
+    setError(null);
+    const requestId = bound?.id;
+    const unconfirm =
+      requestId === undefined ? undefined : onRequestConfirmed?.(requestId);
+    try {
+      const success = await plugins.installImport(
+        preview.token,
+        candidate.path,
+      );
+      if (!success) {
+        if (!current.active) return;
+        showError(
+          plugins.snapshot().error ??
+            "Plugin installation wasn’t confirmed. Check the preview and try again.",
+          installButton.current,
+        );
+        return;
+      }
+      // Native keeps the prepared preview after install.
+      current.token = "";
+      await imports.discard(preview.token).catch(() => {});
+      if (!existing && enableOnInstall)
+        await plugins.change("enable", candidate.manifest.id);
+      if (!current.active) {
+        if (requestId !== undefined)
+          settleRequest.current?.(
+            requestId,
+            existing ? "updated" : "installed",
+          );
+        onClosed?.();
+        return;
+      }
+      if (!updateId) setPreview(null);
+      else if (existing)
+        setExisting({
+          ...existing,
+          revision: candidate.revision,
+        });
+      releaseRequest(existing ? "updated" : "installed");
+      setOpen(false);
+      onClosed?.();
+    } finally {
+      unconfirm?.();
+      current.installing = false;
+      if (!current.active && current.token) {
+        await imports.discard(current.token).catch(() => {});
+        current.token = "";
+      }
+      release();
+      pending.current = false;
+      if (current.active) setLoading(false);
+    }
+  }
+  const automaticToken = useRef("");
+  const applyFreshUpdate = useEffectEvent(() => {
+    if (
+      !updateAction?.apply ||
+      !preview ||
+      !candidate ||
+      loading ||
+      error ||
+      upToDate ||
+      automaticToken.current === preview.token
+    )
+      return;
+    automaticToken.current = preview.token;
+    const snapshot = plugins.snapshot();
+    const live =
+      snapshot.configuration.status === "ready"
+        ? snapshot.configuration.catalog.plugins.find(
+            (item) => item.manifest.id === updateId,
+          )
+        : undefined;
+    if (
+      !live ||
+      pluginAccessIncreases(candidate.manifest, live.manifest) ||
+      (candidate.publisher ?? null) !== (live.publisher ?? null) ||
+      importRollbackWarning(candidate, live)
+    )
+      return;
+    void installCandidate();
+  });
+  useEffect(() => {
+    if (preview && !loading && !error && !upToDate) applyFreshUpdate();
+  }, [preview, loading, error, upToDate]);
+  const automaticUpdate =
+    !!updateAction?.apply &&
+    !error &&
+    !pinError &&
+    !conflict &&
+    !upToDate &&
+    (!preview ||
+      (!!candidate &&
+        !!currentPlugin &&
+        !pluginAccessIncreases(candidate.manifest, currentPlugin.manifest) &&
+        (candidate.publisher ?? null) === (currentPlugin.publisher ?? null) &&
+        !importRollbackWarning(candidate, currentPlugin) &&
+        (automaticToken.current !== preview.token ||
+          lifetime.current.installing)));
+  if (!imports) return null;
   const addButton = (
     <Button
       ref={trigger}
@@ -473,19 +866,17 @@ export function PluginImport({
   const updateActions = (
     <>
       {!savedSource && !preview && addButton}
-      {savedSource &&
-        "repository" in savedSource &&
-        !(preview && !error && !upToDate) && (
-          <Button
-            ref={checkAgain}
-            variant="subtle"
-            size="sm"
-            disabled={blocked || checking}
-            onClick={() => checkSavedGit()}
-          >
-            Check for updates
-          </Button>
-        )}
+      {savedSource && "repository" in savedSource && (
+        <Button
+          ref={checkAgain}
+          variant="subtle"
+          size="sm"
+          disabled={blocked || checking}
+          onClick={() => checkSavedGit()}
+        >
+          Check for updates
+        </Button>
+      )}
       {updateAvailable && (
         <Button
           ref={trigger}
@@ -505,7 +896,7 @@ export function PluginImport({
     <>
       {!updateId &&
         (actionTarget ? createPortal(addButton, actionTarget) : addButton)}
-      {updateId && (
+      {updateId && !updateAction && (
         <section aria-label="Plugin updates" className="text-body-sm">
           <h3 className={`${styles.sourceHeading} text-caption`}>
             {savedSource && "repository" in savedSource
@@ -563,36 +954,56 @@ export function PluginImport({
           if (!next) void close();
         }}
         title={
-          showUnchanged
-            ? "Unchanged declarations"
-            : error || !preview
-              ? updateId
-                ? "Update plugin"
-                : "Add a plugin"
-              : reviewing
-                ? duplicate
-                  ? "Already installed"
-                  : existing
-                    ? `Update ${existing.manifest.name}`
-                    : "Review plugin access"
-                : preview.candidates.length
-                  ? "Choose a plugin"
-                  : "No plugins found"
+          automaticUpdate ? (
+            `Updating ${currentPlugin?.manifest.name ?? "plugin"}`
+          ) : showUnchanged ? (
+            "Unchanged declarations"
+          ) : error || !preview ? (
+            updateId ? (
+              "Update plugin"
+            ) : (
+              "Add a plugin"
+            )
+          ) : reviewing ? (
+            duplicate ? (
+              "Already installed"
+            ) : existing ? (
+              `Update ${existing.manifest.name}`
+            ) : (
+              <>
+                Review{" "}
+                <strong>{candidate?.manifest.name ?? "Unknown"} Plugin</strong>{" "}
+                access
+              </>
+            )
+          ) : preview.candidates.length ? (
+            "Choose a plugin"
+          ) : (
+            "No plugins found"
+          )
         }
         description={
-          error || showUnchanged
-            ? undefined
-            : preview
-              ? reviewing
-                ? updating
-                  ? undefined
-                  : "Only install code you trust."
-                : preview.candidates.length
-                  ? "Select a plugin to review before installing."
-                  : "Try another folder or repository."
-              : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
+          updateAction
+            ? "Save unfinished forms and stop active plugin workers before you update. Updating an enabled plugin reloads it immediately."
+            : error || showUnchanged
+              ? undefined
+              : preview
+                ? reviewing
+                  ? updating
+                    ? undefined
+                    : "Only install code you trust."
+                  : preview.candidates.length
+                    ? "Select a plugin to review before installing."
+                    : "Try another folder or repository."
+                : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
-        size={error || (reviewing && updating) ? "compact" : "wide"}
+        size={
+          automaticUpdate || error || (reviewing && updating)
+            ? "compact"
+            : "wide"
+        }
+        headerGap={reviewing && updating ? "compact" : "default"}
+        footerGap={reviewing && updating ? "compact" : "default"}
         leadingActions={
           !error &&
           !showUnchanged &&
@@ -618,7 +1029,7 @@ export function PluginImport({
           ) : undefined
         }
         actions={
-          error ? (
+          automaticUpdate ? undefined : error ? (
             <Button
               ref={errorBack}
               type="button"
@@ -692,51 +1103,17 @@ export function PluginImport({
               {reviewing &&
                 candidate &&
                 !upToDate &&
-                (!existing || !!updateId) && (
+                !conflict &&
+                !pinError &&
+                (!existing || !!updateId || requested) && (
                   <Button
                     ref={installButton}
                     variant="prominent"
                     type="button"
-                    disabled={blocked || existing?.source === "bundled"}
-                    onClick={async () => {
-                      if (blocked || pending.current) return;
-                      const current = lifetime.current;
-                      pending.current = true;
-                      setLoading(true);
-                      setError(null);
-                      try {
-                        const success = await plugins.installImport(
-                          preview.token,
-                          candidate.path,
-                        );
-                        if (!current.active) return;
-                        if (!success) {
-                          showError(
-                            plugins.snapshot().error ??
-                              "Plugin installation wasn’t confirmed. Check the preview and try again.",
-                            installButton.current,
-                          );
-                          return;
-                        }
-                        // Native keeps the prepared preview after install.
-                        current.token = "";
-                        await imports.discard(preview.token).catch(() => {});
-                        if (!existing && enableOnInstall)
-                          await plugins.change("enable", candidate.manifest.id);
-                        if (!current.active) return;
-                        if (!updateId) setPreview(null);
-                        else if (existing)
-                          setExisting({
-                            ...existing,
-                            revision: candidate.revision,
-                          });
-                        setOpen(false);
-                        onClosed?.();
-                      } finally {
-                        pending.current = false;
-                        if (current.active) setLoading(false);
-                      }
-                    }}
+                    disabled={
+                      blocked || retired || existing?.source === "bundled"
+                    }
+                    onClick={() => void installCandidate()}
                   >
                     {updating ? "Update" : "Install plugin"}
                   </Button>
@@ -750,7 +1127,7 @@ export function PluginImport({
           return true;
         }}
         dismissOnOutsideClick
-        preventClose={blocked}
+        preventClose={blocked && !canAbandonPreview}
         finalFocus={() =>
           returnFocus?.() ?? trigger.current ?? checkAgain.current
         }
@@ -767,78 +1144,73 @@ export function PluginImport({
             unchangedOnly
           />
         )}
-        <div hidden={!!error || showUnchanged}>
+        {automaticUpdate && <p role="status">Updating plugin…</p>}
+        <div hidden={automaticUpdate || !!error || showUnchanged}>
           <div hidden={!!preview || (!!updateId && !!savedSource)}>
             {(!updateId || !savedSource) && (
               <div className={styles.columns}>
-                <section
-                  aria-label="Add from folder"
-                  className={styles.folder}
-                  data-dragging={dragging || undefined}
-                  onDragOver={(event) => {
-                    if (!event.dataTransfer.types.includes("Files")) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.dataTransfer.dropEffect = blocked ? "none" : "copy";
-                    setDragging(!blocked);
-                  }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setDragging(false);
-                    const items = Array.from(event.dataTransfer.items);
-                    const entry =
-                      items.length === 1
-                        ? items[0]?.webkitGetAsEntry?.()
-                        : null;
-                    const current = lifetime.current;
-                    void load(async () => {
-                      if (!entry?.isDirectory)
-                        throw new Error("Drop one folder, or choose Browse.");
-                      const upload = await readPluginFolder(entry);
-                      if (!current.active) return null;
-                      const next = await imports.files(
-                        upload.source,
-                        upload.files,
-                      );
-                      return next
-                        ? {
-                            ...next,
-                            warnings: [...upload.warnings, ...next.warnings],
-                          }
-                        : null;
-                    });
-                  }}
-                >
-                  <FolderOpenIcon size={32} aria-hidden="true" />
-                  <p className="m-0 text-body-sm">Drop a plugin folder here</p>
-                  <Button
-                    size="sm"
-                    ref={browse}
-                    aria-label="Browse plugin folder"
-                    disabled={blocked}
-                    onClick={() => void load(() => imports.folder())}
+                {!bound && (
+                  <section
+                    aria-label="Add from folder"
+                    className={styles.folder}
+                    data-dragging={dragging || undefined}
+                    onDragOver={(event) => {
+                      if (!event.dataTransfer.types.includes("Files")) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.dataTransfer.dropEffect = blocked ? "none" : "copy";
+                      setDragging(!blocked);
+                    }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setDragging(false);
+                      const items = Array.from(event.dataTransfer.items);
+                      const entry =
+                        items.length === 1
+                          ? items[0]?.webkitGetAsEntry?.()
+                          : null;
+                      const current = lifetime.current;
+                      void load(async () => {
+                        if (!entry?.isDirectory)
+                          throw new Error("Drop one folder, or choose Browse.");
+                        const upload = await readPluginFolder(entry);
+                        if (!current.active) return null;
+                        const next = await imports.files(
+                          upload.source,
+                          upload.files,
+                        );
+                        return next
+                          ? {
+                              ...next,
+                              warnings: [...upload.warnings, ...next.warnings],
+                            }
+                          : null;
+                      });
+                    }}
                   >
-                    Browse
-                  </Button>
-                </section>
+                    <FolderOpenIcon size={32} aria-hidden="true" />
+                    <p className="m-0 text-body-sm">
+                      Drop a plugin folder here
+                    </p>
+                    <Button
+                      size="sm"
+                      ref={browse}
+                      aria-label="Browse plugin folder"
+                      disabled={blocked}
+                      onClick={() => void load(() => imports.folder())}
+                    >
+                      Browse
+                    </Button>
+                  </section>
+                )}
                 <form
                   aria-label="Add from Git"
                   className={styles.git}
                   onSubmit={(event) => {
                     event.preventDefault();
-                    if (repository.trim())
-                      void load(async () => {
-                        const signed = await authorizeGit?.(repository);
-                        return signed
-                          ? imports.git(
-                              signed.repository,
-                              reference,
-                              signed.token,
-                            )
-                          : imports.git(repository, reference);
-                      });
+                    if (repository.trim()) void loadGit(repository, reference);
                   }}
                 >
                   <SettingsGroup layout="form">
@@ -847,6 +1219,7 @@ export function PluginImport({
                         required
                         value={repository}
                         disabled={blocked}
+                        readOnly={!!bound || linkConstrained}
                         placeholder="https://github.com/owner/repository"
                         onChange={(event) => setRepository(event.target.value)}
                       />
@@ -855,10 +1228,27 @@ export function PluginImport({
                       <Input
                         value={reference}
                         disabled={blocked}
+                        readOnly={!!bound || linkConstrained}
                         placeholder="Repository default"
                         onChange={(event) => setReference(event.target.value)}
                       />
                     </Field>
+                    {(bound || linkConstrained) && (
+                      <p className="m-0 break-all text-caption text-muted">
+                        {bound
+                          ? `Opened from ${requester(bound.origin)}. `
+                          : "Opened from a link. "}
+                        {constraint?.commit
+                          ? `Pinned to commit ${shortCommit(constraint.commit)}. Nothing is installed unless the fetched repository matches it. `
+                          : ""}
+                        {constraint?.path
+                          ? `Plugin folder: ${constraint.path}. `
+                          : ""}
+                        {bound
+                          ? "Review the source, then choose Find to read it. Nothing is installed until you confirm."
+                          : "Nothing is installed until you confirm."}
+                      </p>
+                    )}
                     <p className="m-0 text-caption text-muted">
                       HTTPS or SSH; GitHub owner/repository also works. SSH uses
                       your agent and known hosts. Password prompts and
@@ -967,11 +1357,18 @@ export function PluginImport({
                       </ul>
                     </section>
                   )}
+                {reviewing &&
+                  candidate &&
+                  existing &&
+                  (candidate.publisher ?? null) !==
+                    (existing.publisher ?? null) && (
+                    <p className="m-0 break-all text-body-sm">
+                      Publisher: {candidate.publisher ?? "Unsigned"}. Previous
+                      publisher: {existing.publisher ?? "Unsigned"}.
+                    </p>
+                  )}
                 {reviewing && updating && (
-                  <section
-                    aria-label="Update source"
-                    className="text-body-sm mb-4"
-                  >
+                  <section aria-label="Update source" className="text-body-sm">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-muted">
                         {preview.commit ? "Source" : "Source folder"}
@@ -982,7 +1379,22 @@ export function PluginImport({
                     </code>
                   </section>
                 )}
-                {reviewing && updating && !updateId && (
+                {reviewing && bound && (
+                  <p className="m-0 text-caption text-muted">
+                    Opened from {requester(bound.origin)}.
+                  </p>
+                )}
+                {reviewing && pinError && <p className="m-0">{pinError}</p>}
+                {reviewing && (requested || pinned) && preview.commit && (
+                  <p className="m-0 break-all text-caption text-muted">
+                    Commit {shortCommit(preview.commit)}
+                    {pinned && !pinError
+                      ? " (matches the requested commit)"
+                      : ""}
+                  </p>
+                )}
+                {reviewing && conflict && <p className="m-0">{conflict}</p>}
+                {reviewing && updating && !updateId && !requested && (
                   <p>
                     This plugin is already installed. Open its details to manage
                     it.
@@ -991,7 +1403,8 @@ export function PluginImport({
                 {reviewing &&
                   candidate &&
                   (existing?.source !== "bundled" || loading) &&
-                  (!existing || !!updateId) && (
+                  !conflict &&
+                  (!existing || !!updateId || requested) && (
                     <PluginAccessReview
                       manifest={candidate.manifest}
                       previousManifest={existing?.manifest}
@@ -1006,7 +1419,7 @@ export function PluginImport({
                   </p>
                 )}
                 {reviewing &&
-                  updateId &&
+                  (updateId || (requested && !conflict)) &&
                   candidate &&
                   existing?.source === "external" &&
                   rollbackWarning && (

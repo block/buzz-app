@@ -1,3 +1,4 @@
+import { eventDto } from "../../src/features/relay/events";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
@@ -93,7 +94,12 @@ let releaseReply = () => {};
 let replyPending = false;
 let data = [
   profile(viewer, { name: "Viewer", about: "Human profile", picture }),
-  profile(mic, { name: "Mic", about: "Mic biography" }),
+  profile(mic, {
+    name: new URLSearchParams(location.search).has("name-collision")
+      ? "Viewer "
+      : "Mic",
+    about: "Mic biography",
+  }),
   signed(pinky, {
     kind: 0,
     content: JSON.stringify({
@@ -146,10 +152,47 @@ function session() {
             },
           }
         : {}),
+      ...(new URLSearchParams(location.search).has("verified-name")
+        ? {
+            verifiedProfiles: {
+              pubkey: authority.pubkey,
+              multipleIssuers: false,
+            },
+            readVerifiedProfileAuthority: async () => null,
+          }
+        : {}),
       relayAuthor: authority.pubkey,
       subscribe(callbacks) {
         callbacks.state({ status: "connected", routes: [] });
-        return { update() {}, retry() {}, dispose() {} };
+        return {
+          update() {},
+          retry() {},
+          dispose() {},
+          syncVerifiedProfiles(_filter, sink) {
+            sink.event(
+              eventDto(
+                signed(authority, {
+                  kind: 30382,
+                  content: "",
+                  tags: [
+                    ["d", viewer.pubkey],
+                    ["p", viewer.pubkey],
+                    ["active", "true"],
+                    ["display_name", "Viewer"],
+                    ["username", "viewer"],
+                    ["issuer_label", "Example"],
+                    ["verified_at", "1000000"],
+                    ...(new URLSearchParams(location.search).has("no-full-name")
+                      ? []
+                      : [["full_name", "Viewer Example"]]),
+                  ],
+                }),
+              ),
+            );
+            sink.eose();
+            return () => {};
+          },
+        };
       },
       media: (url, size) => {
         report.media.push([url, size]);

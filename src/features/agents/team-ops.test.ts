@@ -267,6 +267,43 @@ describe("teamOps.change", () => {
     expect(retry.channels.removeMember).not.toHaveBeenCalled();
   });
 
+  it("a move records its own copy before any member change, and stops if that record fails", async () => {
+    const order: string[] = [];
+    const recorded = setup({
+      members: [],
+      saved: { status: "conflict", head: head() } as never,
+    });
+    recorded.channels.addMember.mockImplementation(async () => {
+      order.push("add");
+      return { status: "confirmed" } as never;
+    });
+    const move = {
+      ...edit,
+      members: ["a", "b"],
+      adopt: true,
+      fresh: true,
+      resume: { ...edit, members: ["a"] },
+    };
+    await recorded.ops.change({
+      ...move,
+      owned: async () => void order.push("owned"),
+    });
+    expect(order[0]).toBe("owned");
+    const refused = setup({
+      members: [],
+      saved: { status: "conflict", head: head() } as never,
+    });
+    expect(
+      await refused.ops.change({
+        ...move,
+        owned: async () => {
+          throw new Error("Storage refused");
+        },
+      }),
+    ).toMatchObject({ ok: false, created: true, error: "Storage refused" });
+    expect(refused.channels.addMember).not.toHaveBeenCalled();
+  });
+
   it("a definitely refused first save is reported as refused", async () => {
     const { ops } = setup({
       saved: { status: "refused", refusal: "offline", message: "no" },

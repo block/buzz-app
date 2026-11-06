@@ -16080,6 +16080,60 @@ describe("synced teams", () => {
       expect(channels.saveTeam).toHaveBeenCalledTimes(1);
     });
 
+    it("records its own copy before resumed member changes, so a stop after them still finishes the move", async () => {
+      // Birch was added here after the first try sent only Alder.
+      const t = await local(
+        [{ ...mine, members: [alder, birch] }],
+        ["local-1"],
+      );
+      const stored: unknown[] = [];
+      type Edit = {
+        fresh?: boolean;
+        saving?: (sent: TeamSent) => Promise<void>;
+        owned?: () => Promise<void>;
+      };
+      const answers = [
+        async (edit: Edit) => {
+          await edit.saving?.(sent);
+          return { ...fail, uncertain: true };
+        },
+        // The resume takes its own copy, adds Birch, then stops before
+        // reporting: the relay now has a member the record doesn't.
+        async (edit: Edit) => {
+          await edit.owned?.();
+          stored.push(new TeamMoves(t.storage).get("local-1"));
+          return { ...fail, added: [alder, birch], uncertain: true };
+        },
+        // Its next try finishes; a fresh one would find a conflict.
+        async (edit: Edit) =>
+          edit.fresh
+            ? { ...fail, error: "A different copy", conflict: true }
+            : { ok: true, added: [], removed: [], skipped: [] },
+      ];
+      const channels = teamChannels(async (edit) => answers.shift()?.(edit));
+      const f = await setup({
+        identities: [here(alder), here(birch)],
+        storage: t.storage,
+      });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      t.confirm(channels.stores.get(home));
+      f.recover();
+      await vi.waitFor(() => expect(stored).toHaveLength(1));
+      expect(stored[0]).toMatchObject({ community: home, created: true });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      f.recover();
+      await vi.waitFor(() =>
+        expect(f.storage.get(teamsKey)).not.toContain("Mine"),
+      );
+      expect(channels.saveTeam.mock.calls[2]?.[0]).not.toHaveProperty("fresh");
+      expect(f.service.teamSync("local-1")).not.toEqual({ conflict: home });
+      expect(moves(f)).toEqual({});
+    });
+
     it("keeps no attempt record after a definitely refused first save, so another copy stays a conflict", async () => {
       const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
       const answers = [

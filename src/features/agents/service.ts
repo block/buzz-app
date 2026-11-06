@@ -5239,6 +5239,10 @@ export class AgentsService extends Service implements Agents {
                     throw error;
                   }
                 },
+                owned: async () => {
+                  own = true;
+                  await journal(move?.failed);
+                },
               }),
             },
           );
@@ -5410,6 +5414,7 @@ export class AgentsService extends Service implements Agents {
       fresh?: boolean;
       resume?: TeamSent;
       saving?: (sent: TeamSent) => Promise<void>;
+      owned?: () => Promise<void>;
     }>,
   ) {
     const host = hostOf({ relay: home });

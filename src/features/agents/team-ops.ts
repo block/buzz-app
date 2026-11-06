@@ -42,6 +42,9 @@ export type TeamEdit = Readonly<{
    * so the caller can durably record that this device may be creating the
    * team. */
   saving?: (sent: TeamSent) => Promise<void>;
+  /** Awaited once a `fresh` change knows the team there is this device's,
+   * before any member changes, so the caller can durably record it. */
+  owned?: () => Promise<void>;
 }>;
 
 /** What the change did. `ok` only when the readback shows all of it. */
@@ -248,6 +251,12 @@ export function teamOps(deps: TeamDeps) {
           conflict: true,
         });
     }
+    if (created && edit.fresh)
+      try {
+        await edit.owned?.();
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : String(error));
+      }
 
     const add = edit.members.filter((pubkey) => !present.includes(pubkey));
     const remove = base

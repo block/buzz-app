@@ -200,12 +200,20 @@ export function useAppNavigation(
     else if (!providerAvailable) failure = "unavailable";
   }
   // An installed plugin that is turned off has no pages: say so, not "removed".
+  // Paused external plugins can't start this launch, so Enable wouldn't help.
+  const configuration = plugins.configuration;
   const turnedOff =
     failure === "unavailable" &&
     (target.kind === "page" || target.kind === "plugin") &&
-    plugins.configuration.status === "ready"
-      ? plugins.configuration.catalog.plugins.find(
-          (plugin) => plugin.manifest.id === target.pluginId && !plugin.enabled,
+    configuration.status === "ready"
+      ? configuration.catalog.plugins.find(
+          (plugin) =>
+            plugin.manifest.id === target.pluginId &&
+            !plugin.enabled &&
+            !(
+              configuration.externalPluginsPaused &&
+              plugin.source === "external"
+            ),
         )?.manifest
       : undefined;
   // Legacy Home resolves to Messages; version-1 placeholder routes resolve to

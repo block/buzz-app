@@ -94,7 +94,17 @@ export function HuddleCard({
   const start = history.startedAt ?? message.createdAt;
   const active =
     !ended && start <= now && (current || (loaded && now - start < 3600));
-  const finished = ended || (loaded && !active);
+  // A sender clock slightly ahead dates the start in the near future.
+  const pending = !ended && start > now && start <= now + 30;
+  const finished = ended || (loaded && !active && !pending);
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(
+      () => setNow(Math.floor(Date.now() / 1000)),
+      start * 1000 - Date.now(),
+    );
+    return () => clearTimeout(timer);
+  }, [pending, start]);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(

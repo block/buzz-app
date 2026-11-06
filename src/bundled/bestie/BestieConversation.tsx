@@ -222,16 +222,21 @@ export function BestieConversation({
   const moveOn = useCallback(() => {
     if (context.current !== undefined) setMovedOn(context.current);
   }, []);
-  const inTimeline = useMessageOpening(
-    session.channels,
-    channel.id,
-    stayed ? sought : undefined,
-    visit,
-  );
   // A message visit that opened as a thread returns to that thread. The tab
   // store's record outlives this page's mount and is pruned with history.
   const recorded =
     navigation && exact ? state.routedVisits?.[navigation.entryId] : undefined;
+  // Without that record, as when the visit was left before history answered
+  // or after a reload, Back and Forward decide again between the chat and the
+  // thread, without revealing the message.
+  const unresolved =
+    exact?.channelId === channel.id && !recorded ? exact.messageId : undefined;
+  const inTimeline = useMessageOpening(
+    session.channels,
+    channel.id,
+    (stayed ? sought : undefined) ?? unresolved,
+    visit,
+  );
   const thread =
     routed ??
     (recorded
@@ -459,8 +464,8 @@ export function BestieConversation({
       !navigation ||
       !ownsCurrentVisit() ||
       (addressed?.channelId && addressed.channelId !== channel.id) ||
-      // A message visit is a thread visit until history says otherwise.
-      (exact && sought && inTimeline === undefined) ||
+      // A message visit waits for history to say whether it is a thread visit.
+      (exact && !thread && inTimeline === undefined) ||
       appliedVisit.current === navigation.entryId
     )
       return;
@@ -493,7 +498,6 @@ export function BestieConversation({
     channel.id,
     state.enterVisit,
     exact,
-    sought,
     inTimeline,
     thread,
     detail,
@@ -555,9 +559,14 @@ export function BestieConversation({
         messageId,
         threadRootId: rootId,
       });
+      const key = targetKey(target);
       opened.current = {
         from: navigation.entryId,
-        target: targetKey(target),
+        target: key,
+        // Opening the shown thread again restarts this visit under its id.
+        ...(key === targetKey(navigation.target) && {
+          entryId: navigation.entryId,
+        }),
       };
       void navigator.open(target);
     }

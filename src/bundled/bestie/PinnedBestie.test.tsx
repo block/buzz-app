@@ -1014,6 +1014,68 @@ it("returns to a reply's thread after leaving Bestie for another page", async ()
   );
 });
 
+it("returns to a reply's thread after leaving Bestie before history answered", async () => {
+  const h = await linkedVisit(({ replyId }) => ({ messageId: replyId }), {
+    holdHead: true,
+  });
+  expect(await screen.findByText("Loading messages…")).toBeVisible();
+  act(() => {
+    void h.host.navigation.open(homeTarget);
+  });
+  expect(await screen.findByLabelText("promoted DM")).toBeInTheDocument();
+  act(() => h.host.navigation.back());
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).toBeInTheDocument();
+  // Back enters the visit once history says where the message is.
+  await act(async () => h.f.release.head());
+  expect(
+    await within(await screen.findByLabelText("Thread")).findByText(
+      "Yep, here. What’s up?",
+    ),
+  ).toBeVisible();
+  expect(h.host.navigation.snapshot().entry.target).toEqual(
+    bestieTarget(h, { messageId: h.f.replyId }),
+  );
+});
+
+it("resolves message visits with no stored resolution on Back, without revealing them", async () => {
+  // In the main pane, each visit's resolution shows in the selected tab.
+  localStorage.setItem("buzz-thread-placement.v1", "main");
+  const f = await threadHistoryFixture();
+  const { navigator, rerender, bestie } = f;
+  const selected = () =>
+    within(screen.getByLabelText("Bestie conversation tabs")).getByRole("tab", {
+      selected: true,
+    });
+  expect(await screen.findByText("Are you there?")).toBeVisible();
+  const message = (messageId: string) =>
+    ({
+      ...bestie,
+      route: { version: 1, params: { channelId: pollenDM, messageId } },
+    }) as const;
+  // Visits this page never presented, as after a reload: the tab store has
+  // no record of how they resolved.
+  void navigator.open(message(f.rootId));
+  void navigator.open(message(f.replyId));
+  void navigator.open(f.previous);
+  act(() => navigator.back());
+  rerender();
+  expect(
+    await within(await screen.findByLabelText("Thread")).findByText(
+      "Yep, here. What’s up?",
+    ),
+  ).toBeVisible();
+  expect(selected()).toHaveTextContent("Are you there?");
+  act(() => navigator.back());
+  rerender();
+  expect(navigator.snapshot().entry.target).toEqual(message(f.rootId));
+  await waitFor(() => expect(selected()).toHaveTextContent("Pollen"));
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+});
+
 it("leaves the chat history in place for View thread and for Back and Forward", async () => {
   const f = await threadHistoryFixture();
   const { navigator, rerender } = f;
@@ -1041,6 +1103,30 @@ it("leaves the chat history in place for View thread and for Back and Forward", 
   await act(() => frames(2));
   expect(f.revealed(f.rootId)).toBeUndefined();
   expect(row).toBeInTheDocument();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+});
+
+it("leaves the chat history in place when View thread opens its shown thread again", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender } = f;
+  const viewThread = await screen.findByRole("button", {
+    name: "View thread: 1 reply",
+  });
+  await userEvent.click(viewThread);
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  const visit = navigator.snapshot().entry.id;
+  const attempt = navigator.snapshot().attempt.id;
+  fireEvent.wheel(inChat("[data-message-scroller]") as HTMLElement, {
+    deltaY: -40,
+  });
+  await userEvent.click(viewThread);
+  rerender();
+  // The same visit restarts under its id; it is still this page's own.
+  expect(navigator.snapshot().entry.id).toBe(visit);
+  expect(navigator.snapshot().attempt.id).not.toBe(attempt);
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
   expect(screen.queryByText("Loading messages…")).toBeNull();
 });
 

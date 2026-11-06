@@ -53,9 +53,11 @@ marked. A message visit holds the history until that message
 is found, then scrolls to and focuses it, or opens its thread when it is a
 reply or isn't in history; the tab store records that resolution, so a return
 after this page unmounted reopens the thread, and closing it retires the
-visit by that record rather than by its address. Threads opened here with
-**View thread**, and Back/Forward returns, leave the history where the reader
-left it. Links in the
+visit by that record rather than by its address. A return with no record, as
+after leaving before history answered or after a reload, decides again before
+it applies the visit. Threads opened here with **View thread**, including
+the shown thread opened again, and Back/Forward returns, leave the history
+where the reader left it. Links in the
 chat into this DM open as this page's own visits. A visit to Forward or
 Members has no Bestie route and stays in Messages, as does a visit that
 Messages had already opened before the promotion was known. The handed-off

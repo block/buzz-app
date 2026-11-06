@@ -235,12 +235,45 @@ export async function frames(page, count = 2) {
 // Hover a row's element with one raw pointer move. Locator.hover retries by
 // scrolling the timeline, and each scroll restarts Virtua's pointer-event
 // hold; a hover rest (Base UI's PreviewCard) starts only on a move over the
-// element, so arrive once the list hit-tests again. A late re-measure can
-// still scroll between the measurement and the move.
+// element, so arrive once its centre hit-tests again. Geometry quiescence has
+// no terminal signal: a later re-measure can still scroll between this check
+// and the move, or after the move. The preview assertion must still catch it.
 export async function hoverRow(page, locator, scroller = history(page)) {
   await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
   await expect(locator).toBeInViewport();
+  await expect
+    .poll(
+      () =>
+        locator.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          return element.contains(
+            document.elementFromPoint(
+              box.x + box.width / 2,
+              box.y + box.height / 2,
+            ),
+          );
+        }),
+      { message: "timeline hover target hit-tests at its centre" },
+    )
+    .toBe(true);
   const box = await locator.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+}
+// Click a control inside a timeline row once the timeline is at rest. Opening
+// a panel resizes the timeline, and its rows rewrap and move through scroll
+// events. Each scroll event restarts Virtua's pointer-event hold. On Linux
+// WebKit CI, a click sent during that movement reached the scroller, and the
+// control never saw it. A scroll event reaches Virtua in a later rendering
+// update, so wait for those updates, and check pointer events again after the
+// geometry settles. Then the control must be fully visible: locator.click()
+// scrolls a control into view, and that would hide a reading position the app
+// moved during the wait.
+export async function clickRow(page, locator, scroller = history(page)) {
+  await virtuaIdle(page, scroller);
+  await frames(page);
+  await virtuaIdle(page, scroller);
+  await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
+  await expect(locator).toBeInViewport({ ratio: 1 });
+  await locator.click();
 }
 export { activate } from "./navigation.mjs";

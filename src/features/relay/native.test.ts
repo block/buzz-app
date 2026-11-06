@@ -1,4 +1,8 @@
 import {
+  ARTIFACT_INCREMENTAL_LIMITS,
+  ArtifactIncrementalError,
+} from "./artifact-incremental-reader";
+import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
@@ -15,6 +19,7 @@ import {
   nativeRelayRequest,
   nativeRelaySigner,
   nativeWriteKinds,
+  verifyNativeStored,
 } from "./native";
 import { keypair, message, nativeSignatureChecks, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
@@ -161,6 +166,21 @@ beforeEach(() => {
   });
 });
 
+it("verifies stored events through native signature checks without connecting", async () => {
+  vi.mocked(invoke).mockClear();
+  const profile = signed(viewer, { kind: 0, tags: [], content: "{}" });
+  const restored = await verifyNativeStored([
+    JSON.parse(JSON.stringify(profile)),
+  ]);
+  expect(restored.map((event) => event.id)).toEqual([profile.id]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "relay_verify_signatures",
+  ]);
+  await expect(
+    verifyNativeStored([{ ...profile, content: "changed" }]),
+  ).rejects.toThrow();
+  expect(requests).toEqual([]);
+});
 it("requires the relay self key, never its operator contact pubkey", async () => {
   vi.mocked(invoke).mockResolvedValueOnce({
     status: 200,
@@ -344,7 +364,7 @@ it.each([true, false])(
         status: accepted ? 200 : 403,
         body: accepted
           ? { accepted: true, event_id: JSON.parse(request.body ?? "{}").id }
-          : { error: "Registration denied" },
+          : { error: "restricted: registration denied" },
       });
       expect(outbox.supports(30177)).toBe(true);
       const id = outbox.send({ kind: 30177, tags: [["d", agent]], content });
@@ -353,7 +373,7 @@ it.each([true, false])(
           outbox.snapshot().find((item) => item.event.id === id),
         ).toMatchObject({
           delivery: accepted ? "accepted" : "failed",
-          ...(accepted ? {} : { error: "Relay rejected the message (403)" }),
+          ...(accepted ? {} : { error: "Registration denied" }),
         }),
       );
       const publishes = requests.filter(
@@ -451,6 +471,10 @@ it("rejects tampered reads and keeps refusals distinct from uncertain receipts",
   const event = message(viewer, "channel", "original", 1700000000);
   respond = () => ({ body: [{ ...event, content: "tampered" }] });
   await expect(transport.query([{ kinds: [9], limit: 10 }])).rejects.toThrow();
+  respond = () => ({ body: [event, { ...event, sig: "0".repeat(128) }] });
+  await expect(transport.query([{ kinds: [9], limit: 10 }])).rejects.toThrow(
+    "invalidly signed",
+  );
   assert.exists(transport.writer);
   respond = () => ({ status: 403, body: { error: "denied" } });
   await expect(
@@ -532,10 +556,19 @@ it("authenticates live traffic with the native signer and verifies incoming chan
     await socket.receive(["EOSE", route[1]]);
     const incoming = message(keypair(), "channel", "Live reply", 1700000002);
     await socket.receive(["EVENT", route[1], incoming]);
+    await vi.waitFor(() => expect(receive).toHaveBeenCalled());
     expect(receive).toHaveBeenCalledWith([incoming], {
       phase: "live",
       channelId: "channel",
     });
+    expect(vi.mocked(invoke).mock.calls).toContainEqual([
+      "relay_verify_signatures",
+      {
+        claims: [
+          { id: incoming.id, pubkey: incoming.pubkey, sig: incoming.sig },
+        ],
+      },
+    ]);
     expect(
       vi
         .mocked(invoke)
@@ -1297,6 +1330,77 @@ it("sorts host memory projections with the same locale collation as the broker",
   ).toEqual(["mem/b", "mem/b_c", "mem/b-c", "mem/b/c", "mem/bc"]);
 });
 
+it("streams memory pages as they land and cancels native paging on abort", async () => {
+  const transport = await connectNativeTransport(community);
+  const agent = keypair();
+  const entry = (slug: string, i: number) => ({
+    slug,
+    body: slug,
+    eventId: i.toString(16).padStart(64, "0"),
+    createdAt: 1,
+  });
+  let finish: (value: unknown) => void = () => {};
+  let readId = "";
+  const dispatch = vi.mocked(invoke);
+  dispatch.mockImplementationOnce(async (command, args) => {
+    expect(command).toBe("relay_agent_memories_read");
+    const { id, onPage } = args as { id: string; onPage: { id: string } };
+    readId = id;
+    progressChannels.get(onPage.id)?.({
+      entries: [entry("mem/a", 1)],
+      partial: false,
+    });
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  const pages: string[][] = [];
+  const controller = new AbortController();
+  const read = transport.readAgentMemories?.(
+    agent.pubkey,
+    controller.signal,
+    undefined,
+    (page) => pages.push(page.entries.map((e) => e.slug)),
+  );
+  await vi.waitFor(() => expect(pages).toEqual([["mem/a"]]));
+  // Leaving mid-stream cancels the native read by its ID.
+  dispatch.mockResolvedValueOnce(undefined);
+  controller.abort();
+  expect(dispatch).toHaveBeenLastCalledWith("relay_http_cancel", {
+    id: readId,
+  });
+  finish({ entries: [entry("mem/a", 1), entry("mem/b", 2)], partial: false });
+  await expect(read).rejects.toThrow();
+});
+
+it("skips a streamed Memory page that fails validation and still answers", async () => {
+  const transport = await connectNativeTransport(community);
+  const agent = keypair();
+  const entry = {
+    slug: "mem/a",
+    body: "a",
+    eventId: "1".padStart(64, "0"),
+    createdAt: 1,
+  };
+  vi.mocked(invoke).mockImplementationOnce(async (_command, args) => {
+    const { onPage } = args as { onPage: { id: string } };
+    const page = progressChannels.get(onPage.id);
+    expect(() => page?.({ entries: [null], partial: true })).not.toThrow();
+    page?.({ entries: [entry], partial: true });
+    return { entries: [entry], partial: false };
+  });
+  const pages: string[][] = [];
+  await expect(
+    transport.readAgentMemories?.(
+      agent.pubkey,
+      new AbortController().signal,
+      undefined,
+      (page) => pages.push(page.entries.map((e) => e.slug)),
+    ),
+  ).resolves.toEqual({ entries: [entry], partial: false });
+  expect(pages).toEqual([["mem/a"]]);
+});
+
 it("exposes purpose-bound agent readers and fences obsolete observer decoding", async () => {
   const transport = await connectNativeTransport(community);
   expect(transport.agentActivity).toBe(true);
@@ -1313,7 +1417,13 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
   });
   dispatch.mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_agent_memories_read");
-    expect(args).toEqual({ community, agent: agent.pubkey, slug: null });
+    expect(args).toEqual({
+      community,
+      agent: agent.pubkey,
+      slug: null,
+      id: expect.any(String),
+      onPage: null,
+    });
     return { entries: [], partial: true };
   });
   expect(await transport.readAgentMemories?.(agent.pubkey, signal)).toEqual({
@@ -1373,7 +1483,7 @@ it("routes relay media through the authenticated native scheme only", async () =
     `buzz-media://localhost/${encodeURIComponent(media)}`,
   );
   expect(transport.media(media, "small")).toBe(
-    `buzz-media://localhost/${encodeURIComponent(`${community}/media/${hash}.thumb.jpg`)}`,
+    `buzz-media://localhost/${encodeURIComponent(`${community}/media/${hash}.thumb.webp`)}`,
   );
   expect(transport.media("https://images.test/cat.png")).toBe(
     "https://images.test/cat.png",
@@ -2069,4 +2179,47 @@ it("cancellation during ingress prevents further chunks and final upload", async
       .mock.calls.filter(([command]) => command === "relay_upload_chunk"),
   ).toHaveLength(1);
   expect(uploads).toHaveLength(0);
+});
+
+it.each([
+  { live: false, incremental: false },
+  { live: true, incremental: false },
+  { live: false, incremental: true },
+  { live: true, incremental: true },
+])(
+  "keeps live and incremental artifact capabilities separate: %j",
+  async ({ live, incremental }) => {
+    discovery = {
+      artifacts: {
+        ...(live ? { sync: { version: 1 } } : {}),
+        ...(incremental ? { incremental: ARTIFACT_INCREMENTAL_LIMITS } : {}),
+      },
+    };
+    const transport = await connectNativeTransport(community);
+    expect(transport.artifactSync).toBe(live ? true : undefined);
+    expect(transport.artifactIncremental !== undefined).toBe(incremental);
+  },
+);
+
+it.each([
+  "incremental_limit",
+  "incremental_reset",
+  "incremental_invalid",
+  "incremental_unsupported_scope",
+  "incremental_unavailable",
+])("preserves %s through native admission", async (code) => {
+  discovery = { artifacts: { incremental: ARTIFACT_INCREMENTAL_LIMITS } };
+  const transport = await connectNativeTransport(community);
+  respond = () => ({
+    status: 422,
+    body: { error: "scope or capacity", code },
+  });
+  assert.exists(transport.artifactIncremental);
+  const work = transport.artifactIncremental.delta(
+    { artifact: "current", kinds: [45010], "#type": ["task"] },
+    {},
+    new AbortController().signal,
+  );
+  await expect(work).rejects.toBeInstanceOf(ArtifactIncrementalError);
+  await expect(work).rejects.toMatchObject({ code });
 });

@@ -31,12 +31,14 @@ export function ManagedPlugins({
   catalog,
   busy,
   authorizeGit,
+  holdReview,
 }: {
   plugins: PluginManager;
   managed: ManagedPolicy | undefined;
   catalog: Catalog;
   busy: boolean;
   authorizeGit?: Authorize | undefined;
+  holdReview?: (() => () => void) | undefined;
 }) {
   const [reviewingId, setReviewingId] = useState<string>();
   const trigger = useRef<HTMLElement | null>(null);
@@ -54,6 +56,7 @@ export function ManagedPlugins({
           : undefined
       }
       authorizeGit={authorizeGit}
+      holdReview={holdReview}
       returnFocus={() => trigger.current}
       onClose={() => setReviewingId(undefined)}
     />
@@ -156,6 +159,7 @@ export function ManagedPluginUpdate({
   source,
   entry,
   authorizeGit,
+  holdReview,
   returnFocus,
 }: {
   plugins: PluginManager;
@@ -164,6 +168,7 @@ export function ManagedPluginUpdate({
   source: string;
   entry: ManagedEntry;
   authorizeGit?: Authorize | undefined;
+  holdReview?: (() => () => void) | undefined;
   returnFocus?: () => HTMLElement | null;
 }) {
   const [open, setOpen] = useState(false);
@@ -196,6 +201,7 @@ export function ManagedPluginUpdate({
           source={source}
           entry={entry}
           authorizeGit={authorizeGit}
+          holdReview={holdReview}
           returnFocus={() => returnFocus?.() ?? trigger.current}
           onClose={() => setOpen(false)}
         />
@@ -212,14 +218,18 @@ type Review =
 const entryKey = ({ repository, reference, commit, path }: ManagedEntry) =>
   [repository, reference, commit, path].join("\n");
 
-function ManagedPluginReview({
+export function ManagedPluginReview({
   plugins,
   catalog,
   busy: managing,
   source,
   entry,
   authorizeGit,
+  holdReview,
+  requestedBy,
+  recheck,
   returnFocus,
+  onInstalled,
   onClose,
 }: {
   plugins: PluginManager;
@@ -229,11 +239,18 @@ function ManagedPluginReview({
   /** The live recommendation; undefined once the policy no longer lists it. */
   entry: ManagedEntry | undefined;
   authorizeGit?: Authorize | undefined;
+  holdReview?: (() => () => void) | undefined;
+  /** An agent's request, reviewed in place of a recommendation. */
+  requestedBy?: Readonly<{ name: string; reason: string }> | undefined;
+  /** Run as the owner confirms; a returned reason refuses the install. */
+  recheck?: (() => string | undefined) | undefined;
   returnFocus: () => HTMLElement | null;
+  onInstalled?: () => void;
   onClose: () => void;
 }) {
   const imports = plugins.imports;
   const key = entry && entryKey(entry);
+  useEffect(() => holdReview?.(), [holdReview]);
   const [attempt, setAttempt] = useState(0);
   const [review, setReview] = useState<Review>({ status: "loading" });
   const [installing, setInstalling] = useState(false);
@@ -346,6 +363,11 @@ function ManagedPluginReview({
       entryKey(wanted) !== review.key
     )
       return;
+    const refusal = recheck?.();
+    if (refusal) {
+      setReview({ status: "error", reason: refusal });
+      return;
+    }
     const alreadyInstalled = latest.current.catalog.plugins.some(
       (plugin) => plugin.manifest.id === wanted.id,
     );
@@ -373,6 +395,7 @@ function ManagedPluginReview({
       await imports?.discard(value).catch(() => {});
       if (!alreadyInstalled && enable)
         await plugins.change("enable", wanted.id);
+      onInstalled?.();
       onClose();
     } finally {
       working.current = false;
@@ -397,7 +420,7 @@ function ManagedPluginReview({
       }
       description={
         ready && !updating
-          ? `Recommended by ${source}. Only install code you trust.`
+          ? `${requestedBy ? `Requested by ${requestedBy.name}` : `Recommended by ${source}`}. Only install code you trust.`
           : undefined
       }
       size={ready && updating ? "compact" : "wide"}
@@ -454,6 +477,12 @@ function ManagedPluginReview({
       )}
       {ready && candidate && entry && (
         <section aria-label="Managed plugin source" className="text-body-sm">
+          {requestedBy && (
+            <p className="mb-4 mt-0 break-words">
+              {updating && `${requestedBy.name}: `}
+              {requestedBy.reason}
+            </p>
+          )}
           <code className={`${importStyles.sourcePath} break-all`}>
             {location(entry)}
           </code>

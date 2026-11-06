@@ -12,6 +12,8 @@ import type { BuzzClient } from "./client";
 import { BUZZ_PROMPT } from "./prompt";
 import { respond } from "./rpc";
 import { turnNote } from "./session-tools";
+import { PLUGIN_TOOLS } from "./plugins";
+import { SETTINGS_TOOLS } from "./settings";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { TOOLS } from "./tools";
 
@@ -98,10 +100,17 @@ describe("the tool list", () => {
   it("always offers the attention tools with their guidance, and says each turn whether attention is on", async () => {
     // One list whatever the setting, so turning attention on or off never
     // replaces a session or its cached prompt prefix.
-    const names = [...TOOLS, ...ATTENTION_TOOLS, ...SOLO_WORKER_TOOLS].map(
-      (tool) => tool.name,
-    );
-    expect(await list()).toEqual(names);
+    const names = [
+      ...TOOLS,
+      ...ATTENTION_TOOLS,
+      ...SOLO_WORKER_TOOLS,
+      ...PLUGIN_TOOLS,
+    ].map((tool) => tool.name);
+    // Clients without settings don't list their tools; no client lists all.
+    expect(await list()).toEqual([
+      ...names,
+      ...SETTINGS_TOOLS.map((tool) => tool.name),
+    ]);
     for (const enabled of [true, false])
       expect(
         await list({
@@ -169,7 +178,7 @@ describe("the tool list", () => {
 
 describe("the attention tools", () => {
   it("creates, shows and replaces an Interest with expected-state tokens", async () => {
-    const { call } = agent();
+    const { call, api } = agent();
     const created = await call("interest_set", {
       id: "triage",
       instructions: "Triage asks.",
@@ -189,11 +198,19 @@ describe("the attention tools", () => {
     ).rejects.toThrow(/^conflict:[\s\S]*\(classifier: unavailable\)$/);
     const shown = await call("interest_show", { id: "triage" });
     expect(shown.expected_state).toBe(created.expected_state);
+    const paused = await api.write(
+      "interest/triage",
+      { type: "interest", instructions: "Triage asks.", paused: true },
+      { expected: shown.expected_state },
+    );
     await call("interest_set", {
       id: "triage",
       instructions: "Triage every ask.",
-      expected_state: shown.expected_state,
+      expected_state: paused.expected_state,
     });
+    expect(
+      (await call("interest_show", { id: "triage" })).object,
+    ).toMatchObject({ paused: true, instructions: "Triage every ask." });
     expect(await call("interest_list")).toEqual({
       classifier: "unavailable",
       interests: ["triage"],

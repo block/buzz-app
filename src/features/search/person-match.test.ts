@@ -4,6 +4,7 @@ import {
   extendsName,
   foldName,
   matchPerson,
+  matchTier,
   normalizeName,
 } from "./person-match";
 
@@ -28,6 +29,33 @@ describe("matchPerson", () => {
     // One ligature code point covers two typed letters.
     expect(matchPerson("ﬁona", "fio")?.positions).toEqual([0, 1]);
     expect(matchPerson("  Honey", "hon")?.positions).toEqual([2, 3, 4]);
+  });
+
+  it("gives matchTier the tier of matchPerson, repeated and across queries", () => {
+    const names = [
+      "Mary José",
+      "Jose\u0301 Luis",
+      "ﬁona",
+      "  Honey ",
+      "ΟΔΥΣΣΕΥΣ",
+      "a-b",
+    ];
+    const queries = [
+      "jose",
+      "jose l",
+      "fio",
+      "hon",
+      "οδυσσευσ",
+      "b",
+      "",
+      "  ",
+      "zz",
+    ];
+    for (const query of queries)
+      for (const name of [...names, ...names])
+        expect(matchTier(name, [...normalizeName(query)])).toBe(
+          matchPerson(name, query)?.tier,
+        );
   });
 
   it("normalizes the way it matches", () => {

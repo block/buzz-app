@@ -6,15 +6,18 @@ import {
   type PromiseWithChild,
   spawn,
 } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { watch } from "node:fs";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,6 +25,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import script from "./claude.sh?raw";
+import { PROTECTED_CLAUDE_VERSION } from "./security";
 
 const execFileAsync = promisify(execFile);
 const homes: string[] = [];
@@ -128,6 +132,13 @@ it("prunes older releases but keeps a newer one another build may be testing", a
   );
   await step("use", "0.3.0");
   expect(await folders()).toEqual(["0.10.0", "0.2.0", "0.3.0"]);
+});
+
+it("keeps the release protected agents run when it switches past it", async () => {
+  const pinned = PROTECTED_CLAUDE_VERSION;
+  const { step, folders } = await disk([pinned, "99.0.0", "99.1.0"], "99.0.0");
+  await step("use", "99.1.0");
+  expect(await folders()).toEqual([pinned, "99.0.0", "99.1.0"]);
 });
 
 /** Holds the switch lock, as a build that is switching does, until killed. */
@@ -239,3 +250,290 @@ it("starts the release in use when switches prune the one it read", async () => 
     await launching.catch(() => {});
   }
 });
+
+const sha256 = (text: string) =>
+  createHash("sha256").update(text).digest("hex");
+
+/** A `curl` on PATH that counts its calls and saves `release` where -o names. */
+async function downloads(home: string, release: string) {
+  const bin = join(home, "bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, "release"), release);
+  await writeFile(
+    join(bin, "curl"),
+    `#!/bin/sh\necho >>"${bin}/calls"\nwhile [ "$1" != -o ]; do shift; done\n/bin/cp "${bin}/release" "$2"\n`,
+  );
+  await chmod(join(bin, "curl"), 0o755);
+  return {
+    install: (version: string, checksum: string) =>
+      run(
+        "bash",
+        [
+          "-c",
+          script,
+          "claude.sh",
+          "install",
+          version,
+          "darwin-arm64",
+          checksum,
+        ],
+        { env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: home } },
+      ),
+    calls: () =>
+      readFile(join(bin, "calls"), "utf8").then(
+        (calls) => calls.split("\n").length - 1,
+        () => 0,
+      ),
+  };
+}
+const release = (version: string) => `#!/bin/sh\necho "${version}"\n`;
+
+// A build stopped between `install` and `use` leaves the release whole but none in use.
+it("uses a downloaded release that matches its checksum without downloading it again", async () => {
+  const { home, dir, step, selected } = await disk(["0.2.0"]);
+  const binary = join(dir, "0.2.0", "claude");
+  await chmod(binary, 0o644);
+  const { install, calls } = await downloads(home, "unused");
+  const { stdout } = await install(
+    "0.2.0",
+    sha256(await readFile(binary, "utf8")),
+  );
+  expect(stdout).toContain("Claude 0.2.0 is already downloaded.");
+  expect(await calls()).toBe(0);
+  await expect(selected()).rejects.toThrow("Claude is not installed");
+  await step("use", "0.2.0");
+  expect(await selected()).toBe("0.2.0");
+});
+
+// A release this user cannot chmod, such as one another account wrote, is still used.
+it("uses an executable matching release without changing its mode", async () => {
+  const { home, dir } = await disk(["0.2.0"]);
+  const binary = join(dir, "0.2.0", "claude");
+  const { install, calls } = await downloads(home, "unused");
+  await writeFile(join(home, "bin", "chmod"), "#!/bin/sh\nexit 1\n");
+  await chmod(join(home, "bin", "chmod"), 0o755);
+  const { stdout } = await install(
+    "0.2.0",
+    sha256(await readFile(binary, "utf8")),
+  );
+  expect(stdout).toContain("Claude 0.2.0 is already downloaded.");
+  expect(await calls()).toBe(0);
+});
+
+it("downloads again over a matching release it cannot make executable", async () => {
+  const { home, dir, step, selected } = await disk([]);
+  const binary = join(dir, "0.2.0", "claude");
+  await mkdir(dirname(binary), { recursive: true });
+  await writeFile(binary, release("0.2.0"));
+  await chmod(binary, 0o644);
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  // Refuses only the cached file, so the download can still mark its own copy executable.
+  await writeFile(
+    join(home, "bin", "chmod"),
+    '#!/bin/sh\ncase "$2" in */claude) exit 1 ;; esac\nexec /bin/chmod "$@"\n',
+  );
+  await chmod(join(home, "bin", "chmod"), 0o755);
+  await install("0.2.0", sha256(release("0.2.0")));
+  expect(await calls()).toBe(1);
+  expect(await readFile(binary, "utf8")).toBe(release("0.2.0"));
+  await step("use", "0.2.0");
+  expect(await selected()).toBe("0.2.0");
+});
+
+it("downloads again over a release that does not match its checksum", async () => {
+  const { home, dir } = await disk([]);
+  const binary = join(dir, "0.2.0", "claude");
+  await mkdir(dirname(binary), { recursive: true });
+  // Cut short, as a copy written some other way may be.
+  await writeFile(binary, release("0.2.0").slice(0, 12));
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  await install("0.2.0", sha256(release("0.2.0")));
+  expect(await calls()).toBe(1);
+  expect(await readFile(binary, "utf8")).toBe(release("0.2.0"));
+});
+
+it("downloads again when a stopped download left only its partial file", async () => {
+  const { home, dir } = await disk([]);
+  const binary = join(dir, "0.2.0", "claude");
+  await mkdir(dirname(binary), { recursive: true });
+  await writeFile(`${binary}.4242`, release("0.2.0"));
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  await install("0.2.0", sha256(release("0.2.0")));
+  expect(await calls()).toBe(1);
+  expect(await readFile(binary, "utf8")).toBe(release("0.2.0"));
+});
+
+it("does not use a link to a release that matches its checksum", async () => {
+  const { home, dir } = await disk([]);
+  const target = join(home, "elsewhere");
+  await writeFile(target, release("0.2.0"));
+  await mkdir(join(dir, "0.2.0"), { recursive: true });
+  await symlink(target, join(dir, "0.2.0", "claude"));
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  await install("0.2.0", sha256(release("0.2.0")));
+  expect(await calls()).toBe(1);
+  expect((await lstat(join(dir, "0.2.0", "claude"))).isSymbolicLink()).toBe(
+    false,
+  );
+});
+
+it("keeps a mismatched download from being used", async () => {
+  const { home, dir, step, selected } = await disk(["0.1.0"], "0.1.0");
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  await expect(install("0.2.0", sha256("something else"))).rejects.toThrow(
+    "The download did not match its checksum",
+  );
+  expect(await calls()).toBe(1);
+  await expect(readdir(join(dir, "0.2.0"))).resolves.toEqual([]);
+  await expect(step("use", "0.2.0")).rejects.toThrow("no longer downloaded");
+  expect(await selected()).toBe("0.1.0");
+});
+
+// An empty digest from a hash that failed must not match: the checksum itself is refused.
+it("refuses a checksum that is not 64 hex digits before reusing or downloading", async () => {
+  const { home, dir } = await disk(["0.2.0"]);
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  const digest = sha256(release("0.2.0"));
+  for (const checksum of [
+    "",
+    digest.slice(1),
+    digest.toUpperCase(),
+    `${digest.slice(1)}/`,
+  ])
+    await expect(install("0.2.0", checksum)).rejects.toThrow(
+      "Invalid checksum",
+    );
+  expect(await calls()).toBe(0);
+  expect(await readFile(join(dir, "0.2.0", "claude"), "utf8")).toBe(
+    release("0.2.0"),
+  );
+});
+
+/** Security reviews' own Claude folder in a new home, and its two steps:
+ * `save` sends a token on stdin, as Buzz does. Their folder is macOS-only. */
+async function reviewHome() {
+  const { home } = await disk([]);
+  const folder = join(
+    home,
+    "Library/Application Support/Buzz/claude-code-review-home",
+  );
+  const steps = (args: string[], input?: string) => {
+    const running = run("bash", ["-c", script, "claude.sh", ...args], {
+      env: { PATH: process.env.PATH ?? "", HOME: home },
+    });
+    running.child.stdin?.end(input);
+    return running as Promise<{ stdout: string; stderr: string }>;
+  };
+  return {
+    home,
+    folder,
+    save: (token: string) => steps(["review-token"], `${token}\n`),
+    read: () => steps(["review"]),
+  };
+}
+const TOKEN = "sk-ant-oat01-Abc_123-xyz";
+
+it.skipIf(process.platform !== "darwin")(
+  "saves reviews' sign-in from stdin, privately, and only `review` prints it",
+  async () => {
+    const { folder, save, read } = await reviewHome();
+    // No folder yet: nothing, so reviews fail closed.
+    await expect(read()).resolves.toEqual({ stdout: "", stderr: "" });
+    const saved = await save(TOKEN);
+    expect(saved).toEqual({
+      stdout: "Saved the sign-in for Claude security reviews.\n",
+      stderr: "",
+    });
+    expect((await lstat(folder)).mode & 0o777).toBe(0o700);
+    expect((await lstat(join(folder, "token"))).mode & 0o777).toBe(0o600);
+    await expect(read()).resolves.toEqual({
+      stdout: `${folder}\n${TOKEN}\n`,
+      stderr: "",
+    });
+    // A link in the token's place is replaced, not written through.
+    const target = join(folder, "elsewhere");
+    await rm(join(folder, "token"));
+    await symlink(target, join(folder, "token"));
+    await save(`${TOKEN}2`);
+    expect((await lstat(join(folder, "token"))).isSymbolicLink()).toBe(false);
+    await expect(lstat(target)).rejects.toThrow("ENOENT");
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "prints only the review folder until it holds a sign-in",
+  async () => {
+    const { folder, read } = await reviewHome();
+    await mkdir(folder, { recursive: true });
+    await expect(read()).resolves.toEqual({
+      stdout: `${folder}\n`,
+      stderr: "",
+    });
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "refuses a review folder that is a link, for saving and reading",
+  async () => {
+    const { home, folder, save, read } = await reviewHome();
+    const target = join(home, "elsewhere");
+    await mkdir(target);
+    await writeFile(join(target, "token"), `${TOKEN}\n`);
+    await mkdir(dirname(folder), { recursive: true });
+    await symlink(target, folder);
+    const saving = save(`${TOKEN}2`);
+    await expect(saving).rejects.toThrow(
+      "The Claude review folder is not a folder",
+    );
+    await saving.catch((error: { stdout: string; stderr: string }) =>
+      expect(error.stdout + error.stderr).not.toContain(TOKEN),
+    );
+    expect(await readFile(join(target, "token"), "utf8")).toBe(`${TOKEN}\n`);
+    const reading = read();
+    await expect(reading).rejects.toThrow(
+      "The Claude review folder is not a folder",
+    );
+    await reading.catch((error: { stdout: string }) =>
+      expect(error.stdout).toBe(""),
+    );
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "refuses what is not a Claude token without printing it",
+  async () => {
+    const { folder, save } = await reviewHome();
+    for (const pasted of [
+      "",
+      "sk-ant-",
+      `${TOKEN} more`,
+      `x${TOKEN}`,
+      `${TOKEN}é`,
+    ]) {
+      const saving = save(pasted);
+      await expect(saving).rejects.toThrow("That is not a Claude token");
+      await saving.catch((error: { stdout: string; stderr: string }) => {
+        expect(error.stdout).toBe("");
+        expect(error.stderr).toBe(
+          "That is not a Claude token. Paste what claude setup-token printed.\n",
+        );
+      });
+    }
+    await expect(lstat(folder)).rejects.toThrow("ENOENT");
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "reads no sign-in through a link in the token's place",
+  async () => {
+    const { home, folder, read } = await reviewHome();
+    await mkdir(folder, { recursive: true });
+    const target = join(home, "elsewhere");
+    await writeFile(target, `${TOKEN}\n`);
+    await symlink(target, join(folder, "token"));
+    await expect(read()).resolves.toEqual({
+      stdout: `${folder}\n`,
+      stderr: "",
+    });
+  },
+);

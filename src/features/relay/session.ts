@@ -3,7 +3,10 @@ import type { LocalAgentSource } from "../agents/local-activity";
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
-import { addChannelMember } from "../channel-members/members";
+import {
+  addChannelMember,
+  addChannelMembersAtOnce,
+} from "../channel-members/members";
 import type { LocalAgents } from "../agents/local";
 import type { GitRead } from "../repos/git";
 import { repoDestinations } from "../repos/destinations";
@@ -25,7 +28,7 @@ import { createChannelDetails } from "./channel-details";
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported } from "./channel-labels";
 import { createWorkflows } from "../workflows/capability";
-import { isWorkflowOperation } from "../workflows/protocol";
+import { isWorkflowOperation, workflowReference } from "../workflows/protocol";
 import {
   createRelayReader,
   type Priority,
@@ -70,9 +73,14 @@ import type {
 } from "./incoming";
 import { objectBody } from "./body";
 import { agentAudience } from "./audience";
-import type { ChannelList, ChannelSummary } from "./contracts";
+import type {
+  ChannelList,
+  ChannelReadOptions,
+  ChannelSummary,
+} from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import { readSidebarPreferences } from "./sidebar-preferences";
+import { sidebarSortNeedsActivity } from "./sidebar-sort";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createUserStatuses } from "./user-status";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -146,6 +154,11 @@ export type EventViewSnapshot = Readonly<{
  * kick or DM, or a dropped fan-out. Any completed full read restarts it. */
 export const ROSTER_BACKSTOP_INTERVAL = 15 * 60_000;
 
+/** The live recovery tick repairs unread at most this often. The live stream
+ * carries every unread change; this read only backs up what it can lose with
+ * no signal: a channel the relay pruned from a batch, or a dropped fan-out. */
+export const UNREAD_BACKSTOP_INTERVAL = 15 * 60_000;
+
 /** A read of named authors' profiles only. Profiles do not depend on channels,
  * so no channel access change, including a denied channel list, can stale it. */
 function isProfileFilter(filter: ReadFilter) {
@@ -164,6 +177,27 @@ function isProfileRead(filters: readonly ReadFilter[]) {
   return filters.length > 0 && filters.every(isProfileFilter);
 }
 
+/** Own encrypted read-state is independent of channel membership. */
+function isOwnReadStateFilter(filter: ReadFilter, viewer: string | undefined) {
+  return (
+    !!viewer &&
+    filter.kinds?.length === 1 &&
+    filter.kinds[0] === 30078 &&
+    filter.authors?.length === 1 &&
+    filter.authors[0] === viewer &&
+    (filter["#t"] === undefined ||
+      (filter["#t"].length === 1 && filter["#t"][0] === "read-state")) &&
+    (filter["#d"] === undefined ||
+      (filter["#d"].length > 0 &&
+        filter["#d"].every((coordinate) =>
+          /^read-state:[0-9a-f]{32}$/.test(coordinate),
+        ))) &&
+    Object.keys(filter).every((key) =>
+      ["kinds", "authors", "limit", "#t", "#d"].includes(key),
+    )
+  );
+}
+
 /** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
 export function createRelaySession(
   transport: ReadTransport | null,
@@ -175,6 +209,8 @@ export function createRelaySession(
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
     readPublisherLock?: ReadPublisherLock;
+    /** Overrides the 30-day read floor, for fixtures on a toy clock. */
+    readStateFloor?: () => number;
     deliveryTimeoutMs?: number;
   } = {},
 ) {
@@ -254,10 +290,11 @@ export function createRelaySession(
       channels.queries.list().channels.some((channel) => channel.id === id),
     notify,
   );
-  const recent = new ByteLru<{ event: RelayEvent; revision: number }>(
-    4096,
-    8 * 1024 * 1024,
-  );
+  const recent = new ByteLru<{
+    event: RelayEvent;
+    revision: number;
+    incoming?: "replay" | "live";
+  }>(4096, 8 * 1024 * 1024);
   const observations = new Set<(events: readonly RelayEvent[]) => void>();
   const incomingListeners = new Set<IncomingListener>();
   const liveEventListeners = new Set<LiveListener>();
@@ -409,7 +446,7 @@ export function createRelaySession(
       details.cancel();
       memberAdministration.clear();
       typing.clear();
-      // Saved owner inventory and profiles do not depend on channel access.
+      // Saved owner inventory, read-state and profiles do not depend on channel access.
       // Preserve only those narrow reads; broad, mixed, ID and channel reads
       // must still retire.
       const retired = (filters: readonly ReadFilter[]) =>
@@ -417,6 +454,7 @@ export function createRelaySession(
         filters.some(
           (filter) =>
             !isOwnerInventoryFilter(filter, transport?.viewer) &&
+            !isOwnReadStateFilter(filter, transport?.viewer) &&
             !isProfileFilter(filter),
         );
       requests.invalidate(retired);
@@ -649,24 +687,27 @@ export function createRelaySession(
     events = events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
     // Ranked global search needs channel authority before visibility filtering.
     // Store metadata reads use channelTraffic=false, so this cannot recurse.
-    if (
-      channelTraffic &&
-      filters.every(
-        (filter) =>
-          (filter.search !== undefined ||
-            !!filter.authors?.length ||
-            filter.since !== undefined ||
-            filter.until !== undefined) &&
-          !filter["#h"]?.length &&
-          !!filter.kinds?.length &&
-          filter.kinds.every((kind) => [9, 40002, 40008].includes(kind)),
-      )
-    ) {
+    // So does a read of every channel that asks for it, of any kinds.
+    const chat = (kind: number) => [9, 40002, 40008].includes(kind);
+    const broad = !!settings?.resolveChannels;
+    const resolves = (filter: ReadFilter, broad: boolean) =>
+      (broad ||
+        filter.search !== undefined ||
+        !!filter.authors?.length ||
+        filter.since !== undefined ||
+        filter.until !== undefined) &&
+      !filter["#h"]?.length &&
+      !!filter.kinds?.length &&
+      (broad || filter.kinds.every(chat));
+    if (channelTraffic && filters.every((filter) => resolves(filter, broad))) {
+      // A lookup may extend a discovered list, never stand in for it.
+      if (broad && channels.queries.list().status !== "ready")
+        throw new ReadError("unavailable", "Channels are not discovered yet.");
       const ids = [
         ...new Set(
           events.flatMap((event) => {
             const tags = event.tags.filter(([name]) => name === "h");
-            return [9, 40002, 40008].includes(event.kind) &&
+            return (broad || chat(event.kind)) &&
               tags.length === 1 &&
               tags[0]?.[1]
               ? [tags[0][1]]
@@ -674,14 +715,22 @@ export function createRelaySession(
           }),
         ),
       ];
-      await channels.queries.resolve?.(ids, settings);
-      events = events.filter((event) => {
-        const destinations = event.tags.filter(([name]) => name === "h");
-        const id = destinations[0]?.[1];
-        return (
-          destinations.length === 1 && !!id && !!channels.queries.get?.(id)
-        );
-      });
+      // What only `resolveChannels` looks up is known for agents alone.
+      const viewers = filters.every((filter) => resolves(filter, false));
+      if (!viewers) for (const id of ids) learnedByAgents(id);
+      await channels.queries.resolve?.(
+        ids,
+        viewers ? { ...settings, viewerLookup: true } : settings,
+      );
+      // A read of every channel keeps what visibility keeps below.
+      if (!broad)
+        events = events.filter((event) => {
+          const destinations = event.tags.filter(([name]) => name === "h");
+          const id = destinations[0]?.[1];
+          return (
+            destinations.length === 1 && !!id && !!channels.queries.get?.(id)
+          );
+        });
       settings?.signal?.throwIfAborted();
       if (closed || epoch !== accessEpoch)
         throw new DOMException("Stale relay search", "AbortError");
@@ -741,7 +790,9 @@ export function createRelaySession(
         }
       : {}),
   };
-  const searchProfiles = createProfileSearch(verified);
+  const searchProfiles = createProfileSearch(verified, Date.now, () =>
+    profiles.queries.verifiedAuthority?.(),
+  );
   /** Directory reads bypass shared profile admission. Retry one access
    * invalidation here, where caller/cache/connection lifetimes are known. */
   function directoryRead<T>(
@@ -796,6 +847,7 @@ export function createRelaySession(
       raw: readonly RelayEvent[],
     ) => void,
     signal?: AbortSignal,
+    incomingPhase?: "replay" | "live",
   ): readonly RelayEvent[] {
     if (closed) return [];
     // Authority precedes every projection, even in a batch containing both a
@@ -828,15 +880,33 @@ export function createRelaySession(
       "events.reconcile",
       events[0]?.id ?? "empty",
       () => {
-        for (const event of visible)
-          recent.set(event.id, { event, revision: ++revision });
+        for (const event of visible) {
+          const previous = recent.peek(event.id);
+          // Replay can precede a fresh live copy. Keep alert receipt separate from content receipt.
+          const incoming = [9, 40002, 40008].includes(event.kind)
+            ? incomingPhase === "live" || previous?.incoming === "live"
+              ? "live"
+              : previous?.incoming === "replay" ||
+                  (incomingPhase === "replay" &&
+                    !previous &&
+                    !unread.event(event.id))
+                ? "replay"
+                : undefined
+            : undefined;
+          recent.set(event.id, {
+            event,
+            revision: ++revision,
+            ...(incoming ? { incoming } : {}),
+          });
+        }
         activity.messagesChanged(visible);
         if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
         unread.accept(visible);
         writes?.observe(visible);
         if (epoch !== accessEpoch) return;
-        profiles.accept(visible);
+        // A profile read's signal lets the directory publish its pages once.
+        profiles.accept(visible, signal);
         if (epoch !== accessEpoch) return;
         emoji.accept(visible);
         if (epoch !== accessEpoch) return;
@@ -1015,8 +1085,14 @@ export function createRelaySession(
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           rosterComplete: dropStrandedSends,
+          // The viewer's own lookups make a channel known to the viewer's
+          // traffic, as without any `attend`; rechecks do not.
+          resolved: (ids) => {
+            for (const id of ids) knownToViewer(id);
+          },
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
+          verifyStored: transport.verifyStored?.bind(transport),
           demand: (channelId) => demandChannel(channelId),
           rosterChanged: (strong) => {
             if (channels.roster().state === "verified")
@@ -1079,6 +1155,7 @@ export function createRelaySession(
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
   });
   const workflows = createWorkflows({
+    profiles: profiles.queries,
     reader: transport ? verified : undefined,
     viewer: transport?.viewer ?? "",
     outbox: writes?.outbox,
@@ -1097,6 +1174,14 @@ export function createRelaySession(
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
   const channelQueries = Object.freeze({
     ...channels.queries,
+    // Only the viewer's own surfaces call it from outside the session (a
+    // scoped search, a requested channel, a repository page), so what they
+    // look up becomes the viewer's, as without any `attend`.
+    ...(channels.queries.resolve && {
+      resolve: (ids: readonly string[], options?: ChannelReadOptions) =>
+        channels.queries.resolve?.(ids, { ...options, viewerLookup: true }) ??
+        Promise.resolve(),
+    }),
     list() {
       const snapshot = channels.queries.list();
       const activityRevision = channelActivity.revision();
@@ -1152,6 +1237,7 @@ export function createRelaySession(
       options.readStateStorage ??
       browserReadStateStorage(readScope, transport?.viewer ?? ""),
     lock: options.readPublisherLock ?? browserReadPublisherLock(readScope),
+    floor: options.readStateFloor,
     notify,
     broadcastName: transport?.readState
       ? `buzz-read-state:${readScope}`
@@ -1174,6 +1260,14 @@ export function createRelaySession(
     follows: browserThreadFollows(readScope),
   });
   const inboxFeed = createInboxFeed({
+    reactionReader: {
+      read: (filters, settings) =>
+        finiteRead(filters, settings, (signal) =>
+          relayRead(filters, { ...settings, signal }),
+        ),
+    },
+    relayAuthor: transport?.relayAuthor,
+    signingAuthority: transport?.archiveAuthority,
     // A withheld auxiliary event is not proof of an exhausted history page.
     // Fail closed at raw/admitted admission; do not relax reference visibility.
     reader: {
@@ -1215,6 +1309,124 @@ export function createRelaySession(
   const followed = new Set<readonly string[]>();
   /** Each follow's check, after an access change, for channels it lost. */
   const followRevocations = new Set<() => void>();
+  /** Channels each `attend` keeps live for agents' watches, its own list. */
+  const attended = new Set<readonly string[]>();
+  /** The channels the live routes carry for the viewer: joined and opened,
+   * as without any `attend`. */
+  let viewerLive: ReadonlySet<string> = new Set();
+  /** Channels the session knows only because agents' watches looked them
+   * up: an attended channel's metadata read, or a read of every channel that
+   * resolved channels the viewer's own reads would not. One leaves once the
+   * viewer's traffic knows it too: joined, opened or looked up. */
+  const learnedForAgents = new Set<string>();
+  /** Channels the viewer's traffic has known this session. Agents' reads
+   * never mark one agents-only, even while it is unreadable or unknown: the
+   * viewer found it first. */
+  const viewerKnown = new Set<string>();
+  const knownToViewer = (id: string) => {
+    viewerKnown.add(id);
+    learnedForAgents.delete(id);
+  };
+  /** An agents' read of a channel the session does not know now. */
+  const learnedByAgents = (id: string) => {
+    if (!viewerKnown.has(id) && !channels.queries.get?.(id))
+      learnedForAgents.add(id);
+  };
+  /** Attended channels read since the last wait ended, in flight or done.
+   * One known again leaves it, so it is read at once if it is unknown again. */
+  const attendChecked = new Set<string>();
+  /** Attended channels whose metadata read is in flight. */
+  const attendReading = new Set<string>();
+  /** The first wait before an attended channel still unknown is read again,
+   * and the most it grows to while channels stay unknown. */
+  const ATTEND_RETRY_MS = 30_000;
+  const ATTEND_RETRY_MAX_MS = 300_000;
+  let attendDelay = ATTEND_RETRY_MS;
+  /** One wait for every channel still unknown, so reads do not multiply. */
+  let attendRetry: ReturnType<typeof setTimeout> | undefined;
+  /** Forgets the reads made, and any wait for them, so channels still
+   * unknown are read again; a reconnect or new `attend` also starts the wait
+   * over from `ATTEND_RETRY_MS`. */
+  const retryAttended = (restart = true) => {
+    if (attendRetry) {
+      clearTimeout(attendRetry);
+      timers.delete(attendRetry);
+      attendRetry = undefined;
+    }
+    attendChecked.clear();
+    if (restart) attendDelay = ATTEND_RETRY_MS;
+  };
+  const retryAttendedLater = () => {
+    if (closed || attendRetry) return;
+    const delay = attendDelay;
+    attendDelay = Math.min(delay * 2, ATTEND_RETRY_MAX_MS);
+    attendRetry = setTimeout(() => {
+      retryAttended(false);
+      updateInterests();
+    }, delay);
+    timers.add(attendRetry);
+  };
+  /** Attendance lookups in order, one at a time: the reader times a read
+   * from when it is queued, so a batch queued behind another background
+   * read would spend its deadline waiting. */
+  let attendLookups = Promise.resolve();
+  /** Reads the metadata of attended channels not known. Only into a ready
+   * list: a lookup may extend one, never stand in for initial discovery. A
+   * channel still unknown after its read, because the read failed or found
+   * nothing the viewer may read, is read again after a wait that doubles up
+   * to `ATTEND_RETRY_MAX_MS`, or once discovery is after a reconnect: it may
+   * have turned public since. So is one that becomes unknown again, as when
+   * newer metadata makes it private. */
+  const resolveAttended = () => {
+    const resolve = channels.queries.resolve;
+    if (closed || !resolve || channels.queries.list().status !== "ready")
+      return;
+    const unknown = [...new Set([...attended].flat())].filter(
+      (id) => !channels.queries.get?.(id),
+    );
+    for (const id of attendChecked)
+      if (channels.queries.get?.(id)) attendChecked.delete(id);
+    if (!unknown.length) attendDelay = ATTEND_RETRY_MS;
+    if (unknown.some((id) => attendChecked.has(id) && !attendReading.has(id)))
+      retryAttendedLater();
+    // One whose read is still in flight is checked by that read: a new
+    // attendance or a retry must not queue a second read of it.
+    const fresh = unknown.filter(
+      (id) => !attendChecked.has(id) && !attendReading.has(id),
+    );
+    for (const id of unknown) attendChecked.add(id);
+    for (const id of fresh) {
+      attendReading.add(id);
+      learnedByAgents(id);
+    }
+    for (let start = 0; start < fresh.length; start += 128) {
+      const queued = fresh.slice(start, start + 128);
+      const lookUp = () => {
+        // A channel no attendance wants now, or known since, is not read:
+        // its batch would delay the reads that current watches wait for.
+        // A skipped channel keeps its agents-only mark: another agents' read
+        // may share it, and a viewer's lookup or join clears it.
+        const wanted = new Set([...attended].flat());
+        const batch = queued.filter(
+          (id) => wanted.has(id) && !channels.queries.get?.(id),
+        );
+        for (const id of queued)
+          if (!batch.includes(id)) attendReading.delete(id);
+        if (!batch.length) return Promise.resolve();
+        // In the background lane, so an interactive read never waits behind it.
+        return resolve(batch, {
+          signal: lifetime.signal,
+          priority: "background",
+        })
+          .catch(() => {})
+          .finally(() => {
+            for (const id of batch) attendReading.delete(id);
+            updateInterests();
+          });
+      };
+      attendLookups = attendLookups.then(lookUp, lookUp);
+    }
+  };
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
     status: transport?.subscribe ? "connecting" : "unavailable",
@@ -1305,17 +1517,37 @@ export function createRelaySession(
       }
     }
   }
+  /** Who a message in the channel addresses without a mention: a one-to-one
+   * DM's other member. */
+  function dmPartners(channelId: string): readonly string[] {
+    const channel = channels.queries
+      .list()
+      .channels.find((item) => item.id === channelId);
+    return channel?.channelType === "dm" &&
+      channel.members?.length === 2 &&
+      transport?.viewer &&
+      channel.members.includes(transport.viewer)
+      ? channel.members.filter((key) => key !== transport.viewer)
+      : [];
+  }
   function validateMentions(channelId: string, pubkeys: readonly string[]) {
     if (!pubkeys.length) return;
     const channel = channels.queries
       .list()
       .channels.find((item) => item.id === channelId);
+    // A one-to-one DM's partner is addressed by every message there, so a
+    // plain message must still queue while the live stream reconnects.
+    // Publication still reads the roster fresh (preflightMentions).
+    const partners = dmPartners(channelId);
+    const addressesPartnerOnly = pubkeys.every((key) => partners.includes(key));
     if (
       closed ||
       !channels.canWrite(channelId) ||
       !channel?.members ||
       channel.archived ||
-      (transport?.subscribe && liveSnapshot.status !== "connected")
+      (transport?.subscribe &&
+        liveSnapshot.status !== "connected" &&
+        !addressesPartnerOnly)
     )
       throw new Error("Refresh channel membership before mentioning anyone");
     if (pubkeys.some((key) => !channel.members?.includes(key)))
@@ -1336,6 +1568,15 @@ export function createRelaySession(
     if ([9000, 9001, 9022].includes(event.kind)) return;
     const id = event.tags.find(([key]) => key === "h")?.[1];
     if (!id || channels.queries.get?.(id)?.viewerRole !== "guest") return;
+    // Workflow-coordinate deletion is an ownership action, not a contribution.
+    // Full command validation still runs before signing and publication.
+    if (event.kind === 5 && isWorkflowOperation(event)) {
+      const workflow = workflowReference({
+        ...event,
+        pubkey: transport?.viewer ?? "",
+      });
+      if (workflows.capability.permissions.canDelete(workflow)) return;
+    }
     // The relay permits a verified owner to edit/delete their agent's messages.
     const targets = event.tags.filter(([key]) => key === "e");
     if (
@@ -1576,19 +1817,30 @@ export function createRelaySession(
   const mainAgent = (() => {
     const read = transport?.readMainAgent;
     const write = transport?.writeMainAgent;
+    const clear = transport?.clearMainAgent;
     const bounded = (ms: number) =>
       AbortSignal.any([lifetime.signal, AbortSignal.timeout(ms)]);
     // One change at a time, so the last choice is the one confirmed.
     let writes = Promise.resolve();
-    const queue = (change: () => Promise<void>) => {
+    const queue = <T>(change: () => Promise<T>) => {
       const next = writes.then(change);
-      writes = next.catch(() => {});
+      writes = next.then(
+        () => {},
+        () => {},
+      );
       return next;
     };
     return read && write
       ? Object.freeze({
           read: () => read(bounded(10_000)),
-          write: (agent: string) => queue(() => write(agent, bounded(20_000))),
+          write: (agent: string | null) =>
+            queue(() => write(agent, bounded(20_000))),
+          ...(clear
+            ? {
+                clear: (expected: string) =>
+                  queue(() => clear(expected, bounded(20_000))),
+              }
+            : {}),
         })
       : undefined;
   })();
@@ -2033,17 +2285,15 @@ export function createRelaySession(
       }
     },
   });
+  // A Solo chat admits people under its share rule; agents join by mention.
+  const solo = (channelId: string) =>
+    (
+      session.channels.list().channels.find((item) => item.id === channelId) ??
+      session.channels.get?.(channelId)
+    )?.channelType === "solo";
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
     async (channelId, pubkey, intent): Promise<void> => {
-      // A Solo chat admits people under its share rule; agents join by mention.
-      const solo =
-        (
-          session.channels
-            .list()
-            .channels.find((item) => item.id === channelId) ??
-          session.channels.get?.(channelId)
-        )?.channelType === "solo";
       await addChannelMember(
         session,
         channelId,
@@ -2051,10 +2301,20 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
-        solo,
+        solo(channelId),
       );
     },
     writes?.local,
+    (channelId, pubkeys, intents) =>
+      addChannelMembersAtOnce(
+        session,
+        channelId,
+        pubkeys,
+        intents,
+        lifetime.signal,
+        solo(channelId),
+        writes?.local,
+      ),
   );
   const recoverable = (
     subscribe: (listener: () => void) => () => void,
@@ -2115,6 +2375,7 @@ export function createRelaySession(
     liveWasConnected = connected;
   });
   const session = Object.freeze({
+    artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
     presence,
     viewer: transport?.viewer,
@@ -2141,6 +2402,47 @@ export function createRelaySession(
       return () => {
         incomingListeners.delete(listener);
       };
+    },
+    /** Keeps `channelIds` in the live routes while attended, for agents'
+     * watches: a readable public channel the viewer has not joined too, whose
+     * metadata is read first when unknown. It is not joined, listed or counted
+     * unread, as an opened preview is not. Its events reach `subscribeLive`.
+     * The live owner admits it after joined and opened channels; past its
+     * capacity, it gets finite reads only. */
+    attend(channelIds: readonly string[]): () => void {
+      if (closed) return () => {};
+      const ids = [
+        ...new Set(
+          channelIds.filter((id) => /^[a-zA-Z0-9_-]{1,128}$/.test(id)),
+        ),
+      ];
+      // Unread or refused before, it is read again, and soon; one read in
+      // flight now answers for it.
+      for (const id of ids) attendChecked.delete(id);
+      attendDelay = ATTEND_RETRY_MS;
+      attended.add(ids);
+      updateInterests();
+      return () => {
+        if (attended.delete(ids)) updateInterests();
+      };
+    },
+    /** Whether the session does not know `channelId`: a read of the channel
+     * returns none of its events. True of a channel not attended yet, so a
+     * read that runs before its `attend` waits for it as well, and of one
+     * whose metadata read found nothing the viewer may read, until a later
+     * read finds it. */
+    attendPending(channelId: string): boolean {
+      const channel = channels.queries.get?.(channelId);
+      return !channel || !!channel.pending;
+    },
+    /** Whether an event of `channelId` reaches agents as it would with no
+     * `attend` and no `resolveChannels` read: not from a channel the session
+     * knows only from agents' lookups, nor, heard `live`, one the live routes
+     * carry only because it is attended. */
+    unattended(channelId: string, live: boolean): boolean {
+      if (viewerLive.has(channelId)) return true;
+      if (learnedForAgents.has(channelId)) return false;
+      return !live || ![...attended].some((ids) => ids.includes(channelId));
     },
     /** Verified, access-filtered live-phase events of any kind, after reconciliation.
      * Never finite reads or local intent, except the viewer's own messages in
@@ -2268,6 +2570,8 @@ export function createRelaySession(
           : {}),
       },
       searchProfiles,
+      () => profiles.queries.verifiedAuthority?.(),
+      profiles.queries,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
@@ -2393,17 +2697,7 @@ export function createRelaySession(
           : undefined,
         transport?.archiveAuthority,
         profiles.queries,
-        (channelId) => {
-          const channel = channels.queries
-            .list()
-            .channels.find((item) => item.id === channelId);
-          return channel?.channelType === "dm" &&
-            channel.members?.length === 2 &&
-            transport?.viewer &&
-            channel.members.includes(transport.viewer)
-            ? channel.members.filter((key) => key !== transport.viewer)
-            : [];
-        },
+        dmPartners,
         (id) => [
           ...new Map(
             [
@@ -3031,6 +3325,25 @@ export function createRelaySession(
         }),
       ]),
     ];
+    // Channels agents' watches listen to. The live owner counts its wires
+    // and admits them: joined channels share batched wires, and opened ones,
+    // ranked first by `prioritize`, keep theirs; the rest get finite reads.
+    const listened = new Set(ids);
+    viewerLive = listened;
+    for (const id of listened) knownToViewer(id);
+    ids.push(
+      ...[...new Set([...attended].flat())].filter((id) => {
+        const channel = channels.queries.get?.(id);
+        return (
+          !listened.has(id) &&
+          !!channel &&
+          channels.canAccess(id) &&
+          !channel.cached &&
+          !channel.pending
+        );
+      }),
+    );
+    resolveAttended();
     const wanted = new Set(ids);
     for (const id of catchups.keys()) if (!wanted.has(id)) catchups.delete(id);
     try {
@@ -3056,6 +3369,14 @@ export function createRelaySession(
   // the sidebar page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
+  /** When unread was last asked for a full repair: a connection's first
+   * establishment, then the recovery tick's backstop. */
+  let unreadRepairedAt = 0;
+  const repairUnread = (covered = false) => {
+    // A covered resume reads no snapshot, so it cannot replace the backstop.
+    if (!covered) unreadRepairedAt = Date.now();
+    unread.reconnect(covered);
+  };
   /** Held profiles still need a full read: none has completed since the
    * session started or since the last one was asked for. */
   let profilesOwed = true;
@@ -3090,6 +3411,9 @@ export function createRelaySession(
       // Recovery retries a failed or deferred roster read on its own.
       owed: () => channels.rosterOwed(),
       read: () => refreshRoster(),
+      // The skipped roster read would also have read again the metadata the
+      // drop left unconfirmed; that read stays owed.
+      resumed: () => void channels.confirmMetadata(),
     },
   };
   /** `continuous` is undefined when the route failed or went unreported. */
@@ -3101,6 +3425,7 @@ export function createRelaySession(
     if (continuous !== false && global.generation === liveGeneration) return;
     global.generation = liveGeneration;
     if (!continuous || global.owed()) global.read();
+    else if ("resumed" in global) global.resumed();
   };
   /** Per global route, the connection whose covered reads are settled. */
   const coveredGeneration = { profiles: -1, membership: -1 };
@@ -3129,7 +3454,7 @@ export function createRelaySession(
         }
         return;
       }
-      unread.reconnect(continuous);
+      repairUnread(continuous);
       // Only while this same connection is still up.
       if (generation === liveGeneration && memoryConnected)
         void (continuous ? reminders?.resume() : reminders?.recover());
@@ -3254,8 +3579,8 @@ export function createRelaySession(
                   event.pubkey !== transport.viewer &&
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&
-                  !recent.peek(event.id) &&
-                  !unread.event(event.id) &&
+                  (recent.peek(event.id)?.incoming === "replay" ||
+                    (!recent.peek(event.id) && !unread.event(event.id))) &&
                   !rawLocal().some((item) => item.event.id === event.id)
                 );
               })
@@ -3276,7 +3601,13 @@ export function createRelaySession(
       );
       const epoch = accessEpoch;
       const generation = liveGeneration;
-      const visible = accept(events);
+      const visible = accept(
+        events,
+        true,
+        undefined,
+        undefined,
+        provenance?.channelId ? provenance.phase : undefined,
+      );
       // Completion subscribers can synchronously clear, revoke or retire this
       // live delivery. Do not admit its remaining pulses into the new lifetime.
       if (
@@ -3305,6 +3636,8 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       )
         channelActivity.accept(visible);
+      if (!closed && epoch === accessEpoch && generation === liveGeneration)
+        inboxFeed.reactions.receive(events, provenance?.phase);
       const replay = provenance?.phase === "replay";
       if (
         (provenance?.phase === "live" || replay) &&
@@ -3382,6 +3715,7 @@ export function createRelaySession(
         liveGeneration++;
         // Reminder catch-up waits for the recovery read after re-establishment.
         reminders?.stale();
+        retryAttended();
         channelActivity.cancel();
         activityRosterKey = undefined;
         catchups.clear();
@@ -3394,6 +3728,7 @@ export function createRelaySession(
         workflows.interrupt();
         streamDropped = true;
         channels.staleHeads();
+        channels.staleMetadata();
         for (const thread of threads) thread.stale();
         unread.stale();
         inboxFeed.stale();
@@ -3499,7 +3834,12 @@ export function createRelaySession(
         Date.now() - rosterReadAt >= ROSTER_BACKSTOP_INTERVAL
       )
         refreshRoster();
-      unread.reconnect();
+      // A failed repair retries on the next tick, as the roster does.
+      if (
+        unread.owed() ||
+        Date.now() - unreadRepairedAt >= UNREAD_BACKSTOP_INTERVAL
+      )
+        repairUnread();
     },
     denied(channelId, reason) {
       if (!closed) channels.denyChannel(channelId, new Error(reason));
@@ -3510,7 +3850,7 @@ export function createRelaySession(
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
     if (
-      !Object.values(preferences?.sort ?? {}).includes("recent") &&
+      !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
       !Object.values(preferences?.filters ?? {}).includes("active")
     ) {
       channelActivity.cancel();

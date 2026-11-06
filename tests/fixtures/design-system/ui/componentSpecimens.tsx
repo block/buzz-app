@@ -51,6 +51,7 @@ import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorks
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
   DotsThreeIcon,
+  TrashIcon,
   ArrowLeftIcon,
   HashIcon,
   ChatCircleIcon,
@@ -66,6 +67,7 @@ import {
   type ThemeMode,
 } from "../../../../src/shared/design-system/ui/ThemePicker";
 import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/KeyboardShortcut";
+import { CountBadge } from "../../../../src/shared/design-system/ui/CountBadge";
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
@@ -404,7 +406,7 @@ function AvatarSpecimen() {
       <SpecimenGroup
         label="Status badge and rounded cutout"
         code={`<div className="flex flex-wrap items-center gap-4">
-  {(["compact", "small", "default", "large"] as const).map((size) => (
+  {(["tiny", "compact", "small", "default", "large"] as const).map((size) => (
 
       <Avatar
         src={avatarUrl}
@@ -437,17 +439,19 @@ function AvatarSpecimen() {
 </div>`}
       >
         <div className="component-specimen-row">
-          {(["compact", "small", "default", "large"] as const).map((size) => (
-            <Specimen key={size} prop={`${size} · online`}>
-              <Avatar
-                src={avatarUrl}
-                alt="Morgan Martin"
-                fallback="Morgan"
-                size={size}
-                statusBadge="online"
-              />
-            </Specimen>
-          ))}
+          {(["tiny", "compact", "small", "default", "large"] as const).map(
+            (size) => (
+              <Specimen key={size} prop={`${size} · online`}>
+                <Avatar
+                  src={avatarUrl}
+                  alt="Morgan Martin"
+                  fallback="Morgan"
+                  size={size}
+                  statusBadge="online"
+                />
+              </Specimen>
+            ),
+          )}
           {(["away", "offline"] as const).map((status) => (
             <Specimen key={status} prop={`large · ${status}`}>
               <Avatar
@@ -472,7 +476,7 @@ function AvatarSpecimen() {
       <SpecimenGroup
         label="Agent shape (proposed)"
         code={`<div className="flex flex-wrap items-center gap-4">
-  {(["compact", "small", "default", "large"] as const).map((size) => (
+  {(["tiny", "compact", "small", "default", "large"] as const).map((size) => (
 
       <Avatar
         src={avatarUrl}
@@ -510,18 +514,20 @@ function AvatarSpecimen() {
 </div>`}
       >
         <div className="component-specimen-row">
-          {(["compact", "small", "default", "large"] as const).map((size) => (
-            <Specimen key={size} prop={`squircle · ${size} · online`}>
-              <Avatar
-                src={avatarUrl}
-                alt="Agent artwork"
-                fallback="Agent"
-                shape="squircle"
-                size={size}
-                statusBadge="online"
-              />
-            </Specimen>
-          ))}
+          {(["tiny", "compact", "small", "default", "large"] as const).map(
+            (size) => (
+              <Specimen key={size} prop={`squircle · ${size} · online`}>
+                <Avatar
+                  src={avatarUrl}
+                  alt="Agent artwork"
+                  fallback="Agent"
+                  shape="squircle"
+                  size={size}
+                  statusBadge="online"
+                />
+              </Specimen>
+            ),
+          )}
           {(["away", "offline"] as const).map((status) => (
             <Specimen key={status} prop={`squircle · large · ${status}`}>
               <Avatar
@@ -715,6 +721,9 @@ function FullPageSurfaceSpecimen() {
 function PanelSpecimen() {
   return (
     <div className="component-specimen-stack">
+      <Panel as="div" shape="card" aria-label="Account card surface">
+        <div className="p-8">Standalone account card</div>
+      </Panel>
       <Panel as="div" shape="capsule" aria-label="Capsule surface">
         <div className="p-2">Shell control group</div>
       </Panel>
@@ -827,6 +836,13 @@ function TabsSpecimen() {
         value={panelDestination}
         onValueChange={setPanelDestination}
         items={DESTINATIONS}
+      />
+      <Tabs
+        label="Dock destinations"
+        variant="dock"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={iconItems}
       />
       <Tabs
         label="Icon segmented filters"
@@ -1312,6 +1328,32 @@ function NavigationItemSpecimen() {
             trailing={<span className="text-body-sm">3</span>}
             selected={selected === "desktop-new"}
             onClick={() => setSelected("desktop-new")}
+          />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Card — selected item in a collection"
+        code={`<NavigationCard>
+  <NavigationItem label="Selected draft" selected aria-current="true" />
+</NavigationCard>`}
+      >
+        <div className="component-navigation-section-demo">
+          <NavigationCard>
+            <NavigationItem
+              label="Selected draft"
+              selected
+              aria-current="true"
+            />
+            <IconButton
+              aria-label="Delete selected draft"
+              variant="bare"
+              icon={<TrashIcon size={16} />}
+            />
+          </NavigationCard>
+          <NavigationItem
+            label="Selected sent message"
+            selected
+            aria-current="true"
           />
         </div>
       </SpecimenGroup>
@@ -2322,6 +2364,23 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     </div>
   ),
   "theme-picker": ThemePickerSpecimen,
+  "count-badge": () => (
+    <div className="flex w-64 flex-col gap-1">
+      <NavigationItem
+        label="Drafts & sent"
+        trailing={<CountBadge count={5} label="5 drafts" />}
+      />
+      <NavigationItem
+        label="Drafts & sent"
+        selected
+        trailing={<CountBadge count={42} label="42 drafts" />}
+      />
+      <NavigationItem
+        label="Drafts & sent"
+        trailing={<CountBadge count={1200} label="1200 drafts" />}
+      />
+    </div>
+  ),
   "keyboard-shortcut": () => (
     <div className="flex flex-wrap gap-3">
       <KeyboardShortcut text="⇧⌘K" label="Shift Command K" />
@@ -2432,6 +2491,24 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           },
         ]}
       />
+      <SettingsGroup>
+        <PreferenceRow title="Public key" subtitle="npub1…" />
+        <Accordion
+          variant="settings"
+          items={[
+            {
+              value: "Previous versions",
+              title: "Previous versions · 3 versions",
+              content: (
+                <p className="text-body-sm">
+                  Settings and instructions versions.
+                </p>
+              ),
+            },
+          ]}
+        />
+        <PreferenceRow title="Remove from this community" />
+      </SettingsGroup>
       <h3 className="text-label">
         Form disclosures · spacing owned by the form
       </h3>
@@ -2489,6 +2566,23 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           icon={<SquaresFourIcon />}
           title="No templates yet"
           description="Save a starting setup to reuse in new channels."
+        />
+      </SpecimenFrame>
+      <SpecimenFrame
+        code={`<EmptyState
+  frame="none"
+  level={4}
+  icon={<SmileyIcon />}
+  title="You're all caught up"
+  description="Inside a popover, the popover is the frame."
+/>`}
+      >
+        <EmptyState
+          frame="none"
+          level={4}
+          icon={<SmileyIcon />}
+          title="You're all caught up"
+          description="Inside a popover, the popover is the frame."
         />
       </SpecimenFrame>
     </div>

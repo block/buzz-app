@@ -1,11 +1,15 @@
 import { ProfilePanel } from "../profiles/ProfilePanel";
-import { createRelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import {
   profileActivityViewTarget,
   profileTarget,
 } from "../../features/profiles/target";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import closeRequest from "../../../src-tauri/src/close-request.js?raw";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
@@ -18,10 +22,12 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactNode } from "react";
+import { Context } from "@deepseek-ai/cordis";
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
+  AgentCreateProps,
   AgentProviderSnapshot,
   AgentViewProps,
   Agents,
@@ -33,17 +39,26 @@ import type {
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
-import { setDefaultAgent } from "../../features/solo/default-agent";
+import {
+  chooseDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import { readView, writeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { CommunityReader } from "../../features/communities/service";
-import type { Navigation } from "../../features/navigation/controller";
+import {
+  createNavigationController,
+  type Navigation,
+} from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentSettings } from "../../app/AgentSettings";
+import { registerNavigationShortcuts } from "../../app/shortcuts";
+import { ShortcutsService } from "../../features/shortcuts/service";
+import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import { AgentsPage } from "./AgentsPage";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -149,6 +164,7 @@ function setup(
   saved: Agent[],
   {
     shown = true,
+    scope = undefined as string | undefined,
     model = false,
     status = "ready" as AgentsSnapshot["status"],
     more = [] as RegisteredAgentType[],
@@ -187,11 +203,12 @@ function setup(
     </>
   ));
   const DirtySettings = ({ agent, save, settingsHost }: AgentViewProps) => {
-    const [reply, setReply] = useState(
-      (agent.config as { reply: string }).reply,
-    );
+    const saved = (agent.config as { reply: string }).reply;
+    const [reply, setReply] = useState(saved);
     const [error, setError] = useState("");
     const pendingSave = settingsHost?.pendingSave;
+    // As real settings tabs do through AgentSaveButton.
+    useAgentSaveState(reply !== saved, false);
     return settingsHost ? (
       <form
         onSubmit={(event) => {
@@ -244,21 +261,24 @@ function setup(
     Peek: ({ agent }: { agent: Agent }) => <p>Peek of {agent.name}</p>,
     CreateModel: model
       ? ({
+          agent,
+          openSettings,
           config,
           onChange,
           disabled,
-        }: {
-          config: { reply: string };
-          onChange(config: { reply: string }): void;
-          disabled: boolean;
-        }) => (
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange({ ...config, reply: "New model" })}
-          >
-            Change model
-          </button>
+        }: AgentCreateProps<{ reply: string }>) => (
+          <>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange({ ...config, reply: "New model" })}
+            >
+              Change model
+            </button>
+            <button type="button" onClick={openSettings}>
+              Model settings for {agent?.name}
+            </button>
+          </>
         )
       : undefined,
     provider: echoProvider.contribution,
@@ -289,6 +309,8 @@ function setup(
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
     handle: () => undefined,
+    canConnectExternal: () => false,
+    connectExternal: vi.fn(),
     sessionState: () => "unavailable" as const,
     session: vi.fn(async () => {}),
     register: vi.fn(),
@@ -346,6 +368,7 @@ function setup(
     remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
     unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
     interruptible: () => false,
+    hostedInstructions: () => undefined,
     interrupt: vi.fn(async () => false),
     note: () => false,
     classifier: () => "unavailable",
@@ -398,8 +421,14 @@ function setup(
     addedTabs: () => [],
     registerTab: () => {},
     controlAttention: () => {},
+    registerExecution: () => {},
+    bindExecution: async () => {},
+    executionBinding: () => undefined,
+    inspectExecution: async () => undefined,
+    execution: async () => undefined,
+    harness: {} as Agents["harness"],
   } satisfies Agents;
-  const disconnected = { status: "disconnected", generation: 0 };
+  const disconnected = { status: "disconnected", generation: 0, scope };
   const relay = {
     snapshot: () => disconnected,
     subscribe: () => () => {},
@@ -679,6 +708,7 @@ it("restores provider links and retires only that provider's visits after close 
       position: () => undefined,
       savePosition() {},
       forSession: () => navigation,
+      passThrough: () => () => {},
       resolve: () => true,
       complete: () => true,
     };
@@ -731,6 +761,89 @@ it("restores provider links and retires only that provider's visits after close 
   expect(open).not.toHaveBeenCalled();
 });
 
+it("lets the Back shortcut hide a routed provider's blocking work and Forward restore it", async () => {
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const controller = createNavigationController(createMemoryHistory(page));
+  const navigator = controller.navigation;
+  const remove = registerNavigationShortcuts(
+    new ShortcutsService(ctx, window),
+    navigator,
+  );
+  /** The Agents page as the host presents each visit to it. */
+  function Host({ agents, relay }: { agents: Agents; relay: RelayData }) {
+    const { entry, attempt } = useSyncExternalStore(
+      navigator.subscribe,
+      navigator.snapshot,
+    );
+    const navigation = useMemo(() => {
+      const request: PageNavigation = {
+        entryId: entry.id,
+        target: entry.target,
+        signal: attempt.signal,
+        position: () => undefined,
+        savePosition() {},
+        passThrough: () => () => {},
+        forSession: () => request,
+        resolve: () => true,
+        complete: () => true,
+      };
+      return request;
+    }, [entry, attempt]);
+    return (
+      <AgentsPage
+        agents={agents}
+        relay={relay}
+        navigator={navigator}
+        navigation={navigation}
+      />
+    );
+  }
+  try {
+    const view = setup([agent("Ada", 1)]);
+    view.rerender(<Host agents={view.agents} relay={view.relay} />);
+    void navigator.open({
+      ...page,
+      route: { version: 1, params: { provider: "test/echo" } },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Echo" });
+    act(() => view.echoProvider.set({ readiness: "ready", blocking: true }));
+    expect(
+      within(dialog).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
+    expect(dialog).toHaveAttribute("data-navigation-visit");
+    expect(fireEvent.keyDown(dialog, { key: "[", ctrlKey: true })).toBe(false);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull(),
+    );
+    expect(navigator.snapshot().entry.target).toEqual(page);
+    expect(screen.getByRole("grid", { name: "Agents" })).toBeVisible();
+    // Hiding is not a Close, which would retire the visit Forward returns to.
+    expect(fireEvent.keyDown(document.body, { key: "]", ctrlKey: true })).toBe(
+      false,
+    );
+    const restored = await screen.findByRole("dialog", { name: "Echo" });
+    expect(restored).toHaveAttribute("data-navigation-visit");
+    expect(
+      within(restored).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
+  } finally {
+    remove();
+    controller.dispose();
+    await ctx.fiber.dispose();
+  }
+});
+
 it("opens the agent a link names, on Your agents", async () => {
   const target = {
     version: 1,
@@ -754,6 +867,7 @@ it("opens the agent a link names, on Your agents", async () => {
     forSession: () => navigation,
     resolve: () => true,
     complete: () => true,
+    passThrough: () => () => {},
   };
   setup([agent("Ada", 1), agent("Bea", 2)], {
     page: { navigator, navigation },
@@ -1167,7 +1281,7 @@ it("cancels cross-community consent and discards it when the destination changes
   expect(reminder()).not.toBeChecked();
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
+      within(dialog).getByRole("button", { name: "Import" }),
     ).toHaveFocus(),
   );
   await user.click(reminder());
@@ -1417,7 +1531,7 @@ it("shows the matching community images and follows their presentation updates",
   expect(to).toHaveTextContent("destination.example");
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
+      within(dialog).getByRole("button", { name: "Import" }),
     ).toHaveFocus(),
   );
   await user.hover(from);
@@ -1428,7 +1542,8 @@ it("shows the matching community images and follows their presentation updates",
   await waitFor(() =>
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
   );
-  // Return through Close to the destination illustration using the keyboard.
+  // Return through Cancel and Close to the destination illustration using the keyboard.
+  await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
   expect(to).toHaveFocus();
@@ -2887,7 +3002,7 @@ it("keeps a synced team in its home while none of its members is listed", async 
     ],
   });
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
-  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" });
+  expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" }, undefined);
   await user.click(screen.getByRole("button", { name: "Gone" }));
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("gone");
@@ -3095,10 +3210,35 @@ it("opens deletion from the card menu without selecting it and requires confirma
   );
 });
 
+it.each([false, true])(
+  "keeps the production provider/model presentation on a remote card (model controls: %s)",
+  (model) => {
+    setup(
+      [{ ...agent("Ada", 1), place: "hosted", config: { reply: "Echo" } }],
+      { model },
+    );
+    const card = screen.getByRole("gridcell", { name: "Ada" });
+    expect(within(card).queryByText("Remote")).not.toBeInTheDocument();
+    if (model) {
+      expect(
+        within(card).getByRole("button", { name: "Change model" }),
+      ).toBeVisible();
+      expect(within(card).queryByText("Echo")).not.toBeInTheDocument();
+    } else {
+      const detail = within(card).getByText("Echo");
+      expect(detail.parentElement?.querySelector("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    }
+  },
+);
+
 it("saves a card model through its type and keeps failures on the card", async () => {
   const user = userEvent.setup();
   const saved = agent("Ada", 1);
   const { agents } = setup([saved], { model: true });
+  expect(screen.queryByText("Local · Desktop")).not.toBeInTheDocument();
   agents.save.mockRejectedValueOnce(new Error("Model could not save"));
   await user.click(screen.getByRole("button", { name: "Change model" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -3113,6 +3253,12 @@ it("saves a card model through its type and keeps failures on the card", async (
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
   );
   expect(agents.save).toHaveBeenCalledTimes(2);
+  await user.click(
+    screen.getByRole("button", { name: "Model settings for Ada" }),
+  );
+  expect(
+    await screen.findByRole("complementary", { name: "Ada identity" }),
+  ).toBeVisible();
 });
 
 it("opens marketplace beside Your teams without a modal", async () => {
@@ -3539,7 +3685,7 @@ it("opens the owned agent provider Activity tab for the originating conversation
   }
 });
 
-it("opens a turn's thread or channel from its label on the Agents page Activity tab", async () => {
+it("lets an Activity tab open a thread or channel through the host", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const open = vi.fn(async () => ({ status: "opened" as const }));
@@ -3557,27 +3703,18 @@ it("opens a turn's thread or channel from its label on the Agents page Activity 
   };
   const relay = { ...view.relay, snapshot: () => snapshot };
   const root = "c".repeat(64);
-  const turn = (turnId: string, threadRootId: string | null) => ({
-    turnId,
-    channelId: "channel-a",
-    threadRootId,
-    triggeringEventIds: [],
-    newSession: false,
-    config: [],
-    startedAt: Date.parse("2026-10-20T12:00:00Z"),
-    endedAt: Date.parse("2026-10-20T12:01:00Z"),
-    partial: false,
-    items: [],
-  });
-  const transcript = { turns: [turn("thread", root), turn("channel", null)] };
-  // Like a harness's Activity tab: it hands the host's opener to the transcript.
   const Activity = ({ openConversation }: AgentViewProps) => (
-    <ActivityTranscript
-      transcript={transcript}
-      agentName="Ada"
-      state={() => "ended"}
-      openConversation={openConversation}
-    />
+    <>
+      <button
+        type="button"
+        onClick={() => openConversation?.("channel-a", root)}
+      >
+        Thread cccccccc
+      </button>
+      <button type="button" onClick={() => openConversation?.("channel-a")}>
+        Channel
+      </button>
+    </>
   );
   const echo = view.agents.types()[0];
   if (!echo) throw new Error("Missing fixture type");
@@ -3678,6 +3815,765 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
+it("asks before choosing another agent discards an unsaved draft", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1), agent("Bo", 2)], {
+    dirtySettings: true,
+  });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+
+  await user.click(within(grid).getByText("Bo"));
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  expect(prompt).toHaveTextContent("Your unsaved changes to Ada will be lost.");
+  const keep = within(prompt).getByRole("button", { name: "Keep editing" });
+  await waitFor(() => expect(keep).toHaveFocus());
+  await user.click(keep);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("textbox", { name: "Reply" })).toBe(field);
+  expect(field).toHaveValue("Unsaved reply");
+
+  // The arrow keys ask the same way; Escape keeps editing.
+  screen.getByRole("gridcell", { name: "Ada" }).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+  ).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveFocus(),
+  );
+  expect(field).toHaveValue("Unsaved reply");
+
+  // Discarding moves the selection, and keyboard focus with it.
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus(),
+  );
+  expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue(
+    "Bo says hi",
+  );
+  expect(agents.save).not.toHaveBeenCalled();
+
+  // Without a draft, nothing asks.
+  await user.click(within(grid).getByText("Ada"));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue(
+    "Ada says hi",
+  );
+});
+
+it("asks before closing a panel with an unsaved draft and keeps it through another agent's deletion", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents, show } = setup([ada, agent("Bo", 2)], {
+    dirtySettings: true,
+  });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+
+  const close = screen.getByRole("button", { name: "Close Ada tab" });
+  await user.click(close);
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  await user.click(
+    within(prompt).getByRole("button", { name: "Keep editing" }),
+  );
+  await waitFor(() => expect(close).toHaveFocus());
+  expect(screen.getByRole("region", { name: "Agent profile" })).toBeVisible();
+  expect(field).toHaveValue("Unsaved reply");
+
+  // Escape in the grid asks too.
+  screen.getByRole("gridcell", { name: "Ada" }).focus();
+  await user.keyboard("{Escape}");
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(field).toHaveValue("Unsaved reply");
+
+  // Deleting another agent leaves this panel and its draft.
+  agents.remove.mockImplementationOnce(async () => show([ada]));
+  await user.click(screen.getByRole("button", { name: "Actions for Bo" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete agent" }),
+  );
+  await user.click(
+    within(await screen.findByRole("dialog", { name: "Delete Bo?" })).getByRole(
+      "button",
+      { name: "Delete" },
+    ),
+  );
+  expect(agents.remove).toHaveBeenCalledWith("2".repeat(64));
+  await waitFor(() =>
+    expect(screen.queryByRole("gridcell", { name: "Bo" })).toBeNull(),
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(field).toHaveValue("Unsaved reply");
+
+  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+  expect(agents.save).not.toHaveBeenCalled();
+  await user.click(within(grid).getByText("Ada"));
+  expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue(
+    "Ada says hi",
+  );
+});
+
+it("leaves focus in the grid when changing agents after keeping a draft over Close", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1), agent("Bo", 2)], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.type(field, "!");
+  const close = screen.getByRole("button", { name: "Close Ada tab" });
+  await user.click(close);
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  await waitFor(() => expect(close).toHaveFocus());
+  // Undoing the edit leaves nothing to ask about.
+  await user.type(field, "{Backspace}");
+  screen.getByRole("gridcell", { name: "Ada" }).focus();
+  await user.keyboard("{ArrowRight}");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus();
+});
+
+/** Runs the script native Close Tab evaluates; jsdom gives the pane no geometry. */
+const closeTab = () => {
+  const rects = vi
+    .spyOn(HTMLElement.prototype, "getClientRects")
+    .mockReturnValue([{ width: 500, height: 500 }] as unknown as DOMRectList);
+  let status: unknown;
+  try {
+    act(() => {
+      status = new Function(
+        "window",
+        "document",
+        "Event",
+        "tabEvent",
+        `return eval(${JSON.stringify(closeRequest)})`,
+      )(window, document, Event, "buzz:close-active-tab");
+    });
+  } finally {
+    rects.mockRestore();
+  }
+  return status;
+};
+
+it("focuses the closed agent's card after discarding a draft over ×, panel Escape or native Close Tab", async () => {
+  const user = userEvent.setup();
+  const [ada, bo] = [agent("Ada", 1), agent("Bo", 2)];
+  const { show } = setup([ada, bo], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  const cell = (name: string) => screen.getByRole("gridcell", { name });
+  const edit = async (name: string) => {
+    await user.click(within(grid).getByText(name));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+  };
+  const prompt = () =>
+    screen.findByRole("alertdialog", { name: "Discard changes?" });
+  const discard = async () =>
+    user.click(
+      within(await prompt()).getByRole("button", { name: "Discard changes" }),
+    );
+
+  // The card is found by key, so a reorder behind the prompt cannot misplace it.
+  await edit("Bo");
+  await user.click(screen.getByRole("button", { name: "Close Bo tab" }));
+  await prompt();
+  act(() => show([bo, ada]));
+  await discard();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+
+  await edit("Ada");
+  await user.keyboard("{Escape}");
+  await discard();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Ada")).toHaveFocus());
+
+  await edit("Bo");
+  expect(closeTab()).toBe("handled");
+  await discard();
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+});
+
+it("focuses a cleanly closed panel's card, and leaves focus held outside the panel", async () => {
+  const user = userEvent.setup();
+  const sky: Agent = {
+    ...agent("Sky", 4),
+    place: "hosted",
+    unfinished: true,
+    attention: {},
+  };
+  setup([agent("Ada", 1), sky]);
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  const cell = (name: string) => screen.getByRole("gridcell", { name });
+
+  await user.click(within(grid).getByText("Ada"));
+  await user.click(screen.getByRole("button", { name: "Close Ada tab" }));
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(cell("Ada")).toHaveFocus();
+
+  // An unfinished agent's peek closes from its own button the same way.
+  await user.click(within(grid).getByText("Sky"));
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(cell("Sky")).toHaveFocus();
+
+  // Native Close Tab still closes the panel from outside it, leaving focus.
+  await user.click(within(grid).getByText("Ada"));
+  const yours = screen.getByRole("tab", { name: "Your agents" });
+  yours.focus();
+  expect(closeTab()).toBe("handled");
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  expect(yours).toHaveFocus();
+});
+
+it("keeps grid focus on the card a prompt leaves selected, after a click, a second click or Escape", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1), agent("Bo", 2)], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  const cell = (name: string) => screen.getByRole("gridcell", { name });
+  const edit = (name: string) =>
+    user
+      .click(within(grid).getByText(name))
+      .then(() =>
+        user.type(screen.getByRole("textbox", { name: "Reply" }), "!"),
+      );
+  const answer = async (name: "Keep editing" | "Discard changes") =>
+    user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name }),
+    );
+  await edit("Ada");
+
+  // Keeping the draft over another card returns focus to the kept one;
+  // discarding it moves focus to the chosen one.
+  await user.click(within(grid).getByText("Bo"));
+  await answer("Keep editing");
+  await waitFor(() => expect(cell("Ada")).toHaveFocus());
+  expect(cell("Ada")).toHaveAttribute("aria-selected", "true");
+  await user.click(within(grid).getByText("Bo"));
+  await answer("Discard changes");
+  expect(cell("Bo")).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+
+  // A second click on the open card closes it, keeping focus there.
+  await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+  await user.click(within(grid).getByText("Bo"));
+  await answer("Discard changes");
+  expect(cell("Bo")).toHaveAttribute("aria-selected", "false");
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+
+  // Bo leaves the tab order once closed, so focus must be put back on it.
+  await edit("Bo");
+  cell("Bo").focus();
+  await user.keyboard("{Escape}");
+  await answer("Discard changes");
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+  // The arrow keys still move from there.
+  await user.keyboard("{Home}");
+  expect(cell("Ada")).toHaveAttribute("aria-selected", "true");
+  expect(cell("Ada")).toHaveFocus();
+});
+
+it("focuses the card a discard chose even when the list reorders behind the prompt", async () => {
+  const user = userEvent.setup();
+  const [ada, bo, cy] = [agent("Ada", 1), agent("Bo", 2), agent("Cy", 3)];
+  const { show } = setup([ada, bo, cy], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+  screen.getByRole("gridcell", { name: "Ada" }).focus();
+  await user.keyboard("{ArrowRight}");
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  act(() => show([cy, ada, bo]));
+  await user.click(
+    within(prompt).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus(),
+  );
+});
+
+it("asks before a marketplace listing opens one of your agents over a draft", async () => {
+  const user = userEvent.setup();
+  const helper: Agent = {
+    ...agent("Marketplace helper", 2),
+    type: "test/shared",
+    config: {},
+  };
+  const view = setup([agent("Ada", 1), helper], {
+    dirtySettings: true,
+    more: [
+      {
+        key: "test/shared",
+        id: "shared",
+        title: "Shared",
+        defaults: () => ({ config: {} }),
+        importShared: () => ({}),
+        exportShared: () => ({
+          model: "example-model",
+          runtime: "test/shared",
+        }),
+        carry: () => ({ instructions: "Help with tasks." }),
+      } as unknown as RegisteredAgentType,
+    ],
+  });
+  const owner = createRelaySession(null);
+  const session = {
+    ...owner.session,
+    read: vi.fn().mockResolvedValue([
+      {
+        id: "ab".repeat(32),
+        pubkey: "cd".repeat(32),
+        kind: 30175,
+        created_at: 1,
+        tags: [
+          ["d", "helper"],
+          ["shared", "true"],
+        ],
+        content: JSON.stringify({
+          display_name: "Marketplace helper",
+          system_prompt: "Help with tasks.",
+          model: "example-model",
+          runtime: "test/shared",
+        }),
+      },
+    ]),
+  };
+  const snapshot = { status: "ready" as const, generation: 1, session };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+    await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+    await user.click(screen.getByRole("tab", { name: "Marketplace" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Marketplace helper" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    const open = within(
+      screen.getByRole("dialog", { name: "Marketplace helper" }),
+    ).getByRole("button", { name: "Open Marketplace helper" });
+
+    await user.click(open);
+    const prompt = await screen.findByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    expect(prompt).toHaveTextContent(
+      "Your unsaved changes to Ada will be lost.",
+    );
+    await user.click(
+      within(prompt).getByRole("button", { name: "Keep editing" }),
+    );
+    // Nothing moves: the listing's dialog stays open over Marketplace.
+    await waitFor(() => expect(open).toHaveFocus());
+    expect(
+      screen.getByRole("tab", { name: "Marketplace", hidden: true }),
+    ).toHaveAttribute("aria-selected", "true");
+
+    await user.click(open);
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Discard changes" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Your agents" })).toHaveFocus(),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Shared agent profile" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("gridcell", { name: "Marketplace helper" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(view.agents.save).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
+it("leaves an agent a link opened while an unfinished agent's Delete was finishing", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = {
+    ...agent("Sky", 4),
+    place: "hosted",
+    unfinished: true,
+    attention: {},
+  };
+  const { agents, relay, rerender, show } = setup([ada, sky]);
+  await user.click(
+    within(screen.getByRole("grid", { name: "Agents" })).getByText("Sky"),
+  );
+  let finish!: () => void;
+  agents.remove.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => {
+          show([ada]);
+          resolve();
+        };
+      }),
+  );
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  await user.click(
+    within(
+      await screen.findByRole("dialog", { name: "Delete Sky?" }),
+    ).getByRole("button", { name: "Delete" }),
+  );
+  expect(agents.remove).toHaveBeenCalledWith(sky.key);
+
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { agent: ada.pubkey } },
+  } as const;
+  const navigator = {
+    snapshot: () => ({ entry: { id: "ada", target } }),
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "ada",
+    target,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  rerender(
+    <AgentsPage
+      agents={agents}
+      relay={relay}
+      navigator={navigator}
+      navigation={navigation}
+    />,
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
+  await act(async () => finish());
+  expect(screen.queryByRole("gridcell", { name: "Sky" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it("keeps a draft open behind Import without asking, and deleting the open agent closes it without asking", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bo = agent("Bo", 2);
+  const { agents, show } = setup([ada, bo], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+
+  // Import is a dialog over the page, so the panel and its draft stay.
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const importing = await screen.findByRole("dialog", {
+    name: "Import an agent",
+  });
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  await user.click(within(importing).getByRole("button", { name: "Close" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Import an agent" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(field).toHaveValue("Unsaved reply");
+
+  agents.remove.mockImplementationOnce(async () => show([bo]));
+  await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Delete agent" }),
+  );
+  await user.click(
+    within(
+      await screen.findByRole("dialog", { name: "Delete Ada?" }),
+    ).getByRole("button", { name: "Delete" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Agent profile" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("asks about an unsaved agent name and keeps the selection while it saves", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1), agent("Bo", 2)]);
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change name" }),
+  );
+  const name = await screen.findByRole("textbox", { name: "Agent name" });
+  await user.clear(name);
+  await user.type(name, "Ada Two");
+
+  await user.click(within(grid).getByText("Bo"));
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(name).toHaveValue("Ada Two");
+
+  let finish!: () => void;
+  agents.save.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  try {
+    expect(agents.save).toHaveBeenCalledWith("1".repeat(64), {
+      name: "Ada Two",
+    });
+    await user.click(within(grid).getByText("Bo"));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(grid).toHaveAttribute("aria-busy", "true");
+  } finally {
+    finish();
+  }
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("textbox", { name: "Agent name" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(grid).not.toHaveAttribute("aria-busy");
+  await user.click(within(grid).getByText("Bo"));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+});
+
+it("asks before choosing another agent drops a staged harness change", async () => {
+  const user = userEvent.setup();
+  const relay = {
+    key: "test/relay",
+    pluginId: "test",
+    revision: "1",
+    id: "relay",
+    title: "Relay",
+    icon: PlugIcon,
+    defaults: () => ({ config: { endpoint: "wss://relay.example" } }),
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: ({ settingsHost }: AgentViewProps) => (
+          <>
+            {settingsHost?.typeControl?.(false)}
+            <p>Relay settings</p>
+          </>
+        ),
+      },
+    ],
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1), agent("Bo", 2)], {
+    more: [relay],
+    dirtySettings: true,
+  });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  await user.click(
+    screen.getByRole("button", { name: "Change harness from Echo" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "Relay" }));
+  await user.click(
+    within(
+      await screen.findByRole("dialog", { name: "Move Ada to Relay?" }),
+    ).getByRole("button", { name: "Continue" }),
+  );
+  expect(await screen.findByText("Relay settings")).toBeVisible();
+
+  // Only the staged change is unsaved; its settings tab reports nothing.
+  await user.click(within(grid).getByText("Bo"));
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Change harness from Relay" }),
+  ).toBeVisible();
+
+  await user.click(within(grid).getByText("Bo"));
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(agents.retype).not.toHaveBeenCalled();
+  await user.click(within(grid).getByText("Ada"));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Change harness from Echo" }),
+  ).toBeVisible();
+});
+
+it("asks before Create or another card's Open settings replaces an unsaved draft", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1), agent("Bo", 2)], {
+    dirtySettings: true,
+  });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+
+  // The new agent is made either way; keeping the draft leaves it unopened.
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new agent" }),
+  );
+  const creating = screen.getByRole("dialog", { name: "Create agent" });
+  await user.type(within(creating).getByLabelText("Name"), "Nova");
+  await user.click(
+    within(creating).getByRole("button", { name: "Create agent" }),
+  );
+  await vi.waitFor(() => expect(agents.create).toHaveBeenCalled());
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Nova" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+  expect(field).toHaveValue("Unsaved reply");
+
+  await user.click(screen.getByRole("button", { name: "Actions for Bo" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open settings" }),
+  );
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(field).toHaveValue("Unsaved reply");
+
+  await user.click(screen.getByRole("button", { name: "Actions for Nova" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open settings" }),
+  );
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Nova" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(agents.save).not.toHaveBeenCalled();
+});
+
 it("announces the Bestie on its card without repeating it in actions", async () => {
   const ada = agent("Ada", 1);
   const view = setup([ada]);
@@ -3711,6 +4607,10 @@ it("announces the Bestie on its card without repeating it in actions", async () 
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(within(menu).queryByText("Bestie")).toBeNull();
+  // Without an account to save none to, it can't be removed here.
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Remove as bestie" }),
+  ).toBeNull();
   // Right-click carries the same ordinary actions as the card's "..." menu.
   expect(
     within(menu).getByRole("menuitem", { name: "Copy public key" }),
@@ -3792,6 +4692,231 @@ it("offers Make my bestie from the card's actions button", async () => {
     await screen.findByRole("gridcell", { name: "Ada, Bestie" }),
   ).toBeVisible();
   expect(screen.getByRole("gridcell", { name: "Bea" })).toBeVisible();
+});
+
+it("offers Make my bestie for a remote agent, asking first, and Cancel saves nothing", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = { ...agent("Sky", 2), place: "hosted" };
+  const view = setup([ada, sky]);
+  const rows = [ada, sky].map((each) => ({
+    pubkey: each.pubkey,
+    name: each.name,
+    managed: true,
+  }));
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  // Saved none: there is no Bestie to replace.
+  const mainAgent = {
+    read: async () => null,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remote-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: /^Sky/ });
+  const make = async () => {
+    await user.click(
+      within(card).getByRole("button", { name: "Actions for Sky" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Make my bestie" }),
+    );
+    return screen.findByRole("alertdialog", {
+      name: "Use Sky as your bestie?",
+    });
+  };
+  const ask = await make();
+  expect(ask).toHaveTextContent(
+    "Some bestie features aren’t available with remote agents.",
+  );
+  await user.click(within(ask).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(mainAgent.write).not.toHaveBeenCalled();
+
+  await user.click(
+    within(await make()).getByRole("button", { name: "Use as bestie" }),
+  );
+  expect(mainAgent.write).toHaveBeenCalledWith(sky.pubkey);
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+});
+
+it("removes a Bestie on another device from its card, asking first", async () => {
+  const user = userEvent.setup();
+  const ada: Agent = { ...agent("Ada", 1), place: "elsewhere" };
+  const view = setup([ada]);
+  const rows = [{ pubkey: ada.pubkey, name: ada.name, managed: true }];
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remove-remote-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  const ask = async () => {
+    await user.click(
+      within(card).getByRole("button", { name: "Actions for Ada" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove as bestie" }),
+    );
+    return screen.findByRole("alertdialog", {
+      name: "Remove Ada as your Bestie?",
+    });
+  };
+  // Removal starts on the highlighted Cancel, which saves nothing; its
+  // settings are on the device it runs on.
+  let dialog = await ask();
+  const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+  expect(cancel).toHaveAttribute("data-variant", "prominent");
+  await waitFor(() => expect(cancel).toHaveFocus());
+  expect(dialog).toHaveTextContent(
+    "turn them off in its Former Bestie tab on the device it runs on.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(mainAgent.write).not.toHaveBeenCalled();
+  // A failed save says so and keeps the Bestie.
+  mainAgent.write.mockRejectedValueOnce(new Error("offline"));
+  dialog = await ask();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Removing your Bestie couldn't be saved to your account. Try again.",
+  );
+  // The open dialog hides the page from the accessibility tree.
+  expect(
+    screen.getByRole("gridcell", { name: "Ada, Bestie", hidden: true }),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  expect(mainAgent.write).toHaveBeenLastCalledWith(null);
+  expect(await screen.findByRole("gridcell", { name: "Ada" })).toBeVisible();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  // No longer Bestie, it is offered again instead.
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(
+    within(menu).getByRole("menuitem", { name: "Make my bestie" }),
+  ).toBeVisible();
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Remove as bestie" }),
+  ).toBeNull();
+});
+
+it("keeps a Bestie chosen elsewhere while its removal is being asked about", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const rows = [ada, bea].map((each) => ({
+    pubkey: each.pubkey,
+    name: each.name,
+    managed: true,
+  }));
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remove-superseded-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  await user.click(
+    within(card).getByRole("button", { name: "Actions for Ada" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove as bestie" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Remove Ada as your Bestie?",
+  });
+  // Another surface makes Bea Bestie while the question is open.
+  await act(() =>
+    chooseDefaultAgent(
+      connection.session as unknown as RelaySession,
+      connection.scope,
+      bea.pubkey,
+    ),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(mainAgent.write).toHaveBeenCalledTimes(1);
+  expect(mainAgent.write).toHaveBeenLastCalledWith(bea.pubkey);
+  expect(screen.getByRole("gridcell", { name: "Bea, Bestie" })).toBeVisible();
 });
 
 it("keeps a failed Bestie replacement visible and retries the account save", async () => {
@@ -4135,6 +5260,41 @@ it("offers Make my bestie on a stand-in for a missing chosen agent", async () =>
   ).toBeNull();
 });
 
+it("restores scoped card order without menu reorder actions or remounting neighbours", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bo = agent("Bo", 2);
+  const nova = agent("Nova", 3);
+  const scope = "https://relay.example:owner";
+  const view = setup([ada, bo], { scope });
+  const order = () =>
+    screen
+      .getAllByRole("gridcell")
+      .map((card) => card.getAttribute("aria-label"));
+  await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Move earlier" }),
+  ).toBeNull();
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Move later" }),
+  ).toBeNull();
+  act(() => view.show([ada, bo, nova]));
+  expect(menu).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  act(() => writeView(scope, "agents:order", [bo.pubkey, ada.pubkey]));
+  expect(order()).toEqual(["Bo", "Ada", "Nova"]);
+  await user.click(screen.getByRole("gridcell", { name: "Bo" }));
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveFocus();
+  view.unmount();
+  const restored = setup([ada, bo, nova, agent("New", 4)], { scope });
+  expect(order()).toEqual(["Bo", "Ada", "Nova", "New"]);
+  restored.unmount();
+  setup([ada, bo], { scope: "https://other.example:owner" });
+  expect(order()).toEqual(["Ada", "Bo"]);
+});
+
 it("offers to save an automatic bestie to the account, and again after a failed save", async () => {
   const ada = agent("Ada", 1);
   const bea = agent("Bea", 2);
@@ -4211,4 +5371,267 @@ it("offers to save an automatic bestie to the account, and again after a failed 
     key: "Escape",
   });
   expect(await make("Bea")).toBeNull();
+});
+
+it("opens a restored version address in Settings, closes on Back, and retires only that scoped version on Close", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const revision = {
+    id: "a".repeat(64),
+    pubkey: ada.pubkey,
+    sig: "b".repeat(128),
+    kind: 45010,
+    created_at: 1700000000,
+    content: JSON.stringify({ version: 1, text: "Help." }),
+    tags: [
+      ["ar", "1"],
+      ["h", "c"],
+      ["d", "instructions"],
+      ["type", "buzz.agent.instructions"],
+      ["op", "create"],
+    ],
+  };
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { agent: ada.pubkey, revision: "" } },
+  } as const;
+  const opened = {
+    ...base,
+    route: {
+      version: 1,
+      params: { agent: ada.pubkey, revision: `instructions/${revision.id}` },
+    },
+  } as const;
+  let current: { id: string; target: OpenTarget } = {
+    id: "version",
+    target: opened,
+  };
+  const dismiss = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: current }),
+    open: vi.fn(),
+    dismiss,
+  } as unknown as Navigation;
+  const request = (): PageNavigation => {
+    const navigation = {
+      entryId: current.id,
+      target: current.target,
+      signal: new AbortController().signal,
+      position: () => undefined,
+      savePosition() {},
+      passThrough: () => () => {},
+      forSession: () => navigation,
+      resolve: () => true,
+      complete: () => true,
+    };
+    return navigation;
+  };
+  const view = setup([ada, bea]);
+  const read = vi.fn(async () => [revision]);
+  const revise = vi.fn();
+  Object.assign(view.agents, {
+    configHistory: () => ({
+      read,
+      revise,
+      sides: [
+        {
+          side: "instructions",
+          expected: {
+            channel: "c",
+            d: "instructions",
+            type: "buzz.agent.instructions",
+          },
+          head: revision,
+        },
+      ],
+    }),
+  });
+  const page = () => (
+    <AgentsPage
+      agents={view.agents}
+      relay={view.relay}
+      navigation={request()}
+      navigator={navigator}
+    />
+  );
+  view.rerender(page());
+  expect(
+    await screen.findByRole("heading", {
+      name: "Instructions version Current",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Revert to this" })).toBeNull();
+  current = { id: "base", target: base };
+  view.rerender(page());
+  expect(
+    screen.queryByRole("dialog", { name: "Instructions version Current" }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Previous versions" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  current = { id: "version", target: opened };
+  view.rerender(page());
+  expect(
+    await screen.findByRole("dialog", { name: "Instructions version Current" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  const [matches, fallback] = dismiss.mock.calls[0] as unknown as [
+    (target: OpenTarget) => boolean,
+    OpenTarget,
+  ];
+  expect(fallback).toEqual(base);
+  expect(matches(opened)).toBe(true);
+  expect(matches(base)).toBe(false);
+  expect(
+    matches({
+      ...opened,
+      scope: {
+        viewer: "f".repeat(64),
+        communityOrigin: "https://elsewhere.example",
+      },
+    }),
+  ).toBe(false);
+  expect(revise).not.toHaveBeenCalled();
+  current = { id: "base", target: base };
+  view.rerender(page());
+  await user.click(
+    within(screen.getByRole("grid", { name: "Agents" })).getByText("Bea"),
+  );
+  expect(screen.getByRole("heading", { name: "Bea" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Reply" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(
+    screen.getByRole("button", { name: "Previous versions" }),
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
+it("opens Create agent from an agent card's link and retires the link's visits when it closes", async () => {
+  const user = userEvent.setup();
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const routed = {
+    ...base,
+    route: { version: 1, params: { card: "tinker" } },
+  } as const;
+  const dismiss = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: { id: "card", target: routed } }),
+    open: vi.fn(),
+    dismiss,
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "card",
+    target: routed,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  const fetch = vi.fn(async () =>
+    Response.json({
+      id: "tinker",
+      name: "Tinker",
+      avatarUrl: "https://cdn.example/tinker/avatar.png",
+      instructions: "You are Tinker.",
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const { agents } = setup([agent("Ada", 1)], {
+      page: { navigator, navigation },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Create agent" });
+    expect(fetch).toHaveBeenCalledWith(
+      "https://d2z0pbxrxbsiz5.cloudfront.net/tinker/agent.json",
+      expect.anything(),
+    );
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Tinker");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create agent" }),
+    );
+    expect(agents.create).toHaveBeenCalledWith({
+      type: "test/echo",
+      name: "Tinker",
+      picture: "https://cdn.example/tinker/avatar.png",
+      config: { reply: "" },
+    });
+    await vi.waitFor(() => expect(dismiss).toHaveBeenCalledOnce());
+    const [matches, fallback] = dismiss.mock.calls[0] as unknown as [
+      (target: OpenTarget) => boolean,
+      OpenTarget,
+    ];
+    expect(fallback).toEqual(base);
+    expect(matches(routed)).toBe(true);
+    expect(matches(base)).toBe(false);
+    expect(
+      matches({ ...routed, route: { version: 1, params: { card: "occam" } } }),
+    ).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("explains an agent card that can't be loaded, and retries it", async () => {
+  const user = userEvent.setup();
+  const routed = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { card: "gone" } },
+  } as const;
+  const dismiss = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: { id: "card", target: routed } }),
+    open: vi.fn(),
+    dismiss,
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "card",
+    target: routed,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  const fetch = vi.fn(async () => new Response("", { status: 404 }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    setup([agent("Ada", 1)], { page: { navigator, navigation } });
+    const dialog = await screen.findByRole("dialog", { name: "Agent card" });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "This agent card isn’t available.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Close" }),
+    );
+    expect(dismiss).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "Create agent" })).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

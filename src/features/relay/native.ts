@@ -1,4 +1,9 @@
 import {
+  artifactIncrementalCapability,
+  artifactIncrementalFailure,
+  createArtifactIncrementalReader,
+} from "./artifact-incremental-reader";
+import {
   verifiedProfileAuthority,
   verifiedProfileDiscovery,
 } from "./verified-profile";
@@ -21,14 +26,19 @@ import {
   validateUploadResult,
   type UploadProgress,
 } from "./attachments";
-import { eventDto, type RelayEvent } from "./events";
+import {
+  createEventVerifier,
+  eventDto,
+  type RelayEvent,
+  type SignatureVerifier,
+} from "./events";
 import {
   privateTag,
   privateCoordinate,
   parsePrivateRecord,
   type PrivateRecord,
 } from "../channel-templates/model";
-import type { RelayWriter } from "./transport";
+import { parseEvents, type RelayWriter } from "./transport";
 import { communityGitRepository } from "../repos/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
@@ -335,9 +345,19 @@ export function nativeRelaySigner(community: string): Signer {
     },
     upload: (file, signal) => nativeUpload(origin, file, signal),
     media: nativeMediaUrl,
-    verifySignatures: (claims) =>
-      nativeReadInvoke<boolean[]>("relay_verify_signatures", { claims }),
+    verifySignatures: verifyNativeSignatures,
   };
+}
+
+const verifyNativeSignatures: SignatureVerifier = (claims) =>
+  nativeReadInvoke<boolean[]>("relay_verify_signatures", { claims });
+
+/** Device evidence can be verified before any relay connection exists. */
+export function verifyNativeStored(values: readonly unknown[]) {
+  return parseEvents(
+    values,
+    createEventVerifier(undefined, verifyNativeSignatures),
+  );
 }
 
 export const NOT_A_COMMUNITY_ERROR =
@@ -439,6 +459,21 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
+    ...(artifactIncrementalCapability(info)
+      ? {
+          artifactIncremental: createArtifactIncrementalReader(
+            (filter, signal) =>
+              admitSignedRequest(
+                origin,
+                transport.viewer,
+                () => nativeRelayRequest(origin, "/query", [filter]),
+                signal,
+                "background",
+                artifactIncrementalFailure,
+              ),
+          ),
+        }
+      : {}),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);
@@ -652,25 +687,54 @@ export async function connectNativeTransport(
       agent: string,
       signal: AbortSignal,
       slug?: string,
+      onPage?: (page: MemoryListing) => void,
     ): Promise<MemoryListing> {
       if (!memoryAgent(agent, transport.viewer))
         throw new Error("Invalid memory target");
-      const bounded = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      // A streamed read has no overall deadline: its pages arrive as they
+      // decode, and native code bounds each one.
+      const bounded = onPage
+        ? signal
+        : AbortSignal.any([signal, AbortSignal.timeout(10000)]);
       bounded.throwIfAborted();
+      // Aborting stops native paging and drops what it decoded.
+      const id = crypto.randomUUID();
+      const cancel = () => {
+        invoke("relay_http_cancel", { id }).catch(() => {});
+      };
+      bounded.addEventListener("abort", cancel, { once: true });
       let result: unknown;
       try {
         result = await invoke<unknown>("relay_agent_memories_read", {
           community: origin,
           agent,
           slug: slug ?? null,
+          id,
+          onPage: onPage
+            ? new Channel<unknown>((page) => {
+                if (bounded.aborted) return;
+                let listing: MemoryListing;
+                try {
+                  listing = memoryListing(page);
+                } catch {
+                  // The result is validated in full; an invalid page only
+                  // goes unshown.
+                  return;
+                }
+                onPage(listing);
+              })
+            : null,
         });
       } catch (reason) {
+        bounded.throwIfAborted();
         if (reason === "MemoryDenied") {
           const denied = new Error("Memory read failed");
           denied.name = "MemoryDenied";
           throw denied;
         }
         throw reason;
+      } finally {
+        bounded.removeEventListener("abort", cancel);
       }
       bounded.throwIfAborted();
       return memoryListing(result);

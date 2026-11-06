@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import type { SidebarScope } from "../../features/channel-navigation/sidebar-scope-service";
 import { act, render } from "@testing-library/react";
 import { vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -9,11 +10,15 @@ import type { ReadTransport } from "../../features/relay/transport";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
-import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
+import {
+  ChannelNavigationProvider,
+  useChannelNavigation,
+} from "../../features/channel-navigation/ChannelNavigationState";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { NewMenu } from "./NewMenu";
 import type { Agents } from "../../features/agents/service";
 import { PrimarySidebar } from "./PrimarySidebar";
+import { DraftsSentNavigation } from "../../features/drafts-sent/DraftsSentNavigation";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { conversationTarget } from "../../features/channel-navigation/routes";
@@ -40,6 +45,7 @@ export function fixture(
   host: {
     transport?: ReadTransport;
     federatedIdentity?: FederatedIdentity;
+    sidebarScope?: SidebarScope;
   } = {},
 ) {
   const owner = createRelaySession(host.transport ?? null);
@@ -176,6 +182,7 @@ export function fixture(
     session,
     generation: 1,
     scope,
+    viewer,
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
@@ -204,9 +211,15 @@ export function fixture(
   const publish = () => {
     for (const listener of listeners) listener();
   };
+  let handoff: ReturnType<typeof useChannelNavigation>;
+  const HandoffProbe = () => {
+    handoff = useChannelNavigation();
+    return null;
+  };
   const tree = () => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
+        <HandoffProbe />
         {combined ? (
           <SidebarCreationHost
             relay={relay}
@@ -222,10 +235,16 @@ export function fixture(
                   target={target}
                   chatIcons={chatIcons}
                   chatMenus={chatMenus}
+                  sidebarScope={host.sidebarScope}
                   {...(host.federatedIdentity
                     ? { federatedIdentity: host.federatedIdentity }
                     : {})}
                 >
+                  <DraftsSentNavigation
+                    relay={relay}
+                    navigator={navigator}
+                    target={target}
+                  />
                   <button type="button">Inbox</button>
                 </PrimarySidebar>
               )
@@ -269,6 +288,8 @@ export function fixture(
       });
     },
     open,
+    /** The sidebar's hand-off to the conversation page it opens. */
+    handoff: () => handoff,
     markThrough,
     listeners,
     typing(next: typeof typing) {

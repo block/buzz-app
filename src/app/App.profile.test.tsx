@@ -22,6 +22,7 @@ import type { ComposerInputElement } from "../features/messages/composer-dom";
 import { composerDOMFixture } from "../features/messages/composer-testing";
 import * as communityApi from "../features/communities/api";
 import { communityDestination } from "../features/communities/destination";
+import { readView, writeView } from "../shared/view-state";
 import { sidebarFixtureState } from "./sidebar-plugin.fixture";
 
 /** Any variant of the App-owned "page couldn't open" card. */
@@ -332,8 +333,8 @@ it("isolates a sidebar failure and recovers it on target change before restoring
     await openSidebarPage("plain");
     expect(await screen.findByText("Plain page content")).toBeVisible();
     expect(
-      screen.getByRole("complementary", { name: "Sidebar" }),
-    ).toBeVisible();
+      screen.queryByRole("complementary", { name: "Sidebar" }),
+    ).not.toBeInTheDocument();
   } finally {
     error.mockRestore();
   }
@@ -373,6 +374,67 @@ it("recovers a failed sidebar registration after disabling and re-enabling its p
   } finally {
     error.mockRestore();
   }
+});
+
+it("shares its resizable width between a page sidebar and Messages, including the fallback", async () => {
+  await setup();
+  const appServices = services;
+  if (!appServices) throw new Error("Expected app services after setup");
+  const scope =
+    appServices.communities.relay.snapshot().scope ?? "disconnected";
+  act(() => writeView(scope, "channel-sidebar", { width: 344 }));
+  const sidebarColumn = () =>
+    screen.getByRole("separator", { name: "Resize sidebar" })
+      .previousElementSibling as HTMLElement;
+
+  await openSidebarPage("main", "first");
+  expect(await screen.findByText("Beacon page content")).toBeVisible();
+  expect(sidebarColumn()).toHaveStyle({ width: "344px" });
+  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
+    key: "End",
+  });
+  expect(sidebarColumn()).toHaveStyle({ width: "520px" });
+  expect(readView(scope, "channel-sidebar", null)).toMatchObject({
+    width: 520,
+  });
+
+  await act(async () => {
+    await appServices.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+    });
+  });
+  expect(
+    await screen.findByRole("complementary", { name: "Sidebar" }),
+  ).toBeVisible();
+  expect(sidebarColumn()).toHaveStyle({ width: "520px" });
+  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
+    key: "Home",
+  });
+  expect(sidebarColumn()).toHaveStyle({ width: "220px" });
+  expect(readView(scope, "channel-sidebar", null)).toMatchObject({
+    width: 220,
+  });
+
+  await openSidebarPage("main", "second");
+  expect(
+    await within(
+      screen.getByRole("complementary", { name: "Beacon sidebar" }),
+    ).findByText("main:second"),
+  ).toBeVisible();
+  expect(sidebarColumn()).toHaveStyle({ width: "220px" });
+
+  await openSidebarPage("main", "broken-sidebar");
+  expect(
+    await screen.findByText("This page’s sidebar is unavailable."),
+  ).toBeVisible();
+  expect(sidebarColumn()).toHaveStyle({ width: "220px" });
+  fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
+    key: "End",
+  });
+  expect(sidebarColumn()).toHaveStyle({ width: "520px" });
 });
 
 it.each([
@@ -730,8 +792,8 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const workspace = frame?.parentElement;
   expect(workspace).toContainElement(composing);
   expect(workspace).toContainElement(panel);
-  // The community switcher lives in the app header, which the frame excludes.
-  expect(workspace).not.toContainElement(communities);
+  // The dock remains in the workspace alongside the Settings frame.
+  expect(workspace).toContainElement(communities);
   expect(modal.closest('[aria-hidden="true"], [inert]')).toBeNull();
   await waitFor(() =>
     expect(modal).toContainElement(document.activeElement as HTMLElement),

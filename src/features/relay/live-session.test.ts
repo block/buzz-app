@@ -29,13 +29,16 @@ it("clears retained repository homes on live recovery, cache clearing, and dispo
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
-  const owner = createRelaySession({
-    ...wire.transport,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
     },
-  });
+    { readStateFloor: () => 0 },
+  );
   const seed = async () => {
     const pending = owner.session.repositories.home(
       "repo-channel",
@@ -67,13 +70,16 @@ it("establishing a large roster reads only retained windows, not every channel h
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
-  const owner = createRelaySession({
-    ...wire.transport,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
     },
-  });
+    { readStateFloor: () => 0 },
+  );
   try {
     const ids = Array.from({ length: 128 }, (_, i) => `channel-${i}`);
     const first = ids[0];
@@ -119,7 +125,7 @@ it("a skipped warm head cannot hide the stream gap behind its freshness lease", 
         return { update() {}, retry() {}, dispose() {} };
       },
     },
-    { prepared: true },
+    { readStateFloor: () => 0, prepared: true },
   );
   try {
     owner.session.channels.ensureList();
@@ -233,13 +239,16 @@ it("post-subscribe demand supersedes a pre-stream head and prioritizes the curre
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
   const priority = vi.fn();
-  const owner = createRelaySession({
-    ...wire.transport,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, prioritize: priority, retry() {}, dispose() {} };
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, prioritize: priority, retry() {}, dispose() {} };
+      },
     },
-  });
+    { readStateFloor: () => 0 },
+  );
   try {
     live.receive(["a", "z"].map((id) => roster(relay, id, [viewer.pubkey])));
     owner.session.channels.ensure("a");
@@ -280,13 +289,16 @@ it("long API pause keeps lightweight catch-up obligations; retry does not drain 
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
-  const owner = createRelaySession({
-    ...wire.transport,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, retry() {}, dispose() {} };
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
     },
-  });
+    { readStateFloor: () => 0 },
+  );
   try {
     live.receive(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey])));
     for (const id of ["a", "b"]) {
@@ -347,13 +359,16 @@ it.each([1, 2, 130])(
       peer = keypair();
     const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
     let live!: LiveCallbacks;
-    const owner = createRelaySession({
-      ...wire.transport,
-      subscribe(callbacks) {
-        live = callbacks;
-        return { update() {}, retry() {}, dispose() {} };
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
       },
-    });
+      { readStateFloor: () => 0 },
+    );
     try {
       const ids = Array.from(
         { length: count },
@@ -430,7 +445,7 @@ function reconnectHarness(options: ChannelStoreOptions = {}) {
         return { update() {}, retry() {}, dispose() {} };
       },
     },
-    { prepared: true, ...options },
+    { readStateFloor: () => 0, prepared: true, ...options },
   );
   const window = () => owner.session.channels.window("c");
   const rows = () => window().rows.map((row) => row.id);
@@ -1620,6 +1635,91 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
     expect(covered(await drain())).toEqual(once);
     ready();
     stop();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("shows the viewer's own sends from before the loaded history only once paging reaches them", async () => {
+  // The outbox keeps confirmed sends. One older than the head page must wait
+  // for the older page, as every other row does: shown early, the reader
+  // scrolls up through their own messages with everyone else's missing, even
+  // while the head page loads. A failed send stays, since only its row offers
+  // Retry.
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const lost = message(viewer, "c", "lost", 3),
+    mine = message(viewer, "c", "mine", 5),
+    before = message(alice, "c", "before", 4),
+    after = message(alice, "c", "after", 6),
+    seen = message(alice, "c", "seen", 10);
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: {
+        sign: async () => {
+          throw new Error("unused");
+        },
+        publish: async () => {},
+      },
+    },
+    {
+      prepared: true,
+      outboxStorage: {
+        load: () => [
+          { event: lost, delivery: "failed" },
+          { event: mine, signed: mine, delivery: "seen" },
+        ],
+        save() {},
+      },
+    },
+  );
+  const rows = () =>
+    owner.session.channels.window("c").rows.map((row) => row.id);
+  try {
+    await owner.session.outbox?.ready();
+    owner.session.channels.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "c", [viewer.pubkey]),
+        metadata(relay, "c", "C"),
+      ]);
+    await flush();
+    owner.session.channels.ensure("c");
+    await flush();
+    // Before the head answers, the history's extent is unknown, not unbounded.
+    expect(rows()).toEqual([lost.id]);
+    wire.next().respond([
+      seen,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 10, id: seen.id },
+      }),
+    ]);
+    await flush();
+    expect(rows()).toEqual([lost.id, seen.id]);
+    // Other reads (profiles, outbox readback) answer empty.
+    for (const entry of wire.pending.splice(0)) entry.respond([]);
+    await flush();
+    owner.session.channels.loadOlder("c");
+    const older = wire.pending.find(
+      ({ filters }) => filters[0]?.before_id === seen.id,
+    );
+    assert.exists(older);
+    older.respond([
+      after,
+      mine,
+      before,
+      bounds(relay, "c", `10:${seen.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    expect(rows()).toEqual([lost.id, before.id, mine.id, after.id, seen.id]);
   } finally {
     owner.dispose();
   }

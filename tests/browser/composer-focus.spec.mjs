@@ -88,7 +88,13 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
     "Beta",
     "Alice Fixture",
   ].entries()) {
-    await sidebar.getByRole("button", { name, exact: true }).click();
+    // A row left with a draft adds its Draft pencil to its name.
+    await sidebar
+      .getByRole("button", {
+        name: index < 2 ? name : `${name} Draft`,
+        exact: true,
+      })
+      .click();
     await expect(input).toBeFocused();
     if (index < 2) {
       await page.keyboard.type(`Draft for ${name}`);
@@ -203,7 +209,8 @@ test.describe("retained agent focus", () => {
         .click();
       await page
         .getByRole("dialog", { name: "Mention a member or agent" })
-        .getByRole("button", { name: new RegExp(pubkey) })
+        .getByRole("button")
+        .and(page.locator(`[data-mention-choice="${pubkey}"]`))
         .click();
     }
     await page.keyboard.type("First request");

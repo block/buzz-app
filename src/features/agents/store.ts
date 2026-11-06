@@ -1,4 +1,4 @@
-import { sourceCompleted, sourceSignature } from "./attention";
+import { interestPaused, sourceCompleted, sourceSignature } from "./attention";
 // Device-local settings for agents: the attention objects of each agent's
 // membership in a community, in the `agent-attention/v1` shape, with its
 // timers' run state, and one JSON blob the agent's plugin type owns. Which
@@ -24,6 +24,10 @@ import { AGENT_KEY, type AgentKey } from "./membership";
 export type AgentStore = Readonly<{
   keys(): readonly string[];
   get(key: string): string | null;
+  /** Reads saved state after this program's pending writes to the key. */
+  read(key: string): Promise<string | null>;
+  /** Reads saved entries under a prefix without changing this program's copy. */
+  scan(prefix: string): Promise<Record<string, string>>;
   /** Saves `value` under `key`; null removes the key. */
   set(key: string, value: string | null): Promise<void>;
   /** Saves `value` only if no program saved a value under `key`. Resolves
@@ -42,6 +46,16 @@ export function localStore(
         storage.key(index),
       ).filter((key): key is string => key !== null),
     get: (key: string) => storage.getItem(key),
+    read: async (key: string) => storage.getItem(key),
+    scan: async (prefix: string) =>
+      Object.fromEntries(
+        Array.from({ length: storage.length }, (_, index) => storage.key(index))
+          .filter((key): key is string => Boolean(key?.startsWith(prefix)))
+          .flatMap((key) => {
+            const value = storage.getItem(key);
+            return value === null ? [] : [[key, value]];
+          }),
+      ),
     set: async (key: string, value: string | null) => {
       if (value === null) storage.removeItem(key);
       else storage.setItem(key, value);
@@ -209,7 +223,53 @@ function readRecord(
   const entries = Object.entries(record.attention ?? {}).sort(([a], [b]) =>
     a < b ? -1 : a > b ? 1 : 0,
   );
-  for (const [slug, object] of entries) {
+  for (const [slug, stored] of entries) {
+    // Older readers reject this watch extension and retain it for repair. Only
+    // unwrap after its parent has been validated (Interests sort before watches).
+    let object = stored;
+    const value = stored?.value;
+    if (
+      value &&
+      typeof value === "object" &&
+      "interest_paused" in value &&
+      value.interest_paused &&
+      typeof value.interest_paused === "object" &&
+      value.type !== "interest" &&
+      interestPaused(attention, value.interest_id)
+    ) {
+      const { interest_paused, ...watch } = value;
+      // Skipped objects survive older rewrites, while their top-level runtime
+      // metadata does not. Recover it here, then use the usual validators below.
+      const state = interest_paused as {
+        timer?: TimerState;
+        completed?: true;
+        history?: AttentionHistory;
+      };
+      record = {
+        ...record,
+        ...(state.timer && {
+          timers: { [slug]: state.timer, ...record.timers },
+        }),
+        ...(state.completed === true &&
+          watch.type === "source" && {
+            sourceRuns: {
+              ...record.sourceRuns,
+              [slug]: sourceSignature({
+                slug,
+                value: watch,
+                modifiedAt: stored.modifiedAt,
+              }),
+            },
+          }),
+        ...(state.history && {
+          attentionHistory: {
+            [slug]: state.history,
+            ...record.attentionHistory,
+          },
+        }),
+      };
+      object = { ...stored, value: watch };
+    }
     const modifiedAt = Number.isSafeInteger(object?.modifiedAt)
       ? object.modifiedAt
       : 0;
@@ -223,7 +283,7 @@ function readRecord(
         problem = `Over the limit of ${OBJECT_LIMIT} ${kind}`;
     }
     if (problem)
-      skipped[slug] = { slug, value: object?.value, modifiedAt, problem };
+      skipped[slug] = { slug, value: stored?.value, modifiedAt, problem };
     else attention[slug] = { slug, value: object.value, modifiedAt };
   }
   const timers: Record<string, TimerState> = {};
@@ -332,7 +392,7 @@ export function removeRecord(storage: AgentStore, key: AgentKey) {
 }
 
 /** A record as it is saved. */
-function recordText({ skipped, ...record }: AgentRecord) {
+export function recordText({ skipped, ...record }: AgentRecord) {
   // Skipped objects go back where they were read from, so a later reader that
   // can apply them still finds them.
   return JSON.stringify({
@@ -344,7 +404,38 @@ function recordText({ skipped, ...record }: AgentRecord) {
           object,
         ]),
       ),
-      ...record.attention,
+      ...Object.fromEntries(
+        Object.entries(record.attention).map(([slug, object]) => {
+          const value = object.value;
+          if (value.type === "interest") {
+            // Active Interests need no extension, so older readers keep their instructions.
+            const { paused, ...interest } = value;
+            return [slug, paused ? object : { ...object, value: interest }];
+          }
+          return [
+            slug,
+            interestPaused(record.attention, value.interest_id)
+              ? {
+                  ...object,
+                  value: {
+                    ...value,
+                    interest_paused: {
+                      ...(record.timers?.[slug] && {
+                        timer: record.timers[slug],
+                      }),
+                      ...(sourceCompleted(record.sourceRuns, object) && {
+                        completed: true,
+                      }),
+                      ...(record.attentionHistory?.[slug] && {
+                        history: record.attentionHistory[slug],
+                      }),
+                    },
+                  },
+                }
+              : object,
+          ];
+        }),
+      ),
     },
   });
 }

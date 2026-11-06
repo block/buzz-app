@@ -1,3 +1,4 @@
+import { createPcmSender } from "./sender";
 import type { ChannelSummary } from "../relay/contracts";
 import type { AudioSettingsState } from "./audio-settings";
 import { createHuddleRequests } from "./requests";
@@ -5,6 +6,7 @@ import { discoverHuddles } from "./discovery";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { HuddleBridge, HuddleDestination, HuddleUpdate } from "./bridge";
 import type { HuddleAudio, OpenHuddleAudio } from "./audio";
+import type { Context } from "@deepseek-ai/cordis";
 
 export type HuddleSnapshot = Readonly<{
   id?: string;
@@ -17,6 +19,7 @@ export type HuddleSnapshot = Readonly<{
   room?: string;
   muted: boolean;
   participants: readonly string[];
+  listening?: readonly string[];
   error?: string;
 }>;
 type Attempt = {
@@ -28,7 +31,7 @@ type Attempt = {
   heartbeat?: ReturnType<typeof setInterval>;
   stopAccess?: () => void;
   stopAudioSettings?: () => void;
-  sending: boolean;
+  sender: ReturnType<typeof createPcmSender>;
 };
 const idle: HuddleSnapshot = { phase: "idle", muted: false, participants: [] };
 const message = (error: unknown) =>
@@ -248,11 +251,19 @@ export function createHuddles(
       snapshot.destination.channelId === destination.channelId
         ? snapshot
         : undefined;
+    const id = crypto.randomUUID();
+    const abort = new AbortController();
     const attempt: Attempt = {
-      id: crypto.randomUUID(),
+      id,
       connection,
-      abort: new AbortController(),
-      sending: false,
+      abort,
+      sender: createPcmSender(
+        (samples) => bridge.send(id, samples),
+        abort.signal,
+        (error) => {
+          if (valid(attempt)) void leave(message(error));
+        },
+      ),
     };
     current = attempt;
     attempt.stopAccess = connection.session.channels.subscribeList(() => {
@@ -337,20 +348,11 @@ export function createHuddles(
           if (
             !valid(attempt) ||
             snapshot.phase !== "connected" ||
-            snapshot.muted ||
-            attempt.sending
+            snapshot.muted
           )
             return;
           activity(destination.viewer, samples);
-          attempt.sending = true;
-          void bridge
-            .send(attempt.id, samples)
-            .catch((error) => {
-              if (valid(attempt)) void leave(message(error));
-            })
-            .finally(() => {
-              attempt.sending = false;
-            });
+          void attempt.sender.send(samples);
         },
         () => {
           if (valid(attempt))
@@ -413,6 +415,23 @@ export function createHuddles(
     );
   return {
     snapshot: () => snapshot,
+    voiceListening(id: string, key: string, active: boolean) {
+      if (snapshot.id !== id || (active && snapshot.phase !== "connected"))
+        return;
+      const listening = snapshot.listening ?? [];
+      if (listening.includes(key) === active) return;
+      update({
+        ...snapshot,
+        listening: active
+          ? [...listening, key]
+          : listening.filter((peer) => peer !== key),
+      });
+    },
+    voiceError(call: string, error?: string) {
+      if (snapshot.id !== call) return;
+      const { error: _previous, ...rest } = snapshot;
+      update(error ? { ...rest, error } : rest);
+    },
     canJoin(scope: string, room: string) {
       return !unavailable.has(`${scope}:${room}`);
     },
@@ -428,6 +447,7 @@ export function createHuddles(
     mute() {
       if (!current || snapshot.phase !== "connected") return;
       const muted = !snapshot.muted;
+      if (muted) current.sender.clear();
       current.audio?.mute(muted);
       if (muted && snapshot.destination)
         speakers.delete(snapshot.destination.viewer);
@@ -452,3 +472,32 @@ export function createHuddles(
   };
 }
 export type Huddles = ReturnType<typeof createHuddles>;
+
+/** Read-only call phase of this document for other plugins, such as a music
+ * player that pauses for a Huddle. No destination, roster, audio or controls. */
+export type HuddleStatus = Readonly<{
+  version: 1;
+  phase(): HuddleSnapshot["phase"];
+  subscribe(listener: () => void): () => void;
+}>;
+/** Provided while Huddles is active; unloading Huddles withdraws it. */
+export function provideHuddleStatus(
+  ctx: Context,
+  huddles: Pick<Huddles, "snapshot" | "subscribe">,
+) {
+  ctx.provide(
+    "huddleStatus",
+    Object.freeze({
+      version: 1,
+      phase: () => huddles.snapshot().phase,
+      subscribe: (listener: () => void) => huddles.subscribe(listener),
+    }) satisfies HuddleStatus,
+  );
+}
+
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    /** Optional: consumers read it with `ctx.inject(["huddleStatus"], …)`. */
+    huddleStatus?: HuddleStatus;
+  }
+}

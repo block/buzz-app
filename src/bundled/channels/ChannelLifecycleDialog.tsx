@@ -60,13 +60,10 @@ function copyFor(action: ChannelLifecycleAction, noun: LifecycleNoun) {
   };
 }
 
-// Reversible actions retain their prominent treatment. Archive still starts
-// on Cancel, so an accidental Enter cannot archive a channel for everyone.
-const reversible = new Set<ChannelLifecycleAction>([
-  "archive",
-  "unarchive",
-  "hide",
-]);
+// Enter confirms unarchive and hide. Archive affects everyone, so it starts on
+// Cancel, which takes the highlight; leave and delete start on a neutral Cancel
+// so it never competes with a red confirm.
+const reversible = new Set<ChannelLifecycleAction>(["unarchive", "hide"]);
 
 export function ChannelLifecycleDialog({
   channelId,
@@ -81,6 +78,7 @@ export function ChannelLifecycleDialog({
   finalFocus,
   confirmed = false,
   undo,
+  autoJoin = false,
 }: {
   channelId: string;
   channelName: string;
@@ -96,6 +94,8 @@ export function ChannelLifecycleDialog({
   confirmed?: boolean;
   /** Offered from an immediate archive's result toast. */
   undo?(): void;
+  /** A starter channel: the relay keeps the flag while archived. */
+  autoJoin?: boolean;
 }) {
   const callbacks = useRef({ completed, failed });
   useLayoutEffect(() => {
@@ -105,6 +105,11 @@ export function ChannelLifecycleDialog({
   const confirm = useRef<HTMLButtonElement>(null);
   const confirms = reversible.has(action);
   const copy = copyFor(action, noun);
+  // The switch is hidden while archived, and Unarchive applies the flag again.
+  const description =
+    action === "archive" && autoJoin
+      ? `${copy.detail} It’s a starter channel, so new members will be added to it again once it’s unarchived. To stop that, turn off Starter channel for new members in Settings first.`
+      : copy.detail;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const notify = useToastNotification();
@@ -180,7 +185,7 @@ export function ChannelLifecycleDialog({
         size="compact"
         open={!immediate && !busy && !error}
         dismissOnOutsideClick
-        initialFocus={confirms && action !== "archive" ? confirm : cancel}
+        initialFocus={confirms ? confirm : cancel}
         // Cancellation remains sidebar-owned; submission returns to the trigger.
         finalFocus={busy || error ? finalFocus : false}
         onOpenChange={(open) => {
@@ -191,10 +196,15 @@ export function ChannelLifecycleDialog({
             ? `Delete ${channelName}?`
             : `${copy.title}: ${channelName}`
         }
-        description={copy.detail}
+        description={description}
         actions={
           <>
-            <Button ref={cancel} type="button" onClick={close}>
+            <Button
+              ref={cancel}
+              type="button"
+              variant={action === "archive" ? "prominent" : "subtle"}
+              onClick={close}
+            >
               Cancel
             </Button>
             <Button

@@ -18,6 +18,10 @@ export function policyRelay({
   holdOlder = true,
 }) {
   const sockets = [];
+  // A page can close between sending a publication and its acceptance. The
+  // relay still accepts it, but that community has no open socket left to
+  // deliver it to, so publish skips its delivery check for that community.
+  let closedAcceptance;
   let presenceHeld = false;
   const presenceWaiters = [];
   report.presenceSnapshots = [];
@@ -376,11 +380,14 @@ export function policyRelay({
           for (const filter of filters) {
             expect(filter).toEqual({
               kinds: [9007],
-              authors: [expect.any(String)],
-              "#h": [expect.any(String)],
-              limit: 1,
+              authors: expect.arrayContaining([expect.any(String)]),
+              "#h": expect.arrayContaining([expect.any(String)]),
+              limit: expect.any(Number),
               ...(filter.consistency ? { consistency: "strong" } : {}),
             });
+            expect(filter["#h"].length).toBeLessThanOrEqual(2048);
+            expect(filter.limit).toBeGreaterThan(0);
+            expect(filter.limit).toBeLessThanOrEqual(500);
             report.queries.push({
               community: communityOf(url),
               filter,
@@ -614,6 +621,14 @@ export function policyRelay({
             if (kind === "EVENT" && acceptPublication) {
               expect(this.authenticated).toBe(true);
               setTimeout(() => {
+                if (
+                  !sockets.some(
+                    (socket) =>
+                      socket.readyState === 1 &&
+                      socket.community === this.community,
+                  )
+                )
+                  closedAcceptance = this.community;
                 try {
                   const accepted = acceptPublication(this.community, id);
                   // A fixture may hold the OK while relay side effects proceed.
@@ -625,6 +640,8 @@ export function policyRelay({
                   else emit(this, ["OK", id.id, true, ""]);
                 } catch (error) {
                   fault(error);
+                } finally {
+                  closedAcceptance = undefined;
                 }
               }, latencyMs);
               return;
@@ -652,12 +669,10 @@ export function policyRelay({
             if (!admitWs(this, kind, id)) return;
             for (const filter of filters) {
               const channel = filter["#h"]?.[0];
-              // Initial replay stays per channel; zero replay may consolidate the wire.
+              // History and live-only requests may both name multiple channels.
               if (
                 filter.kinds.includes(9) &&
-                (!channel ||
-                  filter["#h"].length > 10 ||
-                  (filter.limit !== 0 && filter["#h"].length !== 1))
+                (!channel || filter["#h"].length > 2048)
               ) {
                 queueMicrotask(() =>
                   emit(this, [
@@ -792,7 +807,7 @@ export function policyRelay({
           deliveries++;
         }
       }
-      if (requireSubscriber)
+      if (requireSubscriber && closedAcceptance !== community)
         expect(
           deliveries,
           "event must traverse an explicit production channel REQ",

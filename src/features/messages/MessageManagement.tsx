@@ -25,6 +25,7 @@ import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
+import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
@@ -84,6 +85,35 @@ const Management = createContext<
     }
   | undefined
 >(undefined);
+type MessageVisit = Readonly<{
+  session: RelaySession;
+  channelId: string | undefined;
+  token: object;
+  entryMessageIds: ReadonlySet<string>;
+  entryHistoryComplete: boolean;
+  entryReadRevision: number;
+  entryAttention: ReadonlyMap<
+    string,
+    Pick<MessageAttention, "unread" | "forced"> | null
+  >;
+  active: boolean;
+  ready: boolean;
+  failed: boolean;
+}>;
+const MessageVisitContext = createContext<MessageVisit | undefined>(undefined);
+
+/** The channel visit that owns automatic reading and its entry reconciliation. */
+export function useMessageVisit(
+  session: RelaySession,
+  channelId: string,
+): MessageVisit | null | undefined {
+  const visit = useContext(MessageVisitContext);
+  if (!visit) return undefined;
+  return visit.session === session && visit.channelId === channelId
+    ? visit
+    : null;
+}
+
 export function useMessageDeletion() {
   const management = useContext(Management);
   const editor = useMessageEditScope();
@@ -91,6 +121,66 @@ export function useMessageDeletion() {
     ? (row: ChannelMessage, done?: (focus: boolean) => void) =>
         management.remove(row, done, () => editor?.focusTarget() ?? null)
     : undefined;
+}
+
+/**
+ * Selected-message keys act as the message menu does, read when the key is
+ * pressed. Delete covers your own messages; the menu also deletes for agent
+ * owners, which needs ownership evidence a key cannot wait for.
+ */
+export function useMessageKeyActions(session: RelaySession) {
+  const management = useContext(Management);
+  const editor = useMessageEditScope();
+  return useMemo(() => {
+    if (!management) return undefined;
+    const joined = (row: ChannelMessage) => {
+      const channel = session.channels
+        .list()
+        .channels.find((item) => item.id === row.channelId);
+      return channel &&
+        !channel.cached &&
+        (!channel.readOnly || channel.viewerRole === "guest") &&
+        !row.membership &&
+        !row.diff &&
+        (!row.delivery || ["accepted", "seen"].includes(row.delivery))
+        ? channel
+        : undefined;
+    };
+    return {
+      canDelete(row: ChannelMessage) {
+        const channel = joined(row);
+        return (
+          !!channel &&
+          !channel.readOnly &&
+          !channel.archived &&
+          !!session.viewer &&
+          row.authorId === session.viewer &&
+          !!session.outbox?.supports(5)
+        );
+      },
+      remove(row: ChannelMessage) {
+        management.remove(row, undefined, () => editor?.focusTarget() ?? null);
+      },
+      canMarkUnread(row: ChannelMessage) {
+        // Coordination between agents is never unread, so it has no read state.
+        if (!joined(row) || row.audience === "agents") return false;
+        const attention = session.unread.attention(row.channelId, row.id);
+        return !attention.unread && !attention.forced;
+      },
+      markUnread(row: ChannelMessage) {
+        management.report(undefined);
+        void session.unread
+          .markMessageUnread(row.channelId, row.id)
+          .catch((cause) =>
+            management.report(
+              cause instanceof Error
+                ? cause.message
+                : "Could not update unread state. Try again.",
+            ),
+          );
+      },
+    };
+  }, [management, editor, session]);
 }
 
 /** Recovery stays outside virtualized rows; each conversation has one edit destination. */
@@ -163,14 +253,52 @@ export function MessageManagement({
         ? channel.id
         : undefined,
   );
-  const [notice, setNotice] = useState<{
-    visit: {
-      session: RelaySession;
-      channelId: string | undefined;
-      visitChannelId: string | undefined;
+  // The timeline may mount only after loading or an inline seek completes.
+  // Entry membership and provisional read evidence belong to this visit, not
+  // to that later render or the first complete read snapshot.
+  const captureVisit = () => {
+    const window = channelId ? session.channels.window(channelId) : undefined;
+    const rows = window?.rows ?? [];
+    const entryAttention = new Map<
+      string,
+      Pick<MessageAttention, "unread" | "forced"> | null
+    >();
+    if (channelId)
+      for (const row of rows) {
+        const attention = session.unread.attention(channelId, row.id);
+        entryAttention.set(
+          row.id,
+          attention.status === "unknown" || attention.pending
+            ? null
+            : { unread: attention.unread, forced: attention.forced },
+        );
+      }
+    return {
+      session,
+      channelId,
+      visitChannelId,
+      entryMessageIds: new Set(rows.map((row) => row.id)),
+      entryHistoryComplete:
+        window?.status === "ready" &&
+        window.freshness === "verified" &&
+        !window.refreshing &&
+        !window.loadingOlder &&
+        !window.hasMore &&
+        !window.historyLimited,
+      entryReadRevision: session.unread.revision(),
+      entryAttention,
     };
+  };
+  const [notice, setNotice] = useState<{
+    visit: ReturnType<typeof captureVisit>;
     error?: string | undefined;
-  }>(() => ({ visit: { session, channelId, visitChannelId } }));
+    entryReady: boolean;
+    entryFailed: boolean;
+  }>(() => ({
+    visit: captureVisit(),
+    entryReady: false,
+    entryFailed: false,
+  }));
   const { visit } = notice;
   const currentVisit =
     visit.session === session &&
@@ -178,8 +306,10 @@ export function MessageManagement({
     visit.visitChannelId === visitChannelId;
   if (!currentVisit)
     setNotice({
-      visit: { session, channelId, visitChannelId },
+      visit: captureVisit(),
       error: undefined,
+      entryReady: false,
+      entryFailed: false,
     });
   // Captured reporters cannot overwrite errors from a later visit, even to
   // the same channel. Reset during render so stale alerts never reach children.
@@ -204,6 +334,21 @@ export function MessageManagement({
     }),
     [session, channelId, operations, visit],
   );
+  const messageVisit = useMemo(
+    () => ({
+      session: visit.session,
+      channelId: visit.channelId,
+      token: visit,
+      entryMessageIds: visit.entryMessageIds,
+      entryHistoryComplete: visit.entryHistoryComplete,
+      entryReadRevision: visit.entryReadRevision,
+      entryAttention: visit.entryAttention,
+      active: !!visit.visitChannelId,
+      ready: notice.visit === visit && notice.entryReady,
+      failed: notice.visit === visit && notice.entryFailed,
+    }),
+    [visit, notice.visit, notice.entryReady, notice.entryFailed],
+  );
   useEffect(() => {
     const { session, visitChannelId } = visit;
     let active = true;
@@ -211,20 +356,38 @@ export function MessageManagement({
       ? enterVisit(session, visitChannelId)
       : undefined;
     if (presence)
-      void presence.ready.catch((cause) => {
-        if (active)
-          setNotice((current) =>
-            current.visit === visit
-              ? {
-                  ...current,
-                  error:
-                    cause instanceof Error
-                      ? cause.message
-                      : "Could not restore unread state.",
-                }
-              : current,
-          );
-      });
+      void presence.ready.then(
+        () => {
+          if (active)
+            setNotice((current) =>
+              current.visit === visit
+                ? { ...current, entryReady: true }
+                : current,
+            );
+        },
+        (cause) => {
+          if (active)
+            setNotice((current) =>
+              current.visit === visit
+                ? {
+                    ...current,
+                    entryReady: true,
+                    entryFailed: true,
+                    error:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Could not restore unread state.",
+                  }
+                : current,
+            );
+        },
+      );
+    else
+      setNotice((current) =>
+        current.visit === visit
+          ? { ...current, entryReady: true, entryFailed: false }
+          : current,
+      );
     return () => {
       active = false;
       presence?.leave();
@@ -232,7 +395,9 @@ export function MessageManagement({
   }, [visit]);
   return (
     <Management.Provider value={management}>
-      <MessageEditScope>{children}</MessageEditScope>
+      <MessageVisitContext.Provider value={messageVisit}>
+        <MessageEditScope>{children}</MessageEditScope>
+      </MessageVisitContext.Provider>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {presented && selection && available && (
         <DeleteMessageDialog
@@ -295,7 +460,8 @@ export function MessageReadStateItem({
     (listener) => session.unread.subscribe(target, listener),
     () => session.unread.snapshot(target),
   );
-  if (!management) return null;
+  // Coordination between agents is never unread, so it has no read state.
+  if (!management || row.audience === "agents") return null;
   const attention = session.unread.attention(row.channelId, row.id);
   const unread = attention.unread || attention.forced;
   return (

@@ -1,3 +1,6 @@
+import { activityTranscript } from "../../features/agents/activity-transcript";
+import { useRecordedActivityAgents } from "../../features/conversation/typing-presentation";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useProfileGeneration } from "../../features/relay/react";
 import {
   useEffect,
@@ -12,7 +15,10 @@ import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import type { activityRecords } from "../../features/agents/activity-records";
-import { profileActivityViewTarget } from "../../features/profiles/target";
+import {
+  openProfileTranscript,
+  profileActivityViewTarget,
+} from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -21,10 +27,12 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import {
+  NavigationCard,
+  NavigationItem,
+} from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { TypingDots } from "../../shared/design-system/ui/TypingDots";
+import { ActivityStepPreview } from "../../features/messages/ActivityStepPreview";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -33,7 +41,8 @@ import {
 import { currentActivity } from "./current-activity";
 import { messageWork } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
-import type { Agents } from "../../features/agents/service";
+import { workStop, type WorkStopAgents } from "../../features/agents/work-stop";
+import { useWorkStops } from "../../features/agents/use-work-stops";
 import {
   requestWork,
   type RequestWork,
@@ -42,21 +51,60 @@ import {
   localWorkLabel,
   type WorkStep,
 } from "../../features/agents/local-activity";
-import { useTypingReplacement } from "../../features/conversation/typing-presentation";
+import {
+  useTypingReplacement,
+  useActivityTypingReplacement,
+} from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
+import messageStyles from "../../features/messages/Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { AgentResponsePreview } from "../../features/messages/AgentResponsePreview";
+import { RemoteAgentHint } from "../../features/messages/RemoteAgentHint";
+import { remoteWorkDetail } from "../../features/agents/execution-location";
 
 const noSubscribe = () => () => {};
-/** How long a hosted stop shows as stopping before Stop can be tried again:
- * its provider may never report the turn's end. */
-const HOSTED_STOP_MS = 30_000;
-/** What Stop needs of Agents: a hosted agent's provider stops its turns. */
-export type ActivityAgents = Pick<Agents, "interruptible" | "interrupt">;
+export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
-/** Activity belongs to the exact triggering message, not the composer. */
+const noWork: RequestWork[] = [];
+/** Activity belongs to the exact triggering message, not the composer. Once an
+ * agent has publicly replied, its outcome follows that reply instead. */
 export function ActivityAccessory(props: ActivityProps) {
-  const { session, channelId, message, canOpen } = props;
+  if (
+    props.message?.notice === "execution-failure" &&
+    !props.message.edited &&
+    !props.message.attachments.length
+  )
+    return null;
+  const request = props.stoppedRequest;
+  const author = props.message?.authorId;
+  return (
+    <>
+      <MessageActivity {...props} />
+      {request && author && (
+        <MessageActivity
+          {...props}
+          message={request}
+          threadRootId={request.threadRootId}
+          representedAgents={undefined}
+          repliedAgents={undefined}
+          stoppedRequest={undefined}
+          stoppedAgent={author}
+          // Visibility follows the request's scope, not the reply row's layout.
+          threadScoped={
+            props.messageLayout === "thread" || !!props.message?.threadRootId
+          }
+        />
+      )}
+    </>
+  );
+}
+/** With `stoppedAgent`, only that agent's outcome for `message`. */
+function MessageActivity(
+  props: ActivityProps & { stoppedAgent?: string; threadScoped?: boolean },
+) {
+  const { session, channelId, message, canOpen, stoppedAgent } = props;
   const messageId = message?.id;
+  const recorded = useRecordedActivityAgents(session, channelId, messageId);
   // Every row mounts this; only rows with work subscribe to each activity
   // step, profile and choice change. Others read once and wait for work.
   const hasWork = useSyncExternalStore(session.agentActivity.subscribe, () => {
@@ -72,13 +120,24 @@ export function ActivityAccessory(props: ActivityProps) {
     hasWork ? session.agentActivity.subscribe : noSubscribe,
     session.agentActivity.snapshot,
   );
-  const { live: entries, stopped } = useMemo(
+  const work = useMemo(
     () =>
       messageId && hasWork
         ? messageWork(snapshot, channelId, messageId)
-        : { live: [], stopped: [] },
+        : { live: noWork, stopped: noWork },
     [snapshot, channelId, messageId, hasWork],
   );
+  const entries = work.live.filter((entry) => {
+    const outcome = entry.state === "error" || entry.state === "unknown";
+    return stoppedAgent
+      ? outcome && entry.agent === stoppedAgent
+      : !outcome || !props.repliedAgents?.includes(entry.agent);
+  });
+  const stopped = stoppedAgent
+    ? work.stopped.filter((entry) => entry.agent === stoppedAgent)
+    : work.stopped.filter(
+        (entry) => !props.repliedAgents?.includes(entry.agent),
+      );
   const profiles = useSyncExternalStore(
     hasWork ? session.profiles.subscribe : noSubscribe,
     session.profiles.snapshot,
@@ -114,27 +173,89 @@ export function ActivityAccessory(props: ActivityProps) {
       ? `${name} · ${suffixes.get(agent)}`
       : name;
   };
-  const visible = (entry: { agent: string }) =>
-    canOpen(profileActivityViewTarget(entry.agent) ?? "");
-  const shown: Entry[] = entries.filter(visible).map((entry) => {
-    return {
-      agent: entry.agent,
-      name: named(entry.agent),
-      picture: profiles.get(entry.agent)?.picture,
-      working: entry.working,
-      state: entry.state,
-      reason: entry.reason,
-      ...(entry.step ? { step: entry.step } : {}),
-      ...(entry.stoppable ? { stoppable: true } : {}),
-      ...(entry.retryable ? { retryable: true } : {}),
-      lifecycle: entry.lifecycle,
-      records: entry.selected.records,
-      turns: entry.turns,
-    };
-  });
+  const visible = (entry: RequestWork) => {
+    if (!canOpen(profileActivityViewTarget(entry.agent) ?? "")) return false;
+    if (
+      recorded.has(entry.agent) &&
+      entry.state !== "error" &&
+      entry.state !== "unknown" &&
+      entry.state !== "stopped"
+    )
+      return false;
+    const threadScoped =
+      props.threadScoped ??
+      (props.messageLayout === "thread" || !!message?.threadRootId);
+    if (!threadScoped) {
+      const local = (snapshot.local ?? []).filter(
+        (work) =>
+          work.agent === entry.agent &&
+          work.channelId === channelId &&
+          work.messageId === messageId,
+      );
+      if (local.length)
+        return local.some(
+          (work) =>
+            !work.thread &&
+            !(
+              message &&
+              message.replyCount > 0 &&
+              work.threadRootId === message.id
+            ),
+        );
+      const turns = activityTranscript(entry.selected.records, {
+        agent: entry.agent,
+        channelId,
+      }).turns;
+      if (
+        entry.turns.length
+          ? entry.turns.every(
+              (turn) =>
+                !!turn.threadRootId ||
+                turns.some(
+                  (raw) => raw.turnId === turn.turnId && !!raw.threadRootId,
+                ),
+            )
+          : turns.length && turns.every((turn) => !!turn.threadRootId)
+      )
+        return false;
+    }
+    return true;
+  };
+  const shown: Entry[] = entries
+    // Published replies do not end work. Only a mounted history owner can
+    // replace this indicator (via recorded), including when Stop is unavailable.
+    .filter(visible)
+    .map((entry) => {
+      const choice = choices.identities.find(
+        (row) => row.pubkey === entry.agent,
+      );
+      return {
+        agent: entry.agent,
+        name: named(entry.agent),
+        picture: profiles.get(entry.agent)?.picture,
+        remoteStatus: session.viewer
+          ? remoteWorkDetail(choice?.execution, choice?.runtime)
+          : undefined,
+        working: entry.working,
+        state: entry.state,
+        reason: entry.reason,
+        ...(entry.step ? { step: entry.step } : {}),
+        ...(entry.stoppable ? { stoppable: true } : {}),
+        ...(entry.retryable ? { retryable: true } : {}),
+        lifecycle: entry.lifecycle,
+        records: entry.selected.records,
+        turns: entry.turns,
+      };
+    });
   // When work ends (not when access is revoked), keep the last bubble long
   // enough for the shared leave recipe, then remove it.
   const section = useRef<HTMLElement>(null);
+  const focusAfterRetry = () =>
+    section.current
+      ?.querySelector<HTMLButtonElement>(
+        'button[aria-label^="View agent activity:"]',
+      )
+      ?.focus();
   const retained = useRef<Entry[]>([]);
   const [leaving, setLeaving] = useState<Entry[] | null>(null);
   const ended = !entries.length;
@@ -170,68 +291,147 @@ export function ActivityAccessory(props: ActivityProps) {
   }, [leaving]);
   // The render where work ends keeps the same element (from the last shown
   // entries) so the list never loses and regains its height mid-handoff.
-  const bubble = shown.length
-    ? shown
-    : (leaving ?? (ended ? retained.current : []));
-  // Once its live bubble has left, a stopped request stays noted here.
-  const noted = bubble.length ? [] : stopped.filter(visible);
+  const bubble = (
+    shown.length ? shown : (leaving ?? (ended ? retained.current : []))
+  ).filter(
+    (entry) =>
+      !recorded.has(entry.agent) ||
+      entry.state === "error" ||
+      entry.state === "unknown",
+  );
+  // Once its own live bubble has left, a stopped request stays noted here. It sits
+  // in the incoming message frame without a gutter, so it starts at the reply
+  // avatars' edge.
+  const noted = stopped.filter(
+    (entry) =>
+      visible(entry) && !bubble.some((row) => row.agent === entry.agent),
+  );
   const note = noted.length ? (
     <div
-      className={`${styles.root} ${styles.stopped} text-caption text-subtle buzz-arrive`}
-      data-activity-stopped=""
-      data-buzz-ui=""
+      className={`${messageStyles.message} ${styles.outcome}`}
+      data-layout={props.messageLayout ?? "timeline"}
     >
-      <AvatarStack
-        size="mini"
-        items={noted.map(({ agent }) => ({
-          id: agent,
-          name: named(agent),
-          src: avatarMedia(profiles.get(agent)?.picture, session.media),
-          shape: "squircle",
-        }))}
-      />
-      <span>{noted.map(({ agent }) => named(agent)).join(", ")} · Stopped</span>
+      {stoppedAgent && <div className={messageStyles.messageGutter} />}
+      <div
+        className={`${styles.root} ${styles.stopped} text-caption text-subtle buzz-arrive`}
+        data-activity-stopped=""
+        data-buzz-ui=""
+      >
+        {!stoppedAgent && (
+          <AvatarStack
+            size="mini"
+            items={noted.map(({ agent }) => ({
+              id: agent,
+              name: named(agent),
+              src: avatarMedia(profiles.get(agent)?.picture, session.media),
+              shape: "squircle",
+            }))}
+          />
+        )}
+        <span>
+          {!stoppedAgent &&
+            `${noted.map(({ agent }) => named(agent)).join(", ")} · `}
+          Stopped
+        </span>
+      </div>
     </div>
   ) : null;
-  if (props.renderMessageSummary) {
+  if (!bubble.length) return note;
+  const primary = bubble[0];
+  if (!primary) return note;
+  const compact = bubble.every(
+    (entry) => entry.state === "error" || entry.state === "unknown",
+  );
+  if (compact)
     return (
       <>
-        {shown.map((entry) => (
-          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
-        ))}
-        <ActivityBubble
-          {...props}
-          entries={bubble}
-          interactive={shown.length > 0}
-        />
+        <section
+          ref={section}
+          className={`${messageStyles.message} ${styles.outcome}`}
+          data-layout={props.messageLayout ?? "timeline"}
+          data-activity-outcome=""
+          aria-label="Agent activity on this message"
+          aria-hidden={shown.length ? undefined : true}
+        >
+          {stoppedAgent && <div className={messageStyles.messageGutter} />}
+          <div
+            className={`${styles.root} ${styles.caption} text-caption text-subtle`}
+            aria-live="polite"
+          >
+            {!stoppedAgent && (
+              <>
+                <AvatarStack
+                  size="mini"
+                  items={bubble.map((entry) => ({
+                    id: entry.agent,
+                    name: entry.name,
+                    src: avatarMedia(entry.picture, session.media),
+                    shape: "squircle",
+                  }))}
+                />
+                <span>{bubble.map((entry) => entry.name).join(", ")} ·</span>
+              </>
+            )}
+            <ActivityBubble
+              {...props}
+              entries={bubble}
+              interactive={shown.length > 0}
+              onRetried={focusAfterRetry}
+              compact
+            />
+          </div>
+        </section>
         {note}
       </>
     );
-  }
-  if (!bubble.length) return note;
   return (
-    <section
-      ref={section}
-      className={`${styles.root} buzz-arrive`}
-      data-message-activity=""
-      data-arrive="grow"
-      data-leaving={shown.length ? undefined : ""}
-      data-buzz-ui=""
-      aria-label="Agent activity on this message"
-      aria-hidden={shown.length ? undefined : true}
-    >
-      <div>
-        {shown.map((entry) => (
-          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
-        ))}
-        <ActivityBubble
-          key={`${channelId}:${message?.id ?? ""}`}
-          {...props}
-          entries={bubble}
-          interactive={shown.length > 0}
-        />
-      </div>
-    </section>
+    <>
+      <section
+        ref={section}
+        className={`${styles.root} buzz-arrive`}
+        data-message-activity=""
+        data-arrive="grow"
+        data-leaving={shown.length ? undefined : ""}
+        data-buzz-ui=""
+        aria-label="Agent activity on this message"
+        aria-hidden={shown.length ? undefined : true}
+      >
+        <AgentResponsePreview
+          name={primary.name}
+          bylineHint={
+            <RemoteAgentHint
+              session={session}
+              viewer={session.viewer}
+              pubkey={primary.agent}
+            />
+          }
+          participants={bubble.map((entry) => ({
+            id: entry.agent,
+            name: entry.name,
+            picture: avatarMedia(entry.picture, session.media),
+          }))}
+          picture={avatarMedia(primary.picture, session.media)}
+          layout={props.messageLayout}
+        >
+          {shown.map((entry) => (
+            <TypingReplacement
+              shared
+              key={entry.agent}
+              {...props}
+              agent={entry.agent}
+            />
+          ))}
+          <ActivityBubble
+            key={`${channelId}:${message?.id ?? ""}`}
+            {...props}
+            entries={bubble}
+            interactive={shown.length > 0}
+            onRetried={focusAfterRetry}
+          />
+        </AgentResponsePreview>
+      </section>
+      {note}
+    </>
   );
 }
 
@@ -239,6 +439,8 @@ type Entry = {
   agent: string;
   name: string;
   picture: string | undefined;
+  /** Active fallback for a known remote agent without current step details. */
+  remoteStatus: string | undefined;
   working: boolean;
   state: RequestWork["state"];
   reason: string | undefined;
@@ -253,86 +455,37 @@ type Entry = {
 function ActivityBubble({
   entries,
   interactive,
+  compact = false,
+  onRetried,
   agents,
   ...props
-}: ActivityProps & { entries: Entry[]; interactive: boolean }) {
+}: ActivityProps & {
+  entries: Entry[];
+  interactive: boolean;
+  compact?: boolean;
+  onRetried: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  // Agents asked to stop whose work has not stopped yet.
-  const [stops, setStops] = useState<ReadonlySet<string>>(new Set());
-  // The latest stop asked of each agent, so a late timeout knows its own.
-  const attempts = useRef(new Map<string, symbol>());
-  const notify = useToastNotification();
-  // A hosted stop still pending when its activity goes away needs no retry.
-  useEffect(() => {
-    const pending = attempts.current;
-    return () => pending.clear();
-  }, []);
   const message = props.message;
-  const stoppable = (entry: Entry) =>
-    !!message &&
-    (entry.lifecycle
-      ? !!entry.stoppable &&
-        (entry.state === "working" || entry.state === "waiting")
-      : entry.working && !!agents?.interruptible(entry.agent));
-  const forget = (agent: string) => {
-    attempts.current.delete(agent);
-    setStops((prior) => {
-      if (!prior.has(agent)) return prior;
-      const next = new Set(prior);
-      next.delete(agent);
-      return next;
-    });
-  };
-  const stop = (entry: Entry) => {
-    if (!message) return;
-    const attempt = Symbol(entry.agent);
-    attempts.current.set(entry.agent, attempt);
-    setStops((prior) => new Set(prior).add(entry.agent));
-    const newer = () => {
-      const latest = attempts.current.get(entry.agent);
-      return !!latest && latest !== attempt;
-    };
-    // A local request settles as stopped; a hosted turn ends when its
-    // provider reports it, so it shows as stopping until then.
-    const asked = entry.lifecycle
-      ? props.session.agentActivity.interrupt(
-          entry.agent,
-          props.channelId,
-          message.id,
-        )
-      : agents?.interrupt(entry.agent, {
-          channelId: props.channelId,
-          threadRootId: message.threadRootId ?? message.id,
-        });
-    void Promise.resolve(asked).then(
-      (running) => {
-        // A newer stop of this agent reports its own result.
-        if (newer()) return;
-        if (entry.lifecycle) {
-          forget(entry.agent);
-          notify(`Stopped ${entry.name}`, "success");
-        } else if (running === false) {
-          forget(entry.agent);
-          notify(`${entry.name} had nothing running to stop`, "info");
-        } else {
-          notify(`Stopping ${entry.name}`, "success");
-          setTimeout(() => {
-            if (attempts.current.get(entry.agent) !== attempt) return;
-            forget(entry.agent);
-            notify(`${entry.name} hasn’t stopped yet. Try again.`, "error");
-          }, HOSTED_STOP_MS);
-        }
-      },
-      (error: unknown) => {
-        if (newer()) return;
-        forget(entry.agent);
-        notify(
-          `Couldn’t stop ${entry.name}. ${error instanceof Error ? error.message : String(error)}`,
-          "error",
+  const controls = new Map(
+    entries.flatMap((entry) => {
+      const control =
+        message &&
+        workStop(
+          entry,
+          {
+            channelId: props.channelId,
+            messageId: message.id,
+            threadRootId: message.threadRootId ?? message.id,
+          },
+          props.session.agentActivity,
+          agents,
         );
-      },
-    );
-  };
+      return control ? [[entry.agent, control] as const] : [];
+    }),
+  );
+  const { pending: stops, stop } = useWorkStops([...controls.values()]);
+  const notify = useToastNotification();
   // A retried request begins again; its popup closes on the new row.
   const retry = (entry: Entry) => {
     if (!message) return;
@@ -343,6 +496,8 @@ function ActivityBubble({
         message.id,
       );
       setExpanded(false);
+      // Retry replaces the compact failure trigger with the active work row.
+      queueMicrotask(onRetried);
     } catch (error) {
       notify(
         `Couldn’t retry ${entry.name}. ${error instanceof Error ? error.message : String(error)}`,
@@ -350,23 +505,32 @@ function ActivityBubble({
       );
     }
   };
-  // A stop is forgotten once its agent's work here has ended.
-  const live = entries
-    .filter((entry) => entry.working || entry.state === "waiting")
-    .map((entry) => entry.agent)
-    .join(":");
-  useEffect(() => {
-    const agents = new Set(live.split(":"));
-    for (const agent of attempts.current.keys())
-      if (!agents.has(agent)) attempts.current.delete(agent);
-    setStops((prior) =>
-      [...prior].every((agent) => agents.has(agent))
-        ? prior
-        : new Set([...prior].filter((agent) => agents.has(agent))),
-    );
-  }, [live]);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
+  const retirement = useRef({
+    interactive,
+    onFocusedRemoval: props.onFocusedRemoval,
+  });
+  useLayoutEffect(() => {
+    retirement.current = {
+      interactive,
+      onFocusedRemoval: props.onFocusedRemoval,
+    };
+  });
+  useLayoutEffect(
+    () => () => {
+      // Published content removes this preview immediately, without a leave phase.
+      // Ordinary completion uses the existing interactive=false handoff below.
+      if (!retirement.current.interactive) return;
+      const focused = trigger.current?.ownerDocument.activeElement;
+      if (
+        focused &&
+        (trigger.current?.contains(focused) || popup.current?.contains(focused))
+      )
+        retirement.current.onFocusedRemoval?.();
+    },
+    [],
+  );
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
@@ -396,10 +560,8 @@ function ActivityBubble({
   const waiting = entries.some(starting);
   const stepping = entries.some((entry) => entry.working && !starting(entry));
 
-  const unknown = entries.some((entry) => !entry.lifecycle && !entry.working);
-  const failedCount = entries.filter(
-    (entry) => entry.lifecycle && entry.state === "error",
-  ).length;
+  const unknown = entries.some((entry) => entry.state === "unknown");
+  const failedCount = entries.filter((entry) => entry.state === "error").length;
   const label = (entry: Entry) =>
     entry.lifecycle
       ? localWorkLabel({
@@ -412,15 +574,29 @@ function ActivityBubble({
           ...(entry.reason ? { error: entry.reason } : {}),
           ...(entry.step ? { step: entry.step } : {}),
         })
-      : entry.working
-        ? "working"
-        : "status unknown";
-  const failedEntries = entries.filter(
-    (entry) => entry.lifecycle && entry.state === "error",
-  );
+      : entry.state === "error"
+        ? "failed"
+        : entry.working
+          ? "working"
+          : "status unknown";
+  const failedEntries = entries.filter((entry) => entry.state === "error");
   const otherEntries = entries.filter(
     (entry) => !failedEntries.includes(entry),
   );
+  const current =
+    otherEntries.find((entry) => entry.working && entry.step) ??
+    otherEntries.find((entry) => entry.working);
+  const currentPreview =
+    current && !current.lifecycle
+      ? currentActivity(current.records, current.turns)
+      : undefined;
+  const stepText = current?.step
+    ? label(current)
+    : currentPreview
+      ? [currentPreview.title, currentPreview.detail]
+          .filter(Boolean)
+          .join(" · ")
+      : undefined;
   const avatars = (group: Entry[]) => (
     <AvatarStack
       size="mini"
@@ -436,11 +612,13 @@ function ActivityBubble({
     <span className={styles.summaryGroups}>
       {otherEntries.length > 0 && (
         <span className={styles.summaryActivity} data-thread-working="">
-          {avatars(otherEntries)}
           {(working || waiting) && (
-            <TypingDots size="small" state={stepping ? "working" : "waiting"} />
+            <ActivityStepPreview
+              text={stepText}
+              state={stepping ? "working" : "waiting"}
+            />
           )}
-          {unknown && <span>Status unknown</span>}
+          {unknown && <span>Status unavailable</span>}
         </span>
       )}
       {failedCount > 0 && (
@@ -448,31 +626,24 @@ function ActivityBubble({
           className={`${styles.summaryActivity} ${styles.failure}`}
           data-activity-failure=""
         >
-          {avatars(failedEntries)}
+          {avatars(
+            failedEntries.filter((entry) => entry.agent !== entries[0]?.agent),
+          )}
           <WarningCircleIcon size={12} aria-hidden="true" />
-          <span>{failedCount} failed</span>
+          <span>
+            {entries.length === 1 ? "Couldn’t finish" : `${failedCount} failed`}
+          </span>
         </span>
       )}
     </span>
   );
-  const summary = props.renderMessageSummary?.(
-    entries.length
-      ? {
-          participants: entries.map((entry) => entry.agent),
-          content,
-          label: entries
-            .map((entry) => `${entry.name}, ${label(entry)}`)
-            .join("; "),
-          ref: trigger,
-        }
-      : undefined,
-  );
-  if (!entries.length && !summary) return null;
+  if (!entries.length) return null;
   return (
     <PopoverRoot
       open={expanded}
       onOpenChange={(open) => setExpanded(interactive && open)}
     >
+      {compact && content}
       <PopoverTrigger
         openOnHover={interactive && "preview"}
         {...(!interactive
@@ -487,26 +658,29 @@ function ActivityBubble({
             event.preventBaseUIHandler();
             return;
           }
-          if (summary) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          } else if (props.openThread?.()) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          }
         }}
         render={
-          summary ?? (
+          compact ? (
             <Button
               ref={trigger}
+              variant="link"
+              size="inline"
               tabIndex={interactive ? undefined : -1}
-              size="xs"
-              variant="subtle"
+              aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${entry.remoteStatus ? "remote, " : ""}${label(entry)}`).join("; ")} · Details`}
+            >
+              Details
+            </Button>
+          ) : (
+            <button
+              ref={trigger}
+              tabIndex={interactive ? undefined : -1}
+              type="button"
+              className={messageStyles.activityBubbleTrigger}
               data-activity-summary=""
-              aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
+              aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${entry.remoteStatus ? "remote, " : ""}${label(entry)}`).join("; ")}`}
             >
               {content}
-            </Button>
+            </button>
           )
         }
       />
@@ -520,59 +694,74 @@ function ActivityBubble({
         {expanded && (
           <div className={styles.previews}>
             {entries.map((entry) => {
-              // Opens the agent's profile on its Activity tab.
+              // Opens the agent's Activity on this message's transcript.
               const target = profileActivityViewTarget(entry.agent);
               const preview = entry.working
                 ? currentActivity(entry.records, entry.turns)
                 : undefined;
-              const stopping = stops.has(entry.agent);
+              const control = controls.get(entry.agent);
+              const stopping = !!control && stops.has(control.key);
               return (
-                <div key={entry.agent} className={styles.row}>
-                  <NavigationItem
-                    variant="option"
-                    aria-label={`View activity for ${entry.name}`}
-                    disabled={!target || !props.canOpen(target)}
-                    onClick={() => {
-                      if (target && props.canOpen(target) && props.open(target))
-                        setExpanded(false);
-                    }}
-                    icon={
-                      <ActivityAvatar
-                        session={props.session}
-                        entry={entry}
-                        size="small"
-                      />
-                    }
-                    label={
-                      <span
-                        className={`text-body-sm ${styles.preview}`}
-                        data-error={
-                          entry.lifecycle && entry.state === "error"
-                            ? ""
-                            : undefined
-                        }
-                      >
-                        <ShimmerText
-                          active={stopping || entry.working || starting(entry)}
-                        >
-                          {(stopping ? "Stopping…" : undefined) ??
-                            (entry.lifecycle
-                              ? label(entry)
-                              : !entry.working
-                                ? "Activity interrupted or out of date"
-                                : (preview?.title ??
-                                  "Waiting for activity details"))}
-                        </ShimmerText>
-                        {preview?.detail && (
-                          <span className={styles.detail}>
-                            <ShimmerText active={entry.working}>
-                              {preview.detail}
-                            </ShimmerText>
-                          </span>
-                        )}
+                <NavigationCard key={entry.agent}>
+                  {compact && !entry.lifecycle ? (
+                    <div className={`${styles.outcomeDetail} text-body-sm`}>
+                      <span className="text-subtle">{entry.name}</span>
+                      <span>
+                        {entry.state === "error"
+                          ? "This request ended before it could finish. Try again in a new thread, or choose a different model."
+                          : "Buzz couldn’t confirm whether this request finished. Check the conversation before trying again."}
                       </span>
-                    }
-                  />
+                    </div>
+                  ) : (
+                    <NavigationItem
+                      variant="option"
+                      aria-label={`View activity for ${entry.name}`}
+                      disabled={!target || !props.canOpen(target)}
+                      onClick={() => {
+                        if (
+                          target &&
+                          props.canOpen(target) &&
+                          openProfileTranscript(target, props.open)
+                        )
+                          setExpanded(false);
+                      }}
+                      icon={
+                        <ActivityAvatar
+                          session={props.session}
+                          entry={entry}
+                          size="small"
+                        />
+                      }
+                      label={
+                        <span
+                          className={`text-body-sm ${styles.preview}`}
+                          data-error={entry.state === "error" ? "" : undefined}
+                        >
+                          <ShimmerText
+                            active={
+                              stopping || entry.working || starting(entry)
+                            }
+                          >
+                            {(stopping ? "Stopping…" : undefined) ??
+                              (entry.lifecycle || entry.state === "error"
+                                ? label(entry)
+                                : !entry.working
+                                  ? "Activity interrupted or out of date"
+                                  : (preview?.title ??
+                                    entry.remoteStatus ??
+                                    "Waiting for activity details"))}
+                          </ShimmerText>
+                          {preview?.detail && (
+                            <span className={styles.detail}>
+                              <ShimmerText active={entry.working}>
+                                {preview.detail}
+                              </ShimmerText>
+                            </span>
+                          )}
+                        </span>
+                      }
+                    />
+                  )}
                   {entry.lifecycle && entry.state === "error" ? (
                     <span className={styles.action}>
                       {entry.retryable && (
@@ -606,16 +795,16 @@ function ActivityBubble({
                         }}
                       />
                     </span>
-                  ) : stoppable(entry) ? (
+                  ) : control ? (
                     <span className={styles.action}>
                       <Button
                         size="sm"
-                        variant="subtle"
+                        variant="plain"
                         aria-label={`Stop ${entry.name}`}
                         loading={stopping}
                         onClick={(event) => {
                           event.stopPropagation();
-                          stop(entry);
+                          stop(control, entry.name);
                         }}
                       >
                         <OctagonIcon
@@ -626,7 +815,7 @@ function ActivityBubble({
                       </Button>
                     </span>
                   ) : undefined}
-                </div>
+                </NavigationCard>
               );
             })}
           </div>
@@ -688,7 +877,12 @@ function TypingReplacement({
   channelId,
   threadRootId,
   agent,
-}: ComposerAccessoryProps & { agent: string }) {
+  shared = false,
+}: ComposerAccessoryProps & { agent: string; shared?: boolean }) {
+  useActivityTypingReplacement(
+    { session, channelId, threadRootId, pubkey: agent },
+    shared,
+  );
   useTypingReplacement(
     { session, channelId, threadRootId, pubkey: agent },
     true,

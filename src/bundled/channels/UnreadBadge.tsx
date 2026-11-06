@@ -20,7 +20,7 @@ export function ordinaryUnread(
   const count = snapshot.observedCount ?? 0;
   return (
     snapshot.manual !== "none" ||
-    (dm ? count > 0 : !muted && count > (snapshot.attentionCount ?? 0))
+    (!muted && (dm ? count > 0 : count > (snapshot.attentionCount ?? 0)))
   );
 }
 
@@ -144,6 +144,7 @@ export function UnreadBadge({
         <span
           className={styles.unreadState}
           data-channel-unread=""
+          data-channel-muted={muted || undefined}
           data-priority={priority}
           role="img"
           aria-label={unreadLabel}
@@ -164,6 +165,7 @@ export function UnreadBadge({
           <span
             className={styles.threadActivityDot}
             data-channel-activity=""
+            data-channel-muted={muted || undefined}
             role="img"
             aria-label={threadLabel}
             title={threadLabel}

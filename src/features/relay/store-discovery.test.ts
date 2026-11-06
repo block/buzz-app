@@ -3,6 +3,7 @@ import {
   WORKFLOW_CHANNEL_BATCH,
   WORKFLOW_DEFINITION_LIMIT,
 } from "../workflows/queries";
+import { byteSize } from "./budget";
 import { tag, type RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import type { ChannelSummary } from "./contracts";
@@ -31,12 +32,12 @@ function named(id: string) {
 }
 // Preserve real page/capacity boundaries; sign metadata lazily when requested.
 beforeAll(() => {
-  memberships = Array.from({ length: 1025 }, (_, i) => {
+  memberships = Array.from({ length: 10_001 }, (_, i) => {
     const id = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
     names.set(id, { name: `Channel ${i}` });
     return roster(relay, id, [viewer.pubkey]);
   }).sort((a, b) => a.id.localeCompare(b.id));
-});
+}, 60_000);
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
@@ -77,8 +78,12 @@ function setup(
     next,
     settled,
     emit: (events: readonly RelayEvent[]) => receive(events),
-    async rosters(count: number) {
-      for (let offset = 0; offset <= count; offset += 500) {
+    async rosters(count: number, exhaust = true) {
+      for (
+        let offset = 0;
+        offset < count || (exhaust && offset === count);
+        offset += 500
+      ) {
         const request = await next(39002);
         const previous = memberships[offset - 1];
         expect(request.filters).toEqual([
@@ -482,44 +487,52 @@ it("keeps membership and earlier names when a later metadata batch fails, then r
   ).toBe(true);
 });
 
-it.each([1024, 1025])(
+it.each([10_000, 10_001])(
   "reports retention coverage truthfully for %i memberships",
   async (count) => {
     const h = setup();
     h.channels.ensureList();
     await h.rosters(count);
-    await h.metadata(1024);
-    expect(h.channels.list().channels).toHaveLength(1024);
-    expect(h.channels.list().coverage).toBe(
-      count > 1024 ? "partial" : undefined,
-    );
+    await h.metadata(count);
+    expect(h.channels.list().channels).toHaveLength(count);
+    expect(h.channels.list().coverage).toBeUndefined();
     expect(h.pending).toHaveLength(0);
   },
+  60_000,
 );
 
-it("does not revoke omitted channels when retained rosters exhaust capacity", async () => {
-  const h = setup();
-  h.emit([roster(relay, "omitted", [viewer.pubkey])]);
+it("does not revoke omitted channels when retained bytes exhaust the budget", async () => {
+  const omitted = roster(relay, "omitted", [viewer.pubkey]);
+  const maxDiscoveryBytes =
+    byteSize(omitted) +
+    memberships
+      .slice(0, 499)
+      .reduce((bytes, event) => bytes + byteSize(event), 0);
+  const h = setup({ maxDiscoveryBytes });
+  h.emit([omitted]);
   h.channels.ensureList();
-  await h.rosters(1024);
-  await h.metadata(1023);
+  await h.rosters(500, false);
+  await h.metadata(499);
   expect(h.channels.list().coverage).toBe("partial");
-  expect(h.channels.list().channels).toHaveLength(1024);
+  expect(h.channels.list().channels).toHaveLength(500);
   expect(
     h.channels.list().channels.some((channel) => channel.id === "omitted"),
   ).toBe(true);
 });
 
 it("keeps coverage partial when exact discovery overflows during omission confirmation", async () => {
-  const h = setup();
-  h.emit(memberships.slice(0, 1024));
-  expect(h.channels.list().channels).toHaveLength(1024);
+  const maxDiscoveryBytes = memberships
+    .slice(0, 1000)
+    .reduce((bytes, event) => bytes + byteSize(event), 0);
+  const h = setup({ maxDiscoveryBytes });
+  h.emit(memberships.slice(0, 1000));
+  expect(h.channels.list().channels).toHaveLength(1000);
 
   h.channels.ensureList();
-  await h.rosters(1000);
+  await h.rosters(976);
   const confirmation = await h.next(39002);
   const omitted = memberships
-    .slice(1000, 1024)
+    .slice(976, 1000)
     .flatMap((event) => tag(event, "d") ?? []);
   const confirmationIds = confirmation.filters[0]?.["#d"] ?? [];
   expect(confirmation.filters[0]).toMatchObject({
@@ -552,7 +565,7 @@ it("keeps coverage partial when exact discovery overflows during omission confir
   expect(h.channels.list().coverage).toBe("partial");
 
   confirmation.respond([]);
-  await h.metadata(1000);
+  await h.metadata(976);
   expect(h.session.live.snapshot().roster.state).toBe("verified");
   expect(h.channels.list().coverage).toBe("partial");
   expect(
@@ -562,13 +575,18 @@ it("keeps coverage partial when exact discovery overflows during omission confir
   expect(h.pending).toHaveLength(0);
 });
 
-it("marks metadata retention overflow as partial without discarding membership", async () => {
-  const h = setup();
-  const member = memberships[1024];
+it("marks metadata byte overflow as partial without discarding membership", async () => {
+  const initial = [...names.keys()].slice(0, 500).map(named);
+  const retained = new Set(initial.map((event) => tag(event, "d")));
+  const member = memberships.find((event) => !retained.has(tag(event, "d")));
   assert.exists(member);
   const id = tag(member, "d");
   assert.exists(id);
-  h.emit([...names.keys()].filter((channelId) => channelId !== id).map(named));
+  const maxDiscoveryBytes =
+    byteSize(member) +
+    initial.reduce((bytes, event) => bytes + byteSize(event), 0);
+  const h = setup({ maxDiscoveryBytes });
+  h.emit(initial);
   h.channels.ensureList();
   (await h.next(39002)).respond([member]);
   (await h.next(39000)).respond([named(id)]);
@@ -1387,6 +1405,90 @@ it("orders public matches by the shared ranks, best first", async () => {
   expect(h.pending).toHaveLength(0);
 });
 
+it("reads the open directory for browsing with descriptions, sharing the search read", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `13000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const page = [
+    metadata(relay, id(0), "design", 1_700_000_000, [
+      ["public"],
+      ["t", "stream"],
+      ["about", "Critiques and crits"],
+    ]),
+    metadata(relay, id(1), "ops", 1_700_000_000, [["public"], ["t", "stream"]]),
+  ];
+  // A caller that stops waiting leaves the read for the next one.
+  const gaveUp = new AbortController();
+  const abandoned = h.channels.readDirectory?.({ signal: gaveUp.signal });
+  assert.exists(abandoned);
+  const request = await h.next(39000);
+  gaveUp.abort();
+  await expect(abandoned).rejects.toThrow();
+  const done = h.channels.readDirectory?.();
+  // A search while it runs joins the same read.
+  const search = h.channels.searchPublic?.("zzz");
+  request.respond(page);
+  expect(await done).toEqual({ partial: false });
+  expect(await search).toEqual({ channels: [], partial: false });
+  expect(h.channels.openDirectory?.()).toEqual([
+    {
+      id: id(0),
+      name: "design",
+      description: "Critiques and crits",
+      channelType: "stream",
+    },
+    { id: id(1), name: "ops", channelType: "stream" },
+  ]);
+  // Within the reuse window, browsing again reads nothing.
+  expect(await h.channels.readDirectory?.()).toEqual({ partial: false });
+  expect(h.pending).toHaveLength(0);
+});
+
+it("shows a first directory read's pages to browsing only, and names them for references once it finishes", async () => {
+  const h = setup({ publicDirectoryPage: 2, maxPublicDirectory: 10 });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `13100000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, at: number) =>
+    metadata(relay, id(n), `open-${n}`, at, [["public"], ["t", "stream"]]);
+  const list = vi.fn();
+  const pages = vi.fn();
+  const offList = h.channels.subscribeList(list);
+  const offPages = h.channels.subscribeDirectory?.(pages);
+  try {
+    const done = h.channels.readDirectory?.();
+    (await h.next(39000)).respond([
+      open(0, 1_700_000_003),
+      open(1, 1_700_000_002),
+    ]);
+    await vi.waitFor(() => expect(pages).toHaveBeenCalledTimes(1));
+    // Browsing has the first page; references and the list hear nothing yet.
+    expect(h.channels.browseDirectory?.()).toEqual([
+      { id: id(0), name: "open-0", channelType: "stream" },
+      { id: id(1), name: "open-1", channelType: "stream" },
+    ]);
+    expect(h.channels.openDirectory?.()).toEqual([]);
+    expect(list).not.toHaveBeenCalled();
+    (await h.next(39000)).respond([open(2, 1_700_000_001)]);
+    expect(await done).toEqual({ partial: false });
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(pages).toHaveBeenCalledTimes(2);
+    const names = ["open-0", "open-1", "open-2"];
+    expect(h.channels.openDirectory?.().map(({ name }) => name)).toEqual(names);
+    expect(h.channels.browseDirectory?.().map(({ name }) => name)).toEqual(
+      names,
+    );
+  } finally {
+    offList();
+    offPages?.();
+  }
+});
+
 it("names the completed public directory's open channels for references, without reading", async () => {
   const h = setup();
   h.channels.ensureList();
@@ -1628,8 +1730,16 @@ it("reports landed public pages' matches while the read goes on, to a search tha
   expect(h.pending).toHaveLength(0);
 });
 
+function retainedDiscoveryBytes(count: number) {
+  return memberships.slice(0, count).reduce((bytes, event) => {
+    const id = tag(event, "d");
+    assert.exists(id);
+    return bytes + byteSize(event) + byteSize(named(id));
+  }, 0);
+}
+
 it("leaves a nearly full discovery room for the final public search answer", async () => {
-  const h = setup();
+  const h = setup({ maxDiscoveryBytes: retainedDiscoveryBytes(1023) + 512 });
   h.channels.ensureList();
   await h.rosters(1023);
   await h.metadata(1023);
@@ -1640,8 +1750,8 @@ it("leaves a nearly full discovery room for the final public search answer", asy
     progress: (found) => typed.push(names(found)),
   });
   assert.exists(done);
-  // The one free slot is kept for the final answer: a page in flight would
-  // spend it on a match the better one on the next page then cannot replace.
+  // The remaining bytes fit one final metadata record. Provisional records
+  // cannot consume the budget for a better match on the next page.
   (await take()).respond(first);
   await vi.waitFor(() => expect(typed).toEqual([[]]));
   (await take()).respond(second);
@@ -1653,14 +1763,14 @@ it("leaves a nearly full discovery room for the final public search answer", asy
 });
 
 it("leaves room for the final answers of public searches that run side by side", async () => {
-  const h = setup();
+  const h = setup({ maxDiscoveryBytes: retainedDiscoveryBytes(1022) + 1024 });
   h.channels.ensureList();
   await h.rosters(1022);
   await h.metadata(1022);
   const { id, first, second, take, resolves, names } = openDirectory(h);
   const typed: string[][] = [];
   // Cmd-K's `in:recent-1 nsec-backup`: an exact lookup and a substring search
-  // share the read, and each final answer needs one of the two free slots.
+  // share the read, and each final answer needs its metadata byte budget.
   const found = h.channels.searchPublic?.("nsec-backup", {
     limit: 1,
     progress: (found) => typed.push(names(found)),
@@ -1671,8 +1781,7 @@ it("leaves room for the final answers of public searches that run side by side",
   });
   assert.exists(found);
   assert.exists(scoped);
-  // A page in flight would spend a slot on a match the substring search's
-  // final answer replaces, leaving the exact lookup none.
+  // Provisional metadata cannot consume the bytes for either final answer.
   (await take()).respond(first);
   await vi.waitFor(() => expect(typed).toEqual([[]]));
   (await take()).respond(second);
@@ -1686,7 +1795,7 @@ it("leaves room for the final answers of public searches that run side by side",
 });
 
 it("leaves room for the final answer of a public search that joins after a page lands", async () => {
-  const h = setup();
+  const h = setup({ maxDiscoveryBytes: retainedDiscoveryBytes(1022) + 1024 });
   h.channels.ensureList();
   await h.rosters(1022);
   await h.metadata(1022);
@@ -1697,8 +1806,8 @@ it("leaves room for the final answer of a public search that joins after a page 
     progress: (found) => typed.push(names(found)),
   });
   assert.exists(found);
-  // Alone on the read, a page in flight would still spend a slot the final
-  // answers of this search and of an `in:` lookup joining later both need.
+  // The byte budget stays available for this final answer and for an
+  // exact lookup that can join the read later.
   (await take()).respond(first);
   await vi.waitFor(() => expect(typed).toEqual([[]]));
   // Editing `nsec-backup` to `in:recent-1 nsec-backup` starts only the lookup.
@@ -1913,4 +2022,49 @@ it("finds a labeled system channel whose roster arrived before its metadata", as
   ]);
   names.respond([labeled]);
   expect(found.map((channel) => channel.id)).toEqual([id]);
+});
+
+it("counts members in small side-by-side reads, keeping each read's answers when another fails", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const ids = Array.from(
+    { length: 12 },
+    (_, n) => `13200000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+  );
+  const counted = h.channels.readMemberCounts?.(ids);
+  const first = await h.next(39002);
+  const second = await h.next(39002);
+  // Ten rosters at most per read, and the second doesn't wait for the first.
+  expect(first.filters[0]?.["#d"]).toEqual(ids.slice(0, 10));
+  expect(second.filters[0]?.["#d"]).toEqual(ids.slice(10));
+  second.fail(new Error("Relay response too large"));
+  first.respond([roster(relay, ids[0] ?? "", [viewer.pubkey, relay.pubkey])]);
+  const result = await counted;
+  expect(result?.counts).toEqual(new Map([[ids[0], 2]]));
+  expect(result?.failed).toEqual(ids.slice(10));
+  // The answered count is kept; only the failed ids read again.
+  const again = h.channels.readMemberCounts?.([ids[0] ?? "", ...ids.slice(10)]);
+  const retry = await h.next(39002);
+  expect(retry.filters[0]?.["#d"]).toEqual(ids.slice(10));
+  retry.respond([]);
+  expect((await again)?.counts).toEqual(new Map([[ids[0], 2]]));
+  expect(h.pending).toHaveLength(0);
+});
+
+it("accepts only a directory page size that divides its budget", () => {
+  for (const options of [
+    { publicDirectoryPage: 0 },
+    { publicDirectoryPage: 501 },
+    { publicDirectoryPage: 2.5 },
+    { publicDirectoryPage: 300, maxPublicDirectory: 1000 },
+  ])
+    expect(() => createRelaySession(null, options)).toThrow(
+      "Invalid public directory capacity",
+    );
+  createRelaySession(null, {
+    publicDirectoryPage: 10,
+    maxPublicDirectory: 20,
+  }).dispose();
 });

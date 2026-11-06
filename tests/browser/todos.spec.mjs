@@ -74,7 +74,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(
       page
         .getByRole("article", { name: "Conversation" })
-        .getByRole("tab", { name: "Alpha", exact: true }),
+        .getByRole("button", { name: "Manage members of Alpha", exact: true }),
     ).toBeVisible();
   };
   await page.goto(app.origin);
@@ -252,25 +252,23 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(assignee).toHaveAttribute("data-size", "sm");
     await expect(assignee).toContainText("Fixture Reader");
   };
-  // Channel-specific drawers stay off other pages, but returning to the same
-  // channel can reopen its Canvas-backed content with a live launcher.
+  // Channel-specific drawers stay off other pages; returning to the same
+  // channel shows the panel left open there, with a live launcher.
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
     exact: true,
   });
-  const pages = sidebar.getByRole("navigation", { name: "Pages" });
-  for (const destination of ["Inbox", "Bestie"]) {
-    await pages.getByRole("button", { name: destination, exact: true }).click();
+  for (const destination of ["Activity", "Bestie"]) {
+    await openPage(page, destination);
     await expect(
       page.getByRole("region", { name: destination, exact: true }),
     ).toBeVisible();
     await expect(drawer).toHaveCount(0);
     await expect(launcher).toHaveCount(0);
+    await openPage(page, "Messages");
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-    await expect(drawer).toHaveCount(0);
-    await expect(launcher).toHaveAttribute("aria-expanded", "false");
-    await launcher.click();
     await expect(drawer).toBeVisible();
+    await expect(launcher).toHaveAttribute("aria-expanded", "true");
     await expect(todo).toBeChecked();
     await expect(assignee).toHaveAttribute(
       "aria-description",
@@ -319,13 +317,13 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(
     page
       .getByRole("article", { name: "Conversation" })
-      .getByRole("tab", { name: "Beta", exact: true }),
+      .getByRole("button", { name: "Manage members of Beta", exact: true }),
   ).toBeVisible();
   await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
   await expect(
     page
       .getByRole("article", { name: "Conversation" })
-      .getByRole("tab", { name: "Alpha", exact: true }),
+      .getByRole("button", { name: "Manage members of Alpha", exact: true }),
   ).toBeVisible();
   await plugins();
   await enabled.click();
@@ -338,6 +336,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await page
     .getByRole("menuitem", { name: "View canvas", exact: true })
     .click();
+  await expect(
+    page.getByRole("article", { name: "Saved Canvas" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Edit", exact: true }).click();
   const canvas = page.getByRole("textbox", {
     name: "Canvas Markdown",
     exact: true,

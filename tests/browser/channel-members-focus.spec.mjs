@@ -209,7 +209,7 @@ test("overlapping idle additions restore focus when the suggestion list retires"
         });
         await expect(recovery).toBeVisible();
         await expect(
-          recovery.getByRole("button", { name: "Retry", exact: true }),
+          recovery.getByRole("button", { name: "Retry adding Agent 2" }),
         ).toBeEnabled();
       } else {
         await expect(
@@ -832,6 +832,10 @@ test("final invitation expansion continues keyboard focus at the first new row",
     await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", { name: "Manage members" });
     await dialog.getByRole("searchbox").fill("Helper");
+    // Late search results can move Show more between pointer down and up.
+    await expect(
+      dialog.getByRole("region", { name: "Member list" }),
+    ).toHaveAttribute("data-refreshing", "false");
     const group = dialog.getByRole("region", {
       name: "Your other agents",
       exact: true,
@@ -1315,9 +1319,7 @@ test("Solo adds an agent with pointer or Enter and retains the search focus", as
       name: "Search people, agents and channels",
     });
     await expect(search).toBeFocused();
-    await expect(search).toHaveAccessibleDescription(
-      /can read the full history/,
-    );
+    await expect(search).toHaveAccessibleDescription("");
     const add = dialog.getByRole("button", { name: /Add Morgan/ });
     await expect(add).toHaveCount(0);
     await expect(dialog).toHaveAccessibleDescription("");

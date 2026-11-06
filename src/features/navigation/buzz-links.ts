@@ -10,8 +10,13 @@ import {
   type NavigationScope,
 } from "./targets";
 
+/** A published agent card's id: one path segment on the avatars CDN, such as
+ * `tinker` or `av_…`. */
+export const AGENT_CARD_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 type BuzzLink =
   | { format: "plugin-install"; source: GitPluginSource }
+  | { format: "agent-card"; card: string }
   | { format: "removed" }
   | { format: "entity"; route: EntityRoute }
   | {
@@ -75,6 +80,17 @@ function parsePluginLink(url: URL, href: string): BuzzLink | null {
   }
 }
 
+/** The Agents page, starting an agent from card `card` in `scope`. */
+export const agentCardTarget = (card: string, scope: NavigationScope) =>
+  ({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope,
+    route: { version: 1, params: { card } },
+  }) as const;
+
 /** Legacy links are relative to the receiving conversation's community, never an access grant. */
 export function parseBuzzLink(href: string): BuzzLink | null {
   try {
@@ -93,7 +109,7 @@ export function parseBuzzLink(href: string): BuzzLink | null {
         (url.pathname !== "" &&
           (url.pathname !== "/" ||
             !/^buzz:\/\/plugin-install\/\?/i.test(href))) ||
-        ["repository", "ref"].some(
+        ["repository", "ref", "path", "commit"].some(
           (key) => url.searchParams.getAll(key).length > 1,
         )
       )
@@ -103,8 +119,24 @@ export function parseBuzzLink(href: string): BuzzLink | null {
         source: parseGitPluginSource({
           repository: url.searchParams.get("repository") ?? "",
           reference: url.searchParams.get("ref") ?? "",
+          ...(url.searchParams.has("path")
+            ? { path: url.searchParams.get("path") }
+            : {}),
+          ...(url.searchParams.has("commit")
+            ? { commit: url.searchParams.get("commit") }
+            : {}),
         }),
       };
+    }
+    // `buzz://agent/new?card=<id>`, as Buzz mobile reads it.
+    if (url.hostname === "agent") {
+      const cards = url.searchParams.getAll("card");
+      const card = cards[0] ?? "";
+      return url.pathname === "/new" &&
+        cards.length === 1 &&
+        AGENT_CARD_ID.test(card)
+        ? { format: "agent-card", card }
+        : null;
     }
     if (
       url.hostname === "project" &&
@@ -187,6 +219,7 @@ export function buzzLinkTarget(href: string, scope: NavigationScope) {
       pluginImport: link.source,
     });
   if (link.format === "entity") return entityTarget(link.route, scope);
+  if (link.format === "agent-card") return agentCardTarget(link.card, scope);
   if (link.format === "removed")
     return {
       version: 1,

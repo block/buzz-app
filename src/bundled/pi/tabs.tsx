@@ -39,6 +39,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { effortLabel } from "../claude-code/runtime";
@@ -543,6 +544,7 @@ export function createTabs({
   function CreateModel({
     config,
     onChange,
+    onReadyChange,
     disabled,
     modelAppearance,
   }: AgentCreateProps<Config>) {
@@ -563,6 +565,12 @@ export function createTabs({
     );
     const unknown = unknownProvider(current, providers);
     const fallback = defaultModel(current, providers?.defaults);
+    const ready =
+      listing.status === "ready" &&
+      !unknown &&
+      !!id.trim() &&
+      !!(current.model || fallback)?.trim();
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const named = (model: string) =>
       models.value?.find((item) => item.id === model)?.label ?? model;
     const provider =
@@ -649,12 +657,10 @@ export function createTabs({
     agent,
     place,
     working,
-    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     place: Place;
     working: boolean;
-    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
     const [read, refresh] = useRead(
       (signal) => runtime.transcript(agent.key, place, working, signal),
@@ -682,7 +688,9 @@ export function createTabs({
           <ActivityTranscript
             transcript={read.value}
             agentName={agent.name}
-            openConversation={openConversation}
+            agentKey={agent.key}
+            agentPicture={agent.picture}
+            community={agent.relay}
             state={() => (working ? "working" : undefined)}
             before={
               read.value.more && (
@@ -710,12 +718,10 @@ export function createTabs({
     agent,
     conversation,
     initialTranscript,
-    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
-    openConversation?: AgentViewProps<Config>["openConversation"];
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -765,7 +771,6 @@ export function createTabs({
         conversation={conversation}
         places={places}
         working={working}
-        openConversation={openConversation}
       />
     );
   }
@@ -775,14 +780,13 @@ export function createTabs({
     conversation,
     places,
     working,
-    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     places: readonly Place[];
     working: readonly number[];
-    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
+    useClockFormat();
     const { session: here } = useOpenedSession(
       places,
       conversation,
@@ -864,7 +868,6 @@ export function createTabs({
               agent={agent}
               place={open}
               working={working.includes(open.conversation)}
-              openConversation={openConversation}
             />
           </PanelSubview>
         )}

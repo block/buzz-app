@@ -3,7 +3,6 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -25,7 +24,6 @@ import {
   BoxArrowUpIcon,
   CheckCircleIcon,
   CircleNotchIcon,
-  LinkBreakIcon,
   GlobeIcon,
   SignOutIcon,
   TrashIcon,
@@ -36,7 +34,6 @@ import {
   boundKey,
   check,
   clearPendingDeletion,
-  HOST_SUFFIX,
   isDefinitiveDeletionRejection,
   makePendingDeletion,
   persistPendingDeletion,
@@ -45,7 +42,6 @@ import {
   readPendingDeletion,
   relayUrl,
   Unsupported,
-  VALID_NAME,
   type Account,
   type Api,
   type Community,
@@ -54,6 +50,7 @@ import {
   type Quota,
 } from "./api";
 import { writeClipboardText } from "../../../shared/clipboard";
+import { CommunityAddressField, useCommunityAddress } from "./CommunityAddress";
 
 const card = "mt-6 rounded-xl border border-default p-5";
 const sectionClassName = "mt-section-gap";
@@ -64,6 +61,8 @@ type Confirm = {
   title: string;
   description: string;
   action: string;
+  /** Both start on Cancel: permanent shows the action in red, guarded highlights Cancel. */
+  caution?: "permanent" | "guarded";
   run(): Promise<void>;
 };
 
@@ -90,6 +89,7 @@ export function HostedCommunities({
   const [action, setAction] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   const [transfer, setTransfer] = useState<Community | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Community | null>(null);
   const [pendingDeletion, setPendingDeletion] =
@@ -572,7 +572,8 @@ export function HostedCommunities({
                 <p className="text-body-sm text-muted">
                   Your Builderlab account is linked to another Buzz key.
                   Creating communities and copying addresses are paused until
-                  the identities match.
+                  the identities match. To keep the account’s key, sign in to
+                  Buzz on this device with that key instead of switching.
                 </p>
                 <dl className="text-body-sm">
                   <dt className="text-muted">Account uses</dt>
@@ -582,18 +583,29 @@ export function HostedCommunities({
                 </dl>
                 <Button
                   variant="primary"
-                  loading={action === "switch"}
                   disabled={busy || !local}
                   onClick={() =>
-                    void run("switch", async () => {
-                      check(
-                        await api.call("unbind"),
-                        "Could not release the previously connected Buzz identity.",
-                      );
-                      setPendingDeletion(null);
-                      // Unbound is a valid resting state; Connect recovers it.
-                      setIdentity(null);
-                      if (activeRef.current()) await bind();
+                    setConfirm({
+                      title: "Switch to this device’s identity?",
+                      // kgoose revokes an unlinked key: binding it again answers 409.
+                      // The client can't tell whether this device's key already was.
+                      description:
+                        "The key your account uses now will be permanently unlinked. It can never be linked to a Builderlab account again. If this device’s key was unlinked before, Builderlab refuses it too, and your account is left with no key.",
+                      action: "Switch identity",
+                      caution: "permanent",
+                      run: async () => {
+                        check(
+                          await api.call("unbind"),
+                          "Could not release the previously connected Buzz identity.",
+                        );
+                        setPendingDeletion(null);
+                        // Unbound is a valid resting state; Connect recovers it.
+                        setIdentity(null);
+                        // The unlink is done: retire its confirmation so a
+                        // failed bind is never retried by unlinking again.
+                        setConfirm(null);
+                        if (activeRef.current()) await bind();
+                      },
                     })
                   }
                 >
@@ -601,39 +613,13 @@ export function HostedCommunities({
                 </Button>
               </section>
             ) : (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-body-sm">
-                  <CheckCircleIcon size={16} aria-hidden="true" />
-                  Buzz identity connected{" "}
-                  <span className="break-all font-mono text-muted">
-                    {npub(bound)}
-                  </span>
-                </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() =>
-                    setConfirm({
-                      title: "Unpair this Buzz identity?",
-                      description:
-                        "Your Builderlab account will no longer be connected to this Buzz key. You can reconnect any key later, but community actions stay unavailable until you do.",
-                      action: "Unpair identity",
-                      run: async () => {
-                        check(
-                          await api.call("unbind"),
-                          "Could not unpair the Buzz identity.",
-                        );
-                        setPendingDeletion(null);
-                        setIdentity(null);
-                        await settle();
-                      },
-                    })
-                  }
-                >
-                  <LinkBreakIcon aria-hidden="true" /> Unpair identity
-                </Button>
-              </div>
+              <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-body-sm">
+                <CheckCircleIcon size={16} aria-hidden="true" />
+                Buzz identity connected{" "}
+                <span className="break-all font-mono text-muted">
+                  {npub(bound)}
+                </span>
+              </p>
             )}
           </SettingsGroup>
           <div className="mt-section-gap">
@@ -834,6 +820,7 @@ export function HostedCommunities({
                                     description:
                                       "New and existing connections stop and the address stays reserved. Archiving can’t be undone from here without unarchiving, and the community keeps counting toward your quota — it isn’t deleted.",
                                     action: "Archive",
+                                    caution: "guarded",
                                     run: () =>
                                       mutate(
                                         "archive",
@@ -967,15 +954,27 @@ export function HostedCommunities({
           title={confirm.title}
           description={confirm.description}
           pending={busy}
+          initialFocus={confirm.caution ? undefined : proceed}
           onClose={() => setConfirm(null)}
           {...(failure ? { children: failure } : {})}
           actions={
             <>
-              <Button disabled={busy} onClick={() => setConfirm(null)}>
+              <Button
+                variant={confirm.caution === "guarded" ? "prominent" : "subtle"}
+                disabled={busy}
+                onClick={() => setConfirm(null)}
+              >
                 Cancel
               </Button>
               <Button
-                variant="prominent"
+                ref={proceed}
+                variant={
+                  confirm.caution === "permanent"
+                    ? "destructive"
+                    : confirm.caution
+                      ? "subtle"
+                      : "prominent"
+                }
                 loading={busy}
                 onClick={() =>
                   void run("confirm", confirm.run).then(
@@ -1104,41 +1103,24 @@ function CreateCommunity({
   creating: boolean;
   onCreate(name: string): Promise<boolean>;
 }) {
-  const suffixId = useId();
-  const [name, setName] = useState("");
-  // null while checking; otherwise the answer or the failure to show.
-  const [available, setAvailable] = useState<boolean | null>(null);
-  const [failed, setFailed] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  const valid = name.length <= 63 && VALID_NAME.test(name);
-  // Check a paused, valid address so the result is ready before Create.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt re-runs the same check on retry.
-  useEffect(() => {
-    setAvailable(null);
-    setFailed("");
-    if (!enabled || !valid) return;
-    let current = true;
-    const timer = setTimeout(() => {
-      void api
-        .call("availability", { name })
-        .then((reply) => {
-          check(reply, "Could not check that address.");
-          if (current) setAvailable(Boolean(reply.available));
-        })
-        .catch((reason) => current && setFailed(message(reason)));
-    }, 500);
-    return () => {
-      current = false;
-      clearTimeout(timer);
-    };
-  }, [api, enabled, name, valid, attempt]);
+  const availability = useCallback(
+    async (name: string) =>
+      Boolean(
+        check(
+          await api.call("availability", { name }),
+          "Could not check that address.",
+        ).available,
+      ),
+    [api],
+  );
+  const address = useCommunityAddress(availability, enabled);
   return (
     <form
       className={sectionClassName}
       onSubmit={(event) => {
         event.preventDefault();
-        if (enabled && valid && available)
-          void onCreate(name).then((ok) => ok && setName(""));
+        if (address.ready)
+          void onCreate(address.name).then((ok) => ok && address.setName(""));
       }}
     >
       <InlineHeader
@@ -1147,61 +1129,12 @@ function CreateCommunity({
       />
       <SettingsGroup layout="form">
         {atLimit && <p className="text-body-sm text-muted">{atLimit}</p>}
-        <Field
-          label="Community address"
-          labelVisibility="hidden"
-          invalid={Boolean(name) && !valid}
-          error={
-            name && !valid
-              ? "Use lowercase letters, numbers, and single hyphens."
-              : available === false
-                ? "That address is already taken."
-                : undefined
-          }
-        >
-          <div className="flex max-w-xl flex-wrap items-center gap-2">
-            <div className="min-w-0 flex-1 basis-48">
-              <Input
-                autoComplete="off"
-                spellCheck={false}
-                maxLength={63}
-                placeholder="north-star"
-                aria-describedby={suffixId}
-                disabled={!enabled || busy}
-                value={name}
-                onValueChange={(value) => setName(value.trim().toLowerCase())}
-              />
-            </div>
-            <span id={suffixId} className="shrink-0 text-body-sm text-muted">
-              .{HOST_SUFFIX}
-            </span>
-          </div>
-        </Field>
-        {valid && enabled && failed ? (
-          <div role="alert" className="text-body-sm">
-            <p className="error m-0 break-words">{failed}</p>
-            <div className="mt-2">
-              <Button onClick={() => setAttempt((count) => count + 1)}>
-                Check again
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <p role="status" className="text-body-sm text-muted">
-            {valid && enabled
-              ? available === null
-                ? "Checking availability…"
-                : available
-                  ? "That address is available."
-                  : ""
-              : ""}
-          </p>
-        )}
+        <CommunityAddressField address={address} busy={busy} />
         <Button
           type="submit"
           variant="primary"
           loading={creating}
-          disabled={!enabled || !valid || !available || busy}
+          disabled={!address.ready || busy}
         >
           Create community
         </Button>

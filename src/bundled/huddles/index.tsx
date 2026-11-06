@@ -1,9 +1,13 @@
+import { createHuddleVoices } from "../../features/huddle/voice";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { createHuddleRing } from "../../features/huddle/ring";
 import type { PluginModule } from "../../plugins/api";
 import { nativeHuddles } from "../../features/huddle/bridge";
 import { openHuddleAudio } from "../../features/huddle/audio";
-import { createHuddles } from "../../features/huddle/service";
+import {
+  createHuddles,
+  provideHuddleStatus,
+} from "../../features/huddle/service";
 import { createHuddleWindow } from "../../features/huddle/window";
 import { HuddleCapsule } from "./HuddleCapsule";
 import { HuddleLauncher, SoloHuddleMenu } from "./HuddleLauncher";
@@ -20,6 +24,14 @@ export const inject = [
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!nativeHuddles.available) return;
   const huddles = createHuddles(ctx.relay, nativeHuddles, openHuddleAudio);
+  const stopVoices = createHuddleVoices(
+    huddles,
+    ctx.agents,
+    ctx.relay,
+    nativeHuddles,
+    huddles.voiceError,
+  );
+  provideHuddleStatus(ctx, huddles);
   const stopRing = createHuddleRing(huddles);
   const openLink = (url: string) => {
     const connection = ctx.relay.snapshot();
@@ -65,7 +77,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   ctx.effect(() => async () => {
     stopRing();
-    await Promise.all([companion.dispose(), huddles.dispose()]);
+    await Promise.all([stopVoices(), companion.dispose(), huddles.dispose()]);
   });
   ctx.conversation.registerChatMenu((props) => (
     <SoloHuddleMenu

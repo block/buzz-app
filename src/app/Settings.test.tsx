@@ -24,8 +24,17 @@ import type { ClientSnapshot } from "../features/communities/service";
 import type { DecisionsService } from "../features/decisions/service";
 import type { RelayData } from "../features/relay/service";
 import type { Contribution } from "../plugins/contributions";
+import { createPluginInstallRequests } from "../plugins/installer";
+import { createPluginRequests } from "../plugins/requests";
 
 afterEach(cleanup);
+// Settings reads agent plugin requests from every plugin manager.
+const noRequests = createPluginRequests({
+  catalog: () => undefined,
+  imports: undefined,
+  change: vi.fn(),
+  error: () => null,
+});
 vi.mock("../bundled/icons", () => ({
   bundledIcons: new Map([
     ["buzz.channels", "/channels-icon.png"],
@@ -122,14 +131,92 @@ const communityState = {
   selected: "primary",
   sync: { known: [], outbox: [] },
 };
+const disconnected = { status: "disconnected" };
+const connecting = { status: "connecting" };
+const relay = { subscribe: () => () => {}, snapshot: () => disconnected };
 const host = {
   plugins: { subscribe: () => () => {}, snapshot: () => pluginState },
   communities: {
     retainPresentation: () => () => {},
     subscribe: () => () => {},
     snapshot: () => communityState,
+    relay,
   },
 } as unknown as Parameters<typeof Settings>[0];
+
+it("opens the addressed plugin's update checkbox and keeps its action separate from Close", async () => {
+  const { cards } = registry([]);
+  const change = vi.fn(async () => true);
+  const close = vi.fn();
+  const plugin = {
+    manifest: {
+      id: "example.notes",
+      name: "Notes",
+      apiVersion: 1,
+      updates: { defaultEnabled: true },
+    },
+    source: "external",
+    enabled: false,
+    revision: "one",
+    previous: null,
+    reloadable: false,
+    error: null,
+    updateSource: {
+      repository: "https://example.com/plugins.git",
+      reference: "main",
+      path: ".",
+    },
+  };
+  const state = {
+    ...pluginState,
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: { profile: "test", location: "test", plugins: [plugin] },
+    },
+  };
+  render(
+    <Settings
+      {...host}
+      cards={cards}
+      navigation={
+        {
+          entryId: "plugin-checks",
+          target: {
+            version: 1,
+            kind: "settings",
+            section: "plugins",
+            pluginId: "example.notes",
+          },
+          complete: vi.fn(),
+        } as unknown as Parameters<typeof Settings>[0]["navigation"]
+      }
+      plugins={
+        {
+          subscribe: () => () => {},
+          snapshot: () => state,
+          requests: noRequests,
+          change,
+        } as unknown as Parameters<typeof Settings>[0]["plugins"]
+      }
+      onPluginDetailsClosed={close}
+    />,
+  );
+  const checkbox = await screen.findByRole("menuitemcheckbox", {
+    name: "Check for updates automatically",
+  });
+  expect(
+    screen.getByRole("complementary", { name: "Notes details" }),
+  ).toBeVisible();
+  expect(checkbox).toHaveAttribute("aria-checked", "true");
+  await waitFor(() => expect(checkbox).toHaveFocus());
+  fireEvent.click(checkbox);
+  expect(change).toHaveBeenCalledWith("disable-update-checks", "example.notes");
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.keyDown(checkbox, { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
+  expect(close).toHaveBeenCalledTimes(1);
+});
 
 it.each([false, true])("groups plugins (Essentials=%s)", async (essentials) => {
   const ready = {
@@ -241,6 +328,7 @@ it.each([false, true])("groups plugins (Essentials=%s)", async (essentials) => {
         {
           subscribe: () => () => {},
           snapshot: () => ready,
+          requests: noRequests,
           change: vi.fn(async () => true),
           reload: vi.fn(async () => true),
           dismissError: vi.fn(),
@@ -464,6 +552,7 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
   const plugins = {
     subscribe: () => () => {},
     snapshot: () => snapshot,
+    requests: noRequests,
     change: vi.fn(),
     reload: vi.fn(),
     dismissError: vi.fn(),
@@ -688,6 +777,7 @@ function reviewPluginFixture(
       return () => listeners.delete(listener);
     },
     snapshot: () => snapshot,
+    requests: noRequests,
     change: vi.fn(async (action: string, id: string) => {
       if (action === "remove") {
         snapshot.configuration = {
@@ -1150,6 +1240,7 @@ it("keeps grouped cards available without a selected community", () => {
           retainPresentation: () => () => {},
           subscribe: () => () => {},
           snapshot: () => noCommunityState,
+          relay,
         } as unknown as Parameters<typeof Settings>[0]["communities"]
       }
       cards={cards}
@@ -1192,6 +1283,7 @@ it("shows administration only within a selected community", () => {
     retainPresentation: () => () => {},
     subscribe: () => () => {},
     snapshot: () => noCommunityState,
+    relay,
   } as unknown as Parameters<typeof Settings>[0]["communities"];
   view.rerender(<Settings {...host} communities={noCommunity} cards={cards} />);
   expect(nav).not.toHaveTextContent("Community admin");
@@ -1234,6 +1326,260 @@ it("opens Manage plugins from the Decisions API hint", async () => {
   rerender(view("plugins"));
   expect(screen.getByRole("region", { name: "Manage plugins" })).toHaveFocus();
 });
+
+function pluginSectionsFixture(
+  cards: SettingsCards,
+  decisions?: DecisionsService,
+) {
+  const plugin = (id: string, name: string) => ({
+    manifest: { id, name, apiVersion: 1 as const },
+    source: "bundled" as const,
+    enabled: true,
+    revision: "bundled",
+    previous: null,
+    reloadable: false,
+    error: null,
+  });
+  const snapshot = {
+    configuration: {
+      status: "ready" as const,
+      externalPluginsPaused: false,
+      catalog: {
+        profile: "test",
+        location: "test",
+        plugins: [
+          plugin("buzz.github", "GitHub"),
+          plugin("buzz.codex", "Codex"),
+          plugin("buzz.typesafe", "TypeSafe"),
+        ],
+      },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const plugins = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    requests: noRequests,
+    change: vi.fn(),
+    reload: vi.fn(),
+    dismissError: vi.fn(),
+  } as unknown as Parameters<typeof Settings>[0]["plugins"];
+  const onSection = vi.fn();
+  const view = (section: string, communities = host.communities) => (
+    <div id="settings-content" tabIndex={-1}>
+      <Settings
+        {...host}
+        communities={communities}
+        cards={cards}
+        plugins={plugins}
+        decisions={decisions}
+        navigation={
+          {
+            target: { version: 1, kind: "settings", section },
+            complete: () => true,
+          } as never
+        }
+        onSection={onSection}
+        navigationPane
+      />
+    </div>
+  );
+  /** The named link line in a plugin's open details, or null without one. */
+  const links = (name: string) =>
+    within(
+      screen.getByRole("complementary", { name: `${name} details` }),
+    ).queryByRole("group", { name: `${name} settings` });
+  const linkNames = (name: string) =>
+    within(links(name) as HTMLElement)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+  return { onSection, view, links, linkNames };
+}
+
+it("links a plugin's details to the Settings sections it adds", async () => {
+  const user = userEvent.setup();
+  const owned = (id: string, title: string, group?: string) => ({
+    ...card(id, title, group),
+    key: `buzz.github/${id}`,
+    pluginId: "buzz.github",
+  });
+  const all = [
+    owned("authors", "GitHub comment authors", "Plugins"),
+    owned("reviews", "GitHub reviews"),
+    card("groups", "Personal groups"),
+  ];
+  const { cards, set } = registry(all);
+  const { onSection, view, links, linkNames } = pluginSectionsFixture(cards);
+  const noCommunityState = { ...communityState, selected: null };
+  const personal = {
+    retainPresentation: () => () => {},
+    subscribe: () => () => {},
+    snapshot: () => noCommunityState,
+    relay,
+  } as unknown as Parameters<typeof Settings>[0]["communities"];
+
+  const { rerender } = render(view("plugins"));
+  fireEvent.click(screen.getByRole("button", { name: "View Codex details" }));
+  expect(links("Codex")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "View GitHub details" }));
+  expect(links("GitHub")).toHaveTextContent(
+    "Settings: GitHub reviews, GitHub comment authors",
+  );
+  expect(linkNames("GitHub")).toEqual([
+    "GitHub reviews",
+    "GitHub comment authors",
+  ]);
+
+  // Disabling a plugin retires its cards; its details stay open without links.
+  act(() => set([card("groups", "Personal groups")]));
+  expect(links("GitHub")).toBeNull();
+  expect(
+    screen.getByRole("complementary", { name: "GitHub details" }),
+  ).toBeVisible();
+  act(() => set(all));
+
+  // Personal space has no community, so its community card is not linked.
+  rerender(view("plugins", personal));
+  expect(linkNames("GitHub")).toEqual(["GitHub comment authors"]);
+
+  await user.click(
+    screen.getByRole("button", { name: "GitHub comment authors" }),
+  );
+  expect(onSection).toHaveBeenCalledExactlyOnceWith("buzz.github/authors");
+  // Opening the section removes the pane, so focus moves into the section.
+  rerender(view("buzz.github/authors", personal));
+  expect(screen.getByText("GitHub comment authors body")).toBeVisible();
+  expect(
+    screen.queryByRole("complementary", { name: "GitHub details" }),
+  ).toBeNull();
+  expect(document.getElementById("settings-content")).toHaveFocus();
+});
+
+it("links a decision provider's details to Decisions API", async () => {
+  const user = userEvent.setup();
+  const provider = (pluginId: string, id: string) => ({
+    id,
+    key: `${pluginId}/${id}`,
+    pluginId,
+    revision: "bundled",
+    label: id,
+    description: `${id} provider`,
+    status: () => "ready" as const,
+    subscribe: () => () => {},
+    decide: vi.fn(),
+  });
+  const providers = [
+    provider("buzz.typesafe", "typesafe"),
+    provider("buzz.typesafe", "typesafe-fast"),
+    provider("buzz.github", "github"),
+  ];
+  const decisions = {
+    backend: () => undefined,
+    providers: () => providers,
+    subscribe: () => () => {},
+    setBackend: vi.fn(),
+  } as unknown as DecisionsService;
+  const { cards } = registry([
+    {
+      ...card("authors", "GitHub comment authors", "Plugins"),
+      key: "buzz.github/authors",
+      pluginId: "buzz.github",
+    },
+    {
+      ...card("reviews", "GitHub reviews"),
+      key: "buzz.github/reviews",
+      pluginId: "buzz.github",
+    },
+  ]);
+  const { onSection, view, links, linkNames } = pluginSectionsFixture(
+    cards,
+    decisions,
+  );
+  render(view("plugins"));
+
+  fireEvent.click(screen.getByRole("button", { name: "View Codex details" }));
+  expect(links("Codex")).toBeNull();
+  // Decisions API takes its sidebar place among the plugin's own sections.
+  fireEvent.click(screen.getByRole("button", { name: "View GitHub details" }));
+  expect(linkNames("GitHub")).toEqual([
+    "GitHub reviews",
+    "Decisions API",
+    "GitHub comment authors",
+  ]);
+  // Two providers from one plugin still make one link.
+  fireEvent.click(
+    screen.getByRole("button", { name: "View TypeSafe details" }),
+  );
+  expect(linkNames("TypeSafe")).toEqual(["Decisions API"]);
+
+  await user.click(
+    within(links("TypeSafe") as HTMLElement).getByRole("button", {
+      name: "Decisions API",
+    }),
+  );
+  expect(onSection).toHaveBeenCalledExactlyOnceWith("decisions");
+});
+
+it.each([
+  { start: "hidden", via: "link", top: -1100, scrolled: true },
+  { start: "in view", via: "link", top: 260, scrolled: false },
+  // A route change, such as Back or a sidebar click, keeps its own scrolling.
+  { start: "hidden", via: "route", top: -1100, scrolled: false },
+])(
+  "brings a section's start into view only when a link opens it hidden (start $start, via $via)",
+  async ({ via, top, scrolled }) => {
+    const user = userEvent.setup();
+    const { cards } = registry([
+      {
+        ...card("authors", "GitHub comment authors", "Plugins"),
+        key: "buzz.github/authors",
+        pluginId: "buzz.github",
+      },
+    ]);
+    const { view, links } = pluginSectionsFixture(cards);
+    // Stacked navigation and content share one scrollport, which keeps its
+    // offset when the section changes.
+    const stacked = (section: string) => (
+      <div data-testid="scrollport" style={{ overflowY: "auto" }}>
+        {view(section)}
+      </div>
+    );
+    const { rerender } = render(stacked("plugins"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "View GitHub details" }),
+    );
+    if (via === "link")
+      await user.click(
+        within(links("GitHub") as HTMLElement).getByRole("button", {
+          name: "GitHub comment authors",
+        }),
+      );
+    const content = document.getElementById("settings-content") as HTMLElement;
+    const scrollIntoView = vi.fn();
+    content.scrollIntoView = scrollIntoView;
+    vi.spyOn(
+      screen.getByTestId("scrollport"),
+      "getBoundingClientRect",
+    ).mockReturnValue({ top: 240, bottom: 780 } as DOMRect);
+    vi.spyOn(content, "getBoundingClientRect").mockReturnValue({
+      top,
+      bottom: top + 3000,
+    } as DOMRect);
+
+    rerender(stacked("buzz.github/authors"));
+    expect(screen.getByText("GitHub comment authors body")).toBeVisible();
+    if (via === "link") expect(content).toHaveFocus();
+    if (scrolled)
+      expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+        block: "start",
+      });
+    else expect(scrollIntoView).not.toHaveBeenCalled();
+  },
+);
 
 it("gives contributed cards their own community sections and retires removed cards", async () => {
   const { cards, set } = registry([
@@ -1474,6 +1820,7 @@ it("renders a bundled plugin's README below its status, never an external one's"
   const plugins = {
     subscribe: () => () => {},
     snapshot: () => snapshot,
+    requests: noRequests,
     change: vi.fn(),
     reload: vi.fn(),
     dismissError: vi.fn(),
@@ -1589,6 +1936,7 @@ it("keeps related plugins out of the pane even when tags overlap", () => {
     },
     subscribe: () => () => {},
     snapshot: () => snapshot,
+    requests: noRequests,
     change: vi.fn(),
     reload: vi.fn(),
     dismissError: vi.fn(),
@@ -2031,7 +2379,15 @@ it("keeps identity independent of community profile and clears revealed keys on 
         {...host}
         cards={cards}
         identity={
-          { exportKey } as unknown as Parameters<typeof Settings>[0]["identity"]
+          {
+            exportKey,
+            // No backup status: the row stays hidden.
+            backup: {
+              subscribe: () => () => {},
+              snapshot: () => undefined,
+              ready: () => new Promise(() => {}),
+            },
+          } as unknown as Parameters<typeof Settings>[0]["identity"]
         }
       />
     </ToastProvider>,
@@ -2258,7 +2614,7 @@ it("recommends managed plugins in Settings and points to them from navigation", 
   const fixture = reviewPluginFixture({
     communities: {
       ...host.communities,
-      relay: { snapshot: () => ({ status: "connecting" }) },
+      relay: { subscribe: () => () => {}, snapshot: () => connecting },
     } as never,
   });
   Object.assign(fixture.manager, {
@@ -2362,7 +2718,7 @@ it("routes a managed plugin's updates through the managed review instead of the 
   const fixture = reviewPluginFixture({
     communities: {
       ...host.communities,
-      relay: { snapshot: () => ({ status: "connecting" }) },
+      relay: { subscribe: () => () => {}, snapshot: () => connecting },
     } as never,
   });
   const external = fixture.snapshot.configuration.catalog.plugins[1];
@@ -2409,4 +2765,119 @@ it("routes a managed plugin's updates through the managed review instead of the 
     pinned,
   );
   expect(checkGit).not.toHaveBeenCalled();
+});
+
+function installRequestFixture(imports: object | undefined) {
+  const { cards } = registry([]);
+  const snapshot = {
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: { profile: "test", location: "test", plugins: [] },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const plugins = {
+    imports,
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    requests: noRequests,
+    change: vi.fn(async () => true),
+    dismissError: vi.fn(),
+  } as unknown as Parameters<typeof Settings>[0]["plugins"];
+  const requests = createPluginInstallRequests();
+  return { cards, plugins, requests };
+}
+const market = { id: "example.market", name: "Market" };
+
+const requestedSource = {
+  repository: "https://example.com/plugins.git",
+  reference: "v1",
+};
+
+it("opens a requested plugin source in Plugins and cancels it when Settings closes", async () => {
+  const { cards, plugins, requests } = installRequestFixture({
+    git: vi.fn(),
+    discard: vi.fn(async () => {}),
+  });
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  const outcome = requests.request(requestedSource, market);
+  const dialog = await screen.findByRole("dialog", { name: "Add a plugin" });
+  expect(within(dialog).getByLabelText("Git or GitHub repository")).toHaveValue(
+    "https://example.com/plugins.git",
+  );
+  expect(dialog).toHaveTextContent("Opened from Market (example.market).");
+  view.unmount();
+  await expect(outcome).resolves.toBe("cancelled");
+  expect(requests.snapshot()).toBeUndefined();
+});
+
+it("cancels a request nobody claimed when Settings closes", async () => {
+  const { cards, plugins, requests } = installRequestFixture(undefined);
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  const outcome = requests.request(requestedSource, market);
+  expect(requests.snapshot()).toBeDefined();
+  view.unmount();
+  await expect(outcome).resolves.toBe("cancelled");
+});
+
+it("refuses a plugin request while the add dialog is open", async () => {
+  const { cards, plugins, requests } = installRequestFixture({
+    git: vi.fn(),
+    discard: vi.fn(async () => {}),
+  });
+  render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add" }));
+  await screen.findByRole("dialog", { name: "Add a plugin" });
+  await expect(requests.request(requestedSource, market)).resolves.toBe(
+    "unavailable",
+  );
+});
+
+it("leaves a confirmed install's request to the install when Settings closes", async () => {
+  const { cards, plugins, requests } = installRequestFixture(undefined);
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  const outcome = requests.request(requestedSource, market);
+  const id = requests.snapshot()?.id ?? 0;
+  expect(requests.claim(id)).toBe(true);
+  const unconfirm = requests.confirm(id);
+  view.unmount();
+  await Promise.resolve();
+  expect(requests.snapshot()?.id).toBe(id);
+  requests.settle(id, "installed");
+  unconfirm();
+  await expect(outcome).resolves.toBe("installed");
 });

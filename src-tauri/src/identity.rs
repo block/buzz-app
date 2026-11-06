@@ -10,7 +10,7 @@ use nostr::{
 use secp256k1::{Keypair, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, String>;
@@ -36,7 +36,9 @@ fn decrypt_with_conversation(
 }
 
 // No Debug/Serialize: only deliberate export may return the secret to the main UI.
-struct Key(Zeroizing<[u8; 32]>);
+/// The secret, and its public key derived once: socket frames and HTTP
+/// requests read it.
+struct Key(Zeroizing<[u8; 32]>, OnceLock<String>);
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -119,7 +121,7 @@ impl Key {
         if values.next().is_some() {
             return Err(INVALID.into());
         }
-        let key = Self(bytes);
+        let key = Self::new(bytes);
         key.viewer()?;
         Ok(key)
     }
@@ -127,20 +129,26 @@ impl Key {
         loop {
             let mut bytes = Zeroizing::new([0; 32]);
             getrandom::fill(bytes.as_mut()).map_err(|_| "Could not create an identity")?;
-            let key = Self(bytes);
+            let key = Self::new(bytes);
             if key.viewer().is_ok() {
                 return Ok(key);
             }
         }
     }
+    fn new(secret: Zeroizing<[u8; 32]>) -> Self {
+        Self(secret, OnceLock::new())
+    }
     fn viewer(&self) -> Result<String> {
+        if let Some(public) = self.1.get() {
+            return Ok(public.clone());
+        }
         let mut key = SecretKey::from_byte_array(*self.0).map_err(|_| INVALID)?;
         let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key)
             .x_only_public_key()
             .0
             .to_string();
         key.non_secure_erase();
-        Ok(public)
+        Ok(self.1.get_or_init(|| public).clone())
     }
     fn nsec(&self) -> Result<String> {
         bech32::encode::<Bech32>(Hrp::parse("nsec").map_err(|_| INVALID)?, self.0.as_ref())
@@ -398,7 +406,7 @@ impl Identity {
     }
     fn install_recovered(&mut self, secret: Zeroizing<[u8; 32]>, expected: &str) -> Result<String> {
         self.require_missing()?;
-        let key = Key(secret);
+        let key = Key::new(secret);
         let viewer = key.viewer()?;
         if viewer != expected {
             return Err("The recovered identity could not be verified".into());
@@ -533,11 +541,12 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
         "main-agent" => {
             let agent = data.get("agent").ok_or_else(invalid)?;
             if data.len() != 2
-                || !agent.as_str().is_some_and(|v| {
-                    v.len() == 64
-                        && v.bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                })
+                || !(agent.is_null()
+                    || agent.as_str().is_some_and(|v| {
+                        v.len() == 64
+                            && v.bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    }))
             {
                 return Err(invalid());
             }
@@ -549,7 +558,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             coordinate,
             "channel-sections" | "channel-sort" | "channel-filter"
         ) {
-            validate_sidebar_meta(coordinate, meta)?;
+            validate_sidebar_meta(coordinate, meta, false)?;
             let projection = project_sidebar_meta(coordinate, meta);
             let projected = projection.as_object().ok_or_else(invalid)?;
             if projected
@@ -560,12 +569,28 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             }
         }
     }
+    if coordinate == "channel-sort" {
+        if let Some(choices) = data.get("pluginSort") {
+            if !choices
+                .get("g")
+                .and_then(|v| v.as_object())
+                .is_some_and(|g| g.len() <= 104)
+            {
+                return Err(invalid());
+            }
+            validate_sidebar_meta(coordinate, choices, true)?;
+        }
+    }
     Ok(())
 }
 
 // The signer admits only the bounded Desktop register schema, not arbitrary
 // renderer-controlled trees. Retained tombstones share the plaintext byte budget.
-fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<()> {
+fn validate_sidebar_meta(
+    coordinate: &str,
+    value: &serde_json::Value,
+    plugin_sort: bool,
+) -> Result<()> {
     use serde_json::Value;
     const MAX_SAFE: u64 = 9_007_199_254_740_991;
     fn text(value: &Value, max: usize) -> bool {
@@ -612,12 +637,16 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
     let valid = if matches!(coordinate, "channel-sort" | "channel-filter") {
         map(meta.get("g"), 264, |v| {
             reg(v, |v| {
-                v.is_null()
-                    || if coordinate == "channel-filter" {
-                        matches!(v.as_str(), Some("unreads" | "active"))
-                    } else {
-                        matches!(v.as_str(), Some("alpha" | "recent"))
-                    }
+                if plugin_sort {
+                    v.as_str().is_some_and(valid_plugin_sidebar_sort_mode)
+                } else {
+                    v.is_null()
+                        || if coordinate == "channel-filter" {
+                            matches!(v.as_str(), Some("unreads" | "active"))
+                        } else {
+                            matches!(v.as_str(), Some("alpha" | "recent"))
+                        }
+                }
             })
         })
     } else {
@@ -641,6 +670,22 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
         return Err(invalid());
     }
     Ok(())
+}
+
+fn valid_plugin_sidebar_sort_mode(value: &str) -> bool {
+    let Some(value) = value.strip_prefix("plugin:").filter(|_| value.len() <= 512) else {
+        return false;
+    };
+    let parts: Vec<_> = value.split('/').collect();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            part.as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+        })
 }
 
 // Called only after shape validation. Requiring these exact fields also binds
@@ -736,7 +781,7 @@ pub struct IdentityHost(Arc<Mutex<Identity>>);
 impl IdentityHost {
     #[cfg(test)]
     pub(crate) fn fixture() -> Self {
-        Self::fixture_in(State::Ready(Key(Zeroizing::new([1; 32]))))
+        Self::fixture_in(State::Ready(Key::new(Zeroizing::new([1; 32]))))
     }
     /// No saved key, or a key that cannot be read (a signing-out host refuses every read).
     #[cfg(test)]

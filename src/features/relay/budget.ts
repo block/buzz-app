@@ -39,7 +39,7 @@ export class ByteLru<T> {
   constructor(
     public maxEntries: number,
     public maxBytes: number,
-    /** Entries eviction skips; the caller bounds how many it keeps. */
+    /** Entries eviction takes last; the limits still hold. */
     private keep?: (key: string) => boolean,
   ) {}
   /** Change both limits; shrinking evicts least recently used entries now. */
@@ -82,14 +82,16 @@ export class ByteLru<T> {
   }
   /** Entries removed to stay within the limits, over this cache's lifetime. */
   evictions = 0;
+  /** Least recently used first, kept entries only once no other is left. */
   private evict() {
-    for (const oldest of this.items.keys()) {
-      if (this.items.size <= this.maxEntries && this.bytes <= this.maxBytes)
-        break;
-      if (this.keep?.(oldest)) continue;
-      this.delete(oldest);
-      this.evictions++;
-    }
+    for (const spare of [true, false])
+      for (const oldest of this.items.keys()) {
+        if (this.items.size <= this.maxEntries && this.bytes <= this.maxBytes)
+          return;
+        if (spare && this.keep?.(oldest)) continue;
+        this.delete(oldest);
+        this.evictions++;
+      }
   }
   delete(key: string) {
     const entry = this.items.get(key);

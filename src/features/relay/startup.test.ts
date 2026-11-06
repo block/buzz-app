@@ -450,6 +450,20 @@ describe("device-local startup", () => {
     ).toBe("Stranger");
   });
 
+  it("restores a multi-batch mirror when the shorter roster restores first", async () => {
+    const storage = disk();
+    const people = Array.from({ length: 60 }, (_, index) =>
+      profile(keypair(), { name: `Saved ${index}` }),
+    );
+    await storage.writeProfiles?.(people);
+    const { owner } = setup(storage, true);
+    await owner.restore();
+    const snapshot = owner.session.profiles.snapshot();
+    for (const [index, event] of people.entries())
+      expect(snapshot.get(event.pubkey)?.name).toBe(`Saved ${index}`);
+    expect(await storage.readProfiles?.()).toHaveLength(60);
+  });
+
   it("rereads restored names and saves a newer profile", async () => {
     const storage = disk();
     const stranger = keypair();

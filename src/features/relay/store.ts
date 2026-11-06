@@ -290,6 +290,9 @@ export function createChannelStore(
   let disposed = false,
     epoch = 0,
     listBusy = false;
+  // Full cache clears. Profiles outlive access purges (which move `epoch`),
+  // so only a clear or disposal fences a profile restore.
+  let cleared = 0;
   let listAgain = false;
   // Epoch of the latest access revocation. When that revocation is what made a
   // full read stale, it interrupted rather than failed it: a pass is still owed.
@@ -1311,7 +1314,8 @@ export function createChannelStore(
   }
   /** Show the saved names at once, then reread them in the background: the
    * newer kind 0 wins, and the directory change saves it back. */
-  async function restoreProfiles(generation: number) {
+  async function restoreProfiles() {
+    const generation = cleared;
     let saved: unknown[] | undefined;
     try {
       saved = await persistence?.readProfiles?.();
@@ -1332,7 +1336,7 @@ export function createChannelStore(
           }
         }
         await yieldToHost();
-        if (disposed || generation !== epoch) return;
+        if (disposed || generation !== cleared) return;
       }
       directory.accept(profiles);
       if (!options.cachedOnly && profiles.length)
@@ -1346,15 +1350,18 @@ export function createChannelStore(
     } catch {
       // A corrupt copy never blocks fresh reads; the next save replaces it.
     } finally {
-      profilesRestored = true;
-      saveProfiles();
+      // After a clear the disk copy is gone, so saving the directory is right.
+      if (!disposed) {
+        profilesRestored = true;
+        saveProfiles();
+      }
     }
   }
   async function restoreStartup() {
     if (!persistence?.readStartup || !transport || !discovery) return;
     const generation = epoch;
     // Names do not depend on the saved roster: restore them alongside it.
-    const profiles = restoreProfiles(generation);
+    const profiles = restoreProfiles();
     try {
       const saved = (await persistence.readStartup())?.discovery;
       if (
@@ -2985,6 +2992,7 @@ export function createChannelStore(
   }
   async function clearCache() {
     epoch++;
+    cleared++;
     creationReads.clear();
     hydration = undefined;
     revealHydration?.();

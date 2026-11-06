@@ -91,8 +91,8 @@ export function createProfileDirectory(
   },
 ) {
   let limit = PROFILE_CACHE_BASE;
-  // DM partners: eviction skips them, so a large roster cannot turn a DM
-  // label back into a key. Bounded to half the base budget.
+  // DM partners: eviction takes them last, so a large roster cannot turn a
+  // DM label back into a key. Bounded to half the base entry count.
   let kept: ReadonlySet<string> = new Set();
   const events = new ByteLru<RelayEvent>(
     limit,

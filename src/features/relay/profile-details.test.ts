@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import { eventDto, type RelayEvent } from "./events";
 import { selectProfiles } from "./profile-selection";
 import { foldProfiles } from "./profiles";
+import { PROFILE_CACHE_BASE, PROFILE_ENTRY_BYTES } from "./budget";
 import { createProfileDirectory } from "./profile-directory";
 import {
   createRelayReader,
@@ -616,6 +617,29 @@ it("keeps protected DM partners through eviction and lists them last", () => {
     expect(directory.recent(1).map((event) => event.pubkey)).toEqual([
       partner.pubkey,
     ]);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("still holds the byte limit when protected profiles exceed it", () => {
+  const directory = createProfileDirectory({ read: vi.fn(async () => []) });
+  try {
+    // 512 protected profiles of ~5 KiB each exceed the 2 MiB base budget.
+    const about = "x".repeat(5 * 1024);
+    const people = unsignedProfiles(512).map((event, index) => ({
+      ...event,
+      content: JSON.stringify({ name: `P${index}`, about }),
+    }));
+    directory.protect(people.map((event) => event.pubkey));
+    directory.accept(people);
+    expect(directory.stats().bytes).toBeLessThanOrEqual(
+      PROFILE_CACHE_BASE * PROFILE_ENTRY_BYTES,
+    );
+    // The newest protected profiles stay.
+    expect(directory.queries.snapshot().has(people[511]?.pubkey ?? "")).toBe(
+      true,
+    );
   } finally {
     directory.dispose();
   }

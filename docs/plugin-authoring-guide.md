@@ -95,6 +95,67 @@ ctx.effect(() => {
 });
 ```
 
+## Reusing the member picker
+
+Installed plugins can render `ctx.conversation.ui.MembersDialog` and
+`ctx.conversation.ui.GeneralAccess` through the host React instance. Inject
+`react`, `conversation` and `relay`; runtime imports from app source are not
+supported. The type-only author package exports `ChannelMembersDialogProps`,
+`ChannelGeneralAccessProps`, `GeneralAccessPolicy` and `MemberChange`.
+
+```js
+// Inside a plugin component, using a session from ctx.relay.snapshot():
+const h = ctx.react.createElement;
+return h(ctx.conversation.ui.MembersDialog, {
+  key: session.scope + ":" + channelId,
+  session, channelId, trigger, close,
+  title: "Share access",
+  shareLink: "buzz://plugin?id=example.records&record=design",
+  memberActions: {
+    canAdd: canManageRecord,
+    pending: recordAccessPending,
+    // Own stricter policy, write confirmation and readback here.
+    change: (change, signal) => updateRecordMember(change, signal),
+  },
+  accessSettings: h(ctx.conversation.ui.GeneralAccess, {
+    capability: recordAccess,
+    recovery: session.recovery,
+    channelId,
+    policy: {
+      subject: "record",
+      allowPublic: false,
+      visibilityDescription: (visibility) => visibility === "public"
+        ? "Everyone in this community can read this record and its revisions."
+        : "Only invited people can read this record.",
+    },
+  }),
+});
+```
+
+The plugin owns opening/closing and the trigger ref for focus return; render the
+picker only while open. Keep it keyed to session/channel. Addressable openings
+must follow the [navigation contract](navigation-history.md); the component does
+not register a destination. Keep external operations in their existing owner if
+navigation can hide the dialog.
+
+`memberActions` routes individual additions, role changes and removals through
+the plugin, retaining host role checks; team additions are hidden. Its `canAdd`
+can restrict additions and `pending` blocks member mutations and local dismissal.
+The picker also locks while its callback is unresolved, shows callback errors,
+and passes an AbortSignal retired on unmount or session/channel change. The
+callback must confirm writes and refresh signed member roles before resolving;
+uncertain writes need recovery in the plugin's access settings, without resending
+blindly. These UI policies do not replace relay authorization.
+
+`accessSettings` replaces built-in General access (`null` hides it). The optional
+GeneralAccess policy supplies a generic subject and visibility-change disclosure;
+`allowPublic: false` removes Public participation while keeping Private and View
+only. Existing Public access is displayed and can be reduced. Its capability
+retains signed fresh-read, save and uncertain-write recovery behavior. Copy link
+uses `shareLink` and grants no access. Omitted overrides preserve chat/channel
+behavior. Hosts predating this extension lack the two UI entries; check their
+presence before offering sharing when supporting those hosts.
+
 ## Host access (`manifest.host`)
 
 Everything beyond the services above must be declared in `manifest.json`; the owner reviews it at install. Undeclared commands, origins, processes and file access are refused by the host. Limits: at most 16 each of `commands`, `processes`, `networkOrigins`, `agentHooks`. Program names are bare names (`[A-Za-z0-9._-]`, at most 80 bytes, no paths), at most 16 args of 1024 bytes each.

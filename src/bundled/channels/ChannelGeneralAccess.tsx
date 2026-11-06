@@ -36,6 +36,24 @@ import {
   generalAccessValue,
 } from "../../features/channels/general-access";
 
+/** Resource wording and participation policy; relay authorization remains authoritative. */
+export type GeneralAccessPolicy = {
+  subject: string;
+  /** False removes Public participation while retaining community View only. */
+  allowPublic?: boolean;
+  visibilityDescription(visibility: "private" | "public"): string;
+};
+
+export type ChannelGeneralAccessProps = {
+  capability: ChannelDetailsCapability;
+  recovery?: RelayRecovery | undefined;
+  channelId: string;
+  channel?: ChannelSummary;
+  /** False only when the signed member-role snapshot verifies no Guests. */
+  mayHaveGuestMembers?: boolean;
+  policy?: GeneralAccessPolicy;
+};
+
 /** General access uses the same signed save/readback owner as channel details.
  * Each policy is confirmed once, like the individual member roles. */
 export function ChannelGeneralAccess({
@@ -44,15 +62,10 @@ export function ChannelGeneralAccess({
   channelId,
   channel,
   mayHaveGuestMembers = true,
-}: {
-  capability: ChannelDetailsCapability;
-  recovery?: RelayRecovery | undefined;
-  channelId: string;
-  channel?: ChannelSummary;
-  /** False only when the signed member-role snapshot verifies no Guests. */
-  mayHaveGuestMembers?: boolean;
-}) {
-  const place = channel?.channelType === "solo" ? "chat" : "channel";
+  policy,
+}: ChannelGeneralAccessProps) {
+  const place =
+    policy?.subject ?? (channel?.channelType === "solo" ? "chat" : "channel");
   const Icon =
     channel?.visibility === "public"
       ? channel.joinRole === "guest"
@@ -88,7 +101,7 @@ export function ChannelGeneralAccess({
               {channel.viewerRole === "guest" || channel.joinRole === "guest"
                 ? "Viewing only. Ask an owner or admin to participate."
                 : channel.joinRole === "member"
-                  ? "New people can participate. People already in the channel keep their access."
+                  ? `New people can participate. People already in the ${policy?.subject ?? "channel"} keep their access.`
                   : "New people’s access could not be confirmed."}
             </p>
           </div>
@@ -102,6 +115,7 @@ export function ChannelGeneralAccess({
       channelId={channelId}
       mayHaveGuestMembers={mayHaveGuestMembers}
       autoJoin={channel?.autoJoin ?? false}
+      policy={policy}
     />
   );
 }
@@ -112,12 +126,14 @@ function ChannelGeneralAccessEditor({
   channelId,
   mayHaveGuestMembers,
   autoJoin,
+  policy,
 }: {
   capability: ChannelDetailsCapability;
   recovery: RelayRecovery | undefined;
   channelId: string;
   mayHaveGuestMembers: boolean;
   autoJoin: boolean;
+  policy: GeneralAccessPolicy | undefined;
 }) {
   const attempt = useSyncExternalStore(capability.subscribe, () =>
     capability.snapshot(channelId),
@@ -173,7 +189,8 @@ function ChannelGeneralAccessEditor({
   }, [load]);
   const locked = loading || pending || !!attempt || !base?.canEdit;
   const solo = soloLabels(base?.labels);
-  const place = solo ? "chat" : "channel";
+  const place = policy?.subject ?? (solo ? "chat" : "channel");
+  const restrictPublic = solo || policy?.allowPublic === false;
   const access = base ? generalAccessValue(base) : "";
   const Icon =
     access === "public"
@@ -186,7 +203,8 @@ function ChannelGeneralAccessEditor({
     const option = Object.values(generalAccessOptions).find(
       (option) => option.value === value,
     );
-    if (value === access || !option || (solo && value === "public")) return;
+    if (value === access || !option || (restrictPublic && value === "public"))
+      return;
     origin.current =
       section.current?.querySelector<HTMLElement>('[role="combobox"]') ?? null;
     setError("");
@@ -199,7 +217,8 @@ function ChannelGeneralAccessEditor({
       signal.aborted ||
       !current?.canEdit ||
       generalAccessValue(current) === value ||
-      (soloLabels(current.labels) && value === "public")
+      ((soloLabels(current.labels) || policy?.allowPublic === false) &&
+        value === "public")
     )
       return;
     setChoice({
@@ -302,7 +321,9 @@ function ChannelGeneralAccessEditor({
               label="General access"
               value={access}
               valueLabel={
-                solo && access === "public" ? "Public (existing)" : undefined
+                restrictPublic && access === "public"
+                  ? "Public (existing)"
+                  : undefined
               }
               placeholder={loading ? "Loading access…" : "Access unavailable"}
               disabled={locked}
@@ -318,7 +339,9 @@ function ChannelGeneralAccessEditor({
                       ...generalAccessOptions["view-only"],
                       leading: <EyeIcon size={20} />,
                     },
-                  ].filter((option) => !solo || option.value !== "public"),
+                  ].filter(
+                    (option) => !restrictPublic || option.value !== "public",
+                  ),
                 },
                 {
                   label: "",
@@ -342,9 +365,11 @@ function ChannelGeneralAccessEditor({
               solo && choice.visibility === "public"
                 ? SOLO_ACCESS_DISCLOSURE
                 : choice.visibility !== base.visibility
-                  ? solo
-                    ? "Only chat members will have access."
-                    : privacyConsequence(choice.visibility)
+                  ? policy
+                    ? policy.visibilityDescription(choice.visibility)
+                    : solo
+                      ? "Only chat members will have access."
+                      : privacyConsequence(choice.visibility)
                   : "",
               solo && choice.visibility === "private"
                 ? soloRetainedAccessWarning(base, mayHaveGuestMembers)

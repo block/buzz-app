@@ -23,7 +23,11 @@ import type {
   Presence,
   PresenceStatus,
 } from "../../features/presence/presence";
-import { ChannelMembersButton } from "./ChannelMembersDialog";
+import {
+  ChannelMembersButton,
+  ChannelMembersDialog,
+  type ChannelMembersDialogProps,
+} from "./ChannelMembersDialog";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 const stops: (() => void)[] = [];
@@ -375,7 +379,7 @@ it.each(["member", "guest"])(
     const t = await setup(actor, "absent");
     await t.user.type(screen.getByRole("searchbox"), "Morgan");
     if (actor === "member")
-      await screen.findByRole("button", { name: /^Add Morgan \(/ });
+      await screen.findByRole("button", { name: /^Add Morgan \(.*\)$/ });
     expect(
       screen.queryByRole("button", { name: /^Add Morgan .* as$/ }),
     ).not.toBeInTheDocument();
@@ -1882,7 +1886,7 @@ it("shows action feedback above the member list so a long roster cannot hide it"
   );
   await t.user.type(screen.getByRole("searchbox"), "Morgan");
   await t.user.click(
-    await screen.findByRole("button", { name: /^Add Morgan \(/ }),
+    await screen.findByRole("button", { name: /^Add Morgan \(.*\)$/ }),
   );
   const refusal = await screen.findByText(/blocked: you are not allowed/);
   aboveList(refusal);
@@ -2119,3 +2123,112 @@ it.each(["owner", "admin"])(
     expect(t.publish).toHaveBeenCalledOnce();
   },
 );
+
+function pluginPicker(
+  t: Awaited<ReturnType<typeof setup>>,
+  overrides: Partial<ChannelMembersDialogProps>,
+) {
+  cleanup();
+  return render(
+    <ToastProvider>
+      <ChannelMembersDialog
+        session={t.session}
+        channelId={id}
+        trigger={{ current: null }}
+        close={() => {}}
+        {...overrides}
+      />
+    </ToastProvider>,
+  );
+}
+
+it("routes plugin additions, retains failed input, locks pending work, and copies the plugin link", async () => {
+  const t = await setup("owner", "absent");
+  let reject!: (reason: Error) => void;
+  const gate = new Promise<void>((_, fail) => {
+    reject = fail;
+  });
+  const change = vi.fn(() => gate);
+  const close = vi.fn();
+  pluginPicker(t, {
+    close,
+    shareLink: "buzz://plugin?id=example.records&record=design",
+    accessSettings: <p>Record access settings</p>,
+    memberActions: { canAdd: true, pending: false, change },
+  });
+  expect(screen.getByText("Record access settings")).toBeVisible();
+  expect(
+    screen.queryByRole("combobox", { name: "General access" }),
+  ).not.toBeInTheDocument();
+  await t.user.click(screen.getByRole("button", { name: "Copy link" }));
+  expect(await navigator.clipboard.readText()).toBe(
+    "buzz://plugin?id=example.records&record=design",
+  );
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  const add = await screen.findByRole("button", {
+    name: /^Add Morgan \(.*\)$/,
+  });
+  try {
+    await t.user.click(add);
+    expect(change).toHaveBeenCalledExactlyOnceWith(
+      { pubkey: t.target.pubkey, expectedRole: "absent", role: "member" },
+      expect.any(AbortSignal),
+    );
+    expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+    fireEvent.click(add);
+    await t.user.keyboard("{Escape}");
+    expect(close).not.toHaveBeenCalled();
+    expect(change).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => reject(new Error("Record access unavailable")));
+  }
+  expect(await screen.findByText("Record access unavailable")).toBeVisible();
+  expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
+  expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  change.mockResolvedValue(undefined);
+  await t.user.click(add);
+  await vi.waitFor(() => expect(screen.getByRole("searchbox")).toHaveValue(""));
+  expect(change).toHaveBeenCalledTimes(2);
+  expect(t.publish).not.toHaveBeenCalled();
+  expect(t.write).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["Set to viewing only", "Set to viewing only", "guest"],
+  ["Remove from channel", "Remove member", "remove"],
+])(
+  "routes plugin %s through the checked confirmation",
+  async (choice, button, role) => {
+    const t = await setup();
+    const change = vi.fn(async () => {});
+    pluginPicker(t, {
+      memberActions: { canAdd: false, pending: false, change },
+      accessSettings: null,
+    });
+    await screen.findByText("Morgan");
+    const dialog = await t.choose(choice);
+    expect(change).not.toHaveBeenCalled();
+    await t.user.click(within(dialog).getByRole("button", { name: button }));
+    await vi.waitFor(() =>
+      expect(change).toHaveBeenCalledExactlyOnceWith(
+        { pubkey: t.target.pubkey, expectedRole: "member", role },
+        expect.any(AbortSignal),
+      ),
+    );
+    expect(t.publish).not.toHaveBeenCalled();
+    expect(t.write).not.toHaveBeenCalled();
+  },
+);
+
+it("cannot grant a plugin guest member-management authority", async () => {
+  const t = await setup("guest");
+  const change = vi.fn(async () => {});
+  pluginPicker(t, { memberActions: { canAdd: true, pending: false, change } });
+  await screen.findByText("Morgan");
+  await expectProfileOnly(t.user, "Morgan");
+  expect(screen.getByRole("searchbox")).toHaveAttribute(
+    "placeholder",
+    "Search members",
+  );
+  expect(change).not.toHaveBeenCalled();
+});

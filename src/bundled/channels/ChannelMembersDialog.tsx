@@ -556,6 +556,32 @@ function TeamRow({
 
 /** The one access dialog. Any conversation lists and adds members; a Solo chat
  * adds people under its share rule and can also be shared to a channel. */
+export type ChannelMembersDialogProps = {
+  session: RelaySession;
+  channelId: string;
+  close(): void;
+  trigger: RefObject<HTMLElement | null>;
+  title?: string;
+  description?: string;
+  /** A feature may retain stricter access policy while reusing the member picker. */
+  memberActions?: {
+    canAdd: boolean;
+    pending: boolean;
+    change(change: MemberChange, signal: AbortSignal): Promise<void>;
+  };
+  /** Replaces host General access; null hides it. */
+  accessSettings?: React.ReactNode;
+  /** The plugin destination copied by Copy link; defaults to the channel link. */
+  shareLink?: string;
+  agents?: Agents;
+  communities?: CommunityReader | undefined;
+  navigator?: Navigation | undefined;
+  /** The visit that opened this dialog; leaving it retires late results. */
+  signal?: AbortSignal | undefined;
+  /** Opened as its own navigation visit, so Back closes it; local opens are not. */
+  visit?: boolean;
+} & MemberNavigation;
+
 export function ChannelMembersDialog({
   session,
   channelId,
@@ -563,6 +589,9 @@ export function ChannelMembersDialog({
   trigger,
   title,
   description,
+  memberActions,
+  accessSettings,
+  shareLink,
   canOpenLink,
   onOpenLink,
   onOpenConversation,
@@ -571,21 +600,10 @@ export function ChannelMembersDialog({
   navigator,
   signal,
   visit = false,
-}: {
-  session: RelaySession;
-  channelId: string;
-  close(): void;
-  trigger: RefObject<HTMLElement | null>;
-  title?: string;
-  description?: string;
-  agents?: Agents;
-  communities?: CommunityReader | undefined;
-  navigator?: Navigation | undefined;
-  /** The visit that opened this dialog; leaving it retires late results. */
-  signal?: AbortSignal | undefined;
-  /** Opened as its own navigation visit, so Back closes it; local opens are not. */
-  visit?: boolean;
-} & MemberNavigation) {
+}: ChannelMembersDialogProps) {
+  const [changingMember, setChangingMember] = useState(false);
+  const changeInFlight = useRef<AbortSignal | undefined>(undefined);
+  const memberPending = !!memberActions?.pending || changingMember;
   const presenceId = useId();
   const openingDestination = useRef(false);
   const messagePending = useRef(false);
@@ -610,10 +628,11 @@ export function ChannelMembersDialog({
       : undefined;
   const chooseChange = useCallback(
     (change: MemberChange) => {
+      if (memberPending) return;
       setChangeError(undefined);
       setIntent({ session, channelId, change });
     },
-    [session, channelId],
+    [session, channelId, memberPending],
   );
   const previousSelection = useRef(selection);
   useLayoutEffect(() => {
@@ -751,7 +770,8 @@ export function ChannelMembersDialog({
     canShareSoloChat(session, channel) &&
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
-  const canAdd = canAddPeople || canAddSoloAgents;
+  const canAdd =
+    (canAddPeople || canAddSoloAgents) && (memberActions?.canAdd ?? true);
   const generalAccess =
     channel &&
     (solo ||
@@ -805,6 +825,8 @@ export function ChannelMembersDialog({
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
+    changeInFlight.current = undefined;
+    setChangingMember(false);
     setAgentsBusy(false);
     setSoloAdditions({});
     soloPending.current = new Set();
@@ -1294,6 +1316,7 @@ export function ChannelMembersDialog({
   let changePermitted = false;
   if (
     selection &&
+    !memberPending &&
     (selection.expectedRole !== "absent" ||
       !archiveHides(session.archives, selection.pubkey, session.viewer)) &&
     administration.status === "ready" &&
@@ -1322,6 +1345,7 @@ export function ChannelMembersDialog({
     agentsBusy ||
     archives.status === "loading";
   const mutationPending =
+    memberPending ||
     busy.size > 0 ||
     share.busy ||
     administration.operation?.status === "pending";
@@ -1358,7 +1382,9 @@ export function ChannelMembersDialog({
   const teamNames = new Map(
     (agentsSnapshot?.agents ?? []).map((agent) => [agent.pubkey, agent.name]),
   );
-  const teams = (solo ? [] : (agentsSnapshot?.teams ?? [])).flatMap((team) => {
+  const teams = (
+    solo || memberActions ? [] : (agentsSnapshot?.teams ?? [])
+  ).flatMap((team) => {
     const missing = team.members.filter(
       (key) => teamNames.has(key) && !members.has(key),
     );
@@ -1407,10 +1433,64 @@ export function ChannelMembersDialog({
     )
       input.current?.focus();
   }, [memberKey, offering]);
+  const changeMember = useCallback(
+    async (change: MemberChange, signal: AbortSignal) => {
+      if (memberActions && (memberActions.pending || changeInFlight.current))
+        return false;
+      if (memberActions) {
+        changeInFlight.current = signal;
+        setChangingMember(true);
+      }
+      setChangeError(undefined);
+      try {
+        if (memberActions) {
+          if (change.expectedRole === "absent") {
+            const state = session.memberAdministration.snapshot(channelId);
+            if (state.status !== "ready")
+              throw new Error("Refresh members and roles before trying again.");
+            authorizeMemberChange(
+              state.authority,
+              session.viewer ?? "",
+              change,
+            );
+          }
+          await memberActions.change(change, signal);
+        } else await session.memberAdministration.run(channelId, change);
+        return !signal.aborted;
+      } catch (error) {
+        if (!signal.aborted)
+          setChangeError({
+            session,
+            channelId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        return false;
+      } finally {
+        if (changeInFlight.current === signal) {
+          changeInFlight.current = undefined;
+          if (!signal.aborted) setChangingMember(false);
+        }
+      }
+    },
+    [memberActions, session, channelId],
+  );
   const add = useCallback(
     async (key: string) => {
       const signal = lifetime.current?.signal;
-      if (!signal) return;
+      if (!signal || memberPending || (memberActions && !memberActions.canAdd))
+        return;
+      if (memberActions) {
+        if (
+          await changeMember(
+            { pubkey: key, expectedRole: "absent", role: "member" },
+            signal,
+          )
+        ) {
+          setQuery("");
+          setSelectedRole("All");
+        }
+        return;
+      }
       // Capture this intent's text without changing the callback on each key.
       const typed = pickerText(
         "channel-members",
@@ -1465,7 +1545,15 @@ export function ChannelMembersDialog({
         if (direct) pending.delete(key);
       }
     },
-    [session, channelId, canAddSoloAgents, place],
+    [
+      session,
+      channelId,
+      canAddSoloAgents,
+      place,
+      memberActions,
+      memberPending,
+      changeMember,
+    ],
   );
 
   // Adds a team or retries a refused group; `done` is announced only once
@@ -1507,7 +1595,7 @@ export function ChannelMembersDialog({
 
   const copy = async () => {
     try {
-      await writeClipboardText(soloChatLink(channelId));
+      await writeClipboardText(shareLink ?? soloChatLink(channelId));
       setCopyStatus("Link copied");
     } catch {
       setCopyStatus("Couldn’t copy the link.");
@@ -1661,7 +1749,8 @@ export function ChannelMembersDialog({
           rosterBusy ||
           !!rosterError ||
           administration.operation?.status === "pending" ||
-          administration.operation?.status === "uncertain"
+          administration.operation?.status === "uncertain" ||
+          memberPending
         }
         canAddWithRole={
           !solo &&
@@ -1814,26 +1903,29 @@ export function ChannelMembersDialog({
       </span>
     </div>
   );
-  const accessControl = generalAccess ? (
-    <ChannelGeneralAccess
-      key={channelId}
-      capability={session.channelDetails}
-      recovery={session.recovery}
-      channelId={channelId}
-      channel={channel}
-      mayHaveGuestMembers={
-        administration.status !== "ready" ||
-        Object.values(administration.authority.roles).includes("guest")
-      }
-    />
-  ) : null;
+  const accessControl =
+    accessSettings !== undefined ? (
+      accessSettings
+    ) : generalAccess ? (
+      <ChannelGeneralAccess
+        key={channelId}
+        capability={session.channelDetails}
+        recovery={session.recovery}
+        channelId={channelId}
+        channel={channel}
+        mayHaveGuestMembers={
+          administration.status !== "ready" ||
+          Object.values(administration.authority.roles).includes("guest")
+        }
+      />
+    ) : null;
   const dialog = (
     <Dialog
       open
       // Its confirmation step is a nested surface, not part of the visit.
       visit={visit && !selection}
       dismissOnOutsideClick
-      preventClose={share.busy}
+      preventClose={share.busy || memberPending}
       step={
         selection
           ? { key: "confirmation", scale: 0.95 }
@@ -1842,7 +1934,7 @@ export function ChannelMembersDialog({
       onOpenChange={(open) => {
         if (!open) {
           if (selection) setIntent(undefined);
-          else if (!share.busy) close();
+          else if (!share.busy && !memberPending) close();
         }
       }}
       title={
@@ -1854,7 +1946,7 @@ export function ChannelMembersDialog({
               : `Change access to ${memberAccessLabel(selection.role)}?`
           : (title ?? memberAccess(channel).title)
       }
-      height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
+      height={selection ? "content" : accessControl ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
       headerGap={
         !selection || selection.role === "remove" ? "compact" : "default"
@@ -1899,16 +1991,9 @@ export function ChannelMembersDialog({
               onClick={() => {
                 if (!changePermitted) return;
                 setIntent(undefined);
-                void session.memberAdministration
-                  .run(channelId, selection)
-                  .catch((error: unknown) => {
-                    setChangeError({
-                      session,
-                      channelId,
-                      message:
-                        error instanceof Error ? error.message : String(error),
-                    });
-                  });
+                const signal = lifetime.current?.signal;
+                if (!signal) return;
+                void changeMember(selection, signal);
               }}
             >
               {selection.role === "remove"
@@ -1921,7 +2006,11 @@ export function ChannelMembersDialog({
             </Button>
           </>
         ) : (
-          <Button variant="prominent" disabled={share.busy} onClick={close}>
+          <Button
+            variant="prominent"
+            disabled={share.busy || memberPending}
+            onClick={close}
+          >
             Done
           </Button>
         )
@@ -2023,19 +2112,22 @@ export function ChannelMembersDialog({
             data-refreshing={refreshing}
           >
             {accessControl}
-            {!canAdd && !readOnlyAccess && !(solo && rosterBusy) && (
-              <p className="px-control-inset text-body-sm text-subtle">
-                {channel?.channelType === "dm"
-                  ? "DM membership cannot be changed here."
-                  : channel?.archived
-                    ? `Archived ${place}s cannot add members.`
-                    : !session.outbox?.supports(9000)
-                      ? "Adding members is unavailable in this connection."
-                      : solo
-                        ? "You cannot share this chat."
-                        : "Join this channel to add people and agents."}
-              </p>
-            )}
+            {!memberActions &&
+              !canAdd &&
+              !readOnlyAccess &&
+              !(solo && rosterBusy) && (
+                <p className="px-control-inset text-body-sm text-subtle">
+                  {channel?.channelType === "dm"
+                    ? "DM membership cannot be changed here."
+                    : channel?.archived
+                      ? `Archived ${place}s cannot add members.`
+                      : !session.outbox?.supports(9000)
+                        ? "Adding members is unavailable in this connection."
+                        : solo
+                          ? "You cannot share this chat."
+                          : "Join this channel to add people and agents."}
+                </p>
+              )}
             {rosterError && (
               <p
                 role="alert"

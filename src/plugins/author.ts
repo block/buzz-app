@@ -58,6 +58,12 @@ export type {
   ChannelLauncherProps,
 } from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
+export type { ChannelMembersDialogProps } from "../bundled/channels/ChannelMembersDialog";
+export type {
+  ChannelGeneralAccessProps,
+  GeneralAccessPolicy,
+} from "../bundled/channels/ChannelGeneralAccess";
+export type { MemberChange } from "../features/channel-members/administration-protocol";
 export type {
   ComposerObservation,
   CompletionContext,

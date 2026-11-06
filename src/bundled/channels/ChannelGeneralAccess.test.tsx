@@ -303,7 +303,7 @@ it.each(["private", "view-only", "legacy-public"])(
       ),
     ).toEqual(["View only", "Private"]);
     expect(
-      screen.getByRole("option", { name: "View only" }),
+      await screen.findByRole("option", { name: "View only" }),
     ).toHaveAccessibleDescription("Anyone in the community can read.");
     expect(
       screen.queryByRole("option", { name: /^Public$/ }),
@@ -583,3 +583,95 @@ it.each([true, false])(
     expect(h.save).not.toHaveBeenCalled();
   },
 );
+
+const recordPolicy = {
+  subject: "record",
+  allowPublic: false,
+  visibilityDescription: (visibility: "private" | "public") =>
+    visibility === "public"
+      ? "Everyone can read this record and its retained revisions."
+      : "Only invited people can read this record.",
+};
+
+it("uses plugin policy for choices and disclosure while saving fresh signed details", async () => {
+  const h = harness();
+  h.load.mockResolvedValue({
+    ...base,
+    visibility: "private",
+    version: "private-v1",
+  });
+  const user = userEvent.setup();
+  render(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      policy={recordPolicy}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
+  await user.click(screen.getByRole("combobox"));
+  expect(
+    screen.queryByRole("option", { name: /^Public$/ }),
+  ).not.toBeInTheDocument();
+  const fresh = {
+    ...base,
+    visibility: "private" as const,
+    version: "private-v2",
+  };
+  h.load.mockResolvedValue(fresh);
+  await user.click(await screen.findByRole("option", { name: "View only" }));
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+    recordPolicy.visibilityDescription("public"),
+  );
+  expect(screen.getByRole("alertdialog")).not.toHaveTextContent(
+    "channel’s full history",
+  );
+  await user.click(screen.getByRole("button", { name: "Change access" }));
+  expect(h.save).toHaveBeenCalledExactlyOnceWith(
+    fresh,
+    { ...fresh, visibility: "public", joinRole: "guest" },
+    expect.any(AbortSignal),
+  );
+});
+
+it("shows existing Public access without offering it under a stricter plugin policy", async () => {
+  const h = harness();
+  h.load.mockResolvedValue({ ...base, joinRole: "member" });
+  const user = userEvent.setup();
+  render(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      policy={recordPolicy}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
+  expect(screen.getByRole("combobox")).toHaveTextContent("Public (existing)");
+  await select(user, "General access", "Private");
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+    recordPolicy.visibilityDescription("private"),
+  );
+  expect(h.save).not.toHaveBeenCalled();
+});
+
+it("uses plugin resource wording in read-only access without editing reads", () => {
+  const h = harness();
+  render(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      policy={recordPolicy}
+      channel={{
+        id: "alpha",
+        name: "Record",
+        readOnly: true,
+        visibility: "private",
+        joinRole: "guest",
+      }}
+    />,
+  );
+  expect(
+    screen.getByRole("region", { name: "General access" }),
+  ).toHaveTextContent("Only record members can read.");
+  expect(h.load).not.toHaveBeenCalled();
+});

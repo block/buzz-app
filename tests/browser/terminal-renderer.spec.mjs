@@ -315,6 +315,18 @@ for (const platform of ["MacIntel", "Linux x86_64"]) {
         expected.push({ data, source: "user" });
         await expect.poll(generated).toEqual(expected);
       }
+      if (apple) {
+        // Off, Option is a third-level shift; turning the device setting on
+        // makes the open terminal send Meta. The Meta-B also bounds Option+B.
+        await page.keyboard.press("Alt+KeyB");
+        await page.evaluate((key) => {
+          localStorage.setItem(key, "on");
+          window.dispatchEvent(new StorageEvent("storage", { key }));
+        }, "buzz-terminal-option-meta.v1");
+        await page.keyboard.press("Alt+KeyB");
+        expected.push({ data: "\x1bb", source: "user" });
+        await expect.poll(generated).toEqual(expected);
+      }
       await page.evaluate(() =>
         window.terminalRenderer.output("\x1b[?1h\x1b[?2004h"),
       );

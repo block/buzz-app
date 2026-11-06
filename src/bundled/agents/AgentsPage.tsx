@@ -391,12 +391,53 @@ export function AgentsPage({
       ? teamRoute(navigation.target.route?.params)
       : undefined;
   useEffect(() => {
-    if (!routedTeam || !routedEntry) return;
+    if (!routedEntry) return;
+    if (!routedTeam) {
+      // Back past a team's visit closes its editor; a new team has none.
+      setEditingTeam((open) => (open === "new" ? open : undefined));
+      return;
+    }
     setSelectedKey(undefined);
     setSharedSelection(undefined);
     setTab("teams");
     setEditingTeam(routedTeam);
   }, [routedTeam, routedEntry]);
+  // Opening a team is a visit Back and Forward move between, and closing its
+  // editor ends the visit.
+  const editTeam = (id: string | undefined) => {
+    if (
+      !navigation ||
+      !navigator ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "page" ||
+      navigator.snapshot().entry.id !== navigation.entryId ||
+      id === "new"
+    ) {
+      setEditingTeam(id);
+      return;
+    }
+    const page = agentProviderTarget(navigation.target);
+    if (id) {
+      void navigator.open({
+        ...page,
+        route: { version: 1, params: { team: id } },
+      });
+      return;
+    }
+    const closing = routedTeam;
+    if (!closing) {
+      setEditingTeam(undefined);
+      return;
+    }
+    const pageKey = targetKey(page);
+    navigator.dismiss(
+      (visit) =>
+        visit.kind === "page" &&
+        teamRoute(visit.route?.params) === closing &&
+        targetKey(agentProviderTarget(visit)) === pageKey,
+      page,
+    );
+  };
   useEffect(() => {
     if (!routedAgent || !routedEntry) return;
     setEditingTeam(undefined);
@@ -697,7 +738,7 @@ export function AgentsPage({
               )}
               teams={teams}
               editing={editing}
-              onEdit={setEditingTeam}
+              onEdit={editTeam}
               historyPresentation={
                 editing &&
                 navigation &&
@@ -2361,18 +2402,15 @@ function Teams({
   historyPresentation?: HistoryPresentation | undefined;
   newTeam: ReactNode;
 }) {
-  // A revert opens the editor again on the version it saved.
-  const [reverts, setReverts] = useState(0);
   const team = teams.find((item) => item.id === editing);
   if (editing === "new" || team)
     return (
       <TeamEditor
-        key={`${editing}/${reverts}`}
+        key={editing}
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
         historyPresentation={historyPresentation}
-        onReverted={() => setReverts((count) => count + 1)}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -2410,22 +2448,22 @@ function TeamEditor({
   saved,
   team,
   historyPresentation,
-  onReverted,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
   historyPresentation?: HistoryPresentation | undefined;
-  onReverted(): void;
   onDone(): void;
 }) {
+  // A saved revert, until the team shows its new version.
+  const [reverted, setReverted] = useState(false);
   const synced = team && agents.teamHistory(team.id);
   const history = synced && {
     ...synced,
     revise: async (...args: Parameters<typeof synced.revise>) => {
       const outcome = await synced.revise(...args);
-      if (outcome.status === "accepted") onReverted();
+      if (outcome.status === "accepted") setReverted(true);
       return outcome;
     },
   };
@@ -2437,7 +2475,14 @@ function TeamEditor({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   // What a synced Save revises, and a new team's id for every retry.
-  const [opened] = useState(team);
+  const [opened, setOpened] = useState(team);
+  // A revert takes its instructions and version, keeping the other edits.
+  useEffect(() => {
+    if (!reverted || !team || team.revision === opened?.revision) return;
+    setReverted(false);
+    setOpened(team);
+    setInstructions(team.instructions);
+  }, [reverted, team, opened]);
   const [draft] = useState(() => crypto.randomUUID());
   const which = opened ? { id: opened.id } : { draft };
   // Each hosted agent picked, as listed then in the only community with it.

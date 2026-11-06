@@ -11993,8 +11993,10 @@ it("changes instructions in place and discards a dismissed change draft", async 
 
 it("reads the owner's agents and teams, and saves only a reviewed team draft", async () => {
   const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
   await service.create({ type: "example/echo", name: "Parent" });
   await service.create({ type: "example/echo", name: "Child" });
+  await service.create({ type: "example/cloud", name: "Sky" });
   const team = await service.saveTeam({
     draft: crypto.randomUUID(),
     name: "Crew",
@@ -12008,6 +12010,12 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
   expect(handle.readAgents()).toEqual([
     expect.objectContaining({ pubkey: bot, name: "Parent" }),
     expect.objectContaining({ pubkey: sibling, name: "Child" }),
+    {
+      pubkey: hostedKey,
+      name: "Sky",
+      type: "example/cloud",
+      unavailable: "Its provider keeps its config",
+    },
   ]);
   expect(handle.readAgents("Child")).toMatchObject({
     pubkey: sibling,

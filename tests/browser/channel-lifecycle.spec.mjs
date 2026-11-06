@@ -860,6 +860,8 @@ test.describe("Solo chat owned through its agent", () => {
       await expect(
         menu.getByRole("menuitem", { name, exact: true }),
       ).toBeInViewport({ ratio: 1 });
+    // At the default text scale, the old 24rem cap clipped this menu by its
+    // fixed-pixel parts; larger text grows rows and a rem cap alike.
     expect(
       await menu.evaluate((popup) => popup.scrollHeight - popup.clientHeight),
     ).toBe(0);

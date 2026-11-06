@@ -50,6 +50,22 @@ it.each([
 ])("leaves code/link/non-token context literal: %s", (content) => {
   expect(parts(content)).toEqual([{ text: content }]);
 });
+it("binds a mention after a bare link that ends at CJK punctuation, but not inside links", () => {
+  for (const content of [
+    "https://example.test，@Mic",
+    "看这个 https://example.test/a。@Mic",
+    "(https://example.test，@Mic)",
+  ])
+    expect(parts(content).filter((part) => part.target)).toEqual([
+      { text: "@Mic", target: profileTarget(mic) },
+    ]);
+  for (const content of [
+    "https://example.test/文档?to=@Mic",
+    "<https://example.test/a，@Mic>",
+    "[[a]](https://example.test/a，@Mic)",
+  ])
+    expect(parts(content)).toEqual([{ text: content }]);
+});
 it("recognizes prose after a closed code span even when the span contained HTTPS", () => {
   expect(
     parts("`https://example.test @Mic` then @Mic").filter((p) => p.target),

@@ -1,5 +1,6 @@
 import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import { BARE_URL_REST } from "../relay/message-content";
 import { profileTarget } from "../profiles/target";
 
 /** The names a person's signed prose mention binds by: their shown name and,
@@ -95,6 +96,11 @@ export function profileMentionParts(
   return parts.length ? parts : [{ text }];
 }
 
+const urlScheme = /^(?:[a-z][a-z\d+.-]*:\/\/|mailto:|nostr:)/.source;
+/** Bare URLs end where rendered ones do; `<url>` and `](url)` keep CJK punctuation. */
+const wrappedUrl = new RegExp(urlScheme + /[^\s<>`]+/.source, "i");
+const bareUrl = new RegExp(urlScheme + BARE_URL_REST, "i");
+
 // Evaluate exclusions on the full body BEFORE splitting link/emoji rendering.
 // Deliberately conservative for incomplete code/link syntax; not a Markdown parser.
 function protectedTextEnd(text: string, start: number): number {
@@ -132,8 +138,7 @@ function protectedTextEnd(text: string, start: number): number {
     const link = /^!?\[[^\]\n]*\](?:\([^\n]*?\)|\[[^\]\n]*\])/.exec(rest)?.[0];
     if (link) return start + link.length;
   }
-  const url = /^(?:[a-z][a-z\d+.-]*:\/\/|mailto:|nostr:)[^\s<>`]+/i.exec(
-    rest,
-  )?.[0];
+  const wrapped = text[start - 1] === "<" || text.endsWith("](", start);
+  const url = (wrapped ? wrappedUrl : bareUrl).exec(rest)?.[0];
   return url ? start + url.length : start;
 }

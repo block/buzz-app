@@ -90,6 +90,7 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "https://example.com/a。:party:",
     "链接=https://example.com，:party:",
     "价格<100看这个https://example.com，:party:",
+    "看 [x]: https://example.com，:party:",
     "[a](HTTPS://example.com)，:party:",
     "[a](HTTPS://example.com)，:party:https://b.com",
   ]) {
@@ -118,6 +119,8 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "[a](<https://x.com/a\\\u2028https://y.com/a，:party:>)",
     "[a](<https://x.com/a\\\u2029https://y.com/a，:party:>)",
     "[a](\u2028<x>https://y.com/a，:party:)",
+    "see [a][x]\n\n[x]: https://example.com/a，:party:",
+    "   [x\\]y]:\n<https://x.com/a b?u=https://y.com/a，:party:>",
     "https://github。COM/:party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([]);

@@ -240,6 +240,15 @@ it.each(["source", "event", "timer"] as const)(
         },
         "watch/check": { slug: "watch/check", modifiedAt: 1, value },
       },
+      // Over the limit here; deleting its Interest deletes it too.
+      skipped: {
+        "watch/over": {
+          slug: "watch/over",
+          modifiedAt: 1,
+          value,
+          problem: "Over the limit of 100 watches and timers",
+        },
+      },
     };
     let snapshot = { status: "ready", running: [agent] };
     let finishSave = () => {};
@@ -272,7 +281,17 @@ it.each(["source", "event", "timer"] as const)(
             value: { ...value, enabled: target.enabled },
           };
         }
-        agent = { ...agent, attention: attention as typeof agent.attention };
+        // Deleting a skipped slug clears it, as the store does.
+        const skipped = Object.fromEntries(
+          Object.entries(agent.skipped).filter(
+            ([slug]) => patch.attention?.[slug] !== null,
+          ),
+        ) as typeof agent.skipped;
+        agent = {
+          ...agent,
+          attention: attention as typeof agent.attention,
+          skipped,
+        };
         snapshot = { ...snapshot, running: [agent] };
         changed();
         await saving;
@@ -323,7 +342,11 @@ it.each(["source", "event", "timer"] as const)(
           slug: "interest/release",
         }),
       }),
-      attention: { "watch/check": null, "interest/release": null },
+      attention: {
+        "watch/check": null,
+        "watch/over": null,
+        "interest/release": null,
+      },
     });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(
@@ -404,7 +427,7 @@ it.each(["source", "event", "timer"] as const)(
           slug: "interest/release",
         }),
       }),
-      attention: { "interest/release": null },
+      attention: { "watch/over": null, "interest/release": null },
     });
   },
 );

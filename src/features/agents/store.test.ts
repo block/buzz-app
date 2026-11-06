@@ -632,3 +632,70 @@ it("retains the original pause envelope when a child exceeds the supported objec
     ].value,
   ).toEqual(value);
 });
+
+it("envelopes a paused Interest's skipped watches and saves their history once", async () => {
+  const storage = memoryStorage();
+  const event = {
+    type: "event",
+    interest_id: "task",
+    enabled: true,
+    since: 1,
+    channels: "all",
+    kinds: [9],
+  } as const;
+  const history = { lastWokeAt: 5, output: "Woke" };
+  let saved = setAttention(
+    record,
+    "interest/task",
+    { type: "interest", instructions: "Report privately" },
+    1,
+  );
+  saved = setAttention(saved, "watch/kept", event, 1);
+  saved = {
+    ...saved,
+    // Within an older reader's limit, over this one's.
+    skipped: {
+      "watch/over": {
+        slug: "watch/over",
+        value: event,
+        modifiedAt: 1,
+        problem: "Over the limit",
+      },
+    },
+    attentionHistory: { "watch/kept": history },
+  };
+  const paused = setAttention(
+    saved,
+    "interest/task",
+    { type: "interest", instructions: "Report privately", paused: true },
+    2,
+  );
+  await writeRecord(storage, {
+    ...paused,
+    attentionHistory: { "watch/kept": history },
+  });
+  const raw = JSON.parse(storage.getItem(recordKey(pubkey)) ?? "{}");
+  for (const slug of ["watch/kept", "watch/over"])
+    expect(validateObject(slug, raw.attention[slug].value)).toMatch(
+      /Unknown field/,
+    );
+  expect(raw.attention["watch/kept"].value.interest_paused.history).toEqual(
+    history,
+  );
+  expect(raw.attentionHistory).toEqual({});
+  const read = readRecords(storage)[pubkey];
+  expect(read?.attentionHistory).toEqual({ "watch/kept": history });
+  if (!read) throw new Error("fixture");
+  await writeRecord(
+    storage,
+    setAttention(
+      read,
+      "interest/task",
+      { type: "interest", instructions: "Report privately" },
+      3,
+    ),
+  );
+  const resumed = JSON.parse(storage.getItem(recordKey(pubkey)) ?? "{}");
+  expect(resumed.attention["watch/over"].value).toEqual(event);
+  expect(resumed.attentionHistory).toEqual({ "watch/kept": history });
+});

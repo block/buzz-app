@@ -393,15 +393,34 @@ export function removeRecord(storage: AgentStore, key: AgentKey) {
 
 /** A record as it is saved. */
 export function recordText({ skipped, ...record }: AgentRecord) {
-  // Skipped objects go back where they were read from, so a later reader that
-  // can apply them still finds them.
+  // A watch of a paused Interest is saved in an envelope older readers reject,
+  // so they never run it without its instructions. Its history moves into the
+  // envelope rather than being saved twice.
+  const paused = (value: AttentionValue) =>
+    value.type !== "interest" &&
+    interestPaused(record.attention, value.interest_id);
+  const enveloped = new Set(
+    Object.values(record.attention)
+      .filter(({ value }) => paused(value))
+      .map(({ slug }) => slug),
+  );
   return JSON.stringify({
     ...record,
+    ...(record.attentionHistory && {
+      attentionHistory: Object.fromEntries(
+        Object.entries(record.attentionHistory).filter(
+          ([slug]) => !enveloped.has(slug),
+        ),
+      ),
+    }),
     attention: {
+      // Skipped objects go back where they were read from, so a later reader
+      // that can apply them still finds them, enveloped as their Interest
+      // requires: one over a limit here can be within an older reader's.
       ...Object.fromEntries(
         Object.values(skipped ?? {}).map(({ problem: _, ...object }) => [
           object.slug,
-          object,
+          { ...object, value: skippedValue(record.attention, object.value) },
         ]),
       ),
       ...Object.fromEntries(
@@ -414,7 +433,7 @@ export function recordText({ skipped, ...record }: AgentRecord) {
           }
           return [
             slug,
-            interestPaused(record.attention, value.interest_id)
+            enveloped.has(slug)
               ? {
                   ...object,
                   value: {
@@ -438,6 +457,23 @@ export function recordText({ skipped, ...record }: AgentRecord) {
       ),
     },
   });
+}
+
+/** A skipped watch's value, enveloped while its Interest is paused and
+ * unwrapped once that Interest is active again. */
+function skippedValue(
+  attention: AgentRecord["attention"],
+  value: unknown,
+): unknown {
+  if (!value || typeof value !== "object") return value;
+  const { interest_paused, ...watch } = value as Record<string, unknown>;
+  if (watch.type === "interest" || typeof watch.interest_id !== "string")
+    return value;
+  const parent = attention[`interest/${watch.interest_id}`]?.value;
+  if (parent?.type !== "interest") return value;
+  if (parent.paused)
+    return { ...watch, interest_paused: interest_paused ?? {} };
+  return watch;
 }
 
 /** Saves one record, when it changed. */

@@ -84,10 +84,17 @@ export function createAttentionComponents({
         const focused = document.activeElement;
         const expected = agent.attention[slug];
         if (!expected) throw new Error("This interest no longer exists.");
+        const id = slug.slice("interest/".length);
         const watches = Object.values(agent.attention).filter(
           (object) =>
-            object.value.type !== "interest" &&
-            object.value.interest_id === slug.slice("interest/".length),
+            object.value.type !== "interest" && object.value.interest_id === id,
+        );
+        // A watch skipped here, such as one over the limit, still belongs to
+        // this Interest and could run once there is room for it.
+        const skipped = Object.values(agent.skipped ?? {}).filter(
+          (object) =>
+            (object.value as { interest_id?: unknown } | null)?.interest_id ===
+            id,
         );
         await agents.save(agent.key, {
           attentionExpected: Object.fromEntries([
@@ -95,7 +102,7 @@ export function createAttentionComponents({
             [slug, expected],
           ]),
           attention: Object.fromEntries([
-            ...watches.map((watch) => [watch.slug, null]),
+            ...[...watches, ...skipped].map((watch) => [watch.slug, null]),
             [slug, null],
           ]),
         });

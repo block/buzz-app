@@ -51,11 +51,11 @@ export class BrowserSessions {
         }
         // The view may have gone while the page resumed; then nothing would
         // ever detach it again.
-        if (resumed && current() && !builderlab?.signal.aborted)
-          return parked.sessionId;
+        const wanted = current() && !builderlab?.signal.aborted;
+        if (resumed && wanted) return parked.sessionId;
         await this.close(parked.sessionId);
         // A page that cannot play again opens fresh instead.
-        if (resumed) return undefined;
+        if (!wanted) return undefined;
       }
       while (this.live.length >= MAX_GUESTS) await this.close(this.victim());
       const sessionId = await this.platform.attach(

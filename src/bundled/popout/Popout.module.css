@@ -17,12 +17,22 @@
 .title {
   flex: 1;
   min-width: 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-heading);
   line-height: var(--text-heading--line-height);
   letter-spacing: var(--text-heading--letter-spacing);
+}
+.kind {
+  font-weight: 700;
+}
+.conversation {
+  margin-left: var(--space-2);
+  font-size: var(--text-body);
+  font-weight: 400;
+  color: var(--text-secondary);
 }
 .messages {
   flex: 1;

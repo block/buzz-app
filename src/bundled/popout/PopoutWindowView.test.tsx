@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import type { PopoutView } from "../../features/popout/window";
@@ -49,11 +50,19 @@ const view = (patch: Partial<PopoutView> = {}): PopoutView => ({
   ...patch,
 });
 
-it("shows the thread without chrome and reports its guard", () => {
+it("names what it shows, as Slack's pop-out does, and reports its guard", () => {
   const act = vi.fn();
-  render(<PopoutWindowView view={view()} act={act} />);
-  // The OS title bar names the thread; the window itself is just the thread.
-  expect(screen.queryByRole("heading")).toBeNull();
+  const { rerender } = render(<PopoutWindowView view={view()} act={act} />);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Thread #Design",
+  );
+  rerender(
+    <PopoutWindowView view={view({ isDm: true, title: "Ada" })} act={act} />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Thread Ada",
+  );
+  rerender(<PopoutWindowView view={view()} act={act} />);
   expect(screen.getByText("Root message")).toBeTruthy();
   expect(screen.getByText("First reply")).toBeTruthy();
   // The guard is reported natively from the start: nothing is held yet.

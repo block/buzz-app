@@ -189,6 +189,14 @@ fn require_popout<R: tauri::Runtime>(window: &WebviewWindow<R>) -> Result<String
         Err("Not a pop-out window".into())
     }
 }
+impl View {
+    /// The OS title bar names what the window is, as Slack does: "Thread in
+    /// #channel" (a DM has no `#`).
+    fn window_title(&self) -> String {
+        let hash = if self.is_dm { "" } else { "#" };
+        format!("Thread in {hash}{} — Buzz", self.title)
+    }
+}
 fn validate(view: &View) -> Result<()> {
     if view.title.len() > 4096
         || view.scope.len() > 4096
@@ -352,7 +360,7 @@ pub(crate) fn popout_window_update<R: tauri::Runtime>(
         }
         session.view = next;
         if let Some(companion) = window.app_handle().get_webview_window(&label) {
-            let _ = companion.set_title(&format!("{} — Buzz", session.view.title));
+            let _ = companion.set_title(&session.view.window_title());
         }
     } else {
         map.remove(&label);
@@ -755,6 +763,15 @@ mod tests {
             actions: Channel::new(|_| Ok(())),
             updates: None,
         }
+    }
+    #[test]
+    fn window_title_names_the_thread_and_its_conversation() {
+        let mut view = view();
+        view.title = "design".into();
+        assert_eq!(view.window_title(), "Thread in #design — Buzz");
+        view.is_dm = true;
+        view.title = "Ada".into();
+        assert_eq!(view.window_title(), "Thread in Ada — Buzz");
     }
     #[test]
     fn focus_main_is_a_companion_action_with_no_payload() {

@@ -19,6 +19,7 @@ import * as modelStorage from "../messages/solo-model-picks-storage";
 import { readView, writeView } from "../../shared/view-state";
 import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
+import { writeDefaultLifetime } from "./default-lifetime";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
@@ -711,6 +712,7 @@ it("a refused start leaves New chat alone while its settings are being edited", 
     expect(readView("test", "solo:settings", null)).toEqual({
       canvas: "",
       name: "",
+      ttlSeconds: null,
     }),
   );
   expect(screen.getByRole("textbox")).not.toHaveTextContent("Audit the flow");
@@ -1135,6 +1137,42 @@ it("edits draft settings before creation, restores them, and applies Canvas once
     ),
   );
   expect(order).toEqual(["send", "canvas"]);
+});
+
+it("a new Solo chat starts with the default lifetime unless its settings chose another", async () => {
+  const f = setup(),
+    started = vi.fn(),
+    user = userEvent.setup();
+  writeDefaultLifetime("test", 86400);
+  const mounted = render(
+    <SoloDraft session={f.session} scope="test" onStarted={started} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  expect(
+    await screen.findByRole("radio", { name: /^Temporary/ }),
+  ).toBeChecked();
+  expect(
+    screen.getByText("after 1 day", { selector: "strong" }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  // Following the default saves no choice in the draft.
+  expect(readView("test", "solo:settings", null)).toBeNull();
+  await user.type(screen.getByRole("textbox"), "First");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(f.channelWrites.create.mock.calls[0]?.[2]).toBe(86400);
+  mounted.unmount();
+  render(<SoloDraft session={f.session} scope="test" onStarted={started} />);
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  await user.click(await screen.findByRole("radio", { name: /^Ongoing/ }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(readView("test", "solo:settings", null)).toMatchObject({
+    ttlSeconds: null,
+  });
+  await user.type(screen.getByRole("textbox"), "Second");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledTimes(2));
+  expect(f.channelWrites.create.mock.calls[1]?.[2]).toBeUndefined();
 });
 
 it("a new Solo chat for a named agent starts with it in the pill, not the default", async () => {

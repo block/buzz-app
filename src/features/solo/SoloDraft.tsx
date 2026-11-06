@@ -37,6 +37,7 @@ import {
 import type { DraftPicks } from "../messages/ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import { useDefaultAgent } from "./default-agent";
+import { draftLifetime, useDefaultLifetime } from "./default-lifetime";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
@@ -72,8 +73,11 @@ function readDraftSettings(scope: string, draftKey: string) {
         ? settings.canvas
         : undefined,
     // Preserve malformed lifetime input for the existing visible validation.
+    // `null` is a chosen Ongoing; with none saved the draft follows the
+    // default lifetime for new chats.
     ttlSeconds: ("ttlSeconds" in settings ? settings.ttlSeconds : undefined) as
       | number
+      | null
       | undefined,
   };
 }
@@ -214,6 +218,8 @@ export function SoloDraft({
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
+  // Read again as the chat starts; this renders the current default.
+  useDefaultLifetime(scope);
   const [selectedProject, setSelectedProject] = useState(() => {
     const saved = readView<unknown>(
       scope,
@@ -332,7 +338,7 @@ export function SoloDraft({
       typeof draftSettings.name === "string"
         ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
         : draftSettings.name;
-    const { ttlSeconds } = draftSettings;
+    const ttlSeconds = draftLifetime(scope, draftSettings.ttlSeconds);
     const project = selectedProject;
     const canvas = draftCanvas;
     const draftModelPicksKey = soloModelPicksKey(`${draftKey}:new-draft`);
@@ -760,10 +766,15 @@ export function SoloDraft({
           projectId={selectedProject || undefined}
           canvas={draftCanvas}
           name={draftSettings.name}
-          ttlSeconds={draftSettings.ttlSeconds}
+          ttlSeconds={draftLifetime(scope, draftSettings.ttlSeconds)}
           close={() => setSettingsOpen(false)}
           save={(canvas, ttlSeconds, name) => {
-            const next = { canvas, ttlSeconds, name: name ?? "" };
+            // Saved as chosen, so Ongoing stays ongoing under a temporary default.
+            const next = {
+              canvas,
+              ttlSeconds: ttlSeconds ?? null,
+              name: name ?? "",
+            };
             if (!writeView(scope, `${draftKey}:settings`, next))
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",

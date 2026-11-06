@@ -29,6 +29,7 @@ export function ChannelDurationField({
   disabled = false,
   error,
   label: fieldLabel,
+  description,
   onChange,
 }: {
   temporary: boolean;
@@ -36,6 +37,7 @@ export function ChannelDurationField({
   disabled?: boolean;
   error?: string | undefined;
   label?: string;
+  description?: string;
   onChange(ttlSeconds: number | undefined): void;
 }) {
   const reduceMotion = useReducedMotion();
@@ -54,6 +56,7 @@ export function ChannelDurationField({
     <Field
       label={fieldLabel ?? "Duration"}
       labelVisibility={fieldLabel ? "visible" : "hidden"}
+      description={description}
       error={error}
     >
       <RadioGroup

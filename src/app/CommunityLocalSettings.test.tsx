@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { useSyncExternalStore } from "react";
 import { Context } from "@deepseek-ai/cordis";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
@@ -10,6 +10,7 @@ import { createCommunities } from "../features/communities/service";
 import { localCommunityNameKey } from "../features/communities/names";
 import { flush } from "../features/relay/testing";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
+import { readDefaultLifetime } from "../features/solo/default-lifetime";
 
 const viewer = "a".repeat(64);
 const origin = "https://community.example";
@@ -154,4 +155,25 @@ it("copies the exact community URL, keeps it selectable on clipboard failure, an
   expect(await screen.findByText("Community URL copied.")).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(communities.snapshot().selected).toBe(origin);
+});
+
+it("saves the lifetime new Solo chats start with for this community and account only", async () => {
+  const { user } = await setup();
+  const scope = `${origin}:${viewer}`;
+  const lifetime = screen.getByRole("radiogroup", { name: "New Solo chats" });
+  expect(
+    within(lifetime).getByRole("radio", { name: /^Ongoing/ }),
+  ).toBeChecked();
+  await user.click(within(lifetime).getByRole("radio", { name: /^Temporary/ }));
+  expect(readDefaultLifetime(scope)).toBe(604800);
+  expect(readDefaultLifetime(`${origin}:${"b".repeat(64)}`)).toBeUndefined();
+  await user.click(
+    within(lifetime).getByRole("button", { name: "Increase duration" }),
+  );
+  expect(readDefaultLifetime(scope)).toBe(1209600);
+  await user.click(within(lifetime).getByRole("radio", { name: /^Ongoing/ }));
+  expect(readDefaultLifetime(scope)).toBeUndefined();
+  // Back to Temporary keeps the duration chosen before.
+  await user.click(within(lifetime).getByRole("radio", { name: /^Temporary/ }));
+  expect(readDefaultLifetime(scope)).toBe(1209600);
 });

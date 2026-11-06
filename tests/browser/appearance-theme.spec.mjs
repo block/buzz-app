@@ -96,7 +96,7 @@ const FRAMED_THEMES = [
     },
   },
 ];
-const UNFRAMED_THEMES = ["troupe", "cacophony", "cable", "baton"];
+const UNFRAMED_THEMES = ["troupe", "cacophony", "cable", "baton", "howdy"];
 const THEME_COUNT = 1 + FRAMED_THEMES.length + UNFRAMED_THEMES.length;
 
 for (const [index, theme] of FRAMED_THEMES.entries()) {
@@ -470,4 +470,59 @@ test("Baton keeps its frame on the page mode and changes accent between modes", 
   expect(await resolved(page, "--surface-panel", "body")).toBe("rgb(0, 0, 0)");
   expect(await resolved(page, "--accent-9")).toBe("rgb(43, 209, 43)");
   expect(await resolved(page, "--border-standard")).toBe("rgb(58, 58, 58)");
+});
+
+test("Howdy gives own bubbles the mint fill only with the Theme accent", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await appearance(page);
+  const group = page.getByRole("radiogroup", { name: "Theme", exact: true });
+  await group.getByText("Howdy", { exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "howdy");
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "theme");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-color-level",
+    "touch",
+  );
+  expect(await resolved(page, "--surface-message-own")).toBe(
+    "rgb(218, 246, 208)",
+  );
+  expect(await resolved(page, "--surface-panel", "body")).toBe(
+    "rgb(247, 243, 234)",
+  );
+  await expectFramed(page, false);
+  const cardBubble = (theme) =>
+    group
+      .locator(`svg[data-theme="${theme}"]`)
+      .evaluate((node) =>
+        getComputedStyle(node).getPropertyValue("--surface-message-own"),
+      );
+  expect(
+    await cardBubble("howdy"),
+    "the Howdy card previews the mint fill",
+  ).not.toBe(await cardBubble("buzz"));
+  expect(
+    await cardBubble("relax"),
+    "another theme's card does not inherit the page theme's bubble",
+  ).not.toBe(await cardBubble("howdy"));
+  await chooseColorMode(page, "Dark");
+  expect(await resolved(page, "--surface-message-own")).toBe("rgb(4, 89, 74)");
+  expect(await resolved(page, "--affordance-mention-own-hover")).toBe(
+    "rgb(5, 118, 98)",
+  );
+  await chooseColorMode(page, "Light");
+
+  await page.getByRole("button", { name: "Cobalt accent color" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "cobalt");
+  expect(await resolved(page, "--surface-message-own")).toBe(
+    await resolved(page, "--accent-4"),
+  );
+  expect(await resolved(page, "--surface-message-own")).not.toBe(
+    "rgb(218, 246, 208)",
+  );
+  expect(await resolved(page, "--text-metadata-own")).toBe(
+    await resolved(page, "--text-metadata"),
+  );
 });

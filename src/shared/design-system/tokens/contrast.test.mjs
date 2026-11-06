@@ -581,6 +581,24 @@ describe("semantic contrast contract", () => {
       "--theme-accent-overlay-dark: var(--shade-fill);",
       /baton\/theme\/high\/dark --text-mention-own \(#\w+\) on --affordance-mention-own \(/,
     ],
+    [
+      "an unreadable Howdy own-bubble metadata ink",
+      "--theme-message-own-soft-metadata-dark: var(--howdy-message-own-soft-metadata-dark);",
+      "--theme-message-own-soft-metadata-dark: var(--howdy-neutral-10-dark);",
+      /howdy\/theme\/touch\/dark --text-metadata-own \(#\w+\) on --surface-message-own \(/,
+    ],
+    [
+      "an unreadable Howdy own-bubble mention hover",
+      "--theme-message-own-soft-mention-hover-dark: var(--howdy-message-own-soft-mention-hover-dark);",
+      "--theme-message-own-soft-mention-hover-dark: var(--howdy-neutral-10-dark);",
+      /howdy\/theme\/touch\/dark --text-mention-own/,
+    ],
+    [
+      "a Howdy own bubble that leaves its text unreadable",
+      "--theme-message-own-soft-text-light: var(--howdy-message-own-soft-text-light);",
+      "--theme-message-own-soft-text-light: var(--howdy-message-own-soft-light);",
+      /howdy\/theme\/touch\/light --text-message-own \(#\w+\) on --surface-message-own \(/,
+    ],
   ])("measures a theme in its own scope: %s", (_name, from, to, pairing) => {
     expect(tokens).toContain(from);
     const result = check(tokens.replaceAll(from, to));

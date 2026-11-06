@@ -7,6 +7,7 @@ export const THEMES = [
   "cacophony",
   "cable",
   "baton",
+  "howdy",
 ] as const;
 export type Theme = (typeof THEMES)[number];
 export const DEFAULT_THEME: Theme = "buzz";
@@ -83,6 +84,14 @@ export const THEME_DEFINITIONS: Readonly<Record<Theme, ThemeDefinition>> = {
     frame: { light: "light", dark: "dark" },
     accentFamily: "baton",
     accentName: "Baton",
+  },
+  howdy: {
+    id: "howdy",
+    label: "Howdy",
+    description: "A warm paper page, teal accents and minty replies.",
+    frame: { light: "light", dark: "dark" },
+    accentFamily: "howdy",
+    accentName: "Teal",
   },
 };
 

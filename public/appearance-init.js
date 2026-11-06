@@ -64,6 +64,7 @@
       "cacophony",
       "cable",
       "baton",
+      "howdy",
     ];
     const saved = localStorage.getItem("buzz-theme.v1");
     if (themes.includes(saved)) theme = saved;

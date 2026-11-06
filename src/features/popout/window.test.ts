@@ -50,12 +50,18 @@ function harness() {
     detached: vi.fn(async () => []),
   };
   const openLink = vi.fn(() => true);
-  const windows = createPopoutWindows(relay, { bridge, openLink });
+  const openActivity = vi.fn();
+  const windows = createPopoutWindows(relay, {
+    bridge,
+    openLink,
+    openActivity,
+  });
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   return {
     windows,
     bridge,
     openLink,
+    openActivity,
     flush,
     control: (action: PopoutControl["action"], text?: string, stale = false) =>
       act?.({
@@ -237,4 +243,18 @@ it("names windows holding unsent work for a community exit, until they let go or
   h.control("closed");
   expect(h.windows.held()).toEqual([]);
   expect(changed).toHaveBeenCalledTimes(4);
+});
+
+it("routes an agent's activity view through the activity opener with this window's target", async () => {
+  const h = harness();
+  await h.windows.open({ channelId: "channel", threadRootId: ROOT });
+  const activity = `buzz:profile?agent=${"d".repeat(64)}&tab=activity`;
+  h.control("openLink", activity);
+  expect(h.openActivity).toHaveBeenCalledWith(activity, {
+    channelId: "channel",
+    threadRootId: ROOT,
+  });
+  expect(h.openLink).not.toHaveBeenCalled();
+  h.control("openLink", "buzz://channel/other");
+  expect(h.openLink).toHaveBeenCalledWith("buzz://channel/other");
 });

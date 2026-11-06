@@ -44,6 +44,17 @@ export type CompanionRow = {
   /** For messages the viewer may edit: the exact source text and attachment
    * source main expects an edit to build on. */
   editable?: { sourceContent: string; attachmentSourceId: string } | undefined;
+  /** The author is an agent (profile hint): View activity may be offered. */
+  authorIsAgent?: boolean;
+  /** Plugin message actions main would offer for this row, for a labelled
+   * handoff to the main window; bound to the contribution instance. */
+  actions?: CompanionAction[] | undefined;
+};
+export type CompanionAction = {
+  /** Contribution key and revision: the exact registered instance. */
+  key: string;
+  revision: string;
+  title: string;
 };
 export type CompanionManagement = {
   unread: boolean;
@@ -168,5 +179,6 @@ export function projectCompanionRow(
     time: r.createdAt,
     delivery: r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
     ...projectReactions(r.reactions, session.viewer),
+    ...(r.agentEnvelope || profile?.isAgent ? { authorIsAgent: true } : {}),
   };
 }

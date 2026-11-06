@@ -54,6 +54,8 @@ export function createHuddleComposerOwner(
     authorization(
       id: string,
     ): import("../relay/messages").AgentOwnerAuthorization | undefined;
+    /** Hand a still-registered, still-matching action to the main window. */
+    handoff(messageId: string, key: string, revision: string): boolean;
   },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
@@ -511,6 +513,23 @@ export function createHuddleComposerOwner(
         if (typeof request.args.following !== "boolean")
           throw new Error("Invalid follow state.");
         session.unread.follow(room, thread, request.args.following);
+        return;
+      }
+      case "handoff": {
+        check();
+        const { messageId, key, revision } = request.args;
+        if (
+          !thread ||
+          !shown ||
+          typeof messageId !== "string" ||
+          !/^[0-9a-f]{64}$/.test(messageId) ||
+          typeof key !== "string" ||
+          key.length > 256 ||
+          typeof revision !== "string" ||
+          revision.length > 256 ||
+          !shown.handoff(messageId, key, revision)
+        )
+          throw new Error("This action is no longer available.");
         return;
       }
       case "acknowledgeOperations": {

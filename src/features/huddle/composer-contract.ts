@@ -90,6 +90,12 @@ export type ComposerOperations = {
     result: import("../companion/operations").Admission;
   };
   retryOperation: { args: { id: string }; result: undefined };
+  /** Pop-out windows: hand a registered plugin action for a shown message to
+   * the main window (a labelled interim, not execution in the companion). */
+  handoff: {
+    args: { messageId: string; key: string; revision: string };
+    result: undefined;
+  };
   /** The companion reconciled these terminal operation reports; main may
    * stop repeating them. */
   acknowledgeOperations: {

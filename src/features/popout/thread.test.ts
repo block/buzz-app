@@ -177,6 +177,8 @@ const shownFor = (h: ReturnType<typeof fixture>) => ({
     h.thread.admit(id, messageId, kind),
   acknowledge: (ids: readonly string[]) => h.thread.acknowledge(ids),
   authorization: (id: string) => h.thread.authorization(id),
+  handoff: (messageId: string, key: string, revision: string) =>
+    !!h.thread.handoff(messageId, key, revision),
 });
 const OWN_EVENT = "c".repeat(64);
 const OTHER_EVENT = "d".repeat(64);
@@ -674,4 +676,60 @@ it("admits a verified owner's deletion in a channel that is read-only to a guest
   await expect(other.deleteMessage({ messageId: ROOT })).rejects.toThrow(
     /read-only/,
   );
+});
+
+it("offers registered plugin actions as handoffs bound to their contribution, never the spawn action", async () => {
+  const h = fixture();
+  type Entry = import("../../plugins/contributions").Contribution<
+    import("../conversation/contracts").MessageAction
+  >;
+  const action = (id: string, revision: string, matches = true): Entry => ({
+    key: `plugin:${id}`,
+    pluginId: "plugin",
+    revision,
+    id,
+    title: id === "remind-me" ? "Remind me" : "Open thread in new window",
+    matches: () => matches,
+    component: () => null,
+  });
+  let entries: Entry[] = [
+    action("remind-me", "1"),
+    action("open-thread-window", "1"),
+  ];
+  const listeners = new Set<() => void>();
+  const actions = {
+    snapshot: () => entries,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  const thread = createPopoutThread(
+    h.session,
+    "channel",
+    ROOT,
+    () => {},
+    actions,
+  );
+  clean.push(thread.dispose);
+  expect(thread.snapshot().root?.actions).toEqual([
+    { key: "plugin:remind-me", revision: "1", title: "Remind me" },
+  ]);
+  expect(thread.handoff(ROOT, "plugin:remind-me", "1")?.id).toBe("remind-me");
+  // The spawn action is never a handoff; a disabled/reinstalled contribution
+  // (new revision) or a message it no longer matches invalidates a choice.
+  expect(
+    thread.handoff(ROOT, "plugin:open-thread-window", "1"),
+  ).toBeUndefined();
+  entries = [action("remind-me", "2")];
+  for (const listener of listeners) listener();
+  expect(thread.handoff(ROOT, "plugin:remind-me", "1")).toBeUndefined();
+  expect(thread.handoff(ROOT, "plugin:remind-me", "2")?.id).toBe("remind-me");
+  entries = [action("remind-me", "2", false)];
+  expect(thread.handoff(ROOT, "plugin:remind-me", "2")).toBeUndefined();
+  expect(
+    thread.handoff("f".repeat(64), "plugin:remind-me", "2"),
+  ).toBeUndefined();
 });

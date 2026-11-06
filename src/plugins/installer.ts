@@ -28,6 +28,8 @@ export type PluginInstallOutcome =
   | "unavailable";
 type PluginInstallationStatus = "installed" | "absent" | "unavailable";
 export type PluginInstaller = Readonly<{
+  /** The source kinds `requestInstall` accepts. Missing on hosts that accept only Git. */
+  sources?: readonly ("git" | "url")[];
   /** Opens Settings → Plugins for the user to review; it never installs silently. */
   requestInstall(source: PluginInstallSource): Promise<PluginInstallOutcome>;
   /**
@@ -422,6 +424,8 @@ export function createPluginInstallerService(
   host: Readonly<{ core: PluginInstallCore }>,
 ): PluginInstaller {
   class PluginInstallerService extends Service implements PluginInstaller {
+    readonly sources = Object.freeze(["git", "url"] as const);
+
     constructor() {
       super(ctx, "pluginInstaller");
     }

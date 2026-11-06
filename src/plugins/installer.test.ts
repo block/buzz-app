@@ -596,3 +596,19 @@ it("reports a confirmed self-update as updated even though it replaces the reque
   requests.settle(id, "updated");
   await expect(outcome).resolves.toBe("updated");
 });
+
+it("advertises URL sources and admits a URL request for review", async () => {
+  const { as, requests, open } = setup();
+  const installer = await as("example.market");
+  expect(installer.sources).toEqual(["git", "url"]);
+  const source = {
+    id: "example.artifact",
+    url: "https://cdn.example.com/a.json",
+    sha256: "e".repeat(64),
+  };
+  const outcome = installer.requestInstall(source);
+  expect(requests.snapshot()?.source).toEqual(source);
+  expect(open).toHaveBeenCalledOnce();
+  settleRequest(requests, "cancelled");
+  await expect(outcome).resolves.toBe("cancelled");
+});

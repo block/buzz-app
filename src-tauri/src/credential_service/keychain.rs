@@ -247,4 +247,46 @@ mod tests {
         assert!(super::save(None, |_| unreachable!(), || Err(Error::Absent)).is_ok());
         assert!(super::save(None, |_| unreachable!(), || Err(Error::Unavailable)).is_err());
     }
+
+    /// The owed-clear marker, on disk: missing is not owed, present is, and
+    /// setting it creates its directory.
+    #[test]
+    fn the_owed_marker_is_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("nested").join("pairings.owed");
+        assert!(!super::marker_owed(&marker));
+        super::set_marker(&marker, true).unwrap();
+        assert!(super::marker_owed(&marker));
+        super::set_marker(&marker, true).unwrap();
+        super::set_marker(&marker, false).unwrap();
+        assert!(!super::marker_owed(&marker));
+        // Unsetting an absent marker is fine.
+        super::set_marker(&marker, false).unwrap();
+    }
+
+    /// A marker that cannot be checked counts as owed.
+    #[test]
+    fn an_unreadable_marker_is_owed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        // A path under a regular file cannot be read as missing.
+        assert!(super::marker_owed(&file.join("pairings.owed")));
+    }
+
+    /// The lease is a lock on a file beside the marker: a second taker is
+    /// refused as leased until the first is dropped.
+    #[test]
+    fn the_lease_is_exclusive_until_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("nested").join("pairings.owed");
+        let lease = super::lease_at(&marker).unwrap();
+        assert!(marker.with_extension("lease").exists());
+        assert_eq!(
+            super::lease_at(&marker).err().as_deref(),
+            Some(super::LEASED)
+        );
+        drop(lease);
+        assert!(super::lease_at(&marker).is_ok());
+    }
 }

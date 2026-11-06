@@ -514,6 +514,7 @@ export function WorkflowChannel({
                 title="Leave this draft?"
                 description="Unsaved draft changes will be discarded. Any submitted operation stays with the captured community session; leaving does not cancel or repeat it."
                 action="Leave draft"
+                destructive
                 onConfirm={() => open(pendingSelection)}
                 onCancel={() => setPendingSelection(null)}
               />

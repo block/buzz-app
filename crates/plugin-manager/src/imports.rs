@@ -1751,8 +1751,8 @@ mod tests {
             "ssh://git@github.com/block/plugins.git"
         );
         assert_eq!(
-            repository_url("org-49461806@github.com:squareup/buzz-context-manager.git").unwrap(),
-            "ssh://org-49461806@github.com/squareup/buzz-context-manager.git"
+            repository_url("org-1@github.com:example-org/example-plugin.git").unwrap(),
+            "ssh://org-1@github.com/example-org/example-plugin.git"
         );
         assert_eq!(
             repository_url("dev.user@git.example.org:team/repo.git").unwrap(),

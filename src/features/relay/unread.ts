@@ -1340,9 +1340,6 @@ export function createUnread({
   }
   const stopRead = reads.subscribe(publish);
   const stopProfiles = profiles?.subscribe(() => {
-    // Owners resolve one at a time, so a fold since the last notification can
-    // already hold a newer answer than another channel's cached fold.
-    foldedRows.clear();
     const owner = profiles.owner;
     if (
       !owner ||
@@ -1352,6 +1349,10 @@ export function createUnread({
       return;
     ownersMixed = false;
     ownersRead.clear();
+    // Owners resolve one at a time, so a fold since the last notification can
+    // already hold a newer answer than another channel's cached fold. Folds
+    // read profiles only through owners, so unchanged answers keep their rows.
+    foldedRows.clear();
     publish();
   });
   /** A choice changes relevance in every projection and held live alert. */

@@ -567,11 +567,12 @@ it("rejects profile image URLs with embedded credentials", async () => {
     await screen.findByLabelText("Picture URL (optional)"),
     "https://user:secret@example.test/profile.png",
   );
+  // Done reveals the error instead of applying the URL.
+  await user.click(screen.getByRole("button", { name: "Done" }));
 
   expect(
     screen.getByLabelText("Picture URL (optional)"),
   ).toHaveAccessibleDescription(/Use an HTTPS image URL without credentials/);
-  expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
   expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();

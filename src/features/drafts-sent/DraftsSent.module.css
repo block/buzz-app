@@ -9,7 +9,7 @@
 
 .toolbar {
   flex: none;
-  padding: var(--space-2) var(--space-panel-inset);
+  padding: var(--space-2) var(--space-row-gap);
 }
 
 .notice {
@@ -119,11 +119,6 @@
   background: var(--affordance-accent-prominent);
 }
 
-.badge {
-  color: var(--text-navigation-unread);
-  font-weight: var(--type-weight-semibold);
-}
-
 /* Activity's panel-tab toolbar geometry. */
 .tabsToolbar {
   flex: none;
@@ -139,6 +134,92 @@
 }
 
 .clear {
+  margin-inline-end: var(--space-control-inset);
   flex: none;
   align-self: center;
+}
+
+.draftWorkspace {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.draftWorkspace[hidden] {
+  display: none;
+}
+.draftList {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.draftPreview {
+  display: flex;
+  flex-direction: column;
+  flex: 2;
+  min-width: 0;
+  min-height: 0;
+  border-inline-start: 1px solid var(--border-standard);
+}
+.draftConversation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.draftHistory {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.draftUnavailable {
+  padding: var(--space-panel-inset);
+}
+.draftBack {
+  display: none;
+}
+.draftClose {
+  display: contents;
+}
+@container drafts-sent (max-width: 48rem) {
+  .draftWorkspace[data-selected] .draftList {
+    display: none;
+  }
+  .draftPreview {
+    border-inline-start: 0;
+  }
+  .draftBack {
+    display: contents;
+  }
+  .draftClose {
+    display: none;
+  }
+}
+
+.destinationName {
+  font-weight: var(--type-weight-medium);
+}
+@media (hover: hover) and (pointer: fine) {
+  .row .clear {
+    opacity: 0;
+  }
+  .row:hover .clear,
+  .row:focus-within .clear,
+  .row:has([data-selected]) .clear {
+    opacity: 1;
+  }
+}
+
+.badge {
+  display: inline-grid;
+  margin-inline-end: var(--space-1);
+}
+
+.channelNotice {
+  position: relative;
+  flex: none;
 }

@@ -1,3 +1,4 @@
+import { interestPaused } from "../../features/agents/attention";
 import * as React from "react";
 import type { Context } from "../../plugins/author";
 import type { Agent, Watch } from "./model";
@@ -26,6 +27,9 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuSeparator,
   MenuNote,
 } from "../../shared/design-system/ui/Menu";
 import { ActivityExpansion } from "../../features/messages/ActivityExpansion";
@@ -98,6 +102,7 @@ export function createWatchComponents({
     const state =
       watch.enabled &&
       agent.attentionEnabled &&
+      !interestPaused(agent.attention, watch.interest_id) &&
       !completed &&
       !description.spent
         ? "Active"
@@ -337,6 +342,10 @@ export function createWatchComponents({
                   >
                     <span className="attention-pill-icon">
                       <CircleIcon
+                        data-accent={state === "Active" ? "citrus" : undefined}
+                        data-color-mode={
+                          state === "Active" ? "light" : undefined
+                        }
                         size={12}
                         aria-hidden={true}
                         fill="currentColor"
@@ -366,47 +375,58 @@ export function createWatchComponents({
                     : (returnFocus.current ?? false)
                 }
               >
-                {[true, false].map((enabled) => (
+                <MenuGroup>
+                  <MenuGroupLabel>Trigger</MenuGroupLabel>
                   <MenuItem
-                    key={String(enabled)}
                     disabled={
                       action.pending ||
-                      watch.enabled === enabled ||
-                      (watch.type === "timer" && enabled && !watch.enabled)
+                      (watch.type === "timer" && !watch.enabled)
                     }
                     closeOnClick={false}
                     onClick={() =>
-                      void action.run(() => {
+                      void action.run(async () => {
                         const expected = agent.attention[slug];
                         if (!expected)
                           throw new Error("This watch no longer exists.");
                         return agents.save(agent.key, {
                           watchEnabled: {
-                            [slug]: { enabled, expected },
+                            [slug]: { enabled: !watch.enabled, expected },
                           },
                         });
                       })
                     }
                   >
-                    {enabled ? "Activate" : "Pause"}
+                    {watch.enabled ? "Pause" : "Resume"}
                   </MenuItem>
-                ))}
-                <MenuItem
-                  tone="danger"
-                  disabled={action.pending}
-                  closeOnClick={false}
-                  aria-label={`Delete ${label.text}`}
-                  onClick={() =>
-                    void action.run(() =>
-                      agents.save(agent.key, { attention: { [slug]: null } }),
-                    )
-                  }
-                >
-                  {"Delete"}
-                </MenuItem>
-                {watch.type === "timer" && !watch.enabled && (
-                  <MenuNote>{`Ask ${agent.name} to set this timer’s next run.`}</MenuNote>
-                )}
+                  <MenuSeparator />
+                  <MenuItem
+                    tone="danger"
+                    disabled={action.pending}
+                    closeOnClick={false}
+                    aria-label={`Delete ${label.text}`}
+                    onClick={() =>
+                      void action.run(() =>
+                        agents.save(agent.key, { attention: { [slug]: null } }),
+                      )
+                    }
+                  >
+                    {"Delete"}
+                  </MenuItem>
+                  {interestPaused(agent.attention, watch.interest_id) && (
+                    <MenuNote>
+                      This interest is paused. Resume it to run enabled watches.
+                    </MenuNote>
+                  )}
+                  {!agent.attentionEnabled && (
+                    <MenuNote>
+                      Attention is paused on this device. Resume Attention to
+                      run enabled watches.
+                    </MenuNote>
+                  )}
+                  {watch.type === "timer" && !watch.enabled && (
+                    <MenuNote>{`Ask ${agent.name} to set this timer’s next run.`}</MenuNote>
+                  )}
+                </MenuGroup>
               </MenuPopup>
             </MenuRoot>
           </div>

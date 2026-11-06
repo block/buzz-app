@@ -463,7 +463,7 @@ fn builderlab_binding_rejects_invalid_or_foreign_challenges() {
 #[test]
 fn builderlab_binding_accepts_only_production_or_the_configured_origin() {
     let now = 1_700_000_000;
-    let staging = "https://test.blockstaging.build";
+    let staging = "https://login.example";
     let with_origin = |origin: &str| {
         let mut challenge = builderlab_challenge();
         challenge["origin"] = origin.into();
@@ -479,8 +479,8 @@ fn builderlab_binding_accepts_only_production_or_the_configured_origin() {
     for (origin, configured) in [
         (staging, ""),
         ("https://example.com", staging),
-        ("https://test.blockstaging.build/", staging),
-        ("https://test.blockstaging.build:8443", staging),
+        ("https://login.example/", staging),
+        ("https://login.example:8443", staging),
         ("", ""),
     ] {
         assert_eq!(

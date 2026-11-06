@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { CircleIcon } from "../../shared/design-system/icons";
 import {
@@ -5,15 +6,32 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 
 export function AttentionStatus({
   name,
+  heading = "Attention",
   active,
   pending,
   onChange,
+  onDelete,
+  triggerRef,
+  returnFocus,
+  popupRef,
+  deleteConfirms = false,
+  label = `Attention status for ${name}`,
 }: {
   name: string;
+  heading?: string;
+  popupRef?: RefObject<HTMLDivElement | null>;
+  deleteConfirms?: boolean;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
+  returnFocus?: RefObject<HTMLElement | null>;
+  label?: string;
+  onDelete?(): void;
   active: boolean;
   pending: boolean;
   onChange(active: boolean): void;
@@ -23,11 +41,14 @@ export function AttentionStatus({
       <MenuTrigger
         render={
           <Button
+            ref={triggerRef}
             variant="subtle"
             size="xs"
-            aria-label={`Attention status for ${name}`}
+            aria-label={label}
           >
             <CircleIcon
+              data-accent={active ? "citrus" : undefined}
+              data-color-mode={active ? "light" : undefined}
               size={12}
               fill="currentColor"
               strokeWidth={0}
@@ -43,20 +64,37 @@ export function AttentionStatus({
         }
       />
       <MenuPopup
+        ref={popupRef}
+        finalFocus={() =>
+          triggerRef?.current?.isConnected
+            ? triggerRef.current
+            : (returnFocus?.current ?? true)
+        }
         size="compact"
         align="end"
-        aria-label={`Attention status for ${name}`}
+        aria-label={label}
       >
-        {[true, false].map((enabled) => (
+        <MenuGroup>
+          <MenuGroupLabel>{heading}</MenuGroupLabel>
           <MenuItem
-            key={String(enabled)}
-            disabled={pending || active === enabled}
+            disabled={pending}
             closeOnClick={false}
-            onClick={() => onChange(enabled)}
+            onClick={() => onChange(!active)}
           >
-            {enabled ? "Activate" : "Pause"}
+            {active ? "Pause" : "Resume"}
           </MenuItem>
-        ))}
+          {onDelete && <MenuSeparator />}
+          {onDelete && (
+            <MenuItem
+              tone="danger"
+              disabled={pending}
+              closeOnClick={deleteConfirms}
+              onClick={onDelete}
+            >
+              Delete
+            </MenuItem>
+          )}
+        </MenuGroup>
       </MenuPopup>
     </MenuRoot>
   );

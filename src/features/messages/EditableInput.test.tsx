@@ -3023,6 +3023,8 @@ const controlKey = (key: "a" | "e" | "k", shiftKey = false) => ({
 const optionKey = (key: "ArrowUp" | "ArrowDown") => ({
   key,
   code: key,
+  // A browser's keyCode, so ProseMirror's own arrow handling runs as well.
+  keyCode: key === "ArrowUp" ? 38 : 40,
   altKey: true,
 });
 const linked = `first\nbefore https://github.com/block/buzz/pull/117/changes after\nlast`;
@@ -3067,6 +3069,15 @@ it("moves Option-Up and Option-Down across a link chip, then on to the neighbour
     handledAt(linked.length),
   );
   expect(snapshot(h)).toEqual(before);
+});
+
+it("leaves Option-Up and Option-Down to the conversation shortcuts in an empty draft", () => {
+  setPlatform("MacIntel");
+  const h = mount("");
+  // An unprevented key reaches the window's shortcut dispatcher, which steps
+  // to the previous or next conversation while the composer has focus.
+  expect(chord(h.input, optionKey("ArrowUp"))).toEqual([0, 0, false]);
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual([0, 0, false]);
 });
 
 it("deletes through a link chip for Control-K, leaving plain text to the browser", () => {

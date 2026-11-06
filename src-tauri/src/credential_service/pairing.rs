@@ -92,6 +92,9 @@ pub(crate) struct Pairings {
     /// This app's sole use of the keychain item, taken before the records are
     /// first read and held for good; without it nothing is read or written.
     lease: Mutex<Option<Lease>>,
+    /// The communities saved in Buzz, as the page last reported them; `None`
+    /// until it has. A tool pairs only for one of these.
+    pub(super) communities: Mutex<Option<Vec<String>>>,
 }
 #[derive(Default)]
 struct State {
@@ -99,7 +102,8 @@ struct State {
     records: Option<Result<Vec<Record>, String>>,
     /// When `last_used` last reached the keychain.
     flushed: u64,
-    pending: Option<(String, oneshot::Sender<bool>)>,
+    /// The request waiting for the human: its id, relay and answer.
+    pending: Option<(String, String, oneshot::Sender<bool>)>,
     asked: VecDeque<Instant>,
     /// Bumped by every revoke-all; a token admitted, or an approval begun,
     /// under an earlier one never acts or is saved.
@@ -111,6 +115,23 @@ struct State {
     /// Sign-outs and changes of account recorded but not yet over; see
     /// [`Pairings::record_retirement`].
     retiring: usize,
+}
+
+/// Whether `relay` is one of `communities`, compared as whole URLs.
+fn is_saved(communities: &[String], relay: &str) -> bool {
+    communities
+        .iter()
+        .any(|community| super::policy::same_relay(&as_relay(community), relay))
+}
+
+/// A community URL as the relay URL a tool names: `https` as `wss`, `http`
+/// as `ws`.
+fn as_relay(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => format!("wss://{rest}"),
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("http") => format!("ws://{rest}"),
+        _ => url.into(),
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -125,7 +146,43 @@ impl Pairings {
             write: tokio::sync::Mutex::new(()),
             state: Mutex::default(),
             lease: Mutex::default(),
+            communities: Mutex::default(),
         }
+    }
+
+    /// Records the communities saved in Buzz, as WebSocket or HTTP URLs.
+    /// A request waiting for the human whose community is gone is declined.
+    /// Returns once no approval saved under the old list remains: an approval
+    /// mid-save holds the write lock and, on seeing its community gone,
+    /// removes its record before releasing it.
+    pub(crate) async fn set_communities(&self, communities: Vec<String>) {
+        {
+            let mut saved = self
+                .communities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut state = self.state();
+            if let Some((.., relay, _)) = &state.pending {
+                if !is_saved(&communities, relay) {
+                    // Dropping the sender declines it.
+                    state.pending = None;
+                }
+            }
+            *saved = Some(communities);
+        }
+        drop(self.write.lock().await);
+    }
+
+    /// Whether `relay` is a saved community, compared as a whole URL.
+    fn saved(&self, relay: &str) -> Result<bool, Failure> {
+        let communities = self
+            .communities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let communities = communities
+            .as_ref()
+            .ok_or_else(|| Failure::new("unavailable", "Buzz is starting; try again"))?;
+        Ok(is_saved(communities, relay))
     }
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
@@ -197,6 +254,13 @@ impl Pairings {
         change: impl FnOnce(&mut Vec<Record>) -> Option<T>,
     ) -> Result<Option<T>, String> {
         let _write = self.write.lock().await;
+        self.mutate_locked(change).await
+    }
+    /// [`Self::mutate`], for a caller already holding the write lock.
+    async fn mutate_locked<T>(
+        &self,
+        change: impl FnOnce(&mut Vec<Record>) -> Option<T>,
+    ) -> Result<Option<T>, String> {
         let mut records = self.loaded_locked().await?;
         let Some(out) = change(&mut records) else {
             return Ok(None);
@@ -284,16 +348,18 @@ impl Pairings {
     /// approval saves the new token's digest, then returns the token.
     /// `human` is asked once now and again once approved, so an account
     /// change while the prompt is open issues nothing.
-    pub(crate) async fn pair<F, Fut>(
+    /// `process` names the caller, only for a request that will be asked.
+    pub(crate) async fn pair<F, Fut, P>(
         &self,
         client: &str,
         relay: &str,
-        process: Option<String>,
+        process: impl FnOnce() -> P,
         human: F,
     ) -> Result<(String, Approver), Failure>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Human>,
+        P: std::future::Future<Output = Option<String>>,
     {
         let valid_client =
             (1..=64).contains(&client.chars().count()) && !client.chars().any(char::is_control);
@@ -301,6 +367,13 @@ impl Pairings {
             .is_ok_and(|url| matches!(url.scheme(), "ws" | "wss") && url.host().is_some());
         if !valid_client || !valid_relay {
             return Err(Failure::new("invalid_request", "Invalid pairing request"));
+        }
+        // Refused before anyone is asked or notified.
+        if !self.saved(relay)? {
+            return Err(Failure::new(
+                "denied",
+                &format!("{relay} isn't a community in Buzz; add it first"),
+            ));
         }
         let approver = match human().await {
             Human::Ready(approver) => approver,
@@ -312,7 +385,25 @@ impl Pairings {
             .generation()
             .ok_or_else(|| Failure::new("unavailable", "Paired tools are being revoked"))?;
         let id = uuid::Uuid::new_v4().to_string();
+        let unsaved = || {
+            Failure::new(
+                "denied",
+                &format!("{relay} isn't a community in Buzz; add it first"),
+            )
+        };
         let answer = {
+            // Under the lock a removal cancels under: it either finds this
+            // request pending or is seen here, so no removed community waits.
+            let communities = self
+                .communities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if !communities
+                .as_ref()
+                .is_some_and(|communities| is_saved(communities, relay))
+            {
+                return Err(unsaved());
+            }
             let mut state = self.state();
             let now = Instant::now();
             while state
@@ -340,21 +431,38 @@ impl Pairings {
                 });
             }
             let (send, answer) = oneshot::channel();
-            state.pending = Some((id.clone(), send));
+            state.pending = Some((id.clone(), relay.into(), send));
             state.asked.push_back(now);
             answer
         };
         // Whatever ends the wait, even the caller hanging up, closes the prompt.
-        let _closing = Closing(self, id.clone());
-        (self.notify)(Notice::Ask(Request {
-            id: id.clone(),
-            client: client.into(),
-            relay: relay.into(),
-            process,
-            expires_in: APPROVAL.as_secs(),
-        }));
+        let mut closing = Closing(self, id.clone(), false);
+        let process = process().await;
+        {
+            // Asked under the lock removal and admission take, so no later
+            // request's Ask can precede this one's. `notify` only tells the
+            // page, never back into the pairings.
+            let state = self.state();
+            // A removal during the lookup cancelled it: nothing was asked.
+            if !state
+                .pending
+                .as_ref()
+                .is_some_and(|(pending, ..)| *pending == id)
+            {
+                return Err(unsaved());
+            }
+            closing.2 = true;
+            (self.notify)(Notice::Ask(Request {
+                id: id.clone(),
+                client: client.into(),
+                relay: relay.into(),
+                process,
+                expires_in: APPROVAL.as_secs(),
+            }));
+        }
         match tokio::time::timeout(APPROVAL, answer).await {
             Ok(Ok(true)) => {}
+            Ok(_) if !self.saved(relay)? => return Err(unsaved()),
             Ok(_) => return Err(Failure::new("denied", "Pairing was declined in Buzz")),
             Err(_) => {
                 return Err(Failure::new(
@@ -382,12 +490,37 @@ impl Pairings {
         let account_changed = || Failure::new("denied", "Your Buzz account changed");
         // Saved only under the generation it was approved in, and returned
         // only if no revoke-all began while it was saved: that one removes it.
-        self.mutate(|records| {
-            (self.generation() == Some(generation)).then(|| records.push(record))
+        // A community removed while it was saved is seen before the write
+        // lock is released, which the removal waits for, and removes it.
+        let _write = self.write.lock().await;
+        let mut unsaved_community = false;
+        let id = record.id.clone();
+        self.mutate_locked(|records| {
+            if self.generation() != Some(generation) {
+                return None;
+            }
+            unsaved_community = !self.saved(relay).unwrap_or(false);
+            (!unsaved_community).then(|| records.push(record))
         })
         .await
         .map_err(Failure::unavailable)?
-        .ok_or_else(account_changed)?;
+        .ok_or_else(|| {
+            if unsaved_community {
+                unsaved()
+            } else {
+                account_changed()
+            }
+        })?;
+        if !self.saved(relay).unwrap_or(false) {
+            self.mutate_locked(|records| {
+                records.retain(|record| record.id != id);
+                Some(())
+            })
+            .await
+            .map_err(Failure::unavailable)?;
+            return Err(unsaved());
+        }
+        drop(_write);
         if self.generation() != Some(generation) {
             return Err(account_changed());
         }
@@ -399,11 +532,11 @@ impl Pairings {
         let pending = {
             let mut state = self.state();
             match &state.pending {
-                Some((current, _)) if current == id => state.pending.take(),
+                Some((current, ..)) if current == id => state.pending.take(),
                 _ => None,
             }
         };
-        if let Some((_, send)) = pending {
+        if let Some((.., send)) = pending {
             let _ = send.send(approve);
         }
     }
@@ -543,14 +676,69 @@ pub(crate) struct Unrevoked {
     pub(crate) message: String,
 }
 
-struct Closing<'a>(&'a Pairings, String);
+/// Ends the request with id `.1`; closes its prompt once `.2` says it was asked.
+struct Closing<'a>(&'a Pairings, String, bool);
 impl Drop for Closing<'_> {
     fn drop(&mut self) {
         let mut state = self.0.state();
-        if state.pending.as_ref().is_some_and(|(id, _)| *id == self.1) {
+        if state.pending.as_ref().is_some_and(|(id, ..)| *id == self.1) {
             state.pending = None;
         }
         drop(state);
-        (self.0.notify)(Notice::Closed(self.1.clone()));
+        if self.2 {
+            (self.0.notify)(Notice::Closed(self.1.clone()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, OnceLock, TryLockError};
+
+    /// A request is asked under the state lock that removal and admission
+    /// take, so neither can come between its pending check and its Ask.
+    #[tokio::test]
+    async fn a_request_is_asked_under_the_state_lock() {
+        let pairings: Arc<OnceLock<Arc<Pairings>>> = Arc::default();
+        let (asked_send, asked) = std::sync::mpsc::channel();
+        let notify: Notify = {
+            let pairings = pairings.clone();
+            Arc::new(move |notice| {
+                if let Notice::Ask(request) = notice {
+                    let held = matches!(
+                        pairings.get().unwrap().state.try_lock(),
+                        Err(TryLockError::WouldBlock)
+                    );
+                    asked_send.send((request.id, held)).unwrap();
+                }
+            })
+        };
+        let keychain = Arc::new(super::super::keychain::Memory::default());
+        let made = Arc::new(Pairings::new(Arc::new(keychain), notify));
+        pairings.set(made.clone()).ok();
+        let relay = "wss://relay.example";
+        made.set_communities(vec![relay.into()]).await;
+        let pairing = tokio::spawn({
+            let made = made.clone();
+            async move {
+                let human = || async {
+                    Human::Ready(Approver {
+                        pubkey: "a".repeat(64),
+                        store_account: "account".into(),
+                        fi_account: None,
+                    })
+                };
+                made.pair("buzz-cli", relay, || async { None }, human)
+                    .await
+                    .map(|_| ())
+            }
+        });
+        let (id, held) = tokio::task::spawn_blocking(move || asked.recv().unwrap())
+            .await
+            .unwrap();
+        assert!(held, "Ask was emitted without the state lock");
+        made.answer(&id, false);
+        assert_eq!(pairing.await.unwrap().err().unwrap().code, "denied");
     }
 }

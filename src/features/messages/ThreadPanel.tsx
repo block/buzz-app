@@ -93,12 +93,16 @@ export type ThreadPanelProps = {
   autoFocus?: MessageComposerProps["autoFocus"];
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
+  /** Reveal an inline target without taking focus from its host. */
+  revealFocus?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
   headerActions?: ReactNode | undefined;
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: (() => void) | undefined;
+  /** The hosting preview may track delivery of this exact outgoing message. */
+  onSend?: ((id: string) => void) | undefined;
   active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
@@ -419,8 +423,10 @@ function OwnedThreadPanel({
   autoFocus,
   active = true,
   revealSelected,
+  revealFocus,
   requireReadyRoot,
   onDraftSaved,
+  onSend,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -491,8 +497,10 @@ function OwnedThreadPanel({
       autoFocus={autoFocus}
       active={active}
       revealSelected={revealSelected}
+      revealFocus={revealFocus}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
+      onSend={onSend}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -520,9 +528,11 @@ function ThreadMessages({
   autoFocus,
   active,
   revealSelected,
+  revealFocus,
   revealRequest,
   requireReadyRoot,
   onDraftSaved,
+  onSend,
   selectionFailure,
   onResolvedRoot,
   routePending,
@@ -549,9 +559,12 @@ function ThreadMessages({
   autoFocus?: ThreadPanelProps["autoFocus"];
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
+  /** Reveal an inline target without taking focus from its host. */
+  revealFocus?: boolean | undefined;
   revealRequest?: number | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
+  onSend?: ThreadPanelProps["onSend"];
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -930,7 +943,13 @@ function ThreadMessages({
     inlineReveal ?? (positionedVisit ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
-    focus: !(
+    focus:
+      revealFocus !== false &&
+      !(
+        navigation?.target.kind === "conversation" &&
+        navigation.target.panel === "members"
+      ),
+    mark: !(
       navigation?.target.kind === "conversation" &&
       navigation.target.panel === "members"
     ),
@@ -2063,6 +2082,7 @@ function ThreadMessages({
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
+            onSend?.(id);
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

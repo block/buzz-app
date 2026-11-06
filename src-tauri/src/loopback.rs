@@ -20,6 +20,10 @@ const CONNECTIONS: usize = 32;
 const HEAD_LIMIT: usize = 8192;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The address a request's connection came from, in its extensions.
+#[derive(Clone, Copy)]
+pub(crate) struct Peer(pub(crate) std::net::SocketAddr);
+
 /// Binds synchronously, so the address is known before anyone connects, and
 /// returns the listener with its `127.0.0.1:<port>` authority.
 pub(crate) fn bind() -> std::io::Result<(std::net::TcpListener, String)> {
@@ -51,7 +55,7 @@ where
         let Some((permit, accepted)) = accepted else {
             return;
         };
-        let Ok((socket, _)) = accepted else {
+        let Ok((socket, peer)) = accepted else {
             drop(permit);
             tokio::time::sleep(Duration::from_millis(100)).await;
             continue;
@@ -65,7 +69,13 @@ where
                 .header_read_timeout(HEAD_TIMEOUT)
                 .max_buf_size(HEAD_LIMIT)
                 .keep_alive(false)
-                .serve_connection(TokioIo::new(socket), service_fn(answer));
+                .serve_connection(
+                    TokioIo::new(socket),
+                    service_fn(move |mut request: Request<Incoming>| {
+                        request.extensions_mut().insert(Peer(peer));
+                        answer(request)
+                    }),
+                );
             tokio::select! {
                 _ = connection => {}
                 () = stop.cancelled() => {}

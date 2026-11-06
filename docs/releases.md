@@ -199,11 +199,10 @@ servers to the built-in one; see
 
 ### Signing
 
-Deploy [the signing infrastructure](https://github.com/squareup/tf-mobuild-workers/pull/1398)
-and set these repository Actions secrets:
+Set these repository Actions secrets:
 
-- `OSX_CODESIGN_ROLE`: ARN of `block-buzz-app-codesign-role`.
-- `CODESIGN_S3_BUCKET`: `block-buzz-app-artifacts-bucket-<environment>`.
+- `OSX_CODESIGN_ROLE`: ARN of the IAM role the signing action assumes.
+- `CODESIGN_S3_BUCKET`: the signing action's artifact bucket.
 - `TAURI_SIGNING_PRIVATE_KEY`: persistent Tauri updater private key (not the
   Apple Developer ID signing identity). Restrict access to release CI and back
   it up outside Actions; losing it prevents old updater-enabled builds from
@@ -252,10 +251,10 @@ gh attestation verify <archive> --repo aaif-goose/goose \
 ```
 
 Then update version, source revision, versioned asset URLs and SHA-256 values
-together, and review upstream license/notice changes. Move the
-[Buzz Security plugin](https://github.com/squareup/buzz-plugin-security)'s
-protected Goose pin to the same revision before that Buzz release ships. This
-release is mutable; committed hashes bind the downloaded bytes. Never resolve
+together, and review upstream license/notice changes. Move the Buzz Security
+plugin's protected Goose pin to the same revision before that Buzz release
+ships. This release is mutable; committed hashes bind the downloaded bytes.
+Never resolve
 `latest` at build time.
 The obsolete `target/goose-acp-src` and `target/goose-acp-build` caches are unused
 and can be removed locally when no old source build is running.

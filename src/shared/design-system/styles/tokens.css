@@ -1,5 +1,5 @@
-/* BlockUI neutral values (canonical text and ratified surface ladder), adapted
-   to the existing Buzz ramp. Chromatic ramps and glass remain Buzz-specific. */
+/* Neutral values (canonical text and ratified surface ladder) on the Buzz
+   ramp. Chromatic ramps and glass remain Buzz-specific. */
 /*
  * Buzz colour tokens.
  *
@@ -1561,13 +1561,13 @@
   --border-control: var(--border-prominent);
   --bg-chrome-selected: var(--neutral-5);
 
-  /* BlockUI's darker secondary/tertiary grays fall below Buzz's APCA targets
-     on raised panels. Keep the BlockUI ramp, selecting its lighter steps for
+  /* Darker secondary/tertiary grays fall below Buzz's APCA targets on raised
+     panels. Keep the neutral ramp, selecting its lighter steps for
      readable text: secondary >= 60, metadata >= 45 on every opaque surface. */
   --text-secondary: var(--text-subtle);
   --text-tertiary: var(--text-metadata);
 
-  /* BlockUI subtle border: E8E8E8 in light, 232323 in dark. */
+  /* Subtle border: E8E8E8 in light, 232323 in dark. */
   --border-primary: var(--border-standard);
 
   --rim-lit: #ffffff2e;

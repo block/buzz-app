@@ -833,7 +833,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await sidebarDm.click({ button: "right" });
   await page
     .getByRole("menu", { name: "Actions for Avery Chen" })
-    .getByRole("menuitem", { name: "Remove from Team", exact: true })
+    .getByRole("menuitem", { name: "Close conversation", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
   await page.reload();

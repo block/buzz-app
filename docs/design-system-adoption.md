@@ -1,7 +1,7 @@
 # Shared design system adoption
 
 Buzz uses shared semantic colors, Inter and JetBrains Mono, and Base UI interaction
-primitives. The visual direction follows Block UI’s controls and states. Public
+primitives. Buzz owns the visual direction of its controls and states. Public
 fonts, packages, and generic examples keep the system independent of private assets.
 
 Use this map to find the shared owner before changing a product surface.

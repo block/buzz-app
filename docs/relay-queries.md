@@ -93,6 +93,9 @@ state for their shared load/preflight/confirmation reads; the member dialog's
 separate display-roster load remains replica-eligible. Channel-write membership
 preflights (including session sends and canvas saves) also use the writer, so a
 just-added member does not fail the next operation.
+`owner_channel_get` reads a channel's records from the writer once and judges
+its archive state and lifecycle rights, including an owned agent's grant, from
+those records.
 Template setup also confirms exact Canvas/member events and selected Canvas heads
 against the writer without replaying accepted commands. Agent deletion discovers
 member channels and confirms each removal with writer-backed rosters; unreadable
@@ -321,7 +324,35 @@ DM type grants nonmember reading. Signed membership still owns the joined roster
 `channels.list()` remains joined-only. Opening a nonmember destination revalidates
 its metadata and reuses the existing channel window/exact thread owners. It does
 not join, persist a public head, warm all search results, or add sidebar/unread
-membership. Only demanded retained previews enter the existing live interest set.
+membership. Only demanded retained previews enter the existing live interest set,
+and the public channels agents' watches name (`session.attend`), which the session
+reads metadata for first, as background reads. Attended channels are previews that the live owner
+admits after joined and demanded ones, in the wires those leave (joined channels
+share batched wires); past that they are limited routes. They are never joined,
+listed or counted unread.
+Until the session knows a channel, `session.attendPending(id)` is true, also
+before the channel is attended: a read of it returns none of its events, so
+agent catch-up waits for it. A metadata read that fails, or finds nothing the
+viewer may read (a private channel may turn public), is tried again after a wait
+that starts at 30 s and doubles up to 5 minutes, and after a reconnect or a new
+`attend`. A channel that newer metadata makes unknown again is read again at once. A read of
+every channel with `resolveChannels` resolves the channels its events name, of
+any kinds, before visibility filtering, as ranked search does for chat kinds;
+before discovery it fails and is tried again, rather than drop what it finds.
+`session.unattended(id, live)` says whether an event of a channel reached the
+session as it would have with neither: false for a channel known only from those
+lookups, and, for a live event, one the live routes carry only because it is
+attended. Agents take mentions and one-to-one DM turns only from events for
+which it is true when it arrived, kept while the event waits, so watches do not
+change who a mention wakes; they still hear the rest. A channel leaves the
+agents-only set once a lookup of the viewer's own succeeds, not when it starts:
+an exact lookup marked `viewerLookup` (a name search, a label lookup, a mounted
+link, a search read, or any `session.channels.resolve` call, which only the
+viewer's own surfaces make) reports through `resolved`, and so does a mounted link
+to a channel already known, which needs no lookup: links hold their demand
+even when readable. Rechecks, such as preview
+revalidation after an access-revoked CLOSED or a member-added confirmation,
+leave it as it was.
 Shared composers and reactions remain unavailable for nonmembers; message helpers
 and workflows do not acquire write eligibility from public metadata. The relay
 remains the final write authority, including low-level outbox intent.

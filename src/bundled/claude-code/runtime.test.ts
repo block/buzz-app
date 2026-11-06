@@ -166,6 +166,7 @@ function setup(
       status: "ready",
       session,
       viewer: alice,
+      origin: "https://agent.example",
       scope: `https://agent.example:${alice}`,
     }),
   } as unknown as RelayData;
@@ -1496,6 +1497,40 @@ it("answers Claude's tool calls as the agent, in the thread it is working in", a
   });
 });
 
+it("reads a file outside its turns in its saved workspace, but not on an execution target", async () => {
+  const { runtime, fake } = setup();
+  const agent = {
+    key: self,
+    pubkey: self,
+    config: { ...DEFAULT_CONFIG, workspace: "/saved" },
+  } as Agent;
+  const controller = new AbortController();
+  const read = runtime.workspaceFile(agent, "report.md", controller.signal);
+  read.catch(() => {});
+  await flush(10);
+  const reads = () => fake.processes.filter((process) => process.id === "read");
+  expect(reads().map((read) => [read.options.args, read.options.cwd])).toEqual([
+    [["report.md"], "/saved"],
+  ]);
+  controller.abort();
+  const remote = new ClaudeRuntime(
+    { spawn: fake.spawn } as unknown as Host,
+    () => undefined,
+    async () => null,
+    undefined,
+    config,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => ({ provider: "example/box" }),
+  );
+  await expect(
+    remote.workspaceFile(agent, "report.md", new AbortController().signal),
+  ).rejects.toThrow("only in a conversation on its execution target");
+  expect(reads()).toHaveLength(1);
+});
+
 it("reads a busy turn's files from the workspace it started in", async () => {
   const mention = message("2", "@Claude write a report", {
     tags: [
@@ -1959,6 +1994,48 @@ it.each([true, false])(
       }
     } finally {
       f.runtime.dispose();
+    }
+  },
+);
+
+it.each([
+  ["https://agent.example", false],
+  ["https://other.example", true],
+])(
+  "refuses an owner's workflow mention where the build restricts %s",
+  async (restricted, runs) => {
+    vi.stubEnv("VITE_BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES", restricted);
+    const relay = keypair();
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Claude workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+          ["buzz:workflow-mention", self],
+        ],
+      }),
+    );
+    const f = setup([event], { workflowAuthority: relay.pubkey });
+    try {
+      await f.deliver({ type: "mention", event });
+      if (runs) {
+        await vi.waitFor(() =>
+          expect(f.claudes().some((process) => process.prompts.length)).toBe(
+            true,
+          ),
+        );
+      } else {
+        await flush(10);
+        expect(f.claudes()).toHaveLength(0);
+        expect(f.workingUntil).not.toHaveBeenCalled();
+      }
+    } finally {
+      f.runtime.dispose();
+      vi.unstubAllEnvs();
     }
   },
 );

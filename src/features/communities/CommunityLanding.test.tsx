@@ -152,6 +152,35 @@ it("lets a failed submitted lookup be corrected without losing the landing link"
   expect(await within(dialog).findByLabelText("Invite code")).toBeVisible();
 });
 
+it("lets Back leave a submitted lookup the host never answers, keeping the landing link", async () => {
+  let lookup: AbortSignal | undefined;
+  vi.mocked(communityRequest).mockImplementationOnce(
+    (_id, _route, _body, signal) =>
+      new Promise((_, reject) => {
+        lookup = signal;
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      }),
+  );
+  const user = userEvent.setup();
+  landing();
+  await user.type(
+    screen.getByLabelText("Invite link or community URL"),
+    "https://quiet.example",
+  );
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  const dialog = await screen.findByRole("main");
+  expect(within(dialog).getByRole("status")).toHaveTextContent(
+    "Finding your community…",
+  );
+  const back = within(dialog).getByRole("button", { name: "Back" });
+  expect(back).toBeEnabled();
+  await user.click(back);
+  expect(lookup?.aborted).toBe(true);
+  expect(screen.getByLabelText("Invite link or community URL")).toHaveValue(
+    "https://quiet.example",
+  );
+});
+
 it("omits invite entry when the access check succeeds and keeps policy links inline", async () => {
   vi.mocked(inspectProfile).mockResolvedValueOnce({
     exists: false,

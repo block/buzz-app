@@ -36,6 +36,18 @@ assert(
   commands.length > 0,
   "Bundled CLI help advertised no top-level commands",
 );
+const optionsHelp = help.stdout.split(/^Options:\s*$/m)[1];
+assert(optionsHelp, "Bundled CLI help advertised no root Options section");
+const options = [
+  ...optionsHelp.matchAll(/^ {2}(?:-\w, )? *(--[a-z][a-z-]*)\b/gm),
+]
+  .map((match) => match[1])
+  .filter((option) => option !== "--help");
+assert(options.length > 0, "Bundled CLI help advertised no root options");
+const invocations = [
+  ...commands,
+  ...options.flatMap((option) => [option, `${option}=contract-test`]),
+];
 const build = spawnSync("cargo", ["build", "--locked", "-p", "Buzz"], {
   cwd: root,
   stdio: "inherit",
@@ -50,7 +62,7 @@ const desktop = resolve(
 );
 const home = mkdtempSync(join(tmpdir(), "buzz-cli-contract-"));
 try {
-  for (const command of commands) {
+  for (const command of invocations) {
     const result = spawnSync(desktop, [command], {
       encoding: "utf8",
       timeout: 10_000,
@@ -76,4 +88,6 @@ try {
 } finally {
   rmSync(home, { recursive: true, force: true });
 }
-console.log(`Desktop rejects all ${commands.length} bundled CLI commands`);
+console.log(
+  `Desktop rejects all ${commands.length} bundled CLI commands and ${options.length} root options (bare and =value)`,
+);

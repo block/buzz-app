@@ -86,14 +86,25 @@ function page(session: ComposerSession, people: readonly Person[]) {
   const key = JSON.stringify(
     [...people]
       .sort((a, b) => (a.pubkey < b.pubkey ? -1 : a.pubkey > b.pubkey ? 1 : 0))
-      .map(({ pubkey, name, isAgent, fullName, profileNames, ownerPubkey }) => [
-        pubkey,
-        name,
-        !!isAgent,
-        fullName ?? "",
-        profileNames ?? [],
-        ownerPubkey,
-      ]),
+      .map(
+        ({
+          pubkey,
+          name,
+          isAgent,
+          username,
+          fullName,
+          profileNames,
+          ownerPubkey,
+        }) => [
+          pubkey,
+          name,
+          !!isAgent,
+          username ?? "",
+          fullName ?? "",
+          profileNames ?? [],
+          ownerPubkey,
+        ],
+      ),
   );
   const seen = pages.get(session) ?? new Map<string, readonly Person[]>();
   pages.set(session, seen);

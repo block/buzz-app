@@ -19,7 +19,6 @@ import {
   exactLifecycleTag,
   lifecycleChannelId,
   lifecycleRecord,
-  lifecycleSettings,
 } from "../relay/channel-lifecycle-protocol";
 import { soloLabels } from "../solo/labels";
 import type { RelaySession } from "../relay/session";
@@ -39,7 +38,12 @@ export function ownerMcpEnabled(community: string | null | undefined) {
 
 export type OwnerSession = Pick<
   RelaySession,
-  "relayAuthor" | "channels" | "readRemote" | "names" | "profiles"
+  | "relayAuthor"
+  | "channels"
+  | "readRemote"
+  | "names"
+  | "profiles"
+  | "channelLifecycle"
 >;
 /** The owner's live session for the agent's community, as the host binds it
  * now. `signal` aborts when that binding is replaced. */
@@ -153,7 +157,7 @@ export function createOwnerAccess(
       id,
       relayAuthor,
     ) as RelayEvent;
-    return { events, relayAuthor, rights, metadata };
+    return { rights, metadata };
   };
   /** Channel `id` as the owner's session knows it; never a system channel,
    * which `list()` never shows either. */
@@ -191,11 +195,7 @@ export function createOwnerAccess(
     channel: (id: string, signal?: AbortSignal) =>
       run(signal, async (binding, bound) => {
         const summary = known(binding.session, channelId(id));
-        const { events, relayAuthor, rights, metadata } = await authority(
-          binding,
-          id,
-          bound,
-        );
+        const { rights, metadata } = await authority(binding, id, bound);
         const { viewer } = binding;
         const role = rights.roles[viewer];
         // Type, archive state and lifecycle rights from the records just read,
@@ -207,9 +207,12 @@ export function createOwnerAccess(
             : tag === "stream" || tag === "forum" || tag === "dm"
               ? tag
               : "unknown";
+        // The session's lifecycle owner also grants a member who owns the
+        // channel's owner-role agent, as the relay does.
         const offer = role
-          ? lifecycleSettings(events, id, viewer, relayAuthor)
+          ? await binding.session.channelLifecycle.load(id, bound)
           : undefined;
+        bound.throwIfAborted();
         return {
           execution: execution(binding),
           channel: {

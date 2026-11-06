@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { callSessionTool } from "../../buzz-mcp/session-tools";
 import type { ProtectionAction } from "../agent-protection/service";
+import {
+  type ChannelLifecycleSettings,
+  lifecycleSettings,
+} from "../relay/channel-lifecycle-protocol";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type { RelayEvent } from "../relay/events";
 import {
@@ -58,10 +62,12 @@ function signed(
   ];
 }
 
-/** The owner's session: only reads, so any other member reached fails. */
+/** The owner's session: only reads, so any other member reached fails. Its
+ * lifecycle owner answers from the records last read, with direct roles alone. */
 function fakeSession(
   list: Partial<ChannelList> & { channels: ChannelSummary[] },
   events: () => readonly RelayEvent[] = () => [],
+  lifecycle?: (id: string) => ChannelLifecycleSettings,
 ) {
   const touched = new Set<PropertyKey>();
   const readRemote = vi.fn(
@@ -72,6 +78,12 @@ function fakeSession(
   );
   const ensureList = vi.fn();
   const ensure = vi.fn(async () => {});
+  const load = vi.fn(async (id: string, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    if (lifecycle) return lifecycle(id);
+    const read = await readRemote.mock.results.at(-1)?.value;
+    return lifecycleSettings(read ?? events(), id, owner, relayAuthor);
+  });
   const target = {
     relayAuthor,
     channels: {
@@ -89,6 +101,8 @@ function fakeSession(
       ensure,
       snapshot: () => new Map([[owner, { name: "Owner" }]]),
     },
+    // Reads only: it has no `run`.
+    channelLifecycle: { load },
   };
   const session = new Proxy(target, {
     get(object, key, receiver) {
@@ -97,7 +111,7 @@ function fakeSession(
       return Reflect.get(object, key, receiver);
     },
   }) as unknown as OwnerSession;
-  return { session, readRemote, ensureList, ensure, touched };
+  return { session, readRemote, ensureList, ensure, load, touched };
 }
 
 const channels: ChannelSummary[] = [
@@ -280,6 +294,43 @@ describe("owner access", () => {
     },
   );
 
+  it("offers lifecycle actions the owner has through an agent it owns", async () => {
+    // A member by role, owning the channel's owner-role agent: the session's
+    // lifecycle owner verifies that, as the relay does.
+    const fake = fakeSession(
+      { channels },
+      () => signed(joined, { [owner]: "member", [agent]: "owner" }),
+      (id) => ({
+        ...lifecycleSettings(
+          signed(joined, { [owner]: "member", [agent]: "owner" }),
+          id,
+          owner,
+          relayAuthor,
+        ),
+        canArchive: true,
+        canDelete: true,
+      }),
+    );
+    const access = createOwnerAccess(
+      { pubkey: agent, owner },
+      bound(fake.session).bind,
+    );
+    await expect(access.channel(joined)).resolves.toMatchObject({
+      channel: { role: "member" },
+      capabilities: {
+        manageRoles: false,
+        removeMembers: false,
+        archive: true,
+        unarchive: false,
+        delete: true,
+      },
+    });
+    expect(fake.load).toHaveBeenCalledExactlyOnceWith(
+      joined,
+      expect.any(AbortSignal),
+    );
+  });
+
   it("gives an owner without a role no rights, whatever the list says", async () => {
     const fake = fakeSession({ channels }, () =>
       signed(joined, { [person]: "owner" }),
@@ -298,6 +349,7 @@ describe("owner access", () => {
         delete: false,
       },
     });
+    expect(fake.load).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -406,9 +458,14 @@ describe("owner access", () => {
     await access.members(joined, { offset: 0, limit: 10 });
     expect(
       [...fake.touched].every((key) =>
-        ["relayAuthor", "channels", "readRemote", "names", "profiles"].includes(
-          String(key),
-        ),
+        [
+          "relayAuthor",
+          "channels",
+          "readRemote",
+          "names",
+          "profiles",
+          "channelLifecycle",
+        ].includes(String(key)),
       ),
     ).toBe(true);
   });

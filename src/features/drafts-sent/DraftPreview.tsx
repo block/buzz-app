@@ -110,6 +110,9 @@ export function DraftPreview({
     !channel.readOnly &&
     !!session.viewer &&
     channel.members?.includes(session.viewer);
+  const readable =
+    channel &&
+    (channel.readOnly || channel.members?.includes(session.viewer ?? ""));
   useEffect(() => {
     if (!autoFocus || !writable) close.current?.focus();
   }, [autoFocus, writable]);
@@ -182,7 +185,7 @@ export function DraftPreview({
         <p role="status" className="text-body-sm text-subtle">
           Loading conversation…
         </p>
-      ) : writable ? (
+      ) : channel && (writable || (mode === "sent" && readable)) ? (
         <ConversationChannel
           session={session}
           scope={session.scope}
@@ -200,12 +203,13 @@ export function DraftPreview({
               autoFocus={autoFocus}
               onDraftSaved={draftSaved}
               onSend={sentMessage}
-              active={false}
+              active={mode === "sent"}
             />
           ) : (
             <DraftChannel
               title={title}
               target={mode === "sent" ? entry : undefined}
+              writable={!!writable}
               autoFocus={autoFocus}
               onSaved={draftSaved}
               onSend={sentMessage}
@@ -239,12 +243,14 @@ export function DraftPreview({
 function DraftChannel({
   title,
   target,
+  writable,
   autoFocus,
   onSaved,
   onSend,
 }: {
   title: string;
   target?: Entry | undefined;
+  writable: boolean;
   autoFocus: boolean;
   onSaved(): void;
   onSend(id: string): void;
@@ -252,6 +258,7 @@ function DraftChannel({
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
   const [seekError, setSeekError] = useState(false);
+  const [outgoing, setOutgoing] = useState<string>();
   const [reveal, setReveal] = useState<{
     messageId: string;
     signal: AbortSignal;
@@ -261,7 +268,11 @@ function DraftChannel({
     if (window.status !== "ready") return;
     const request = new AbortController();
     setSeekError(false);
-    setReveal({ messageId: target.id, signal: request.signal });
+    setReveal({ messageId: outgoing ?? target.id, signal: request.signal });
+    if (outgoing) {
+      session.channels.attach?.(channelId);
+      return () => request.abort();
+    }
     void session.channels
       .seek?.(channelId, target.createdAt ?? 0, request.signal)
       .then(() => {
@@ -276,7 +287,7 @@ function DraftChannel({
         if (!request.signal.aborted) setSeekError(true);
       });
     return () => request.abort();
-  }, [session, channelId, target, window.status]);
+  }, [session, channelId, target, outgoing, window.status]);
   useEffect(() => {
     if (!target) session.channels.refresh?.(channelId);
   }, [session, channelId, target]);
@@ -329,12 +340,17 @@ function DraftChannel({
             ))
           )}
         </div>
-        <ConversationComposer
-          label={`Message ${title}`}
-          autoFocus={autoFocus}
-          onDraftSaved={onSaved}
-          onSend={onSend}
-        />
+        {writable && (
+          <ConversationComposer
+            label={`Message ${title}`}
+            autoFocus={autoFocus}
+            onDraftSaved={onSaved}
+            onSend={(id) => {
+              setOutgoing(id);
+              onSend(id);
+            }}
+          />
+        )}
       </div>
     </MessageEditScope>
   );

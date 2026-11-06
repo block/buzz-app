@@ -9,7 +9,7 @@
 
 .toolbar {
   flex: none;
-  padding: var(--space-2) var(--space-panel-inset);
+  padding: var(--space-2) var(--space-row-gap);
 }
 
 .notice {
@@ -198,7 +198,7 @@
 .destinationName {
   font-weight: var(--type-weight-medium);
 }
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .row .clear {
     opacity: 0;
   }

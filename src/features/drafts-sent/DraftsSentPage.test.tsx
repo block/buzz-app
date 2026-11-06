@@ -68,7 +68,10 @@ type FakeView = {
 };
 
 function harness() {
-  const list = {
+  let list: {
+    status: string;
+    channels: import("../relay/contracts").ChannelSummary[];
+  } = {
     status: "ready",
     channels: [
       { id: "team", name: "launch-room", channelType: "stream" },
@@ -90,6 +93,7 @@ function harness() {
     [scout, { name: "Scout", isAgent: true }],
   ]);
   const relayListeners = new Set<() => void>();
+  const channelListeners = new Set<() => void>();
   let events: ReadEvent[] = [event()];
   let status = "ready";
   const viewListeners = new Set<() => void>();
@@ -148,7 +152,10 @@ function harness() {
     relayAuthor: relay,
     channels: {
       list: () => list,
-      subscribeList: () => () => {},
+      subscribeList: (listener: () => void) => {
+        channelListeners.add(listener);
+        return () => channelListeners.delete(listener);
+      },
       ensureList: vi.fn(),
       refreshList: vi.fn(),
     },
@@ -194,6 +201,15 @@ function harness() {
   };
   return {
     page,
+    hideSelected() {
+      list = {
+        ...list,
+        channels: list.channels.map((channel, index) =>
+          index === 0 ? { ...channel, huddle: true } : channel,
+        ),
+      };
+      for (const listener of channelListeners) listener();
+    },
     open,
     view,
     session,
@@ -975,4 +991,28 @@ it("asks for a community before showing anything", () => {
     />,
   );
   expect(screen.getByText("Choose a community")).toBeInTheDocument();
+});
+
+it("focuses search only after an excluded preview closes", async () => {
+  const h = harness();
+  saved("draft:team", "Draft to hide");
+  render(h.page.component());
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /Continue draft.*Draft to hide/,
+    }),
+  );
+  expect(
+    screen.getByRole("region", { name: "Draft for #launch-room" }),
+  ).toBeInTheDocument();
+  const search = screen.getByRole("searchbox");
+  const focus = vi.spyOn(search, "focus").mockImplementation(() => {
+    expect(
+      screen.queryByRole("region", { name: "Draft for #launch-room" }),
+    ).toBeNull();
+    expect(search.closest("[hidden]")).toBeNull();
+    expect(search.closest("[data-selected]")).toBeNull();
+  });
+  act(() => h.hideSelected());
+  await waitFor(() => expect(focus).toHaveBeenCalled());
 });

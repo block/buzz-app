@@ -150,15 +150,33 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
                     }),
                   }),
                 ];
-              return filter.top_level && filter["#h"]?.[0]
-                ? [
-                    ...found,
-                    bounds(relayKey, filter["#h"][0], "head", {
-                      has_more: false,
-                      next_cursor: null,
-                    }),
-                  ]
-                : found;
+              if (filter.top_level && channelId) {
+                const ordered = found.sort(
+                  (a, b) =>
+                    b.created_at - a.created_at || a.id.localeCompare(b.id),
+                );
+                const rows = ordered.slice(0, filter.limit);
+                const more = ordered.length > rows.length;
+                const last = rows.at(-1);
+                return [
+                  ...rows,
+                  bounds(
+                    relayKey,
+                    channelId,
+                    filter.until !== undefined && filter.before_id
+                      ? `${filter.until}:${filter.before_id}`
+                      : "head",
+                    {
+                      has_more: more,
+                      next_cursor:
+                        more && last
+                          ? { created_at: last.created_at, id: last.id }
+                          : null,
+                    },
+                  ),
+                ];
+              }
+              return found;
             }),
           )
         ).flat(),
@@ -204,6 +222,45 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   return {
     session,
     relay,
+    seedHistory: (thread: boolean) => {
+      const history = Array.from({ length: 150 }, (_, i) =>
+        message(
+          other,
+          "room",
+          `Later message ${i}`,
+          100 + i * 3600,
+          thread
+            ? [
+                ["e", root.id, "", "root"],
+                ["e", root.id, "", "reply"],
+              ]
+            : [],
+        ),
+      );
+      events.push(...history);
+    },
+    makeReadOnly: () => {
+      const update = signed(relayKey, {
+        kind: 39002,
+        content: "",
+        created_at: 200,
+        tags: [
+          ["d", "room"],
+          ["p", viewer.pubkey, "", "guest"],
+          ["p", other.pubkey],
+        ],
+      });
+      events.push(update);
+      emit([update]);
+    },
+    archive: () => {
+      const update = metadata(relayKey, "room", "Design", 200, [
+        ["t", "stream"],
+        ["archived", "true"],
+      ]);
+      events.push(update);
+      emit([update]);
+    },
     seedSent: (thread: boolean) => {
       const sent = message(
         viewer,
@@ -834,3 +891,132 @@ it("opens a cold sent channel preview with an empty composer and locates the mes
   );
   expect(within(region).queryByText(/could not be found/)).toBeNull();
 });
+
+it("reveals and highlights an off-screen Sent reply in its visible preview", async () => {
+  const h = fixture();
+  const sent = h.seedSent(true);
+  h.seedHistory(true);
+  let scrolled = false;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const isTarget = this.dataset.messageId === sent.id;
+      return new DOMRect(
+        0,
+        isTarget && !scrolled ? 2000 : 0,
+        800,
+        isTarget ? 100 : 600,
+      );
+    },
+  );
+  vi.mocked(HTMLElement.prototype.scrollIntoView).mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.dataset.messageId === sent.id) scrolled = true;
+  });
+  h.render();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /View message.*Already sent/ }),
+  );
+  const region = screen.getByRole("region", {
+    name: "Sent message in #Design",
+  });
+  await waitFor(() => expect(scrolled).toBe(true));
+  await waitFor(() =>
+    expect(
+      region.querySelector(
+        `[data-message-id="${sent.id}"] [class*="messageHighlight"], [data-message-id="${sent.id}"][class*="messageHighlight"]`,
+      ),
+    ).not.toBeNull(),
+  );
+});
+
+it("returns an older Sent channel window to the head after replying", async () => {
+  const h = fixture();
+  const sent = h.seedSent(false);
+  h.seedHistory(false);
+  writeView(h.session.scope, "draft:room", "Reply from old history");
+  h.render();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /View message.*Already sent/ }),
+  );
+  const region = screen.getByRole("region", {
+    name: "Sent message in #Design",
+  });
+  await waitFor(() => {
+    expect(h.session.channels.window("room").hasNewer).toBe(true);
+    expect(
+      region.querySelector(`[data-message-id="${sent.id}"]`),
+    ).not.toBeNull();
+  });
+  fireEvent.click(
+    await within(region).findByRole("button", { name: "Send message" }),
+  );
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  const outgoing = h.published[0];
+  if (!outgoing) throw new Error("Expected a published reply");
+  await waitFor(() => {
+    expect(h.session.channels.window("room").hasNewer).toBeFalsy();
+    expect(
+      region.querySelector(`[data-message-id="${outgoing.id}"]`),
+    ).not.toBeNull();
+  });
+  await waitFor(() =>
+    expect(
+      vi
+        .mocked(HTMLElement.prototype.scrollIntoView)
+        .mock.contexts.some(
+          (context) =>
+            (context as HTMLElement).dataset.messageId === outgoing.id,
+        ),
+    ).toBe(true),
+  );
+});
+
+it.each([false, true])(
+  "keeps archived Sent context readable without a composer (thread=%s)",
+  async (thread) => {
+    const h = fixture();
+    const sent = h.seedSent(thread);
+    h.archive();
+    h.render();
+    fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /View message.*Already sent/ }),
+    );
+    const region = screen.getByRole("region", {
+      name: "Sent message in #Design",
+    });
+    await waitFor(() =>
+      expect(
+        region.querySelector(`[data-message-id="${sent.id}"]`),
+      ).not.toBeNull(),
+    );
+    expect(within(region).queryByRole("textbox")).toBeNull();
+    expect(within(region).queryByText(/not available for replying/)).toBeNull();
+  },
+);
+
+it.each([false, true])(
+  "keeps read-only Sent context readable (thread=%s)",
+  async (thread) => {
+    const h = fixture();
+    const sent = h.seedSent(thread);
+    h.makeReadOnly();
+    h.render();
+    fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /View message.*Already sent/ }),
+    );
+    const region = screen.getByRole("region", {
+      name: "Sent message in #Design",
+    });
+    await waitFor(() =>
+      expect(
+        region.querySelector(`[data-message-id="${sent.id}"]`),
+      ).not.toBeNull(),
+    );
+    expect(within(region).queryByRole("textbox")).toBeNull();
+  },
+);

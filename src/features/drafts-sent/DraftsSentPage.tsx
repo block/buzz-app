@@ -245,8 +245,8 @@ function ScopedPage({
   useLayoutEffect(() => {
     if (!selectedExcluded) return;
     visit.current = undefined;
+    focusAfterClose.current = searchInput.current;
     setSelected(undefined);
-    searchInput.current?.focus();
   }, [selectedExcluded]);
   const isRoom = (id: string) =>
     ["dm", "solo"].includes(byId.get(id)?.channelType ?? "");
@@ -571,7 +571,6 @@ function ScopedPage({
         disabled={!draft && !place.available}
         selected={selected?.entry.id === entry.id}
         aria-current={selected?.entry.id === entry.id ? "true" : undefined}
-        data-draft-row={draft ? "" : undefined}
         data-preview-row=""
         title={
           draft || place.available
@@ -651,7 +650,7 @@ function ScopedPage({
             {destination}
             <span className={styles.clear}>
               <IconButton
-                variant="destructive-quiet"
+                variant="bare"
                 icon={<TrashIcon size={16} aria-hidden="true" />}
                 aria-label={`Clear draft in ${where}: ${line}`}
                 title="Clear draft"
@@ -699,9 +698,7 @@ function ScopedPage({
           !byId.get(selected.entry.channelId) &&
           (channelListStatus === "idle" || channelListStatus === "loading")
         }
-        onSaved={(restoreFocus) =>
-          selected.draft && closePreview(selected, true, restoreFocus)
-        }
+        onSaved={(restoreFocus) => closePreview(selected, true, restoreFocus)}
       />
     ) : null;
 

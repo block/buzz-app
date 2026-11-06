@@ -506,7 +506,7 @@ export function useAppNavigation(
         pluginId: _pluginId,
         ...dialog
       } = current;
-      // Unscoped visits (⌘, and page links) show the selected scope's Settings.
+      // Unscoped visits (⌘, and some links) show the selected scope's Settings.
       const dialogKey = targetKey({ scope, ...dialog });
       const dismiss = (fallback: OpenTarget) =>
         navigation.dismiss((target) => {

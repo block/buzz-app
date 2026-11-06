@@ -842,7 +842,7 @@ it("Close retires the unscoped Settings visit ⌘, opens along with its section 
   services = current;
   render(<App services={current} />);
   await waitFor(() =>
-    expect(current.navigation.snapshot().status).not.toBe("pending"),
+    expect(current.navigation.snapshot().status).not.toBe("opening"),
   );
   const earlier = current.navigation.snapshot().entry;
   void current.navigation.open({

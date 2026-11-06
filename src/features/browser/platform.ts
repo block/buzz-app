@@ -75,6 +75,9 @@ export interface BrowserPlatform {
     bounds: BrowserBounds,
     visible: boolean,
   ): Promise<void>;
+  /** Holds the page's media, Web Audio included, until resumed. A hidden page
+   * keeps running, so a page no view shows would otherwise stay audible. */
+  setMediaSuspended(sessionId: string, suspended: boolean): Promise<void>;
   /** With `fallbackToHttp`, an https load that fails to connect retries over http. */
   navigate(
     sessionId: string,
@@ -172,6 +175,8 @@ export function createBrowserPlatform(): BrowserPlatform {
     },
     setBounds: (sessionId, bounds, visible) =>
       invoke("browser_set_bounds", { sessionId, bounds, visible }),
+    setMediaSuspended: (sessionId, suspended) =>
+      invoke("browser_set_media_suspended", { sessionId, suspended }),
     navigate: async (sessionId, url, fallbackToHttp = false) =>
       invoke("browser_navigate", {
         sessionId,

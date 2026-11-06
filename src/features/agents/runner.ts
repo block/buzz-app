@@ -1,3 +1,4 @@
+import { interestPaused } from "./attention";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -490,6 +491,8 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
+  /** Owner reads for a run of the agent, where this build enables them. */
+  ownerAccess?(agent: Agent): AgentHandle["ownerAccess"];
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -783,8 +786,9 @@ export class AgentRunners {
    * type of `pluginId` when specified, not changing it, and its community is live. Each
    * call through the handle checks that again, so a kept handle stops
    * working while it no longer holds, and for good once the agent's type
-   * or its plugin is replaced. */
-  handle(key: AgentKey, pluginId?: string) {
+   * or its plugin is replaced. `run` adds what only the agent itself gets,
+   * such as device settings, for a connection that acts as the agent. */
+  handle(key: AgentKey, pluginId?: string, run = false) {
     const held = () => {
       const runner = this.runners.get(key);
       const agent = this.host.ready(key);
@@ -800,7 +804,7 @@ export class AgentRunners {
     if (!now) return;
     const { runner, agent } = now;
     const { signal } = runner.controller;
-    return guarded(this.handleFor(runner, agent), () => {
+    return guarded(this.handleFor(runner, agent, run), () => {
       if (signal.aborted || held()?.runner !== runner)
         throw new Error(
           `${agent.name} no longer runs here as this plugin's agent; ask for its handle again`,
@@ -935,7 +939,12 @@ export class AgentRunners {
     const watches: CompiledWatch[] = [];
     for (const object of Object.values(agent.attention)) {
       const watch = object.value;
-      if (watch.type !== "event" || !watch.enabled) continue;
+      if (
+        watch.type !== "event" ||
+        !watch.enabled ||
+        interestPaused(agent.attention, watch.interest_id)
+      )
+        continue;
       const interest = agent.attention[`interest/${watch.interest_id}`]?.value;
       watches.push({
         slug: object.slug,
@@ -2112,7 +2121,8 @@ export class AgentRunners {
         epoch === runner.epoch &&
         agent.attention[object.slug] === object &&
         object.value.type === "source" &&
-        object.value.enabled
+        object.value.enabled &&
+        !interestPaused(agent.attention, object.value.interest_id)
         ? job
         : undefined;
     }
@@ -2182,7 +2192,8 @@ export class AgentRunners {
       job.matched.epoch === runner.epoch &&
       object === job.matched.object &&
       object.value.type === "timer" &&
-      object.value.enabled
+      object.value.enabled &&
+      !interestPaused(agent.attention, object.value.interest_id)
     );
   }
 
@@ -2215,7 +2226,12 @@ export class AgentRunners {
       | undefined;
     for (const object of Object.values(agent.attention)) {
       const timer = object.value;
-      if (timer.type !== "timer" || !timer.enabled) continue;
+      if (
+        timer.type !== "timer" ||
+        !timer.enabled ||
+        interestPaused(agent.attention, timer.interest_id)
+      )
+        continue;
       const saved = timers[object.slug];
       const state = timerState(timer, saved, now);
       if (state !== saved)
@@ -2677,6 +2693,12 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
+    // Only a bundled harness's run: an installed harness plugin is not trusted
+    // with its owner's access.
+    const ownerAccess =
+      run && runner.type?.revision === "bundled"
+        ? this.host.ownerAccess?.(agent)
+        : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -2774,6 +2796,7 @@ export class AgentRunners {
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),
+        ...(ownerAccess && { ownerAccess }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

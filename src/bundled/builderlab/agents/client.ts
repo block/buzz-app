@@ -135,7 +135,7 @@ export function createAgentClient(
     const credential = session.credential();
     if (!credential.account.canUseRemoteAgents)
       throw new Error(
-        "Builderlab remote agents are coming soon for your account.",
+        "Builderlab remote agents are unavailable for this account.",
       );
     return credential;
   }

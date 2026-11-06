@@ -346,12 +346,21 @@ async function run(
     );
   };
   switch (name) {
-    case "interest_set":
+    case "interest_set": {
+      const slug = `interest/${required(args, "id")}`;
+      const current = (await attention.show(slug)).object;
       return attention.write(
-        `interest/${required(args, "id")}`,
-        { type: "interest", instructions: required(args, "instructions") },
+        slug,
+        {
+          type: "interest",
+          instructions: required(args, "instructions"),
+          ...(current?.type === "interest" && current.paused !== undefined
+            ? { paused: current.paused }
+            : {}),
+        },
         { expected: required(args, "expected_state") },
       );
+    }
     case "interest_show":
       return attention.show(`interest/${required(args, "id")}`);
     case "interest_list":

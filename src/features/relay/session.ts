@@ -1072,6 +1072,7 @@ export function createRelaySession(
           rosterComplete: dropStrandedSends,
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
+          verifyStored: transport.verifyStored?.bind(transport),
           demand: (channelId) => demandChannel(channelId),
           rosterChanged: (strong) => {
             if (channels.roster().state === "verified")

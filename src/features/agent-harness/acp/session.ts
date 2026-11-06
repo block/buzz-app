@@ -99,8 +99,8 @@ export class AcpSession {
     | { waiters: Waiter[]; receipts: Set<ActivityReceipt>; ended?: true }
     | undefined;
   private idlers: (() => void)[] = [];
-  /** How often the owner has stopped its work. */
-  private stops = 0;
+  /** How often its work has been stopped or has ended. */
+  private generation = 0;
 
   constructor(
     private readonly acp: AcpProcess,
@@ -183,11 +183,12 @@ export class AcpSession {
     return settled;
   }
 
-  /** Whether the work running now, if any, still runs unstopped when asked
-   * later. */
+  /** Whether the work running now, if any, still runs unstopped and
+   * unfinished when asked later; work after it is not that work. */
   current(): () => boolean {
-    const stops = this.stopped ? -1 : this.stops;
-    return () => this.stops === stops && !this.stopped && !this.quiet();
+    const generation = this.stopped || this.quiet() ? -1 : this.generation;
+    return () =>
+      this.generation === generation && !this.stopped && !this.quiet();
   }
 
   /** A final message succeeded: the work counts as done at once, unless
@@ -204,7 +205,7 @@ export class AcpSession {
    * harness ends it; a message sent before it has runs as a new turn after. */
   interrupt() {
     if (!this.working || this.closed) return;
-    this.stops++;
+    this.generation++;
     this.queue.length = 0;
     this.steered = Promise.resolve();
     this.stopped = {
@@ -579,6 +580,8 @@ export class AcpSession {
     );
   }
   private wake() {
-    if (this.quiet()) for (const resolve of this.idlers.splice(0)) resolve();
+    if (!this.quiet()) return;
+    this.generation++;
+    for (const resolve of this.idlers.splice(0)) resolve();
   }
 }

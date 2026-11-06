@@ -668,11 +668,13 @@ test.describe("message width and density", () => {
       await expect(page.getByRole("listbox")).toBeHidden();
       await densityChoice.focus();
       await page.keyboard.press("ArrowDown");
-      await expect(page.getByRole("listbox")).toBeVisible();
+      await expect(
+        page.getByRole("option", { name: "Compact", exact: true }),
+      ).toBeFocused();
       await page.keyboard.press("Home");
       await expect(
         page.getByRole("option", { name: "Default", exact: true }),
-      ).toHaveAttribute("data-highlighted", "");
+      ).toBeFocused();
       await page.keyboard.press("Enter");
       await expect(densityChoice).toHaveText("Default");
       await expect(previewBubble).not.toHaveCSS(

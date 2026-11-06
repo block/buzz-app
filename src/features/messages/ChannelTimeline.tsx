@@ -906,8 +906,16 @@ function Timeline({
     () => intent.current === targetIntent.current,
     [],
   );
+  // The visit last revealed or returned to. A relay rebind brings it back with
+  // a new signal, and a thread visit leaves it shown; neither moves the reader.
+  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
+    undefined,
+  );
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
+    // A reveal moves the reader off the visit last presented, even an inline
+    // one that presents none, so a return to that visit restores its place.
+    presentedVisit.current = undefined;
     targetIntent.current = ++intent.current;
     follow.current = false;
     upwardGesture.current = false;
@@ -946,11 +954,6 @@ function Timeline({
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
   // The row the last reveal focused; a return may take focus back from it.
   const revealedRow = useRef<string | undefined>(undefined);
-  // The visit last revealed or returned to. A relay rebind brings it back with
-  // a new signal, and a thread visit leaves it shown; neither moves the reader.
-  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
-    undefined,
-  );
   // The attempt that presented it; leaving records that visit's place.
   const [presented, setPresented] = useState<AbortSignal>();
   const present = useCallback((visit: PageNavigation) => {

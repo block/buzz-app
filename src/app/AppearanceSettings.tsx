@@ -30,6 +30,10 @@ import {
   setFollowUpBehaviorPreference,
 } from "../features/messages/follow-up-preference";
 import {
+  setGitHubLinksOpenInBrowserPreference,
+  useGitHubLinksOpenInBrowserPreference,
+} from "../features/conversation/github-link-preference";
+import {
   setMessageAutocorrectPreference,
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
@@ -83,6 +87,7 @@ export function AppearanceSettings({
   const names = useNamePreference();
   const verifiedCommunity = useVerifiedCommunity(communities?.relay);
   const { placement, unsaved } = useThreadPlacementPreference();
+  const githubLinks = useGitHubLinksOpenInBrowserPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -428,6 +433,12 @@ export function AppearanceSettings({
               />
             }
           />
+          <SwitchPreferenceRow
+            label="Open GitHub links in browser by default"
+            description="Open GitHub links in your browser instead of a side panel."
+            checked={githubLinks.enabled}
+            onCheckedChange={setGitHubLinksOpenInBrowserPreference}
+          />
           <PreferenceRow
             title="Message timestamps"
             subtitle="Hidden times stay available to screen readers."
@@ -553,6 +564,22 @@ export function AppearanceSettings({
               onClick={() => setThreadPlacementPreference(placement)}
             >
               Retry saving thread placement
+            </Button>
+          </ToastNotice>
+        )}
+        {active && githubLinks.unsaved && (
+          <ToastNotice
+            title="GitHub link preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() =>
+                setGitHubLinksOpenInBrowserPreference(githubLinks.enabled)
+              }
+            >
+              Retry saving GitHub link preference
             </Button>
           </ToastNotice>
         )}

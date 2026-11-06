@@ -3,6 +3,7 @@ import {
   type ConversationInteractions,
 } from "./ConversationHost";
 import { ConversationPresentation } from "./ConversationPresentation";
+import { setGitHubLinksOpenInBrowserPreference } from "./github-link-preference";
 // @vitest-environment jsdom
 const emptyTyping: never[] = [];
 import "@testing-library/jest-dom/vitest";
@@ -84,6 +85,8 @@ vi.mock("../../shared/design-system/ui/Dialog", () => ({
 }));
 afterEach(() => {
   cleanup();
+  setGitHubLinksOpenInBrowserPreference(false);
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -461,3 +464,44 @@ it("an open channel reserves profile room for its roster and returns it when it 
   view.unmount();
   expect(release).toHaveBeenCalledTimes(3);
 });
+
+// A catch-all panel makes exclusions observable: the preference must bypass it
+// only for HTTP(S) github.com, leaving other destinations to normal resolution.
+it.each([
+  ["https://github.com/block/buzz-app/pull/2026", true],
+  ["http://github.com/block/buzz-app", true],
+  ["https://GITHUB.COM/block/buzz-app", true],
+  ["https://www.github.com/block/buzz-app", false],
+  ["https://gist.github.com/example/123", false],
+  ["https://github.com.example.test/block/buzz-app", false],
+  ["ftp://github.com/block/buzz-app", false],
+  ["fixture:one", false],
+])(
+  "applies the browser preference only to supported GitHub links: %s",
+  (url, github) => {
+    const h = fixture();
+    let interactions: ConversationInteractions | undefined;
+    render(
+      <ConversationHost {...h.props}>
+        {(value) => {
+          interactions = value;
+          return null;
+        }}
+      </ConversationHost>,
+    );
+    // Read the setting on each action, including changes after the host mounts.
+    setGitHubLinksOpenInBrowserPreference(true);
+    let handled: boolean | undefined;
+    act(() => {
+      handled = interactions?.onOpenLink(url);
+    });
+    expect(handled).toBe(!github);
+    expect(!!screen.queryByText("Linked content")).toBe(!github);
+    setGitHubLinksOpenInBrowserPreference(false);
+    act(() => {
+      handled = interactions?.onOpenLink(url);
+    });
+    expect(handled).toBe(true);
+    expect(screen.getByText("Linked content")).toBeVisible();
+  },
+);

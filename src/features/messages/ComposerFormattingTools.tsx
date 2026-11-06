@@ -74,8 +74,11 @@ export function ComposerFormattingTools({
   toggleFormat,
   editLink,
   trailing,
+  persistent = false,
 }: {
   children: ReactNode;
+  /** Document surfaces expose the formatting list without a toggle. */
+  persistent?: boolean;
   /** Conversation controls that follow the tools on the same row. */
   trailing?: ReactNode;
   disabled: boolean;
@@ -84,7 +87,8 @@ export function ComposerFormattingTools({
   toggleFormat(format: ComposerFormat): void;
   editLink(): void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [toggled, setOpen] = useState(false);
+  const open = persistent || toggled;
   const reduceMotion = useReducedMotion();
   const [keyboardToggle, setKeyboardToggle] = useState(false);
   const instant = reduceMotion || keyboardToggle;
@@ -135,27 +139,29 @@ export function ComposerFormattingTools({
             exit={{ opacity: 0 }}
             transition={transition}
           >
-            <motion.div
-              className={styles.close}
-              initial={instant ? false : faded}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={faded}
-              transition={transition}
-            >
-              <IconButton
-                hint="familiar"
-                ref={openToggle}
-                size="sm"
-                variant="subtle"
-                aria-label="Close formatting"
-                title="Close formatting"
-                disabled={disabled}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={(event) => change(false, event.detail === 0)}
-                icon={<XIcon size={16} />}
-              />
-              <div className={styles.divider} aria-hidden="true" />
-            </motion.div>
+            {!persistent && (
+              <motion.div
+                className={styles.close}
+                initial={instant ? false : faded}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={faded}
+                transition={transition}
+              >
+                <IconButton
+                  hint="familiar"
+                  ref={openToggle}
+                  size="sm"
+                  variant="subtle"
+                  aria-label="Close formatting"
+                  title="Close formatting"
+                  disabled={disabled}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={(event) => change(false, event.detail === 0)}
+                  icon={<XIcon size={16} />}
+                />
+                <div className={styles.divider} aria-hidden="true" />
+              </motion.div>
+            )}
             <motion.div
               className={styles.scroll}
               initial={instant ? false : faded}

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
+import { CodexSetup } from "./setup";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
@@ -5892,30 +5893,34 @@ describe("voice seats", () => {
     expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toContain("NEW CORE");
     await connection.close();
   });
-  it("refuses a protected agent before any setup", async () => {
+  it("refuses a protected agent before setup, server or media", async () => {
     vi.stubGlobal("RTCPeerConnection", class {});
-    const f = fixture();
+    const f = fixture([], undefined, true);
     const d = f.delivery("hello");
-    await expect(
-      f.runtime.voice(
-        {
-          config: d.config,
-          agent: {
-            ...d.agent,
-            protection: {},
-            config: d.config,
-          } as unknown as Agent,
-          conversation: { channelId: "channel" },
-          signal: new AbortController().signal,
-          async output() {},
-          async transcript() {},
-          ended() {},
-        },
-        d.agent,
-      ),
-    ).rejects.toThrow("protected agents");
-    expect(f.spawn).not.toHaveBeenCalled();
-    expect(vi.mocked(openVoice)).not.toHaveBeenCalled();
+    vi.mocked(openVoice).mockClear();
+    const installed = vi.spyOn(CodexSetup.prototype, "installed");
+    const seat = {
+      config: d.config,
+      agent: {
+        ...d.agent,
+        protection: {},
+        config: d.config,
+      } as unknown as Agent,
+      conversation: { channelId: "channel" },
+      signal: new AbortController().signal,
+      async output() {},
+      async transcript() {},
+      ended() {},
+    };
+    await expect(f.voicePlugin(seat)).rejects.toThrow("protected agents");
+    // The runtime refuses on its own too, for any other caller.
+    await expect(f.runtime.voice(seat, d.agent)).rejects.toThrow(
+      "protected agents",
+    );
+    // Nothing was started for the seat: no setup, thread or media.
+    expect(installed).not.toHaveBeenCalled();
+    expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+    expect(openVoice).not.toHaveBeenCalled();
   });
   it("preserves the mention path's synced-effort refusal", async () => {
     await expect(
@@ -6080,8 +6085,15 @@ describe("voice seats", () => {
       method: "turn/started",
       params: { threadId: "thread-1", turn: { id: "voice-1" } },
     });
+    // The voice turn is adopted (its tools run) before the typed one queues.
+    const adopted = await f.tool(
+      "send",
+      { text: "voice work", audience: "everyone" },
+      0,
+      { threadId: "thread-1", turnId: "voice-1" },
+    );
+    expect(adopted?.result).toMatchObject({ success: true });
     await f.runtime.run({ ...f.delivery("@Codex harder"), effort: "high" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(f.starts()).toHaveLength(1);
     f.emit({
       method: "turn/completed",

@@ -155,6 +155,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     voice: async (seat) => {
       if (typeof RTCPeerConnection !== "function")
         throw new Error("Voice is unsupported on this device");
+      // Protection is not known to review realtime input, so voice refuses it.
+      if (seat.agent.protection)
+        throw new Error("Voice is unavailable for protected agents");
       await setup.installed(seat.signal);
       const handle = ctx.agents.handle(seat.agent.key);
       if (!handle) throw new Error("The Codex agent is not running");

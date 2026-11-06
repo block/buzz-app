@@ -305,7 +305,7 @@ export type AgentViewProps<Config = unknown> = {
    * field, or tabs that each save a part will erase each other's fields. A
    * hosted type's tabs save to its provider instead; for them this rejects.
    * A tab that reconciles incoming config can supply its matching configBase;
-   * otherwise the host retains the revision the editor originally opened. */
+   * otherwise the host retains the last revision it opened or saved. */
   save(config: Config, options?: { base: ConfigBase }): Promise<void>;
   /** Host identity/retype framing for a Settings tab. Other surfaces omit it. */
   settingsHost?: AgentSettingsHost;
@@ -341,6 +341,9 @@ export type AgentTab<Config = unknown> = Readonly<{
   role?: "settings" | "activity";
   /** Supports separate identity and runtime settings presentations. */
   splitSettings?: boolean;
+  /** Reconciles incoming config and supplies its matching save base. Keeps
+   * this editor mounted through config unavailability to preserve drafts. */
+  reconcilesConfig?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** A tab a plugin adds to the settings of every agent shown on this device,

@@ -1268,6 +1268,12 @@ export function createTabs({
             {execution.error}
           </p>
         )}
+        {unavailable && (
+          <p className="m-0 text-body-sm text-muted">
+            Your edits stay in this form. You can save them, including Workspace
+            changes, when configuration is available again.
+          </p>
+        )}
         {error && (
           <p
             ref={saveErrorRef}

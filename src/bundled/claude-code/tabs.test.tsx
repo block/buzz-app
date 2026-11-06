@@ -2248,7 +2248,7 @@ it("reports Claude connection readiness after resolving the provider default", a
 
 /** Exercise the real settings tab through the host's revision and discard gates. */
 function syncedSettings() {
-  const Settings = tab(installed().type, 0);
+  const installedType = installed().type;
   let source: Agent<Config> & {
     configBase: { settings: string; instructions: string };
   } = {
@@ -2266,15 +2266,7 @@ function syncedSettings() {
     memberships: () => [],
   } as unknown as Agents;
   const type = {
-    tabs: [
-      {
-        id: "settings",
-        title: "Settings",
-        role: "settings",
-        splitSettings: true,
-        component: Settings,
-      },
-    ],
+    tabs: installedType.tabs?.filter((tab) => tab.role === "settings"),
   } as unknown as RegisteredAgentType;
   let pendingSave: ((config?: unknown) => Promise<void>) | undefined;
   const shown = () => (
@@ -2435,12 +2427,18 @@ it("preserves settings through config unavailability and resumes against the rec
   expect(screen.getByLabelText("Instructions")).toHaveValue("Keep this draft");
   expect(screen.getByRole("alert")).toHaveTextContent("Config unavailable");
   expect(
+    screen.getByText(/You can save them, including Workspace/),
+  ).toBeInTheDocument();
+  expect(
     screen.queryByRole("button", { name: "Save" }),
   ).not.toBeInTheDocument();
   f.update(
     { ...DEFAULT_CONFIG, model: "recovered-model" },
     { settings: "s2", instructions: "i0" },
   );
+  expect(
+    screen.queryByText(/You can save them, including Workspace/),
+  ).not.toBeInTheDocument();
   await userEvent.click(await screen.findByRole("button", { name: "Save" }));
   expect(f.save).toHaveBeenLastCalledWith(f.source().key, {
     config: {

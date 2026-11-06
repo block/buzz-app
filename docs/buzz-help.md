@@ -627,6 +627,8 @@ available rather than silently discarding it.
   before saving. Use **View latest instructions** to read competing instructions.
   Model and thinking are resolved together. If Save reports an error, some settings
   may already have saved; the remaining edits stay available to retry.
+  If configuration is unavailable, edits stay in the open form, but saving
+  (including Workspace changes) waits until configuration returns.
 - **Make my bestie** in an agent card's menu chooses the agent initially tagged
   in new Solo chats for that community. It does not replace recipients in an
   existing chat or an edited draft. People can choose a different agent for a

@@ -78,50 +78,64 @@ export function agentSections({
     settingsHost && settingsTab
       ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
       : typeTabs;
-  const tabs = orderedTabs.map(({ id, title, role, component: Component }) => ({
-    value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
-    label: title,
-    render: () => (
-      <EditorBase agents={agents} agent={agent}>
-        {(save) => {
-          const content = (
-            <Component
-              agent={agent}
-              {...(role === "settings" && settingsSection
-                ? { settingsSection }
-                : {})}
-              {...(role === "settings" && details
-                ? { settingsContent: details }
-                : {})}
-              {...(conversation && { conversation })}
-              {...(role === "activity" &&
-                conversation &&
-                initialTranscript && { initialTranscript })}
-              {...(role === "activity" && close && { close })}
-              {...(role === "activity" &&
-                openConversation && { openConversation })}
-              save={(config, options) =>
-                settingsHost?.pendingSave
-                  ? settingsHost.pendingSave(config)
-                  : save(config, options)
-              }
-              {...(role === "settings" && settingsHost ? { settingsHost } : {})}
-            />
-          );
-          return role === "settings" &&
-            settingsSection !== "runtime" &&
-            execution === "remote" ? (
-            <div className="grid gap-4">
-              <AgentExecutionNote runtime={agent.type} />
-              {content}
-            </div>
-          ) : (
-            content
-          );
-        }}
-      </EditorBase>
-    ),
-  }));
+  const tabs = orderedTabs.map(
+    ({ id, title, role, reconcilesConfig, component: Component }) => ({
+      value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
+      label: title,
+      render: () => (
+        <EditorBase
+          key={
+            reconcilesConfig
+              ? "reconciled"
+              : agent.configProblem
+                ? "unavailable"
+                : "available"
+          }
+          agents={agents}
+          agent={agent}
+        >
+          {(save) => {
+            const content = (
+              <Component
+                agent={agent}
+                {...(role === "settings" && settingsSection
+                  ? { settingsSection }
+                  : {})}
+                {...(role === "settings" && details
+                  ? { settingsContent: details }
+                  : {})}
+                {...(conversation && { conversation })}
+                {...(role === "activity" &&
+                  conversation &&
+                  initialTranscript && { initialTranscript })}
+                {...(role === "activity" && close && { close })}
+                {...(role === "activity" &&
+                  openConversation && { openConversation })}
+                save={(config, options) =>
+                  settingsHost?.pendingSave
+                    ? settingsHost.pendingSave(config)
+                    : save(config, options)
+                }
+                {...(role === "settings" && settingsHost
+                  ? { settingsHost }
+                  : {})}
+              />
+            );
+            return role === "settings" &&
+              settingsSection !== "runtime" &&
+              execution === "remote" ? (
+              <div className="grid gap-4">
+                <AgentExecutionNote runtime={agent.type} />
+                {content}
+              </div>
+            ) : (
+              content
+            );
+          }}
+        </EditorBase>
+      ),
+    }),
+  );
   if (
     !settingsTab &&
     (settingsHost?.typeControl || settingsHost?.pendingSave || historyContent)

@@ -327,6 +327,9 @@ export function createHuddleComposerClient(token: string) {
       request("sendToChannel", args),
     retryOperation: (args: ComposerOperations["retryOperation"]["args"]) =>
       request("retryOperation", args),
+    acknowledgeOperations: (
+      args: ComposerOperations["acknowledgeOperations"]["args"],
+    ) => request("acknowledgeOperations", args),
     markRead: (args: ComposerOperations["markRead"]["args"]) =>
       request("markRead", args),
     follow: (args: ComposerOperations["follow"]["args"]) =>

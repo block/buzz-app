@@ -115,19 +115,7 @@ export function createPopoutWindows(
   function sync(entry: Entry) {
     if (entry.retired || !entry.label) return;
     const next = view(entry);
-    void chain(async () => {
-      await bridge.update(entry.label, next);
-      // Terminal operation reports count as delivered to the companion only
-      // now; if retiring them leaves more to publish, publish again.
-      if (entry.retired) return;
-      const retired = entry.thread.acknowledgePublished(next.operations);
-      const published = new Set(next.operations.map((op) => op.id));
-      if (
-        retired &&
-        entry.thread.operations().some((op) => !published.has(op.id))
-      )
-        sync(entry);
-    });
+    void chain(() => bridge.update(entry.label, next));
   }
   /** Release owner resources; a created window is destroyed natively. */
   function retire(entry: Entry, reason?: string) {
@@ -268,6 +256,10 @@ export function createPopoutWindows(
         admit: (id, messageId, kind) => {
           entry.thread.admit(id, messageId, kind);
           sync(entry);
+        },
+        acknowledge: (ids) => {
+          // Retiring reports may let a capped presentation show others.
+          if (entry.thread.acknowledge(ids)) sync(entry);
         },
       },
     );

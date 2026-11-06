@@ -48,6 +48,8 @@ export function createHuddleComposerOwner(
       messageId: string | undefined,
       kind: 7 | 5 | 40003 | 9,
     ): void;
+    /** The companion reconciled these terminal reports. */
+    acknowledge(ids: readonly string[]): void;
   },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
@@ -490,6 +492,18 @@ export function createHuddleComposerOwner(
         if (typeof request.args.following !== "boolean")
           throw new Error("Invalid follow state.");
         session.unread.follow(room, thread, request.args.following);
+        return;
+      }
+      case "acknowledgeOperations": {
+        const ids = request.args.ids;
+        if (
+          !shown ||
+          !Array.isArray(ids) ||
+          ids.length > 256 ||
+          ids.some((id) => typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id))
+        )
+          throw new Error("Invalid acknowledgement.");
+        shown.acknowledge(ids);
         return;
       }
       case "retryOperation": {

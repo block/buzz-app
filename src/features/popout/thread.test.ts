@@ -175,6 +175,7 @@ const shownFor = (h: ReturnType<typeof fixture>) => ({
   root: () => h.thread.shown(ROOT),
   admit: (id: string, messageId: string | undefined, kind: 7 | 5 | 40003 | 9) =>
     h.thread.admit(id, messageId, kind),
+  acknowledge: (ids: readonly string[]) => h.thread.acknowledge(ids),
 });
 const OWN_EVENT = "c".repeat(64);
 const OTHER_EVENT = "d".repeat(64);
@@ -395,7 +396,9 @@ it("fences and retries from the whole operation collection, capping only the pre
   expect(h.thread.operations()).toEqual([terminal]);
   expect(h.thread.reactionBusy(ROOT)).toBe(false);
   expect(h.thread.snapshot().operations).toEqual([terminal]);
-  expect(h.thread.acknowledgePublished([terminal])).toBe(true);
+  // Acknowledging a non-terminal or unknown id changes nothing.
+  expect(h.thread.acknowledge(["1".repeat(64)])).toBe(false);
+  expect(h.thread.acknowledge([terminal.id])).toBe(true);
   expect(h.thread.operations()).toEqual([]);
   // A message deletion names its message, unlike a reaction removal.
   h.outbox.items = [
@@ -551,7 +554,7 @@ it("keeps terminal reports for this window ahead of the cap and until they are p
   for (let i = 0; i < 65; i++) h.thread.admit(idOf(2000 + i), ROOT, 7);
   const first = h.thread.snapshot().operations;
   expect(first).toHaveLength(64);
-  expect(h.thread.acknowledgePublished(first)).toBe(true);
+  expect(h.thread.acknowledge(first.map((op) => op.id))).toBe(true);
   const rest = h.thread.snapshot().operations;
   expect(rest.map((op) => op.id)).toEqual([idOf(2063), idOf(2064)]);
 });

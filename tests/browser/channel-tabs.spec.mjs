@@ -1,5 +1,5 @@
 import { getPublicKey } from "nostr-tools";
-import { hoverMessage } from "./message-actions.mjs";
+import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -240,21 +240,30 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
       ),
     )
     .toBe(true);
-  // Solo agents answer at top level, so a Solo row starts no thread.
+  // Solo replies now select the existing conversation composer.
   const sent = beta
     .locator("[data-message-id]")
     .filter({ has: page.getByText("Beta draft", { exact: true }) });
   await hoverMessage(sent);
   await expect(
     sent.getByRole("button", { name: "Reply", exact: true }),
+  ).toBeVisible();
+  await sent.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(
+    beta.getByRole("button", { name: "Cancel reply target" }),
+  ).toBeVisible();
+  await composer.press("Escape");
+  await expect(
+    beta.getByRole("button", { name: "Cancel reply target" }),
   ).toHaveCount(0);
+  // Pane navigation uses the thread summary; Reply retains the main editor.
   const row = main.locator(`[data-message-id="${link.id}"]`);
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, link.id);
   const reply = workspace.getByRole("textbox", {
     name: "Reply to thread",
     exact: true,
   });
+  await reply.click();
   await expect(reply).toBeFocused();
   await reply.fill("Alpha reply draft");
   // Shared Beta lists with the viewer's chats.
@@ -274,7 +283,8 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   await expect(alphaComposer).toBeFocused();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, link.id);
+  await reply.click();
   await expect(reply).toBeFocused();
   await expect(reply).toHaveText("Alpha reply draft");
   await workspace
@@ -496,9 +506,8 @@ test("Canvas opens once beside Thread and retains its channel draft", async ({
 }) => {
   await open(page, app);
   const main = page.getByRole("article", { name: "Conversation", exact: true });
-  const row = main.locator("[data-message-id]").first();
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const root = app.histories.get("primary/alpha")[0];
+  await openThreadLink(page, app, root.id);
   const workspace = page.locator("[data-panel-workspace]");
   const thread = workspace.locator(
     '[role="tab"][data-tab-value^="thread:alpha:"]',

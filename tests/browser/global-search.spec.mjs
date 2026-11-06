@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { wheel } from "./timeline.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 // The palette scales in and its content slides in after a delay. Both hold
@@ -384,7 +385,7 @@ test.describe("public search destination", () => {
       );
     });
     // A short viewport makes the two-message thread scroll.
-    await page.setViewportSize({ width: 1100, height: 360 });
+    await page.setViewportSize({ width: 1100, height: 320 });
     await page.goto(app.origin);
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
     await button(page, "Search Buzz").click();
@@ -417,10 +418,64 @@ test.describe("public search destination", () => {
       .toBe(true);
     // The reveal can leave the reply at the end without following it. Scroll
     // away and back as a reader does, so the thread follows its end.
-    await history.hover();
-    await page.mouse.wheel(0, -2000);
+    // Row toolbars can consume wheel input; aim inside the history and prove
+    // each gesture finishes before the next gesture or Join changes its layout.
+    const scrollHistory = async (delta) => {
+      const probe = { x: 48, y: 80 };
+      await history.hover({ position: probe });
+      expect(
+        await history.evaluate((el, point) => {
+          const bounds = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(
+            bounds.x + point.x,
+            bounds.y + point.y,
+          );
+          return !!hit && el.contains(hit) && !hit.closest("[popover]");
+        }, probe),
+      ).toBe(true);
+      await wheel(page, delta, history);
+    };
+    await scrollHistory(-2000);
     await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(0);
-    await page.mouse.wheel(0, 2000);
+    // Wheel over the floating bar: it forwards scrolling synchronously before
+    // React handles the gesture, and must still resume following at the end.
+    const toolbarRow = history.locator("[data-message-id]").first();
+    const prose = toolbarRow.locator("[data-message-action-anchor] p").first();
+    const proseBox = await prose.boundingBox();
+    const point = { x: proseBox.x + 1, y: proseBox.y + 1 };
+    expect(
+      await prose.evaluate(
+        (el, point) => el.contains(document.elementFromPoint(point.x, point.y)),
+        point,
+      ),
+    ).toBe(true);
+    await page.mouse.move(point.x, point.y);
+    const actions = toolbarRow.getByRole("group", {
+      name: "Message actions",
+      includeHidden: true,
+    });
+    await expect
+      .poll(() => actions.evaluate((el) => el.matches(":popover-open")))
+      .toBe(true);
+    const bar = await actions.boundingBox();
+    await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2);
+    expect(
+      await actions.evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        return el.contains(
+          document.elementFromPoint(
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2,
+          ),
+        );
+      }),
+    ).toBe(true);
+    expect(
+      await history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    ).toBeGreaterThan(80);
+    await wheel(page, 2000, history);
     const fromEnd = () =>
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,

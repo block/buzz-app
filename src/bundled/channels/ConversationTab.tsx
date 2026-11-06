@@ -1,3 +1,4 @@
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import {
   useCallback,
   useEffect,
@@ -116,6 +117,12 @@ export function ConversationTab({
     return () => request.abort();
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
+  const inlineReply = useInlineReply(
+    session,
+    channel.id,
+    setSent,
+    focusRequest,
+  );
   const media = useMediaReview();
   // A retained tab re-renders with its page. Its memoized rows open links and
   // threads through stable openers that consult the latest handlers when chosen.
@@ -184,6 +191,7 @@ export function ConversationTab({
         ) : (
           <SoloColumn enabled={soloConversation}>
             <ChannelBody
+              onReply={inlineReply.select}
               viewer={session.viewer}
               cached={!!channel.cached}
               // The composer below mounts TypingIndicator for a live channel.
@@ -204,8 +212,7 @@ export function ConversationTab({
             <ConversationComposer
               // Shown follows the tab, not whether showing it visits the chat.
               shown={active}
-              onSend={setSent}
-              {...(focusRequest ? { focusRequest } : {})}
+              {...inlineReply.composer}
             />
           </SoloColumn>
         )}

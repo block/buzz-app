@@ -4730,6 +4730,83 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
   }
 });
 
+it("replies after a 100ms hold, preserving short clicks, selection, links, and canceled gestures", () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("PointerEvent", MouseEvent);
+  const commit = vi.fn();
+  const cancel = vi.fn();
+  const reply = vi.fn(() => ({ commit, cancel }));
+  const open = vi.fn(() => true);
+  try {
+    const view = renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "Hold this message\n\n[Embedded link](https://example.com)",
+        }}
+        day={false}
+        retry={() => {}}
+        profile={undefined}
+        media={() => undefined}
+        onReply={reply}
+        onOpenLink={open}
+      />,
+    );
+    const prose = screen.getByText("Hold this message");
+    const down = (target = prose) =>
+      fireEvent.pointerDown(target, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.click(prose);
+    down();
+    act(() => vi.advanceTimersByTime(99));
+    expect(reply).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(reply).toHaveBeenCalledExactlyOnceWith(row.id, true);
+    expect(commit).not.toHaveBeenCalled();
+    fireEvent.pointerUp(prose);
+    expect(commit).toHaveBeenCalledOnce();
+    reply.mockClear();
+    commit.mockClear();
+    down();
+    fireEvent.pointerUp(prose);
+    act(() => vi.advanceTimersByTime(100));
+    expect(reply).not.toHaveBeenCalled();
+    down();
+    fireEvent.pointerMove(prose, { clientX: 20, clientY: 10 });
+    act(() => vi.advanceTimersByTime(100));
+    expect(reply).not.toHaveBeenCalled();
+    down();
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(prose);
+    selection?.addRange(range);
+    act(() => vi.advanceTimersByTime(100));
+    expect(reply).not.toHaveBeenCalled();
+    selection?.removeAllRanges();
+    down(screen.getByRole("link", { name: "Embedded link" }));
+    act(() => vi.advanceTimersByTime(100));
+    expect(reply).not.toHaveBeenCalled();
+    down();
+    fireEvent.scroll(document);
+    act(() => vi.advanceTimersByTime(100));
+    expect(reply).not.toHaveBeenCalled();
+    // A preview owns no focus after the row is removed before release.
+    down();
+    act(() => vi.advanceTimersByTime(100));
+    reply.mockClear();
+    view.unmount();
+    fireEvent.pointerUp(document);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(100));
+    expect(reply).not.toHaveBeenCalled();
+  } finally {
+    document.getSelection()?.removeAllRanges();
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
+});
 it.each([
   "agent",
   "failed",

@@ -1607,7 +1607,7 @@ it("names the conversation a thread lives in as a link, only when its host can o
   expect(within(thread).queryByText("#Alpha")).toBeNull();
 });
 
-it("passes readiness through to thread composition, and gives a Solo thread none", () => {
+it("passes readiness through to thread composition, including Solo threads", () => {
   const h = messagesHarness();
   const view = render(<ThreadPanel {...h.props} disabled />);
   const composer = screen.getByRole("region", { name: "Composer" });
@@ -1615,11 +1615,9 @@ it("passes readiness through to thread composition, and gives a Solo thread none
   view.rerender(<ThreadPanel {...h.props} disabled={false} />);
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  // Solo agents answer at top level: its threads are read-only.
+  // Explicit replies are available in Solo threads too.
   view.rerender(<ThreadPanel {...h.props} soloConversation />);
-  expect(
-    screen.queryByRole("region", { name: "Composer" }),
-  ).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeInTheDocument();
   expect(
     screen.getByRole("region", { name: "Thread messages" }),
   ).toBeInTheDocument();

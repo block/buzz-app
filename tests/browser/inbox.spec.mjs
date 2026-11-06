@@ -541,7 +541,7 @@ test.describe("Inbox Solo chat thread", () => {
     agentPeers: true,
     inboxSoloAgent: true,
   });
-  test("a Solo chat thread reply opens its thread without a reply composer", async ({
+  test("a Solo chat thread reply opens its thread with a reply composer", async ({
     page,
     app,
   }) => {
@@ -562,7 +562,7 @@ test.describe("Inbox Solo chat thread", () => {
     await expect(detail.getByText("Unread reply 1")).toBeVisible();
     await expect(
       detail.getByRole("textbox", { name: "Reply to thread" }),
-    ).toHaveCount(0);
+    ).toBeVisible();
   });
 });
 

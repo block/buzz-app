@@ -20,9 +20,11 @@ export const ChannelBody = memo(function ChannelBody({
   marksRead,
   holding,
   onOpenThread,
+  onReply,
   navigation,
   onContentReady,
 }: {
+  onReply?: ChannelTimelineProps["onReply"];
   onContentReady?(channelId: string): void;
   cached: boolean;
   viewer?: string | undefined;
@@ -129,6 +131,7 @@ export const ChannelBody = memo(function ChannelBody({
           window.status === "loading" ||
           (window.status === "ready" && window.freshness === "cached"))
       }
+      onReply={onReply}
       {...(onOpenThread ? { onOpenThread } : {})}
       revealMessageId={revealMessageId}
       inlineTarget={inlineTarget}

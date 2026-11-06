@@ -380,6 +380,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   instead. **History** shows how each saved version differs from the current
   Canvas, with + marking lines only that version has and − marking current
   lines it lacks. Turn on **Show full content** to read a version as written.
+- **Reply to a message**: hold its text for 0.1 seconds to select it in the
+  reply preview inside the composer. Release to focus the composer, or drag to
+  select text and dismiss the provisional preview. Send to reply in its thread.
+  This also works in Solo chats, Inbox conversation previews, Bestie, and conversation tabs.
+  Selecting or canceling a reply preserves your current draft. The preview follows
+  message edits; if the target becomes unavailable, cancel it before sending.
+  Press **Escape** or use **Cancel reply target** to return to the normal composer.
+  Short clicks, links, embedded controls, and selecting text keep their usual behavior.
 - **Keyboard shortcuts** follow Slack where they can. Press ⌘/ (Ctrl+/ on
   Windows and Linux) to open **Settings → Shortcuts**, which lists them, lets
   you change most of them and also shows the fixed message-formatting keys. In

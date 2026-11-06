@@ -36,3 +36,22 @@ export const hoverMessage = async (row) => {
         .first();
   await target.hover();
 };
+
+/** Open an exact thread through a real content link, independently of inline Reply. */
+export const openThreadLink = async (page, app, id, channel = "alpha") => {
+  const link = app.append(
+    "primary",
+    channel,
+    `<buzz://message?channel=${channel}&id=${id}&thread=${id}>`,
+    true,
+    false,
+  );
+  const trigger = page
+    .locator(`[data-channel-timeline] [data-message-id="${link.id}"]`)
+    .getByRole("link");
+  await trigger.click();
+  await expect(
+    page.getByRole("complementary", { name: "Thread", exact: true }),
+  ).toBeVisible();
+  return trigger;
+};

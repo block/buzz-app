@@ -2329,12 +2329,13 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   transform: translateY(0);
 }
 @media (prefers-reduced-motion: no-preference) {
-  html:not([data-keyboard-navigation]) .composerReplySlot {
+  html:not([data-keyboard-navigation]) .composerReplySlot[data-animate-size] {
     transition:
       grid-template-rows var(--duration-state) var(--easing-enter),
       margin-block-start var(--duration-state) var(--easing-enter);
   }
-  html:not([data-keyboard-navigation]) .composerReplySlot[data-open] {
+  html:not([data-keyboard-navigation])
+    .composerReplySlot[data-open][data-animate-size] {
     transition-duration: var(--duration-settle);
 
     @starting-style {

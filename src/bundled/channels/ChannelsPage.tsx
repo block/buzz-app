@@ -1,3 +1,4 @@
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
@@ -916,6 +917,12 @@ function ChannelWorkspace({
     };
   }, [read, readableId, queries, navigation]);
   const onComposerSend = useComposerSent(currentId, setSent);
+  const inlineReply = useInlineReply(
+    queries,
+    currentId,
+    onComposerSend,
+    composerFocus,
+  );
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -2027,6 +2034,13 @@ function ChannelWorkspace({
             holding={contextHolding}
             inlineTarget={contextTarget}
             onOpenThread={openThread}
+            onReply={
+              !current.archived &&
+              current.viewerRole !== "guest" &&
+              !current.readOnly
+                ? inlineReply.select
+                : undefined
+            }
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -2121,9 +2135,8 @@ function ChannelWorkspace({
                 <WorkspaceControl session={queries} channelId={current.id} />
               ) : undefined
             }
-            onSend={onComposerSend}
+            {...inlineReply.composer}
             onCommand={handleCommand}
-            focusRequest={composerFocus}
           />
         )}
     </div>

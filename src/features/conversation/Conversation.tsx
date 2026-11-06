@@ -284,16 +284,16 @@ export function ConversationTimeline(
 ) {
   const {
     session,
-    soloConversation,
+    soloConversation: _soloConversation,
     ownSoloConversation: _,
     ...shared
   } = useConversation();
-  // Solo agents answer at top level: show existing threads, start none.
+  // All conversation types allow explicit thread replies.
   return (
     <ChannelTimeline
       queries={session}
       viewer={session.viewer}
-      startsThreads={!soloConversation}
+      startsThreads
       {...shared}
       {...props}
     />

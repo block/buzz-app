@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open, end, settle } from "./timeline.mjs";
-import { hoverMessage } from "./message-actions.mjs";
+import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
 
 test.use({
@@ -34,7 +34,7 @@ for (const inThread of [false, true]) {
     if (inThread) {
       const row = history.locator(`[data-message-id="${root.id}"]`);
       await hoverMessage(row);
-      await row.getByRole("button", { name: "Reply", exact: true }).click();
+      await openThreadLink(page, app, root.id);
       history = page.getByRole("region", { name: "Thread messages" });
       for (let i = 0; i < 25; i++)
         app.append(

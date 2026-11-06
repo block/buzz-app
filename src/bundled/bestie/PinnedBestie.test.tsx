@@ -388,6 +388,29 @@ it("opens the actual verified DM and sends plain text without a seeded removable
   ).not.toBeInTheDocument();
 });
 
+it("holding a Bestie message targets the mounted composer and Escape preserves its draft", async () => {
+  const f = await fixture({ existing: true, withReply: true });
+  f.choose(pollen);
+  const user = userEvent.setup();
+  f.mount();
+  const input = await screen.findByRole("textbox", { name: "Message Pollen" });
+  await user.type(input, "Keep this draft");
+  const message = await screen.findByText("Are you there?");
+  await user.pointer({ target: message, keys: "[MouseLeft>]" });
+  await screen.findByRole("button", { name: "Cancel reply target" });
+  await user.pointer({ keys: "[/MouseLeft]" });
+  expect(input.isConnected).toBe(true);
+  expect(input).toHaveTextContent("Keep this draft");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Cancel reply target" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(input).toHaveFocus();
+  expect(input).toHaveTextContent("Keep this draft");
+});
+
 it("reuses an existing DM and its ordinary draft after leaving and reopening Bestie", async () => {
   const f = await fixture({ existing: true });
   writeView(f.scope, `draft:${pollenDM}`, "Existing DM draft");

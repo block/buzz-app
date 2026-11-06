@@ -301,10 +301,13 @@ it("the channel reply composer gets message management", () => {
   );
 });
 
-it("a Solo thread opens without a reply composer", () => {
+it("a Solo thread opens with a reply composer in Solo context", () => {
   render(<EmbeddedThread {...fixture("solo").props} />);
   expect(screen.getByRole("article")).toBeVisible();
-  expect(screen.queryByLabelText("Composer")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Composer")).toHaveAttribute(
+    "data-solo-conversation",
+    "true",
+  );
 });
 
 it("selecting a channel supplies its readers without remounting the page below", () => {

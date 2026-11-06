@@ -319,12 +319,15 @@ export type MessageComposerProps = {
     | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  /** Inline replies keep the channel editor and draft while changing delivery target. */
+  retainChannelDraft?: boolean;
   /** The viewer's latest message in this thread, once the thread has loaded.
    * An empty thread composer starts with the agents it notified (see
    * seedMentions); other composers read their own channel window. */
   threadSeed?: Pick<ChannelMessage, "id" | "mentions"> | undefined;
   replyParentId?: string | undefined;
   replyContext?: ReactNode;
+  onCancelReply?: (() => void) | undefined;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
@@ -332,6 +335,8 @@ export type MessageComposerProps = {
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
+  /** Block delivery while retaining draft editing and local composer actions. */
+  sendDisabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
   submission?: {
     draftKey: string;
@@ -369,7 +374,7 @@ export function MessageComposer(props: MessageComposerProps) {
     props.session,
     props.scope,
     props.channelId,
-    props.threadRootId,
+    props.retainChannelDraft ? undefined : props.threadRootId,
   )}`;
   return (
     <TypingPresentation active key={key}>
@@ -508,8 +513,10 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  retainChannelDraft = false,
   threadSeed,
   replyParentId,
+  onCancelReply,
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
@@ -517,6 +524,7 @@ function Composer({
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
+  sendDisabled = false,
   submission,
   soloConversation,
   ownSoloConversation = false,
@@ -548,14 +556,14 @@ function Composer({
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
-    if (disabled || !active) sendAttempt.current?.abort();
-  }, [disabled, active]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
+    if (disabled || sendDisabled || !active) sendAttempt.current?.abort();
+  }, [disabled, sendDisabled, active]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the retained draft.
   useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
   const draftKey =
     submission?.draftKey ??
-    (threadRootId
+    (threadRootId && !retainChannelDraft
       ? `draft:${channelId}:thread:${threadRootId}`
       : `draft:${channelId}`);
   const [admitting, setAdmitting] = useState(false);
@@ -2482,6 +2490,7 @@ function Composer({
     }
     if (
       disabled ||
+      sendDisabled ||
       compactingNow() ||
       accepted ||
       conflict ||
@@ -3262,6 +3271,17 @@ function Composer({
             event.preventDefault();
             event.stopPropagation();
             if (!editing.busy) editing.close();
+          } else if (
+            onCancelReply &&
+            event.key === "Escape" &&
+            !event.defaultPrevented &&
+            !event.nativeEvent.isComposing &&
+            event.nativeEvent.keyCode !== 229 &&
+            !completion.composing.current
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancelReply();
           }
         }}
         onPasteCapture={(event) => {
@@ -3319,7 +3339,10 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
-        <ComposerContext key={editing.target ? "edit" : "reply"}>
+        <ComposerContext
+          key={editing.target ? "edit" : "reply"}
+          animateSize={!!editing.target}
+        >
           {editing.target ? (
             <div className={styles.replyContext}>
               <PencilSimpleIcon size={18} aria-hidden="true" />
@@ -3701,6 +3724,7 @@ function Composer({
               }
               disabled={
                 disabled ||
+                (!editing.target && sendDisabled) ||
                 (!editing.target &&
                   stickyPicks &&
                   (pickReadPending || pickReadFailed)) ||
@@ -3853,13 +3877,20 @@ function Composer({
 }
 
 /** Retain the last preview for collapse; context semantics clear immediately. */
-function ComposerContext({ children }: { children: ReactNode }) {
+function ComposerContext({
+  children,
+  animateSize,
+}: {
+  children: ReactNode;
+  animateSize: boolean;
+}) {
   const open = !!children;
   const [lastContext, setLastContext] = useState(children);
   if (open && children !== lastContext) setLastContext(children);
   return (
     <div
       className={styles.composerReplySlot}
+      data-animate-size={animateSize || undefined}
       data-open={open || undefined}
       inert={!open}
       aria-hidden={!open || undefined}

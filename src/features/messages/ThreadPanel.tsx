@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { ReplyContext } from "./ReplyContext";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -22,8 +23,6 @@ import { replyTree } from "./reply-tree";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -72,7 +71,7 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
-  /** Solo agents answer at top level, so a Solo thread is read-only. */
+  /** Whether this thread belongs to a Solo chat. */
   soloConversation?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
@@ -534,7 +533,7 @@ function ThreadMessages({
   routePending?: boolean | undefined;
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
-  /** Solo agents answer at top level, so a Solo thread is read-only. */
+  /** Whether this thread belongs to a Solo chat. */
   soloConversation?: boolean | undefined;
   disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -662,6 +661,8 @@ function ThreadMessages({
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
+  const currentReplyParent = useRef(replyParent);
+  currentReplyParent.current = replyParent;
   const resolveName = useChannelIdentityNames(session, channelId);
   const senderName = (row: ChannelMessage) => {
     const id = row.workflowOwnerId ?? row.authorId;
@@ -707,6 +708,7 @@ function ThreadMessages({
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
+  const readingIntent = useRef(0);
   const resizePosition = useRef<
     | {
         width: number;
@@ -835,6 +837,7 @@ function ThreadMessages({
     navigation?.complete({ status: "opened" });
   }, [captureResizePosition, navigation, selectedOffset]);
   const prepareTarget = useCallback(() => {
+    readingIntent.current++;
     follow.current = false;
   }, []);
   // Each request reveals its ancestors once; a branch the reader then
@@ -1004,13 +1007,51 @@ function ThreadMessages({
     }
   }, [joining, channelAccess, active]);
   const focusReply = useCallback(() => {
+    readingIntent.current++;
     setReplyParent(undefined);
     setReplyFocus((value) => value + 1);
   }, []);
-  const targetReply = useCallback((id: string) => {
-    setReplyParent((current) => (current === id ? undefined : id));
-    setReplyFocus((value) => value + 1);
-  }, []);
+  const targetReply = useCallback(
+    (id: string, deferFocus = false) => {
+      captureResizePosition();
+      const previousFollow = follow.current;
+      const previousPosition = resizePosition.current;
+      const previewIntent = ++readingIntent.current;
+      const previewReplies = new Set(
+        view.snapshot().replies.map((reply) => reply.id),
+      );
+      follow.current = false;
+      const previous = currentReplyParent.current;
+      const next = previous === id ? undefined : id;
+      currentReplyParent.current = next;
+      setReplyParent(next);
+      if (!deferFocus) setReplyFocus((value) => value + 1);
+      return {
+        commit() {
+          if (currentReplyParent.current === next)
+            setReplyFocus((value) => value + 1);
+        },
+        cancel() {
+          // Keep the selected prose anchored if this loaded window gained rows.
+          // This also covers strict threads whose older pages remain unloaded.
+          if (
+            readingIntent.current === previewIntent &&
+            view
+              .snapshot()
+              .replies.every((reply) => previewReplies.has(reply.id))
+          ) {
+            follow.current = previousFollow;
+            resizePosition.current = previousPosition;
+          } else {
+            // Capture-phase cancellation runs before the native scroll handler.
+            captureResizePosition();
+          }
+          setReplyParent((current) => (current === next ? previous : current));
+        },
+      };
+    },
+    [captureResizePosition, view],
+  );
   useEffect(() => {
     if (replyRequest) focusReply();
   }, [replyRequest, focusReply]);
@@ -1189,16 +1230,19 @@ function ThreadMessages({
     // Native scroll anchoring is off here, so this panel owns ordinary reading
     // too. With no explicit anchor, keep the saved first visible row in place
     // through this commit's layout shift. A scroll since that save is newer
-    // reader intent and wins. A drop in scrollTop while the scroll range shrank
-    // is the browser clamping it during this commit's layout, not the reader;
-    // nor is any change while the reader was hidden, where WebKit drops the
-    // offset under display: none and would show the reader at its top.
+    // reader intent and wins. An offset beyond the new scroll range can be
+    // clamped during this commit before later rows grow the range again.
+    // A hidden reader can also lose its offset under display: none in WebKit;
+    // restore it when shown rather than treating that reset as reader input.
     const reading = resizePosition.current;
+    const maxScrollTop = Math.max(
+      0,
+      element.scrollHeight - element.clientHeight,
+    );
     const clamped =
       reading !== undefined &&
-      element.scrollTop < reading.scrollTop &&
-      element.scrollHeight - element.clientHeight <
-        reading.contentHeight - reading.height;
+      reading.scrollTop > maxScrollTop &&
+      element.scrollTop < reading.scrollTop;
     const reshown = active && !shown.current;
     shown.current = active;
     // Back/Forward returns once to where this visit was left: its row, with
@@ -1385,9 +1429,20 @@ function ThreadMessages({
         previous.contentHeight === element.scrollHeight
       )
         return;
+      const maxScrollTop = Math.max(
+        0,
+        element.scrollHeight - element.clientHeight,
+      );
+      const clamped =
+        previous.scrollTop > maxScrollTop &&
+        Math.abs(element.scrollTop - maxScrollTop) <= 1;
       if (follow.current) {
         element.scrollTop = element.scrollHeight;
-      } else if (previous.anchor && element.contains(previous.anchor.element)) {
+      } else if (
+        (previous.scrollTop === element.scrollTop || clamped) &&
+        previous.anchor &&
+        element.contains(previous.anchor.element)
+      ) {
         correctScrollTop(element, readingDrift(element, previous.anchor));
       }
       // Exact-history restoration must start from this corrected geometry,
@@ -1408,6 +1463,7 @@ function ThreadMessages({
     return () => observer.disconnect();
   }, [active, initialPositioned, captureResizePosition, selectedOffset]);
   const jumpToLatest = () => {
+    readingIntent.current++;
     const element = scroller.current;
     if (!element) return;
     targetAnchor.current = undefined;
@@ -1429,6 +1485,7 @@ function ThreadMessages({
     }, 1000);
   };
   const keepReadingPosition = () => {
+    readingIntent.current++;
     jumpingToLatest.current = false;
     if (jumpTimer.current !== undefined) {
       clearTimeout(jumpTimer.current);
@@ -1529,9 +1586,7 @@ function ThreadMessages({
             extensions={extensions}
             session={session}
             scope={scope}
-            onReply={
-              snapshot.root && !soloConversation ? targetReply : undefined
-            }
+            onReply={snapshot.root ? targetReply : undefined}
             row={row}
             getThreadRoot={getThreadRoot}
             stackPrevious={inside || continuation}
@@ -1667,7 +1722,10 @@ function ThreadMessages({
       );
     });
   }
-  const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  const selectedParent =
+    snapshot.root?.id === replyParent
+      ? snapshot.root
+      : snapshot.replies.find((row) => row.id === replyParent);
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;
     const row = [
@@ -1722,7 +1780,6 @@ function ThreadMessages({
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
-    !soloConversation &&
     (!requireReadyRoot ||
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
@@ -1796,13 +1853,27 @@ function ThreadMessages({
             80;
           if (jumpingToLatest.current) return;
           captureResizePosition();
-          follow.current = bottom;
+          // A shallow upward wheel step must not resume a paused bottom reader.
+          follow.current =
+            bottom &&
+            (follow.current ||
+              !previous ||
+              element.scrollTop > previous.scrollTop);
           setShowJumpToLatest(!bottom);
           if (bottom) setNewMessageCount(0);
           loadOlder();
         }}
         onWheel={(event) => {
           keepReadingPosition();
+          // Floating actions can forward the wheel before this handler runs.
+          // Downward input at the end resumes follow even with no offset delta.
+          const element = event.currentTarget;
+          if (
+            !event.ctrlKey &&
+            event.deltaY > 0 &&
+            element.scrollHeight - element.clientHeight - element.scrollTop <= 1
+          )
+            follow.current = true;
           if (event.deltaY < 0) loadOlder();
         }}
         onTouchMove={() => {
@@ -1850,7 +1921,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
-              onReply={soloConversation ? undefined : focusReply}
+              onReply={targetReply}
               stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
               row={snapshot.root}
               representedAgents={stableActivity.agents(
@@ -2012,10 +2083,12 @@ function ThreadMessages({
           scope={scope}
           channelId={channelId}
           channelName={channelName}
+          soloConversation={soloConversation}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
           threadSeed={threadSeed}
           replyParentId={replyParent}
+          onCancelReply={replyParent ? focusReply : undefined}
           disabled={
             disabled ||
             (requireReadyRoot &&
@@ -2032,27 +2105,11 @@ function ThreadMessages({
               </div>
             ) : (
               selectedParent && (
-                <div className={styles.replyContext}>
-                  <Avatar
-                    src={avatarMedia(
-                      profiles.get(selectedParent.authorId)?.picture,
-                      session.media,
-                    )}
-                    alt=""
-                    fallback={senderName(selectedParent)}
-                    size="default"
-                  />
-                  <div>
-                    <span>Replying to {senderName(selectedParent)}</span>
-                    <p>{selectedParent.content}</p>
-                  </div>
-                  <IconButton
-                    size="sm"
-                    aria-label="Cancel reply target"
-                    onClick={focusReply}
-                    icon={<XIcon size={16} aria-hidden="true" />}
-                  />
-                </div>
+                <ReplyContext
+                  row={selectedParent}
+                  session={session}
+                  onCancel={focusReply}
+                />
               )
             )
           }
@@ -2063,6 +2120,7 @@ function ThreadMessages({
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
+            readingIntent.current++;
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

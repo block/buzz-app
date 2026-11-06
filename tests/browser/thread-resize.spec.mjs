@@ -60,9 +60,14 @@ test("thread stays beside the channel whenever both panes fit", async ({
       "font-size",
       `${16 * scale}px`,
     );
-    const bounds = await channel.boundingBox();
-    const pane = await thread.boundingBox();
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(pane.x);
+    // Font size commits before the split's resize observation and motion settle.
+    await expect
+      .poll(async () => {
+        const bounds = await channel.boundingBox();
+        const pane = await thread.boundingBox();
+        return bounds.x + bounds.width - pane.x;
+      })
+      .toBeLessThanOrEqual(0);
     await expect(input).toHaveText(draft.trimEnd());
     await channel
       .getByRole("button", { name: "Send message", exact: true })
@@ -85,10 +90,18 @@ test("thread stays beside the channel whenever both panes fit", async ({
   });
   await page.setViewportSize({ width: 640, height: 900 });
   await expect(page.locator("html")).toHaveCSS("font-size", "12.8px");
-  const narrowChannel = await channel.boundingBox();
-  const narrowThread = await page.locator("[data-panel-dock]").boundingBox();
-  expect(narrowThread.y).toBe(narrowChannel.y);
-  expect(narrowThread.height).toBe(narrowChannel.height);
+  await expect
+    .poll(async () => {
+      const narrowChannel = await channel.boundingBox();
+      const narrowThread = await page
+        .locator("[data-panel-dock]")
+        .boundingBox();
+      return {
+        top: narrowThread.y - narrowChannel.y,
+        height: narrowThread.height - narrowChannel.height,
+      };
+    })
+    .toEqual({ top: 0, height: 0 });
   await expect(
     page.getByRole("separator", { name: "Resize main and secondary panels" }),
   ).toBeHidden();

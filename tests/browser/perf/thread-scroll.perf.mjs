@@ -5,7 +5,6 @@ import {
   THREAD_CHANNEL,
   THREAD_REPLIES,
 } from "./thread-corpus.mjs";
-import { hoverMessage } from "../message-actions.mjs";
 import { settle } from "../timeline.mjs";
 
 // Browser-only: scrolling the thread history once every reply the strict window
@@ -36,16 +35,14 @@ async function openThread(page, app, perf) {
   const root = populateThread(app);
   const ids = [root.id, ...app.inboxWindow.replies.map((event) => event.id)];
   await perf.setup(THREAD_CHANNEL);
-  const row = page
-    .locator(timeline(THREAD_CHANNEL))
-    .locator(`[data-message-id="${root.id}"]`);
-  // Closed bars are laid out at opacity 0; click only the revealed one.
-  await hoverMessage(row);
-  const reply = page
-    .locator('[role="group"][aria-label="Message actions"]:popover-open')
-    .getByRole("button", { name: "Reply", exact: true });
-  await expect(reply).toBeVisible();
-  return { root, ids, row, reply };
+  // Reply targets the inline composer. Use an exact thread link for opening,
+  // leaving the opening click inside the measured interval.
+  const url = `buzz://message?channel=${THREAD_CHANNEL}&id=${root.id}&thread=${root.id}`;
+  const link = app.append("primary", THREAD_CHANNEL, `<${url}>`, true, false);
+  const click = `${timeline(THREAD_CHANNEL)} [data-message-id="${link.id}"] a`;
+  const trigger = page.locator(click);
+  await expect(trigger).toBeVisible();
+  return { ids, trigger, click };
 }
 
 const history = (page) =>
@@ -55,6 +52,8 @@ const history = (page) =>
 // the fixture until released, so each step waits for its request and rows.
 async function loadHistory(page, app) {
   const element = history(page);
+  // Opening changes pane width; aim the wheel only after that layout settles.
+  await settle(page, element);
   const expected =
     THREAD_REPLIES - app.inboxWindow.replies.filter(isNested).length;
   const box = await element.boundingBox();
@@ -87,11 +86,10 @@ for (const name of ["thread-scroll-open", ...Object.keys(gestures)])
   for (let i = 1; i <= repeats; i++)
     test(`${name} sample ${i}`, async ({ page, app, perf, browserName }) => {
       test.setTimeout(180_000);
-      const { ids, reply } = await openThread(page, app, perf);
+      const { ids, trigger, click } = await openThread(page, app, perf);
       if (name === "thread-scroll-open") {
         const sample = await perf.measure(THREAD_CHANNEL, {
-          click:
-            '[role="group"][aria-label="Message actions"]:popover-open button[aria-label="Reply"]',
+          click,
           selector: historySelector,
           ids,
           timeoutMs: 30_000,
@@ -100,7 +98,7 @@ for (const name of ["thread-scroll-open", ...Object.keys(gestures)])
         await perf.save(sample);
         return;
       }
-      await reply.click();
+      await trigger.click();
       const element = history(page);
       await expect(element).not.toHaveAttribute("data-positioning");
       const loaded = await loadHistory(page, app);

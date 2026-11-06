@@ -313,6 +313,24 @@ test.describe("pages inside one second", () => {
     });
   }
 
+  // Simulate scrollbar holds in the scroller's padding, away from message
+  // prose (which intentionally selects Reply) and the pane resize handle.
+  async function pressScrollGutter(page) {
+    const hit = await history(page).evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const inset = parseFloat(getComputedStyle(element).paddingLeft) / 2;
+      const point = { x: box.x + inset, y: box.y + box.height / 2 };
+      return {
+        ...point,
+        scroller:
+          element.ownerDocument.elementFromPoint(point.x, point.y) === element,
+      };
+    });
+    expect(hit.scroller, "the hold starts on the timeline gutter").toBe(true);
+    await page.mouse.move(hit.x, hit.y);
+    await page.mouse.down();
+  }
+
   test("a held pointer scrolls across the page without being pulled back", async ({
     page,
     app,
@@ -321,9 +339,7 @@ test.describe("pages inside one second", () => {
     // when the randomized page leaves little loaded history above the reader.
     await page.setViewportSize({ width: 1440, height: 600 });
     const pending = await reading(page, app, 1400);
-    const box = await history(page).boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
+    await pressScrollGutter(page);
     try {
       // The press records the topmost whole paragraph as the reading anchor.
       // The timeline holds that row in place while any part of it stays in
@@ -378,9 +394,7 @@ test.describe("pages inside one second", () => {
   }) => {
     // Leave enough loaded history above the reader for an unclamped drag.
     const pending = await reading(page, app, 250);
-    const box = await history(page).boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
+    await pressScrollGutter(page);
     try {
       // The row the page lands around, which the timeline holds while pressed.
       const held = await anchor(page);
@@ -534,9 +548,7 @@ test.describe("pages inside one second", () => {
     app,
   }) => {
     const pending = await reading(page, app, 1400);
-    const box = await history(page).boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
+    await pressScrollGutter(page);
     const height = await history(page).evaluate((e) => e.scrollHeight);
     await holdFrames(page);
     try {
@@ -586,9 +598,7 @@ test.describe("pages inside one second", () => {
 
   test("a cancelled drag ends the hold", async ({ page, app }) => {
     const pending = await reading(page, app, 1400);
-    const box = await history(page).boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
+    await pressScrollGutter(page);
     try {
       const height = await history(page).evaluate((e) => e.scrollHeight);
       pending.release();

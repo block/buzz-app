@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import type { ReplyHold } from "./use-message-reply-hold";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
@@ -196,6 +197,9 @@ export type ChannelTimelineProps = {
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
+  onReply?:
+    | ((row: ChannelMessage, deferFocus?: boolean) => ReplyHold | undefined)
+    | undefined;
   onOpenThread?(
     messageId: string,
     threadRootId: string,
@@ -240,6 +244,7 @@ function Timeline({
   marksRead = true,
   navigation,
   onOpenThread,
+  onReply,
   onOpenMediaReview,
   chatPresentation = false,
   startsThreads = true,
@@ -780,12 +785,14 @@ function Timeline({
       // replaces it. A temporarily unmounted row is still pending measurement.
       if (anchor && !renderedAnchor && position.anchor)
         restoredAnchor.current = undefined;
-      // A settled standalone row no longer needs correction. Membership groups
-      // retain the logical anchor even when their representative is in place.
+      // Allow one pixel of native/virtualizer rounding when retiring a settled
+      // standalone row. Membership groups retain the logical anchor even when
+      // their representative is in place.
       if (
         anchor &&
-        position.anchor?.id === renderedAnchor &&
-        position.anchor?.y === anchor.y &&
+        position.anchor &&
+        position.anchor.id === renderedAnchor &&
+        Math.abs(position.anchor.y - anchor.y) <= 1 &&
         element.scrollHeight - element.clientHeight - element.scrollTop > 1 &&
         !rows.some((row) =>
           row.membershipRows?.some((member) => member.id === anchor.id),
@@ -830,6 +837,9 @@ function Timeline({
       if (movedUp) upwardGesture.current = "moving";
       if (follow.current && !movedUp && (previous || !userScrolled.current))
         position.bottom = true;
+      // The near-bottom threshold must not restart a reader moving away.
+      if (movedUp || (upwardGesture.current && !follow.current))
+        position.bottom = false;
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
       if (restoredAnchor.current) position.bottom = false;
@@ -1469,10 +1479,33 @@ function Timeline({
       else savedPosition.current = { bottom: true };
     }
     let observer: MutationObserver | undefined;
+    const restoreOffset = scroller.current?.scrollTop;
+    const upwardRestore = upwardGesture.current === "moving";
     const restorePosition = () => {
       if (intent.current !== scheduledIntent || !handle.current) return;
+      const element = scroller.current;
+      // A resize can queue this anchor between native steps of one wheel.
+      // That newer movement wins even after scrollend retires its input flag.
+      if (
+        restore &&
+        element &&
+        restoreOffset !== undefined &&
+        (upwardRestore || upwardGesture.current === "moving") &&
+        element.scrollTop <
+          Math.min(
+            restoreOffset,
+            Math.max(0, element.scrollHeight - element.clientHeight),
+          )
+      ) {
+        intent.current++;
+        restoredAnchor.current = undefined;
+        // scrollend can precede this frame; do not restart its finished gesture.
+        recordPosition(element, !upwardGesture.current);
+        return;
+      }
       const row = rows[restoreIndex];
       if (anchor && row) {
+        const wasRestoring = !!restoredAnchor.current;
         pendingRestore.current = undefined;
         restoredAnchor.current = {
           id: containedOwners.has(anchor.id) ? anchor.id : row.id,
@@ -1500,6 +1533,11 @@ function Timeline({
           offset: innerOffset - anchor.y,
         });
         follow.current = false;
+        // After reader input, an already-placed anchor emits no scroll event.
+        // A resize can queue it after scrollend; sample to resume near-bottom follow.
+        // Existing anchors may belong to a held reply preview; keep that hold.
+        if (element && userScrolled.current && !wasRestoring)
+          recordPosition(element, true);
       } else if (follow.current) {
         layoutCorrection.current = true;
         const index = revealIndex >= 0 ? revealIndex : rows.length - 1;
@@ -1525,6 +1563,7 @@ function Timeline({
         if (!restore && !follow.current) {
           settled.current = true;
           readingPositioned(scroller.current);
+          if (scroller.current) updateJumpToLatest(scroller.current);
           return;
         }
         restorePosition();
@@ -1532,7 +1571,7 @@ function Timeline({
         // expires. Retain the same reading anchor (or bottom intent) through
         // those late measurements, never through a new reader gesture.
         const list = scroller.current?.querySelector("ol");
-        if (list) {
+        if (list && intent.current === scheduledIntent) {
           // Virtua measures children in ResizeObserver and synchronously writes
           // this parent height. Observing the parent box would create skipped
           // resize notifications; watch only Virtua's committed height instead.
@@ -1650,11 +1689,11 @@ function Timeline({
     layoutCorrection.current = false;
     intent.current++;
     userScrolled.current = true;
+    upwardGesture.current = upward ? "candidate" : false;
     if (scroller.current) recordPosition(scroller.current);
     // Retiring a pending restore lets the bottom be caught up. Wake dwell: a
     // wheel or touch at the end cannot scroll, so nothing else would.
     if (restoring) readingPositioned(scroller.current);
-    upwardGesture.current = upward ? "candidate" : false;
     if (gestureFrame.current !== undefined)
       cancelAnimationFrame(gestureFrame.current);
     gestureFrame.current = undefined;
@@ -1674,6 +1713,52 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  const replyToMessage = useCallback(
+    (id: string, deferFocus?: boolean) => {
+      const row = rowsById.get(id);
+      if (!row || !onReply) return;
+      const element = scroller.current;
+      const previous = {
+        follow: follow.current,
+        position: savedPosition.current,
+        anchor: restoredAnchor.current,
+        layoutCorrection: layoutCorrection.current,
+      };
+      if (element) {
+        const position = { ...positionAt(element), bottom: false };
+        intent.current++;
+        follow.current = false;
+        layoutCorrection.current = false;
+        savedPosition.current = position;
+        restoredAnchor.current = position.anchor;
+      }
+      const previewIntent = intent.current;
+      const previewRows = edges.current.ids;
+      const reply = onReply(row, deferFocus);
+      if (!deferFocus || !reply) return reply;
+      return {
+        commit: () => reply.commit(),
+        cancel() {
+          // A backlog belongs to the reader selecting here, not live-bottom follow.
+          // Likewise, never overwrite a newer scroll/reveal.
+          if (
+            intent.current === previewIntent &&
+            edges.current.order.every((id) => previewRows.has(id))
+          ) {
+            // Retire queued positioning work owned by the withdrawn preview.
+            intent.current++;
+            follow.current = previous.follow;
+            savedPosition.current = previous.position;
+            restoredAnchor.current = previous.anchor;
+            layoutCorrection.current = previous.layoutCorrection;
+            savePosition();
+          }
+          reply.cancel();
+        },
+      };
+    },
+    [onReply, rowsById, savePosition],
+  );
   return (
     <section
       ref={scroller}
@@ -1724,6 +1809,7 @@ function Timeline({
         // Virtual rows can finish measuring after the last scroll event,
         // especially at the top where reflow cannot change scrollTop.
         const element = event.currentTarget;
+        upwardGesture.current = false;
         if (
           settled.current &&
           edge.current?.clientWidth === size.width &&
@@ -1858,6 +1944,7 @@ function Timeline({
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
+                  onReply={onReply ? replyToMessage : undefined}
                   representedAgents={stableActivity.agents(
                     row.id,
                     presentation.representedAgents.get(row.id),

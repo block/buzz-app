@@ -1,5 +1,5 @@
 import { finalizeEvent } from "nostr-tools";
-import { hoverMessage } from "./message-actions.mjs";
+import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -538,10 +538,8 @@ test("opens an active message's empty thread without losing its activity preview
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
-  const trigger = row.getByRole("button", { name: "Reply", exact: true });
   const response = row.getByRole("button", { name: /^View agent activity:/ });
   await row.hover();
-  await expect(trigger).toBeVisible();
   await response.hover();
   const preview = page.getByRole("dialog", {
     name: "Agent activity",
@@ -550,7 +548,7 @@ test("opens an active message's empty thread without losing its activity preview
   await expect(preview).toBeVisible();
   await page.keyboard.press("Escape");
   await hoverMessage(row);
-  await trigger.click();
+  const trigger = await openThreadLink(page, app, request.id);
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,

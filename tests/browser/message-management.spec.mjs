@@ -1,4 +1,4 @@
-import { hoverMessage } from "./message-actions.mjs";
+import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { readJournal } from "./reading.mjs";
@@ -126,7 +126,7 @@ test("manage a channel message, peer unread state, and its thread", async ({
   }
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, event.id);
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,
@@ -210,7 +210,7 @@ test("deleting a thread reply returns focus to the surviving thread composer", a
   );
   await expect(channelRow).toBeVisible();
   await hoverMessage(channelRow);
-  await channelRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, root.id);
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,
@@ -395,7 +395,7 @@ test("thread media preserves its tab and draft while modal Escape restores focus
     `[data-channel-timeline] [data-message-id="${root.id}"]`,
   );
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, root.id);
   const thread = page.getByRole("complementary", {
     name: "Thread",
     exact: true,

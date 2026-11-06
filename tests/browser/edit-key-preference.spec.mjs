@@ -5,7 +5,7 @@ import {
   closeSettings,
   selectSettingsSection,
 } from "./navigation.mjs";
-import { hoverMessage } from "./message-actions.mjs";
+import { hoverMessage, openThreadLink } from "./message-actions.mjs";
 
 test.use({ productionBroker: true, historyCounts: { alpha: 1, beta: 1 } });
 
@@ -78,8 +78,7 @@ test("Up Arrow editing follows the saved preference in channels and threads", as
     .toBeLessThan(11);
   await input.fill("");
 
-  await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await openThreadLink(page, app, await row.getAttribute("data-message-id"));
   const panel = page.getByRole("complementary", {
     name: "Thread",
     exact: true,

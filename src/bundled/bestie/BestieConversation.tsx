@@ -1,3 +1,4 @@
+import { useInlineReply } from "../../features/messages/use-inline-reply";
 import {
   useCallback,
   useEffect,
@@ -84,6 +85,7 @@ export function BestieConversation({
 }) {
   const [sent, setSent] = useState<string>();
   const [composerFocus, focusComposer] = useState(0);
+  const reply = useInlineReply(session, channel.id, setSent, composerFocus);
   const trigger = useRef<HTMLElement | null>(null);
   const main = useRef<HTMLElement>(null);
   const dismissedTo = useRef<{
@@ -482,6 +484,7 @@ export function BestieConversation({
                             >
                               <MessageManagementStatus />
                               <ChannelBody
+                                onReply={reply.select}
                                 viewer={session.viewer}
                                 cached={!!channel.cached}
                                 revealMessageId={sent}
@@ -493,8 +496,7 @@ export function BestieConversation({
                                 shown={
                                   secondary.selectedMain === "conversation"
                                 }
-                                focusRequest={composerFocus}
-                                onSend={setSent}
+                                {...reply.composer}
                               />
                             </section>
                           </ConversationPresentation>

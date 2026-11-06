@@ -2020,8 +2020,10 @@ designer choices, with no size-to-stroke or selection-to-fill rules. Existing bo
 uses have `strokeWidth={2.5}`; video play/pause controls use explicit filled icons.
 Keep the public gateway names stable. For chat and conversation metaphors, use
 `ChatCircleIcon` / `ChatsCircleIcon` (Tabler’s MessageCircle / Messages), choosing
-the variant that matches the meaning. Keep accessible names on controls and
-decorative artwork hidden from assistive technology.
+the variant that matches the meaning. Reply actions use `MessageIcon` (Tabler
+Message), the designer-approved choice confirmed for the inline reply composer.
+Keep accessible names on controls and decorative artwork hidden from assistive
+technology.
 
 `RobotIcon` is the designer-approved **Soft & wide** custom agent mark, using the
 **Fuller canvas** refinement: a larger rounded head, short antenna, narrow ear
@@ -2142,8 +2144,9 @@ Inline search settings use the search variant of PreferenceRow with a gear icon 
 
 Proposed pending designer sign-off, as a narrow exception to the chat and
 conversation icon rule under Icons. Use `ChatCircleIcon` for a Solo chat in navigation, headers, tabs and chat cards.
-Use `MessageReplyIcon` (Tabler MessageReply) for thread tabs, thread links and
-Reply actions. Keep private Team channels' lock icon; privacy alone does not
+Use `MessageReplyIcon` (Tabler MessageReply) for thread tabs and thread links.
+Reply actions use the approved `MessageIcon` choice under [Icons](#icons).
+Keep private Team channels' lock icon; privacy alone does not
 replace a Solo chat's identity icon. Accessible chat cards end with a right
 chevron. Unavailable chat cards retain a lock and unavailable accessible text;
 unknown access does not earn a chevron. Display chat cards as **Chat:**, while

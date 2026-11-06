@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type RefObject,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   ChannelPanelContext,
   PanelContext,
@@ -13,14 +19,13 @@ import styles from "./Channels.module.css";
 const launcherOrder = (key: string) =>
   key === "buzz.huddles/huddles" ? 2 : key === "buzz.github/object" ? 1 : 0;
 
-type Opening = {
+export type ChannelDrawerOpening = Readonly<{
   panel: RegisteredPanel;
   context: ChannelPanelContext;
   target: string;
   trigger: HTMLElement | null;
-};
-const channelKey = (context: ChannelPanelContext) =>
-  JSON.stringify([context.scope, context.channelId]);
+}>;
+type Opening = ChannelDrawerOpening;
 /** The page's tab workspace, which owns `channelPlacement: "tab"` panels. */
 export type ChannelPanelTabs = {
   pressed(panel: RegisteredPanel, context: ChannelPanelContext): boolean;
@@ -42,27 +47,29 @@ export function useChannelPanels(
     open(target: string): boolean;
   }>,
   openMembers?: () => void,
+  /** The channel's side-column opening, retained across visits until closed. */
+  side?: Readonly<{
+    opening: ChannelDrawerOpening | undefined;
+    set(opening: ChannelDrawerOpening | undefined): void;
+    /** Focus after closing when the opening's trigger has since been replaced. */
+    fallbackFocus?: RefObject<HTMLElement | null> | undefined;
+  }>,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
     panels.snapshot,
   );
-  // Each channel keeps its own opening, so returning to a channel shows the
-  // drawer the viewer left open there until they close it.
-  const [openings, setOpenings] = useState<Readonly<Record<string, Opening>>>(
-    {},
-  );
-  const setOpened = (
-    channel: ChannelPanelContext,
-    change: (current: Opening | undefined) => Opening | undefined,
-  ) =>
-    setOpenings((current) => {
-      const { [channelKey(channel)]: previous, ...rest } = current;
-      const next = change(previous);
-      if (next === previous) return current;
-      return next ? { ...rest, [channelKey(channel)]: next } : rest;
-    });
+  // Bottom drawers belong to this mount and channel. Side-column panels stay
+  // with their channel in `side`, so returning shows them until closed.
+  const [local, setLocal] = useState<Opening>();
+  const opened = side?.opening ?? local;
+  const setOpened = (next: Opening | undefined) => {
+    const retained = !!side && next?.panel.channelPlacement === "side";
+    setLocal(retained ? undefined : next);
+    if (side && (retained || side.opening))
+      side.set(retained ? next : undefined);
+  };
   const mounted = useRef<ChannelPanelContext>(undefined);
   useLayoutEffect(() => {
     mounted.current = context;
@@ -70,20 +77,23 @@ export function useChannelPanels(
       mounted.current = undefined;
     };
   }, [context]);
-  const opened = context && openings[channelKey(context)];
   const selected =
-    opened && available.includes(opened.panel) ? opened : undefined;
+    opened &&
+    context &&
+    opened.context.scope === context.scope &&
+    opened.context.channelId === context.channelId &&
+    available.includes(opened.panel)
+      ? opened
+      : undefined;
+  const retained = side?.opening;
+  const forgetRetained = side?.set;
   useLayoutEffect(() => {
-    // A disabled or replaced contribution closes everywhere; re-enabling starts closed.
-    setOpenings((current) => {
-      const kept = Object.entries(current).filter(([, opening]) =>
-        available.includes(opening.panel),
-      );
-      return kept.length === Object.keys(current).length
-        ? current
-        : Object.fromEntries(kept);
-    });
-  }, [available]);
+    if (local && local !== selected) setLocal(undefined);
+    // A disabled or replaced contribution never reopens; an unavailable
+    // channel only hides its panel until access returns.
+    if (retained && !available.includes(retained.panel))
+      forgetRetained?.(undefined);
+  }, [local, selected, retained, forgetRetained, available]);
   const activeOpening = useRef<Opening>(undefined);
   useLayoutEffect(() => {
     activeOpening.current = selected;
@@ -93,10 +103,11 @@ export function useChannelPanels(
   }, [selected]);
   const hide = (opening: Opening) => {
     if (activeOpening.current !== opening) return;
-    setOpened(opening.context, (current) =>
-      current === opening ? undefined : current,
-    );
-    if (opening.trigger?.isConnected) opening.trigger.focus();
+    setOpened(undefined);
+    const target = opening.trigger?.isConnected
+      ? opening.trigger
+      : side?.fallbackFocus?.current;
+    target?.focus();
   };
   const openingContext = (opening: Opening): PanelContext => ({
     channelId: opening.context.channelId,
@@ -107,9 +118,7 @@ export function useChannelPanels(
   const bound = (binding: ChannelPanelContext, panel: RegisteredPanel) =>
     mounted.current === binding && panels.snapshot().includes(panel);
   return {
-    close: () => {
-      if (context) setOpened(context, () => undefined);
-    },
+    close: () => setOpened(undefined),
     launchers: context && (
       <div className={styles.channelLaunchers}>
         {available
@@ -151,7 +160,7 @@ export function useChannelPanels(
                   else if (selected?.panel === panel) hide(selected);
                   else {
                     onOpen?.();
-                    setOpened(context, () => ({
+                    setOpened({
                       panel,
                       context,
                       target,
@@ -159,7 +168,7 @@ export function useChannelPanels(
                         document.activeElement instanceof HTMLElement
                           ? document.activeElement
                           : null,
-                    }));
+                    });
                   }
                 }}
               />

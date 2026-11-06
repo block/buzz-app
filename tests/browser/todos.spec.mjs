@@ -252,8 +252,8 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(assignee).toHaveAttribute("data-size", "sm");
     await expect(assignee).toContainText("Fixture Reader");
   };
-  // Channel-specific drawers stay off other pages, but returning to the same
-  // channel can reopen its Canvas-backed content with a live launcher.
+  // Channel-specific drawers stay off other pages; returning to the same
+  // channel shows the panel left open there, with a live launcher.
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
     exact: true,
@@ -267,10 +267,8 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await expect(launcher).toHaveCount(0);
     await openPage(page, "Messages");
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-    await expect(drawer).toHaveCount(0);
-    await expect(launcher).toHaveAttribute("aria-expanded", "false");
-    await launcher.click();
     await expect(drawer).toBeVisible();
+    await expect(launcher).toHaveAttribute("aria-expanded", "true");
     await expect(todo).toBeChecked();
     await expect(assignee).toHaveAttribute(
       "aria-description",

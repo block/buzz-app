@@ -1017,10 +1017,12 @@ This is a host-matched preview addition, not cross-version capability negotiatio
 
 A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
 Channels renders these in its conversation header with public `context`, `pressed`,
-`available()`, `toggle(target)` and the channel's `canOpen`/`open`. The page owns one selected panel per channel, placed
+`available()`, `toggle(target)` and the channel's `canOpen`/`open`. The page owns one selected channel panel, placed
 in the bottom drawer by default or the existing companion column when the contribution
-sets `channelPlacement: "side"`. Leaving the channel unmounts it; returning shows it
-again until the viewer closes it. With `channelPlacement: "tab"` the launcher instead
+sets `channelPlacement: "side"`. The bottom drawer closes when the viewer leaves the
+channel. A side-column panel stays open in the channel's workspace: leaving the channel
+or page unmounts it, and returning shows it again until the viewer closes it or the
+plugin is disabled. While the channel is read-only or cached it stays hidden. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher

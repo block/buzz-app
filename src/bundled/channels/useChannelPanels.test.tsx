@@ -15,7 +15,10 @@ import type {
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
-import { useChannelPanels } from "./useChannelPanels";
+import {
+  type ChannelDrawerOpening,
+  useChannelPanels,
+} from "./useChannelPanels";
 
 afterEach(cleanup);
 
@@ -121,97 +124,132 @@ it.each(["bottom", "side"] as const)(
   },
 );
 
-it.each(["bottom", "side"] as const)(
-  "keeps a %s launcher open for its channel until closed or disabled",
-  async (placement) => {
-    const user = userEvent.setup();
-    const contextOf = (channelId: string): ChannelPanelContext => ({
-      scope: "scope",
-      viewer: "viewer",
-      channelId,
-      channelName: channelId,
-      relayUrl: "wss://example.com",
-    });
-    const panel: RegisteredPanel = {
-      id: "huddles",
-      key: "fixture:huddles",
-      pluginId: "fixture",
-      revision: "1",
-      title: "Huddle",
-      channelPlacement: placement,
-      matches: () => true,
-      channelLauncher: ({ toggle, pressed }) => (
+it("keeps a side panel with its channel until closed, while bottom drawers close on leaving", async () => {
+  const user = userEvent.setup();
+  const contextOf = (channelId: string): ChannelPanelContext => ({
+    scope: "scope",
+    viewer: "viewer",
+    channelId,
+    channelName: channelId,
+    relayUrl: "wss://example.com",
+  });
+  const launcherPanel = (
+    title: string,
+    channelPlacement: "bottom" | "side",
+  ): RegisteredPanel => ({
+    id: title,
+    key: `fixture:${title}`,
+    pluginId: "fixture",
+    revision: "1",
+    title,
+    channelPlacement,
+    matches: () => true,
+    channelLauncher: ({ toggle, pressed }) => (
+      <button
+        type="button"
+        aria-pressed={pressed}
+        onClick={() => toggle(title)}
+      >
+        {title}
+      </button>
+    ),
+    component: () => <p>{title} contents</p>,
+  });
+  const huddle = launcherPanel("Huddle", "side");
+  const terminal = launcherPanel("Terminal", "bottom");
+  let available = [huddle, terminal];
+  const listeners = new Set<() => void>();
+  const panels: Panels = {
+    snapshot: () => available,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    register: () => {},
+    resolve: () => huddle,
+    requestOpen: () => false,
+    handleOpenRequests: () => () => {},
+  };
+  // Stands in for the session's per-channel tab store, which outlives the page.
+  const retained: Record<string, ChannelDrawerOpening | undefined> = {};
+  const fallback = { current: null as HTMLElement | null };
+  function Harness({ channel }: { channel: string }) {
+    const [context] = useState(() => contextOf(channel));
+    const [, rerender] = useState(0);
+    const drawer = useChannelPanels(
+      panels,
+      context,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        opening: retained[channel],
+        set: (opening) => {
+          retained[channel] = opening;
+          rerender((value) => value + 1);
+        },
+        fallbackFocus: fallback,
+      },
+    );
+    return (
+      <>
         <button
           type="button"
-          aria-pressed={pressed}
-          onClick={() => toggle("huddle")}
+          ref={(node) => {
+            fallback.current = node;
+          }}
         >
-          Huddle
+          Conversation
         </button>
-      ),
-      component: () => <p>Huddle contents</p>,
-    };
-    let available = [panel];
-    const listeners = new Set<() => void>();
-    const panels: Panels = {
-      snapshot: () => available,
-      subscribe: (listener) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-      register: () => {},
-      resolve: () => panel,
-      requestOpen: () => false,
-      handleOpenRequests: () => () => {},
-    };
-    function Harness({ context }: { context: ChannelPanelContext }) {
-      const drawer = useChannelPanels(panels, context);
-      return (
-        <>
-          {drawer.launchers}
-          {drawer.content}
-          {drawer.side}
-        </>
-      );
-    }
-    const label = placement === "side" ? "Huddle panel" : "Huddle drawer";
-    const region = () => screen.queryByRole("region", { name: label });
-    const launcher = () => screen.getByRole("button", { name: "Huddle" });
-    const alpha = contextOf("alpha");
-    const beta = contextOf("beta");
-    const view = render(<Harness context={alpha} />);
-    await user.click(launcher());
-    expect(region()).toBeVisible();
-    view.rerender(<Harness context={beta} />);
-    expect(region()).not.toBeInTheDocument();
-    expect(launcher()).toHaveAttribute("aria-pressed", "false");
-    view.rerender(<Harness context={alpha} />);
-    expect(region()).toBeVisible();
-    expect(launcher()).toHaveAttribute("aria-pressed", "true");
-    // Closing in one channel leaves it closed on return.
-    await user.click(launcher());
-    expect(region()).not.toBeInTheDocument();
-    view.rerender(<Harness context={beta} />);
-    view.rerender(<Harness context={alpha} />);
-    expect(region()).not.toBeInTheDocument();
-    // Disabling the plugin closes it in every channel; re-enabling starts closed.
-    await user.click(launcher());
-    view.rerender(<Harness context={beta} />);
-    await user.click(launcher());
-    expect(region()).toBeVisible();
-    act(() => {
-      available = [];
-      for (const listener of listeners) listener();
-    });
-    act(() => {
-      available = [panel];
-      for (const listener of listeners) listener();
-    });
-    expect(region()).not.toBeInTheDocument();
-    view.rerender(<Harness context={alpha} />);
-    expect(region()).not.toBeInTheDocument();
-  },
-);
+        {drawer.launchers}
+        {drawer.content}
+        {drawer.side}
+      </>
+    );
+  }
+  const side = () => screen.queryByRole("region", { name: "Huddle panel" });
+  const bottom = () =>
+    screen.queryByRole("region", { name: "Terminal drawer" });
+  const launcher = (name: string) => screen.getByRole("button", { name });
+  // Each channel mounts its own workspace, as ChannelsPage keys it.
+  const view = render(<Harness key="alpha" channel="alpha" />);
+  await user.click(launcher("Huddle"));
+  expect(side()).toBeVisible();
+  view.rerender(<Harness key="beta" channel="beta" />);
+  expect(side()).not.toBeInTheDocument();
+  expect(launcher("Huddle")).toHaveAttribute("aria-pressed", "false");
+  await user.click(launcher("Terminal"));
+  expect(bottom()).toBeVisible();
+  view.rerender(<Harness key="alpha" channel="alpha" />);
+  expect(side()).toBeVisible();
+  expect(launcher("Huddle")).toHaveAttribute("aria-pressed", "true");
+  view.rerender(<Harness key="beta" channel="beta" />);
+  expect(bottom()).not.toBeInTheDocument();
+  // Leaving the page entirely keeps the side panel for the return.
+  view.unmount();
+  const page = render(<Harness key="alpha" channel="alpha" />);
+  expect(side()).toBeVisible();
+  // Its original trigger is gone, so closing focuses the conversation.
+  await user.click(launcher("Huddle"));
+  expect(side()).not.toBeInTheDocument();
+  expect(launcher("Conversation")).toHaveFocus();
+  page.rerender(<Harness key="beta" channel="beta" />);
+  page.rerender(<Harness key="alpha" channel="alpha" />);
+  expect(side()).not.toBeInTheDocument();
+  // Disabling the plugin forgets it; re-enabling starts closed.
+  await user.click(launcher("Huddle"));
+  act(() => {
+    available = [terminal];
+    for (const listener of listeners) listener();
+  });
+  act(() => {
+    available = [huddle, terminal];
+    for (const listener of listeners) listener();
+  });
+  expect(side()).not.toBeInTheDocument();
+  expect(retained.alpha).toBeUndefined();
+});
 
 it("opens the host member picker only while the launcher binding is current", async () => {
   const openMembers = vi.fn();

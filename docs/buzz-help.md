@@ -466,10 +466,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
-  conversation, such as a thread, **Canvas**, a huddle, Todos, or the Terminal
-  drawer, stays open for that conversation
-  when you switch to another one and come back, until you close it. Reloading
-  Buzz does not restore it.
+  conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
+  that conversation when you go to another conversation or page and come back,
+  until you close it. Reloading Buzz does not restore it. The Terminal drawer
+  closes when you leave the conversation.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.

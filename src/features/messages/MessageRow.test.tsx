@@ -44,6 +44,7 @@ import {
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { ReplySummary } from "./ReplySummary";
 import { setClockPreference } from "../../shared/clock-preference";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -5021,4 +5022,29 @@ it("notes a thread's unsent reply on its summary until the thread's composer sho
     view.unmount();
     localStorage.clear();
   }
+});
+
+it("words a thread's draft by its replies even while an activity line hides their count", () => {
+  const summary = (replied: boolean) =>
+    renderDom(
+      <ReplySummary
+        count={0}
+        hideEmptyLabel
+        draft
+        replied={replied}
+        participants={[]}
+        resolveName={(id) => id}
+        media={() => undefined}
+      />,
+    );
+  const busy = summary(true);
+  expect(busy.container.querySelector("[data-thread-draft]")).toHaveTextContent(
+    /^·Draft$/,
+  );
+  busy.unmount();
+  const fresh = summary(false);
+  expect(
+    fresh.container.querySelector("[data-thread-draft]"),
+  ).toHaveTextContent(/^Draft reply$/);
+  fresh.unmount();
 });

@@ -968,6 +968,7 @@ function MessageRowContent({
             <ReplySummary
               hideEmptyLabel={!!activity}
               draft={threadDraft}
+              replied={row.replyCount > 0}
               count={activity ? 0 : row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}

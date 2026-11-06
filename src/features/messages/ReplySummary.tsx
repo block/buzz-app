@@ -19,6 +19,7 @@ export function ReplySummary({
   activity,
   hideEmptyLabel = false,
   draft = false,
+  replied = count > 0,
 }: {
   workingParticipants?: readonly string[];
   activity?: ReactNode;
@@ -26,6 +27,8 @@ export function ReplySummary({
   hideEmptyLabel?: boolean;
   /** An unsent reply waits in this thread; it names an empty thread itself. */
   draft?: boolean;
+  /** The thread has replies, even when an activity line hides their count. */
+  replied?: boolean;
   count: number;
   participants: readonly string[];
   profiles?: ReadonlyMap<string, Profile> | undefined;
@@ -70,9 +73,9 @@ export function ReplySummary({
       ) : null}
       {draft && (
         <span className={styles.threadDraft} data-thread-draft="">
-          {count > 0 && <span aria-hidden="true">·</span>}
+          {replied && <span aria-hidden="true">·</span>}
           <PencilSimpleIcon size={14} aria-hidden="true" />
-          {count > 0 ? "Draft" : "Draft reply"}
+          {replied ? "Draft" : "Draft reply"}
         </span>
       )}
     </>

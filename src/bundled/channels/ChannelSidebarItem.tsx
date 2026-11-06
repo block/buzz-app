@@ -248,7 +248,7 @@ function ChannelSidebarItemCore({
               data-channel-draft=""
               role="img"
               aria-label="Draft"
-              title="Unsent draft"
+              title="Draft"
             >
               <PencilSimpleIcon size={14} />
             </span>

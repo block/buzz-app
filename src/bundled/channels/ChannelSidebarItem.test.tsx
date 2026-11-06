@@ -768,7 +768,7 @@ it("marks a channel with a draft in it or one of its threads, except while it is
       writeView(scope, thread, { text: "Half a reply", recipients: [] });
     });
     const pencil = screen.getByRole("img", { name: "Draft" });
-    expect(pencil).toHaveAttribute("title", "Unsent draft");
+    expect(pencil).toHaveAttribute("title", "Draft");
     // Part of the row's name, not a separate stop.
     expect(pencil.closest("button")).toHaveAttribute(
       "data-channel-id",

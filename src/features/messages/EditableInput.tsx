@@ -381,8 +381,7 @@ export type EditableInputProps = Omit<
   disabled: boolean;
   placeholder: string;
   maxLength: number;
-  /** `length` is the draft's serialized size, the measure maxLength limits. */
-  onDraftChange(draft: MentionDraft, length: number): void;
+  onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onEditLink?(edit: ComposerLinkEdit): void;
   /** A paste would exceed the serialized message budget; nothing was inserted. */
@@ -534,16 +533,13 @@ export function EditableInput({
       }
       editor.dom.dispatchEvent(new Event("select"));
     };
-    // The length check serializes every edit; onDraftChange reports its result.
-    let measured: { doc: EditorNode; length: number } | undefined;
     const normalize = new Plugin({
       filterTransaction(tr) {
-        if (!tr.docChanged) return true;
-        const length = composerMarkdown(
-          projectComposerDocument(tr.doc).draft,
-        ).length;
-        measured = { doc: tr.doc, length };
-        return length <= current.current.maxLength;
+        return (
+          !tr.docChanged ||
+          composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
+            current.current.maxLength
+        );
       },
       appendTransaction(transactions, old, state) {
         if (
@@ -1797,12 +1793,7 @@ export function EditableInput({
             scrollAfterTokens.current ||=
               tr.scrolledIntoView && hosts.current.size > 0;
             emitted.current = projection().draft;
-            current.current.onDraftChange(
-              emitted.current,
-              measured?.doc === editor.state.doc
-                ? measured.length
-                : composerMarkdown(emitted.current).length,
-            );
+            current.current.onDraftChange(emitted.current);
             tokenViews();
           }
           selected();

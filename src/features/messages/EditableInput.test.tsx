@@ -98,7 +98,6 @@ function mount(
 ) {
   const ref = createRef<ComposerInputElement>();
   let draft: MentionDraft = mentionDraft(initial);
-  const lengths: number[] = [];
   let formats: readonly ComposerFormat[] = [];
   const text = draft.text;
   function Editor() {
@@ -131,9 +130,8 @@ function mount(
         onFormatsChange={(active) => {
           formats = active;
         }}
-        onDraftChange={(next, reported) => {
+        onDraftChange={(next) => {
           draft = next;
-          lengths.push(reported);
           setValue(next);
         }}
       />
@@ -157,25 +155,10 @@ function mount(
     user: userEvent.setup(),
     markdown: () => composerMarkdown(draft),
     draft: () => draft,
-    /** Every length reported with a draft, in order. */
-    lengths: () => lengths,
     /** The formats last reported to the toolbar. */
     formats: () => formats,
   };
 }
-
-it("reports each edit's serialized length, the measure maxLength limits", async () => {
-  const h = mount("plain ", { maxLength: 14 });
-  act(() => h.input.toggleFormat("bold"));
-  await h.user.keyboard("bold");
-  expect(h.markdown()).toBe("plain **bold**");
-  expect(h.lengths().at(-1)).toBe(14);
-  const reports = h.lengths().length;
-  // At the limit the next character is refused and nothing new is reported.
-  await h.user.keyboard("!");
-  expect(h.markdown()).toBe("plain **bold**");
-  expect(h.lengths()).toHaveLength(reports);
-});
 
 it("types the first character into the empty paragraph with no task between focus and the key", async () => {
   const h = mount();

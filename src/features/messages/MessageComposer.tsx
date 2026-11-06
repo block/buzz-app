@@ -1100,22 +1100,8 @@ function Composer({
   }
   const [error, setError] = useState<string>();
   const [pasteTooLong, setPasteTooLong] = useState(false);
-  // Edits arrive with the length the editor measured. Other drafts, such as a
-  // restored one or a message opened to edit, are measured here once.
-  const reported = useRef<{ document: object | undefined; length: number }>(
-    undefined,
-  );
-  const captionLength = useMemo(() => {
-    const last = reported.current;
-    return last?.document && last.document === editorDraft.document
-      ? last.length
-      : composerMarkdown(editorDraft).length;
-  }, [editorDraft]);
-  const reserved = [...(chatCards ?? []), ...(gifs ?? [])].reduce(
-    (size, card) => size + card.length + 2,
-    0,
-  );
-  const messageLength = reserved + captionLength;
+  // The limit counts the Markdown that sends, not the visible text.
+  const messageLength = useMemo(() => composerMarkdown(value).length, [value]);
   const showLength = messageLength >= 16000 * 0.9 && !pasteTooLong;
   const [attachmentError, setAttachmentError] =
     useState<Readonly<{ title: string; description: string }>>();
@@ -3422,8 +3408,7 @@ function Composer({
                     ? `${inputId}-length`
                     : undefined
               }
-              onDraftChange={(next, length) => {
-                reported.current = { document: next.document, length };
+              onDraftChange={(next) => {
                 setPasteTooLong(false);
                 const textChanged = next.text !== valueRef.current.text;
                 // The default tag's prefill shows without being saved.
@@ -3467,7 +3452,14 @@ function Composer({
               }
               // Choosing this conversation's tab resumes typing here.
               data-tab-focus=""
-              maxLength={Math.max(0, 16000 - reserved)}
+              maxLength={Math.max(
+                0,
+                16000 -
+                  [...(chatCards ?? []), ...(gifs ?? [])].reduce(
+                    (size, card) => size + card.length + 2,
+                    0,
+                  ),
+              )}
               aria-label={label}
               placeholder={placeholder ?? label}
               onFocus={() => {

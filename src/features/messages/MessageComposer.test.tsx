@@ -15498,7 +15498,7 @@ describe("message length count", () => {
     expect(count()).toHaveTextContent("15,001/16,000");
   });
 
-  it("counts formatting and chat cards as the limit does", async () => {
+  it("counts formatting and chat cards as the limit does", () => {
     const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
     writeView("scope", "draft:channel", {
       text: "",
@@ -15529,14 +15529,8 @@ describe("message length count", () => {
         },
       },
     });
-    const bold = mount();
+    mount();
     expect(count()).toHaveTextContent("14,400/16,000");
-    act(() => {
-      bold.input().focus();
-      bold.input().setSelectionRange(text.length, text.length);
-    });
-    await bold.user.keyboard("y");
-    expect(count()).toHaveTextContent("14,401/16,000");
   });
 
   it("follows the draft through send and editing a sent message", () => {

@@ -716,6 +716,19 @@ function ScopedPage({
     refreshDeletions.current();
   };
 
+  const searchField = (
+    <div className={styles.toolbar}>
+      <SearchField
+        variant="default"
+        value={search}
+        onValueChange={setSearch}
+        label="Search drafts and sent messages"
+        placeholder="Search drafts and sent messages"
+        inputRef={searchInput}
+      />
+    </div>
+  );
+
   return (
     <div data-buzz-ui="" className={styles.page}>
       <Header
@@ -758,16 +771,6 @@ function ScopedPage({
           />
         </div>
       </div>
-      <div className={styles.toolbar}>
-        <SearchField
-          variant="capsule"
-          value={search}
-          onValueChange={setSearch}
-          label="Search drafts and sent messages"
-          placeholder="Search drafts and sent messages"
-          inputRef={searchInput}
-        />
-      </div>
       {notice && (
         <p role="alert" className={styles.notice}>
           {notice}
@@ -785,50 +788,53 @@ function ScopedPage({
           className={styles.draftWorkspace}
           data-selected={!!selected || undefined}
         >
-          <div className={`${styles.section} ${styles.draftList}`}>
-            {drafts.unavailable && (
-              <p
-                role="alert"
-                className={`text-body-sm text-subtle ${styles.sectionCopy}`}
-              >
-                Some saved drafts could not be read. They are unchanged.
-              </p>
-            )}
-            {visibleDrafts.length ? (
-              <ul className={styles.list} aria-label="Drafts">
-                {visibleDrafts.map((item) => row(item, true))}
-              </ul>
-            ) : (
-              <EmptyState
-                icon={<SendIcon size={24} />}
-                title={
-                  search ? `No drafts match “${search.trim()}”.` : "No drafts"
-                }
-                description={
-                  search
-                    ? undefined
-                    : "Messages you start and don’t send wait here."
-                }
-                action={
-                  search ? (
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setSearch("");
-                        searchInput.current?.focus();
-                      }}
-                    >
-                      Clear search
-                    </Button>
-                  ) : undefined
-                }
-              />
-            )}
-            {drafts.limited && (
-              <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
-                Showing 500 drafts.
-              </p>
-            )}
+          <div className={styles.draftList}>
+            {view === "drafts" && searchField}
+            <div className={styles.section}>
+              {drafts.unavailable && (
+                <p
+                  role="alert"
+                  className={`text-body-sm text-subtle ${styles.sectionCopy}`}
+                >
+                  Some saved drafts could not be read. They are unchanged.
+                </p>
+              )}
+              {visibleDrafts.length ? (
+                <ul className={styles.list} aria-label="Drafts">
+                  {visibleDrafts.map((item) => row(item, true))}
+                </ul>
+              ) : (
+                <EmptyState
+                  icon={<SendIcon size={24} />}
+                  title={
+                    search ? `No drafts match “${search.trim()}”.` : "No drafts"
+                  }
+                  description={
+                    search
+                      ? undefined
+                      : "Messages you start and don’t send wait here."
+                  }
+                  action={
+                    search ? (
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setSearch("");
+                          searchInput.current?.focus();
+                        }}
+                      >
+                        Clear search
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              )}
+              {drafts.limited && (
+                <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
+                  Showing 500 drafts.
+                </p>
+              )}
+            </div>
           </div>
           {selected && !selectedExcluded && view === "drafts" && (
             <DraftPreview
@@ -858,71 +864,76 @@ function ScopedPage({
           id="sent-view"
           aria-labelledby="sent-view-tab"
           hidden={view !== "sent"}
-          className={styles.section}
+          className={styles.draftWorkspace}
         >
-          {sent.status === "error" && (
-            <div
-              role="alert"
-              className={`${styles.notice} ${styles.sectionCopy}`}
-            >
-              <p>Sent messages could not be loaded.</p>
-              <Button size="sm" onClick={() => refreshSent.current()}>
-                Retry
-              </Button>
-            </div>
-          )}
-          <LoadingRegion
-            pending={sentLoading}
-            label="Loading sent messages…"
-            statusVisibility={
-              sentLoading && !groups.length ? "visible" : "screen-reader"
-            }
-          >
-            {groups.length ? (
-              groups.map((group) => (
-                <section
-                  key={group.label}
-                  aria-label={group.label}
-                  className={styles.dayGroup}
+          <div className={styles.draftList}>
+            {view === "sent" && searchField}
+            <div className={styles.section}>
+              {sent.status === "error" && (
+                <div
+                  role="alert"
+                  className={`${styles.notice} ${styles.sectionCopy}`}
                 >
-                  <h3 className={`text-caption text-subtle ${styles.day}`}>
-                    {group.label}
-                  </h3>
-                  <ul className={styles.list}>
-                    {group.rows.map((item) => row(item, false))}
-                  </ul>
-                </section>
-              ))
-            ) : sentLoading || sent.status === "error" ? null : search ? (
-              <EmptyState
-                icon={<SendIcon size={24} />}
-                title={`No sent messages match “${search.trim()}”`}
-                description={`Search covers your latest ${SENT_LIMIT} messages.`}
-                action={
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setSearch("");
-                      searchInput.current?.focus();
-                    }}
-                  >
-                    Clear search
+                  <p>Sent messages could not be loaded.</p>
+                  <Button size="sm" onClick={() => refreshSent.current()}>
+                    Retry
                   </Button>
+                </div>
+              )}
+              <LoadingRegion
+                pending={sentLoading}
+                label="Loading sent messages…"
+                statusVisibility={
+                  sentLoading && !groups.length ? "visible" : "screen-reader"
                 }
-              />
-            ) : (
-              <EmptyState
-                icon={<SendIcon size={24} />}
-                title="Nothing sent yet"
-                description="Messages you send in this community show up here."
-              />
-            )}
-          </LoadingRegion>
-          {sentRows.length >= SENT_LIMIT && (
-            <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
-              Showing your latest {SENT_LIMIT} messages.
-            </p>
-          )}
+              >
+                {groups.length ? (
+                  groups.map((group) => (
+                    <section
+                      key={group.label}
+                      aria-label={group.label}
+                      className={styles.dayGroup}
+                    >
+                      <h3 className={`text-caption text-subtle ${styles.day}`}>
+                        {group.label}
+                      </h3>
+                      <ul className={styles.list}>
+                        {group.rows.map((item) => row(item, false))}
+                      </ul>
+                    </section>
+                  ))
+                ) : sentLoading || sent.status === "error" ? null : search ? (
+                  <EmptyState
+                    icon={<SendIcon size={24} />}
+                    title={`No sent messages match “${search.trim()}”`}
+                    description={`Search covers your latest ${SENT_LIMIT} messages.`}
+                    action={
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setSearch("");
+                          searchInput.current?.focus();
+                        }}
+                      >
+                        Clear search
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<SendIcon size={24} />}
+                    title="Nothing sent yet"
+                    description="Messages you send in this community show up here."
+                  />
+                )}
+              </LoadingRegion>
+              {sentRows.length >= SENT_LIMIT && (
+                <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
+                  Showing your latest {SENT_LIMIT} messages.
+                </p>
+              )}
+            </div>
+          </div>
         </section>
       </div>
     </div>

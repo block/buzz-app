@@ -23,11 +23,17 @@ describe("moveHome", () => {
     });
   });
   it("keeps a team with a member that isn't the owner's agent anywhere", () => {
-    expect(moveHome(["x", "w"], of, undefined)).toEqual({ stay: "none" });
+    expect(moveHome(["x", "w"], of, undefined)).toEqual({
+      stay: "none",
+      home: a,
+    });
     expect(moveHome([], of, undefined)).toEqual({ stay: "none" });
   });
   it("keeps a move in the community it began in", () => {
-    expect(moveHome(["z"], of, { community: a })).toEqual({ stay: "none" });
+    expect(moveHome(["z"], of, { community: a })).toEqual({
+      stay: "none",
+      home: a,
+    });
     expect(moveHome(["x"], of, { community: a, failed: true })).toEqual({
       home: a,
     });
@@ -44,6 +50,8 @@ describe("TeamMoves", () => {
     const again = new TeamMoves(storage);
     expect(again.get("one")).toBeUndefined();
     expect(again.get("two")).toEqual({ community: b, failed: true });
+    await moves.set("three", { community: a, created: true });
+    expect(new TeamMoves(storage).get("three")?.created).toBe(true);
   });
   it("keeps no entry from overlapping refused writes", async () => {
     const storage = memoryStorage();
@@ -84,6 +92,10 @@ describe("syncText", () => {
     );
     expect(syncText({ local: undefined }, "team")).toEqual({
       title: "Only on this Mac",
+    });
+    expect(syncText({ conflict: "wss://relay.example" }, "team")).toEqual({
+      title: "Only on this Mac",
+      reason: "A different copy of this team is already in relay.example.",
     });
   });
 });

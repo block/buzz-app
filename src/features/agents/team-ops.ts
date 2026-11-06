@@ -20,6 +20,9 @@ export type TeamEdit = Readonly<{
   base?: Readonly<{ head: string | null; members: readonly string[] }>;
   /** Import: an existing team's name and instructions are kept. */
   adopt?: boolean;
+  /** With `adopt`, a move's first try: an existing team that differs in
+   * name, instructions or members is a conflict, and nothing is written. */
+  fresh?: boolean;
 }>;
 
 /** What the change did. `ok` only when the readback shows all of it. */
@@ -35,7 +38,17 @@ export type TeamResult = Readonly<{
   error?: string;
   /** The last step was sent with no answer: it may have happened. */
   uncertain?: boolean;
+  /** This change created the team: its first name and instructions saved. */
+  created?: true;
+  /** A `fresh` change found a different team there and wrote nothing. */
+  conflict?: true;
 }>;
+
+/** The result a failed team change was thrown with, if any. */
+export const teamResultOf = (error: unknown) =>
+  error instanceof Error && typeof error.cause === "object"
+    ? ((error.cause as TeamResult | null) ?? undefined)
+    : undefined;
 
 export type TeamDeps = Readonly<{
   channels: Pick<
@@ -57,7 +70,11 @@ export type TeamDeps = Readonly<{
 }>;
 
 /** A strong find saw no config channel for the team. */
-export const NO_TEAM_CHANNEL = "This team's config channel can't be found";
+export class NoTeamChannel extends Error {
+  constructor() {
+    super("This team's config channel can't be found");
+  }
+}
 const OFFLINE = "Connect to the team's community to change it";
 
 const others = (channel: ConfigChannel, owner: string) =>
@@ -110,7 +127,7 @@ export function teamOps(deps: TeamDeps) {
     const channel = base
       ? await channels.find("team-config", subject, signal)
       : await channels.ensure("team-config", subject, edit.name, signal);
-    if (!channel) throw new Error("This team's config channel can't be found");
+    if (!channel) throw new NoTeamChannel();
     if (channel.archived)
       throw new Error(
         edit.adopt
@@ -140,6 +157,7 @@ export function teamOps(deps: TeamDeps) {
       throw new Error(
         "This team already has members you've removed here; reopen it to edit them",
       );
+    let created = false;
     const fail = (
       error: string,
       done: Partial<TeamResult> = {},
@@ -149,6 +167,7 @@ export function teamOps(deps: TeamDeps) {
       removed: [],
       skipped: [],
       error,
+      ...(created && { created: true }),
       ...done,
     });
 
@@ -182,6 +201,19 @@ export function teamOps(deps: TeamDeps) {
       if (saved.status === "refused") return fail(saved.message);
       if (saved.status !== "saved" && !adopted)
         return fail("The team changed since it was opened; reopen it");
+      created = !base && saved.status === "saved";
+      // Another copy's team, unless it already is just this one.
+      if (
+        edit.fresh &&
+        !created &&
+        (body?.name !== edit.name ||
+          body.instructions !== edit.instructions ||
+          present.length !== edit.members.length ||
+          present.some((pubkey) => !edit.members.includes(pubkey)))
+      )
+        return fail("A different copy of this team is already there", {
+          conflict: true,
+        });
     }
 
     const add = edit.members.filter((pubkey) => !present.includes(pubkey));
@@ -230,7 +262,13 @@ export function teamOps(deps: TeamDeps) {
           added,
           removed,
         })
-      : { ok: true, added, removed, skipped: [] };
+      : {
+          ok: true,
+          added,
+          removed,
+          skipped: [],
+          ...(created && { created: true }),
+        };
   }
 
   return {
@@ -244,7 +282,7 @@ export function teamOps(deps: TeamDeps) {
           await teamSubject(id),
           signal,
         );
-        if (!channel) throw new Error(NO_TEAM_CHANNEL);
+        if (!channel) throw new NoTeamChannel();
         if (!channel.archived) await channels.archive(channel.id, signal);
         if (!(await channels.archived(channel.id, signal)))
           throw new Error("The team's deletion couldn't be confirmed");

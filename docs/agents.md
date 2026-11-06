@@ -171,8 +171,7 @@ secret in a link, workspace, log, or agent tool result.
 A reconnect link uses version 2 and adds `pairing_id`, `counter`, and `proof`.
 The client saves an increased counter before opening the link. Buzz accepts
 only a greater counter and saves it before it starts a fresh session. A lost
-handshake can skip a counter. A counter is a positive integer of at most
-999999999999999. The proof is unpadded base64url HMAC-SHA256 with the decoded
+handshake can skip a counter. A counter is a positive integer of at most 999999999999999. The proof is unpadded base64url HMAC-SHA256 with the decoded
 reconnect secret as its key. Its input is the UTF-8 JSON array, with no spaces:
 
 ```text
@@ -825,13 +824,13 @@ Two parts of the app decide who you can mention:
 
 The composer accepts these people:
 
-| Where you write | Who you can mention |
-| --- | --- |
-| Channel or forum | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
-| DM | Anyone. People outside the DM are named but not notified. |
-| Solo chat | Chat members, plus your agents (a send adds the tagged ones). |
-| New DM, before it is created | Only the people you chose for the DM. |
-| Archived or read-only channel | Nobody. |
+| Where you write               | Who you can mention                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| Channel or forum              | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
+| DM                            | Anyone. People outside the DM are named but not notified.                                |
+| Solo chat                     | Chat members, plus your agents (a send adds the tagged ones).                            |
+| New DM, before it is created  | Only the people you chose for the DM.                                                    |
+| Archived or read-only channel | Nobody.                                                                                  |
 
 Everywhere, the composer refuses invalid keys and people known to be archived.
 You can always mention yourself. If archive state is unknown, the mention is
@@ -1112,8 +1111,23 @@ in its home record and applies everywhere.
   community takes the team's section from the home
   channel's last confirmed copy, and with none its start waits rather than use
   local fields. Changes and Delete (which archives the home channel) run online,
-  one at a time per team, and report anything left part way. Existing local
-  teams are not migrated.
+  one at a time per team, and report anything left part way.
+  A local team whose members are all the owner's agents in one community that
+  syncs teams moves there once its config channels are up and its agent
+  records are read: it is imported under an id fixed by its local id, so a
+  retry after a crash or disconnect lands in the same team, and the local copy
+  goes only once the relay copy is confirmed. Each move's community is saved
+  before its first write; a failed move is retried on the next connection. A
+  move never writes over a relay team this device didn't create: if the
+  community already has a different copy (as when another copy of the app moved
+  the team first and it was edited there), nothing is written, the team stays
+  local and its status line says "A different copy of this team is already in
+  <community>". Only once this device's own create is confirmed do its local
+  edits win over the relay copy on a retry. A team whose editor has unsaved
+  changes or a Save running doesn't move until they settle. Its status line
+  says why a team stays on this device: its agents are in different
+  communities, the relay doesn't sync teams, or its move failed and will be
+  retried.
 - **Hosted agents** stay in one community, as their provider holds the key.
   Only a synced team homed there can have them as members, so the team editor
   offers them only for such a team, or for a new one that will sync there. One
@@ -1133,7 +1147,6 @@ its channels on a best-effort basis.
 Protocol source: old Buzz `b9392d9` `docs/nips/NIP-IA.md`, especially relay identity,
 snapshot format and snapshot/delta consistency. Tests use the actual session and
 HTTP broker/verified transport, including corrupted signature rejection.
-
 
 ## Agent Activity plugin
 
@@ -1576,7 +1589,6 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
-
 
 ## Attention subscriptions
 

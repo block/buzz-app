@@ -74,7 +74,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
-import { NO_TEAM_CHANNEL } from "./team-ops";
+import { NoTeamChannel } from "./team-ops";
 import { importedTeamId } from "./config-channels";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
@@ -14960,14 +14960,15 @@ describe("synced teams", () => {
 
     it("after a partial move fails, retries on a socket recovery with this device's later edit winning over the relay copy", async () => {
       const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
-      const answers: unknown[] = [fail];
+      // Its create landed before a member add failed.
+      const answers: unknown[] = [{ ...fail, created: true }];
       const channels = teamChannels(async () => answers.shift());
       const f = await setup({ identities: [here(alder)], storage: t.storage });
       await vi.waitFor(() =>
         expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
       );
       expect(moves(f)).toEqual({
-        "local-1": { community: home, failed: true },
+        "local-1": { community: home, failed: true, created: true },
       });
       // The earlier try left the old text there; then it was edited here.
       t.confirm(channels.stores.get(home));
@@ -14987,6 +14988,64 @@ describe("synced teams", () => {
         name: "Edited",
         base: { members: [alder] },
       });
+    });
+
+    it("leaves a different relay copy another app made untouched, keeping the local team as a conflict", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      // The first try fails offline before any create landed; the next finds
+      // the copy another app moved first, and edited since.
+      const answers: unknown[] = [
+        fail,
+        { ...fail, error: "A different copy", conflict: true },
+      ];
+      const channels = teamChannels(async () => answers.shift());
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(moves(f)).toEqual({
+        "local-1": { community: home, failed: true },
+      });
+      t.confirm(channels.stores.get(home), {
+        name: "Mine",
+        instructions: "Newer.",
+      });
+      f.recover();
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ conflict: home }),
+      );
+      expect(channels.saveTeam).toHaveBeenCalledTimes(2);
+      expect(channels.saveTeam.mock.calls[1]?.[0]).toMatchObject({
+        adopt: true,
+        fresh: true,
+      });
+      expect(channels.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("base");
+      expect(templates).not.toHaveBeenCalled();
+      expect(f.storage.get(teamsKey)).toContain("Mine");
+      expect(moves(f)).toEqual({});
+      // Deleting the local copy leaves the relay's alone.
+      await f.service.removeTeam("local-1");
+      expect(channels.removeTeam).not.toHaveBeenCalled();
+    });
+
+    it("moves no team while it is held, and moves it once released", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      const answers: unknown[] = [fail];
+      const channels = teamChannels(async () => answers.shift());
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      t.confirm(channels.stores.get(home));
+      const release = f.service.holdTeam("local-1");
+      f.recover();
+      await settle();
+      expect(channels.saveTeam).toHaveBeenCalledOnce();
+      release();
+      await vi.waitFor(() =>
+        expect(f.storage.get(teamsKey)).not.toContain("Mine"),
+      );
+      expect(channels.saveTeam).toHaveBeenCalledTimes(2);
     });
 
     it("refuses edits and Delete of a local team while it moves, and Delete after a partial move removes its copy", async () => {
@@ -15045,7 +15104,7 @@ describe("synced teams", () => {
       channels.removeTeam.mockImplementationOnce(
         () =>
           new Promise((_, reject) => {
-            release = () => reject(new Error(NO_TEAM_CHANNEL));
+            release = () => reject(new NoTeamChannel());
           }),
       );
       const deleting = f.service.removeTeam("local-1");

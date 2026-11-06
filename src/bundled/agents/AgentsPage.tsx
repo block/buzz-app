@@ -7,7 +7,7 @@ import {
 } from "./routes";
 import { historyPresentation } from "../../features/agents/history-presentation";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import { AgentDetails } from "./AgentDetails";
+import { AgentDetails, useSyncLine } from "./AgentDetails";
 import { communityDestination } from "../../features/communities/destination";
 import { communityIcon } from "../../features/communities/community-icon";
 import { communityName } from "../../features/communities/names";
@@ -130,7 +130,6 @@ import {
   conversationOpener,
 } from "./routes";
 import { AgentCardCreate } from "./AgentCardCreate";
-import { syncText } from "../../features/agents/team-migration";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const message = (error: unknown) =>
@@ -2370,6 +2369,19 @@ function TeamEditor({
   const [opened] = useState(team);
   const [draft] = useState(() => crypto.randomUUID());
   const which = opened ? { id: opened.id } : { draft };
+  // While it has unsaved changes or a Save running, a local team isn't moved
+  // to its community, which would close this editor.
+  const held =
+    !!opened &&
+    (pending ||
+      name !== opened.name ||
+      instructions !== opened.instructions ||
+      members.length !== opened.members.length ||
+      members.some((pubkey) => !opened.members.includes(pubkey)));
+  useEffect(
+    () => (held && opened ? agents.holdTeam(opened.id) : undefined),
+    [agents, held, opened],
+  );
   // Each hosted agent picked, as listed then in the only community with it.
   const [picked, setPicked] = useState<ReadonlyMap<string, Agent>>(
     () => new Map(),
@@ -2544,9 +2556,7 @@ function TeamEditor({
 
 /** Where the team lives: synced in its community, or only on this device. */
 function TeamSyncLine({ agents, id }: { agents: Agents; id: string }) {
-  const line = useSyncExternalStore(agents.subscribe, () =>
-    syncText(agents.teamSync(id), "team"),
-  );
+  const line = useSyncLine(agents, () => agents.teamSync(id), "team");
   if (!line) return null;
   return (
     <p className="m-0 text-body-sm text-secondary">

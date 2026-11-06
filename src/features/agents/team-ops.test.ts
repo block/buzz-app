@@ -79,6 +79,7 @@ describe("teamOps.change", () => {
       added: ["a", "b"],
       removed: [],
       skipped: [],
+      created: true,
     });
     expect(channels.ensure).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledWith(
@@ -130,6 +131,55 @@ describe("teamOps.change", () => {
     });
     const result = await ops.change({ ...edit, members: ["a"], adopt: true });
     expect(result.ok).toBe(true);
+  });
+
+  it("a move's first try writes nothing to a different team already there", async () => {
+    for (const [stored, members] of [
+      [head("Other", "x"), ["a"]],
+      // The same text, with a member this copy doesn't have.
+      [head(), ["a", "z"]],
+    ] as const) {
+      const { ops, channels } = setup({
+        members: [...members],
+        saved: { status: "conflict", head: stored } as never,
+      });
+      const result = await ops.change({
+        ...edit,
+        members: ["a"],
+        adopt: true,
+        fresh: true,
+      });
+      expect(result).toMatchObject({ ok: false, conflict: true });
+      expect(result.created).toBeUndefined();
+      expect(channels.addMember).not.toHaveBeenCalled();
+      expect(channels.removeMember).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a move's first try adopts an identical team, and reports its own create even when a member fails", async () => {
+    const same = setup({
+      members: ["a"],
+      saved: { status: "conflict", head: head() } as never,
+    });
+    expect(
+      await same.ops.change({
+        ...edit,
+        members: ["a"],
+        adopt: true,
+        fresh: true,
+      }),
+    ).toMatchObject({ ok: true });
+    const partial = setup({
+      add: async () => ({ status: "failed", error: "No" }),
+    });
+    expect(
+      await partial.ops.change({
+        ...edit,
+        members: ["a"],
+        adopt: true,
+        fresh: true,
+      }),
+    ).toMatchObject({ ok: false, created: true });
   });
 
   it("an unanswered content save is reported as uncertain, not success", async () => {

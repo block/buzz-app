@@ -59,7 +59,11 @@ import {
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import { syncText } from "../../features/agents/team-migration";
+import {
+  syncText,
+  type SyncLine,
+  type SyncState,
+} from "../../features/agents/team-migration";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
@@ -716,10 +720,30 @@ function SharedSettingsNotice({
 
 /** Where the agent's config lives; nothing while that is still settling. */
 function AgentSyncRow({ agents, agent }: { agents: Agents; agent: Agent }) {
-  const line = useSyncExternalStore(agents.subscribe, () =>
-    syncText(agents.agentSync(agent.pubkey), "agent"),
+  const line = useSyncLine(
+    agents,
+    () => agents.agentSync(agent.pubkey),
+    "agent",
   );
   return line ? (
     <PreferenceRow title={line.title} subtitle={line.reason} />
   ) : null;
+}
+
+/** A team or agent's sync status line, the same object while it reads the
+ * same, as a store snapshot must be. */
+export function useSyncLine(
+  agents: Pick<Agents, "subscribe">,
+  read: () => SyncState | undefined,
+  of: "team" | "agent",
+) {
+  const last = useRef<SyncLine | undefined>(undefined);
+  return useSyncExternalStore(agents.subscribe, () => {
+    const next = syncText(read(), of);
+    const prior = last.current;
+    if (prior?.title === next?.title && prior?.reason === next?.reason)
+      return prior;
+    last.current = next;
+    return next;
+  });
 }

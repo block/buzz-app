@@ -2,38 +2,49 @@
 // its config channels are up. The move itself is an import (`adopt`) of the
 // team under a deterministic id, so a rerun after a crash or disconnect lands
 // in the same channel. The journal saves each move's community before its
-// first write and whether its last try failed.
+// first write, whether its last try failed, and whether this device's own
+// create of the relay team landed: only then may the move write over what is
+// there.
 import type { AgentStore } from "./store";
 
 export const TEAM_MOVES_KEY = "buzz.agents.teams.migration.v1";
 
-/** A move under way: its community, fixed before the first write. */
-export type TeamMove = Readonly<{ community: string; failed?: true }>;
+/** A move under way: its community, fixed before the first write. `created`
+ * once this device's create of the relay team is confirmed saved. */
+export type TeamMove = Readonly<{
+  community: string;
+  failed?: true;
+  created?: true;
+}>;
 
 /** Why a team stays on this device. */
 export type LocalReason = "communities" | "unsupported" | "failed";
 
-/** Where a team or agent's config lives, for its sync status line. */
+/** Where a team or agent's config lives, for its sync status line.
+ * `conflict`: a different copy of the team is already in that community. */
 export type SyncState =
   | Readonly<{ synced: string }>
-  | Readonly<{ local: LocalReason | undefined }>;
+  | Readonly<{ local: LocalReason | undefined }>
+  | Readonly<{ conflict: string }>;
 
 /** Where a team of `members` moves: the one community every member is the
- * owner's agent in, unless the team's move began in another. */
+ * owner's agent in, unless the team's move began in another. Staying, the
+ * community it would move to, if any. */
 export function moveHome(
   members: readonly string[],
   homesOf: (pubkey: string) => readonly string[],
   move: TeamMove | undefined,
-): Readonly<{ home: string }> | Readonly<{ stay: "communities" | "none" }> {
-  const homes = new Set(members.flatMap(homesOf));
-  const [home] = homes;
+):
+  | Readonly<{ home: string }>
+  | Readonly<{ stay: "communities" }>
+  | Readonly<{ stay: "none"; home?: string }> {
+  const each = members.map(homesOf);
+  const homes = new Set(each.flat());
   if (homes.size > 1) return { stay: "communities" };
-  if (
-    !home ||
-    (move && move.community !== home) ||
-    members.some((pubkey) => !homesOf(pubkey).includes(home))
-  )
-    return { stay: "none" };
+  const [found] = homes;
+  const home = move?.community ?? found;
+  if (!found || found !== home || each.some((h) => !h.includes(found)))
+    return { stay: "none", ...(home && { home }) };
   return { home };
 }
 
@@ -91,17 +102,19 @@ const withMove = (
   return move ? { ...rest, [id]: move } : rest;
 };
 
-const REASONS: Record<"team" | "agent", Record<LocalReason, string>> = {
+const REASONS = {
   team: {
     communities: "Its agents are in different communities.",
     unsupported: "This community's relay doesn't sync teams.",
     failed: "Moving it to the community failed; Buzz will try again.",
   },
   agent: {
-    communities: "",
     unsupported: "This community's relay doesn't sync agent settings.",
     failed: "Copying it to the community failed; Buzz will try again.",
   },
+} satisfies {
+  team: Record<LocalReason, string>;
+  agent: Record<Exclude<LocalReason, "communities">, string>;
 };
 
 /** A sync status line: where it lives, and why it is only here. */
@@ -110,21 +123,13 @@ export function syncText(
   of: "team" | "agent",
 ): SyncLine | undefined {
   if (!state) return undefined;
-  const key = `${of} ${JSON.stringify(state)}`;
-  let line = lines.get(key);
-  if (!line) {
-    line = Object.freeze(
-      "synced" in state
-        ? { title: `Synced in ${state.synced.replace(/^\w+:\/\//, "")}` }
-        : {
-            title: "Only on this Mac",
-            ...(state.local && { reason: REASONS[of][state.local] }),
-          },
-    );
-    lines.set(key, line);
-  }
-  return line;
+  const host = (relay: string) => relay.replace(/^\w+:\/\//, "");
+  if ("synced" in state) return { title: `Synced in ${host(state.synced)}` };
+  const reason =
+    "conflict" in state
+      ? `A different copy of this team is already in ${host(state.conflict)}.`
+      : state.local &&
+        (REASONS[of] as Partial<Record<LocalReason, string>>)[state.local];
+  return { title: "Only on this Mac", ...(reason && { reason }) };
 }
 export type SyncLine = Readonly<{ title: string; reason?: string }>;
-/** One line per state, so a store snapshot of it stays the same object. */
-const lines = new Map<string, SyncLine>();

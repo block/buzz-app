@@ -300,6 +300,8 @@ function setup(
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
   const types = [type, ...more];
+  // Local teams kept from moving by their editor.
+  const held = new Set<string>();
   const agents = {
     types: () => types,
     snapshot: () => snapshot,
@@ -395,6 +397,10 @@ function setup(
           : { local: undefined },
     ),
     agentSync: vi.fn((): SyncState | undefined => undefined),
+    holdTeam: vi.fn((id: string) => {
+      held.add(id);
+      return () => held.delete(id);
+    }),
     core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
@@ -454,7 +460,17 @@ function setup(
   const notify = () => {
     for (const listener of listeners) listener();
   };
-  return { agents, echoProvider, types, show, change, notify, relay, ...view };
+  return {
+    agents,
+    echoProvider,
+    types,
+    show,
+    change,
+    notify,
+    relay,
+    held,
+    ...view,
+  };
 }
 
 it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
@@ -2604,6 +2620,44 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
+});
+
+it("keeps a local team with a draft from moving, so its editor stays open, and lets it move once saved", async () => {
+  const ada = agent("Ada", 1);
+  const local = {
+    id: "local-team",
+    name: "Crew",
+    instructions: "Before",
+    members: [ada.pubkey],
+  };
+  const view = setup([ada], { teams: [local] });
+  const user = userEvent.setup();
+  // What a move does unless the team is held: its synced copy replaces it.
+  const move = () =>
+    act(() => {
+      if (!view.held.has(local.id))
+        view.change({
+          teams: [{ ...local, id: "moved-team", revision: "confirmed" }],
+        });
+    });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+      name: "Crew",
+    }),
+  );
+  const box = screen.getByRole("textbox", { name: "Instructions" });
+  await user.clear(box);
+  await user.type(box, "UNSAVED DRAFT");
+  expect(view.agents.holdTeam).toHaveBeenCalledWith(local.id);
+  move();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "UNSAVED DRAFT",
+  );
+  // Back to what it opened with, nothing is held.
+  await user.clear(box);
+  await user.type(box, "Before");
+  expect(view.held.has(local.id)).toBe(false);
 });
 
 it("offers hosted agents as members, warning that they may not get the instructions", async () => {

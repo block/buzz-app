@@ -95,6 +95,8 @@ export function PopoutWindowView({
       // The operations session is built from the client below; one render
       // after it exists the editor adopts it (edits then follow one id).
       session: operationsSession,
+      // Voice notes record here; main uploads them like any attachment.
+      capture: true,
     },
   );
   // Reactions and the picker use the same bridge as the composer: one owner
@@ -125,7 +127,6 @@ export function PopoutWindowView({
       tools: JSON.parse(toolKeys) as string[],
       completions: [],
       gifRequests: client.gifs,
-      capture: true,
     });
     return { session, tools: extensions.tools, inline: extensions.inline };
   }, [client, bridgeSession, toolKeys]);

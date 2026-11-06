@@ -29,6 +29,8 @@ it.each([
   ["relax", "relax"],
   ["utmost", "utmost"],
   ["Utmost", "buzz"],
+  ["Troupe", "buzz"],
+  ["troupe", "troupe"],
 ])("parses %j as %s", (value, expected) => {
   expect(parseTheme(value)).toBe(expected);
 });
@@ -40,6 +42,8 @@ it("opens a dark frame scope only on a light page for a dark-frame theme", () =>
   expect(frameScope("relax", "dark")).toBeUndefined();
   expect(frameScope("utmost", "light")).toBe("dark");
   expect(frameScope("utmost", "dark")).toBeUndefined();
+  expect(frameScope("troupe", "light")).toBeUndefined();
+  expect(frameScope("troupe", "dark")).toBeUndefined();
 });
 
 const tokens = readFileSync(

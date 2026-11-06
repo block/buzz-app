@@ -573,7 +573,7 @@ it("keeps density active on storage failure, retries, and follows other windows"
   expect(b.root.dataset.messageDensity).toBe("default");
 });
 
-it.each([null, "", "RELAX", "garbage", "buzz", "relax", "utmost"])(
+it.each([null, "", "RELAX", "garbage", "buzz", "relax", "utmost", "troupe"])(
   "bootstrap and service agree on stored theme %j",
   (value) => {
     const b = browser();

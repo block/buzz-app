@@ -337,6 +337,9 @@ it("chooses a theme by pointer and keyboard, saves only the theme, and recovers 
   const group = screen.getByRole("radiogroup", { name: "Theme" });
   const buzz = within(group).getByRole("radio", { name: "Buzz" });
   const relax = within(group).getByRole("radio", { name: "Relax" });
+  expect(
+    within(group).getByRole("radio", { name: "Troupe" }),
+  ).toHaveAccessibleDescription("Soft periwinkle on calm, even grays.");
   expect(buzz).toBeChecked();
   expect(relax).toHaveAccessibleDescription(
     "Deep plum frame around a bright, open workspace.",

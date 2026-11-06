@@ -520,6 +520,18 @@ describe("semantic contrast contract", () => {
       "--theme-badge-text-light: var(--utmost-badge-light);",
       /utmost\/theme\/neutral\/light --text-on-badge \(#\w+\) on --surface-badge \(/,
     ],
+    [
+      "a troupe page canvas under its light text",
+      "--theme-canvas-light: var(--troupe-frame-canvas-light);",
+      "--theme-canvas-light: var(--troupe-neutral-12-light);",
+      /troupe\/theme\/neutral\/light --text-standard \(#\w+\) on --bg-app \(/,
+    ],
+    [
+      "an unreadable troupe sidebar selection",
+      "--theme-sidebar-selected-text-light: var(--troupe-sidebar-selected-text-light);",
+      "--theme-sidebar-selected-text-light: var(--troupe-sidebar-selected-light);",
+      /troupe\/theme\/neutral\/light --text-sidebar-selected \(#\w+\) on --surface-sidebar-selected \(/,
+    ],
   ])("measures a theme in its own scope: %s", (_name, from, to, pairing) => {
     expect(tokens).toContain(from);
     const result = check(tokens.replaceAll(from, to));

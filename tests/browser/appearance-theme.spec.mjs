@@ -96,6 +96,8 @@ const FRAMED_THEMES = [
     },
   },
 ];
+const UNFRAMED_THEMES = ["troupe"];
+const THEME_COUNT = 1 + FRAMED_THEMES.length + UNFRAMED_THEMES.length;
 
 for (const [index, theme] of FRAMED_THEMES.entries()) {
   const { id, label, description, light, dark } = theme;
@@ -112,7 +114,7 @@ for (const [index, theme] of FRAMED_THEMES.entries()) {
 
     await appearance(page);
     const group = page.getByRole("radiogroup", { name: "Theme", exact: true });
-    await expect(radios(page)).toHaveCount(FRAMED_THEMES.length + 1);
+    await expect(radios(page)).toHaveCount(THEME_COUNT);
     await expect(group.getByRole("radio", { name: /^Buzz/ })).toBeChecked();
     await expect(group.getByRole("radio", { name: pick })).not.toBeChecked();
     // The name and the description each have one owner; the thumbnail has none.
@@ -130,17 +132,16 @@ for (const [index, theme] of FRAMED_THEMES.entries()) {
     const previews = async () =>
       Object.fromEntries(
         await Promise.all(
-          ["buzz", ...FRAMED_THEMES.map((t) => t.id)].map(async (themeId) => [
-            themeId,
-            await cardSidebar(themeId),
-          ]),
+          ["buzz", ...FRAMED_THEMES.map((t) => t.id), ...UNFRAMED_THEMES].map(
+            async (themeId) => [themeId, await cardSidebar(themeId)],
+          ),
         ),
       );
     const cards = await previews();
     expect(
       new Set(Object.values(cards)).size,
       "every card previews a different sidebar",
-    ).toBe(FRAMED_THEMES.length + 1);
+    ).toBe(THEME_COUNT);
 
     await group.getByRole("radio", { name: /^Buzz/ }).focus();
     for (let step = 0; step <= index; step += 1)
@@ -277,4 +278,46 @@ test("a saved manual accent stays when the theme changes", async ({
   await expect(
     page.getByRole("button", { name: "Cobalt accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a theme with a light frame keeps the shell unframed in both modes and the Theme accent follows its family", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await appearance(page);
+  const group = page.getByRole("radiogroup", { name: "Theme", exact: true });
+  await group.getByText("Troupe", { exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "troupe");
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "theme");
+  expect(await page.evaluate((k) => localStorage.getItem(k), themeKey)).toBe(
+    "troupe",
+  );
+  expect(
+    await page.evaluate((k) => localStorage.getItem(k), accentKey),
+  ).toBeNull();
+
+  await chooseColorMode(page, "Light");
+  await expectFramed(page, false);
+  expect(await resolved(page, "--surface-sidebar", "#shell-navigation")).toBe(
+    "rgb(244, 244, 248)",
+  );
+  expect(await resolved(page, "--bg-app", "header.shell-header")).toBe(
+    "rgb(234, 234, 240)",
+  );
+  expect(await resolved(page, "--accent-9")).toBe("rgb(95, 98, 194)");
+
+  await chooseColorMode(page, "Dark");
+  await expectFramed(page, false);
+  expect(await resolved(page, "--surface-sidebar", "#shell-navigation")).toBe(
+    "rgb(30, 30, 34)",
+  );
+  expect(await resolved(page, "--bg-app", "header.shell-header")).toBe(
+    "rgb(17, 17, 20)",
+  );
+  expect(await resolved(page, "--accent-9")).toBe("rgb(98, 102, 217)");
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "troupe");
+  await expectFramed(page, false);
 });

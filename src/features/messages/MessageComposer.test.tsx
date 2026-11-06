@@ -3104,7 +3104,7 @@ it("keeps a background send on its original thread when the composer moves", asy
   expect(tags.flat()).not.toContain("c".repeat(64));
 });
 
-it("reports a background reply in the task that publishes it, before a subscriber renders", async () => {
+it("reports a background reply in the task that publishes it", async () => {
   const order: string[] = [];
   const h = await mountUploadComposer({
     threadRootId: "b".repeat(64),
@@ -3117,7 +3117,7 @@ it("reports a background reply in the task that publishes it, before a subscribe
     if (queued || !outbox.snapshot().length) return;
     queued = true;
     // React renders an external store's subscribers in a microtask.
-    queueMicrotask(() => order.push("render"));
+    queueMicrotask(() => order.push("microtask"));
   });
   attachByPaste(h.input(), attachmentFile());
   await waitFor(() => expect(h.send()).toBeEnabled());
@@ -3127,7 +3127,7 @@ it("reports a background reply in the task that publishes it, before a subscribe
     h.uploadCalls[0]?.result.resolve(uploadDescriptor());
   });
   await waitFor(() => expect(order).toHaveLength(2));
-  expect(order).toEqual(["onSend", "render"]);
+  expect(order).toEqual(["onSend", "microtask"]);
 });
 
 it("names a failed background reply's thread and opens that thread", async () => {

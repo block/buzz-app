@@ -3636,19 +3636,6 @@ function Composer({
                 )}
               </ComposerFormattingTools>
             )}
-            {showLength && (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="text-body-sm text-subtle tabular-nums"
-                >
-                  {messageLength.toLocaleString("en-US")}/16,000
-                </span>
-                <span id={`${inputId}-length`} className="sr-only">
-                  {messageLength.toLocaleString("en-US")} of 16,000 characters
-                </span>
-              </>
-            )}
             {active &&
               !editing.target &&
               (!submission || ownSoloConversation) &&
@@ -3733,6 +3720,16 @@ function Composer({
         {!editing.target && compacting && (
           <p className={styles.composerStatus} role="status">
             Compacting session…
+          </p>
+        )}
+        {showLength && (
+          <p className="text-end text-body-sm text-subtle tabular-nums">
+            <span aria-hidden="true">
+              {messageLength.toLocaleString("en-US")}/16,000
+            </span>
+            <span id={`${inputId}-length`} className="sr-only">
+              {messageLength.toLocaleString("en-US")} of 16,000 characters
+            </span>
           </p>
         )}
         {pasteTooLong && (

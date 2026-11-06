@@ -1491,6 +1491,8 @@ preloading and product shortcuts remain with the caller.
 controls: the primary NavigationItem owns focus and `aria-current`, while the
 card owns the shared hover and selected surface. Put details in its `footer`,
 not inside the primary button. Nested destinations keep their own selection.
+Default cards use sidebar selection for `aria-current="page"` and neutral
+collection selection for `aria-current="true"`; selection persists during hover.
 Use `tone="tonal"` for task trees: the shared card uses neutral selected and hover
 surfaces. Use `tone="inset"` for a lead destination whose own hover, focus, menu,
 and selection use `surface-inset`. Both tones rest transparent, including open

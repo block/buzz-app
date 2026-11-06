@@ -51,6 +51,7 @@ import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorks
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
   DotsThreeIcon,
+  TrashIcon,
   ArrowLeftIcon,
   HashIcon,
   ChatCircleIcon,
@@ -1327,6 +1328,32 @@ function NavigationItemSpecimen() {
             trailing={<span className="text-body-sm">3</span>}
             selected={selected === "desktop-new"}
             onClick={() => setSelected("desktop-new")}
+          />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Card — selected item in a collection"
+        code={`<NavigationCard>
+  <NavigationItem label="Selected draft" selected aria-current="true" />
+</NavigationCard>`}
+      >
+        <div className="component-navigation-section-demo">
+          <NavigationCard>
+            <NavigationItem
+              label="Selected draft"
+              selected
+              aria-current="true"
+            />
+            <IconButton
+              aria-label="Delete selected draft"
+              variant="bare"
+              icon={<TrashIcon size={16} />}
+            />
+          </NavigationCard>
+          <NavigationItem
+            label="Selected sent message"
+            selected
+            aria-current="true"
           />
         </div>
       </SpecimenGroup>

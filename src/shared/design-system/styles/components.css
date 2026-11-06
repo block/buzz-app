@@ -1556,7 +1556,10 @@
       > .navigation-card-row [aria-expanded="true"][aria-haspopup="menu"]
     ),
     [data-context-menu-present]
-  ):not(:has(> .navigation-card-row [aria-current="page"])) {
+  ):not(
+    :has(> .navigation-card-row [aria-current="page"]),
+    :has(> .navigation-card-row [aria-current="true"])
+  ) {
     background: var(--affordance-panel-hover);
   }
   .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
@@ -1565,6 +1568,18 @@
     background: var(--surface-sidebar-selected);
   }
   .navigation-card:has(> .navigation-card-row [aria-current="page"])
+    > :is(.navigation-card-row, .navigation-card-footer) {
+    --text-subtle: var(--text-row-selected-subtle);
+  }
+  /* Collection selection is neutral; route selection above keeps sidebar paint. */
+  .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
+    > .navigation-card-row [aria-current="true"]
+  ) {
+    background: var(--affordance-selected);
+  }
+  .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
+      > .navigation-card-row [aria-current="true"]
+    )
     > :is(.navigation-card-row, .navigation-card-footer) {
     --text-subtle: var(--text-row-selected-subtle);
   }

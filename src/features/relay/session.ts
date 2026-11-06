@@ -717,9 +717,7 @@ export function createRelaySession(
       ];
       // What only `resolveChannels` looks up is known for agents alone.
       const viewers = filters.every((filter) => resolves(filter, false));
-      if (!viewers)
-        for (const id of ids)
-          if (!channels.queries.get?.(id)) learnedForAgents.add(id);
+      if (!viewers) for (const id of ids) learnedByAgents(id);
       await channels.queries.resolve?.(
         ids,
         viewers ? { ...settings, viewerLookup: true } : settings,
@@ -1090,7 +1088,7 @@ export function createRelaySession(
           // The viewer's own lookups make a channel known to the viewer's
           // traffic, as without any `attend`; rechecks do not.
           resolved: (ids) => {
-            for (const id of ids) learnedForAgents.delete(id);
+            for (const id of ids) knownToViewer(id);
           },
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
@@ -1321,6 +1319,19 @@ export function createRelaySession(
    * resolved channels the viewer's own reads would not. One leaves once the
    * viewer's traffic knows it too: joined, opened or looked up. */
   const learnedForAgents = new Set<string>();
+  /** Channels the viewer's traffic has known this session. Agents' reads
+   * never mark one agents-only, even while it is unreadable or unknown: the
+   * viewer found it first. */
+  const viewerKnown = new Set<string>();
+  const knownToViewer = (id: string) => {
+    viewerKnown.add(id);
+    learnedForAgents.delete(id);
+  };
+  /** An agents' read of a channel the session does not know now. */
+  const learnedByAgents = (id: string) => {
+    if (!viewerKnown.has(id) && !channels.queries.get?.(id))
+      learnedForAgents.add(id);
+  };
   /** Attended channels read since the last wait ended, in flight or done.
    * One known again leaves it, so it is read at once if it is unknown again. */
   const attendChecked = new Set<string>();
@@ -1384,12 +1395,9 @@ export function createRelaySession(
       (id) => !attendChecked.has(id) && !attendReading.has(id),
     );
     for (const id of unknown) attendChecked.add(id);
-    // A suspended preview is unknown only until its recheck; it was known
-    // before, so its read keeps the provenance it had.
-    const suspended = new Set(channels.suspendedPreviews());
     for (const id of fresh) {
       attendReading.add(id);
-      if (!suspended.has(id)) learnedForAgents.add(id);
+      learnedByAgents(id);
     }
     for (let start = 0; start < fresh.length; start += 128) {
       const queued = fresh.slice(start, start + 128);
@@ -3322,7 +3330,7 @@ export function createRelaySession(
     // ranked first by `prioritize`, keep theirs; the rest get finite reads.
     const listened = new Set(ids);
     viewerLive = listened;
-    for (const id of listened) learnedForAgents.delete(id);
+    for (const id of listened) knownToViewer(id);
     ids.push(
       ...[...new Set([...attended].flat())].filter((id) => {
         const channel = channels.queries.get?.(id);

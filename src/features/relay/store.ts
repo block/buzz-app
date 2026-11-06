@@ -1941,12 +1941,21 @@ export function createChannelStore(
         if (complete && !applyDiscovery([], complete, started)) return;
       }
       if (complete) transport.rosterComplete?.();
-      const wanted = [...ids].filter(
-        (id) =>
-          discovery.authorized(id) &&
-          !named.has(id) &&
-          (force || pendingMetadata.has(id) || !discovery.named(id)),
-      );
+      // Saved metadata of a channel the viewer has not joined, as a public
+      // preview's, is read again here too: the roster read never returns it.
+      const wanted = [
+        ...new Set([
+          ...[...ids].filter(
+            (id) =>
+              discovery.authorized(id) &&
+              !named.has(id) &&
+              (force || pendingMetadata.has(id) || !discovery.named(id)),
+          ),
+          ...[...pendingMetadata].filter(
+            (id) => !ids.has(id) && authorized(id),
+          ),
+        ]),
+      ];
       generation = epoch;
       readingRoster = false;
       denyAllOnFailure = false;
@@ -4038,20 +4047,17 @@ export function createChannelStore(
     accept,
     clearCache,
     dispose,
-    /** A dropped stream also ends the relay's confirmation of each joined
-     * channel's metadata: the channel may turn private meanwhile, and the
-     * replay after a reconnect can arrive before discovery reads it again.
-     * Until a fresh read, the metadata counts as only saved
-     * (`metadataCached`), and discovery's next read asks for it again. */
+    /** A dropped stream also ends the relay's confirmation of the metadata
+     * of every channel the viewer can read, joined or a public preview: the
+     * channel may turn private meanwhile, and the replay after a reconnect
+     * can arrive before a read asks again. Until a fresh read, the metadata
+     * counts as only saved (`metadataCached`), and the next discovery or
+     * `confirmMetadata` reads it again. */
     staleMetadata() {
       if (disposed || !transport || !discovery) return;
       let changed = false;
-      for (const [id, roster] of discovery.rosterVersions())
-        if (
-          hasTag(roster, "p", transport.viewer) &&
-          discovery.metadataVersion(id) &&
-          !pendingMetadata.has(id)
-        ) {
+      for (const id of discovery.metadataIds())
+        if (authorized(id) && !pendingMetadata.has(id)) {
           pendingMetadata.add(id);
           changed = true;
         }
@@ -4059,9 +4065,10 @@ export function createChannelStore(
     },
     /** Reads again the metadata still unconfirmed, as after a continuous
      * resume that skips the roster read and so the discovery that would. In
-     * discovery's bounded batches, beside a discovery already reading it. A
-     * failed read owes a discovery (`rosterOwed`), which recovery and Retry
-     * dispatch within the relay's cooldown. */
+     * discovery's bounded batches, beside a discovery already reading it.
+     * One that does not finish, failed or cancelled, owes a discovery
+     * (`rosterOwed`), which recovery and Retry dispatch within the relay's
+     * cooldown. */
     async confirmMetadata() {
       if (
         disposed ||
@@ -4072,14 +4079,13 @@ export function createChannelStore(
         listBusy
       )
         return;
-      const ids = [...pendingMetadata].filter((id) =>
-        discovery?.authorized(id),
-      );
+      const ids = [...pendingMetadata].filter(authorized);
       if (!ids.length) return;
       const generation = epoch;
       const controller = new AbortController();
       controllers.add(controller);
       confirmingMetadata = true;
+      let finished = false;
       try {
         for (let offset = 0; offset < ids.length; offset += DISCOVERY_LIMIT) {
           const metadata = await transport.read(
@@ -4096,15 +4102,21 @@ export function createChannelStore(
           if (disposed || generation !== epoch) return;
           applyDiscovery(metadata);
         }
+        finished = true;
       } catch (error) {
-        if (!disposed && generation === epoch) {
-          metadataOwed = true;
-          if (error instanceof ReadError && error.retryAfterMs !== undefined)
-            listRetryAt = performance.now() + error.retryAfterMs;
-        }
+        if (
+          !disposed &&
+          generation === epoch &&
+          error instanceof ReadError &&
+          error.retryAfterMs !== undefined
+        )
+          listRetryAt = performance.now() + error.retryAfterMs;
       } finally {
         controllers.delete(controller);
         confirmingMetadata = false;
+        // A revocation elsewhere cancels this read too, but not the need.
+        if (!finished && !disposed && [...pendingMetadata].some(authorized))
+          metadataOwed = true;
       }
     },
     /** A disconnected stream invalidates a head's freshness lease, not its content.

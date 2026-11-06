@@ -1151,3 +1151,189 @@ it("keeps the agents-only mark another agents' read set on a channel whose queue
   expect(h.owner.session.unattended(OPEN, false)).toBe(false);
   first();
 });
+
+it("counts a public preview's metadata as only saved from a stream drop until discovery reads it again, though the viewer has not joined", async () => {
+  const h = harness();
+  const summary = () => h.owner.session.channels.get?.(OPEN);
+  const lookup = () =>
+    h.wire.pending.findIndex(
+      (entry) => !entry.signal?.aborted && asks(entry.filters, OPEN),
+    );
+  await h.discover();
+  const stop = h.owner.session.attend([OPEN]);
+  await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+  h.wire.pending
+    .splice(lookup(), 1)[0]
+    ?.respond(channel(OPEN, "public") as RelayEvent[]);
+  await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
+  expect(summary()?.metadataCached).toBeUndefined();
+  // It may turn private while the stream is down, with the viewer added, so
+  // the owner's catch-up can return its new messages before a read decides.
+  h.state({ status: "retrying", routes: [] });
+  expect(summary()?.metadataCached).toBe(true);
+  // Discovery's roster read never returns a channel the viewer has not
+  // joined, so its metadata step reads this one by itself.
+  await h.reconnect();
+  await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+  expect(summary()?.metadataCached).toBe(true);
+  h.wire.pending
+    .splice(lookup(), 1)[0]
+    ?.respond([channel(OPEN, "private", 11)[0]] as RelayEvent[]);
+  await vi.waitFor(() => expect(summary()?.visibility).not.toBe("public"));
+  stop();
+});
+
+it("owes a discovery when a revocation elsewhere cancels the read confirming metadata a drop left unconfirmed", async () => {
+  const h = harness();
+  const OTHER = "55555555-5555-4555-8555-555555555555";
+  const joined = (id: string, created_at = 10, members = [viewer.pubkey]) => [
+    signed(relay, {
+      kind: 39000,
+      content: "",
+      created_at: 10,
+      tags: [["d", id], ["name", id.slice(0, 4)], ["public"]],
+    }),
+    signed(relay, {
+      kind: 39002,
+      content: "",
+      created_at,
+      tags: [["d", id], ...members.map((member) => ["p", member])],
+    }),
+  ];
+  const summary = () => h.owner.session.channels.get?.(OPEN);
+  const live = (match: (entry: (typeof h.wire.pending)[number]) => boolean) =>
+    h.wire.pending.findIndex((entry) => !entry.signal?.aborted && match(entry));
+  const confirmation = (entry: (typeof h.wire.pending)[number]) =>
+    asks(entry.filters, OPEN);
+  const rosterRead = (entry: (typeof h.wire.pending)[number]) =>
+    !entry.filters.some((filter) => filter["#d"]);
+  h.connect();
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.wire.next().respond([...joined(OPEN), ...joined(OTHER)] as RelayEvent[]);
+  await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
+  h.state({ status: "retrying", routes: [] });
+  h.state({ status: "connected", routes: [] });
+  h.establish(undefined, { route: "membership", continuous: true });
+  await vi.waitFor(() => expect(live(confirmation)).not.toBe(-1));
+  // The viewer leaves the other channel, and that revocation cancels the
+  // confirmation in flight: OPEN's metadata stays unconfirmed.
+  h.receive([joined(OTHER, 11, [other.pubkey])[1]] as RelayEvent[]);
+  await vi.waitFor(() => expect(live(confirmation)).toBe(-1));
+  await flush();
+  expect(summary()?.metadataCached).toBe(true);
+  expect(live(rosterRead)).toBe(-1);
+  // Recovery's next tick reads it again through discovery.
+  h.recover();
+  await vi.waitFor(() => expect(live(rosterRead)).not.toBe(-1));
+  h.wire.pending
+    .splice(live(rosterRead), 1)[0]
+    ?.respond([joined(OPEN)[1]] as RelayEvent[]);
+  await vi.waitFor(() => expect(live(confirmation)).not.toBe(-1));
+  h.wire.pending
+    .splice(live(confirmation), 1)[0]
+    ?.respond([joined(OPEN)[0]] as RelayEvent[]);
+  await vi.waitFor(() => expect(summary()?.metadataCached).toBeUndefined());
+});
+
+it("keeps a channel the viewer looked up heard for the viewer when agents read it while newer metadata makes it private", async () => {
+  const h = harness();
+  await h.discover();
+  const lookup = () =>
+    h.wire.pending.findIndex(
+      (entry) => !entry.signal?.aborted && asks(entry.filters, OPEN),
+    );
+  const release = h.owner.session.channels.refer?.(OPEN);
+  await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+  h.wire.pending
+    .splice(lookup(), 1)[0]
+    ?.respond(channel(OPEN, "public") as RelayEvent[]);
+  await vi.waitFor(() =>
+    expect(h.owner.session.channels.get?.(OPEN)).toBeDefined(),
+  );
+  release?.();
+  // Newer signed metadata makes it private, so it is not readable now.
+  h.receive([channel(OPEN, "private", 11)[0]] as RelayEvent[]);
+  await vi.waitFor(() =>
+    expect(h.owner.session.channels.get?.(OPEN)?.visibility).not.toBe("public"),
+  );
+  // Agents attend it while it is private; it turns public again.
+  const stop = h.owner.session.attend([OPEN]);
+  await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+  h.wire.pending
+    .splice(lookup(), 1)[0]
+    ?.respond(channel(OPEN, "public", 12) as RelayEvent[]);
+  await vi.waitFor(() =>
+    expect(h.owner.session.channels.get?.(OPEN)?.visibility).toBe("public"),
+  );
+  // The viewer found it first, so it is not news only to agents.
+  expect(h.owner.session.unattended(OPEN, false)).toBe(true);
+  stop();
+});
+
+it("keeps a suspended preview the viewer looked up heard for the viewer when a read of every channel resolves it", async () => {
+  const h = harness();
+  await h.discover();
+  const lookup = () =>
+    h.wire.pending.findIndex(
+      (entry) => !entry.signal?.aborted && asks(entry.filters, OPEN),
+    );
+  const release = h.owner.session.channels.refer?.(OPEN);
+  await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+  h.wire.pending
+    .splice(lookup(), 1)[0]
+    ?.respond(channel(OPEN, "public") as RelayEvent[]);
+  await vi.waitFor(() =>
+    expect(h.owner.session.channels.get?.(OPEN)).toBeDefined(),
+  );
+  release?.();
+  const stop = h.owner.session.attend([OPEN]);
+  await vi.waitFor(() =>
+    expect(h.update.mock.lastCall?.[0] ?? []).toContain(OPEN),
+  );
+  // The relay closes it; the recheck is left in flight.
+  h.state({
+    status: "connected",
+    routes: [
+      {
+        id: "attended",
+        channelId: OPEN,
+        status: "error",
+        replay: "unknown",
+        error: "restricted: channel access revoked",
+      },
+    ],
+  });
+  await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+  expect(h.owner.session.channels.get?.(OPEN)).toBeUndefined();
+  // An agents' read of every channel, of more than chat, finds it suspended.
+  const reading = h.owner.session.read(
+    [{ kinds: [9, 7], since: 11, until: 20, limit: 16 }],
+    { fresh: true, resolveChannels: true },
+  );
+  const chat = () =>
+    h.wire.pending.findIndex(
+      (entry) =>
+        !entry.signal?.aborted &&
+        entry.filters.some((filter) => filter.kinds?.includes(9)),
+    );
+  await vi.waitFor(() => expect(chat()).not.toBe(-1));
+  h.wire.pending.splice(chat(), 1)[0]?.respond([
+    signed(other, {
+      kind: 9,
+      content: "message",
+      created_at: 15,
+      tags: [["h", OPEN]],
+    }),
+  ] as RelayEvent[]);
+  await flush();
+  // Every lookup finds it public again.
+  while (lookup() !== -1)
+    h.wire.pending
+      .splice(lookup(), 1)[0]
+      ?.respond(channel(OPEN, "public") as RelayEvent[]);
+  await reading;
+  await flush();
+  expect(h.owner.session.channels.get?.(OPEN)).toBeDefined();
+  expect(h.owner.session.unattended(OPEN, false)).toBe(true);
+  stop();
+});

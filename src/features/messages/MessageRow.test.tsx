@@ -35,6 +35,7 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { MessageRow } from "./MessageRow";
 import { setClockPreference } from "../../shared/clock-preference";
 import { formatFullTimestamp } from "../../shared/datetime";
+import { MAX_MARKDOWN_LENGTH } from "../relay/message-content";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -4563,11 +4564,7 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
   const render = (content: string, edited: boolean) =>
     renderDom(
       <MessageRow
-        row={{
-          ...row,
-          content,
-          ...(edited ? { edited: true as const, editedAt: 2 } : {}),
-        }}
+        row={{ ...row, content, ...(edited ? { edited: true as const } : {}) }}
         profile={undefined}
         media={() => undefined}
         onOpenLink={() => false}
@@ -4667,7 +4664,13 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
 
     renderDom(
       <MessageRow
-        row={{ ...row, content: "Done", edited: true, audience: "agents" }}
+        row={{
+          ...row,
+          content: "Done",
+          edited: true,
+          editedAt: 2,
+          audience: "agents",
+        }}
         profile={{ name: "Morgarita" }}
         media={() => undefined}
         onOpenLink={() => false}
@@ -4678,10 +4681,12 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     const line = screen.getByRole("button", {
       name: "Morgarita: Done (edited)",
     });
-    expect(within(line).getByText("(edited)")).toBeInTheDocument();
+    // The line is one button, so its marker stays out of the Tab order.
+    expect(within(line).getByText("(edited)")).not.toHaveAttribute("tabindex");
     fireEvent.click(line);
     expect(screen.getAllByText("(edited)")).toHaveLength(1);
     expect(line).not.toContainElement(screen.getByText("(edited)"));
+    expect(screen.getByText("(edited)")).toHaveAttribute("tabindex", "0");
     cleanup();
 
     const none: never[] = [];
@@ -4728,12 +4733,16 @@ it("dates the edit in the edited marker's hint on hover and keyboard focus", asy
   const user = userEvent.setup();
   const editedAt = new Date(2026, 9, 2, 15, 5, 9).getTime() / 1000;
   const file = { url: "https://example.com/notes.txt", kind: "file" as const };
+  const zone = process.env.TZ;
   try {
-    // After the body's last line, and after a captionless row's attachments.
+    // After the body's last line, after a body too long for Markdown, and
+    // after a captionless row's attachments.
     for (const patch of [
       { content: "Hi" },
+      { content: "x".repeat(MAX_MARKDOWN_LENGTH + 1) },
       { content: "", attachments: [file] },
     ]) {
+      process.env.TZ = "America/Los_Angeles";
       renderMessage({
         row: { ...row, ...patch, edited: true, editedAt },
         media: (url) => url,
@@ -4747,31 +4756,24 @@ it("dates the edit in the edited marker's hint on hover and keyboard focus", asy
       expect(marker).toHaveAttribute("tabindex", "0");
       act(() => marker.focus());
       await waitFor(() => expect(marker).toHaveAccessibleDescription(hint));
-      // An open hint follows the clock settings, as the byline's does.
+      // An open hint follows the time zone and the clock settings, as the
+      // byline's does; the zone is checked when the window regains focus.
+      process.env.TZ = "Asia/Tokyo";
+      act(() => window.dispatchEvent(new Event("focus")));
+      const zoned = formatFullTimestamp(editedAt);
+      expect(zoned).not.toBe(hint);
+      expect(screen.getByRole("tooltip")).toHaveTextContent(zoned);
       act(() => setClockPreference({ hourCycle: "h23" }));
-      expect(formatFullTimestamp(editedAt)).not.toBe(hint);
+      expect(formatFullTimestamp(editedAt)).not.toBe(zoned);
       expect(screen.getByRole("tooltip")).toHaveTextContent(
         formatFullTimestamp(editedAt),
       );
       setClockPreference({ hourCycle: "system" });
       cleanup();
     }
-    // A collapsed agents line is one button; its marker stays out of the Tab order.
-    renderMessage({
-      row: {
-        ...row,
-        content: "Done",
-        edited: true,
-        editedAt,
-        audience: "agents",
-      },
-      profile: { name: "Morgarita" },
-    });
-    const line = screen.getByRole("button", {
-      name: "Morgarita: Done (edited)",
-    });
-    expect(within(line).getByText("(edited)")).not.toHaveAttribute("tabindex");
   } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
     setClockPreference({ hourCycle: "system" });
     cleanup();
   }

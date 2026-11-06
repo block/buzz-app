@@ -32,6 +32,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { formatFullTimestamp } from "../../shared/datetime";
+import { useLocalDay } from "../../shared/use-local-day";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
@@ -553,20 +554,21 @@ export function MessageMarkdown({
 
 /** Metadata, not prose: selection copy omits it like the byline's clock. */
 export function EditedMarker({ at }: { at?: number | undefined }) {
-  const className = `${styles.edited} select-none`;
-  if (at === undefined) return <span className={className}> (edited)</span>;
-  return (
-    <Tooltip content={formatFullTimestamp(at)} disableHoverablePopup>
-      <span
-        className={className}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need access to the edit time in the tooltip.
-        tabIndex={0}
-      >
-        {" "}
-        (edited)
-      </span>
-    </Tooltip>
-  );
+  useLocalDay();
+  const text =
+    at === undefined ? (
+      "(edited)"
+    ) : (
+      <Tooltip content={formatFullTimestamp(at)} disableHoverablePopup>
+        <span
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need access to the edit time in the tooltip.
+          tabIndex={0}
+        >
+          (edited)
+        </span>
+      </Tooltip>
+    );
+  return <span className={`${styles.edited} select-none`}> {text}</span>;
 }
 
 function PreparedMessageMarkdown({

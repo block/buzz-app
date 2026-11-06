@@ -503,6 +503,148 @@ it("prefills an invite but requires explicit discovery and claim before membersh
   expect(communities.joined).not.toHaveBeenCalled();
 });
 
+/** A signed-in account whose server hosts relay.example (`federatedFixture`). */
+async function signedInAccount() {
+  const h = federatedFixture();
+  await h.service.signIn();
+  return h.service;
+}
+
+it("a signed-in account's consent skips the access step: an invite claim confirms the holder's age, with no boxes to tick", async () => {
+  api.inspectProfile
+    .mockRejectedValueOnce(new Error("Relay read failed (403)"))
+    .mockResolvedValueOnce({
+      exists: false,
+      existing: {},
+      profile: { name: "", picture: "" },
+    });
+  const user = userEvent.setup();
+  const accepted: unknown[] = [];
+  const requests = vi.fn(async (url: string, init?: RequestInit) => {
+    const route = String(url).split("/").at(-1);
+    if (route === "register") return Response.json({ id: "x" });
+    if (route === "info")
+      return Response.json({
+        name: "Fixture",
+        membershipRequired: true,
+        policy: {
+          version: "v1",
+          terms_markdown: "Terms",
+          age_attestation_required: true,
+        },
+      });
+    if (route === "accept-policy") {
+      accepted.push(JSON.parse(String(init?.body)));
+      return Response.json({ receipt: "receipt-1" });
+    }
+    if (route === "claim") return Response.json({ status: "joined" });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  vi.stubGlobal("fetch", requests);
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    }),
+  } as unknown as Communities;
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={await signedInAccount()}
+      mode="join"
+      close={() => {}}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Display name")).toBeVisible();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.queryByLabelText("Invite code")).toBeNull();
+  expect(accepted).toEqual([
+    { code: "v2.abc", policy_version: "v1", age_confirmed: true },
+  ]);
+});
+
+it("a signed-in account's refused claim lands on the access step, where another code can be entered", async () => {
+  const user = userEvent.setup();
+  const requests = vi.fn(async (url: string) => {
+    const route = String(url).split("/").at(-1);
+    if (route === "register") return Response.json({ id: "x" });
+    if (route === "info")
+      return Response.json({ name: "Fixture", membershipRequired: true });
+    if (route === "claim")
+      return Response.json({ error: "invite_expired" }, { status: 403 });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  vi.stubGlobal("fetch", requests);
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    }),
+  } as unknown as Communities;
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={await signedInAccount()}
+      mode="join"
+      close={() => {}}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This invite code has expired — ask for a new one.",
+  );
+  expect(screen.getByLabelText("Invite code")).toHaveValue("v2.abc");
+});
+
+it("without a signed-in account a relay's policy is still asked on the access step", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({
+          name: "Fixture",
+          policy: {
+            version: "v1",
+            terms_markdown: "Terms",
+            age_attestation_required: true,
+          },
+        });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+    }),
+  } as unknown as Communities;
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={federatedFixture().service}
+      mode="join"
+      close={() => {}}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(
+    await screen.findByRole("checkbox", {
+      name: "I confirm that I am at least 18 years old.",
+    }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+});
+
 it("renews policy acceptance after an expired receipt instead of replaying it", async () => {
   const user = userEvent.setup();
   let version = "v1";

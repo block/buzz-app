@@ -45,7 +45,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   steps. Before joining, **Back** returns to the entered link; after admission,
   profile setup continues forward. An invite-code field appears for
   a supplied invite or denied access on a community that enforces membership;
-  community policy links open separately.
+  community policy links open separately. When you are signed in to Builderlab
+  and the community is one it hosts, Buzz skips the age and terms boxes,
+  because your account setup already covered them, and **Continue** joins
+  straight away.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
   skips it, and pressing a key finishes it immediately.
   The key-import field masks your key. Use the eye inside the field to reveal

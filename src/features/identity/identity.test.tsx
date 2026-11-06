@@ -4392,6 +4392,49 @@ it("an invite link pasted on the landing is looked up at its origin, kept throug
   identity.dispose();
 });
 
+it("a signed-in account's consent covers a community its server hosts: an invite link joins without Join Community, confirming the account holder's age", async () => {
+  const member = keypair();
+  const relay = nativeRelay(member);
+  relay.admitted = false;
+  relay.policy = invitePolicy;
+  const identity = createIdentity();
+  const communities = communitiesFor(identity);
+  const fi = federatedFixture();
+  const authority = fi.service.snapshot().authority;
+  if (!authority) throw new Error("The fixture has an authority");
+  fi.publish({
+    status: "signed-in",
+    authority: { ...authority, communityHosts: ["relay.example.com:8443"] },
+  });
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={communities}
+      invites={invites}
+      federatedIdentity={fi.service}
+      account={unlinked}
+      connect={vi.fn().mockResolvedValue(credential)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await screen.findByRole("button", { name: SIGN_IN });
+  await user.type(urlField(), inviteLink);
+  await user.keyboard("{Enter}");
+  await screen.findByRole("heading", { name: "Connect to your community" });
+  await user.click(connectButton());
+  expect(
+    await screen.findByRole("heading", { name: "Set up your profile" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Join Community" })).toBeNull();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(relay.calls).toEqual(
+    expect.arrayContaining(claimCalls(relay, member)),
+  );
+  identity.dispose();
+});
+
 it("an invite link pasted on Connect to a community claims its code with no policy to accept, then joins as before", async () => {
   const member = keypair();
   const relay = nativeRelay(member);

@@ -20,8 +20,14 @@ import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { UnreadBadge } from "./UnreadBadge";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
+import {
+  attachmentDraft,
+  clearAttachmentDraft,
+} from "../../features/messages/attachment-draft";
+import { clearView, writeView } from "../../shared/view-state";
 
 afterEach(cleanup);
+afterEach(() => localStorage.clear());
 
 const noTyping = Object.freeze([]);
 
@@ -533,6 +539,84 @@ it("marks a temporary channel with its lifetime and yields the slot to working a
   expect(document.querySelector("[data-channel-temporary]")).toBeNull();
   view.rerender(<ChannelSidebarItem {...itemProps(state.session, false)} />);
   expect(document.querySelector("[data-channel-temporary]")).toBeNull();
+});
+
+const draftScope = `https://demo.invalid:${"f".repeat(64)}`;
+const saveDraft = (key: string, text: string) =>
+  act(() => {
+    writeView(draftScope, key, { text, recipients: [] });
+  });
+
+it("marks a saved channel draft with a pencil, except on the open conversation", () => {
+  const session = { ...owner().session, scope: draftScope } as RelaySession;
+  const props = itemProps(session, false);
+  const view = render(<ChannelSidebarItem {...props} />);
+  const pencil = () => screen.queryByRole("img", { name: "Draft" });
+  // Blank text and thread replies leave the row unmarked.
+  saveDraft("draft:alpha", " \n");
+  saveDraft(`draft:alpha:thread:${"b".repeat(64)}`, "Unsent reply");
+  expect(pencil()).toBeNull();
+  saveDraft("draft:alpha", "Unsent");
+  expect(pencil()?.closest("button")).toHaveAttribute(
+    "data-channel-id",
+    "alpha",
+  );
+  expect(
+    screen.getByRole("button", { name: /^Alpha\s*Draft$/ }),
+  ).toHaveAttribute("data-channel-id", "alpha");
+  view.rerender(<ChannelSidebarItem {...props} selected="alpha" />);
+  expect(pencil()).toBeNull();
+  // Like the temporary marker, it yields the trailing slot to working agents.
+  view.rerender(<ChannelSidebarItem {...props} working />);
+  expect(document.querySelector("[data-channel-working]")).not.toBeNull();
+  expect(pencil()).toBeNull();
+  view.rerender(<ChannelSidebarItem {...props} />);
+  expect(pencil()).toBeInTheDocument();
+  act(() => clearView(draftScope, "draft:alpha"));
+  expect(pencil()).toBeNull();
+});
+
+it("re-renders a row only when its draft starts or clears, not while typing", () => {
+  const session = { ...owner().session, scope: draftScope } as RelaySession;
+  // Rendered by the row core, so it counts row renders.
+  const frame = vi.fn(({ children }: { children: ReactNode }) => children);
+  const props = {
+    ...itemProps(session, false),
+    sectionKey: "group:work",
+    selectFrame: frame,
+  };
+  const view = render(<ChannelSidebarItem {...props} selected="alpha" />);
+  let renders = frame.mock.calls.length;
+  // Typing in the open conversation saves its draft on every key.
+  saveDraft("draft:alpha", "U");
+  saveDraft("draft:alpha", "Un");
+  expect(frame).toHaveBeenCalledTimes(renders);
+  view.rerender(<ChannelSidebarItem {...props} />);
+  expect(screen.getByRole("img", { name: "Draft" })).toBeInTheDocument();
+  renders = frame.mock.calls.length;
+  // Typing elsewhere, or more of this draft, leaves the row alone.
+  saveDraft("draft:beta", "Elsewhere");
+  saveDraft("draft:alpha", "Unsent");
+  expect(frame).toHaveBeenCalledTimes(renders);
+  saveDraft("draft:alpha", "");
+  expect(frame).toHaveBeenCalledTimes(renders + 1);
+  expect(screen.queryByRole("img", { name: "Draft" })).toBeNull();
+});
+
+it("marks files attached in this window as a draft", () => {
+  const session = {
+    ...owner().session,
+    scope: draftScope,
+    attachments: { upload: vi.fn(() => new Promise(() => {})) },
+  } as unknown as RelaySession;
+  render(<ChannelSidebarItem {...itemProps(session, false)} />);
+  const key = `${draftScope}:draft:alpha`;
+  act(() => {
+    attachmentDraft(session, key, "alpha").add([new File(["a"], "a.txt")]);
+  });
+  expect(screen.getByRole("img", { name: "Draft" })).toBeInTheDocument();
+  act(() => clearAttachmentDraft(session, key));
+  expect(screen.queryByRole("img", { name: "Draft" })).toBeNull();
 });
 
 it("re-renders a working row for its agents' profiles, not every profile", () => {

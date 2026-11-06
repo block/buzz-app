@@ -19,7 +19,16 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { ClockIcon } from "../../shared/design-system/icons/index";
+import {
+  attachmentDraftCount,
+  subscribeAttachmentDraftCounts,
+} from "../../features/messages/attachment-draft";
+import {
+  hasDraftContent,
+  mentionDraft,
+} from "../../features/messages/mention-draft";
+import { readView, subscribeView } from "../../shared/view-state";
+import { ClockIcon, PencilSimpleIcon } from "../../shared/design-system/icons";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
@@ -134,6 +143,33 @@ function useOrdinaryUnread(
   return useSyncExternalStore(subscribe, get, get);
 }
 
+/** Unsent text or files wait in the conversation's own composer. Thread drafts
+ * don't count, and the open conversation already shows its draft. */
+function useSavedDraft(session: RelaySession, id: string, open: boolean) {
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const stopViews = subscribeView(session.scope, listener);
+      const stopFiles = subscribeAttachmentDraftCounts(session, listener);
+      return () => {
+        stopViews();
+        stopFiles();
+      };
+    },
+    [session],
+  );
+  const get = () => {
+    const key = `draft:${id}`;
+    return (
+      !open &&
+      hasDraftContent(
+        mentionDraft(readView<unknown>(session.scope, key, "")),
+        attachmentDraftCount(session, `${session.scope}:${key}`),
+      )
+    );
+  };
+  return useSyncExternalStore(subscribe, get, get);
+}
+
 function ChannelSidebarItemCore({
   rowContributions,
   onHiddenChange,
@@ -174,6 +210,7 @@ function ChannelSidebarItemCore({
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  const draft = useSavedDraft(session, channel.id, selected === channel.id);
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
@@ -253,6 +290,16 @@ function ChannelSidebarItemCore({
           </span>
           {channel.ttlSeconds !== undefined && agents.length === 0 && (
             <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
+          )}
+          {draft && agents.length === 0 && (
+            <span
+              className={styles.draftMarker}
+              data-channel-draft=""
+              role="img"
+              aria-label="Draft"
+            >
+              <PencilSimpleIcon size={14} />
+            </span>
           )}
         </>
       }

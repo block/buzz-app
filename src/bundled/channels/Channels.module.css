@@ -1025,7 +1025,8 @@ html[data-keyboard-navigation]
   height: 100%;
 }
 
-.temporaryMarker {
+.temporaryMarker,
+.draftMarker {
   display: inline-flex;
   flex-shrink: 0;
   color: var(--text-subtle);

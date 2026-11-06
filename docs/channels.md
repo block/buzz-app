@@ -1613,6 +1613,13 @@ session, scope or destination changes. Callers may retarget ordinary props witho
 supplying React keys; old thread evidence, scroll state or drafts cannot pair with
 a new destination. Persistent draft keys remain `draft:<channelId>` and
 `draft:<channelId>:thread:<resolvedRootId>` inside stable scope, not connection generation.
+Team channel and DM sidebar rows (`ChannelSidebarItem`) read only the channel
+key, with the composer's `hasDraftContent` test and this window's attached
+files, and show a pencil labelled Draft after their unread and temporary
+markers. Like the temporary marker, it yields the trailing slot to the working
+badge while agents work. Each row subscribes through `subscribeView` and
+re-renders only when that answer changes. The open conversation, thread drafts
+and Solo rows show no pencil.
 `MessageRow` receives folded data, profiles/media and optional reply/retry callbacks.
 
 This is shared source composition, not a new registry or versioned external UI SDK.

@@ -12926,6 +12926,55 @@ it("changes instructions in place and discards a dismissed change draft", async 
   expect(native.setType).not.toHaveBeenCalled();
 });
 
+it("reads synced instructions it can't use as unavailable, not empty", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  const f = await setup({
+    binding: () => ({ instructions: { mode: "synced", subject } }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle?.readAgents) throw new Error("Missing read handle");
+  const store = internals(f.service).configStore;
+  const head = (content: string, op = "create", problem?: string) => {
+    const event = finalizeEvent(
+      { kind: 45010, created_at: 1, content, tags: [["op", op]] },
+      generateSecretKey(),
+    ) as RelayEvent;
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event,
+      ...(problem && { problem }),
+    });
+    return event;
+  };
+  const read = () => handle.readAgents?.(bot);
+  // Unavailable: nothing confirmed yet.
+  expect(await read()).toEqual({
+    pubkey: bot,
+    name: "Echo",
+    type: "example/echo",
+    unavailable: expect.any(String),
+  });
+  head(JSON.stringify({ version: 1 }), "create", "No instructions text");
+  expect(await read()).toMatchObject({ unavailable: expect.any(String) });
+  expect(await read()).not.toHaveProperty("revision");
+  head("", "delete");
+  expect(await read()).toMatchObject({ unavailable: expect.any(String) });
+  expect(await read()).not.toHaveProperty("revision");
+  // Empty instructions that are valid stay a synced success.
+  const empty = head(JSON.stringify({ version: 1, text: "" }));
+  expect(await read()).toMatchObject({ synced: true, revision: empty.id });
+  expect(await read()).not.toHaveProperty("unavailable");
+  await f.ctx.fiber.dispose();
+});
+
 it("reads the owner's agents and teams, and saves only a reviewed team draft", async () => {
   const { service, plugin } = await setup();
   plugin.agents.register(cloud().type);
@@ -12975,6 +13024,9 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
     readInstructions,
   });
   try {
+    // A named local agent reads no remote one.
+    await handle.readAgents("Child");
+    expect(readInstructions).not.toHaveBeenCalled();
     expect(await handle.readAgents("Sky")).toEqual({
       pubkey: hostedKey,
       name: "Sky",
@@ -12988,7 +13040,7 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
     if (before) internals.communityConfigs.set(origin, before);
     else internals.communityConfigs.delete(origin);
   }
-  expect(handle.readTeams(team.id)).toEqual({
+  expect(await handle.readTeams(team.id)).toEqual({
     id: team.id,
     name: "Crew",
     instructions: "Ship.",
@@ -13013,12 +13065,14 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
       instructions: "Ship carefully.",
     }),
   ]);
-  expect(handle.readTeams("Crew")).toMatchObject({ instructions: "Ship." });
+  expect(await handle.readTeams("Crew")).toMatchObject({
+    instructions: "Ship.",
+  });
   await service.approveTeamUpdate(requestId, {
     name: "Crew",
     instructions: "Ship with care.",
   });
-  expect(handle.readTeams("Crew")).toMatchObject({
+  expect(await handle.readTeams("Crew")).toMatchObject({
     instructions: "Ship with care.",
     members: [{ pubkey: bot }, { pubkey: sibling }],
   });

@@ -136,16 +136,11 @@ export function historyTarget(
     },
   };
 }
-export const agentHistoryTarget = (
-  target: PageTarget,
-  agent: string,
-  selected?: HistorySelection,
-) => historyTarget(target, { agent }, selected);
 
 /** The version a route opens, with `route` its agent or team route. */
 export function historyRoute(
   value: JsonValue | undefined,
-  route: (value: JsonValue | undefined) => string | undefined = agentRoute,
+  route: (value: JsonValue | undefined) => string | undefined,
 ) {
   return route(value) &&
     value &&
@@ -154,12 +149,10 @@ export function historyRoute(
     ? historySelection((value as Record<string, JsonValue>).revision)
     : undefined;
 }
-export const agentHistoryRoute = (value: JsonValue | undefined) =>
-  historyRoute(value);
 
 export function historyActive(
   value: JsonValue | undefined,
-  route: (value: JsonValue | undefined) => string | undefined = agentRoute,
+  route: (value: JsonValue | undefined) => string | undefined,
 ) {
   return (
     !!route(value) &&
@@ -168,5 +161,3 @@ export function historyActive(
     "revision" in value
   );
 }
-export const agentHistoryActive = (value: JsonValue | undefined) =>
-  historyActive(value);

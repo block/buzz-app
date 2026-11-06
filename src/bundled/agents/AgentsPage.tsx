@@ -1,10 +1,7 @@
 import { visibleTeams } from "../../features/agents/visible-teams";
 import { profileKey } from "../../features/profiles/target";
-import type { OpenTarget } from "../../features/navigation/targets";
+import type { JsonValue } from "../../features/navigation/targets";
 import {
-  agentHistoryActive,
-  agentHistoryRoute,
-  agentHistoryTarget,
   historyActive,
   historyRoute,
   historyTarget,
@@ -396,10 +393,6 @@ export function AgentsPage({
     routed && navigation.target.kind === "page"
       ? agentRoute(navigation.target.route?.params)
       : undefined;
-  const historyParams =
-    navigation?.target.kind === "page" && routedAgent === selected?.pubkey
-      ? navigation.target.route?.params
-      : undefined;
   const routedEntry = navigation?.entryId;
   // Opened for one of your teams, such as from a version link.
   const routedTeam =
@@ -409,18 +402,30 @@ export function AgentsPage({
   // An editor with unsaved edits or a Save running, which Back leaves open
   // as it leaves an agent's panel.
   const teamBusy = useRef(false);
+  const onTeamBusy = useCallback((busy: boolean) => {
+    teamBusy.current = busy;
+  }, []);
+  // Read as a team's visit arrives, not a reason to apply it again.
+  const leave = useRef({ browse, editingTeam });
+  leave.current = { browse, editingTeam };
   useEffect(() => {
     if (!routedEntry) return;
+    const { browse, editingTeam } = leave.current;
     if (!routedTeam) {
       // Back past a team's visit closes its editor; a new team has none.
       if (!teamBusy.current)
         setEditingTeam((open) => (open === "new" ? open : undefined));
       return;
     }
-    setSelectedKey(undefined);
-    setSharedSelection(undefined);
-    setTab("teams");
-    setEditingTeam(routedTeam);
+    // Another team's visit leaves a busy editor open too; its own versions
+    // still open in it.
+    if (teamBusy.current && editingTeam !== routedTeam) return;
+    // An agent's unsaved edits are asked about first, as choosing another is.
+    browse(undefined, () => {
+      setSharedSelection(undefined);
+      setTab("teams");
+      setEditingTeam(routedTeam);
+    });
   }, [routedTeam, routedEntry]);
   // Opening a team is a visit Back and Forward move between, and closing its
   // editor ends the visit.
@@ -444,9 +449,10 @@ export function AgentsPage({
       });
       return;
     }
-    // An editor Back left open closes here, and its visits end too.
-    const closing = routedTeam ?? editingTeam;
-    if (!routedTeam) setEditingTeam(undefined);
+    // An editor Back left open closes here, and its visits end too; the
+    // team Back reached, if another, opens in its place.
+    const closing = editingTeam ?? routedTeam;
+    if (routedTeam !== closing) setEditingTeam(routedTeam);
     if (!closing || closing === "new") return;
     const pageKey = targetKey(page);
     navigator.dismiss(
@@ -653,6 +659,31 @@ export function AgentsPage({
     navigator &&
     ((section: string) =>
       void navigator.open({ version: 1, kind: "settings", section }));
+  // The version history of the agent or team shown, read from this visit's
+  // route only when it is that subject's.
+  const presentationFor = (
+    subject: Readonly<{ agent: string } | { team: string }>,
+    route: (value: JsonValue | undefined) => string | undefined,
+  ) => {
+    if (
+      !navigation ||
+      !navigator ||
+      navigation.signal.aborted ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    const page = navigation.target;
+    if (page.kind !== "page") return;
+    const id = "agent" in subject ? subject.agent : subject.team;
+    const params =
+      route(page.route?.params) === id ? page.route?.params : undefined;
+    return historyPresentation(
+      navigator,
+      historyRoute(params, route),
+      (selection) => historyTarget(page, subject, selection),
+      historyActive(params, route),
+    );
+  };
   const panel = selected ? (
     selected.unfinished || selected.place === "elsewhere" ? (
       <AgentPeek
@@ -667,25 +698,10 @@ export function AgentsPage({
       />
     ) : (
       <AgentDetails
-        historyPresentation={
-          navigation &&
-          navigator &&
-          !navigation.signal.aborted &&
-          navigator.snapshot().entry.id === navigation.entryId &&
-          navigation.target.kind === "page"
-            ? historyPresentation(
-                navigator,
-                agentHistoryRoute(historyParams),
-                (selection) =>
-                  agentHistoryTarget(
-                    navigation.target as Extract<OpenTarget, { kind: "page" }>,
-                    selected.pubkey,
-                    selection,
-                  ),
-                agentHistoryActive(historyParams),
-              )
-            : undefined
-        }
+        historyPresentation={presentationFor(
+          { agent: selected.pubkey },
+          agentRoute,
+        )}
         communities={communities}
         messageAction={(variant) => (
           <AgentMessageButton
@@ -766,39 +782,10 @@ export function AgentsPage({
               removing={removing}
               onEdit={editTeam}
               onRemove={removeTeam}
-              onBusy={(busy) => {
-                teamBusy.current = busy;
-              }}
+              onBusy={onTeamBusy}
               historyPresentation={
-                editing &&
-                navigation &&
-                navigator &&
-                !navigation.signal.aborted &&
-                navigator.snapshot().entry.id === navigation.entryId &&
-                navigation.target.kind === "page"
-                  ? historyPresentation(
-                      navigator,
-                      routedTeam === editing
-                        ? historyRoute(
-                            navigation.target.route?.params,
-                            teamRoute,
-                          )
-                        : undefined,
-                      (selection) =>
-                        historyTarget(
-                          navigation.target as Extract<
-                            OpenTarget,
-                            { kind: "page" }
-                          >,
-                          { team: editing },
-                          selection,
-                        ),
-                      routedTeam === editing &&
-                        historyActive(
-                          navigation.target.route?.params,
-                          teamRoute,
-                        ),
-                    )
+                editing && editing !== "new"
+                  ? presentationFor({ team: editing }, teamRoute)
                   : undefined
               }
               newTeam={!toolbarAction && newTeamMenu}

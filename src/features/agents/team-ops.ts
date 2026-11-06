@@ -238,10 +238,8 @@ export function teamOps(deps: TeamDeps) {
     change: (edit: TeamEdit) => exclusive(edit.id, () => change(edit)),
     /** Saves a History revert or restore of the team's name and
      * instructions, on the head its `prev` names. */
-    revise: (write: WriteSide, template: Template, prev: string) =>
-      exclusive(write.expected.team ?? "", () =>
-        deps.writer.revise(write, template, prev),
-      ),
+    revise: (id: string, write: WriteSide, template: Template, prev: string) =>
+      exclusive(id, () => deps.writer.revise(write, template, prev)),
     /** Deletes the team by archiving its config channel, once, then reads
      * the archive back (NIP-AP "Deleting a team"). */
     archive: (id: string) =>

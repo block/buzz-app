@@ -1,8 +1,6 @@
 import { expect, it } from "vitest";
 import {
   agentCardRoute,
-  agentHistoryRoute,
-  agentHistoryTarget,
   agentProviderRoute,
   agentProviderTarget,
   agentRoute,
@@ -57,11 +55,11 @@ it("admits an agent of yours to open, by its key", () => {
 it("validates a version locator without treating it as authority or accepting extra route fields", () => {
   const base = { ...agentTarget("a".repeat(64)), scope: null };
   const selected = { side: "settings", id: "b".repeat(64) } as const;
-  const opened = agentHistoryTarget(base, "a".repeat(64), selected);
+  const opened = historyTarget(base, { agent: "a".repeat(64) }, selected);
   expect(agentRoute(opened.route?.params)).toBe("a".repeat(64));
-  expect(agentHistoryRoute(opened.route?.params)).toEqual(selected);
-  expect(agentHistoryTarget(opened, "a".repeat(64))).toEqual(
-    agentHistoryTarget(base, "a".repeat(64)),
+  expect(historyRoute(opened.route?.params, agentRoute)).toEqual(selected);
+  expect(historyTarget(opened, { agent: "a".repeat(64) })).toEqual(
+    historyTarget(base, { agent: "a".repeat(64) }),
   );
   expect(availableAgentProviderRoute(opened.route?.params ?? null)).toBe(true);
   for (const revision of [

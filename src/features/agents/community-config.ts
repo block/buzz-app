@@ -263,21 +263,26 @@ export function agentConfigs(
         );
         if (disposed) return;
         if (found) {
-          // History's side for each team's selected channel, made again
-          // when it selects another: its `d` is async.
-          for (const team of found)
-            if (
-              !team.archived &&
-              !team.unproven &&
-              teamSides.get(team.id)?.expected.channel !== team.channel
-            )
-              teamSides.set(
-                team.id,
-                await ops.side(team.id, team.channel, team.id),
-              );
-          if (disposed) return;
           input.teams.set(owner, community, found);
           input.changed();
+          // Then History's side for each team's selected channel, made again
+          // when it selects another: its `d` is async.
+          const stale = found.filter(
+            (team) =>
+              !team.archived &&
+              !team.unproven &&
+              teamSides.get(team.id)?.expected.channel !== team.channel,
+          );
+          await Promise.all(
+            stale.map(async (team) => {
+              // No title: History only revises, and a revert's template
+              // carries its own; a discovered team has no name here.
+              const side = await ops.side(team.id, team.channel, "");
+              if (!disposed) teamSides.set(team.id, side);
+            }),
+          );
+          if (disposed) return;
+          if (stale.length) input.historyChanged?.();
         }
       } while (again);
     })().finally(() => {
@@ -609,7 +614,7 @@ export function agentConfigs(
       const prev = template.tags.find(([name]) => name === "prev")?.[1];
       if (!local || !prev) throw new Error("This team isn't synced here");
       try {
-        return await ops.revise(local, template, prev);
+        return await ops.revise(id, local, template, prev);
       } finally {
         await refreshTeams();
       }

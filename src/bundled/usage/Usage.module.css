@@ -255,3 +255,66 @@
 .figures tbody th {
   font-weight: inherit;
 }
+
+/* Today's spend beside Send. */
+.besideSend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-end: var(--space-6);
+}
+.spendTrigger {
+  font-variant-numeric: tabular-nums;
+}
+.spendHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-control-inset) 0;
+}
+.spendTotal {
+  margin: 0;
+  padding: 0 var(--space-control-inset) var(--space-2);
+  color: var(--text-standard);
+  font-size: var(--text-title);
+  line-height: var(--text-title--line-height);
+  letter-spacing: var(--text-title--letter-spacing);
+  font-variant-numeric: tabular-nums;
+}
+.spendNote {
+  margin: 0;
+  padding: 0 var(--space-control-inset) var(--space-2);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.spendRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* Every agent, in one list that scrolls inside the card past about five rows,
+   as the Working now card's does, so the card keeps its size and place. The
+   half row showing at the edge says there is more. */
+.spendList {
+  --radius-row: var(--floating-inner-radius);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--size-row) * 5.5);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+/* A row with nothing to open, lined up with the rows that open one. */
+.spendStatic {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--size-row);
+  padding-inline: var(--space-control-inset);
+}

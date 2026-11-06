@@ -134,12 +134,15 @@ export function createAgentOwnerEvidence(
     stopView = undefined;
     if (!pubkey) {
       view = null;
+      emit();
       return;
     }
     try {
       view = session.observe([{ kinds: [0], authors: [pubkey], limit: 1 }]);
     } catch {
+      // Capacity or a closed session: report the failure, don't stay loading.
       view = null;
+      emit();
       return;
     }
     stopView = view.subscribe(changed);

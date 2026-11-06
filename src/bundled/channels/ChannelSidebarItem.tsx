@@ -35,12 +35,13 @@ import { ContributionBoundary } from "../../features/conversation/ContributionBo
 import {
   sidebarRow,
   type RegisteredSidebarRows,
+  type SidebarRowHiddenChange,
 } from "../../features/channel-navigation/sidebar-rows-service";
 import { avatarMedia } from "../../shared/avatar-source";
 
 type ItemProps = {
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
@@ -368,7 +369,7 @@ function ContributedChannelRow({
   session: RelaySession;
   entries: readonly RegisteredSidebarRows[];
   children: ReactElement;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
 }) {
   const target = useMemo(
     () => ({ kind: "channel" as const, channelId: channel.id }),

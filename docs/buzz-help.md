@@ -281,8 +281,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
 - **Hide muted channels** is an optional bundled plugin, off by default; turn it
-  on in **Settings → Plugins**. It moves muted channels out of their sidebar
-  sections into a **Muted** section, where you can open them. Starred channels,
+  on in **Settings → Plugins**. Muted channels leave their sidebar sections;
+  each section's **⋯ → Filter** menu lists its hidden ones under **Muted**, and
+  search still finds them. Starred channels,
   DMs and the channel you have open stay put. A muted channel comes back to its
   section with a dot while it has an unread mention, reply in your thread,
   broadcast or manual unread mark, and leaves again once read.

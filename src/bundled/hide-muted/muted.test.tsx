@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import type { SidebarRow } from "../../features/channel-navigation/sidebar-rows-service";
 import type { RelayData } from "../../features/relay/service";
 import type { UnreadSnapshot } from "../../features/relay/unread";
-import { hideMutedRows, mutedRows } from "./muted";
+import { hideMutedRows } from "./muted";
 
 afterEach(cleanup);
 
@@ -177,42 +177,4 @@ it("keeps the host row mounted as mute and attention change", () => {
   view.rerender(open({ ...quiet, attentionCount: 1 }));
   expect(view.getByRole("button", { name: "host" })).toBe(button);
   expect(dot()).toBeNull();
-});
-
-it("lists hidden muted channels and follows attention, mutes and sessions", () => {
-  const first = fakeSession("one");
-  const r = fakeRelay(first.session);
-  const rows = mutedRows(r.relay);
-  const listener = vi.fn();
-  const stop = rows.subscribe(listener);
-  const labels = () => rows.snapshot().map(({ label }) => label);
-  expect(labels()).toEqual(["Beta"]);
-  expect(rows.snapshot()[0]?.icon).toBeTruthy();
-  expect(rows.snapshot()).toBe(rows.snapshot());
-  listener.mockClear();
-  first.state.attention.add("beta");
-  first.unreadChanged("beta");
-  expect(listener).toHaveBeenCalled();
-  expect(labels()).toEqual([]);
-  first.state.attention.clear();
-  first.unreadChanged("beta");
-  expect(labels()).toEqual(["Beta"]);
-  first.state.muted = ["gamma"];
-  first.preferencesChanged();
-  expect(labels()).toEqual([]);
-  expect(first.listeners.unread.get("beta")?.size ?? 0).toBe(0);
-  first.state.cached = true;
-  first.state.muted = ["beta"];
-  first.preferencesChanged();
-  expect(labels()).toEqual([]);
-  const second = fakeSession("two");
-  r.replace(second.session);
-  expect(labels()).toEqual(["Beta"]);
-  for (const set of first.listeners.unread.values()) expect(set.size).toBe(0);
-  expect(first.listeners.preferences.size).toBe(0);
-  stop();
-  expect(second.listeners.preferences.size).toBe(0);
-  expect(second.listeners.channels.size).toBe(0);
-  for (const set of second.listeners.unread.values()) expect(set.size).toBe(0);
-  expect(r.listeners.size).toBe(0);
 });

@@ -435,7 +435,9 @@ currently authorized roster, not a channel discovery API.
 `Default` is a React element, not a component constructor: return it, wrap it,
 or return a replacement element. Returning `null` intentionally hides the row;
 the host skips hidden rows when choosing a neighbor after leaving or deleting
-the current conversation.
+the current conversation. A contribution with `hiddenLabel` (up to 64
+characters) keeps the rows it hides reachable: each section's **Filter** menu
+lists them under that label, in section order, and choosing one opens it.
 Render callbacks must be pure; return a component element if it needs hooks.
 The live host element keeps selection, unread badges, keyboard focus, menus and
 channel dragging without copying their implementation. Replacements and wrappers

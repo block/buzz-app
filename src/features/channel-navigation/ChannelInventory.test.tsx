@@ -3421,7 +3421,7 @@ it("updates decorated unread data and a selected unread sort without rewriting p
   }
 });
 
-it("lets the hide-muted plugin hide confirmed muted rows except open and starred rows", async () => {
+it("lets the hide-muted plugin hide confirmed muted rows, list them under Muted in their section, and keep open and starred rows", async () => {
   const user = userEvent.setup();
   let muted = ["beta"];
   let settle: () => void = () => {};
@@ -3461,6 +3461,23 @@ it("lets the hide-muted plugin hide confirmed muted rows except open and starred
     await screen.findByRole("button", { name: "alpha" });
     expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
     expect(screen.getByRole("button", { name: /^gamma/ })).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Channels" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+    const group = await screen.findByRole("group", { name: "Muted" });
+    expect(
+      within(group)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual([expect.stringContaining("beta")]);
+    fireEvent.click(within(group).getByRole("menuitem", { name: /beta/ }));
+    expect(h.navigator.open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "conversation", channelId: "beta" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("menu", { name: /Filter/ })).toBeNull(),
+    );
     fireEvent.keyDown(screen.getByRole("button", { name: "alpha" }), {
       key: "ContextMenu",
     });

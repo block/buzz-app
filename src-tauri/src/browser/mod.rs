@@ -16,7 +16,7 @@ use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview};
 use wry::{PageLoadEvent, Rect, WebView, WebViewBuilder};
 
 pub use policy::BrowserBounds;
-use policy::NavigationPolicy;
+use policy::{Approval, ApprovalGate, NavigationPolicy};
 
 thread_local! {
     // Wry and its delegates must be created, used, and dropped on the UI thread.
@@ -90,6 +90,9 @@ struct BrowserSession {
     navigation: platform::Navigation,
     snapshot: Rc<RefCell<BrowserSnapshot>>,
     policy: NavigationPolicy,
+    /// A tool-app approval handed to the system browser, until Reload
+    /// returns to its app or the guest goes elsewhere.
+    approval: Rc<RefCell<Option<Approval>>>,
 }
 
 impl BrowserSession {
@@ -99,6 +102,7 @@ impl BrowserSession {
             .then(|| self.policy.http_fallback(&url))
             .flatten();
         platform::load(&self.guest, &self.navigation, &url, http_fallback)?;
+        self.approval.borrow_mut().take();
         let mut snapshot = self.snapshot.borrow_mut();
         snapshot.url = url.to_string();
         snapshot.loading = true;
@@ -216,6 +220,41 @@ fn storage_identifier(name: &str) -> Result<[u8; 16], String> {
     Ok(identifier)
 }
 
+const APPROVE_IN_BROWSER: &str = "Approve this app in your web browser, then select Reload";
+
+/// Hands the Builderlab tool-app approval page to the system browser, where
+/// the user's portal login lives.
+struct Handoff {
+    app: AppHandle,
+    gate: Option<ApprovalGate>,
+    approval: Rc<RefCell<Option<Approval>>>,
+    snapshot: Rc<RefCell<BrowserSnapshot>>,
+}
+
+impl Handoff {
+    /// Whether `target` is the approval gate, which the guest must not load.
+    /// Each pending approval opens the system browser once.
+    fn intercept(&self, target: &str) -> bool {
+        let Some(next) = self.gate.as_ref().and_then(|gate| gate.approval(target)) else {
+            return false;
+        };
+        let mut approval = self.approval.borrow_mut();
+        if approval.as_ref() != Some(&next) {
+            use tauri_plugin_opener::OpenerExt;
+            let error = match self.app.opener().open_url(&next.gate, None::<&str>) {
+                Ok(()) => APPROVE_IN_BROWSER.to_string(),
+                Err(_) => format!(
+                    "Open {} in your web browser to approve this app, then select Reload",
+                    next.gate
+                ),
+            };
+            self.snapshot.borrow_mut().error = Some(error);
+            *approval = Some(next);
+        }
+        true
+    }
+}
+
 fn build_contents(
     app: &AppHandle,
     target: &str,
@@ -237,6 +276,17 @@ fn build_contents(
     let title_snapshot = snapshot.clone();
     let load_snapshot = snapshot.clone();
     let download_snapshot = snapshot.clone();
+    let approval = Rc::new(RefCell::new(None));
+    let gate = app
+        .try_state::<crate::federated_identity::FederatedIdentity>()
+        .and_then(|identity| identity.config().map(|config| config.adapter_base.clone()))
+        .and_then(|adapter_base| ApprovalGate::new(&adapter_base));
+    let handoff = Handoff {
+        app: app.clone(),
+        gate,
+        approval: approval.clone(),
+        snapshot: snapshot.clone(),
+    };
     // No URL is loaded until native permission handlers replace Wry's defaults.
     // In particular, this builder receives no IPC handler or host initialization scripts.
     let builder = platform::with_storage(WebViewBuilder::new(), storage)
@@ -250,7 +300,9 @@ fn build_contents(
         })
         // Wry also reports subframe URLs here. A blocked iframe must not label
         // the successfully loaded top-level website as a navigation failure.
-        .with_navigation_handler(move |target| navigation_policy.validate(&target).is_ok())
+        .with_navigation_handler(move |target| {
+            !handoff.intercept(&target) && navigation_policy.validate(&target).is_ok()
+        })
         .with_document_title_changed_handler(move |title| {
             title_snapshot.borrow_mut().title = title;
         })
@@ -276,6 +328,7 @@ fn build_contents(
         navigation,
         snapshot,
         policy,
+        approval,
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     if !defer_navigation {
@@ -400,9 +453,21 @@ pub async fn browser_action(
         with_browser(&session_id, |browser| {
             browser.snapshot.borrow_mut().error = None;
             match action {
-                BrowserAction::Reload => browser.guest.reload().map_err(|error| error.to_string()),
-                BrowserAction::Back => platform::back(&browser.guest),
-                BrowserAction::Forward => platform::forward(&browser.guest),
+                BrowserAction::Reload => {
+                    let approval = browser.approval.borrow_mut().take();
+                    match approval {
+                        Some(approval) => browser.navigate(&approval.app, false),
+                        None => browser.guest.reload().map_err(|error| error.to_string()),
+                    }
+                }
+                BrowserAction::Back => {
+                    browser.approval.borrow_mut().take();
+                    platform::back(&browser.guest)
+                }
+                BrowserAction::Forward => {
+                    browser.approval.borrow_mut().take();
+                    platform::forward(&browser.guest)
+                }
             }
         })
     })

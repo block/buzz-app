@@ -472,6 +472,10 @@ export function BrowserHostView({
         <div className={styles.error} role="alert">
           {error}
         </div>
+      ) : status.notice ? (
+        <div className={styles.notice} role="status">
+          {status.notice}
+        </div>
       ) : null}
       <div className={styles.viewport} ref={viewport} />
     </section>

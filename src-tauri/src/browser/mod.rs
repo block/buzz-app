@@ -72,6 +72,8 @@ pub struct BrowserSnapshot {
     pub title: String,
     pub loading: bool,
     pub error: Option<String>,
+    /// A step the user takes elsewhere, such as approving an app.
+    pub notice: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -91,9 +93,7 @@ struct BrowserSession {
     navigation: platform::Navigation,
     snapshot: Rc<RefCell<BrowserSnapshot>>,
     policy: NavigationPolicy,
-    /// A tool-app approval handed to the system browser, until Reload
-    /// returns to its app or the guest goes elsewhere.
-    approval: Rc<RefCell<Option<Approval>>>,
+    approvals: Rc<RefCell<Approvals>>,
 }
 
 impl BrowserSession {
@@ -103,11 +103,12 @@ impl BrowserSession {
             .then(|| self.policy.http_fallback(&url))
             .flatten();
         platform::load(&self.guest, &self.navigation, &url, http_fallback)?;
-        self.approval.borrow_mut().take();
+        self.approvals.borrow_mut().reset();
         let mut snapshot = self.snapshot.borrow_mut();
         snapshot.url = url.to_string();
         snapshot.loading = true;
         snapshot.error = None;
+        snapshot.notice = None;
         Ok(())
     }
 
@@ -222,21 +223,39 @@ fn storage_identifier(name: &str) -> Result<[u8; 16], String> {
 }
 
 const APPROVE_IN_BROWSER: &str = "Approve this app in your web browser, then select Reload";
+const APPROVE_AFTER_RELOAD: &str =
+    "This app needs approval. Select Reload to approve it in your web browser";
+
+/// Tool-app approvals handed to the system browser.
+#[derive(Default)]
+struct Approvals {
+    /// Where Reload goes once approved, until the guest loads another page.
+    pending: Option<Approval>,
+    /// Set by a handoff and cleared only by a user action (Reload, Back,
+    /// Forward or a typed address), so a page cannot open a stream of
+    /// approval tabs, even by reloading itself.
+    opened: bool,
+}
+
+impl Approvals {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
 
 /// Hands the Builderlab tool-app approval page to the system browser, where
 /// the user's portal login lives.
 struct Handoff {
     gate: Option<ApprovalGate>,
     open: Box<dyn Fn(&str) -> bool>,
-    approval: Rc<RefCell<Option<Approval>>>,
+    approvals: Rc<RefCell<Approvals>>,
     snapshot: Rc<RefCell<BrowserSnapshot>>,
 }
 
 impl Handoff {
     /// Whether `target` is the approval gate, which the guest must not load.
-    /// Only the first gate after a user action opens the system browser; any
-    /// other, for whichever app, is blocked until Reload, Back, Forward or a
-    /// typed address, so a page cannot open a stream of approval tabs.
+    /// Only the first gate after a user action opens the system browser; a
+    /// later one waits for Reload, which opens it.
     fn intercept(&self, target: &str) -> bool {
         let Some(next) = self.gate.as_ref().and_then(|gate| gate.approval(target)) else {
             return false;
@@ -249,22 +268,34 @@ impl Handoff {
         {
             return false;
         }
-        if self.approval.borrow().is_some() {
-            return true;
+        {
+            let mut approvals = self.approvals.borrow_mut();
+            if approvals.opened {
+                if approvals.pending.is_none() {
+                    approvals.pending = Some(next);
+                    let mut snapshot = self.snapshot.borrow_mut();
+                    snapshot.notice = Some(APPROVE_AFTER_RELOAD.into());
+                    snapshot.loading = false;
+                }
+                return true;
+            }
         }
-        let error = if (self.open)(&next.gate) {
-            APPROVE_IN_BROWSER.to_string()
+        let opened = (self.open)(&next.gate);
+        let mut snapshot = self.snapshot.borrow_mut();
+        if opened {
+            snapshot.notice = Some(APPROVE_IN_BROWSER.into());
         } else {
-            format!(
+            snapshot.error = Some(format!(
                 "Open {} in your web browser to approve this app, then select Reload",
                 next.gate
-            )
-        };
-        let mut snapshot = self.snapshot.borrow_mut();
-        snapshot.error = Some(error);
+            ));
+        }
         // The cancelled load never finishes.
         snapshot.loading = false;
-        *self.approval.borrow_mut() = Some(next);
+        *self.approvals.borrow_mut() = Approvals {
+            pending: Some(next),
+            opened: true,
+        };
         true
     }
 }
@@ -290,8 +321,8 @@ fn build_contents(
     let title_snapshot = snapshot.clone();
     let load_snapshot = snapshot.clone();
     let download_snapshot = snapshot.clone();
-    let approval = Rc::new(RefCell::new(None));
-    let load_approval = approval.clone();
+    let approvals = Rc::new(RefCell::new(Approvals::default()));
+    let load_approvals = approvals.clone();
     let gate = app
         .try_state::<crate::federated_identity::FederatedIdentity>()
         .and_then(|identity| identity.config().map(|config| config.adapter_base.clone()))
@@ -305,7 +336,7 @@ fn build_contents(
             use tauri_plugin_opener::OpenerExt;
             opener.opener().open_url(url, None::<&str>).is_ok()
         }),
-        approval: approval.clone(),
+        approvals: approvals.clone(),
         snapshot: snapshot.clone(),
     };
     // No URL is loaded until native permission handlers replace Wry's defaults.
@@ -333,7 +364,8 @@ fn build_contents(
             snapshot.loading = matches!(event, PageLoadEvent::Started);
             if snapshot.loading {
                 // The guest moved on; Reload reloads this page again.
-                load_approval.borrow_mut().take();
+                load_approvals.borrow_mut().pending = None;
+                snapshot.notice = None;
             }
         })
         .with_download_started_handler(move |_, _| {
@@ -353,7 +385,7 @@ fn build_contents(
         navigation,
         snapshot,
         policy,
-        approval,
+        approvals,
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     if !defer_navigation {
@@ -476,21 +508,25 @@ pub async fn browser_action(
 ) -> Result<(), String> {
     on_main_thread(&app, move || {
         with_browser(&session_id, |browser| {
-            browser.snapshot.borrow_mut().error = None;
+            {
+                let mut snapshot = browser.snapshot.borrow_mut();
+                snapshot.error = None;
+                snapshot.notice = None;
+            }
             match action {
                 BrowserAction::Reload => {
-                    let approval = browser.approval.borrow_mut().take();
+                    let approval = std::mem::take(&mut *browser.approvals.borrow_mut()).pending;
                     match approval {
                         Some(approval) => browser.navigate(&approval.app, false),
                         None => browser.guest.reload().map_err(|error| error.to_string()),
                     }
                 }
                 BrowserAction::Back => {
-                    browser.approval.borrow_mut().take();
+                    browser.approvals.borrow_mut().reset();
                     platform::back(&browser.guest)
                 }
                 BrowserAction::Forward => {
-                    browser.approval.borrow_mut().take();
+                    browser.approvals.borrow_mut().reset();
                     platform::forward(&browser.guest)
                 }
             }
@@ -640,7 +676,7 @@ mod handoff_tests {
                 record.borrow_mut().push(url.to_owned());
                 true
             }),
-            approval: Rc::new(RefCell::new(None)),
+            approvals: Rc::new(RefCell::new(Approvals::default())),
             snapshot: Rc::new(RefCell::new(BrowserSnapshot {
                 url: "https://a.apps.builderlab.xyz/page".into(),
                 loading: true,
@@ -667,15 +703,32 @@ mod handoff_tests {
             [format!("{GATE}?app=a.apps.builderlab.xyz")]
         );
         assert_eq!(
-            handoff.approval.borrow().as_ref().map(|a| a.app.as_str()),
+            handoff
+                .approvals
+                .borrow()
+                .pending
+                .as_ref()
+                .map(|a| a.app.as_str()),
             Some("https://a.apps.builderlab.xyz/")
         );
         let snapshot = handoff.snapshot.borrow().clone();
-        assert_eq!(snapshot.error.as_deref(), Some(APPROVE_IN_BROWSER));
+        assert_eq!(snapshot.notice.as_deref(), Some(APPROVE_IN_BROWSER));
+        assert_eq!(snapshot.error, None);
         assert!(!snapshot.loading);
 
-        // Reload, Back, Forward, typed addresses and page loads clear it.
-        handoff.approval.borrow_mut().take();
+        // A page load forgets where Reload goes but opens nothing more, so a
+        // page reloading itself into its gate cannot open another tab.
+        handoff.approvals.borrow_mut().pending = None;
+        assert!(handoff.intercept(&format!("{GATE}?app=a.apps.builderlab.xyz")));
+        assert_eq!(opened.borrow().len(), 1);
+        assert_eq!(
+            handoff.snapshot.borrow().notice.as_deref(),
+            Some(APPROVE_AFTER_RELOAD)
+        );
+        assert!(handoff.approvals.borrow().pending.is_some());
+
+        // Reload, Back, Forward and typed addresses allow the next one.
+        handoff.approvals.borrow_mut().reset();
         assert!(handoff.intercept(&format!("{GATE}?app=a.apps.builderlab.xyz")));
         assert_eq!(opened.borrow().len(), 2);
     }

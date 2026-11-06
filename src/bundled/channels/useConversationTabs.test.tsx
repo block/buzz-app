@@ -1388,6 +1388,78 @@ it("opens a linked thread from a readable channel through one stable opener", ()
   }
 });
 
+it("closing the last side thread returns focus where its link named, unless that target is hidden", () => {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  // The media that opened a review, which the followed link left.
+  const media = document.createElement("button");
+  const fallback = document.createElement("button");
+  document.body.append(media, fallback);
+  onTestFinished(() => {
+    media.remove();
+    fallback.remove();
+  });
+  const h = renderHook(() =>
+    useConversationTabs({
+      profiles: new Map(),
+      state: useChannelTabState(session, "alpha"),
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+      fallbackFocus: { current: fallback },
+    }),
+  );
+  const close = (id: string) => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    act(() => h.result.current.items.find((item) => item.id === id)?.close());
+  };
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+  });
+  close("thread:alpha:a");
+  expect(media).toHaveFocus();
+
+  // Closing it while other tabs remain retires the target, so the thread
+  // opened again from elsewhere returns as the pane usually does.
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+    h.result.current.openConversationThread("alpha", "b", "b");
+  });
+  close("thread:alpha:a");
+  expect(document.body).toHaveFocus();
+  act(() => h.result.current.openConversationThread("alpha", "a", "a"));
+  close("thread:alpha:b");
+  close("thread:alpha:a");
+  expect(fallback).toHaveFocus();
+
+  // A target that cannot take focus leaves the pane's usual return.
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+  });
+  media.hidden = true;
+  close("thread:alpha:a");
+  expect(fallback).toHaveFocus();
+});
+
 it.each(["linked", "conversation"] as const)(
   "%s thread opening preserves only the selected side panel's context",
   (opener) => {

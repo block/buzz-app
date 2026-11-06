@@ -190,6 +190,11 @@ export function useConversationTabs({
     else target?.focus({ preventScroll: true });
   });
   const panelTrigger = useRef<HTMLElement | null>(null);
+  // The return target the last linked thread's link named, as a media review's
+  // comment does (LinkThreadTabContext), until that thread's tab closes.
+  const linkedReturn = useRef<
+    { channelId: string; rootId: string; trigger: HTMLElement } | undefined
+  >(undefined);
   const mounted = useRef(false);
   const visit = useMemo(() => ({ queries, currentId }), [queries, currentId]);
   const liveVisit = useRef(visit);
@@ -563,8 +568,22 @@ export function useConversationTabs({
       notify(!remaining.length);
       return;
     }
-    afterClose(id);
-    if (rootTabIds.length === 1) focusSplit.current = true;
+    // A linked thread whose link named a return target, such as the media
+    // that opened a review, returns focus there as its pane empties.
+    const linked = linkedReturn.current;
+    const returning =
+      closing?.kind === "thread" &&
+      linked?.channelId === closing.channelId &&
+      linked.rootId === rootOfTab(closing);
+    if (returning) linkedReturn.current = undefined;
+    const trigger =
+      returning &&
+      linked.trigger.isConnected &&
+      !linked.trigger.closest('[inert], [hidden], [aria-hidden="true"]')
+        ? linked.trigger
+        : undefined;
+    afterClose(id, trigger);
+    if (rootTabIds.length === 1 && !trigger) focusSplit.current = true;
     notify(rootTabIds.length === 1);
   };
   const [announcement, setAnnouncement] = useState("");
@@ -748,10 +767,15 @@ export function useConversationTabs({
   // Message rows are memoized: links read one stable opener that consults the
   // live workspace when chosen. Only current-channel threads use the main pane.
   const linkedThread = useRef<
-    (channelId: string, messageId: string, rootId: string) => boolean
+    (
+      channelId: string,
+      messageId: string,
+      rootId: string,
+      returnFocus?: HTMLElement,
+    ) => boolean
   >(() => false);
   useLayoutEffect(() => {
-    linkedThread.current = (channelId, messageId, rootId) => {
+    linkedThread.current = (channelId, messageId, rootId, returnFocus) => {
       if (!currentVisit() || !tabChannel({ kind: "thread", channelId }))
         return false;
       tabState.openThreadTab(
@@ -761,6 +785,11 @@ export function useConversationTabs({
         "reveal",
         threadPane ?? (mainThread(channelId) ? undefined : "side"),
       );
+      linkedReturn.current = returnFocus && {
+        channelId,
+        rootId,
+        trigger: returnFocus,
+      };
       if (
         opening.current &&
         panelTabId(opening.current) !== tabState.getSelected()
@@ -770,8 +799,12 @@ export function useConversationTabs({
     };
   });
   const openLinkedThread = useCallback(
-    (channelId: string, messageId: string, rootId: string) =>
-      linkedThread.current(channelId, messageId, rootId),
+    (
+      channelId: string,
+      messageId: string,
+      rootId: string,
+      returnFocus?: HTMLElement,
+    ) => linkedThread.current(channelId, messageId, rootId, returnFocus),
     [],
   );
   // Several open threads stay distinguishable by their original message.

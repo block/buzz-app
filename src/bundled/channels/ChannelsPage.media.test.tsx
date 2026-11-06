@@ -30,9 +30,12 @@ import {
   roster,
   signed,
 } from "../../features/relay/testing";
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import type { PageTabTarget } from "../../features/conversation/contracts";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { writeView } from "../../shared/view-state";
 import { ChannelsPage } from "./ChannelsPage";
+import { PageTabs } from "./PageTabs";
 
 // jsdom has no layout, so the virtualizer would mount no rows. Geometry is the
 // only thing replaced: every row mounts, in order.
@@ -177,7 +180,14 @@ async function channels(comment: (target: string) => string) {
   await waitFor(() =>
     expect(owner.session.channels.list().channels).toHaveLength(1),
   );
-  return { owner, scope, viewer: viewer.pubkey, sam: sam.pubkey, target };
+  return {
+    owner,
+    scope,
+    viewer: viewer.pubkey,
+    sam: sam.pubkey,
+    target,
+    rootId: root.id,
+  };
 }
 
 async function mount(h: Awaited<ReturnType<typeof channels>>) {
@@ -230,6 +240,7 @@ async function mount(h: Awaited<ReturnType<typeof channels>>) {
       signal: new AbortController().signal,
       position: () => undefined,
       savePosition() {},
+      passThrough: () => () => {},
       forSession: () => navigation,
       complete: () => true,
       resolve: () => true,
@@ -326,5 +337,105 @@ it("returns focus to the image that opened the review when a followed message li
   );
   await flushFrames();
   expect(screen.queryByRole("tab", { name: /Linked message/ })).toBeNull();
+  await waitFor(() => expect(attachment).toHaveFocus());
+});
+
+/** Activity's tab workspace with the image post's thread moved to its main
+ * pane, and that thread's image review open. */
+async function activity(h: Awaited<ReturnType<typeof channels>>) {
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    scope: h.scope,
+    viewer: h.viewer,
+    session: h.owner.session,
+  };
+  const host = {
+    relay: { snapshot: () => snapshot, subscribe: () => () => {} },
+    panels: {
+      snapshot: () => empty,
+      subscribe: () => () => {},
+      resolve: () => undefined,
+    },
+    navigation: { open: vi.fn() },
+  } as unknown as ConversationHostServices;
+  let open: (target: PageTabTarget) => boolean = () => false;
+  render(
+    <ToastProvider>
+      <PageTabs
+        id="inbox"
+        session={h.owner.session}
+        scope={h.scope}
+        label="Activity"
+        host={host}
+        extensions={extensions}
+        visits={false}
+      >
+        {(next) => {
+          open = next;
+          return <p>Activity list</p>;
+        }}
+      </PageTabs>
+    </ToastProvider>,
+  );
+  act(() => {
+    expect(open({ channelId, threadId: h.rootId })).toBe(true);
+  });
+  const thread = within(
+    await screen.findByRole("tablist", { name: "Panel tabs" }),
+  ).getByRole("tab");
+  act(() => {
+    fireEvent.keyDown(thread, {
+      key: "ArrowLeft",
+      altKey: true,
+      shiftKey: true,
+    });
+  });
+  expect(
+    within(screen.getByRole("tablist", { name: "Activity tabs" }))
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent),
+  ).toEqual(["Activity", "Thread · Alpha"]);
+  expect(screen.queryByRole("tablist", { name: "Panel tabs" })).toBeNull();
+  const attachment = await screen.findByRole("link", {
+    name: "Open image attachment",
+  });
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  attachment.focus();
+  expect(attachment).toHaveFocus();
+  fireEvent.click(attachment);
+  const review = await screen.findByRole("dialog", { name: "Image viewer" });
+  const comments = await within(review).findByRole("region", {
+    name: "Media comments",
+  });
+  await flushFrames();
+  return { attachment, comments };
+}
+
+it("returns focus to the image in Activity's main pane when a followed message's only side thread closes", async () => {
+  const h = await channels((target) => `See <${target}>`);
+  const { attachment, comments } = await activity(h);
+  fireEvent.contextMenu(await within(comments).findByRole("link"));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open link" }));
+  await flushFrames();
+  expect(screen.queryByRole("dialog", { name: "Image viewer" })).toBeNull();
+  // The followed message's thread is the side pane's only tab.
+  const side = await screen.findByRole("tablist", { name: "Panel tabs" });
+  const tab = within(side).getByRole("tab");
+  expect(tab).toHaveAttribute("aria-selected", "true");
+  const workspace = side.closest<HTMLElement>("[data-panel-workspace]");
+  expect(workspace).not.toBeNull();
+
+  fireEvent.click(
+    within(workspace as HTMLElement).getByRole("button", {
+      name: /^Close .* tab$/,
+    }),
+  );
+  await flushFrames();
+  expect(screen.queryByRole("tablist", { name: "Panel tabs" })).toBeNull();
+  expect(attachment).toBeInTheDocument();
   await waitFor(() => expect(attachment).toHaveFocus());
 });

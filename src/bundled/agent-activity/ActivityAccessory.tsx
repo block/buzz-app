@@ -250,6 +250,12 @@ function MessageActivity(
   // When work ends (not when access is revoked), keep the last bubble long
   // enough for the shared leave recipe, then remove it.
   const section = useRef<HTMLElement>(null);
+  const focusAfterRetry = () =>
+    section.current
+      ?.querySelector<HTMLButtonElement>(
+        'button[aria-label^="View agent activity:"]',
+      )
+      ?.focus();
   const retained = useRef<Entry[]>([]);
   const [leaving, setLeaving] = useState<Entry[] | null>(null);
   const ended = !entries.length;
@@ -366,6 +372,7 @@ function MessageActivity(
             {...props}
             entries={bubble}
             interactive={shown.length > 0}
+            onRetried={focusAfterRetry}
             compact
           />
         </div>
@@ -412,6 +419,7 @@ function MessageActivity(
           {...props}
           entries={bubble}
           interactive={shown.length > 0}
+          onRetried={focusAfterRetry}
         />
       </AgentResponsePreview>
     </section>
@@ -439,12 +447,14 @@ function ActivityBubble({
   entries,
   interactive,
   compact = false,
+  onRetried,
   agents,
   ...props
 }: ActivityProps & {
   entries: Entry[];
   interactive: boolean;
   compact?: boolean;
+  onRetried: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const message = props.message;
@@ -477,6 +487,8 @@ function ActivityBubble({
         message.id,
       );
       setExpanded(false);
+      // Retry replaces the compact failure trigger with the active work row.
+      queueMicrotask(onRetried);
     } catch (error) {
       notify(
         `Couldn’t retry ${entry.name}. ${error instanceof Error ? error.message : String(error)}`,

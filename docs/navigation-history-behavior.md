@@ -63,7 +63,7 @@ visit beneath the new destination.
 Settings Close retires its known section visits for the same account/community
 scope and returns to the covered workspace. Back/Forward between sections remains
 reversible until Close. Back/Forward to Manage plugins reopens the plugin
-details that visit showed; opening Manage plugins again starts at the list.
+details that visit showed; opening it from another section starts at the list.
 Profile discard confirmation precedes dismissal and Back/Forward departure.
 Keep editing preserves the mounted draft and current visit; Discard changes
 continues the requested traversal without retiring the Settings visit.

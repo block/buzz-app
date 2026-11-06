@@ -896,22 +896,31 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const shownPluginId = useRef(selectedPluginId);
+  shownPluginId.current = selectedPluginId;
   const addressedPlugin = useRef(false);
+  // Set while Settings dismisses its own visit: the visit it lands on keeps
+  // what is shown rather than what it last showed.
+  const closingVisit = useRef(false);
   const requestedPluginId =
     navigation?.target.kind === "settings"
       ? navigation.target.pluginId
       : undefined;
   useEffect(() => {
     if (selected !== "plugins" || !navigation?.entryId) return;
-    if (requestedPluginId) {
-      setSelectedPluginId(requestedPluginId);
-      addressedPlugin.current = true;
-    } else if (addressedPlugin.current) {
-      setSelectedPluginId(undefined);
-      addressedPlugin.current = false;
-    } else if (navigation.traversal) {
+    const leftAddressed = addressedPlugin.current;
+    const closed = closingVisit.current;
+    addressedPlugin.current = !!requestedPluginId;
+    closingVisit.current = false;
+    if (requestedPluginId) setSelectedPluginId(requestedPluginId);
+    else if (navigation.traversal && !closed) {
       const shown = navigation.position(PLUGIN_DETAILS);
-      if (typeof shown === "string") setSelectedPluginId(shown);
+      setSelectedPluginId(typeof shown === "string" ? shown : undefined);
+    } else {
+      // A visit records what it starts with; addressed details don't carry over.
+      const shown = leftAddressed ? undefined : shownPluginId.current;
+      setSelectedPluginId(shown);
+      navigation.savePosition(PLUGIN_DETAILS, shown ?? null);
     }
   }, [requestedPluginId, navigation, selected]);
   const showPluginDetails = (id: string | undefined) => {
@@ -945,7 +954,10 @@ export function Settings({
   const visibleReturn = (target: HTMLElement | null) =>
     covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
   useEffect(() => {
-    if (selected !== "plugins") setSelectedPluginId(undefined);
+    if (selected !== "plugins") {
+      setSelectedPluginId(undefined);
+      addressedPlugin.current = closingVisit.current = false;
+    }
   }, [selected]);
   useEffect(() => {
     const element = layout.current;
@@ -971,14 +983,18 @@ export function Settings({
     if (selectedPluginId && catalog && !selectedPlugin) {
       pluginSection.current?.focus();
       setSelectedPluginId(undefined);
+      navigation?.savePosition(PLUGIN_DETAILS, null);
     }
-  }, [catalog, selectedPlugin, selectedPluginId]);
+  }, [catalog, navigation, selectedPlugin, selectedPluginId]);
   const closePluginDetails = () => {
     holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     showPluginDetails(undefined);
-    if (requestedPluginId) onPluginDetailsClosed?.();
+    if (requestedPluginId) {
+      closingVisit.current = true;
+      onPluginDetailsClosed?.();
+    }
   };
   useLayoutEffect(() => {
     const held = heldPluginRow.current;
@@ -1531,7 +1547,15 @@ export function Settings({
                     : undefined
                 }
                 requestSignal={navigation?.signal}
-                onClosed={() => onPluginImportClosed?.()}
+                onClosed={() => {
+                  // "Open in Buzz" shows its plugin before this dismissal lands.
+                  if (
+                    navigation?.target.kind === "settings" &&
+                    navigation.target.pluginImport
+                  )
+                    closingVisit.current = true;
+                  onPluginImportClosed?.();
+                }}
                 actionTarget={pluginImportActions}
                 request={installRequest}
                 onRequestSettled={installRequests?.settle}

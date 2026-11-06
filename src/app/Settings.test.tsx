@@ -1367,14 +1367,37 @@ function pluginSectionsFixture(
     change: vi.fn(),
     reload: vi.fn(),
     dismissError: vi.fn(),
+    // A linked import stays loading, so its dialog can be closed at once.
+    imports: { git: () => new Promise(() => {}) },
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
   const onSection = vi.fn();
+  const onPluginDetailsClosed = vi.fn();
+  const onPluginImportClosed = vi.fn();
   /** Per-visit positions, as the navigation service keeps them. */
   const positions = new Map<string, unknown>();
+  /** One request per visit, kept across renders as App's `route.request` is. */
+  const requests = new Map<string, unknown>();
+  const request = (section: string, visit: Visit = {}) => {
+    const { entryId, traversal, ...address } = visit;
+    const target = { version: 1, kind: "settings", section, ...address };
+    const key = JSON.stringify([entryId, traversal, target]);
+    if (!requests.has(key))
+      requests.set(key, {
+        ...(entryId && { entryId }),
+        ...(traversal && { traversal }),
+        target,
+        complete: () => true,
+        position: (name: string) =>
+          positions.get(JSON.stringify([entryId, name])),
+        savePosition: (name: string, value: unknown) =>
+          positions.set(JSON.stringify([entryId, name]), value),
+      });
+    return requests.get(key) as never;
+  };
   const view = (
     section: string,
     communities = host.communities,
-    visit?: { entryId: string; traversal?: true },
+    visit?: Visit,
   ) => (
     <div id="settings-content" tabIndex={-1}>
       <Settings
@@ -1383,18 +1406,10 @@ function pluginSectionsFixture(
         cards={cards}
         plugins={plugins}
         decisions={decisions}
-        navigation={
-          {
-            ...visit,
-            target: { version: 1, kind: "settings", section },
-            complete: () => true,
-            position: (key: string) =>
-              positions.get(JSON.stringify([visit?.entryId, key])),
-            savePosition: (key: string, value: unknown) =>
-              positions.set(JSON.stringify([visit?.entryId, key]), value),
-          } as never
-        }
+        navigation={request(section, visit)}
         onSection={onSection}
+        onPluginDetailsClosed={onPluginDetailsClosed}
+        onPluginImportClosed={onPluginImportClosed}
         navigationPane
       />
     </div>
@@ -1408,8 +1423,22 @@ function pluginSectionsFixture(
     within(links(name) as HTMLElement)
       .getAllByRole("button")
       .map((button) => button.textContent);
-  return { onSection, view, links, linkNames, positions };
+  return {
+    onSection,
+    onPluginDetailsClosed,
+    onPluginImportClosed,
+    view,
+    links,
+    linkNames,
+    positions,
+  };
 }
+type Visit = {
+  entryId?: string;
+  traversal?: true;
+  pluginId?: string;
+  pluginImport?: { repository: string; reference: string };
+};
 
 it("links a plugin's details to the Settings sections it adds", async () => {
   const user = userEvent.setup();
@@ -1530,6 +1559,107 @@ it("reopens the details a Manage plugins visit showed on Back or Forward, not on
   );
   rerender(view("plugins", undefined, { entryId: "p5", traversal: true }));
   expect(screen.queryByRole("complementary")).toBeNull();
+  expect(positions.get(JSON.stringify(["p5", "settings.pluginDetails"]))).toBe(
+    null,
+  );
+});
+
+/** Manage plugins visits from p1, with the open details' plugin name or null. */
+function pluginVisits() {
+  const fixture = pluginSectionsFixture(registry([]).cards);
+  const { rerender } = render(
+    fixture.view("plugins", undefined, { entryId: "p1" }),
+  );
+  return {
+    ...fixture,
+    visit: (section: string, visit: Visit) =>
+      rerender(fixture.view(section, undefined, visit)),
+    toggle: (name: string) =>
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: `View ${name} details`,
+          hidden: true,
+        }),
+      ),
+    shown: () =>
+      screen
+        .queryByRole("complementary", { hidden: true })
+        ?.getAttribute("aria-label")
+        ?.replace(/ details$/, "") ?? null,
+  };
+}
+const imported = { repository: "https://example.com/p.git", reference: "main" };
+
+it("shows the list on Back to a visit that closed its details", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("Codex");
+  toggle("Codex");
+  visit("plugins", { entryId: "p2", pluginImport: imported });
+  toggle("GitHub");
+  expect(shown()).toBe("GitHub");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBeNull();
+});
+
+it("records the details an adjacent visit inherits", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginImport: imported });
+  expect(shown()).toBe("GitHub");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBe("GitHub");
+  visit("plugins", { entryId: "p2", pluginImport: imported, traversal: true });
+  expect(shown()).toBe("GitHub");
+});
+
+it("shows the list on Back to a visit that never opened details", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  visit("plugins", { entryId: "p2", pluginImport: imported });
+  toggle("GitHub");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBeNull();
+});
+
+it("returns from addressed details to the details the earlier visit showed", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex" });
+  expect(shown()).toBe("Codex");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBe("GitHub");
+});
+
+it("returns through another section to addressed details, then the earlier visit's", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex" });
+  visit("appearance", { entryId: "s3" });
+  expect(shown()).toBeNull();
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex", traversal: true });
+  expect(shown()).toBe("Codex");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBe("GitHub");
+});
+
+it("lands on the list when Close dismisses addressed details", () => {
+  const { visit, toggle, shown, onPluginDetailsClosed } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex" });
+  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
+  expect(onPluginDetailsClosed).toHaveBeenCalledOnce();
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBeNull();
+});
+
+it("keeps the plugin Open in Buzz shows when the import's dismissal lands", () => {
+  const { visit, toggle, shown, onPluginImportClosed } = pluginVisits();
+  visit("plugins", { entryId: "p2", pluginImport: imported });
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(onPluginImportClosed).toHaveBeenCalledOnce();
+  // Open in Buzz selects after closing; the browser lands on p1 later.
+  toggle("GitHub");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBe("GitHub");
 });
 
 it("links a decision provider's details to Decisions API", async () => {

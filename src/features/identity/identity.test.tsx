@@ -7973,6 +7973,54 @@ it("a relaunch sign-in whose account holds a different key rests on Welcome back
   identity.dispose();
 });
 
+/** Relaunch sign-in to an account linked elsewhere, resting on Welcome back. */
+async function relaunchWelcomeBack(
+  user: ReturnType<typeof userEvent.setup>,
+  identity: Identity,
+  unbind: FirstRunAccount["unbind"] = noUnlink,
+) {
+  localStorage.setItem(ROUTE_NOTE, "builderlab");
+  render(
+    <Welcome
+      identity={identity}
+      communities={communitiesFor(identity)}
+      invites={invites}
+      account={(...args) => ({ ...linkedTo(owned.pubkey)(...args), unbind })}
+      connect={vi.fn().mockResolvedValue(credential)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await screen.findByRole("heading", { name: "Continue with this key" });
+}
+const OCCUPIED = /already has a different Buzz key/;
+
+it("a relaunch Welcome back refuses to import the linked key over the device key", async () => {
+  keyOnDevice();
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await relaunchWelcomeBack(user, identity);
+  await importLinkedKey(user);
+  expect(await screen.findByText(OCCUPIED)).toBeVisible();
+  expect(invoke).not.toHaveBeenCalledWith("identity_import", expect.anything());
+  expect(screen.queryByText("Signed in")).toBeNull();
+  identity.dispose();
+});
+
+it("a relaunch Start over refuses before unlinking the account's key or creating one", async () => {
+  keyOnDevice();
+  const unbind = vi.fn(noUnlink);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await relaunchWelcomeBack(user, identity, unbind);
+  await startOver(user);
+  expect(await screen.findByText(OCCUPIED)).toBeVisible();
+  expect(unbind).not.toHaveBeenCalled();
+  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  identity.dispose();
+});
+
 it("a relaunch sign-in whose account has no key links and backs up the device key instead of making a new one", async () => {
   localStorage.setItem(ROUTE_NOTE, "builderlab");
   keyOnDevice();

@@ -74,6 +74,18 @@ function saved(identity: Identity) {
 }
 
 /**
+ * Native leaves a key already on this device in place, so creating or
+ * importing over it would "succeed" as that other key. Refuse first, before
+ * any account step (Start over's unlink) acts on the result.
+ */
+function vacant(identity: Identity) {
+  if (identity.snapshot().status === "ready")
+    throw new Error(
+      "This Mac already has a different Buzz key. Sign out of Buzz on this Mac first, or use a different account.",
+    );
+}
+
+/**
  * The key for an account that has none: old Buzz's, when it was used on this
  * device, so someone who used Buzz before stays the same person; otherwise a
  * new one. Reading old Buzz's secure storage may bring up an OS prompt, and if
@@ -83,6 +95,7 @@ export function keyForAccount(identity: Identity): SetupStep {
   return {
     label: "Preparing your identity…",
     run: async () => {
+      vacant(identity);
       if (await identity.legacyAvailable().catch(() => false)) {
         await identity.importLegacy();
         if (identity.snapshot().status === "ready") return;
@@ -98,6 +111,7 @@ export function createKey(identity: Identity): SetupStep {
   return {
     label: "Creating your key…",
     run: async () => {
+      vacant(identity);
       await identity.create();
       saved(identity);
     },
@@ -110,6 +124,7 @@ export function createKey(identity: Identity): SetupStep {
  * under the import page's field, not on the failed page.
  */
 export async function importKey(identity: Identity, nsec: string) {
+  vacant(identity);
   await identity.importKey(nsec);
   saved(identity);
 }

@@ -61,8 +61,8 @@ type Confirm = {
   title: string;
   description: string;
   action: string;
-  /** Permanent changes focus Cancel and show the action in red. */
-  permanent?: true;
+  /** Both start on Cancel: permanent shows the action in red, guarded highlights Cancel. */
+  caution?: "permanent" | "guarded";
   run(): Promise<void>;
 };
 
@@ -592,7 +592,7 @@ export function HostedCommunities({
                       description:
                         "The key your account uses now will be permanently unlinked. It can never be linked to a Builderlab account again. If this device’s key was unlinked before, Builderlab refuses it too, and your account is left with no key.",
                       action: "Switch identity",
-                      permanent: true,
+                      caution: "permanent",
                       run: async () => {
                         check(
                           await api.call("unbind"),
@@ -820,6 +820,7 @@ export function HostedCommunities({
                                     description:
                                       "New and existing connections stop and the address stays reserved. Archiving can’t be undone from here without unarchiving, and the community keeps counting toward your quota — it isn’t deleted.",
                                     action: "Archive",
+                                    caution: "guarded",
                                     run: () =>
                                       mutate(
                                         "archive",
@@ -953,17 +954,27 @@ export function HostedCommunities({
           title={confirm.title}
           description={confirm.description}
           pending={busy}
-          initialFocus={confirm.permanent ? undefined : proceed}
+          initialFocus={confirm.caution ? undefined : proceed}
           onClose={() => setConfirm(null)}
           {...(failure ? { children: failure } : {})}
           actions={
             <>
-              <Button disabled={busy} onClick={() => setConfirm(null)}>
+              <Button
+                variant={confirm.caution === "guarded" ? "prominent" : "subtle"}
+                disabled={busy}
+                onClick={() => setConfirm(null)}
+              >
                 Cancel
               </Button>
               <Button
                 ref={proceed}
-                variant={confirm.permanent ? "destructive" : "prominent"}
+                variant={
+                  confirm.caution === "permanent"
+                    ? "destructive"
+                    : confirm.caution
+                      ? "subtle"
+                      : "prominent"
+                }
                 loading={busy}
                 onClick={() =>
                   void run("confirm", confirm.run).then(

@@ -1,7 +1,11 @@
-import { projectMarkdownAttachments } from "../relay/message-content";
+import {
+  projectMarkdownAttachments,
+  scanMarkdown,
+} from "../relay/message-content";
 import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { npubEncode } from "nostr-tools/nip19";
+import { literalRanges } from "./markdown-preparation";
 import type { MentionRecipient } from "./mention-draft";
 import { profileMentionParts } from "./profile-mentions";
 
@@ -27,14 +31,18 @@ export function messageEditText(
   agents: AgentLibrary["identities"] = [],
 ) {
   const { attachmentSeams: _seams, ...source } = row;
-  return profileMentionParts(
-    { ...source, content: row.sourceContent ?? row.content },
-    profiles,
-    agents,
-  )
-    .map(({ text, target }) =>
-      target ? profileMentionLink(text, target) : text,
-    )
+  const content = row.sourceContent ?? row.content;
+  const ranges = literalRanges(scanMarkdown(content).tree, true);
+  let offset = 0;
+  return profileMentionParts({ ...source, content }, profiles, agents)
+    .map(({ text, target }) => {
+      const start = offset;
+      offset += text.length;
+      return target &&
+        !ranges.some((range) => start < range.end && offset > range.start)
+        ? profileMentionLink(text, target)
+        : text;
+    })
     .join("");
 }
 

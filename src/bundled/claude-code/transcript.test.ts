@@ -896,7 +896,7 @@ it("reads a session's latest whole turns from its end", async () => {
   ).toEqual([["2", "2"]]);
 });
 
-it("reads no latest turns when the chunk holds no whole turn", async () => {
+it("reads none of the latest turns when the chunk holds no whole turn, so what is shown stays", async () => {
   clock = 0;
   const { spawn } = host({
     "./-Users-me--buzz/session-1.jsonl": [
@@ -913,7 +913,7 @@ it("reads no latest turns when the chunk holds no whole turn", async () => {
       false,
       new AbortController().signal,
     ),
-  ).resolves.toBeUndefined();
+  ).resolves.toEqual([]);
 });
 
 it("shows a session's prompt once over the latest turns it swaps in", async () => {

@@ -15,6 +15,7 @@ import {
   LIVE_READ_MS,
   STEP_READ_MS,
   TranscriptPanel,
+  TURN_LIMIT,
   useLiveTranscript,
   withLatest,
 } from "./TranscriptPanel";
@@ -132,16 +133,19 @@ it("polls only while working, and stops when idle", async () => {
 
 it("never overlaps reads, and reads once more after one asked during it", async () => {
   const { calls, view, step } = setup();
+  await settle(nth(calls, 0), "first");
   view.rerender({ key: "a", working: true });
   act(() => vi.advanceTimersByTime(LIVE_READ_MS * 4));
+  // Automatic reads don't show as loading; Refresh does.
+  expect(view.result.current.loading).toBe(false);
   step();
   act(() => view.result.current.refresh());
-  expect(calls).toHaveLength(1);
-  await settle(nth(calls, 0), "first");
-  expect(calls).toHaveLength(2);
   expect(view.result.current.loading).toBe(true);
-  await settle(nth(calls, 1), "second");
   expect(calls).toHaveLength(2);
+  await settle(nth(calls, 1), "second");
+  expect(calls).toHaveLength(3);
+  await settle(nth(calls, 2), "third");
+  expect(calls).toHaveLength(3);
   expect(view.result.current.loading).toBe(false);
 });
 
@@ -150,9 +154,8 @@ it("reads for the agent's steps a second after a read, only while working", asyn
   await settle(nth(calls, 0), "a");
   expect(steps.size).toBe(0);
   view.rerender({ key: "a", working: true });
-  // A step during a slow read waits a second after it finishes.
+  // A step during a read waits a second after it finishes.
   step();
-  act(() => vi.advanceTimersByTime(LIVE_READ_MS));
   await settle(nth(calls, 1), "b");
   // Steps inside that second make one read.
   step();
@@ -199,17 +202,61 @@ it("ignores a slow read that finishes after switching conversations", async () =
 
 it("waits while hidden to run a read queued during another", async () => {
   const { calls, view, step } = setup();
+  await settle(nth(calls, 0), "a");
   view.rerender({ key: "a", working: true });
   step();
   const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
-  await settle(nth(calls, 0), "a");
+  await settle(nth(calls, 1), "b");
   act(() => vi.advanceTimersByTime(LIVE_READ_MS * 3));
-  expect(calls).toHaveLength(1);
+  expect(calls).toHaveLength(2);
   expect(view.result.current.loading).toBe(false);
   hidden.mockReturnValue(false);
   act(() => document.dispatchEvent(new Event("visibilitychange")));
-  expect(calls).toHaveLength(2);
+  expect(calls).toHaveLength(3);
   hidden.mockRestore();
+});
+
+it("aborts a pending read when the agent goes idle, and reads in full at once", async () => {
+  const { calls, view } = setup();
+  await settle(nth(calls, 0), "a");
+  view.rerender({ key: "a", working: true });
+  expect(calls).toHaveLength(2);
+  view.rerender({ key: "a", working: false });
+  expect(nth(calls, 1).signal.aborted).toBe(true);
+  expect(calls).toHaveLength(3);
+  expect(view.result.current.shown.transcript).toBe("a");
+  await settle(nth(calls, 2), "final");
+  expect(view.result.current.shown.transcript).toBe("final");
+});
+
+it("aborts a pending read when its inputs change while hidden, keeping what it shows", async () => {
+  const { calls, view } = setup();
+  await settle(nth(calls, 0), "a");
+  act(() => view.result.current.refresh());
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  view.rerender({ key: "a", again: "next", working: false });
+  expect(nth(calls, 1).signal.aborted).toBe(true);
+  expect(calls).toHaveLength(2);
+  await settle(nth(calls, 1), "stale");
+  expect(view.result.current.shown.transcript).toBe("a");
+  hidden.mockReturnValue(false);
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(calls).toHaveLength(3);
+  await settle(nth(calls, 2), "next");
+  expect(view.result.current.shown.transcript).toBe("next");
+  hidden.mockRestore();
+});
+
+it("waits twice as long as the last read took, when longer", async () => {
+  const { calls, view } = setup();
+  await settle(nth(calls, 0), "a");
+  view.rerender({ key: "a", working: true });
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS * 2));
+  await settle(nth(calls, 1), "b");
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS * 4 - 1));
+  expect(calls).toHaveLength(2);
+  act(() => vi.advanceTimersByTime(1));
+  expect(calls).toHaveLength(3);
 });
 
 it("reads once when shown after a turn ended while hidden", async () => {
@@ -308,6 +355,18 @@ it("swaps the latest turns over the end of the held transcript", () => {
     more: true,
   });
   expect(withLatest(held, [])).toBe(held);
+  // Turns older than all it holds are left.
+  expect(withLatest(held, [turn("0"), turn("2"), turn("3")])).toEqual({
+    turns: [turn("1"), turn("2"), turn("3")],
+    more: true,
+  });
+  // It holds at most TURN_LIMIT turns.
+  const full = {
+    turns: Array.from({ length: TURN_LIMIT }, (_, i) => turn(String(i))),
+  };
+  const grown = withLatest(full, [turn(String(TURN_LIMIT - 1)), turn("new")]);
+  expect(grown?.turns).toHaveLength(TURN_LIMIT);
+  expect(grown?.turns.at(-1)).toEqual(turn("new"));
   // A turn it doesn't hold can't be placed.
   expect(withLatest(held, [turn("9")])).toBeUndefined();
   // Nor can turns that would cut another session's.

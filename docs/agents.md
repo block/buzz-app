@@ -1261,16 +1261,24 @@ Activity frames (24200) and turn metrics (44200) are no longer saved locally or
 restored after reload; plugin harnesses show history from their own session files.
 An open transcript (`TranscriptPanel`, `src/features/agents/TranscriptPanel.tsx`)
 reads that history in full on open, on Refresh, and when a turn starts or
-ends. While the agent works it reads again 2.5 s after each read finishes and
-on the steps the agent reports (`Agents.subscribeSteps`): a step reads no
-sooner than 1 s after the previous read finishes, and steps inside that second
-make one read. These use the harness's
-`readLatest` when it has one: only the latest turns, swapped over the end of
-the held transcript by `turnId`, or a full read when they don't continue it.
-Claude Code reads the last 2 MiB of its saved session; Codex and Pi already
-read only recent turns; goose has no recent-messages API, so it reads in full.
-Automatic reads wait while the window is hidden. One read runs at a time, and
-the last result stays while the next is read.
+ends. While the agent works it reads again after each read finishes, waiting
+2.5 s or twice that read's duration, whichever is longer, and on the steps the
+agent reports (`Agents.subscribeSteps`): a step reads no sooner than 1 s, or
+that doubled duration, after the previous read finishes, and steps inside that
+gap make one read. These use the harness's `readLatest` when it has one: only
+the latest turns, swapped over the end of the held transcript by `turnId` from
+the first turn it holds, at most 50 turns, or a full read when they don't
+continue it. Claude Code reads the last 2 MiB of its saved session, finding
+the project folder once per workspace; a turn larger than that keeps what is
+shown until the next full read. Codex reads recent turns and only the part of
+each rollout appended since its last read. Pi reads recent turns, and a
+transcript read stops waiting on the shared worker when cancelled. goose has
+no recent-messages API, so it reads in full, but while a session works it
+exports only that one and reuses the others' last export. Automatic reads
+wait while the window is hidden, and so do Pi's retries. One read runs at a
+time; a change of conversation, read inputs or working state aborts it at
+once, even while hidden, and the last result stays while the next is read.
+Only the first read and Refresh show as loading.
 The host archive store (`src-tauri/src/archive`, `browser-host/archive.mjs`) and
 any existing `archive/events.sqlite3` remain until a follow-up removes them.
 

@@ -230,22 +230,26 @@ it("keeps a send that failed or has not finished as a tool call", () => {
 function server(
   list: (params: Record<string, unknown>) => Wire,
   threads: { id: string; name: string; updatedAt: number }[] = [],
-  rollout?: string,
+  rollout?: string | (() => string),
+  path = "/sessions/rollout.jsonl",
 ) {
   const sent: Wire[] = [];
   const items = new Map<string, unknown[]>();
   const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
-    if (_id === "read") {
+    if (_id === "read" || _id === "read-from") {
       // Match the desktop host's process-directory contract.
       if (options?.cwd && !options.cwd.startsWith("/"))
         throw new Error("The process directory must be absolute");
-      if (rollout === undefined) options?.onStderr?.("file unavailable");
-      else options?.onStdout?.(btoa(rollout));
+      const file = typeof rollout === "function" ? rollout() : rollout;
+      // `read-from` is `tail -c +N`: from byte N, counting from 1.
+      const from = _id === "read" ? 0 : Number(options?.args?.[1]) - 1;
+      if (file === undefined) options?.onStderr?.("file unavailable");
+      else options?.onStdout?.(btoa(file.slice(from)));
       return {
         write: async () => {},
         end: async () => {},
         kill: async () => {},
-        exited: Promise.resolve(rollout === undefined ? 1 : 0),
+        exited: Promise.resolve(file === undefined ? 1 : 0),
       };
     }
     let exit!: (code: number) => void;
@@ -264,7 +268,7 @@ function server(
             : wire.method === "thread/items/list"
               ? itemPage(items, params)
               : wire.method === "thread/read"
-                ? { result: { thread: { path: "/sessions/rollout.jsonl" } } }
+                ? { result: { thread: { path } } }
                 : wire.method === "thread/list"
                   ? {
                       result: {
@@ -384,6 +388,65 @@ it("loads the recorded script through the declared file reader, and reports unav
   expect(fallback?.turns[0]?.items).toContainEqual(
     expect.objectContaining({ title: "pnpm test" }),
   );
+});
+
+it("reads only what a rollout appended since its last read, showing the same recorded tools", async () => {
+  const records = [
+    { type: "event_msg", payload: { type: "task_started", turn_id: "turn-1" } },
+    {
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call",
+        call_id: "script",
+        name: "exec",
+        input: "text(42)",
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call_output",
+        call_id: "script",
+        output: "42",
+      },
+    },
+  ].map((record) => JSON.stringify(record));
+  // The first read ends partway through the output record.
+  const cut = `${records.slice(0, 2).join("\n")}\n${records[2]?.slice(0, 20)}`;
+  let file = cut;
+  const path = "/sessions/appended.jsonl";
+  const { spawn } = server(paged([turn({ items: [] })]), [], () => file, path);
+  const lookupOne = { ...lookup, threadId: "thread-1" };
+  const first = await readTranscript(
+    spawn,
+    lookupOne,
+    new AbortController().signal,
+  );
+  expect(first?.turns[0]?.items).toMatchObject([
+    { title: "exec", input: "text(42)" },
+  ]);
+  file = records.join("\n");
+  const second = await readTranscript(
+    spawn,
+    lookupOne,
+    new AbortController().signal,
+  );
+  // From the partial line on, not the whole file again.
+  const whole = records.slice(0, 2).join("\n").length + 1;
+  expect(spawn).toHaveBeenLastCalledWith(
+    "read-from",
+    expect.objectContaining({ args: [path, String(whole + 1)] }),
+  );
+  const fresh = await readTranscript(
+    server(paged([turn({ items: [] })]), [], file, "/sessions/fresh.jsonl")
+      .spawn,
+    lookupOne,
+    new AbortController().signal,
+  );
+  expect(second?.turns).toEqual(fresh?.turns);
+  expect(second?.turns[0]?.items).toMatchObject([
+    { title: "exec", input: "text(42)", output: "42" },
+  ]);
 });
 
 it("reads the latest turns oldest first, and closes its app-server", async () => {

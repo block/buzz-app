@@ -13,7 +13,7 @@ import type {
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
 /** The largest file a tool reads: the community's upload limit. */
-const READ_LIMIT = 50 * 1024 * 1024;
+export const READ_LIMIT = 50 * 1024 * 1024;
 const READ_TIMEOUT_MS = 60_000;
 
 export function appClient(

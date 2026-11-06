@@ -12,7 +12,10 @@ import { errorText } from "../../buzz-mcp/rpc";
 import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { PiStopped } from "./pi";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
-import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
+import {
+  TranscriptPanel,
+  whenShown,
+} from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ModelPicker } from "../../features/agents/ModelPicker";
@@ -664,14 +667,19 @@ export function createTabs({
     return (
       <TranscriptPanel
         agent={agent}
-        read={(signal) =>
-          retryRead(
-            (signal) => runtime.transcript(agent.key, place, working, signal),
+        read={(signal) => {
+          let tries = 0;
+          return retryRead(
+            // A retry waits for a hidden window to show.
+            async (signal) => {
+              if (tries++) await whenShown(signal);
+              return runtime.transcript(agent.key, place, working, signal);
+            },
             signal,
             // The next request starts another host.
             (error) => error instanceof PiStopped || isRetryableRead(error),
-          )
-        }
+          );
+        }}
         readKey={`${agent.key}\u0000${place.key}\u0000${place.conversation}`}
         working={working}
         reading="Reading the Pi conversation…"

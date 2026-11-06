@@ -268,6 +268,11 @@ login | review)
     printf '%s\n' "$workspace"
   fi
   ;;
+read-from)
+  # A session file from byte "$2", counting from 1, in base64.
+  set -o pipefail
+  tail -c "+$2" -- "$1" | base64
+  ;;
 *)
   echo "Unknown command: $command" >&2
   exit 2

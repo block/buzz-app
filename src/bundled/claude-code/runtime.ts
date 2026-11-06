@@ -632,7 +632,7 @@ export class ClaudeRuntime {
     held: readonly TranscriptTurn[],
   ) {
     if (await this.inspect?.(conversation.agent)) return undefined;
-    const turns = await readLatestTurns(
+    const read = await readLatestTurns(
       this.spawn,
       workspace,
       conversation,
@@ -640,7 +640,15 @@ export class ClaudeRuntime {
       signal,
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
     );
-    if (!turns) return undefined;
+    if (!read) return undefined;
+    // Turns older than all `held` keeps are left.
+    const ids = new Set(held.map((turn) => turn.turnId));
+    const turns = read.slice(
+      Math.max(
+        read.findIndex((turn) => ids.has(turn.turnId)),
+        0,
+      ),
+    );
     const at = held.findIndex((turn) => turn.turnId === turns[0]?.turnId);
     const kept = new Set(
       held.slice(0, Math.max(at, 0)).map((t) => t.sessionId),

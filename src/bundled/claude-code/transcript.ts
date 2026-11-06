@@ -288,6 +288,9 @@ const indexedFor = (start: Start, conversation: Conversation) =>
     ? start.scope === "thread" && start.root === conversation.root
     : start.scope !== "thread");
 
+/** How long finding the agent's workspace may take. */
+const WORKSPACE_TIMEOUT_MS = 10_000;
+
 /** The Claude Code project directory name for the agent's workspace, or
  * undefined when it is too long to be one. */
 export async function workspaceProject(
@@ -302,9 +305,16 @@ export async function workspaceProject(
       directory += data;
     },
   });
-  if ((await process.exited) !== 0)
-    throw new Error("Could not find the agent's workspace");
+  const stop = () => void process.kill();
+  signal.addEventListener("abort", stop, { once: true });
+  if (signal.aborted) stop();
+  const timer = setTimeout(stop, WORKSPACE_TIMEOUT_MS);
+  const code = await process.exited.finally(() => {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", stop);
+  });
   signal.throwIfAborted();
+  if (code !== 0) throw new Error("Could not find the agent's workspace");
   const project = projectName(directory.trim());
   return project.length > PROJECT_NAME_LIMIT ? undefined : project;
 }
@@ -341,9 +351,13 @@ async function sizeOf(spawn: Spawn, path: string, signal: AbortSignal) {
 /** MiB read from the end of a session for its latest turns. */
 const LATEST_MIB = 2;
 
+/** Each workspace's project, found once for the latest-turn reads. */
+const projects = new Map<string, string | undefined>();
+
 /** The whole turns in the last {@link LATEST_MIB} MiB of the conversation's
- * saved session, oldest first, or undefined when there are none: no saved
- * session, or a turn larger than that. */
+ * saved session, oldest first: none while a turn is larger than that, so
+ * what is shown stays until the next full read; undefined with no saved
+ * session. */
 export async function readLatestTurns(
   spawn: Spawn,
   workspace: string,
@@ -352,7 +366,9 @@ export async function readLatestTurns(
   signal: AbortSignal,
   nameOf?: Names,
 ): Promise<TranscriptTurn[] | undefined> {
-  const project = await workspaceProject(spawn, workspace, signal);
+  if (!projects.has(workspace))
+    projects.set(workspace, await workspaceProject(spawn, workspace, signal));
+  const project = projects.get(workspace);
   const { sessionId } = conversation;
   if (!project || !sessionId) return undefined;
   const path = `./${project}/${sessionId}.jsonl`;
@@ -369,7 +385,7 @@ export async function readLatestTurns(
   );
   // A chunk from partway through starts partway through a line.
   const start = from ? bytes.indexOf(10) + 1 : 0;
-  if (from && !start) return undefined;
+  if (from && !start) return [];
   const turns = claudeTurns(
     decode(bytes.subarray(start)),
     {
@@ -381,7 +397,7 @@ export async function readLatestTurns(
     nameOf,
   ).filter((turn) => !turn.partial);
   if (from && turns[0]) turns[0].newSession = false;
-  return turns.length ? turns : undefined;
+  return turns;
 }
 
 /** A session file in `~/.claude/projects`. One too large to read whole is

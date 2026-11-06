@@ -11,7 +11,7 @@ import {
 import type { AgentKey } from "../../features/agents/membership";
 import { sessionTag, sessionTitle } from "./prompt";
 import { AppServer, Oversized, type Spawn } from "./rpc";
-import { readFile } from "../../buzz-mcp/app-client";
+import { READ_LIMIT, readFile } from "../../buzz-mcp/app-client";
 import { restoreRecordedTools } from "./recorded-tools";
 
 /** The latest turns shown; earlier ones stay in Codex's own history. */
@@ -433,6 +433,40 @@ export async function withServer<T>(
   }
 }
 
+/** Rollouts read before, by path, so a read takes only what was appended
+ * since; Codex only appends to them. */
+const rollouts = new Map<string, { bytes: number; text: string }>();
+/** Rollouts remembered at most. */
+const ROLLOUT_LIMIT = 8;
+
+/** A rollout's text, read whole the first time and then from its end. */
+async function rollout(
+  spawn: Spawn,
+  directory: string,
+  path: string,
+  signal: AbortSignal,
+) {
+  const known = rollouts.get(path);
+  const added = known
+    ? await readFile(spawn, directory, path, signal, undefined, "read-from", [
+        String(known.bytes + 1),
+      ])
+    : await readFile(spawn, directory, path, signal);
+  // Text ends at its last whole line, so no character is split.
+  const end = added.lastIndexOf(10) + 1;
+  const text =
+    (known?.text ?? "") + new TextDecoder().decode(added.subarray(0, end));
+  if ((known?.bytes ?? 0) + added.length > READ_LIMIT) {
+    rollouts.delete(path);
+    throw new Error(`${path} is larger than 50 MB`);
+  }
+  rollouts.delete(path);
+  rollouts.set(path, { bytes: (known?.bytes ?? 0) + end, text });
+  for (const old of rollouts.keys())
+    if (rollouts.size > ROLLOUT_LIMIT) rollouts.delete(old);
+  return text + new TextDecoder().decode(added.subarray(end));
+}
+
 /** The latest turns of all the conversation's threads, oldest first, from a
  * short-lived app-server, or undefined when Codex has no history for it on
  * this device. */
@@ -473,10 +507,10 @@ export async function readTranscript(
         // Codex supplies the rollout in Buzz's own home. Use its directory:
         // the desktop host rejects a relative process cwd, including ".".
         const directory = thread.path.slice(0, thread.path.lastIndexOf("/"));
-        const file = new TextDecoder().decode(
-          await readFile(spawn, directory, thread.path, signal),
+        restoreRecordedTools(
+          mapped,
+          await rollout(spawn, directory, thread.path, signal),
         );
-        restoreRecordedTools(mapped, file);
       } catch (error) {
         signal.throwIfAborted();
         const latest = mapped.at(-1);

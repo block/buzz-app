@@ -158,9 +158,11 @@ export function listDraftViews(
   return { entries: drafts, limited, unavailable };
 }
 
-/** Forgets every key saved under one scope, for a community the viewer has left. */
-export function clearViewScope(scope: string) {
-  const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
+/** Forgets every key saved under one scope, for a community the viewer has
+ * left, or only the keys there that start with `keyPrefix`. */
+export function clearViewScope(scope: string, keyPrefix = "") {
+  // JSON escapes per character, so an encoded key starts with its encoded prefix.
+  const prefix = `buzz-view.v1:${JSON.stringify([scope, keyPrefix]).slice(0, -2)}`;
   const stale: string[] = [];
   for (let index = 0; index < localStorage.length; index++) {
     const key = localStorage.key(index);

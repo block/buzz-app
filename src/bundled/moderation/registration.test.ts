@@ -7,14 +7,20 @@ import { SettingsCardsService } from "../../features/settings/service";
 import { createAdminAccess } from "../admin-access";
 import type { CommunityReader } from "../../features/communities/service";
 import type { RelayStaffBackend } from "../../features/relay-staff/contract";
+import { communityRequest } from "../../features/communities/api";
 import { apply, inject } from "./index";
 import manifest from "./manifest.json";
+
+vi.mock("../../features/communities/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../features/communities/api")>()),
+  communityRequest: vi.fn(async () => ({ policy: null })),
+}));
 
 const relayKey = "f".repeat(64);
 const owner = "0".repeat(64);
 
-/** A ready connection whose relay-signed roster names the viewer an owner. */
-function relay(): RelayData {
+/** A ready connection whose relay-signed roster gives the viewer `role`. */
+function relay(role = "owner"): RelayData {
   const session = {
     relayAuthor: relayKey,
     read: async () => [
@@ -25,7 +31,7 @@ function relay(): RelayData {
         created_at: 1,
         content: "",
         sig: "",
-        tags: [["-"], ["member", owner, "owner"]],
+        tags: [["-"], ["member", owner, role]],
       },
     ],
   };
@@ -55,6 +61,14 @@ it("registers the Membership card under the key the community rail opens", async
   });
   const data = relay();
   root.provide("relay", data);
+  // The Welcome card names the community in its default title.
+  root.provide("communityReader", {
+    snapshot: () => ({ memberships: [] }),
+    subscribe: () => () => {},
+  } as unknown as CommunityReader);
+  // Its message editor shows pasted links through the conversation's
+  // link renderers.
+  root.provide("conversation", {} as never);
   const access = createAdminAccess(
     data,
     {
@@ -94,3 +108,70 @@ it("registers the Membership card under the key the community rail opens", async
   await root.fiber.dispose();
   access.dispose();
 });
+
+it.each([
+  ["owner", true],
+  ["member", false],
+])(
+  "shows the Welcome card to a community %s on any relay: %s",
+  async (role, visible) => {
+    // Starter channels need no relay support; the card hides only the
+    // welcome form when the relay lacks it.
+    vi.mocked(communityRequest).mockResolvedValue({
+      policy: null,
+      landingChannels: false,
+    });
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const data = relay(role);
+    root.provide("relay", data);
+    root.provide("communityReader", {
+      snapshot: () => ({ memberships: [] }),
+      subscribe: () => () => {},
+    } as unknown as CommunityReader);
+    root.provide("conversation", {} as never);
+    const access = createAdminAccess(
+      data,
+      {
+        snapshot: () => ({
+          status: "ready",
+          selected: "https://primary.example",
+          viewer: owner,
+        }),
+        subscribe: () => () => {},
+      } as unknown as CommunityReader,
+      { available: false } as RelayStaffBackend,
+    );
+    root.provide("adminAccess", access);
+    const cards = new SettingsCardsService(root);
+    const releaseVisibility = cards.retainVisibility();
+    const fiber = root
+      .extend({ pluginOwner: { id: manifest.id, revision: "one" } })
+      .plugin({ name: manifest.id, inject, apply });
+    await fiber.await();
+    await flush();
+
+    // The roster settles both cards; a member sees neither.
+    await vi.waitFor(() =>
+      expect(cards.visibility(MEMBERSHIP_SECTION)).toBe(visible),
+    );
+    expect(cards.visibility("buzz.moderation/welcome")).toBe(visible);
+    const card = cards
+      .snapshot()
+      .find((entry) => entry.key === "buzz.moderation/welcome");
+    if (visible)
+      expect(card).toMatchObject({
+        title: "Welcome",
+        section: "administration",
+      });
+    else expect(card).toBeUndefined();
+
+    await fiber.dispose();
+    releaseVisibility();
+    await root.fiber.dispose();
+    access.dispose();
+  },
+);

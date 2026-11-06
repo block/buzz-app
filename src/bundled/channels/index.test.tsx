@@ -23,7 +23,6 @@ function registered() {
     relay: {},
     panels: {},
     agents: {},
-    adminAccess: { membership: undefined },
     communityReader: {},
   } as unknown as Parameters<typeof apply>[0]);
   return new Map(

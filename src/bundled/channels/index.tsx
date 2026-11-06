@@ -9,12 +9,23 @@ import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
-import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
+import type {
+  ArchiveShortcut,
+  LandingReader,
+  ReadShortcut,
+} from "./ChannelsPage";
+import {
+  communityRequest,
+  type CommunityInfo,
+} from "../../features/communities/api";
 import {
   conversationRows,
   inTerminal,
   stepConversation,
 } from "./conversation-rows";
+/** The relay's welcome-channel support and designation, read live from NIP-11. */
+const readLanding: LandingReader = (community, signal) =>
+  communityRequest<CommunityInfo>(community, "info", undefined, signal);
 export const inject = [
   "pages",
   "relay",
@@ -25,7 +36,6 @@ export const inject = [
   "agents",
   "shortcuts",
   "communityReader",
-  "adminAccess",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerCanvas(ctx);
@@ -115,7 +125,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     run: () => read.current?.run(),
   });
   const agents = ctx.agents;
-  const membership = ctx.adminAccess.membership;
   ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",
@@ -147,7 +156,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         companion={companion}
         agents={agents}
         communities={ctx.communityReader}
-        membership={membership}
+        landing={readLanding}
       />
     ),
   });

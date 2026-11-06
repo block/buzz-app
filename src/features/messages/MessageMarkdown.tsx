@@ -501,6 +501,7 @@ export function MessageMarkdown({
   participantProfiles,
   largeEmoji = false,
   interactive = true,
+  inertProfileChips = false,
   edited = false,
 }: {
   row: ChannelMessage;
@@ -514,6 +515,9 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
+  /** In a non-interactive render, show explicit profile links as the inert
+   * chips a live row would show, instead of their locators. */
+  inertProfileChips?: boolean | undefined;
   /** Mark the body as replaced by an edit, after its last line. */
   edited?: boolean | undefined;
 }) {
@@ -544,6 +548,7 @@ export function MessageMarkdown({
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
+      inertProfileChips={inertProfileChips}
       edited={edited}
     />
   );
@@ -568,6 +573,7 @@ function PreparedMessageMarkdown({
   resolveName,
   largeEmoji = false,
   interactive = true,
+  inertProfileChips = false,
   edited = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
   prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
@@ -711,6 +717,10 @@ function PreparedMessageMarkdown({
     }
     return undefined;
   };
+  // An explicit profile link becomes a chip when it can open a profile, or in
+  // a preview that asks for the inert chip; otherwise its locator stays visible.
+  const profileChip = (href: string) =>
+    interactive ? !!canOpenLink?.(href) : inertProfileChips;
   const components: MessageComponents = {
     p: ({ node, ...props }) => {
       const first = node?.children[0];
@@ -721,8 +731,7 @@ function PreparedMessageMarkdown({
         (element?.tagName === "a" &&
           typeof href === "string" &&
           !!profileKey(href) &&
-          interactive &&
-          !!canOpenLink?.(href));
+          profileChip(href));
       return (
         <p
           {...props}
@@ -744,7 +753,7 @@ function PreparedMessageMarkdown({
           : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
-        if (!interactive || !canOpenLink?.(href))
+        if (!profileChip(href))
           return (
             <span>
               {children} ({href})

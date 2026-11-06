@@ -320,8 +320,6 @@ ctx.provide("agents", {
   snapshot: () => noAgents,
   subscribe: () => () => {},
 });
-// Channels hands community membership to its page for the auto-join switch; no roster here.
-ctx.provide("adminAccess", { membership: undefined });
 Object.assign(window, {
   conversationFixture: {
     report,

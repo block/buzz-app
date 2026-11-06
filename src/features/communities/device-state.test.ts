@@ -86,7 +86,18 @@ it("forgets every store partitioned to the left community and viewer, and nothin
   localStorage.setItem(receipt(`${kept}:${viewer}`), "1");
   localStorage.setItem(follows(scope), "[]");
   localStorage.setItem(follows(`${kept}:${viewer}`), "[]");
+  // The welcome record is the one store scoped by origin alone.
+  writeView(origin, "welcome-first-open", 1_788_810_000);
+  writeView(origin, "welcome-dismissed:general", true);
+  writeView(origin, "unrelated", "kept");
+  writeView(kept, "welcome-first-open", 1_788_810_000);
   expect(await purgeCommunityDeviceState(origin, viewer)).toEqual([]);
+  expect(readView(origin, "welcome-first-open", undefined)).toBeUndefined();
+  expect(
+    readView(origin, "welcome-dismissed:general", undefined),
+  ).toBeUndefined();
+  expect(readView(origin, "unrelated", undefined)).toBe("kept");
+  expect(readView(kept, "welcome-first-open", undefined)).toBe(1_788_810_000);
   expect(
     localStorage.getItem(localCommunityNameKey(origin, viewer)),
   ).toBeNull();
@@ -119,7 +130,8 @@ it("clears the remaining stores when one is unavailable and reports each failure
   writeView(scope, "draft:general", "unsent");
   localStorage.setItem(reactions(scope), '[{"emoji":"🎉","count":1,"used":1}]');
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  // Key enumeration fails, which the view and channel-setup sweeps rely on.
+  // Key enumeration fails, which the view, welcome and channel-setup sweeps
+  // rely on.
   const denied = new Error("denied");
   vi.spyOn(Storage.prototype, "key").mockImplementation(() => {
     throw denied;
@@ -127,6 +139,7 @@ it("clears the remaining stores when one is unavailable and reports each failure
   const failures = await purgeCommunityDeviceState(origin, viewer);
   expect(failures).toEqual([
     { store: "view state", error: denied },
+    { store: "welcome record", error: denied },
     { store: "channel setups", error: denied },
   ]);
   expect(localStorage.getItem(reactions(scope))).toBeNull();
@@ -134,6 +147,7 @@ it("clears the remaining stores when one is unavailable and reports each failure
   // naming the store and the community it belongs to.
   expect(warn.mock.calls).toEqual([
     [`Couldn't clear view state for ${origin} on this device`, denied],
+    [`Couldn't clear welcome record for ${origin} on this device`, denied],
     [`Couldn't clear channel setups for ${origin} on this device`, denied],
   ]);
 });

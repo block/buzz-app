@@ -1,4 +1,5 @@
 import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
+import { isEarlierActivityFilter } from "../src/features/relay/earlier-activity.ts";
 import {
   isCatalogKind,
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
@@ -26,6 +27,7 @@ import {
 } from "../src/features/repos/git.ts";
 import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
+import { landingInfo } from "../src/features/relay/landing.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
 import { validateArchiveRequestTemplate } from "../src/features/relay/identity-archive-protocol.ts";
 import {
@@ -743,7 +745,7 @@ export function validChannelActivityFilters(filters) {
     )
   );
 }
-export function validFilters(filters) {
+export function validFilters(filters, viewer) {
   return (
     Array.isArray(filters) &&
     filters.length >= 1 &&
@@ -761,7 +763,8 @@ export function validFilters(filters) {
           )) ||
           (filter.kinds === undefined &&
             Array.isArray(filter.ids) &&
-            filter.ids.length > 0)) &&
+            filter.ids.length > 0) ||
+          isEarlierActivityFilter(filter, viewer)) &&
         Number.isInteger(filter.limit) &&
         filter.limit >= 1 &&
         filter.limit <= MAX_LIMIT,
@@ -1228,6 +1231,7 @@ export function relayBrokerPlugin({
               name: info.name,
               icon: info.icon,
               policy: policy ?? null,
+              ...landingInfo(info),
               ...(gifSearchPath
                 ? {
                     supported_extensions: ["buzz-gif"],
@@ -3032,7 +3036,7 @@ export function relayBrokerPlugin({
             !readPublishing &&
             !snapshot &&
             !channelActivity &&
-            !validFilters(filters)
+            !validFilters(filters, viewer)
           )
             return json(res, 400, { error: "Read filter rejected" });
           if (publishing || readPublishing) {

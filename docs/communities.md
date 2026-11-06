@@ -57,11 +57,14 @@ admitted destination through the same read and call. `Welcome` is also the
 second caller of the invite intent (`invite-intent.ts`) beside OS deep links:
 an address typed on the welcome screen that the restore did not admit opens
 this dialog, prefilled, as the app opens. The relay adds a member newly admitted
-by an invite claim to the community's starter channels, so they are already in
-the sidebar and Messages opens the first of them. An open community needs no
+by an invite claim to the community's [welcome channel](#welcome-channel) and
+starter channels, so they are already in the sidebar. Messages opens the welcome
+channel, or else the first starter channel. An open community needs no
 claim: there the relay adds each person, though not agents, to the starter
-channels they have never been in each time they connect, so those channels
-appear a moment later. See [local-first launch](channels.md#local-first-launch).
+channels they have never been in each time they connect, and to the welcome
+channel when they first connect. Those channels appear a moment later, while
+Messages shows that it is opening the person's channels. See
+[local-first launch](channels.md#local-first-launch).
 
 
 
@@ -115,6 +118,11 @@ sessions. Leave asks for confirmation, then sends a signed NIP-43 leave request
 answers end the membership here. The relay accepting, or answering that the
 viewer is not a member, removes the community and clears its drafts, reading
 positions and other device state, since the relay holds nothing to go back to.
+That includes the welcome record the device keeps per community for all of its
+identities (when it first opened it and which welcomes were dismissed), so a
+rejoin by any identity here starts it afresh. That is an accepted trade-off:
+another identity on this device that had dismissed the welcome may see it once
+more.
 The relay answering that the viewer is banned also removes the community and
 disposes its session, but keeps that device state: the relay still holds the
 membership while a ban lasts (bans can be timed or lifted), and the data is
@@ -135,6 +143,85 @@ Messages shows an intentional
 empty state there. Try drafting in A, switching to B, then returning to A.
 Selected channels, drafts and reading offsets are partitioned by the canonical
 community origin and viewer; channel IDs alone are not sufficient keys.
+
+## Welcome channel
+
+A relay that advertises the `buzz-landing-channel` NIP-11 extension keeps one
+welcome channel per community. The relay adds each newly entering human to it
+first, ahead of the starter channels. Messages opens it when there is no saved
+selection, waiting briefly for a designated channel that is not listed yet (see
+[local-first launch](channels.md#local-first-launch)). A new member sees a
+welcome card pinned above its composer until they dismiss it on that device;
+an existing member never does (see [pinned welcome](channels.md#pinned-welcome)).
+
+Owners and admins set it under **Community admin → Welcome**, which appears
+when the relay-signed roster gives the viewer an owner or admin role. Each time
+the card opens, it reads a fresh NIP-11 document. On a relay without the
+extension it says so and shows only the starter channels. Otherwise it reads the
+current designation from that document, then that channel's title and message
+with a strong metadata read. If nothing is designated yet, the channel field
+starts empty and must be chosen before Save. The picker lists public, unarchived
+stream channels.
+
+The title starts with the custom title or the default: "Welcome to" and the
+community's configured name, the one this viewer gave it or the relay's
+published one, or just "Welcome" when the community is known only by its
+address. A title is 1–120 characters on one line. The message starts with the
+custom text or the default. It is edited in the message composer's editor, with
+its formatting toolbar, shortcuts and link dialog; Enter adds a line break, and
+there are no mentions, attachments, GIFs or cards. The message is stored as
+Markdown and rendered as messages are: published Markdown opens as its source
+text, as when editing a sent message, and formatting applied in the editor is
+written as Markdown. `[@Name](nostr:npub…)` identity links show the person
+without notifying them; a pasted npub from **Copy npub**, bare or as a
+`nostr:` URI, becomes one, labelled with the person's name when it is known.
+That happens only when it is pasted as a word of its own, with whitespace or
+the start or end of the message on each side, outside Markdown code and links.
+Anywhere else, such as after `[@Name](`, an unclosed backtick or a URL being
+typed, it stays as pasted.
+Channel or message links pasted from **Copy link** show as chips in the editor,
+with the same link presentation as in messages, and as linked names in the
+card, where they open in place for members. It takes 1–4,000 characters, with
+no control characters other than line breaks and tabs.
+Both are checked against the relay's rules as the admin types: text made only
+of spaces and invisible characters, such as zero-width spaces or the Braille
+blank, counts as empty, and hidden text-direction marks, embeddings, overrides
+and isolates are refused anywhere. Line endings are
+normalized and both are trimmed before sending. A message matching the default
+is saved as the default rather than as custom text. The default title depends on
+who is looking, so it is never inferred: an edited title is saved as written, an
+untouched one stays as published, and **Restore defaults** resets both in the
+draft and saves the default title. Nothing is published until **Save**. Save
+sends the welcome's whole state if it changed, then each changed starter flag
+in turn, and confirms each step as described in
+[channel lifecycle](channels.md#channel-lifecycle); one "Welcome saved" notice
+follows a complete save. A relay refusal of the welcome is shown with its reason
+and the draft is kept. A step the relay has not shown yet keeps the draft with
+Save disabled until **Check again** reads the relay's state for that step. If
+that read finds the relay no longer supports welcome channels, the welcome draft
+and its notice end with it, and the starter list stays. **Add a channel**,
+**Remove** and **Cancel** announce the pending, undone or discarded change for
+screen readers, and focus on a Save or Cancel that leaves rests on the welcome channel
+field, or on the search where there is no welcome form. Archive,
+Delete, Make private and expiry are not disabled for the welcome channel yet; the
+relay refuses them, and that refusal is shown like any other lifecycle error.
+
+**Also add new members to** lists only the starter channels, so it stays short
+however many channels the community has. The welcome channel comes first, fixed,
+because new members always join it; its own flag is left unchanged. Each other
+starter channel has **Remove**, and **Add a channel** searches the community's
+open, unarchived stream channels that are not starters yet. Both edit the draft,
+and Save and Cancel appear for starter changes alone: an added channel is listed
+as not saved yet, and a removed one leaves the list until Cancel brings it back.
+Save stops at a refused step. The steps before it are published, the refused
+change returns to its published state with the relay's reason beside its row
+for a removal or on the search for an addition, and the changes after it stay in
+the draft. A confirmed change shows at once wherever the directory or roster
+lists the channel, without waiting for the next directory read. Owners and
+admins can add a channel they are not in. Adding a
+channel applies to people who join from then on, not current members; in an
+open community it also adds people who come back and have never been in that
+channel.
 
 ## Import from the previous desktop app
 

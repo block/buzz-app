@@ -1,0 +1,55 @@
+@reference "../../shared/styles/globals.css";
+
+/* Floats over the end of the history, as a channel's join notice does; the
+   page extends the history's end so its last messages scroll clear. */
+.pinned {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3);
+  /* Unlike a preview, this channel has a composer, and "X is typing" floats a
+     caption pill (padding space-1, raised space-half) just above it, in this
+     same corner (TypingIndicator.module.css). Leave that lane below the card,
+     and the reported height carries it to the history's end. */
+  padding-block-end: calc(
+    var(--space-3) +
+    var(--space-half) +
+    2 *
+    var(--space-1) +
+    var(--text-caption) *
+    var(--text-caption--line-height)
+  );
+  pointer-events: none;
+}
+.card {
+  @apply floating-surface;
+  /* Content padding: keep nested corners concentric (DESIGN.md, Floating surfaces). */
+  --floating-inset: var(--space-3);
+  pointer-events: auto;
+  width: min(100%, 40rem);
+  padding: var(--floating-inset) var(--space-4) var(--space-4);
+  color: var(--text-standard);
+  text-align: start;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+/* A long welcome scrolls within the card instead of covering the history. */
+.body {
+  max-block-size: min(12rem, 30vh);
+  overflow-y: auto;
+  margin-block-start: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

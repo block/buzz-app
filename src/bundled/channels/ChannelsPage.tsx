@@ -39,7 +39,6 @@ import {
 } from "../../features/channel-navigation/routes";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
-import type { CommunityMembership } from "../moderation/membership";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
@@ -52,7 +51,11 @@ import { ChannelJoinNotice } from "../../features/messages/ChannelJoinNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
-import type { Navigation } from "../../features/navigation/controller";
+import type {
+  Navigation,
+  NavigationFocus,
+  NavigationOpenOptions,
+} from "../../features/navigation/controller";
 import { targetKey, type OpenTarget } from "../../features/navigation/targets";
 import {
   buzzLinkTarget,
@@ -83,6 +86,7 @@ import {
   LockIcon,
   ChatCircleIcon,
   GearIcon,
+  HashIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
@@ -121,6 +125,16 @@ import { channelHasUnread } from "./useSidebarFilters";
 import { inFieldOutsideComposer } from "./conversation-rows";
 import styles from "./Channels.module.css";
 import type { CommunityReader } from "../../features/communities/service";
+import {
+  PinnedWelcome,
+  WelcomeMessage,
+} from "../../features/communities/WelcomeCard";
+import {
+  recordWelcomeFirstOpen,
+  usePinnedWelcome,
+} from "../../features/communities/welcome-pin";
+import type { CommunityInfo } from "../../features/communities/api";
+import { communityFromScope } from "../../features/relay/gifs";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
@@ -143,17 +157,18 @@ export function ChannelsPage({
   navigator,
   agents,
   communities,
+  landing,
   archive,
   read,
-  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
   /** For adding a whole team of the owner's agents from the members dialog. */
   agents?: Agents | undefined;
   communities?: CommunityReader | undefined;
-  /** The viewer's community role, for the auto-join switch in Channel settings. */
-  membership?: CommunityMembership | undefined;
+  /** Reads the relay's welcome-channel support, so a new member's opening can
+   * wait for the channel the relay is adding them to. */
+  landing?: LandingReader | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -309,7 +324,7 @@ export function ChannelsPage({
           companion={companion}
           agents={agents}
           communities={communities}
-          membership={membership}
+          landing={landing}
         />
       )}
     </section>
@@ -322,6 +337,29 @@ function LiveNewMessage(
 ) {
   const { channels } = useChannelList(props.session.channels);
   return <NewMessage {...props} channels={channels} />;
+}
+
+/** How long a channel list with nothing to open keeps the opening state. */
+const ENROLLMENT_WAIT_MS = 10_000;
+
+type Landing = Pick<CommunityInfo, "landingChannels" | "landingChannel">;
+export type LandingReader = (
+  community: string,
+  signal: AbortSignal,
+) => Promise<Landing>;
+
+/** Focus for a default that replaces its visit's opening: focus the reader
+ * has moved out of Messages stays where it is. */
+function correctionFocus(
+  history: HTMLElement | null,
+  focus: NavigationFocus | undefined,
+): NavigationFocus | undefined {
+  const active = document.activeElement;
+  return active &&
+    active !== document.body &&
+    !history?.closest("[data-channel-workspace]")?.contains(active)
+    ? "preserve"
+    : focus;
 }
 
 function ChannelWorkspace({
@@ -338,16 +376,16 @@ function ChannelWorkspace({
   viewer,
   agents,
   communities,
+  landing,
   archive,
   read,
-  membership,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
   agents?: Agents | undefined;
-  membership?: CommunityMembership | undefined;
   companion?: ReactNode;
   communities?: CommunityReader | undefined;
+  landing?: LandingReader | undefined;
   scope: string;
   navigation?: PageNavigation | undefined;
   navigator: Navigation;
@@ -387,7 +425,10 @@ function ChannelWorkspace({
     // Start the optional catalog afterward so opening Messages cannot strand it.
     if (list.status === "ready") queries.channelKit.ensure();
   }, [queries, list.status]);
+  // The join notice's height, or the pinned welcome's: never both at once.
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
+  // Before any passive effect, so the pinned welcome's first read has it.
+  useLayoutEffect(() => recordWelcomeFirstOpen(scope), [scope]);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
   const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
@@ -421,19 +462,22 @@ function ChannelWorkspace({
     return () => clearPreparingDm?.();
   }, [composingMessage, clearPreparingDm]);
   const navigate = useCallback(
-    (id: string) => {
+    (id: string, options?: NavigationOpenOptions) => {
       setSelected(id);
       writeView(scope, "selected-channel", id);
       if (navigator && viewer) {
-        void navigator.open({
-          version: 1,
-          kind: "conversation",
-          channelId: id,
-          scope: {
-            viewer,
-            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        void navigator.open(
+          {
+            version: 1,
+            kind: "conversation",
+            channelId: id,
+            scope: {
+              viewer,
+              communityOrigin: scope.slice(0, -(viewer.length + 1)),
+            },
           },
-        });
+          options,
+        );
       }
     },
     [navigator, viewer, scope],
@@ -546,6 +590,94 @@ function ChannelWorkspace({
     !!draft ||
     (navigation?.target.kind === "page" &&
       navigation.target.route?.params === "empty");
+  const kept =
+    (!navigation && !cached && visiblePreview.current?.queries === queries
+      ? queries.channels.get?.(visiblePreview.current.channelId)
+      : undefined) ??
+    channels.find((channel) => channel.id === selected) ??
+    // A computed choice stays put while its channel is listed, so a channel
+    // flagged or added later never swaps the one being read; only a welcome
+    // channel can replace a provisional fallback (see `provisional`).
+    channels.find((channel) => channel.id === chosen.current);
+  // A new member lands in the community's welcome channel, else in its
+  // default channel when it has one.
+  const welcomeChannel = channels.find(
+    (channel) => channel.landing && channel.channelType === "stream",
+  );
+  /** When the list first loaded; the opening waits are measured from it. */
+  const listedAt = useRef<number>(undefined);
+  // With nothing saved or requested, the relay's NIP-11 document names its
+  // welcome channel before the list can: a new member's list may not have it
+  // yet. A saved selection whose metadata is still arriving needs no read; one
+  // the list shows is `kept`, and an archived one is no longer being read.
+  const community = communityFromScope(scope);
+  const needsLanding =
+    !!landing &&
+    !!community &&
+    !cached &&
+    !emptyDestination &&
+    !requestedChannel &&
+    !kept &&
+    (!selected ||
+      (list.status === "ready" &&
+        !list.channels.some(
+          (channel) => channel.id === selected && channel.metadataPending,
+        )));
+  const [landingRead, setLandingRead] = useState<Landing | "failed">();
+  useEffect(() => {
+    if (!needsLanding || landingRead || !landing || !community) return;
+    const reading = new AbortController();
+    landing(community, reading.signal).then(
+      (info) => !reading.signal.aborted && setLandingRead(info),
+      () => !reading.signal.aborted && setLandingRead("failed"),
+    );
+    return () => reading.abort();
+  }, [needsLanding, landingRead, landing, community]);
+  const landingInfo = landingRead === "failed" ? undefined : landingRead;
+  const awaited = landingInfo?.landingChannel;
+  // While that read is pending, or names a channel not listed yet, no other
+  // channel opens in its place, until ENROLLMENT_WAIT_MS after the list loaded.
+  // Only while the list still looks like a new member's: nothing but the
+  // relay's starter channels and DMs. A channel the person joined themselves
+  // means the relay is not adding them to the welcome channel now, as for a
+  // member from before it was designated, or one who left it.
+  const [heldOut, setHeldOut] = useState(false);
+  const newcomer = channels.every(
+    (channel) =>
+      channel.autoJoin ||
+      channel.channelType === "dm" ||
+      channel.channelType === "solo",
+  );
+  const holdFallback =
+    needsLanding &&
+    !heldOut &&
+    !welcomeChannel &&
+    newcomer &&
+    list.status !== "error" &&
+    (!landingRead ||
+      (!!awaited && !list.channels.some((channel) => channel.id === awaited)));
+  useEffect(() => {
+    if (!holdFallback || list.status !== "ready") return;
+    const timer = setTimeout(
+      () => setHeldOut(true),
+      Math.max(
+        0,
+        (listedAt.current ?? Date.now()) + ENROLLMENT_WAIT_MS - Date.now(),
+      ),
+    );
+    return () => clearTimeout(timer);
+  }, [holdFallback, list.status]);
+  // A channel whose metadata is still pending can be the welcome channel, so
+  // the starter and first-channel fallbacks wait for it rather than settle first.
+  const fallback =
+    kept ||
+    welcomeChannel ||
+    holdFallback ||
+    (metadataPending && list.status !== "error")
+      ? undefined
+      : (channels.find(
+          (channel) => channel.autoJoin && channel.channelType !== "solo",
+        ) ?? channels.find((item) => item.channelType !== "solo"));
   const requestedDestination = emptyDestination
     ? undefined
     : requestedChannel
@@ -555,18 +687,7 @@ function ChannelWorkspace({
         (previewAvailable
           ? queries.channels.get?.(requestedChannel)
           : undefined))
-      : ((!navigation && !cached && visiblePreview.current?.queries === queries
-          ? queries.channels.get?.(visiblePreview.current.channelId)
-          : undefined) ??
-        channels.find((channel) => channel.id === selected) ??
-        // A computed choice stays put while its channel is listed, so a channel
-        // flagged or added later never swaps the one being read.
-        channels.find((channel) => channel.id === chosen.current) ??
-        // A new member lands in the community's default channel when it has one.
-        channels.find(
-          (channel) => channel.autoJoin && channel.channelType !== "solo",
-        ) ??
-        channels.find((item) => item.channelType !== "solo"));
+      : (kept ?? welcomeChannel ?? fallback);
   // Exact links and saved selections must respect the same Huddle-only entry point.
   const resolving =
     resolvingMembership ||
@@ -575,14 +696,116 @@ function ChannelWorkspace({
     requestedDestination?.huddle || requestedDestination?.metadataPending
       ? undefined
       : requestedDestination;
+  // With nothing requested, the default channel is still arriving rather than
+  // unchosen: a new member's welcome channel can follow the first list.
+  const defaulting = !emptyDestination && !requestedChannel && !current;
+  const emptyList =
+    defaulting &&
+    list.status === "ready" &&
+    !metadataPending &&
+    !channels.some((channel) => channel.channelType !== "solo");
+  // A list with nothing to open can be a new member's, read before the relay
+  // has added them to the welcome channel. Any such empty default keeps
+  // opening for a bounded time, once per workspace, before offering recovery;
+  // a relay without welcome channels adds no one, so its first list does not
+  // wait. Try again refreshes the list and waits once more.
+  const [listAttempt, setListAttempt] = useState(0);
+  const [waitedOut, setWaitedOut] = useState(-1);
+  const unenrolled =
+    waitedOut === listAttempt ||
+    (listAttempt === 0 && landingInfo?.landingChannels === false);
+  const noChannels = emptyList && unenrolled;
+  useEffect(() => {
+    if (!emptyList || unenrolled) return;
+    const timer = setTimeout(
+      () => setWaitedOut(listAttempt),
+      ENROLLMENT_WAIT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [emptyList, listAttempt, unenrolled]);
+  const opening =
+    defaulting &&
+    (list.status === "idle" ||
+      list.status === "loading" ||
+      metadataPending ||
+      holdFallback ||
+      (emptyList && !noChannels));
+  // The relay's membership hints can confirm a new member's starter channel
+  // before their welcome channel, so a fallback chosen with no welcome channel
+  // listed is provisional. Until the reader clicks or types anywhere or moves
+  // to another visit, a welcome channel arriving within ENROLLMENT_WAIT_MS of
+  // the list first loading replaces it.
+  const provisional = useRef<{
+    channelId: string;
+    entryId: string | undefined;
+    /** Removes the input listeners that settle it. */
+    listening: AbortController;
+  }>(undefined);
+  const settleDefault = useCallback(() => {
+    provisional.current?.listening.abort();
+    provisional.current = undefined;
+  }, []);
+  useEffect(() => settleDefault, [settleDefault]);
   useLayoutEffect(() => {
+    if (list.status === "ready") listedAt.current ??= Date.now();
+    // The route handoff briefly passes no navigation; only another visit
+    // settles the choice.
+    if (
+      navigation &&
+      provisional.current &&
+      provisional.current.entryId !== navigation.entryId
+    )
+      settleDefault();
     // An open draft resolves nothing; keep the choice for when it closes.
-    if (requestedDestination) chosen.current = requestedDestination.id;
+    if (requestedDestination) {
+      if (!requestedChannel && requestedDestination === fallback) {
+        settleDefault();
+        // A click or key press anywhere settles it, such as tabbing through
+        // the sidebar or typing in a field outside Messages.
+        const listening = new AbortController();
+        for (const type of ["pointerdown", "keydown"])
+          document.addEventListener(type, settleDefault, {
+            capture: true,
+            signal: listening.signal,
+          });
+        provisional.current = {
+          channelId: requestedDestination.id,
+          entryId: navigation?.entryId,
+          listening,
+        };
+      }
+      chosen.current = requestedDestination.id;
+    }
     visiblePreview.current =
       current?.readOnly && !current.cached && !cached
         ? { channelId: current.id, queries }
         : undefined;
   });
+  const welcomeId = welcomeChannel?.id;
+  const currentId = current?.id;
+  const visitFocus = navigation?.focus;
+  useEffect(() => {
+    const choice = provisional.current;
+    if (!choice || !welcomeId) return;
+    settleDefault();
+    const shown = navigator?.snapshot().entry;
+    if (
+      currentId !== choice.channelId ||
+      welcomeId === choice.channelId ||
+      listedAt.current === undefined ||
+      Date.now() - listedAt.current >= ENROLLMENT_WAIT_MS ||
+      // Only the provisional visit while it is shown: never Settings over it,
+      // nor a visit opened since. An unrouted workspace has no visit to match,
+      // so only Settings is checked.
+      (choice.entryId === undefined
+        ? shown?.target.kind === "settings"
+        : shown?.id !== choice.entryId)
+    )
+      return;
+    const focus = correctionFocus(historyContainer.current, visitFocus);
+    // The same opening, corrected: no return path to the fallback.
+    navigate(welcomeId, { replace: true, ...(focus && { focus }) });
+  }, [welcomeId, currentId, visitFocus, navigate, navigator, settleDefault]);
   // Sidebar routing can update the same mounted page. Keep its saved default
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {
@@ -601,6 +824,8 @@ function ChannelWorkspace({
     }
   }, [joiningChannel, current]);
   const CurrentChannelIcon = channelIcon(current);
+  /** The opened visit a late default last replaced, which it does once. */
+  const corrected = useRef<string>(undefined);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
     if (composingMessage || draft) {
@@ -629,7 +854,7 @@ function ChannelWorkspace({
       navigation?.complete({ status: "opened" });
     if (!requestedChannel && current && navigation && viewer) {
       // Resolve the saved default within this attempt, keeping its caller and deadline.
-      navigation.resolve({
+      const resolved = navigation.resolve({
         version: 1,
         kind: "conversation",
         channelId: current.id,
@@ -638,6 +863,25 @@ function ChannelWorkspace({
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
         },
       });
+      // The visit opened with nothing to show, as the opening waits do. The
+      // welcome channel arriving since, or the fallback once a held opening
+      // gave up on it, replaces that visit so its route and selection follow.
+      // Only while the visit is shown, never Settings or a visit opened since.
+      const shown = navigator.snapshot();
+      if (
+        !resolved &&
+        (current.id === welcomeId || heldOut) &&
+        shown.status === "opened" &&
+        shown.entry.id === navigation.entryId &&
+        corrected.current !== navigation.entryId
+      ) {
+        corrected.current = navigation.entryId;
+        const focus = correctionFocus(
+          historyContainer.current,
+          navigation.focus,
+        );
+        navigate(current.id, { replace: true, ...(focus && { focus }) });
+      }
     }
   }, [
     cached,
@@ -650,8 +894,12 @@ function ChannelWorkspace({
     current,
     list,
     navigation,
+    navigator,
+    navigate,
     viewer,
     scope,
+    welcomeId,
+    heldOut,
   ]);
   const requestedMessage =
     navigation?.target.kind === "conversation"
@@ -684,7 +932,6 @@ function ChannelWorkspace({
       navigation.resolve(target);
     }
   }, [cached, current, navigation]);
-  const currentId = current?.id;
   useEffect(() => {
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
@@ -1924,8 +2171,6 @@ function ChannelWorkspace({
       }
       channel={current}
       details={queries.channelDetails}
-      lifecycle={queries.channelLifecycle}
-      membership={membership}
       session={queries}
       canOpenLink={canOpenLink}
       onOpenLink={openLink}
@@ -1992,6 +2237,18 @@ function ChannelWorkspace({
     (current.archived ||
       (current.readOnly &&
         (!current.cached || current.viewerRole === "guest")));
+  const composes =
+    !!current &&
+    !current.archived &&
+    current.viewerRole !== "guest" &&
+    (!current.readOnly || !!current.cached);
+  const welcome = usePinnedWelcome({
+    session: queries,
+    scope,
+    channelId: current?.id,
+    // A member of the welcome channel, with its composer.
+    member: !!current?.landing && current.channelType === "stream" && composes,
+  });
   useChannelHistoryFocus(
     historyContainer,
     navigation,
@@ -2012,7 +2269,7 @@ function ChannelWorkspace({
         }
         tabIndex={-1}
         ref={historyContainer}
-        className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
+        className={`relative flex min-h-0 flex-col${current || noChannels ? " flex-1" : ""}`}
       >
         {current ? (
           <ChannelBody
@@ -2031,16 +2288,42 @@ function ChannelWorkspace({
               sent?.channelId === current.id ? sent.id : undefined
             }
           />
+        ) : noChannels ? (
+          <div className={styles.failed}>
+            <EmptyState
+              icon={<HashIcon />}
+              title="You’re not in any channels yet"
+              description="Channels you join will appear here. If you just joined this community, try again."
+              action={
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => {
+                    // This button leaves with the empty state; keep focus in
+                    // the pane that announces the wait.
+                    historyContainer.current?.focus({ preventScroll: true });
+                    setListAttempt((attempt) => attempt + 1);
+                    queries.channels.refreshList?.({ consistency: "strong" });
+                  }}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          </div>
         ) : (
           <div
             className={styles.empty}
+            role={opening ? "status" : undefined}
             data-buzz-launch-pending={
               resolving && !navigation?.signal.aborted ? "required" : undefined
             }
           >
             {resolving
               ? "Checking conversation access…"
-              : "Select a channel to read it."}
+              : opening
+                ? "Opening your channels…"
+                : "Select a channel to read it."}
           </div>
         )}
         {current && channelNotice && (
@@ -2063,6 +2346,30 @@ function ChannelWorkspace({
             onJoin={() => setJoiningChannel(current.id)}
             onHeightChange={setJoinNoticeHeight}
           />
+        )}
+        {current && welcome.shown && (
+          <PinnedWelcome
+            key={`welcome:${current.id}`}
+            communities={communities}
+            scope={scope}
+            title={current.welcomeTitle}
+            onDismiss={(focused) => {
+              welcome.dismiss();
+              // Dismiss leaves with the card; typing is what comes next.
+              if (focused) setComposerFocus((value) => value + 1);
+            }}
+            onHeightChange={setJoinNoticeHeight}
+          >
+            <WelcomeMessage
+              message={current.welcome}
+              session={queries}
+              scope={scope}
+              channelId={current.id}
+              extensions={extensions}
+              onOpenLink={openLink}
+              canOpenLink={canOpenLink}
+            />
+          </PinnedWelcome>
         )}
       </section>
       {!cached && (
@@ -2091,41 +2398,38 @@ function ChannelWorkspace({
           }
         />
       )}
-      {current &&
-        !current.archived &&
-        current.viewerRole !== "guest" &&
-        (!current.readOnly || current.cached) && (
-          <ConversationComposer
-            key={`composer:${current.id}`}
-            onFocusedRemoval={focusArchivedHistory}
-            autoFocus={
-              // Remote unarchive restores controls within the reader's current visit.
-              !(continuingVisit && committedVisit.current?.archived) &&
-              // Conversion remounts the body, but isn't a new conversation opening.
-              // Its dialog hands off focus after closing and releasing modality.
-              !(
-                continuingVisit &&
-                committedVisit.current?.channelType === "solo" &&
-                current.channelType !== "solo"
-              ) &&
-              // The bound request arrives after the composer's first render.
-              (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
-                "preserve" &&
-              !current.readOnly &&
-              !requestedMessage &&
-              !requestedThread &&
-              !routedThread
-            }
-            trailingTool={
-              solo ? (
-                <WorkspaceControl session={queries} channelId={current.id} />
-              ) : undefined
-            }
-            onSend={onComposerSend}
-            onCommand={handleCommand}
-            focusRequest={composerFocus}
-          />
-        )}
+      {current && composes && (
+        <ConversationComposer
+          key={`composer:${current.id}`}
+          onFocusedRemoval={focusArchivedHistory}
+          autoFocus={
+            // Remote unarchive restores controls within the reader's current visit.
+            !(continuingVisit && committedVisit.current?.archived) &&
+            // Conversion remounts the body, but isn't a new conversation opening.
+            // Its dialog hands off focus after closing and releasing modality.
+            !(
+              continuingVisit &&
+              committedVisit.current?.channelType === "solo" &&
+              current.channelType !== "solo"
+            ) &&
+            // The bound request arrives after the composer's first render.
+            (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
+              "preserve" &&
+            !current.readOnly &&
+            !requestedMessage &&
+            !requestedThread &&
+            !routedThread
+          }
+          trailingTool={
+            solo ? (
+              <WorkspaceControl session={queries} channelId={current.id} />
+            ) : undefined
+          }
+          onSend={onComposerSend}
+          onCommand={handleCommand}
+          focusRequest={composerFocus}
+        />
+      )}
     </div>
   );
   const workspace = (
@@ -2171,9 +2475,10 @@ function ChannelWorkspace({
           className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}
           style={
             {
-              "--channel-preview-inset": channelNotice
-                ? `calc(${joinNoticeHeight}px + var(--space-3))`
-                : "0px",
+              "--channel-preview-inset":
+                channelNotice || welcome.shown
+                  ? `calc(${joinNoticeHeight}px + var(--space-3))`
+                  : "0px",
             } as React.CSSProperties
           }
           data-attachment-drop-zone=""

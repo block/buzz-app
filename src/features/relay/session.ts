@@ -1119,6 +1119,7 @@ export function createRelaySession(
     relayAuthor: transport?.relayAuthor ?? "",
     canAccess: (id) => !closed && channels.canParticipate(id),
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
+    acceptDirectory: (events) => channels.acceptDirectory(events),
     removed: (id) => {
       channels.denyChannel(id, new Error("Channel is no longer available"));
       dropStrandedSends();

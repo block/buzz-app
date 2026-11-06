@@ -196,7 +196,7 @@ it.each([true, false])(
       await screen.findByRole("dialog", { name: "Archive channel: general" }),
     ).toHaveAccessibleDescription(
       autoJoin
-        ? `${archive} It’s a starter channel, so new members will be added to it again once it’s unarchived. To stop that, turn off Starter channel for new members in Settings first.`
+        ? `${archive} It’s a starter channel, so new members will be added to it again once it’s unarchived. To stop that, turn it off in Settings → Community admin → Welcome first.`
         : archive,
     );
   },

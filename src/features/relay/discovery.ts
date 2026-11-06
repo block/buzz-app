@@ -10,6 +10,7 @@ import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
 import { channelIdentity } from "./channel-labels";
+import { landingTags } from "./landing";
 
 const names = new WeakMap<RelayEvent, string | undefined>();
 /** Display name from signed channel metadata; the content body overrides the tag. */
@@ -452,6 +453,7 @@ export class DiscoveryState {
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(this.autoJoin(id) ? { autoJoin: true } : {}),
+      ...(event ? landingTags(event.tags) : {}),
       ...(channelType ? { channelType } : {}),
       ...(channelType === "solo" && event
         ? { updatedAt: event.created_at }

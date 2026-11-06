@@ -14,6 +14,10 @@ export type CommunityInfo = {
   name?: string;
   icon?: string;
   policy: JoinPolicy | null;
+  /** The relay advertises `buzz-landing-channel`: admins can set a welcome channel. */
+  landingChannels?: boolean;
+  /** The designated welcome channel, read live from NIP-11. */
+  landingChannel?: string;
 };
 export async function communityRequest<T>(
   id: string,

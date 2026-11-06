@@ -625,7 +625,7 @@ it("leave still forgets the community when a store will not clear, and logs and 
     '[{"emoji":"🎉","count":1,"used":1}]',
   );
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  // Key enumeration is what the view and channel-setup sweeps rely on.
+  // Key enumeration is what the view, welcome and channel-setup sweeps rely on.
   const denied = new Error("denied");
   vi.spyOn(localStorage, "key").mockImplementation(() => {
     throw denied;
@@ -639,10 +639,15 @@ it("leave still forgets the community when a store will not clear, and logs and 
   ).toBeNull();
   expect(failures).toEqual([
     { store: "view state", error: denied },
+    { store: "welcome record", error: denied },
     { store: "channel setups", error: denied },
   ]);
   expect(warn).toHaveBeenCalledWith(
     `Couldn't clear view state for ${origin} on this device`,
+    denied,
+  );
+  expect(warn).toHaveBeenCalledWith(
+    `Couldn't clear welcome record for ${origin} on this device`,
     denied,
   );
   expect(warn).toHaveBeenCalledWith(

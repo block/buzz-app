@@ -256,6 +256,38 @@ revokes all of them, and a pairing unused for 30 days expires.
   stopped reading, or at the latest message once you had caught up. You and
   the person asking may have different channel access. A link alone never
   grants access.
+- **Welcome channel**: on relays that support it, a community can choose a
+  public channel that new members join and open first. There, a new member
+  sees a welcome card above the message box, showing the community's message
+  or a default one. Choose **Dismiss** to hide it on this computer; it stays
+  hidden even if the title or message changes, though a welcome moved to
+  another channel can show once more there. People who had already written in the
+  community never see it, though someone who has never posted may see it once
+  on each new device. The card isn't a message: it can't be replied to or
+  deleted. While
+  a new member's channels arrive, Messages says it is opening them, and waits a
+  few seconds for the welcome channel rather than open another conversation
+  first. If none arrive, **Try again** checks for them again; a welcome channel
+  that arrives later still opens. Owners and admins choose the channel and edit
+  the card's title and message in **Settings → Community admin → Welcome**. The
+  message editor has the composer's formatting toolbar and shortcuts. The
+  default title names the community when the relay or you have given it a
+  name, and is just "Welcome" otherwise. The message is saved as Markdown, up
+  to 4,000 characters,
+  and a published message opens as its Markdown source; identity links name
+  people without notifying them. Paste a channel's **Copy link** to link the
+  channel, or a person's **Copy npub** to link the person. People already in
+  the community keep their channels when the welcome channel changes.
+- **Starter channels**: in the same **Welcome** settings, owners and admins
+  choose which other open channels new members join, even on relays without a
+  welcome channel. Only starter channels are listed, each with **Remove**;
+  **Add a channel** searches the others. Until you type a name, this picker and
+  the welcome channel picker list the first 50 channels. Adding and removing
+  change the draft; **Save** publishes them with the welcome, and **Cancel**
+  discards them. A saved change applies to people who join
+  afterwards, not to current members; in an open community it also adds
+  returning people who were never in that channel. Archiving a starter channel
+  or making it private pauses it until it is public again.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private

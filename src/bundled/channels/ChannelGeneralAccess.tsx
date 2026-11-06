@@ -357,7 +357,7 @@ function ChannelGeneralAccessEditor({
                 : "",
               // The relay keeps the flag but refuses changing it on a private channel.
               choice.visibility === "private" && autoJoin
-                ? "It’s a starter channel, so new members will be added to it again if it’s made public. To stop that, turn off Starter channel for new members in Settings first."
+                ? "It’s a starter channel, so new members will be added to it again if it’s made public. To stop that, turn it off in Settings → Community admin → Welcome first."
                 : "",
               !solo && choice.visibility === "public"
                 ? `New people will ${choice.joinRole === "guest" ? "only be able to view" : "be able to participate"}. People already in the ${place} keep their access.`

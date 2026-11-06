@@ -111,7 +111,7 @@ export function ChannelLifecycleDialog({
   // The switch is hidden while archived, and Unarchive applies the flag again.
   const description =
     action === "archive" && autoJoin
-      ? `${copy.detail} It’s a starter channel, so new members will be added to it again once it’s unarchived. To stop that, turn off Starter channel for new members in Settings first.`
+      ? `${copy.detail} It’s a starter channel, so new members will be added to it again once it’s unarchived. To stop that, turn it off in Settings → Community admin → Welcome first.`
       : copy.detail;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

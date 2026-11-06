@@ -348,7 +348,11 @@ export function createHuddleComposerOwner(
       case "sendToChannel":
       case "markRead":
       case "report": {
-        check(request.op !== "markRead" && request.op !== "report");
+        check(
+          request.op !== "markRead" &&
+            request.op !== "report" &&
+            request.op !== "deleteMessage",
+        );
         if (!thread || !shown)
           throw new Error("This action is not available in a Huddle composer.");
         const { messageId } = request.args;
@@ -414,7 +418,17 @@ export function createHuddleComposerOwner(
           case "deleteMessage": {
             // Own messages, or an owned agent's with main's verified evidence
             // read again now, after any wait; never from a projected flag.
+            // Deletion has its own write policy, as in main: a verified owner
+            // may delete in a channel that is read-only to a guest.
             const proof = own ? undefined : shown.authorization(messageId);
+            const c = metadata();
+            if (
+              !c ||
+              c.archived ||
+              c.cached ||
+              (c.readOnly && !(c.viewerRole === "guest" && proof))
+            )
+              throw new Error("This thread is read-only.");
             if ((!own && !proof) || !delivered || !session.outbox?.supports(5))
               throw new Error("Only your own messages can be deleted here.");
             return admitted(session.messages.remove([messageId], proof), 5);

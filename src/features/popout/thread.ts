@@ -103,13 +103,21 @@ export function createPopoutThread(
   const channel = () =>
     session.channels.get?.(channelId) ??
     session.channels.list().channels.find((c) => c.id === channelId);
-  /** Observe owner evidence for an agent author shown here (bounded). */
-  function observeOwner(authorId: string) {
-    if (disposed || evidence.has(authorId)) return;
-    if (evidence.size >= MAX_EVIDENCE) return;
-    const store = createAgentOwnerEvidence(session, authorId);
-    evidence.set(authorId, store);
-    store.subscribe(notify);
+  /** Observe owner evidence for the agent authors shown now, within the
+   * bound; authors that left the projection release their observation first. */
+  function observeOwners(authors: ReadonlySet<string>) {
+    if (disposed) return;
+    for (const [authorId, store] of evidence)
+      if (!authors.has(authorId)) {
+        store.dispose();
+        evidence.delete(authorId);
+      }
+    for (const authorId of authors) {
+      if (evidence.has(authorId) || evidence.size >= MAX_EVIDENCE) continue;
+      const store = createAgentOwnerEvidence(session, authorId);
+      evidence.set(authorId, store);
+      store.subscribe(notify);
+    }
   }
   /** Agent-owner deletion authority for a row, from verified evidence only. */
   function authorization(row: ChannelMessage) {
@@ -279,6 +287,20 @@ export function createPopoutThread(
       const snap = thread?.snapshot();
       const profiles = session.profiles.snapshot();
       const replies = snap ? visible(snap.replies) : [];
+      // Agent hints decide whose ownership to observe; evidence decides
+      // authority. Observation follows the rows shown now.
+      const shownRows = snap ? [snap.root, ...replies].filter(Boolean) : [];
+      observeOwners(
+        new Set(
+          (shownRows as ChannelMessage[])
+            .filter(
+              (row) =>
+                row.authorId !== session.viewer &&
+                (row.agentEnvelope || profiles.get(row.authorId)?.isAgent),
+            )
+            .map((row) => row.authorId),
+        ),
+      );
       const c = channel();
       const joined =
         !!c && !c.cached && (!c.readOnly || c.viewerRole === "guest");
@@ -299,13 +321,6 @@ export function createPopoutThread(
         // The same single-row predicate the main menu uses.
         const canEdit =
           channelWritable && own && !!lastEditableMessage(session, [row]);
-        // Agent hints decide whether to observe; evidence decides authority.
-        if (
-          !own &&
-          !archived &&
-          (row.agentEnvelope || profiles.get(row.authorId)?.isAgent)
-        )
-          observeOwner(row.authorId);
         const owned = !archived && !!authorization(row);
         const attention = session.unread.attention(channelId, row.id);
         return {

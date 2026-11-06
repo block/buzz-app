@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession, type RelaySession } from "../relay/session";
-import type { ChannelSummary } from "../relay/contracts";
+import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import type { ThreadSnapshot } from "../relay/threads";
 import { createHuddleComposerOwner } from "../huddle/composer-owner";
 import { createHuddleComposerClient } from "../huddle/composer-client";
@@ -558,4 +558,102 @@ it("keeps terminal reports for this window ahead of the cap and until they are p
   expect(h.thread.acknowledge(first.map((op) => op.id))).toBe(true);
   const rest = h.thread.snapshot().operations;
   expect(rest.map((op) => op.id)).toEqual([idOf(2063), idOf(2064)]);
+});
+
+it("releases owner observations for agents that left the view before observing new ones", () => {
+  const h = fixture();
+  const disposed: string[] = [];
+  const observed: string[] = [];
+  (h.session as unknown as { observe: unknown }).observe = (
+    filters: readonly { authors?: readonly string[] }[],
+  ) => {
+    const author = filters[0]?.authors?.[0] ?? "";
+    observed.push(author);
+    return {
+      snapshot: () => ({ status: "ready", events: [] }),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      dispose: () => disposed.push(author),
+    };
+  };
+  const verified = h.snapshot.current;
+  if (!verified.root) throw new Error("root");
+  const root = verified.root;
+  const agentRow = (n: number): ChannelMessage => ({
+    ...root,
+    id: n.toString(16).padStart(64, "0"),
+    authorId: (1000 + n).toString(16).padStart(64, "0"),
+    agentEnvelope: true as const,
+    reactions: [],
+  });
+  h.snapshot.current = {
+    ...verified,
+    replies: Array.from({ length: 32 }, (_, i) => agentRow(i)),
+  };
+  h.thread.snapshot();
+  expect(observed).toHaveLength(32);
+  // All 32 leave; one new agent arrives: the old observations release first.
+  h.snapshot.current = { ...verified, replies: [agentRow(99)] };
+  h.thread.snapshot();
+  expect(disposed).toHaveLength(32);
+  expect(observed.at(-1)).toBe((1099).toString(16).padStart(64, "0"));
+});
+
+it("admits a verified owner's deletion in a channel that is read-only to a guest", async () => {
+  const h = fixture();
+  h.channel.current = {
+    ...h.channel.current,
+    readOnly: true,
+    viewerRole: "guest",
+  };
+  const AGENT = "e".repeat(64);
+  const verified = h.snapshot.current;
+  if (!verified.root) throw new Error("root");
+  h.snapshot.current = {
+    ...verified,
+    root: { ...verified.root, authorId: AGENT, agentEnvelope: true },
+  };
+  const proof = { agentId: AGENT, ownerId: VIEWER };
+  const owner = createHuddleComposerOwner(
+    h.session,
+    "channel",
+    "channel",
+    undefined,
+    () => true,
+    () => h.thread.rootVerified(),
+    undefined,
+    ROOT,
+    { ...shownFor(h), authorization: () => proof },
+  );
+  clean.push(owner.dispose);
+  const client = createHuddleComposerClient(owner.token);
+  clean.push(client.dispose);
+  await vi.waitFor(() => expect(client.snapshot().data).toBeDefined());
+  // Replies are not writable for a guest, but the owner's deletion is.
+  expect(client.snapshot().data?.writable).toBe(false);
+  await expect(
+    client.deleteMessage({ messageId: ROOT }),
+  ).resolves.toMatchObject({
+    id: "removal-id",
+  });
+  expect(h.remove).toHaveBeenCalledWith([ROOT], proof);
+  // Without proof the guest's read-only channel refuses, as main would.
+  const unproven = createHuddleComposerOwner(
+    h.session,
+    "channel",
+    "channel",
+    undefined,
+    () => true,
+    () => h.thread.rootVerified(),
+    undefined,
+    ROOT,
+    { ...shownFor(h), authorization: () => undefined },
+  );
+  clean.push(unproven.dispose);
+  const other = createHuddleComposerClient(unproven.token);
+  clean.push(other.dispose);
+  await vi.waitFor(() => expect(other.snapshot().data).toBeDefined());
+  await expect(other.deleteMessage({ messageId: ROOT })).rejects.toThrow(
+    /read-only/,
+  );
 });

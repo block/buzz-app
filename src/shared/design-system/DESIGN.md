@@ -753,7 +753,8 @@ panel grid must have a shrinkable column so tabs do not widen other content.
 ## Focus appearance
 
 Keyboard focus is visible, and the component recipes in this guide own the ring.
-Buttons use a 3px `border-focus` outline with a 2px offset. In Dialog and AlertDialog,
+Buttons use a 3px `border-focus` outline with a 1px offset, fitting the existing
+4px focus allowance in scrolling dialog footers. In Dialog and AlertDialog,
 the focused button always shows this ring, including automatic focus after pointer
 entry: it identifies what Enter will activate without changing the primary and
 secondary action styling. Other button contexts and control recipes are gated on
@@ -1987,7 +1988,7 @@ Reuse and compose existing components before adding another.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.
-- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
+- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control, except the always-visible focused dialog Button ring documented above. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
 
 ## Using the system
 

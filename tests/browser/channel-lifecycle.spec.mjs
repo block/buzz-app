@@ -100,6 +100,18 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   // Pointer entry still shows what Enter will activate without swapping emphasis.
   await expect(cancel).toHaveCSS("outline-style", "solid");
   await expect(cancel).toHaveCSS("outline-width", "3px");
+  expect(
+    await cancel.evaluate((button) => {
+      const row = button.closest(".buzz-dialog-action-row");
+      if (!row) throw new Error("Missing dialog action row");
+      const control = button.getBoundingClientRect();
+      const bounds = row.getBoundingClientRect();
+      const style = getComputedStyle(button);
+      const ring =
+        parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+      return control.top - ring >= bounds.top;
+    }),
+  ).toBe(true);
   await expect(cancel).toHaveAttribute("data-variant", "subtle");
   await expect(
     dialog.getByRole("button", { name: "Archive channel", exact: true }),

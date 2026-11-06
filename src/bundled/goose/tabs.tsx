@@ -11,7 +11,7 @@ import {
 } from "react";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
+import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import {
@@ -55,7 +55,6 @@ import {
 } from "./setup";
 import {
   type GooseHistory,
-  type GooseTranscript,
   type Place,
   RECENT_LIMIT,
   TURN_LIMIT,
@@ -788,8 +787,8 @@ export function createTabs({
     );
   }
 
-  /** One session's turns, or a place's across its sessions, read on open and
-   * on Refresh. A refresh keeps the last result until the new one arrives. */
+  /** One session's turns, or a place's across its sessions, kept current
+   * while goose works. */
   function TranscriptView({
     agent,
     row,
@@ -800,119 +799,80 @@ export function createTabs({
     working?: string | undefined;
   }) {
     const workspace = readConfig(agent.config).workspace;
-    const [read, setRead] = useState<
-      | { status: "ready"; transcript: GooseTranscript }
-      | { status: "missing" }
-      | { status: "error"; error: string }
-    >();
-    const [loading, setLoading] = useState(true);
-    const [attempt, setAttempt] = useState(0);
     // Searching goose's history takes seconds, so only on request.
     const [search, setSearch] = useState(false);
-    // A turn ending rereads, so its last steps show without a Refresh.
     // Read again when the conversation saves or opens another session.
     const ids = [row.sessionId, ...(row.sessions ?? [])].join(" ");
-    // biome-ignore lint/correctness/useExhaustiveDependencies: row is read by its key and ids; attempt is the explicit Refresh.
-    useEffect(() => {
-      const abort = new AbortController();
-      setLoading(true);
-      history
-        .transcript(
-          {
-            agent: agent.key,
-            workspace,
-            ...(row.sessionId ? { sessionId: row.sessionId } : {}),
-            ...(row.sessions ? { sessions: row.sessions } : {}),
-            ...(row.channelId ? { place: placeOf(row.key), search } : {}),
-            ...(working ? { working } : {}),
-          },
-          abort.signal,
-          (pubkey) => runtime.name(agent.key, pubkey),
-        )
-        .then(
-          (transcript) =>
-            transcript
-              ? ({
-                  status: "ready",
-                  transcript: {
-                    ...transcript,
-                    turns: runtime.prompts(agent.key).shown(transcript.turns),
-                  },
-                } as const)
-              : ({ status: "missing" } as const),
-          (reason: unknown) =>
-            ({ status: "error", error: message(reason) }) as const,
-        )
-        .then((next) => {
-          if (abort.signal.aborted) return;
-          setRead(next);
-          setLoading(false);
-        });
-      return () => abort.abort();
-    }, [row.key, ids, workspace, working, attempt, search]);
+    /** With `reuse`, sessions that aren't working keep their last export. */
+    const read = async (signal: AbortSignal, reuse = false) => {
+      const transcript = await history.transcript(
+        {
+          agent: agent.key,
+          workspace,
+          ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+          ...(row.sessions ? { sessions: row.sessions } : {}),
+          ...(row.channelId ? { place: placeOf(row.key), search } : {}),
+          ...(working ? { working } : {}),
+        },
+        signal,
+        (pubkey) => runtime.name(agent.key, pubkey),
+        reuse,
+      );
+      return (
+        transcript && {
+          ...transcript,
+          turns: runtime.prompts(agent.key).shown(transcript.turns),
+        }
+      );
+    };
     return (
-      <div className="grid gap-4">
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            loading={loading}
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Refresh
-          </Button>
-        </div>
-        {!read ? (
-          <p role="status" className="m-0">
-            Reading the goose session…
-          </p>
-        ) : read.status === "missing" && row.channelId && !search ? (
-          <div className="grid gap-2">
-            <p className="m-0 text-body-sm text-subtle">
-              {row.sessions?.length
-                ? "goose no longer has the sessions Buzz saved for this conversation."
-                : "Buzz saved no goose session for this conversation."}{" "}
-              One from an earlier version of Buzz can be found by searching
-              goose's history, which can take a while.
-            </p>
-            <div>
-              <Button
-                type="button"
-                variant="subtle"
-                size="sm"
-                onClick={() => setSearch(true)}
-              >
-                Search older sessions
-              </Button>
+      <TranscriptPanel
+        agent={agent}
+        read={read}
+        // Automatic reads while working; open, Refresh and a turn starting
+        // or ending export every session.
+        readLatest={async (signal) => (await read(signal, true))?.turns}
+        readKey={`${row.key}\u0000${workspace}`}
+        readAgain={`${ids}\u0000${search}`}
+        working={Boolean(working)}
+        reading="Reading the goose session…"
+        failed="Could not read the goose session"
+        missing={
+          row.channelId && !search ? (
+            <div className="grid gap-2">
+              <p className="m-0 text-body-sm text-subtle">
+                {row.sessions?.length
+                  ? "goose no longer has the sessions Buzz saved for this conversation."
+                  : "Buzz saved no goose session for this conversation."}{" "}
+                One from an earlier version of Buzz can be found by searching
+                goose's history, which can take a while.
+              </p>
+              <div>
+                <Button
+                  type="button"
+                  variant="subtle"
+                  size="sm"
+                  onClick={() => setSearch(true)}
+                >
+                  Search older sessions
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : read.status === "missing" ? (
-          <p className="m-0 text-body-sm text-subtle">
-            goose has no session for this conversation on this computer. It may
-            have been deleted, or it ran in a different workspace.
-          </p>
-        ) : read.status === "error" ? (
-          <p role="alert" className="m-0">
-            Could not read the goose session: {read.error}
-          </p>
-        ) : (
-          <ActivityTranscript
-            transcript={read.transcript}
-            agentName={agent.name}
-            agentKey={agent.key}
-            agentPicture={agent.picture}
-            community={agent.relay}
-            state={() => (working ? "working" : undefined)}
-            before={
-              read.transcript.more && (
-                <p className="m-0 text-body-sm text-subtle">
-                  Showing the latest {TURN_LIMIT} turns.
-                </p>
-              )
-            }
-          />
-        )}
-      </div>
+          ) : (
+            <p className="m-0 text-body-sm text-subtle">
+              goose has no session for this conversation on this computer. It
+              may have been deleted, or it ran in a different workspace.
+            </p>
+          )
+        }
+        notes={(transcript) =>
+          transcript.more && (
+            <p className="m-0 text-body-sm text-subtle">
+              Showing the latest {TURN_LIMIT} turns.
+            </p>
+          )
+        }
+      />
     );
   }
 

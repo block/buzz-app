@@ -12,7 +12,10 @@ import { errorText } from "../../buzz-mcp/rpc";
 import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { PiStopped } from "./pi";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
+import {
+  TranscriptPanel,
+  whenShown,
+} from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ModelPicker } from "../../features/agents/ModelPicker";
@@ -651,8 +654,7 @@ export function createTabs({
     );
   }
 
-  /** One conversation's turns, read on open, on Refresh, and when a turn
-   * there ends. A refresh keeps the last result until the new one arrives. */
+  /** One conversation's turns, kept current while Pi works. */
   function TranscriptView({
     agent,
     place,
@@ -662,52 +664,35 @@ export function createTabs({
     place: Place;
     working: boolean;
   }) {
-    const [read, refresh] = useRead(
-      (signal) => runtime.transcript(agent.key, place, working, signal),
-      `${agent.key}\u0000${place.key}\u0000${place.conversation}\u0000${working}`,
-      `${agent.key}\u0000${place.key}\u0000${place.conversation}`,
-    );
     return (
-      <div className="grid gap-4">
-        <div>
-          <Button
-            type="button"
-            variant="ghost"
-            loading={read.status === "loading"}
-            onClick={refresh}
-          >
-            Refresh
-          </Button>
-        </div>
-        {read.status === "error" && (
-          <p role="alert" className="m-0">
-            Could not read the Pi conversation: {read.error}
-          </p>
-        )}
-        {read.value ? (
-          <ActivityTranscript
-            transcript={read.value}
-            agentName={agent.name}
-            agentKey={agent.key}
-            agentPicture={agent.picture}
-            community={agent.relay}
-            state={() => (working ? "working" : undefined)}
-            before={
-              read.value.more && (
-                <p className="m-0 text-body-sm text-subtle">
-                  Showing the latest {TURN_LIMIT} turns.
-                </p>
-              )
-            }
-          />
-        ) : (
-          read.status !== "error" && (
-            <p role="status" className="m-0">
-              Reading the Pi conversation…
+      <TranscriptPanel
+        agent={agent}
+        read={(signal) => {
+          let tries = 0;
+          return retryRead(
+            // A retry waits for a hidden window to show.
+            async (signal) => {
+              if (tries++) await whenShown(signal);
+              return runtime.transcript(agent.key, place, working, signal);
+            },
+            signal,
+            // The next request starts another host.
+            (error) => error instanceof PiStopped || isRetryableRead(error),
+          );
+        }}
+        readKey={`${agent.key}\u0000${place.key}\u0000${place.conversation}`}
+        working={working}
+        reading="Reading the Pi conversation…"
+        failed="Could not read the Pi conversation"
+        missing={null}
+        notes={(transcript) =>
+          transcript.more && (
+            <p className="m-0 text-body-sm text-subtle">
+              Showing the latest {TURN_LIMIT} turns.
             </p>
           )
-        )}
-      </div>
+        }
+      />
     );
   }
 

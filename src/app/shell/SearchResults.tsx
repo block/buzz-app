@@ -19,7 +19,10 @@ import {
   useProfileGeneration,
 } from "../../features/relay/react";
 import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
-import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
+import {
+  useUnreadChannelIds,
+  useUnreadThreadOnly,
+} from "../../bundled/channels/useSidebarFilters";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { canMessageAgent } from "../../features/agents/choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
@@ -29,6 +32,7 @@ import {
   ArrowsDownUpIcon,
   CalendarIcon,
   ChatCircleIcon,
+  MessageReplyIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Calendar } from "../../shared/design-system/ui/Calendar";
@@ -195,7 +199,11 @@ export function SearchResults({
   scopedChannelId?: string | undefined;
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
-  openConversation: (channelId: string, messageId?: string) => void;
+  openConversation: (
+    channelId: string,
+    messageId?: string,
+    threadRootId?: string,
+  ) => void;
   /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
@@ -1298,14 +1306,59 @@ export function SearchResults({
     id !== currentChannelId &&
     unreadIds.has(id) &&
     !muted.includes(id);
-  const suggestion = (channel: ChannelSummary): SearchDestination => ({
-    ...conversationDestination(channel),
-    ...(channel.preview ? { detail: channel.preview } : {}),
-  });
-  const unread = suggestions
-    .filter(isUnread)
-    .slice(0, UNREAD_ROWS)
-    .map(suggestion);
+  const unreadChannels = suggestions.filter(isUnread).slice(0, UNREAD_ROWS);
+  // A channel unread only through thread replies previews and opens the
+  // newest one, as its sidebar activity does.
+  const unreadThreads = useUnreadThreadOnly(
+    session.unread,
+    JSON.stringify(
+      unreadChannels.map(({ id, channelType }) => [id, channelType === "dm"]),
+    ),
+  );
+  const threadAuthors = [
+    ...new Set(
+      [...unreadThreads.values()].map(
+        ({ authorId, workflowOwnerId }) => workflowOwnerId ?? authorId,
+      ),
+    ),
+  ]
+    .sort()
+    .join(":");
+  useEffect(() => {
+    void profileGeneration;
+    if (threadAuthors)
+      void session.profiles
+        .ensure(threadAuthors.split(":"), "background")
+        .catch(() => {});
+  }, [session, threadAuthors, profileGeneration]);
+  const suggestion = (channel: ChannelSummary): SearchDestination => {
+    const destination = conversationDestination(channel);
+    const thread = unreadThreads.get(channel.id);
+    if (!thread)
+      return {
+        ...destination,
+        ...(channel.preview ? { detail: channel.preview } : {}),
+      };
+    const displayId = thread.workflowOwnerId ?? thread.authorId;
+    const resolved = resolveName(
+      displayId,
+      profiles.get(displayId)?.name ?? displayId.slice(0, 10),
+      channel.members ?? noMembers,
+    );
+    const name = thread.workflowOwnerId ? workflowLabel(resolved) : resolved;
+    return {
+      ...destination,
+      detailIcon: MessageReplyIcon,
+      detailIconLabel: "Thread reply",
+      detail: thread.preview.trim()
+        ? `${name}: ${thread.preview}`
+        : `${name} replied in a thread`,
+      run: choose(destination.key, () =>
+        openConversation(channel.id, thread.latestMessageId, thread.rootId),
+      ),
+    };
+  };
+  const unread = unreadChannels.map(suggestion);
   const recent = suggestions
     .filter((channel) => !isUnread(channel))
     .slice(0, 4)

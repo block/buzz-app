@@ -3,7 +3,12 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
-import type { AgentAttention } from "../features/agents/service";
+import type {
+  AgentAttention,
+  AgentReadout,
+  TeamReadout,
+  TeamUpdateInput,
+} from "../features/agents/service";
 import type { AgentPlugins } from "../plugins/requests";
 import type { SettingState } from "../shared/device-settings";
 
@@ -182,6 +187,11 @@ export interface BuzzClient {
       /** Uploads the picture once the request is valid: its URL. */
       picture?: () => Promise<string>;
     }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
+  readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
+  updateTeam?(
+    input: TeamUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins, where the host has them: read directly, changed
    * by owner-confirmed request. */

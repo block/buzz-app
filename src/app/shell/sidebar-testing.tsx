@@ -52,6 +52,7 @@ export function fixture(
   owners.push(owner);
   const base = owner.session;
   const listeners = new Set<() => void>();
+  const rosterListeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
     return () => {
@@ -85,7 +86,7 @@ export function fixture(
     durability: "saved" as const,
     sync: "pending" as const,
   }));
-  const list = {
+  let list = {
     status: "ready" as const,
     channels: [
       {
@@ -126,7 +127,15 @@ export function fixture(
     scope,
     viewer,
     channelCreation: { ...base.channelCreation, available: canCreate },
-    channels: { ...base.channels, list: () => list, ensureList() {} },
+    channels: {
+      ...base.channels,
+      list: () => list,
+      subscribeList(listener) {
+        rosterListeners.add(listener);
+        return () => rosterListeners.delete(listener);
+      },
+      ensureList() {},
+    },
     sidebarPreferences: {
       ...base.sidebarPreferences,
       sectionCreationWritable: canCreate,
@@ -308,6 +317,13 @@ export function fixture(
       act(() => {
         threads = next;
         publish();
+      });
+    },
+    /** A roster update, as the relay delivers one: a new list of channels. */
+    roster(update: (channels: typeof list.channels) => typeof list.channels) {
+      act(() => {
+        list = { ...list, channels: update(list.channels) };
+        for (const listener of rosterListeners) listener();
       });
     },
     clearUnread() {

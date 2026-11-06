@@ -54,6 +54,10 @@
   overflow: auto;
   margin: 0;
 }
+.attention-markdown :is(a, .attention-link) {
+  text-decoration: underline;
+  cursor: pointer;
+}
 .attention-markdown ul,
 .attention-markdown ol {
   margin: 0;

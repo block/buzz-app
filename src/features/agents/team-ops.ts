@@ -17,6 +17,8 @@ export type TeamSent = Readonly<{
   members: readonly string[];
 }>;
 
+type Template = Parameters<ConfigWriter["revise"]>[1];
+
 export type TeamEdit = Readonly<{
   id: string;
   name: string;
@@ -303,7 +305,12 @@ export function teamOps(deps: TeamDeps) {
   }
 
   return {
+    side,
     change: (edit: TeamEdit) => exclusive(edit.id, () => change(edit)),
+    /** Saves a History revert or restore of the team's name and
+     * instructions, on the head its `prev` names. */
+    revise: (id: string, write: WriteSide, template: Template, prev: string) =>
+      exclusive(id, () => deps.writer.revise(write, template, prev)),
     /** Deletes the team by archiving its config channel, once, then reads
      * the archive back (NIP-AP "Deleting a team"). */
     archive: (id: string) =>

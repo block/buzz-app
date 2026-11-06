@@ -1688,9 +1688,10 @@ it.each([
           name: `View agent activity: Blossom, ${label}`,
         }),
       ).toBeVisible();
+      // The message bubble is the agent's one working indicator here.
       expect(
-        screen.getByRole("button", { name: "Activity: Blossom working" }),
-      ).toBeVisible();
+        screen.queryByRole("button", { name: /Activity: .*working/ }),
+      ).toBeNull();
       expect(screen.getAllByText(label)).toHaveLength(1);
       view.rerender(ui([A]));
       expect(
@@ -1698,6 +1699,9 @@ it.each([
           name: `View agent activity: Blossom, ${label}`,
         }),
       ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: /Activity: .*working/ }),
+      ).toBeNull();
       expect(
         screen.queryByRole("button", { name: "Reading notes.txt" }),
       ).toBeNull();
@@ -1773,6 +1777,58 @@ it.each([false, true])(
     }
   },
 );
+
+it("lets a thread root's live bubble replace that thread's indicator", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
+  const session = {
+    ...f.props.session,
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  // MessageRow passes the row's own thread root: none for a thread's root row.
+  const props = { ...f.props, session, threadRootId: undefined };
+  local.begin({
+    scope: "test",
+    agent: A,
+    channelId: "c",
+    messageId: root,
+    threadRootId: root,
+    thread: true,
+  });
+  const ui = (layout: "thread" | "timeline") => (
+    <ActivityIndicatorPresentation>
+      <ActivityAccessory {...props} messageLayout={layout} />
+      <TypingIndicator
+        session={session}
+        channelId="c"
+        threadRootId={root}
+        inFlow
+      />
+    </ActivityIndicatorPresentation>
+  );
+  const view = render(ui("thread"));
+  try {
+    expect(
+      screen.getByLabelText("Agent activity on this message"),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
+    // In the channel timeline the root shows no thread bubble, so the thread
+    // keeps its own indicator.
+    view.rerender(ui("timeline"));
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Activity: .*working/ }),
+    ).toBeVisible();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
 
 it("shows thinking once across the live bubble, recorded history and conversation indicator", () => {
   const local = createLocalAgentActivity();
@@ -1867,6 +1923,10 @@ it("shows thinking once across the live bubble, recorded history and conversatio
   const view = render(ui(false));
   try {
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
+    // Until history owns the work, the message bubble is its one indicator.
+    expect(
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
     view.rerender(ui(true));
     expect(
       screen.queryByLabelText("Agent activity on this message"),

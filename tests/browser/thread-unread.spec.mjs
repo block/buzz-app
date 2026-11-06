@@ -346,6 +346,73 @@ test.describe("mentioned reply priority", () => {
     await expect(composer).toBeFocused();
     await expect(composer).toHaveText("Still typing");
   });
+
+  test("search's Unread row opens the previewed thread reply with focus, and reading it updates the row", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const unread = () =>
+      page.evaluate(() => {
+        const { unread } = window.fixtureRelay.snapshot().session;
+        return {
+          count: unread.snapshot({ kind: "channel", channelId: "alpha" })
+            .observedCount,
+          items: unread.activity("alpha").items ?? [],
+        };
+      });
+    // Reading the channel leaves Alpha unread only through its threads.
+    await page
+      .getByRole("textbox", { name: "Message #Alpha", exact: true })
+      .focus();
+    await expect
+      .poll(async () => {
+        const { count, items } = await unread();
+        return (
+          items.length === 2 &&
+          items[0].unreadCount + items[1].unreadCount === count
+        );
+      })
+      .toBe(true);
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    const [newest, other] = (await unread()).items;
+    const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+    const row = dialog
+      .getByRole("group", { name: "Unread" })
+      .getByRole("option")
+      .filter({ hasText: /^Alpha/ });
+    await page.keyboard.press("ControlOrMeta+k");
+    await dialog.getByRole("combobox", { name: "Search Buzz" }).fill("");
+    await expect(row).toContainText(`Alice Fixture: ${newest.preview}`);
+    await expect(row).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Enter");
+    await expect(dialog).toBeHidden();
+    const thread = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    await expect(
+      thread.locator(`[data-message-id="${newest.latestMessageId}"]`),
+    ).toBeVisible();
+    // The thread takes focus from search, so it reads without another gesture.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => !!document.activeElement?.closest("[data-reading-surface]"),
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(async () => (await unread()).items.map(({ rootId }) => rootId))
+      .toEqual([other.rootId]);
+    await page.locator('button[data-channel-id="beta"]').click();
+    await page.keyboard.press("ControlOrMeta+k");
+    await dialog.getByRole("combobox", { name: "Search Buzz" }).fill("");
+    await expect(row).toContainText(`Alice Fixture: ${other.preview}`);
+  });
 });
 
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({

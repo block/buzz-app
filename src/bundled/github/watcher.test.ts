@@ -771,7 +771,10 @@ describe("github_watch_pr", () => {
       `Stopped watching ${url}.`,
     );
     app.gh(null);
-    await expect(app.call({ url })).rejects.toThrow(/gh/);
+    // The refusal says what gh answered, so the agent can tell why.
+    await expect(app.call({ url })).rejects.toThrow(
+      /gh: Could not resolve to a Repository/,
+    );
     await expect(app.call({ url: "https://example.com/x" })).rejects.toThrow(
       /pull request URL/,
     );

@@ -58,6 +58,20 @@ the requesting agent once the request is valid, stripped of metadata as the
 owner's own avatar upload is. The draft carries only its HTTPS URL, which starts the
 review's avatar picker, and saving sets it as the owner's own avatar change
 does. Change requests share the creation requests' local bound and lifetime.
+
+`agent_read` returns one of the owner's agents in the caller's community, by
+pubkey or exact name, or all of them: name, type, instructions (null for a type
+without them), whether they sync and the current instructions revision. A
+hosted agent or one on another device gives its synced instructions when the
+owner can read them here (read only, never creating or moving its config),
+and otherwise `unavailable` saying why.
+`team_read` returns the teams Your teams shows in that community, by id or
+exact name, or all of them: name, instructions, members, whether the team syncs
+and its revision. `team_update` submits an unsaved draft of a team's new name
+or instructions, never its members. The owner reviews it in a dialog; saving
+writes the team as Save in its editor does and is refused once the team's
+name, instructions or revision changed since the draft. Team requests share the
+same local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
@@ -1272,6 +1286,29 @@ evidence. A batch with a recognized denied channel is hidden as a whole.
 
 Activity frames (24200) and turn metrics (44200) are no longer saved locally or
 restored after reload; plugin harnesses show history from their own session files.
+An open transcript (`TranscriptPanel`, `src/features/agents/TranscriptPanel.tsx`)
+reads that history in full on open, on Refresh, and when a turn starts or
+ends. While the agent works it reads again after each read finishes, waiting
+2.5 s or twice that read's duration, whichever is longer, and on the steps the
+agent reports (`Agents.subscribeSteps`): a step reads no sooner than 1 s, or
+that doubled duration, after the previous read finishes, and steps inside that
+gap make one read. These use the harness's `readLatest` when it has one: only
+the latest turns, swapped over the end of the held transcript by `turnId` from
+the first turn it holds, at most 50 turns, or a full read when they don't
+continue it. Claude Code reads the last 2 MiB of its saved session, finding
+the project folder once per workspace; while a turn is larger than that, it
+keeps what is shown and reads in full every 30 s. Codex reads recent turns,
+and keeps only the rollout records restoring tools needs, for 2 files at
+most, parsing just the lines appended since its last read; a file that shrank
+is read whole again, and a turn ending frees them. Pi reads recent turns, and a
+transcript read stops waiting on the shared worker when cancelled. goose has
+no recent-messages API, so it reads in full, but its automatic reads while a
+session works export only that one and reuse the others' last export; open,
+Refresh and a turn starting or ending export every session. Automatic reads
+wait while the window is hidden, and so do Pi's retries. One read runs at a
+time; a change of conversation, read inputs or working state aborts it at
+once, even while hidden, and the last result stays while the next is read.
+Only the first read and Refresh show as loading.
 The host archive store (`src-tauri/src/archive`, `browser-host/archive.mjs`) and
 any existing `archive/events.sqlite3` remain until a follow-up removes them.
 
@@ -1304,10 +1341,13 @@ tasks unknown.
 
 ### Activity updates in the conversation
 
-The live conversation indicator remains visible while agents work, even when
-recorded activity is collapsed or expanded. It keeps dots beside current tool
-labels; reduced motion leaves the dots static. Activity text may shimmer too,
-but does not replace that persistent working cue.
+When no live activity bubble on the triggering message shows an agent, the live
+conversation indicator remains visible while it works, even when recorded
+activity is collapsed or expanded. While that bubble shows, it is the agent's
+working indicator and the conversation adds no second one; the conversation cue
+returns once recorded history owns the work. The indicator keeps dots beside
+current tool labels; reduced motion leaves the dots static. Activity text may
+shimmer too, but does not replace that persistent working cue.
 When local request evidence is available, old activity does not inherit the
 working/thinking state of a different request in the same thread.
 
@@ -1469,6 +1509,8 @@ use the publisher's slug mapping only when local definitions do not collide. Loc
 names and artwork win for matching keys. A failed source leaves the other source
 visible with a warning. Reads are lazy (once per demand or Refresh), with no polling
 or relay-directory startup scan.
+Relay inventory uses foreground read capacity because Solo needs complete
+inventory to restore its recipients; it keeps the normal ten-second deadline.
 
 Discovery is not global coverage, verified membership, credentials, or execution
 status. No keys, config, memory, membership, or runtime state are changed by it.

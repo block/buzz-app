@@ -397,6 +397,8 @@ export type Lookup = Readonly<{
 /** goose's history for an agent, each read in its own short-lived `goose-acp`. */
 export class GooseHistory {
   constructor(private readonly host: GooseHost | undefined) {}
+  /** The last transcript read's messages, by session. */
+  private exported = new Map<string, Message[]>();
 
   /** Every session in `workspace` used since `since`, newest first, and the
    * messages of those `wanted` picks, all from one `goose-acp`: every agent
@@ -445,6 +447,7 @@ export class GooseHistory {
     lookup: Lookup,
     signal: AbortSignal,
     name?: Names,
+    reuse = false,
   ): Promise<GooseTranscript | undefined> {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const saved = new Set(lookup.sessions);
@@ -459,15 +462,24 @@ export class GooseHistory {
       }
       const turns: TranscriptTurn[] = [];
       let found = false;
+      // With `reuse`, while one session works, the others' messages are as
+      // last exported.
+      const exported = new Map<string, Message[]>();
       for (const sessionId of ids) {
         let read: Message[];
+        signal.throwIfAborted();
+        const kept = reuse && lookup.working && this.exported.get(sessionId);
         try {
-          read = await messages(goose, sessionId);
+          read =
+            kept && sessionId !== lookup.working
+              ? kept
+              : await messages(goose, sessionId);
         } catch (error) {
           if (/not found/i.test(String(error))) continue;
           throw error;
         }
         signal.throwIfAborted();
+        exported.set(sessionId, read);
         if (
           lookup.place &&
           sessionId !== lookup.sessionId &&
@@ -485,6 +497,7 @@ export class GooseHistory {
           ),
         );
       }
+      this.exported = exported;
       if (!found) return undefined;
       turns.sort((a, b) => a.startedAt - b.startedAt);
       return {
@@ -500,8 +513,17 @@ export class GooseHistory {
   ) {
     const { host } = this;
     if (!host) throw new Error("goose runs only in the desktop app");
-    // Cancelling rejects at once, and `briefly` then stops goose.
-    return briefly(host, (goose) => abortable(run(goose, host), signal));
+    // Cancelling rejects at once, and `briefly` then stops goose, or stops
+    // its startup.
+    return briefly(
+      host,
+      (goose) => {
+        signal.throwIfAborted();
+        return abortable(run(goose, host), signal);
+      },
+      {},
+      signal,
+    );
   }
 }
 

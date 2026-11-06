@@ -2255,6 +2255,30 @@ it("bottom catch-up reads top-level mentions and broadcasts; participating threa
   lease.dispose();
 });
 
+it("bottom catch-up leaves older attention that arrives during its save unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const bottom = message(h.alice, "room", "bottom", 20);
+  h.emit([bottom]);
+  const lease = h.session.unread.reading("room");
+  const { started, release } = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  await started; // The dwell's activity save is held before the arrival.
+  const late = message(h.alice, "room", "late mention", 17, [
+    ["p", h.viewer.pubkey],
+  ]);
+  try {
+    h.emit([late]);
+  } finally {
+    release();
+  }
+  await pending;
+  // The dwell ended before this mention arrived, so it waits for its own.
+  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 20 });
+  expect(h.session.unread.attention("room", late.id).unread).toBe(true);
+  lease.dispose();
+});
+
 it.each(["catchUp", "observe"] as const)(
   "reading a DM (%s) reads all of it and ends its manual unread",
   async (step) => {

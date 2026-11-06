@@ -9,6 +9,10 @@ export const ATTENTION_SCHEMA = "agent-attention/v1";
 
 export type Interest = Readonly<{
   type: "interest";
+  /** What the owner sees as the Interest's name. */
+  title?: string;
+  /** One or two sentences under the title on the owner's card. */
+  summary?: string;
   instructions: string;
   paused?: boolean;
 }>;
@@ -305,10 +309,13 @@ export function validateObject(
     if (parsed.space === "interest") {
       if (object.type !== "interest")
         fail('An interest/ value has type "interest"');
-      fields(object, ["type", "instructions"], ["paused"]);
+      fields(object, ["type", "instructions"], ["title", "summary", "paused"]);
       if (object.paused !== undefined && typeof object.paused !== "boolean")
         fail("paused must be true or false");
       filled(object.instructions, "instructions", TEXT_LIMIT);
+      if (object.title !== undefined && !label(object.title, "title").trim())
+        fail("title is empty");
+      if (object.summary !== undefined) filled(object.summary, "summary", 1024);
     } else if (object.type === "event") eventWatch(object);
     else if (object.type === "timer") timer(object);
     else if (object.type === "source") {

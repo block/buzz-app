@@ -290,7 +290,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
   nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
-  of reopening where you left it. Muted
+  of reopening where you left it. A conversation unread only through thread
+  replies previews its newest unread reply and opens it in its thread. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
 - **Activity** threads name their channel above the original message. Select that
@@ -355,7 +356,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still
-  cannot post or react. Reading without joining stays available.
+  cannot post, react, or change Canvas or Todos. Reading without joining
+  stays available.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
@@ -748,20 +750,33 @@ available rather than silently discarding it.
   the feed; the dialog identifies it in words and offers no restore action.
   **Load older** fetches more history. Reverting one track saves
   a new revision without changing the other track.
+- **Agents → Your teams → Previous versions**, in a team's editor, lists the
+  saved versions of a team that syncs to a community, the same way. Reverting
+  restores its instructions and keeps its current name; members are not
+  versioned. Teams kept only on this Mac have no versions.
+- Your agents can read your agents and teams here (`agent_read`,
+  `team_read`) and propose a team's new name or instructions
+  (`team_update`). A proposal opens a review: nothing changes until you save
+  it, members never change this way, and Save is refused if the team changed
+  since the proposal.
 - **Activity**, where the agent type provides it, shows sessions and their
-  transcripts in the agent's profile. A turn's **Thread** or **Channel** label
+  transcripts in the agent's profile. An open transcript updates by itself
+  while the agent works; **Refresh transcript** stays at the top as you scroll.
+  A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
   conversation's transcript. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
-  still shows when an agent is working there. Dots remain at the end of the
-  conversation while agents work, alongside current step details when available.
-  With Reduce Motion enabled, the dots stay still. Open the live indicator or
-  expand recorded work to view the agent’s activity or **Stop** the running
-  request. The live indicator keeps its controls while recorded updates are
-  visible. Stop availability depends on the agent type.
+  still shows when an agent is working there. While the activity under your
+  message shows an agent working, it is that agent's only working indicator.
+  Otherwise dots remain at the end of the conversation while agents work,
+  alongside current step details when available. With Reduce Motion enabled,
+  the dots stay still. Open the live indicator or expand recorded work to view
+  the agent’s activity or **Stop** the running request. The live indicator
+  keeps its controls while recorded updates are visible. Stop availability
+  depends on the agent type.
 - Agent-to-agent messages stay in the conversation as collapsed history after
   work finishes or you reopen a thread. Expand them to read dispatches, handoffs,
   and results. The working indicator shows current activity separately.
@@ -805,7 +820,7 @@ mention picker. Select a team to insert its members as individual mentions.
 Typing its name alone does not notify it. Empty teams, teams with more than 32
 members, and teams with unavailable members cannot be selected; edit the team or
 refresh the choices. Adding people to a channel still requires the normal send
-confirmation.
+confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
 ## Optional features and limits
 

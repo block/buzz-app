@@ -580,7 +580,15 @@ which uploads of local files use. The kit grants nothing `ctx.agents` and
 A plugin, bundled or installed, can add a tab to the settings of agents
 running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
-`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
+`{ agent, open, canOpen }`; it reads and saves through the plugin's own `ctx.agents`.
+`open(target)` opens a link, such as a `nostr:npub…` profile, where the tab is
+shown: the profile panel opens it beside the conversation and the Agents page
+selects that agent. `canOpen(target)` says whether `open` can open that link
+there, so the tab can show it as plain text when it can't. `open` returns true
+once it has opened the link, and false otherwise: either it can't, or the host
+first asks whether to discard unsaved edits and opens the link only if the
+person agrees. So false is not an error. Both are absent where the tab can open
+nothing. An
 optional `when(agent)` limits the tab to the agents it returns true for, and an
 optional `subscribe(listener)` tells the host when `when` may answer
 differently, so the tab appears or goes without a reload. A `when` that throws
@@ -1099,6 +1107,7 @@ Unordered checkbox items in that section are shown, including nested tasks. Nest
 Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
+People who can’t write the channel’s Canvas, such as guests, see Todos read-only.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
 the convenience UI, not the saved list: Channel actions → View canvas remains editable.
 

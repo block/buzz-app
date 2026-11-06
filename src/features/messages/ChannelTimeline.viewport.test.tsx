@@ -20,7 +20,9 @@ import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 import {
+  ActivityIndicatorPresentation,
   TypingPresentation,
+  useActivityTypingReplacement,
   useTypingReplacement,
 } from "../conversation/typing-presentation";
 import type { RelaySession } from "../relay/session";
@@ -28,6 +30,20 @@ import type { RelaySession } from "../relay/session";
 function RecordedTyping({ session }: { session: RelaySession }) {
   useTypingReplacement(
     { session, channelId: "alpha", threadRootId: undefined, pubkey: "agent" },
+    true,
+  );
+  return null;
+}
+/** A message's live bubble registers presence in the conversation's store. */
+function LiveBubble({ session }: { session: RelaySession }) {
+  useActivityTypingReplacement(
+    {
+      session,
+      channelId: "alpha",
+      threadRootId: undefined,
+      pubkey: "agent",
+      presence: true,
+    },
     true,
   );
   return null;
@@ -334,9 +350,13 @@ it.each([1, 4])(
   },
 );
 
-it.each([false, true])(
-  "keeps ongoing typing in the reply group after completed history (replaced=%s)",
-  (replaced) => {
+it.each([
+  [false, false],
+  [true, false],
+  [true, true],
+])(
+  "keeps ongoing typing in the reply group after completed history (replaced=%s, presented=%s)",
+  (replaced, presented) => {
     const { owner, updates, content } = activityFixture();
     try {
       const history = updates(2);
@@ -366,17 +386,31 @@ it.each([false, true])(
         },
       };
       const view = render(
-        <TypingPresentation active>
-          {replaced && <RecordedTyping session={queries} />}
-          {content(
-            [...history, { ...reply, id: "reply", content: "Main reply" }],
-            undefined,
-            true,
-            queries,
-          )}
-        </TypingPresentation>,
+        <ActivityIndicatorPresentation>
+          <TypingPresentation active>
+            {replaced && !presented && <RecordedTyping session={queries} />}
+            {presented && <LiveBubble session={queries} />}
+            {content(
+              [...history, { ...reply, id: "reply", content: "Main reply" }],
+              undefined,
+              true,
+              queries,
+            )}
+          </TypingPresentation>
+        </ActivityIndicatorPresentation>,
       );
       expect(screen.queryByText("2 completed steps")).toBeNull();
+      if (presented) {
+        // A live bubble elsewhere shows the agent: no conversation cue, and
+        // the reply does not join one.
+        expect(
+          screen.queryByRole("button", { name: /Activity: .*working/ }),
+        ).toBeNull();
+        expect(
+          screen.getByText("Main reply").closest("li"),
+        ).not.toHaveAttribute("data-stack-next", "true");
+        return;
+      }
       expect(
         screen.getByRole("button", { name: /Activity: .*working/ }),
       ).toBeVisible();

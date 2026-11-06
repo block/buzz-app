@@ -1337,3 +1337,146 @@ it("keeps a suspended preview the viewer looked up heard for the viewer when a r
   expect(h.owner.session.unattended(OPEN, false)).toBe(true);
   stop();
 });
+
+it("stops counting an attended preview's saved grant once a read after a drop omits it, and hears it once a later lookup finds it public again", async () => {
+  for (const continuous of [false, true]) {
+    const h = harness();
+    const summary = () => h.owner.session.channels.get?.(OPEN);
+    const lookup = () =>
+      h.wire.pending.findIndex(
+        (entry) => !entry.signal?.aborted && asks(entry.filters, OPEN),
+      );
+    const answer = (events: readonly unknown[]) => {
+      const index = lookup();
+      if (index === -1) throw new Error("No metadata read");
+      h.wire.pending.splice(index, 1)[0]?.respond(events as RelayEvent[]);
+    };
+    await h.discover();
+    const stop = h.owner.session.attend([OPEN]);
+    await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+    answer(channel(OPEN, "public"));
+    await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
+    // Private while the stream is down: the read after it omits it.
+    if (continuous) {
+      h.state({ status: "retrying", routes: [] });
+      h.state({ status: "connected", routes: [] });
+      h.establish(undefined, { route: "membership", continuous: true });
+    } else await h.reconnect();
+    await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+    expect(summary()?.metadataCached).toBe(true);
+    answer([]);
+    // Missing evidence keeps no saved grant: unknown, so attendance reads
+    // it again, at once or after its wait.
+    await vi.waitFor(() => expect(summary()).toBeUndefined());
+    expect(h.owner.session.attendPending(OPEN)).toBe(true);
+    await flush();
+    if (lookup() === -1) {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await vi.advanceTimersByTimeAsync(30_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+    await vi.waitFor(() => expect(lookup()).not.toBe(-1));
+    answer(channel(OPEN, "public", 12));
+    await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
+    expect(summary()?.metadataCached).toBeUndefined();
+    stop();
+    h.owner.dispose();
+  }
+});
+
+it("keeps an attended preview that newer metadata or a membership reaches while a later batch of the read after a drop is in flight", async () => {
+  // The viewer joins enough channels that a confirmation needs two batches.
+  // Signed once: the two cases share them.
+  const joined = Array.from({ length: 500 }, (_, i) => {
+    const id = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    return [
+      signed(relay, {
+        kind: 39000,
+        content: "",
+        created_at: 10,
+        tags: [["d", id], ["name", id.slice(-4)], ["public"]],
+      }),
+      signed(relay, {
+        kind: 39002,
+        content: "",
+        created_at: 10,
+        tags: [
+          ["d", id],
+          ["p", viewer.pubkey],
+        ],
+      }),
+    ];
+  }).flat() as RelayEvent[];
+  for (const arrival of ["metadata", "membership"] as const) {
+    const h = harness();
+    const summary = () => h.owner.session.channels.get?.(OPEN);
+    const live = (match: (entry: (typeof h.wire.pending)[number]) => boolean) =>
+      h.wire.pending.findIndex(
+        (entry) => !entry.signal?.aborted && match(entry),
+      );
+    const metadataRead = (entry: (typeof h.wire.pending)[number]) =>
+      entry.filters.some((filter) => filter["#d"]);
+    await h.discover();
+    const stop = h.owner.session.attend([OPEN]);
+    await vi.waitFor(() =>
+      expect(live((entry) => asks(entry.filters, OPEN))).not.toBe(-1),
+    );
+    h.wire.pending
+      .splice(
+        live((entry) => asks(entry.filters, OPEN)),
+        1,
+      )[0]
+      ?.respond(channel(OPEN, "public") as RelayEvent[]);
+    await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
+    // The preview, saved first, is in the first batch.
+    h.receive(joined);
+    await flush();
+    while (live(() => true) !== -1)
+      h.wire.pending
+        .splice(
+          live(() => true),
+          1,
+        )[0]
+        ?.respond([]);
+    await flush();
+    h.state({ status: "retrying", routes: [] });
+    h.state({ status: "connected", routes: [] });
+    h.establish(undefined, { route: "membership", continuous: true });
+    await vi.waitFor(() => expect(live(metadataRead)).not.toBe(-1));
+    const first = h.wire.pending.splice(live(metadataRead), 1)[0];
+    expect(first && asks(first.filters, OPEN)).toBe(true);
+    // The first batch omits the preview.
+    first?.respond([]);
+    await vi.waitFor(() => expect(live(metadataRead)).not.toBe(-1));
+    // Before the second batch answers, the preview turns public in newer
+    // metadata, or the viewer joins it as a guest, which leaves it read-only.
+    h.receive(
+      arrival === "metadata"
+        ? [channel(OPEN, "public", 12)[0] as RelayEvent]
+        : ([
+            signed(relay, {
+              kind: 39002,
+              content: "",
+              created_at: 11,
+              tags: [
+                ["d", OPEN],
+                ["p", other.pubkey],
+                ["p", viewer.pubkey, "", "guest"],
+              ],
+            }),
+          ] as RelayEvent[]),
+    );
+    await flush();
+    h.wire.pending.splice(live(metadataRead), 1)[0]?.respond([]);
+    await flush();
+    expect(summary(), arrival).toBeDefined();
+    expect(summary()?.visibility, arrival).toBe("public");
+    if (arrival === "membership")
+      expect(summary()).toMatchObject({ viewerRole: "guest", readOnly: true });
+    stop();
+    h.owner.dispose();
+  }
+}, 15_000); // This case signs and applies 1,000 relay events.

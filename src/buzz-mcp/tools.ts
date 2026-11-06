@@ -157,6 +157,22 @@ export const TOOLS: readonly Tool[] = [
     ["agent"],
   ),
   tool(
+    "agent_read",
+    "Read one of your owner's agents here, yourself included: name, type, instructions, whether they sync and their current revision; a hosted agent or one on another device says its config is unavailable when it can't be read here. agent is its pubkey or exact name; without it, lists them all.",
+    { agent: str },
+  ),
+  tool(
+    "team_read",
+    "Read one of your owner's teams here: name, instructions, members, whether it syncs and its current revision. team is its id or exact name; without it, lists them all.",
+    { team: str },
+  ),
+  tool(
+    "team_update",
+    "Submit an unsaved draft of a new name or instructions for one of your owner's teams, for them to review. team is its id or exact name. Members never change this way. Nothing changes until they save it.",
+    { team: str, name: str, instructions: str },
+    ["team"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -531,6 +547,32 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
         ...(picture && { picture }),
+      }),
+    );
+  },
+  async agent_read({ client }, args) {
+    if (!client.readAgents)
+      throw new Error("Agent reads are unavailable on this host");
+    return JSON.stringify(await client.readAgents(text(args.agent)));
+  },
+  async team_read({ client }, args) {
+    if (!client.readTeams)
+      throw new Error("Team reads are unavailable on this host");
+    return JSON.stringify(await client.readTeams(text(args.team)));
+  },
+  async team_update({ client }, args) {
+    if (!client.updateTeam)
+      throw new Error("Team changes are unavailable on this host");
+    const team = text(args.team);
+    if (!team) throw new Error("team is required");
+    const name = text(args.name);
+    // Empty instructions propose clearing them.
+    const { instructions } = args;
+    return JSON.stringify(
+      await client.updateTeam({
+        team,
+        ...(name && { name }),
+        ...(typeof instructions === "string" && { instructions }),
       }),
     );
   },

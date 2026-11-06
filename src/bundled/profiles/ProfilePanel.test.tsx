@@ -39,6 +39,7 @@ import { keypair, profile, signed } from "../../features/relay/testing";
 const key = "a".repeat(64),
   viewer = "b".repeat(64),
   threadRoot = "c".repeat(64);
+const personLink = profileTarget("d".repeat(64)) ?? "";
 afterEach(cleanup);
 
 function deferred() {
@@ -377,6 +378,7 @@ function renderAgentActivity(
   transcript: "opened" | "shown again" | false = false,
   navigation?: Navigation,
   channelType?: "solo" | "dm" | "stream",
+  linkTab = false,
 ) {
   const owner = createRelaySession(null);
   // The originating channel, as the community lists it.
@@ -482,10 +484,24 @@ function renderAgentActivity(
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
     memberships: () => [],
     configHistory: () => undefined,
-    addedTabs: () => [],
+    addedTabs: () =>
+      linkTab
+        ? [
+            {
+              key: "link",
+              title: "Link",
+              component: ({ open }: { open?: (target: string) => boolean }) => (
+                <button type="button" onClick={() => open?.(personLink)}>
+                  Open person
+                </button>
+              ),
+            },
+          ]
+        : [],
     registerTab: () => {},
     controlAttention: () => {},
   } as unknown as Agents;
+  const open = vi.fn(() => true);
   let target = profileActivityViewTarget(key) ?? "";
   // Like Working now: the opener asks as it opens the target.
   if (transcript === "opened") openProfileTranscript(target, () => true);
@@ -499,7 +515,7 @@ function renderAgentActivity(
         channelId: "originating-channel",
         ...(rootId && { rootId }),
         canOpen: () => true,
-        open: vi.fn(() => true),
+        open,
       }}
       close={() => {}}
       {...(navigation && { navigation })}
@@ -515,6 +531,7 @@ function renderAgentActivity(
     {
       target,
       offered,
+      open,
       navigate: (next: string) => {
         target = next;
         view.rerender(panel(mounts));
@@ -755,6 +772,51 @@ it("keeps an unsaved change until the reader chooses to leave it for a transcrip
       screen.getByRole("tab", { name: "Activity", selected: true }),
     ).toBeVisible();
     expect(dispose.offered).toHaveBeenCalledOnce();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks before a plugin tab's link replaces a profile with an unsaved name", async () => {
+  const dispose = renderAgentActivity(
+    [],
+    undefined,
+    false,
+    undefined,
+    undefined,
+    true,
+  );
+  const user = userEvent.setup();
+  try {
+    await user.click(screen.getByRole("tab", { name: "Link" }));
+    await user.click(screen.getByRole("button", { name: "Open person" }));
+    expect(dispose.open).toHaveBeenCalledTimes(1);
+    dispose.open.mockClear();
+    await user.click(
+      screen.getByRole("button", { name: "Agent profile actions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change name" }),
+    );
+    await user.type(screen.getByRole("textbox", { name: "Agent name" }), "!");
+    await user.click(screen.getByRole("button", { name: "Open person" }));
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    expect(dispose.open).not.toHaveBeenCalled();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Keep editing" }),
+    );
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue(
+      "Echo!",
+    );
+    await user.click(screen.getByRole("button", { name: "Open person" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Discard changes",
+      }),
+    );
+    expect(dispose.open).toHaveBeenCalledExactlyOnceWith(personLink);
   } finally {
     dispose();
   }

@@ -17,6 +17,7 @@ import {
   useRowProfiles,
 } from "../../features/relay/react";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { plainText } from "../../features/notifications/content";
 import { rowProfileIds } from "../../features/relay/membership";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import type { RelaySession } from "../../features/relay/session";
@@ -242,9 +243,11 @@ export function createAttentionActivity(navigation: Context["navigation"]) {
     command: boolean;
   }) {
     const [open, setOpen] = React.useState(false);
-    const summary = heading(
-      entry.text.trim().split("\n")[0] ?? "Recorded event",
-    ).text;
+    // Command output is literal; anything else is Markdown, so its spoilers stay hidden.
+    const summary =
+      (command
+        ? heading(entry.text.trim().split("\n")[0] ?? "").text
+        : plainText(entry.text)) || "Recorded event";
     return (
       <li className="attention-timeline-event">
         <details open={open}>
@@ -319,7 +322,7 @@ export function createAttentionActivity(navigation: Context["navigation"]) {
           {"Activity"}
           <span className="attention-detail-preview">
             {history?.events?.length
-              ? `${history.events.length} events`
+              ? `${history.events.length} event${history.events.length === 1 ? "" : "s"}`
               : history?.output
                 ? "1 event"
                 : "No activity yet"}

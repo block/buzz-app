@@ -151,8 +151,17 @@ const tool = (
 export const ATTENTION_TOOLS: readonly Tool[] = [
   tool(
     "interest_set",
-    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Subscriptions say what wakes you and may specify a conversation delivery address. Keep the task and reporting policy in the Interest instructions. ${WRITES}`,
-    { id, instructions: str, expected_state: token },
+    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Subscriptions say what wakes you and may specify a conversation delivery address. Keep the task and reporting policy in the Interest instructions. Your owner sees each Interest as a card: give it a title naming the responsibility and a summary of one or two sentences saying what wakes you and what you do, so they can tell your Interests apart without reading the instructions. Write the instructions for them too: name people as [Name](nostr:npub…), which shows as the name and opens their profile, and link pull requests, messages and channels rather than pasting raw IDs. When the work changes, replace the title, summary and instructions rather than appending notes; a replacement without a title or summary clears it. ${WRITES}`,
+    {
+      id,
+      title: { ...str, description: "A short name for the card, one line." },
+      summary: {
+        ...str,
+        description: "One or two sentences shown under the title.",
+      },
+      instructions: str,
+      expected_state: token,
+    },
     ["id", "instructions", "expected_state"],
   ),
   tool("interest_show", "One Interest and its expected_state.", { id }, ["id"]),
@@ -353,6 +362,8 @@ async function run(
         slug,
         {
           type: "interest",
+          ...given(args, "title"),
+          ...given(args, "summary"),
           instructions: required(args, "instructions"),
           ...(current?.type === "interest" && current.paused !== undefined
             ? { paused: current.paused }
@@ -575,15 +586,20 @@ function sourceFields(args: Args) {
 }
 function eventFields(args: Args) {
   const fields = pick(args, EVENT, [...TIMER, ...SOURCE]);
-  if (fields.since === "now") fields.since = seconds();
+  if ("since" in fields)
+    fields.since = fields.since === "now" ? seconds() : whole(fields.since);
   return fields;
 }
 function timerFields(args: Args) {
   const fields = pick(args, TIMER, [...EVENT, ...SOURCE]);
   for (const key of ["max_occurrences", "expires_at"])
-    if (fields[key] === "unbounded") fields[key] = null;
+    if (key in fields)
+      fields[key] = fields[key] === "unbounded" ? null : whole(fields[key]);
   return fields;
 }
+/** Some clients send an integer whose schema also allows a word as its digits. */
+const whole = (value: unknown) =>
+  typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
 
 const seconds = () => Math.floor(Date.now() / 1000);
 const fail = (message: string): never => {
@@ -595,6 +611,11 @@ const refuse = (message: string): never => {
 };
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** `{ [name]: text }` when the argument has text, otherwise nothing. */
+const given = (args: Args, name: string) => {
+  const value = text(args[name]);
+  return value ? { [name]: value } : {};
+};
 function required(args: Args, name: string) {
   const value = args[name];
   if (typeof value === "string" && value) return value;

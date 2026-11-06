@@ -3,8 +3,6 @@ import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
@@ -16,7 +14,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
+import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -51,7 +49,6 @@ import {
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
-import type { ClaudeTranscript } from "./transcript";
 import {
   settingLabels,
   useSettingsDraft,
@@ -64,10 +61,6 @@ const message = (error: unknown) =>
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 const CONVERSATION_LIMIT = 30;
-type Read =
-  | { status: "ready"; transcript: ClaudeTranscript }
-  | { status: "missing" }
-  | { status: "error"; error: string };
 
 const options = (choices: readonly (readonly [string, string])[]) => [
   { label: "", options: choices.map(([value, label]) => ({ value, label })) },
@@ -846,8 +839,7 @@ export function createTabs({
     );
   }
 
-  /** One conversation's session file, read on open and on Refresh. A refresh
-   * keeps the last result in place until the new one arrives. */
+  /** One conversation's session file, kept current while Claude works. */
   function TranscriptView({
     agent,
     conversation,
@@ -858,94 +850,47 @@ export function createTabs({
     working: boolean;
   }) {
     const workspace = readConfig(agent.config).workspace;
-    const [read, setRead] = useState<Read>();
-    const [loading, setLoading] = useState(true);
-    const [attempt, setAttempt] = useState(0);
-    // A turn ending rereads, so its last steps show without a Refresh.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit Refresh.
-    useEffect(() => {
-      const abort = new AbortController();
-      setLoading(true);
-      void runtime
-        .transcript(conversation, workspace, working, abort.signal)
-        .then(
-          (transcript): Read =>
-            transcript
-              ? { status: "ready", transcript }
-              : { status: "missing" },
-          (reason): Read => ({ status: "error", error: message(reason) }),
-        )
-        .then((next) => {
-          if (abort.signal.aborted) return;
-          setRead(next);
-          setLoading(false);
-        });
-      return () => abort.abort();
-    }, [conversation, workspace, working, attempt]);
     return (
-      <div className={activityStyles.transcript}>
-        <InlineHeader
-          title="Transcript"
-          actions={
-            <IconButton
-              hint="familiar"
-              aria-label="Refresh transcript"
-              title="Refresh transcript"
-              loading={loading}
-              onClick={() => setAttempt((value) => value + 1)}
-              icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
-            />
-          }
-        />
-        {read && loading && (
-          <span role="status" className="sr-only">
-            Refreshing transcript…
-          </span>
-        )}
-        {!read ? (
-          <p role="status" className="m-0">
-            Reading the Claude session…
-          </p>
-        ) : read.status === "missing" ? (
+      <TranscriptPanel
+        agent={agent}
+        read={(signal) =>
+          runtime.transcript(conversation, workspace, working, signal)
+        }
+        readLatest={(signal, held) =>
+          runtime.latestTurns(conversation, workspace, working, signal, held)
+        }
+        readKey={`${conversation.key}\u0000${workspace}`}
+        readAgain={conversation.sessionId ?? ""}
+        working={working}
+        reading="Reading the Claude session…"
+        failed="Could not read the Claude session"
+        missing={
           <p className="m-0 text-body-sm text-subtle">
             Claude has no transcript for this conversation on this computer. It
             may have been deleted, or the session ran in a different workspace.
           </p>
-        ) : read.status === "error" ? (
-          <p role="alert" className="m-0">
-            Could not read the Claude session: {read.error}
-          </p>
-        ) : (
-          <ActivityTranscript
-            transcript={read.transcript}
-            agentName={agent.name}
-            agentKey={agent.key}
-            agentPicture={agent.picture}
-            community={agent.relay}
-            state={() => (working ? "working" : undefined)}
-            before={
-              <>
-                {read.transcript.incomplete && (
-                  <p role="status" className="m-0 text-body-sm">
-                    Some of this conversation’s sessions may be missing. Refresh
-                    to try again.{" "}
-                    <span className="text-subtle">
-                      ({read.transcript.incomplete.split("\n")[0]})
-                    </span>
-                  </p>
-                )}
-                {read.transcript.more && (
-                  <p className="m-0 text-body-sm text-subtle">
-                    {read.transcript.turns.length
-                      ? `Showing the latest ${read.transcript.turns.length === 1 ? "turn" : `${read.transcript.turns.length} turns`}.`
-                      : "The latest turn is too large to show."}
-                  </p>
-                )}
-              </>
-            }
-          />
+        }
+        notes={(transcript) => (
+          <>
+            {transcript.incomplete && (
+              <p role="status" className="m-0 text-body-sm">
+                Some of this conversation’s sessions may be missing. Refresh to
+                try again.{" "}
+                <span className="text-subtle">
+                  ({transcript.incomplete.split("\n")[0]})
+                </span>
+              </p>
+            )}
+            {transcript.more && (
+              <p className="m-0 text-body-sm text-subtle">
+                {transcript.turns.length
+                  ? `Showing the latest ${transcript.turns.length === 1 ? "turn" : `${transcript.turns.length} turns`}.`
+                  : "The latest turn is too large to show."}
+              </p>
+            )}
+          </>
         )}
-      </div>
+      />
     );
   }
 
@@ -1071,7 +1016,9 @@ export function createTabs({
             <TranscriptView
               key={open.key}
               agent={agent}
-              conversation={open}
+              conversation={
+                conversations.find((item) => item.key === open.key) ?? open
+              }
               working={busy.get(open.key) ?? false}
             />
           </PanelSubview>

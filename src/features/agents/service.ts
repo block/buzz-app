@@ -196,6 +196,7 @@ import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import type { OwnerAccess } from "../../buzz-mcp/client";
 import { nameSoloChat } from "./solo-chat-name";
+import { visibleTeams } from "./visible-teams";
 import {
   clearDeletedDefaultAgent,
   forgetDefaultAgent,
@@ -359,7 +360,14 @@ export type AgentTab<Config = unknown> = Readonly<{
 export type AgentAddedTab = Readonly<{
   id: string;
   title: string;
-  component: ComponentType<{ agent: Agent }>;
+  component: ComponentType<{
+    agent: Agent;
+    /** Opens a link, such as a profile, where the tab is shown; false when it
+     * can't there. Absent where the tab can open nothing. */
+    open?: ((target: string) => boolean) | undefined;
+    /** Whether `open` can open this link, so the tab shows it as text if not. */
+    canOpen?: ((target: string) => boolean) | undefined;
+  }>;
   /** Whether the tab shows for this agent; absent, it shows for each. */
   when?: (agent: Agent) => boolean;
   /** Calls `listener` when `when` may answer differently. */
@@ -467,6 +475,15 @@ export type AgentHandle = Readonly<{
   /** Owner-reviewed changes to one of the owner's agents here. */
   updateAgent?(
     input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** The owner's agents here, or the one with this pubkey or name. */
+  readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
+  /** The owner's teams the Agents page shows here, or the one with this id
+   * or name. */
+  readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
+  /** Owner-reviewed name and instructions changes to one of those teams. */
+  updateTeam?(
+    input: TeamUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins, as the agent may read and change them. */
   plugins?: AgentPlugins | undefined;
@@ -1097,6 +1114,46 @@ export type AgentUpdateRequest = AgentUpdate &
     /** Its type when requested, shown as what the review changes from. */
     agentType: string;
   }>;
+/** What `agent_read` shows of one of the owner's agents. Instructions are
+ * null for a type that has none. An agent hosted or on another device shows
+ * its synced instructions when the owner can read them here, and otherwise
+ * has `unavailable` instead, saying why. */
+export type AgentReadout = Readonly<
+  { pubkey: string; name: string; type: string } & (
+    | { instructions: string | null; synced: boolean; revision?: string }
+    | { unavailable: string }
+  )
+>;
+/** What `team_read` shows of one of the owner's teams. */
+export type TeamReadout = Readonly<{
+  id: string;
+  name: string;
+  instructions: string;
+  members: readonly Readonly<{ pubkey: string; name: string }>[];
+  synced: boolean;
+  revision?: string;
+}>;
+/** `team` is the id or exact name of one of the owner's teams here. Members
+ * never change by request. */
+export type TeamUpdateInput = Readonly<{
+  team: string;
+  name?: string;
+  instructions?: string;
+}>;
+/** An unsaved team change request. Only the owner-facing review may approve
+ * it, and only while the team is as it was when requested. */
+export type TeamUpdateRequest = Readonly<{
+  id: string;
+  requester: string;
+  requesterName: string;
+  owner: string;
+  community: string;
+  team: string;
+  /** The team as it was requested over. */
+  base: Pick<Team, "name" | "instructions" | "revision">;
+  name?: string;
+  instructions?: string;
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1263,6 +1320,9 @@ export type Agents = {
   wake(agent: AgentKey, wake: AgentWake): void;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Calls `listener` when a turn this copy of the app runs for the agent
+   * reports a new step, as its harness names them. */
+  subscribeSteps(agent: AgentKey, listener: () => void): () => void;
   /** Gives each `interrupted` agent again the turns it was working on, each
    * once its community connects. */
   resumeInterrupted(): void;
@@ -1317,6 +1377,15 @@ export type Agents = {
   /** Saves the owner-reviewed edit form, the agent's settings with the
    * request's changes, to the request's agent. */
   approveUpdate(id: string, input: NewAgent): Promise<void>;
+  /** Local, unsaved team change requests; closing a review discards one. */
+  teamUpdateRequests(): readonly TeamUpdateRequest[];
+  dismissTeamUpdate(id: string): void;
+  /** Saves the owner-reviewed name and instructions to the request's team,
+   * refused once the team changed since the request. */
+  approveTeamUpdate(
+    id: string,
+    input: Pick<Team, "name" | "instructions">,
+  ): Promise<void>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1339,6 +1408,9 @@ export type Agents = {
   /** The History of each of the agent's synced config sides; undefined while
    * none syncs here. */
   configHistory(agent: AgentKey): ConfigHistory | undefined;
+  /** The History of a synced team's name and instructions; undefined for a
+   * team kept only on this device. */
+  teamHistory(id: string): ConfigHistory | undefined;
   /** Previews the destination config and transferable settings the same
    * migration used by `retype` will produce, without changing the agent. */
   previewRetype(agent: AgentKey, type: string): RetypePreview;
@@ -1569,6 +1641,25 @@ function defaults(pubkey: string, type: RegisteredAgentType) {
 const PARENT_LOOKUP_MS = 5_000;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
+/** The one of `items` whose id or exact name is `target`. */
+function pick<T>(
+  items: readonly T[],
+  target: string,
+  keys: (item: T) => readonly [string, string],
+  noun: "agent" | "team",
+): T {
+  const byId = items.find((item) => keys(item)[0] === target);
+  if (byId) return byId;
+  const named = items.filter((item) => keys(item)[1] === target);
+  if (named.length > 1)
+    throw new Error(
+      `Several ${noun}s have that name; use its ${noun === "agent" ? "pubkey" : "id"}`,
+    );
+  const [found] = named;
+  if (!found)
+    throw new Error(`Your owner has no ${noun} here by that name or id`);
+  return found;
+}
 /** The team sections for agent `self`: each team it is on, its members that
  * still exist by name and npub (by npub alone where `agents` has no name),
  * and the team's instructions. */
@@ -1808,6 +1899,7 @@ export class AgentsService extends Service implements Agents {
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
+  private teamUpdates: readonly TeamUpdateRequest[] = [];
   private readonly approving = new Set<string>();
   /** Every saved membership, deleted ones included: native's list is the
    * agent list, and `records` only adds settings to it. */
@@ -1919,7 +2011,7 @@ export class AgentsService extends Service implements Agents {
       pubkey: string,
       signal: AbortSignal,
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
-    localActivity = createLocalAgentActivity(),
+    private readonly localActivity = createLocalAgentActivity(),
     /** Runs watch classifiers on this device's decision backend. */
     private readonly decisions: Decisions | undefined = undefined,
     /** Which artifact types an agent has synced, from its config channel
@@ -2137,7 +2229,7 @@ export class AgentsService extends Service implements Agents {
           if (!kind) throw new Error("That agent type is not available");
           if (kind.remote)
             throw new Error("A hosted agent's key stays with its provider");
-          if (this.requests.length + this.updates.length >= 16)
+          if (this.pendingRequests() >= 16)
             throw new Error("Review the pending agent requests first");
           return {
             id: crypto.randomUUID(),
@@ -2199,7 +2291,7 @@ export class AgentsService extends Service implements Agents {
           if (Object.keys(change).length === 0 && !pending)
             throw new Error("Propose at least one change");
           this.updateKind(identity, change);
-          if (this.requests.length + this.updates.length >= 16)
+          if (this.pendingRequests() >= 16)
             throw new Error("Review the pending agent requests first");
           return {
             id: crypto.randomUUID(),
@@ -2225,6 +2317,102 @@ export class AgentsService extends Service implements Agents {
           proposedPicture(await upload?.()),
         );
         this.updates = [...this.updates, next];
+        this.notify();
+        return { requestId: next.id, saved: false };
+      },
+      readAgents: async (agent, target) => {
+        const origin = this.callerOrigin(agent);
+        const held = this.identities.filter(
+          (identity) =>
+            !identity.deleted &&
+            !identity.deleting &&
+            identity.owner === agent.owner &&
+            originOf(identity.relay) === origin,
+        );
+        const found = held.map((identity) => this.agentReadout(identity));
+        // Hosted ones and ones on the owner's other devices, as listed here,
+        // with their synced instructions where the owner can read them.
+        const config = origin ? this.communityConfigs.get(origin) : undefined;
+        const listed = this.listedAgents(
+          origin,
+          new Set(held.map((identity) => identity.pubkey)),
+        ).filter((item) => item.owner === agent.owner && !item.unfinished);
+        const remote = async (item: (typeof listed)[number]) => {
+          const read = await config
+            ?.readInstructions(item.pubkey)
+            .catch(() => undefined);
+          const base = {
+            pubkey: item.pubkey,
+            name: item.name,
+            type: item.type,
+          };
+          return read
+            ? { ...base, ...read, synced: true }
+            : {
+                ...base,
+                unavailable:
+                  item.place === "hosted"
+                    ? "Its provider keeps its config"
+                    : "Its config is on another device",
+              };
+        };
+        if (target === undefined)
+          return [...found, ...(await Promise.all(listed.map(remote)))];
+        // Only the one asked for is read from the relay.
+        const readers = [
+          ...found.map((entry) => ({ entry, read: () => entry })),
+          ...listed.map((entry) => ({ entry, read: () => remote(entry) })),
+        ];
+        return pick(
+          readers,
+          target,
+          ({ entry }) => [entry.pubkey, entry.name],
+          "agent",
+        ).read();
+      },
+      readTeams: async (agent, target) => {
+        const found = this.callerTeams(agent).map((team) =>
+          this.teamReadout(team),
+        );
+        return target === undefined
+          ? found
+          : pick(found, target, (item) => [item.id, item.name], "team");
+      },
+      updateTeam: async (agent, { team: target, ...proposed }) => {
+        const team = pick(
+          this.callerTeams(agent),
+          target,
+          (item) => [item.id, item.name],
+          "team",
+        );
+        const name = proposed.name?.trim();
+        if (name === "") throw new Error("Name the team");
+        const change = {
+          ...(name !== undefined && name !== team.name && { name }),
+          ...(proposed.instructions !== undefined &&
+            proposed.instructions !== team.instructions && {
+              instructions: proposed.instructions,
+            }),
+        };
+        if (Object.keys(change).length === 0)
+          throw new Error("Propose at least one change");
+        if (this.pendingRequests() >= 16)
+          throw new Error("Review the pending agent requests first");
+        const next: TeamUpdateRequest = {
+          id: crypto.randomUUID(),
+          requester: agent.pubkey,
+          requesterName: agent.name,
+          owner: agent.owner,
+          community: this.callerOrigin(agent),
+          team: team.id,
+          base: {
+            name: team.name,
+            instructions: team.instructions,
+            ...(team.revision && { revision: team.revision }),
+          },
+          ...change,
+        };
+        this.teamUpdates = [...this.teamUpdates, next];
         this.notify();
         return { requestId: next.id, saved: false };
       },
@@ -2295,15 +2483,17 @@ export class AgentsService extends Service implements Agents {
           }
         },
       },
-      activity: localActivity,
+      activity: this.localActivity,
       channel: (agent, event) => this.channelOf(agent, event),
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
-      woke: (key, object, events) =>
+      woke: (key, object, events) => {
+        const at = Math.floor(Date.now() / 1000);
         this.history(
           key,
           object,
+          // A timer has no event, so its wake is what it was asked to do.
           events?.map((event) => ({
             id: event.id,
             at: event.created_at,
@@ -2318,9 +2508,13 @@ export class AgentsService extends Service implements Agents {
                 ? [tag[1]]
                 : [],
             ),
-          })),
-          Math.floor(Date.now() / 1000),
-        ),
+          })) ??
+            (object.value.type === "timer"
+              ? [{ at, text: object.value.prompt }]
+              : undefined),
+          at,
+        );
+      },
       finished: (key) => {
         void this.coreMemory.refresh(key);
         this.retakeType(key);
@@ -2384,12 +2578,17 @@ export class AgentsService extends Service implements Agents {
           const updates = this.updates.filter(
             (request) => request.owner === viewer,
           );
+          const teamUpdates = this.teamUpdates.filter(
+            (request) => request.owner === viewer,
+          );
           if (
             kept.length !== this.requests.length ||
-            updates.length !== this.updates.length
+            updates.length !== this.updates.length ||
+            teamUpdates.length !== this.teamUpdates.length
           ) {
             this.requests = kept;
             this.updates = updates;
+            this.teamUpdates = teamUpdates;
             this.notify();
           }
           this.watch();
@@ -2879,6 +3078,33 @@ export class AgentsService extends Service implements Agents {
     });
   }
   snapshot = () => this.state;
+  subscribeSteps = (agent: AgentKey, listener: () => void) => {
+    const pubkey = pubkeyOf(agent);
+    const { reader } = this.localActivity;
+    /** Each of the agent's work rows' latest step, by its message. */
+    const steps = () =>
+      new Map(
+        reader
+          .work()
+          .flatMap((work) =>
+            work.agent === pubkey && work.step
+              ? [
+                  [
+                    `${work.scope} ${work.messageId}`,
+                    `${work.step.tool} ${work.step.target ?? ""}`,
+                  ] as const,
+                ]
+              : [],
+          ),
+      );
+    let last = steps();
+    return reader.subscribeWork(() => {
+      const next = steps();
+      const stepped = [...next].some(([work, step]) => last.get(work) !== step);
+      last = next;
+      if (stepped) listener();
+    });
+  };
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -3274,6 +3500,99 @@ export class AgentsService extends Service implements Agents {
     } finally {
       this.approving.delete(id);
     }
+  }
+  teamUpdateRequests = () => this.teamUpdates;
+  dismissTeamUpdate = (id: string) => {
+    if (this.approving.has(id)) return;
+    this.teamUpdates = this.teamUpdates.filter((request) => request.id !== id);
+    this.notify();
+  };
+  async approveTeamUpdate(
+    id: string,
+    { name, instructions }: Pick<Team, "name" | "instructions">,
+  ) {
+    const request = this.teamUpdates.find((item) => item.id === id);
+    if (!request || this.approving.has(id))
+      throw new Error("No such pending team request");
+    const team = this.allTeams().find((item) => item.id === request.team);
+    if (!team) throw new Error("That team no longer exists");
+    const { base } = request;
+    if (
+      team.revision !== base.revision ||
+      team.name !== base.name ||
+      team.instructions !== base.instructions
+    )
+      throw new Error(
+        "The team changed since this was proposed; close this and ask again",
+      );
+    this.approving.add(id);
+    try {
+      await this.saveTeam({
+        id: team.id,
+        opened: team,
+        name,
+        instructions,
+        members: team.members,
+      });
+      this.teamUpdates = this.teamUpdates.filter((item) => item.id !== id);
+      this.notify();
+    } finally {
+      this.approving.delete(id);
+    }
+  }
+  private pendingRequests() {
+    return this.requests.length + this.updates.length + this.teamUpdates.length;
+  }
+  /** The community `agent` asks from. */
+  private callerOrigin(agent: Agent) {
+    const binding = this.bindingOf(agent);
+    if (!binding || !this.liveMember(agent.key))
+      throw new Error("The requesting agent is no longer available");
+    return binding.origin;
+  }
+  /** The teams the Agents page shows in `agent`'s community. */
+  private callerTeams(agent: Agent) {
+    return visibleTeams(this, this.callerOrigin(agent));
+  }
+  private agentReadout(identity: AgentIdentity): AgentReadout {
+    const kind = this.types().find((type) => type.key === identity.type);
+    const saved = this.settingsOf(identity);
+    const editor = this.editorConfig(identity, saved.config as object);
+    const config = editor?.config ?? saved.config;
+    const side = this.configBinding(identity).instructions;
+    const synced = !!side && isSynced(this.configStore, side);
+    const base = {
+      pubkey: identity.pubkey,
+      name: identity.name,
+      type: identity.type,
+    };
+    // Synced instructions that are deleted, invalid or unreadable are not
+    // empty ones.
+    if (synced && editor?.problem)
+      return { ...base, unavailable: editor.problem };
+    const head = synced ? this.configStore.state(side.subject).head : undefined;
+    return {
+      ...base,
+      instructions: kind?.adopt
+        ? (kind.carry?.(config).instructions ?? "")
+        : null,
+      synced,
+      ...(head && { revision: head.id }),
+    };
+  }
+  private teamReadout(team: Team): TeamReadout {
+    const labels = publicKeyLabels(new Set(team.members));
+    return {
+      id: team.id,
+      name: team.name,
+      instructions: team.instructions,
+      members: team.members.map((pubkey) => ({
+        pubkey,
+        name: this.liveRows(pubkey)[0]?.name || (labels.get(pubkey) ?? pubkey),
+      })),
+      synced: !!team.revision,
+      ...(team.revision && { revision: team.revision }),
+    };
   }
   /** The type `change` leaves the agent with, refusing what it cannot apply. */
   private updateKind(identity: AgentIdentity, change: AgentUpdate) {
@@ -3849,15 +4168,23 @@ export class AgentsService extends Service implements Agents {
         // As a save: a revert can't put this type back over another's.
         const problem = side === "settings" && this.otherType(agent);
         if (problem) return { status: "refused", message: problem };
-        const result = await config.revise(pubkey, side, template);
-        switch (result.status) {
-          case "saved":
-          case "accepted-unavailable":
-            return { status: "accepted" };
-          case "unknown":
-            return { status: "uncertain", message: result.message };
-          default:
-            return { status: "refused", message: saveProblem(result) };
+        return revertOutcome(await config.revise(pubkey, side, template));
+      },
+    };
+  };
+  teamHistory = (id: string): ConfigHistory | undefined => {
+    const community = this.teamHome(id, undefined);
+    const config = community ? this.communityConfigs.get(community) : undefined;
+    const side = config?.teamHistory(id);
+    if (!config || !side) return undefined;
+    return {
+      read: config.read,
+      sides: [side],
+      revise: async (_side, template) => {
+        try {
+          return revertOutcome(await config.reviseTeam(id, template));
+        } catch (error) {
+          return { status: "refused", message: message(error) };
         }
       },
     };
@@ -5294,10 +5621,12 @@ export class AgentsService extends Service implements Agents {
   }
   /** The selected community's agents that are not here: hosted ones, set up
    * or not, and ones on the viewer's other devices. */
-  private listedAgents(origin: string | undefined) {
+  private listedAgents(
+    origin: string | undefined,
+    here = new Set(this.identities.map((identity) => identity.pubkey)),
+  ) {
     const binding = origin ? this.bound.get(origin)?.binding : undefined;
     if (!origin || !binding) return [];
-    const here = new Set(this.identities.map((identity) => identity.pubkey));
     const listings = this.rowsOf(origin);
     const types = new Map(this.types().map((type) => [type.key, type]));
     const relay = wssOf(binding.origin);
@@ -6122,6 +6451,11 @@ export class AgentsService extends Service implements Agents {
           const teams = this.teamsChanged();
           if (!this.update() && !teams) this.notify();
         },
+        // A new snapshot, so open History lists read their version again.
+        historyChanged: () => {
+          this.state = Object.freeze({ ...this.state });
+          this.notify();
+        },
       },
       binding.controller.signal,
     ).catch(() => undefined);
@@ -6582,6 +6916,18 @@ async function unarchive(
   return true;
 }
 
+/** What History says of a revert's save. */
+function revertOutcome(result: Saved): RevertOutcome {
+  switch (result.status) {
+    case "saved":
+    case "accepted-unavailable":
+      return { status: "accepted" };
+    case "unknown":
+      return { status: "uncertain", message: result.message };
+    default:
+      return { status: "refused", message: saveProblem(result) };
+  }
+}
 /** What a synced side's Save that didn't save tells the editor. */
 function saveProblem(result: Saved) {
   switch (result.status) {

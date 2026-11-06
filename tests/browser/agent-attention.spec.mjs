@@ -21,6 +21,29 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
   });
   await expect(interest).toHaveCSS("border-top-width", "1px");
   await expect(interest).not.toHaveCSS("border-radius", "0px");
+  // A titled Interest shows its summary; an older one keeps its heading and shows none.
+  const titled = pane.getByRole("region", {
+    name: "Interest PR reviews",
+    exact: true,
+  });
+  await expect(titled.locator(".attention-interest-summary")).toHaveText(
+    /^Wakes on new reviews/,
+  );
+  await expect(interest.locator(".attention-interest-summary")).toHaveCount(0);
+  // A person in the instructions shows by name and opens their profile.
+  await interest.locator(".attention-instructions summary").click();
+  await interest.screenshot({
+    path: testInfo.outputPath("interest-profile-link.png"),
+  });
+  await interest.getByRole("button", { name: "Sam", exact: true }).click();
+  await expect(page.locator("body")).toHaveAttribute(
+    "data-opened",
+    /^nostr:npub1/,
+  );
+  await expect(interest).not.toContainText("npub1");
+  await titled.screenshot({
+    path: testInfo.outputPath("interest-summary.png"),
+  });
   await page
     .getByRole("button", {
       name: "Details for Release discussion",
@@ -323,9 +346,7 @@ test.describe("touch delete actions", () => {
     await expect(remaining).toBeVisible();
     await remaining.tap();
     await page.getByRole("menuitem", { name: "Delete", exact: true }).tap();
-    await dialog
-      .getByRole("button", { name: "Delete interest and watches", exact: true })
-      .tap();
+    await dialog.getByRole("button", { name: "Delete", exact: true }).tap();
     await expect(remaining).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: /^Watch status for / }),

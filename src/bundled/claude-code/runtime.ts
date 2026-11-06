@@ -22,6 +22,7 @@ import {
   unverifiedSynced,
 } from "../../features/agents/agent-config";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
@@ -68,6 +69,7 @@ import {
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { protectionHistoryEntry } from "./security";
 import {
+  readLatestTurns,
   readSessionTitle,
   readTranscript,
   type Conversation,
@@ -618,6 +620,44 @@ export class ClaudeRuntime {
       (transcript) =>
         transcript && { ...transcript, turns: prompts.shown(transcript.turns) },
     );
+  }
+  /** The latest whole turns of a conversation's saved session, or undefined
+   * when it has none to read that way. Its sessions' prompts are shown
+   * once: not again on a session whose earlier turns `held` keeps. */
+  async latestTurns(
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+    held: readonly TranscriptTurn[],
+  ) {
+    if (await this.inspect?.(conversation.agent)) return undefined;
+    const read = await readLatestTurns(
+      this.spawn,
+      workspace,
+      conversation,
+      working,
+      signal,
+      (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+    );
+    if (!read) return undefined;
+    // Turns older than all `held` keeps are left.
+    const ids = new Set(held.map((turn) => turn.turnId));
+    const turns = read.slice(
+      Math.max(
+        read.findIndex((turn) => ids.has(turn.turnId)),
+        0,
+      ),
+    );
+    const at = held.findIndex((turn) => turn.turnId === turns[0]?.turnId);
+    const kept = new Set(
+      held.slice(0, Math.max(at, 0)).map((t) => t.sessionId),
+    );
+    return this.prompts(conversation.agent)
+      .shown(turns)
+      .map((turn, index) =>
+        kept.has(turn.sessionId) ? (turns[index] ?? turn) : turn,
+      );
   }
   /** What each of the agent's sessions started with. */
   private prompts(agent: AgentKey) {

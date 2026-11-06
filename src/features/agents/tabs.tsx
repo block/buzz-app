@@ -37,6 +37,8 @@ export function agentSections({
   initialTranscript,
   close,
   openConversation,
+  openLink,
+  canOpenLink,
   settingsHost,
   memories,
   communities,
@@ -53,6 +55,9 @@ export function agentSections({
   close?: (() => void) | undefined;
   /** Opens a turn's conversation; see AgentViewProps. */
   openConversation?: AgentViewProps["openConversation"];
+  /** Opens a link from a plugin's tab; see AgentAddedTab. */
+  openLink?: ((target: string) => boolean) | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
@@ -159,7 +164,9 @@ export function agentSections({
       tabs.push({
         value: `agent:added:${key}`,
         label: title,
-        render: () => <Component agent={agent} />,
+        render: () => (
+          <Component agent={agent} open={openLink} canOpen={canOpenLink} />
+        ),
       });
   return [
     ...tabs,

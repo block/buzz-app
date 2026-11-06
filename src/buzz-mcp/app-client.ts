@@ -13,7 +13,7 @@ import type {
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
 /** The largest file a tool reads: the community's upload limit. */
-const READ_LIMIT = 50 * 1024 * 1024;
+export const READ_LIMIT = 50 * 1024 * 1024;
 const READ_TIMEOUT_MS = 60_000;
 
 export function appClient(
@@ -217,6 +217,24 @@ export function appClient(
       if (!agent.updateAgent)
         throw new Error("Agent changes are unavailable on this host");
       return agent.updateAgent(input);
+    },
+    readAgents: async (target) => {
+      check();
+      if (!agent.readAgents)
+        throw new Error("Agent reads are unavailable on this host");
+      return agent.readAgents(target);
+    },
+    readTeams: async (target) => {
+      check();
+      if (!agent.readTeams)
+        throw new Error("Team reads are unavailable on this host");
+      return agent.readTeams(target);
+    },
+    updateTeam: async (input) => {
+      check();
+      if (!agent.updateTeam)
+        throw new Error("Team changes are unavailable on this host");
+      return agent.updateTeam(input);
     },
     ...(plugins && {
       plugins: {

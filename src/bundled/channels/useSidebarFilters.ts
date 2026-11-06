@@ -6,7 +6,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { DEFAULT_ACTIVE_WINDOW_SECONDS } from "../../features/relay/sidebar-preferences";
-import type { UnreadCapability } from "../../features/relay/unread";
+import type {
+  ThreadActivityItem,
+  UnreadCapability,
+} from "../../features/relay/unread";
 import type { sidebarSections } from "./sidebar-sections";
 
 export type { SidebarFilterMode as SidebarFilter } from "../../features/relay/sidebar-preferences";
@@ -117,4 +120,58 @@ export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
   );
   const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
   return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);
+}
+
+/** The newest unread thread reply of each channel among `targets` (a JSON
+ * array of `[id, dm]` pairs) whose unread is only thread replies: no manual
+ * mark and no unread message outside the listed threads. A DM shares one read
+ * marker across its threads, so it qualifies only with a single unread thread. */
+export function useUnreadThreadOnly(unread: UnreadCapability, targets: string) {
+  const channels = useMemo(
+    () => JSON.parse(targets) as [string, boolean][],
+    [targets],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const stops = channels.flatMap(([channelId]) => [
+        unread.subscribe({ kind: "channel", channelId }, listener),
+        unread.subscribeActivity(channelId, listener),
+      ]);
+      return () => {
+        for (const stop of stops) stop();
+      };
+    },
+    [channels, unread],
+  );
+  const snapshot = useCallback(
+    () =>
+      JSON.stringify(
+        channels.flatMap(([channelId, dm]) => {
+          const items = unread.activity(channelId).items ?? [];
+          const state = unread.snapshot({ kind: "channel", channelId });
+          const replies = items.reduce(
+            (sum, item) => sum + item.unreadCount,
+            0,
+          );
+          return items[0] &&
+            (!dm || items.length === 1) &&
+            state.manual === "none" &&
+            (state.observedCount ?? 0) <= replies
+            ? [items[0]]
+            : [];
+        }),
+      ),
+    [channels, unread],
+  );
+  const threads = useSyncExternalStore(subscribe, snapshot, snapshot);
+  return useMemo(
+    () =>
+      new Map(
+        (JSON.parse(threads) as ThreadActivityItem[]).map((item) => [
+          item.channelId,
+          item,
+        ]),
+      ),
+    [threads],
+  );
 }

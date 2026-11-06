@@ -410,7 +410,7 @@ it("holds a malformed cold-start link until Inbox can open, then explains it onc
   t.stop();
 });
 it.each([
-  "buzz://",
+  "buzz://unknown",
   "buzz://message?channel=general",
   "buzz://message?channel=general&id=not-an-event",
   "buzz://channel/%E0%A4%A",
@@ -439,9 +439,9 @@ it.each([
 it("explains each repeated malformed warm link without adding visits, then opens a valid one", async () => {
   const t = harness(ready);
   await settle();
-  t.arrive("buzz://");
+  t.arrive("buzz://unknown");
   await settle();
-  t.arrive("buzz://");
+  t.arrive("buzz://unknown");
   await settle();
   expect(t.log).toEqual(["rejected", "rejected"]);
   expect(t.host.accepted).not.toHaveBeenCalled();
@@ -456,8 +456,51 @@ it("explains each repeated malformed warm link without adding visits, then opens
   });
   t.stop();
 });
-it("explains a malformed launch link over the start page, adding no visit, when Inbox is turned off", async () => {
+it.each(["buzz://", "buzz:///"])(
+  "a bare warm link (%s) only brings Buzz forward: no notice, visit or failure",
+  async (url) => {
+    const t = harness(ready);
+    await settle();
+    await t.host.navigation.open({ version: 1, kind: "settings" });
+    const before = t.host.navigation.snapshot();
+    t.arrive(url);
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(t.host.rejected).not.toHaveBeenCalled();
+    expect(t.host.accepted).not.toHaveBeenCalled();
+    expect(t.host.fail).not.toHaveBeenCalled();
+    expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
+    expect(t.host.navigation.snapshot()).toMatchObject({
+      entry: { id: before.entry.id },
+      status: "opened",
+    });
+    t.stop();
+  },
+);
+it("a bare launch link opens the ordinary start page, not Inbox with a notice", async () => {
   const t = harness(loading, ["buzz://"]);
+  await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+  await settle();
+  t.become(ready);
+  await settle();
+  expect(t.log).toEqual([]);
+  expect(t.host.navigation.snapshot().entry.target).toEqual({
+    version: 1,
+    kind: "home",
+  });
+  t.stop();
+});
+it("a bare link queued after a real one does not displace it", async () => {
+  const t = harness(loading, ["buzz://channel/general", "buzz://"]);
+  await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+  await settle();
+  t.become(ready);
+  await settle();
+  expect(t.log).toEqual([channelOpen]);
+  t.stop();
+});
+it("explains a malformed launch link over the start page, adding no visit, when Inbox is turned off", async () => {
+  const t = harness(loading, ["buzz://unknown"]);
   t.inbox("off");
   await settle();
   const before = t.host.navigation.snapshot();
@@ -473,7 +516,7 @@ it("explains a malformed launch link over the start page, adding no visit, when 
 it.each(["on", "off"] as const)(
   "holds a malformed launch link until Inbox availability settles (%s)",
   async (settled) => {
-    const t = harness(loading, ["buzz://"]);
+    const t = harness(loading, ["buzz://unknown"]);
     t.inbox("loading");
     await settle();
     const before = t.host.navigation.snapshot();
@@ -493,7 +536,7 @@ it.each(["on", "off"] as const)(
   },
 );
 it("a newer user visit cancels a malformed launch link waiting for Inbox", async () => {
-  const t = harness(loading, ["buzz://"]);
+  const t = harness(loading, ["buzz://unknown"]);
   t.inbox("loading");
   await settle();
   t.become(ready);
@@ -505,7 +548,7 @@ it("a newer user visit cancels a malformed launch link waiting for Inbox", async
 });
 it("never reports a held malformed link as denied when the account changes", async () => {
   const other = "f".repeat(64);
-  const t = harness({ ...ready, status: "loading" }, ["buzz://"]);
+  const t = harness({ ...ready, status: "loading" }, ["buzz://unknown"]);
   try {
     await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
     await settle();
@@ -523,7 +566,9 @@ it("never reports a held malformed link as denied when the account changes", asy
   }
 });
 it("a newer user visit cancels a malformed link waiting for a community", async () => {
-  const t = harness({ status: "ready", viewer, selected: null }, ["buzz://"]);
+  const t = harness({ status: "ready", viewer, selected: null }, [
+    "buzz://unknown",
+  ]);
   try {
     await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
     await settle();
@@ -696,7 +741,7 @@ it("a malformed warm link retires an earlier link's recovery and restores the pa
     await vi.waitFor(() =>
       expect(t.host.navigation.snapshot().retryable).toBe(true),
     );
-    t.arrive("buzz://");
+    t.arrive("buzz://unknown");
     await vi.waitFor(() => expect(t.host.rejected).toHaveBeenCalledTimes(1));
     expect(t.host.navigation.snapshot()).toMatchObject({
       entry: { id: before.entry.id },

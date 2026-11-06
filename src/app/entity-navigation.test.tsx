@@ -231,7 +231,7 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   // page in place: no visit, and history is unchanged.
   const before = current.navigation.snapshot();
   await act(async () => {
-    queue.push("buzz://");
+    queue.push("buzz://unknown");
     ping();
   });
   await screen.findByRole("dialog", { name: "This link doesn’t work" });
@@ -276,7 +276,7 @@ it.each([
     const identity = new Promise<void>((resolve) => (release = resolve));
     const { current } = bindCommunityLinks(
       origin,
-      async () => ["buzz://"],
+      async () => ["buzz://unknown"],
       identity,
     );
     await waitFor(() => expect(current.plugins.startup()).not.toBe("loading"));
@@ -311,7 +311,9 @@ it.each([
 it("opens Inbox for a malformed launch link when the catalog settles after the client", async () => {
   let release = () => {};
   catalogGate.value = new Promise<void>((resolve) => (release = resolve));
-  const { current } = bindCommunityLinks(origin, async () => ["buzz://"]);
+  const { current } = bindCommunityLinks(origin, async () => [
+    "buzz://unknown",
+  ]);
   await waitFor(() =>
     expect(current.communities.snapshot()).toMatchObject({
       status: "ready",
@@ -339,7 +341,9 @@ it("opens Inbox for a malformed launch link when the catalog settles after the c
 it("opens Inbox for a malformed launch link when Inbox activates last", async () => {
   let release = () => {};
   inboxGate.value = new Promise<void>((resolve) => (release = resolve));
-  const { current } = bindCommunityLinks(origin, async () => ["buzz://"]);
+  const { current } = bindCommunityLinks(origin, async () => [
+    "buzz://unknown",
+  ]);
   await waitFor(() => {
     expect(current.communities.snapshot()).toMatchObject({
       status: "ready",
@@ -375,7 +379,9 @@ it("keeps a malformed launch link on the start page when the catalog turning Inb
     "buzzodz.plugins.v1",
     JSON.stringify({ version: 3, enabled: { "buzz.inbox": false } }),
   );
-  const { current } = bindCommunityLinks(origin, async () => ["buzz://"]);
+  const { current } = bindCommunityLinks(origin, async () => [
+    "buzz://unknown",
+  ]);
   await waitFor(() =>
     expect(current.communities.snapshot()).toMatchObject({
       status: "ready",
@@ -420,7 +426,7 @@ it("a malformed link in a running app retires an earlier link's Try again", asyn
   });
   await screen.findByRole("button", { name: "Try again" });
   await act(async () => {
-    queue.push("buzz://");
+    queue.push("buzz://unknown");
     ping();
   });
   await screen.findByRole("dialog", { name: "This link doesn’t work" });

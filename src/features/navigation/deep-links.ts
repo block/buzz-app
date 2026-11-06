@@ -47,6 +47,11 @@ type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 // normalized its case before this bridge receives it. Every address outside the
 // Buzz link grammar, unknown hosts included, parses to null; the app has no link
 // form of its own beyond the Buzz ones.
+
+// Bare `buzz://` ("Open Buzz") only asks for the app, which native has already
+// brought to the front. It names no intent, so ingress skips it; it is never held,
+// bound or rejected, and still parses to null. Windows can add a root path.
+const OPEN_APP_LINK = /^buzz:\/\/\/?$/;
 const buzzLink = (url: unknown) =>
   typeof url === "string" && url.startsWith("buzz:")
     ? parseBuzzLink(url)
@@ -278,7 +283,7 @@ export function bindDeepLinks(
         let url: string | undefined;
         for (let index = urls.length - 1; index >= 0; index--) {
           const candidate = urls[index];
-          if (typeof candidate === "string") {
+          if (typeof candidate === "string" && !OPEN_APP_LINK.test(candidate)) {
             url = candidate;
             break;
           }

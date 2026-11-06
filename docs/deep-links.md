@@ -30,6 +30,9 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
 - `buzz://plugin?id=<plugin id>[&page=<page id>][&route.<key>=<value>...]`
 - `buzz://agent/new?card=<id>`
+- `buzz://` (also `buzz:///`), the Builderlab console's **Open Buzz app**: it
+  only brings Buzz to the front and opens nothing, at cold start too. It shows
+  no notice and never replaces a link still waiting to open
 
 External authorization links show owner consent. They never grant access on arrival. The [external app protocol](agents.md#external-app-authorization) defines the callback, S256 exchange, scopes, and expiry. Handshake values stay outside navigation history.
 
@@ -105,7 +108,7 @@ link; HTTPS itself is not registered as an OS handler. `buzz://connect`
 community **Open in Buzz**; `name` is ignored) are the same form without a code:
 they open the join dialog with the relay prefilled or, when this device already
 belongs to that community, switch to it. Links that name no destination, such
-as bare `buzz://`, unknown hosts, missing or malformed parameters, malformed join
+as unknown hosts, missing or malformed parameters, malformed join
 or community links, incomplete entity or plugin links and oversize links, show a "This
 link doesn't work" notice. In a running app the notice shows over the current
 page, and history is unchanged. A link that launches the app, read before the
@@ -156,7 +159,7 @@ For OS ingress, use a packaged app or debug bundle. Write a link by hand, such a
 `buzz://channel/general` or `buzz://message?channel=general&id=<64-hex event id>`.
 A warm packaged app should come to the front and open the conversation. A cold
 start should launch, show the start page, then open the destination once the
-client is ready. A malformed link such as `buzz://` or
+client is ready. A malformed link such as `buzz://unknown` or
 `buzz://join?relay=example` must show the "This link doesn't work" notice over
 the current page when warm, and open Inbox with it on a cold start. Ordinary `just desktop` keeps in-app Buzz links and
 **Copy link**, but external `buzz://` delivery is not a supported development

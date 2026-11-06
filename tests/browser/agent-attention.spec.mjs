@@ -21,6 +21,18 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
   });
   await expect(interest).toHaveCSS("border-top-width", "1px");
   await expect(interest).not.toHaveCSS("border-radius", "0px");
+  // A titled Interest shows its summary; an older one keeps its heading and shows none.
+  const titled = pane.getByRole("region", {
+    name: "Interest PR reviews",
+    exact: true,
+  });
+  await expect(titled.locator(".attention-interest-summary")).toHaveText(
+    /^Wakes on new reviews/,
+  );
+  await expect(interest.locator(".attention-interest-summary")).toHaveCount(0);
+  await titled.screenshot({
+    path: testInfo.outputPath("interest-summary.png"),
+  });
   await page
     .getByRole("button", {
       name: "Details for Release discussion",

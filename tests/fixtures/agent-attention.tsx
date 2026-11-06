@@ -93,7 +93,13 @@ let snapshot = {
         "interest/review": {
           slug: "interest/review",
           modifiedAt: 1,
-          value: { type: "interest", instructions: "# Review checks" },
+          value: {
+            type: "interest",
+            title: "PR reviews",
+            summary:
+              "Wakes on new reviews and CI results for example/project#42, then fixes failures and replies to feedback.",
+            instructions: "# Review checks",
+          },
         },
         "watch/pr": {
           slug: "watch/pr",

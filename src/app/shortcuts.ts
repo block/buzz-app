@@ -5,6 +5,7 @@ import type { Appearance } from "../shared/theme/service";
 import { statusShortcut } from "../features/user-status/status-shortcut";
 import {
   activeMessageList,
+  markUnreadOnAltClick,
   reactionTrigger,
   replyTrigger,
   selectedMessage,
@@ -203,6 +204,9 @@ export function registerAppShortcuts(
   const settings = () => shortcuts.runHost("settings");
   window.addEventListener("buzz:open-settings", settings);
   remove.push(() => window.removeEventListener("buzz:open-settings", settings));
+  // After React's handlers, so clicks they stop or prevent are left alone.
+  window.addEventListener("click", markUnreadOnAltClick);
+  remove.push(() => window.removeEventListener("click", markUnreadOnAltClick));
   return () => {
     for (const dispose of remove) dispose();
   };

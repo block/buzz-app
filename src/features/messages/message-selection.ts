@@ -193,3 +193,29 @@ export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
     focusWithKeyboard(composer);
   }
 }
+
+const OWN_CLICKS =
+  "a, button, input, textarea, select, summary, label, [role='button'], [role='menuitem'], [role='group'], [contenteditable='true'], img, video, audio, pre, [data-copy-code]";
+
+/** Slack's Option-click marks a message unread, as U does, from its box only:
+ * not its day divider, controls, media, code or reactions, nor the end of a
+ * text selection, which WebKit's Option-drag also makes. */
+export function markUnreadOnAltClick(event: MouseEvent) {
+  const { target } = event;
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (event.defaultPrevented || !(target instanceof Element)) return;
+  const element = target.closest<HTMLElement>(ROW);
+  if (!element) return;
+  const box = focusTarget(element);
+  if (
+    !box.contains(target) ||
+    box.contains(target.closest(OWN_CLICKS)) ||
+    !target.ownerDocument.getSelection()?.isCollapsed
+  )
+    return;
+  const owner = listFor(element);
+  const list = owner && lists.get(owner);
+  const id = element.dataset.messageId;
+  const row = id ? list?.row(id) : undefined;
+  if (row && list?.canMarkUnread(row)) list.markUnread(row);
+}

@@ -686,6 +686,7 @@ function ReviewComments({
           audience="agents"
           inFlow
           previousAuthor={replies.at(-1)?.authorId}
+          latestMessage={replies.at(-1)}
         />
         {!replies.length && (
           <p className={styles.threadNote}>

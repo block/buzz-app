@@ -2037,6 +2037,7 @@ function Timeline({
               ? lastPublicMessage.authorId
               : undefined
           }
+          latestMessage={rows.at(-1)}
           openActivity={onOpenLink}
           canOpenActivity={canOpenLink}
         />

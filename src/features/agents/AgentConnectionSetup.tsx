@@ -450,7 +450,7 @@ export function AgentConnectionForm({
                           : "Send a message to continue your conversation."
                         : type
                           ? "Review the settings to import this agent and continue your conversation."
-                          : "The previously used harness isn’t available here. Choose another harness to continue."}
+                          : "Choose a harness to continue."}
                     {!done &&
                       " Stop this agent in old Buzz before connecting, so only one app replies."}
                   </p>

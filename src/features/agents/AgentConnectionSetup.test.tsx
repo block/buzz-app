@@ -651,16 +651,14 @@ it("offers another harness when the saved plugin cannot report model readiness",
   render(
     <AgentConnectionForm agents={agents} candidate={candidate} scope="scope" />,
   );
-  expect(
-    screen.getByText(/previously used harness isn’t available/),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/Choose a harness to continue/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
   expect(screen.queryByText("Old plugin model")).not.toBeInTheDocument();
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Harness" }));
   await user.click(await screen.findByRole("option", { name: "Replacement" }));
   expect(
-    screen.queryByText(/previously used harness isn’t available/),
+    screen.queryByText(/Choose a harness to continue/),
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Connect" }));
   await waitFor(() =>

@@ -1,4 +1,10 @@
-import { useContext, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -344,8 +350,21 @@ export function AgentConnectionForm({
     void Promise.resolve(provider?.check()).catch(() => {});
   }, [provider]);
   const Model = type?.CreateModel;
+  const [modelReadiness, setModelReadiness] = useState<{
+    draft: typeof draft;
+    ready: boolean;
+  }>();
+  const onModelReady = useCallback(
+    (ready: boolean) => {
+      setModelReadiness({ draft, ready });
+    },
+    [draft],
+  );
+  const configurationReady =
+    !Model || (modelReadiness?.draft === draft && modelReadiness?.ready);
+
   const connect = async () => {
-    if (!type || !draft || pending) return;
+    if (!type || !draft || pending || !configurationReady) return;
     if (preview) {
       setError("Preview only. No agent was imported.");
       return;
@@ -471,6 +490,8 @@ export function AgentConnectionForm({
                       />
                       {Model && draft && (
                         <Model
+                          key={type?.key}
+                          onReadyChange={onModelReady}
                           modelAppearance="inverted"
                           showEffort={false}
                           config={draft.config}
@@ -486,6 +507,7 @@ export function AgentConnectionForm({
                         disabled={
                           pending ||
                           !type ||
+                          !configurationReady ||
                           (!!provider && state?.readiness !== "ready")
                         }
                         onClick={() => void connect()}

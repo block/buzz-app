@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { useEffect } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import userEvent from "@testing-library/user-event";
@@ -551,4 +552,77 @@ it("requires an explicit follow-up after import and preserves send failure for r
   ).toBeDisabled();
   expect(sendAgain).toHaveBeenCalledTimes(2);
   expect(port).toHaveBeenCalledOnce();
+});
+
+it("requires the model control to resolve provider and model, and revokes readiness after edits", async () => {
+  const port = vi.fn(async () => ({ notes: [] }));
+  const types: RegisteredAgentType[] = [
+    {
+      ...type,
+      CreateModel: ({ config, onChange, onReadyChange }) => {
+        const values = config as { provider: string; model: string };
+        const ready = !!values.provider?.trim() && !!values.model?.trim();
+        useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
+        return (
+          <>
+            <input
+              aria-label="Provider"
+              value={values.provider ?? ""}
+              onChange={(event) =>
+                onChange({ ...values, provider: event.target.value })
+              }
+            />
+            <input
+              aria-label="Model"
+              value={values.model}
+              onChange={(event) =>
+                onChange({ ...values, model: event.target.value })
+              }
+            />
+          </>
+        );
+      },
+    },
+  ];
+  const snapshot = {};
+  const agents = {
+    types: () => types,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    port,
+  } as unknown as Agents;
+  render(
+    <AgentConnectionForm
+      agents={agents}
+      candidate={{ ...candidate, connection: { runtime: "goose" } }}
+      scope="scope"
+    />,
+  );
+  const user = userEvent.setup();
+  const connect = screen.getByRole("button", { name: "Connect" });
+  expect(connect).toBeDisabled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Provider" }),
+    "anthropic",
+  );
+  expect(connect).toBeDisabled();
+  await user.click(connect);
+  expect(port).not.toHaveBeenCalled();
+  await user.type(screen.getByRole("textbox", { name: "Model" }), "model-a");
+  expect(connect).toBeEnabled();
+  await user.clear(screen.getByRole("textbox", { name: "Provider" }));
+  expect(connect).toBeDisabled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Provider" }),
+    "anthropic",
+  );
+  await user.click(connect);
+  expect(port).toHaveBeenCalledWith(
+    expect.objectContaining({
+      config: expect.objectContaining({
+        provider: "anthropic",
+        model: "model-a",
+      }),
+    }),
+  );
 });

@@ -321,6 +321,8 @@ export type AgentCreateProps<Config = unknown> = {
   openSettings?: () => void;
   /** Model fields may use the compact card treatment in the library. */
   modelAppearance?: "glass-ghost" | "inverted";
+  /** Reports whether the displayed provider/model selection is usable, including defaults. */
+  onReadyChange?: (ready: boolean) => void;
   /** Hide effort editing in streamlined connection setup. */
   showEffort?: boolean;
   config: Config;

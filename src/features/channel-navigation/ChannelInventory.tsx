@@ -649,7 +649,9 @@ export function ChannelInventory({
           ? `group:${sectionId}`
           : channel?.channelType === "dm"
             ? "dms"
-            : "channels";
+            : channel?.channelType === "forum"
+              ? "forums"
+              : "channels";
     },
     [queries],
   );
@@ -774,7 +776,7 @@ export function ChannelInventory({
     surface?: ChannelMenuSurface,
   ) => {
     const actions: ReactNode[] = [];
-    if (placementWritable && channel.channelType !== "forum") {
+    if (placementWritable) {
       const currentSectionId = sectionKey.startsWith("group:")
         ? sectionKey.slice("group:".length)
         : undefined;
@@ -1549,7 +1551,8 @@ export function ChannelInventory({
                       sectionKey={section.key}
                       selectFrame={
                         channel.channelType !== "dm" &&
-                        isChannelDropSectionKey(section.key)
+                        (isChannelDropSectionKey(section.key) ||
+                          section.key === "forums")
                           ? DraggableChannel
                           : undefined
                       }

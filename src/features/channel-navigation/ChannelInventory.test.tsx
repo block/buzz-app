@@ -842,102 +842,117 @@ it("copies a channel link that opens the same channel", async () => {
   ).toBeInTheDocument();
 });
 
-it("offers DMs a Move conversation menu and relocates them into a saved group", async () => {
-  const saved: SidebarPreferences = {
-    sections: [{ id: "work", name: "Work", order: 0 }],
-    assignments: {},
-    starred: [],
-    muted: [],
-  };
-  let assignments: Record<string, string> = {};
-  const read = vi.fn(async () => ({ ...saved, assignments }));
-  const write = vi.fn(
-    async (intent: { channelId?: string; sectionId?: string }) => {
-      if (intent.channelId === undefined)
-        throw new Error("Expected channel move");
-      const changedAssignments = intent.sectionId
-        ? { ...assignments, [intent.channelId]: intent.sectionId }
-        : Object.fromEntries(
-            Object.entries(assignments).filter(
-              ([id]) => id !== intent.channelId,
-            ),
-          );
-      assignments = changedAssignments;
-      return { sections: saved.sections, assignments };
-    },
-  );
-  const star = vi.fn(async () => []);
-  const preferences = createSidebarPreferencesStore({
-    read,
-    available: true,
-    write,
-    writeStar: star,
-  });
-  await preferences.queries.ensure();
-  const h = fixture(preferences.queries, "ready", [
-    { id: "alpha", name: "alpha", channelType: "stream" },
-    { id: "dm", name: "Alice", channelType: "dm" },
-  ]);
-  const user = userEvent.setup();
-  try {
-    render(h.view("alpha"));
-    await screen.findByRole("button", { name: "Alice" });
-    const row = screen.getByRole("button", { name: "Alice" });
-    fireEvent.keyDown(row, { key: "ContextMenu" });
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Move conversation" }),
+it.each(["dm", "forum"] as const)(
+  "offers %s placement and returns to its default section",
+  async (channelType) => {
+    const moveLabel =
+      channelType === "dm" ? "Move conversation" : "Move channel";
+    const homeKey = channelType === "dm" ? "dms" : "forums";
+    const saved: SidebarPreferences = {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: {},
+      starred: [],
+      muted: [],
+    };
+    let assignments: Record<string, string> = {};
+    const read = vi.fn(async () => ({ ...saved, assignments }));
+    const write = vi.fn(
+      async (intent: { channelId?: string; sectionId?: string }) => {
+        if (intent.channelId === undefined)
+          throw new Error("Expected channel move");
+        const changedAssignments = intent.sectionId
+          ? { ...assignments, [intent.channelId]: intent.sectionId }
+          : Object.fromEntries(
+              Object.entries(assignments).filter(
+                ([id]) => id !== intent.channelId,
+              ),
+            );
+        assignments = changedAssignments;
+        return { sections: saved.sections, assignments };
+      },
     );
-    expect(
-      await screen.findByRole("menuitemradio", { name: "Direct messages" }),
-    ).toBeChecked();
-    await screen.findByRole("menuitemradio", { name: "Work" });
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "Work" }));
-    await waitFor(() =>
-      expect(write).toHaveBeenCalledWith(
-        { channelId: "dm", sectionId: "work" },
+    const star = vi.fn(async () => []);
+    const preferences = createSidebarPreferencesStore({
+      read,
+      available: true,
+      write,
+      writeStar: star,
+    });
+    await preferences.queries.ensure();
+    const h = fixture(preferences.queries, "ready", [
+      { id: "alpha", name: "alpha", channelType: "stream" },
+      { id: "dm", name: "Alice", channelType },
+    ]);
+    const user = userEvent.setup();
+    try {
+      render(h.view("alpha"));
+      await screen.findByRole("button", { name: "Alice" });
+      const row = screen.getByRole("button", { name: "Alice" });
+      fireEvent.keyDown(row, { key: "ContextMenu" });
+      await user.hover(
+        await screen.findByRole("menuitem", { name: moveLabel }),
+      );
+      if (channelType === "dm")
+        expect(
+          await screen.findByRole("menuitemradio", { name: "Direct messages" }),
+        ).toBeChecked();
+      await screen.findByRole("menuitemradio", { name: "Work" });
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Work" }));
+      await waitFor(() =>
+        expect(write).toHaveBeenCalledWith(
+          { channelId: "dm", sectionId: "work" },
+          expect.any(AbortSignal),
+        ),
+      );
+      await waitFor(() => {
+        expect(
+          document.querySelector('[data-sidebar-section="group:work"]'),
+        ).toContainElement(screen.getByRole("button", { name: "Alice" }));
+        expect(
+          document.querySelector(
+            `[data-sidebar-section="${homeKey}"] [data-channel-id="dm"]`,
+          ),
+        ).toBeNull();
+      });
+      act(() =>
+        writeView(h.session.scope, "channel-sidebar", { collapsed: [homeKey] }),
+      );
+      fireEvent.keyDown(screen.getByRole("button", { name: "Alice" }), {
+        key: "ContextMenu",
+      });
+      await user.hover(
+        await screen.findByRole("menuitem", { name: moveLabel }),
+      );
+      expect(
+        await screen.findByRole("menuitemradio", { name: "Work" }),
+      ).toBeChecked();
+      fireEvent.click(
+        channelType === "dm"
+          ? screen.getByRole("menuitemradio", { name: "Direct messages" })
+          : screen.getByRole("menuitem", { name: "Remove from Work" }),
+      );
+      await waitFor(() => {
+        expect(
+          document.querySelector(`[data-sidebar-section="${homeKey}"]`),
+        ).toContainElement(screen.getByRole("button", { name: "Alice" }));
+        expect(screen.getByRole("button", { name: "Alice" })).toBeVisible();
+        expect(
+          document.querySelector('[data-sidebar-section="group:work"]'),
+        ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
+      });
+      expect(write).toHaveBeenLastCalledWith(
+        { channelId: "dm" },
         expect.any(AbortSignal),
-      ),
-    );
-    await waitFor(() => {
-      expect(
-        document.querySelector('[data-sidebar-section="group:work"]'),
-      ).toContainElement(screen.getByRole("button", { name: "Alice" }));
-      expect(
-        document.querySelector('[data-sidebar-section="dms"]'),
-      ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
-    });
-    fireEvent.keyDown(screen.getByRole("button", { name: "Alice" }), {
-      key: "ContextMenu",
-    });
-    await user.hover(
-      await screen.findByRole("menuitem", { name: "Move conversation" }),
-    );
-    expect(
-      await screen.findByRole("menuitemradio", { name: "Work" }),
-    ).toBeChecked();
-    fireEvent.click(
-      screen.getByRole("menuitemradio", { name: "Direct messages" }),
-    );
-    await waitFor(() => {
-      expect(
-        document.querySelector('[data-sidebar-section="dms"]'),
-      ).toContainElement(screen.getByRole("button", { name: "Alice" }));
-      expect(
-        document.querySelector('[data-sidebar-section="group:work"]'),
-      ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
-    });
-    expect(write).toHaveBeenLastCalledWith(
-      { channelId: "dm" },
-      expect.any(AbortSignal),
-    );
-    expect(star).toHaveBeenLastCalledWith(
-      { channelId: "dm", starred: false },
-      expect.any(AbortSignal),
-    );
-  } finally {
-    preferences.dispose();
-  }
-});
+      );
+      expect(star).toHaveBeenLastCalledWith(
+        { channelId: "dm", starred: false },
+        expect.any(AbortSignal),
+      );
+    } finally {
+      preferences.dispose();
+    }
+  },
+);
 
 async function failedMoveFixture() {
   const data: SidebarPreferences = {
@@ -1490,7 +1505,7 @@ it("clears only the removed section's collapsed intent after confirmation, never
     };
     let dialog = await open();
     expect(dialog).toHaveAccessibleDescription(
-      "1 channel will move back to Channels. This does not delete any channels.",
+      "1 channel will move back to their default sections. This does not delete any channels.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(remove).not.toHaveBeenCalled();

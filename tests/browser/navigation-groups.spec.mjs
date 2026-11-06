@@ -1138,3 +1138,47 @@ test("Move and Create persist across apps without a sidebar", async ({
   await openPage(page, "Messages");
   await expect(rowIn(page, `group:${section.id}`)).toBeVisible();
 });
+
+// Keyboard focus after relocation and pointer activation need the mounted app.
+test("forums move between saved sections, Starred and their default Forums section", async ({
+  page,
+  app,
+}) => {
+  app.setChannelMetadata("beta", [
+    ["name", "Beta"],
+    ["t", "forum"],
+  ]);
+  await open(page, app);
+  const beta = rowIn(page, "group:work");
+  await expect(beta).toBeVisible();
+  let menu = await openMove(page, beta);
+  await menu.getByRole("menuitem", { name: "Remove from Work" }).click();
+  const home = rowIn(page, "forums");
+  await expect(home).toBeFocused();
+  await saved(page, app, 1);
+  await page.reload();
+  await expect(home).toBeVisible();
+
+  await pull(page, home, "group:work");
+  await page.mouse.up();
+  await expect(beta).toBeVisible();
+  await expect(home).toHaveCount(0);
+  await saved(page, app, 2);
+
+  menu = await openMove(page, beta);
+  await menu
+    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .click();
+  const starred = rowIn(page, "starred");
+  await expect(starred).toBeFocused();
+  await saved(page, app, 3);
+  await page.reload();
+  await expect(starred).toBeVisible();
+  menu = await openMove(page, starred);
+  await menu.getByRole("menuitem", { name: "Remove from Starred" }).click();
+  await expect(home).toBeFocused();
+  await saved(page, app, 5);
+  await expect(sidebar(page).locator('[data-channel-id="beta"]')).toHaveCount(
+    1,
+  );
+});

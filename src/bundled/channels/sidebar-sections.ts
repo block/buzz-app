@@ -70,7 +70,8 @@ export function sidebarSections<T extends ChannelSummary>(
   const dms = active.filter(
     (channel) => channel.channelType === "dm" && !hiddenDms.has(channel.id),
   );
-  const movable = [...streams, ...dms];
+  const forums = active.filter((channel) => channel.channelType === "forum");
+  const movable = [...streams, ...forums, ...dms];
   const stars = new Set(preferences?.starred);
   const groups = preferences?.sections ?? [];
   const ids = new Set(groups.map((group) => group.id));
@@ -118,7 +119,10 @@ export function sidebarSections<T extends ChannelSummary>(
       title: "Forums",
       icon: undefined,
       rows: sort(
-        active.filter((channel) => channel.channelType === "forum"),
+        forums.filter(
+          (channel) =>
+            !stars.has(channel.id) && !ids.has(assignment(channel.id) ?? ""),
+        ),
         "forums",
       ),
     },

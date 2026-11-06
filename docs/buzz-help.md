@@ -505,6 +505,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   **Open Activity** opens the page. The card's **Unread only** switch is
   separate from the Activity page's filters and hides reactions when on. The preview is not shown on touch
   devices or while the Activity page is open.
+- **Sidebar sections**: use **Move channel** on a channel or forum to place it in
+  a saved section or Starred, or create a new section. You can also drag forums
+  into saved sections. Removing a forum from a section returns it to **Forums**.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community

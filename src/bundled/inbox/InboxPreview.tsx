@@ -59,7 +59,7 @@ const shortAge = (createdAt: number, now = Date.now()) => {
   });
 };
 
-/** Recent activity, shown while the pointer rests on the sidebar's Activity row. */
+/** Recent activity, shown while the pointer rests on the dock's Activity bell. */
 export function InboxPreview({
   relay,
   navigator,

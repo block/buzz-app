@@ -18,10 +18,11 @@ Click the avatar → **Settings → Profile**. With a community selected in the
 dock's community switcher, Save updates only your profile in that community;
 there is no separate profile-destination selector. In Personal space, Save edits
 the local default for new communities without publishing. Open the dock's
-community switcher, choose **Join a community** and type a **Community URL**. With
-no community saved, the picker is labeled **Communities**; otherwise it shows the
-selected community's icon or the Personal space globe. There
-is no destination dropdown. Accepts `wss://` or `https://` origins, for example
+community switcher, choose **Join a community** and type a **Community URL**. The
+switcher's trigger is an icon-only button: the selected community's icon, or a
+globe in Personal space or with no community saved. Its tooltip names the
+selected community, or reads **Personal space**, or **Communities** when none is
+saved. There is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
 Buzz-compatible community relays. No community is pre-joined; a packaged build
 that sets [`BUZZ_DEFAULT_COMMUNITY_URL`](configuration.md) only preselects one.

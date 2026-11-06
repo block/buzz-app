@@ -40,6 +40,8 @@ fn legacy_cli_commands_fail_without_echoing_payloads() {
         vec!["--help"],
         vec!["messages", "send", "--content", "private-message-payload"],
         vec!["gifs", "search", "private-gif-query"],
+        vec!["auth", "login", "private-auth-payload"],
+        vec!["huddles", "join", "private-huddle-payload"],
         vec!["--private-key=private-key-payload", "messages", "list"],
         vec!["--format", "compact", "channels", "list"],
     ] {
@@ -52,6 +54,8 @@ fn legacy_cli_commands_fail_without_echoing_payloads() {
         assert!(stderr.contains("Buzz.app/Contents/Resources/bin/buzz"));
         assert!(!stderr.contains("private-message-payload"));
         assert!(!stderr.contains("private-gif-query"));
+        assert!(!stderr.contains("private-auth-payload"));
+        assert!(!stderr.contains("private-huddle-payload"));
         assert!(!stderr.contains("private-key-payload"));
     }
 }

@@ -48,10 +48,14 @@ const invocations = [
   ...commands,
   ...options.flatMap((option) => [option, `${option}=contract-test`]),
 ];
-const build = spawnSync("cargo", ["build", "--locked", "-p", "Buzz"], {
-  cwd: root,
-  stdio: "inherit",
-});
+// Integration tests build the real executable with the workspace test feature
+// graph. CI's following test run reuses this build instead of compiling another
+// dependency graph with cargo build.
+const build = spawnSync(
+  "cargo",
+  ["test", "--workspace", "--locked", "--no-run"],
+  { cwd: root, stdio: "inherit" },
+);
 if (build.error) throw build.error;
 assert.equal(build.status, 0, "Could not build the desktop executable");
 const desktop = resolve(

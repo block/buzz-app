@@ -14,12 +14,14 @@ pub(crate) fn is_legacy_cli_arg(arg: &OsStr) -> bool {
         arg,
         "help"
             | "agents"
+            | "auth"
             | "messages"
             | "channels"
             | "canvas"
             | "reactions"
             | "emoji"
             | "gifs"
+            | "huddles"
             | "dms"
             | "users"
             | "workflows"
@@ -55,12 +57,14 @@ mod tests {
         for arg in [
             "help",
             "agents",
+            "auth",
             "messages",
             "channels",
             "canvas",
             "reactions",
             "emoji",
             "gifs",
+            "huddles",
             "dms",
             "users",
             "workflows",

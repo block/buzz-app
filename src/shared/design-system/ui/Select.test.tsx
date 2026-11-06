@@ -168,20 +168,29 @@ it("keeps a controlled replacement when its previous option is removed, and stil
   render(<Choices />);
   const trigger = screen.getByRole("combobox", { name: "Model" });
   await user.click(trigger);
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Default" })).toHaveFocus(),
+  );
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(trigger).toHaveAttribute("aria-expanded", "false"),
   );
+  await waitFor(() => expect(trigger).toHaveFocus());
   await user.click(screen.getByRole("button", { name: "Use custom" }));
   expect(trigger).toHaveTextContent("Custom model");
   await user.click(trigger);
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Custom model" })).toHaveFocus(),
+  );
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(trigger).toHaveAttribute("aria-expanded", "false"),
   );
+  await waitFor(() => expect(trigger).toHaveFocus());
   await user.click(screen.getByRole("button", { name: "Use saved" }));
   expect(trigger).toHaveTextContent("New model");
   expect(screen.getByLabelText("Selected model")).toHaveTextContent("new");
+  expect(screen.getByRole("button", { name: "Use saved" })).toHaveFocus();
   await user.tab();
   await waitFor(() => expect(trigger).toHaveFocus());
   expect(trigger).toHaveAttribute("aria-expanded", "false");

@@ -353,7 +353,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       const fallback = parseOpenTarget(input);
       const closing = [...known].filter(([, entry]) =>
         typeof visits === "function"
-          ? visits(entry.target)
+          ? visits(entry.target, entry.id)
           : visits.includes(entry.id),
       );
       for (const [index] of closing) dismissed.add(index);

@@ -40,6 +40,8 @@ import {
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import type { CommunityMembership } from "../moderation/membership";
+import { bestieConversationTarget } from "../bestie/routes";
+import { useBestieConversation } from "../../app/shell/bestie-context";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
@@ -170,6 +172,20 @@ export function ChannelsPage({
   // retrying connection is a failure that keeps trying, not a connection.
   // Each attempt republishes the connection, so reading it here stays current.
   const visitSettled = navigator.snapshot().status !== "opening";
+  // Messages omits the promoted Bestie DM's row, so a pending visit to it that
+  // Bestie can present opens there instead, before this page presents it. A
+  // settled visit stays, even while another opening keeps this page shown.
+  const bestieDm = useBestieConversation(session.session);
+  const bestie =
+    !visitSettled &&
+    navigator.snapshot().attempt.entry.id === navigation?.entryId &&
+    navigation.target.kind === "conversation" &&
+    navigation.target.channelId === bestieDm
+      ? bestieConversationTarget(navigation.target)
+      : undefined;
+  useLayoutEffect(() => {
+    if (bestie) sessionNavigation?.resolve(bestie);
+  }, [sessionNavigation, bestie]);
   const presentedSession = useRef<
     | {
         scope: typeof session.scope;
@@ -291,7 +307,7 @@ export function ChannelsPage({
             </div>
           )}
         </PanelFrame>
-      ) : (
+      ) : bestie ? null : (
         <ChannelWorkspace
           chatMenus={chatMenus}
           extensions={extensions}

@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import {
   bestieBaseTarget,
   bestieRoute,
+  bestieMessageRoute,
+  bestieMessageTarget,
   bestieThreadTarget,
   bestieDetailRoute,
   bestieDetailTarget,
@@ -38,6 +40,28 @@ it.each([
   { ...route, threadRootId: "A".repeat(64) },
 ])("rejects an invalid Bestie thread route", (value) => {
   expect(bestieRoute(value)).toBeUndefined();
+});
+
+it("round-trips an exact Bestie message route, distinct from a thread's", () => {
+  const { channelId, messageId } = route;
+  const target = bestieMessageTarget(page, { channelId, messageId });
+  expect(bestieMessageRoute(target.route?.params)).toEqual({
+    channelId,
+    messageId,
+  });
+  expect(bestieRoute(target.route?.params)).toBeUndefined();
+  expect(
+    bestieMessageRoute(bestieThreadTarget(page, route).route?.params),
+  ).toBeUndefined();
+  for (const invalid of [
+    undefined,
+    {},
+    { channelId },
+    { channelId: "../other", messageId },
+    { channelId, messageId: "A".repeat(64) },
+    { channelId, messageId, extra: true },
+  ])
+    expect(bestieMessageRoute(invalid)).toBeUndefined();
 });
 
 it("round-trips a panel address without accepting malformed detail routes", () => {

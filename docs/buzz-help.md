@@ -619,7 +619,17 @@ available rather than silently discarding it.
   existing chat or an edited draft. People can choose a different agent for a
   particular conversation. When the optional **Bestie** plugin is on, that saved
   choice also opens the agent's DM from the left Apps dock. The Messages
-  sidebar omits the duplicate Bestie row. Bestie uses the same conversation tabs as
+  sidebar omits the duplicate Bestie row, and links to that DM, one of its
+  threads or one of its messages, such as a thread's **In DM** link in Activity,
+  a notification or a search result, open in Bestie. A thread link opens the
+  thread beside the chat, which keeps focus, and briefly marks the thread's
+  root message in the chat once it is loaded, even from older history, unless
+  you scroll the chat or send a message first; a message link scrolls to that
+  message, or opens its thread when it is a reply. **View thread** and Back or
+  Forward leave the chat where you were. Closing a thread that a message link
+  opened retires that link's visit, as closing any thread does. Forward and
+  Members still open in Messages.
+  Bestie uses the same conversation tabs as
   Messages: threads open beside the chat (or in the main pane, following your
   thread placement setting), and can be moved, renamed, or closed. Collapsing
   the side pane keeps its open threads and reply drafts.

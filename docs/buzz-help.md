@@ -580,7 +580,8 @@ available rather than silently discarding it.
   sessions** doesn't find them, because it only matches channel conversations.
 - Failed requests show **Couldn’t finish**, cancelled requests **Stopped**, and
   unconfirmed outcomes **Status unavailable**. Choose **Details** for status
-  information.
+  information. For your remote agents, Buzz checks again automatically when no
+  final result is available yet while you stay signed in and connected.
 - Automatic failure replies use a compact status line; **Details** expands the
   explanation inline. Failures of channel requests also appear in the channel.
 - For agents running on this device, **Details** can offer **Retry** to ask again

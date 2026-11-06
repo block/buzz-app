@@ -22,6 +22,7 @@ const response = (outcomes: object): HostResponse => ({
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 async function fixture(
@@ -31,6 +32,8 @@ async function fixture(
   vi.setSystemTime(1800000000000);
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   const result = deferred<HostResponse>();
+  let finalStatuses: object | undefined;
+  let pubkeys = [agent];
   const started = deferred<void>();
   const hostRequest = vi.fn(async (input: { url: string; body?: string }) => {
     if (input.url.endsWith("/list-agents"))
@@ -39,17 +42,25 @@ async function fixture(
         headers: {},
         body: JSON.stringify({
           status: 1,
-          agents: [
-            {
-              agent_id: "agent",
-              agent_name: "Helper",
-              agent_pubkey: agent,
-              status: 2,
-            },
-          ],
+          agents: pubkeys.map((pubkey, index) => ({
+            agent_id: `agent-${index}`,
+            agent_name: "Helper",
+            agent_pubkey: pubkey,
+            status: 2,
+          })),
         }),
       };
     started.resolve();
+    if (finalStatuses) {
+      const requested = JSON.parse(input.body ?? "{}").task_ids;
+      return response(
+        Object.fromEntries(
+          Object.entries(finalStatuses).filter(([id]) =>
+            requested.includes(id),
+          ),
+        ),
+      );
+    }
     return result.promise;
   });
   let subject = "owner";
@@ -138,14 +149,16 @@ async function fixture(
     result,
     started,
     hostRequest,
+    setStatus(outcomes: object) {
+      finalStatuses = outcomes;
+    },
+    setAgents(next: string[]) {
+      pubkeys = next;
+    },
     async changeAccount() {
       session.signOut();
       subject = "other-owner";
-      hostRequest.mockResolvedValueOnce({
-        status: 200,
-        headers: {},
-        body: JSON.stringify({ status: 1, agents: [] }),
-      });
+      pubkeys = [];
       await session.signIn();
     },
     changeCommunity() {
@@ -221,22 +234,8 @@ it("refreshes the owned agent inventory when another agent appears", async () =>
     await vi.advanceTimersByTimeAsync(31000);
     await f.started.promise;
     const newcomer = "ef".repeat(32);
-    f.hostRequest.mockResolvedValueOnce({
-      status: 200,
-      headers: {},
-      body: JSON.stringify({
-        status: 1,
-        agents: [
-          {
-            agent_id: "new",
-            agent_name: "New helper",
-            agent_pubkey: newcomer,
-            status: 2,
-          },
-        ],
-      }),
-    });
-    f.hostRequest.mockResolvedValueOnce(response({ newTask: "failed" }));
+    f.setAgents([agent, newcomer]);
+    f.setStatus({ newTask: "failed" });
     f.send(
       "turn_started",
       1,
@@ -293,22 +292,7 @@ it("leaves missing status unknown and reads it again after reconnect", async () 
     await vi.advanceTimersByTimeAsync(31000);
     await f.started.promise;
     expect(f.work()).toBe("unknown");
-    f.hostRequest.mockResolvedValueOnce({
-      status: 200,
-      headers: {},
-      body: JSON.stringify({
-        status: 1,
-        agents: [
-          {
-            agent_id: "agent",
-            agent_name: "Helper",
-            agent_pubkey: agent,
-            status: 2,
-          },
-        ],
-      }),
-    });
-    f.hostRequest.mockResolvedValueOnce(response({ task: "failed" }));
+    f.setStatus({ task: "failed" });
     f.activity.state({ status: "retrying", routes: [] });
     f.activity.state(connected);
     await vi.waitFor(() => expect(f.work()).toBe("error"));
@@ -316,6 +300,81 @@ it("leaves missing status unknown and reads it again after reconnect", async () 
     f.dispose();
   }
 });
+
+it("recovers a task that finishes after an empty read without reconnecting", async () => {
+  const f = await fixture();
+  try {
+    f.result.resolve(response({}));
+    await vi.advanceTimersByTimeAsync(31000);
+    await f.started.promise;
+    expect(f.work()).toBe("unknown");
+    f.setStatus({ task: "completed" });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(f.work()).toBe("ended");
+    const reads = f.hostRequest.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(f.hostRequest.mock.calls).toHaveLength(reads);
+  } finally {
+    f.dispose();
+  }
+});
+
+it("backs off missing results to a five-minute ceiling without overlapping reads", async () => {
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  const f = await fixture();
+  const reads = () =>
+    f.hostRequest.mock.calls.filter(([input]) =>
+      input.url.endsWith("/get-agent-turn-status"),
+    ).length;
+  try {
+    f.result.resolve(response({}));
+    await vi.advanceTimersByTimeAsync(31000);
+    expect(reads()).toBe(1);
+    for (const delay of [30000, 60000, 120000, 240000, 300000, 300000]) {
+      const before = reads();
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(reads()).toBe(before);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(reads()).toBe(before + 1);
+    }
+    const pending = deferred<HostResponse>();
+    f.hostRequest.mockImplementationOnce(async () => pending.promise);
+    const before = reads();
+    await vi.advanceTimersByTimeAsync(300000);
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(reads()).toBe(before);
+    pending.resolve({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ status: 1, agents: [] }),
+    });
+    await vi.advanceTimersByTimeAsync(1);
+  } finally {
+    f.dispose();
+  }
+});
+
+it.each(["sign-out", "account-change", "community-change", "clear", "dispose"])(
+  "cancels a queued recovery retry after %s",
+  async (change) => {
+    const f = await fixture();
+    try {
+      f.result.resolve(response({}));
+      await vi.advanceTimersByTimeAsync(31000);
+      await f.started.promise;
+      if (change === "sign-out") f.session.signOut();
+      else if (change === "account-change") await f.changeAccount();
+      else if (change === "community-change") f.changeCommunity();
+      else if (change === "clear") f.activity.clear();
+      else f.activity.dispose();
+      const before = f.hostRequest.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(f.hostRequest.mock.calls).toHaveLength(before);
+    } finally {
+      f.dispose();
+    }
+  },
+);
 
 it("does not overwrite a live terminal with a delayed readback", async () => {
   const f = await fixture();

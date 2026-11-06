@@ -285,9 +285,9 @@
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-standard);
 }
-/* GitHub gives no image height, so a frame shown before the image loads
+/* GitHub gives no media height, so a frame shown before its media loads
    would guess its size, then jump; it stays collapsed until then. */
-.attachment:not([data-loaded]) [data-image-preview] {
+.attachment:not([data-loaded]) [data-media-preview] {
   height: 0;
   aspect-ratio: auto;
   margin-block: 0;

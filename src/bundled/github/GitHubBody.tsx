@@ -29,12 +29,10 @@ import {
 } from "./attachments";
 import styles from "./GitHub.module.css";
 
-function containsImage(node: NonNullable<ExtraProps["node"]>): boolean {
-  return (
-    node.tagName === "img" ||
-    node.children.some(
-      (child) => child.type === "element" && containsImage(child),
-    )
+function images(node: NonNullable<ExtraProps["node"]>): unknown[] {
+  if (node.tagName === "img") return [node.properties.src];
+  return node.children.flatMap((child) =>
+    child.type === "element" ? images(child) : [],
   );
 }
 
@@ -201,6 +199,7 @@ function EmbeddedAttachment({
       className={styles.attachment}
       data-loaded={loaded ? "" : undefined}
       onLoadCapture={() => setLoaded(shown)}
+      onLoadedMetadataCapture={() => setLoaded(shown)}
       onLoadedDataCapture={() => setLoaded(shown)}
       onErrorCapture={() => {
         setLoaded(undefined);
@@ -260,7 +259,7 @@ function BodyMedia({
             {...(description !== undefined
               ? { imageDescription: description }
               : {})}
-            preload="metadata"
+            preload="auto"
             loading="eager"
           />
         )
@@ -274,13 +273,17 @@ const components: Components = {
   p: ({ children }) => <div className={styles.paragraph}>{children}</div>,
   a: ({ href, children, node }) => {
     if (!href) return <>{children}</>;
-    if (node && containsImage(node))
+    const linked = node ? images(node) : [];
+    if (linked.length)
       return (
         <div>
           {children}
-          <a href={href} target="_blank" rel="noreferrer">
-            {href}
-          </a>
+          {/* GitHub links an uploaded image to itself; the preview opens it. */}
+          {!linked.every((src) => src === href) && (
+            <a href={href} target="_blank" rel="noreferrer">
+              {href}
+            </a>
+          )}
         </div>
       );
     return (

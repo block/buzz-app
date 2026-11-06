@@ -66,7 +66,7 @@ it("renders GFM and Before/After players without duplicate loaded-media links", 
     screen.getByRole("link", { name: "Result recording" }),
   ).toHaveAttribute("href", after);
   for (const video of container.querySelectorAll("video")) {
-    expect(video).toHaveAttribute("preload", "metadata");
+    expect(video).toHaveAttribute("preload", "auto");
     expect(video).not.toHaveAttribute("autoplay");
     expect(video.closest("p, a")).toBeNull();
     fireEvent.loadedData(video);
@@ -476,6 +476,17 @@ it("preserves linked HTML images and media fallback destinations without nested 
       destination,
     );
   expect(container.querySelector("a a, a img")).toBeNull();
+});
+
+it("omits the link GitHub adds from an uploaded image to itself", () => {
+  render(
+    <GitHubBody
+      url={url}
+      body={`<a href="${image}"><img src="${image}" alt="Self-linked"></a>`}
+    />,
+  );
+  fireEvent.load(screen.getByAltText("Self-linked"));
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
 
 it("preserves deeply nested HTML as literal text beyond the parsing budget", () => {

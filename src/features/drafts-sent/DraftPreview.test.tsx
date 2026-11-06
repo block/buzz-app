@@ -1238,15 +1238,12 @@ it.each([
     const region = screen.getByRole("region", {
       name: "Sent message in #Design",
     });
-    const composer = await within(region).findByRole("textbox");
-    if (narrow)
-      await waitFor(() =>
-        expect(
-          within(region).getByRole("button", { name: "Back to sent" }),
-        ).toHaveFocus(),
-      );
-    else expect(row).toHaveFocus();
-    expect(composer).not.toHaveFocus();
+    // Role queries are slow over a seeded thread; the labels are exact.
+    const back = region.querySelector('[aria-label="Back to sent"]');
+    await waitFor(() =>
+      expect(region.querySelector('[role="textbox"]')).not.toBeNull(),
+    );
+    expect(narrow ? back : row).toHaveFocus();
   },
 );
 

@@ -803,29 +803,35 @@ export function createTabs({
     const [search, setSearch] = useState(false);
     // Read again when the conversation saves or opens another session.
     const ids = [row.sessionId, ...(row.sessions ?? [])].join(" ");
+    /** With `reuse`, sessions that aren't working keep their last export. */
+    const read = async (signal: AbortSignal, reuse = false) => {
+      const transcript = await history.transcript(
+        {
+          agent: agent.key,
+          workspace,
+          ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+          ...(row.sessions ? { sessions: row.sessions } : {}),
+          ...(row.channelId ? { place: placeOf(row.key), search } : {}),
+          ...(working ? { working } : {}),
+        },
+        signal,
+        (pubkey) => runtime.name(agent.key, pubkey),
+        reuse,
+      );
+      return (
+        transcript && {
+          ...transcript,
+          turns: runtime.prompts(agent.key).shown(transcript.turns),
+        }
+      );
+    };
     return (
       <TranscriptPanel
         agent={agent}
-        read={async (signal) => {
-          const transcript = await history.transcript(
-            {
-              agent: agent.key,
-              workspace,
-              ...(row.sessionId ? { sessionId: row.sessionId } : {}),
-              ...(row.sessions ? { sessions: row.sessions } : {}),
-              ...(row.channelId ? { place: placeOf(row.key), search } : {}),
-              ...(working ? { working } : {}),
-            },
-            signal,
-            (pubkey) => runtime.name(agent.key, pubkey),
-          );
-          return (
-            transcript && {
-              ...transcript,
-              turns: runtime.prompts(agent.key).shown(transcript.turns),
-            }
-          );
-        }}
+        read={read}
+        // Automatic reads while working; open, Refresh and a turn starting
+        // or ending export every session.
+        readLatest={async (signal) => (await read(signal, true))?.turns}
         readKey={`${row.key}\u0000${workspace}`}
         readAgain={`${ids}\u0000${search}`}
         working={Boolean(working)}

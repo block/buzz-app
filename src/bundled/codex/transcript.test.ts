@@ -243,13 +243,15 @@ function server(
       const file = typeof rollout === "function" ? rollout() : rollout;
       // `read-from` is `tail -c +N`: from byte N, counting from 1.
       const from = _id === "read" ? 0 : Number(options?.args?.[1]) - 1;
+      const shrank = file !== undefined && from > file.length;
       if (file === undefined) options?.onStderr?.("file unavailable");
+      else if (shrank) options?.onStderr?.(`${path} shrank`);
       else options?.onStdout?.(btoa(file.slice(from)));
       return {
         write: async () => {},
         end: async () => {},
         kill: async () => {},
-        exited: Promise.resolve(file === undefined ? 1 : 0),
+        exited: Promise.resolve(file === undefined ? 1 : shrank ? 3 : 0),
       };
     }
     let exit!: (code: number) => void;
@@ -415,7 +417,10 @@ it("reads only what a rollout appended since its last read, showing the same rec
   const cut = `${records.slice(0, 2).join("\n")}\n${records[2]?.slice(0, 20)}`;
   let file = cut;
   const path = "/sessions/appended.jsonl";
-  const { spawn } = server(paged([turn({ items: [] })]), [], () => file, path);
+  // While its turn works, the rollout is remembered between reads.
+  const working = () =>
+    paged([turn({ items: [], status: "inProgress", completedAt: null })]);
+  const { spawn } = server(working(), [], () => file, path);
   const lookupOne = { ...lookup, threadId: "thread-1" };
   const first = await readTranscript(
     spawn,
@@ -438,12 +443,32 @@ it("reads only what a rollout appended since its last read, showing the same rec
     expect.objectContaining({ args: [path, String(whole + 1)] }),
   );
   const fresh = await readTranscript(
-    server(paged([turn({ items: [] })]), [], file, "/sessions/fresh.jsonl")
-      .spawn,
+    server(working(), [], file, "/sessions/fresh.jsonl").spawn,
     lookupOne,
     new AbortController().signal,
   );
   expect(second?.turns).toEqual(fresh?.turns);
+  // A file that shrank is read whole again, not from the old text.
+  file = records.slice(0, 2).join("\n");
+  const shrunk = await readTranscript(
+    spawn,
+    lookupOne,
+    new AbortController().signal,
+  );
+  expect(
+    spawn.mock.calls.filter(
+      ([id, options]) => id === "read" && options?.args?.[0] === path,
+    ),
+  ).toHaveLength(2);
+  expect(shrunk?.turns).toEqual(
+    (
+      await readTranscript(
+        server(working(), [], file, "/sessions/shrunk.jsonl").spawn,
+        lookupOne,
+        new AbortController().signal,
+      )
+    )?.turns,
+  );
   expect(second?.turns[0]?.items).toMatchObject([
     { title: "exec", input: "text(42)", output: "42" },
   ]);

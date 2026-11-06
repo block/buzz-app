@@ -22,6 +22,7 @@ import { ClaudeRuntime } from "./runtime";
 import {
   claudeTurns,
   projectName,
+  OVERSIZED_READ_MS,
   readLatestTurns,
   readTranscript,
   TURN_LIMIT,
@@ -896,7 +897,7 @@ it("reads a session's latest whole turns from its end", async () => {
   ).toEqual([["2", "2"]]);
 });
 
-it("reads none of the latest turns when the chunk holds no whole turn, so what is shown stays", async () => {
+it("reads a turn larger than the chunk in full only every 30 s, keeping what is shown between", async () => {
   clock = 0;
   const { spawn } = host({
     "./-Users-me--buzz/session-1.jsonl": [
@@ -905,15 +906,23 @@ it("reads none of the latest turns when the chunk holds no whole turn, so what i
       line("assistant", [{ type: "text", text: "done" }]),
     ].join("\n"),
   });
-  await expect(
+  const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const latest = () =>
     readLatestTurns(
       spawn,
       "~/.buzz",
       conversation,
-      false,
+      true,
       new AbortController().signal,
-    ),
-  ).resolves.toEqual([]);
+    );
+  // Undefined reads it in full; none keeps what is shown.
+  await expect(latest()).resolves.toBeUndefined();
+  now.mockReturnValue(1_000_000 + OVERSIZED_READ_MS - 1);
+  await expect(latest()).resolves.toEqual([]);
+  now.mockReturnValue(1_000_000 + OVERSIZED_READ_MS);
+  await expect(latest()).resolves.toBeUndefined();
+  await expect(latest()).resolves.toEqual([]);
+  now.mockRestore();
 });
 
 it("shows a session's prompt once over the latest turns it swaps in", async () => {

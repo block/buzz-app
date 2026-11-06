@@ -354,10 +354,16 @@ const LATEST_MIB = 2;
 /** Each workspace's project, found once for the latest-turn reads. */
 const projects = new Map<string, string | undefined>();
 
+/** How often a session whose latest turn is larger than {@link LATEST_MIB}
+ * MiB is read in full instead. */
+export const OVERSIZED_READ_MS = 30_000;
+/** When each such session was last left to a full read. */
+const oversized = new Map<string, number>();
+
 /** The whole turns in the last {@link LATEST_MIB} MiB of the conversation's
- * saved session, oldest first: none while a turn is larger than that, so
- * what is shown stays until the next full read; undefined with no saved
- * session. */
+ * saved session, oldest first; undefined with no saved session. While a turn
+ * is larger than that, none, so what is shown stays, except undefined every
+ * {@link OVERSIZED_READ_MS} to read it in full. */
 export async function readLatestTurns(
   spawn: Spawn,
   workspace: string,
@@ -383,9 +389,15 @@ export async function readLatestTurns(
     "read-page",
     [String(from), String(LATEST_MIB)],
   );
+  const tooLarge = () => {
+    const last = oversized.get(path);
+    if (last !== undefined && Date.now() - last < OVERSIZED_READ_MS) return [];
+    oversized.set(path, Date.now());
+    return undefined;
+  };
   // A chunk from partway through starts partway through a line.
   const start = from ? bytes.indexOf(10) + 1 : 0;
-  if (from && !start) return [];
+  if (from && !start) return tooLarge();
   const turns = claudeTurns(
     decode(bytes.subarray(start)),
     {
@@ -397,6 +409,8 @@ export async function readLatestTurns(
     nameOf,
   ).filter((turn) => !turn.partial);
   if (from && turns[0]) turns[0].newSession = false;
+  if (from && !turns.length) return tooLarge();
+  oversized.delete(path);
   return turns;
 }
 

@@ -447,6 +447,7 @@ export class GooseHistory {
     lookup: Lookup,
     signal: AbortSignal,
     name?: Names,
+    reuse = false,
   ): Promise<GooseTranscript | undefined> {
     return this.with(signal, async (goose, { resolveDirectory }) => {
       const saved = new Set(lookup.sessions);
@@ -461,12 +462,13 @@ export class GooseHistory {
       }
       const turns: TranscriptTurn[] = [];
       let found = false;
-      // While one session works, the others' messages are as last exported.
+      // With `reuse`, while one session works, the others' messages are as
+      // last exported.
       const exported = new Map<string, Message[]>();
       for (const sessionId of ids) {
         let read: Message[];
         signal.throwIfAborted();
-        const kept = lookup.working && this.exported.get(sessionId);
+        const kept = reuse && lookup.working && this.exported.get(sessionId);
         try {
           read =
             kept && sessionId !== lookup.working

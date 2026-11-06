@@ -1269,12 +1269,15 @@ gap make one read. These use the harness's `readLatest` when it has one: only
 the latest turns, swapped over the end of the held transcript by `turnId` from
 the first turn it holds, at most 50 turns, or a full read when they don't
 continue it. Claude Code reads the last 2 MiB of its saved session, finding
-the project folder once per workspace; a turn larger than that keeps what is
-shown until the next full read. Codex reads recent turns and only the part of
-each rollout appended since its last read. Pi reads recent turns, and a
+the project folder once per workspace; while a turn is larger than that, it
+keeps what is shown and reads in full every 30 s. Codex reads recent turns,
+and keeps only the rollout records restoring tools needs, for 2 files at
+most, parsing just the lines appended since its last read; a file that shrank
+is read whole again, and a turn ending frees them. Pi reads recent turns, and a
 transcript read stops waiting on the shared worker when cancelled. goose has
-no recent-messages API, so it reads in full, but while a session works it
-exports only that one and reuses the others' last export. Automatic reads
+no recent-messages API, so it reads in full, but its automatic reads while a
+session works export only that one and reuse the others' last export; open,
+Refresh and a turn starting or ending export every session. Automatic reads
 wait while the window is hidden, and so do Pi's retries. One read runs at a
 time; a change of conversation, read inputs or working state aborts it at
 once, even while hidden, and the last result stays while the next is read.

@@ -11,8 +11,8 @@ import {
 import type { AgentKey } from "../../features/agents/membership";
 import { sessionTag, sessionTitle } from "./prompt";
 import { AppServer, Oversized, type Spawn } from "./rpc";
-import { READ_LIMIT, readFile } from "../../buzz-mcp/app-client";
-import { restoreRecordedTools } from "./recorded-tools";
+import { readFile } from "../../buzz-mcp/app-client";
+import { recordedLines, restoreRecordedTools } from "./recorded-tools";
 
 /** The latest turns shown; earlier ones stay in Codex's own history. */
 export const TURN_LIMIT = 20;
@@ -433,38 +433,46 @@ export async function withServer<T>(
   }
 }
 
-/** Rollouts read before, by path, so a read takes only what was appended
- * since; Codex only appends to them. */
-const rollouts = new Map<string, { bytes: number; text: string }>();
+/** Rollouts read before, by path, with the lines restoring tools reads,
+ * so a read parses only what was appended since; Codex only appends. */
+const rollouts = new Map<string, { bytes: number; lines: Json[] }>();
 /** Rollouts remembered at most. */
-const ROLLOUT_LIMIT = 8;
+const ROLLOUT_LIMIT = 2;
 
-/** A rollout's text, read whole the first time and then from its end. */
+/** A rollout's lines restoring tools reads: read whole the first time or
+ * when the file shrank, and then from where the last read ended. */
 async function rollout(
   spawn: Spawn,
   directory: string,
   path: string,
   signal: AbortSignal,
 ) {
-  const known = rollouts.get(path);
-  const added = known
-    ? await readFile(spawn, directory, path, signal, undefined, "read-from", [
-        String(known.bytes + 1),
-      ])
-    : await readFile(spawn, directory, path, signal);
-  // Text ends at its last whole line, so no character is split.
-  const end = added.lastIndexOf(10) + 1;
-  const text =
-    (known?.text ?? "") + new TextDecoder().decode(added.subarray(0, end));
-  if ((known?.bytes ?? 0) + added.length > READ_LIMIT) {
-    rollouts.delete(path);
-    throw new Error(`${path} is larger than 50 MB`);
-  }
+  let known = rollouts.get(path);
   rollouts.delete(path);
-  rollouts.set(path, { bytes: (known?.bytes ?? 0) + end, text });
+  let added: Uint8Array;
+  try {
+    added = known
+      ? await readFile(spawn, directory, path, signal, undefined, "read-from", [
+          String(known.bytes + 1),
+        ])
+      : await readFile(spawn, directory, path, signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    if (!known || !/shrank/.test(String(error))) throw error;
+    known = undefined;
+    added = await readFile(spawn, directory, path, signal);
+  }
+  // Only whole lines are kept, so no record or character is split.
+  const end = added.lastIndexOf(10) + 1;
+  const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  const lines = [
+    ...(known?.lines ?? []),
+    ...recordedLines(decode(added.subarray(0, end))),
+  ];
+  rollouts.set(path, { bytes: (known?.bytes ?? 0) + end, lines });
   for (const old of rollouts.keys())
     if (rollouts.size > ROLLOUT_LIMIT) rollouts.delete(old);
-  return text + new TextDecoder().decode(added.subarray(end));
+  return [...lines, ...recordedLines(decode(added.subarray(end)))];
 }
 
 /** The latest turns of all the conversation's threads, oldest first, from a
@@ -487,6 +495,7 @@ export async function readTranscript(
     let found = false;
     let more = false;
     let working = false;
+    const paths: string[] = [];
     for (const [threadId, legacy] of threads) {
       const read = await page(rpc, threadId, TURN_LIMIT, signal);
       if (!read || (legacy && !startedFor(read.data, lookup))) continue;
@@ -504,6 +513,7 @@ export async function readTranscript(
         }>("thread/read", { threadId, includeTurns: false });
         if (!thread?.path)
           throw new Error("The local session file is unavailable.");
+        paths.push(thread.path);
         // Codex supplies the rollout in Buzz's own home. Use its directory:
         // the desktop host rejects a relative process cwd, including ".".
         const directory = thread.path.slice(0, thread.path.lastIndexOf("/"));
@@ -523,6 +533,8 @@ export async function readTranscript(
       }
       all.push(...mapped);
     }
+    // Once the turn ends, the next read reads its rollouts whole.
+    if (!working) for (const path of paths) rollouts.delete(path);
     if (!found) return undefined;
     all.sort((a, b) => a.startedAt - b.startedAt);
     return {

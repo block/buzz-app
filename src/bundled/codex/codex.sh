@@ -269,8 +269,14 @@ login | review)
   fi
   ;;
 read-from)
-  # A session file from byte "$2", counting from 1, in base64.
+  # A session file from byte "$2", counting from 1, in base64; it fails
+  # saying so when the file is now shorter than what was read before.
   set -o pipefail
+  size=$(wc -c <"$1") || exit 1
+  if [ "$size" -lt "$(($2 - 1))" ]; then
+    echo "$1 shrank" >&2
+    exit 3
+  fi
   tail -c "+$2" -- "$1" | base64
   ;;
 *)

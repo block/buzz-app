@@ -3,6 +3,7 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { nativeIdentityEnabled } from "../identity/service";
 import type { HostResponse } from "../host/service";
+import { coversCommunity } from "./community-hosts";
 
 export type SessionSnapshot = Readonly<{
   status:
@@ -31,6 +32,13 @@ export type SessionSnapshot = Readonly<{
   expiresAt: string | null;
   /** The session ends soon; signing in again now keeps the app open. */
   expiring: boolean;
+  /** Native relay admission for this saved organization session only. */
+  cacheAdmissions?: readonly Readonly<{
+    viewer: string;
+    relay: string;
+    allowed: boolean;
+    retryable?: boolean;
+  }>[];
   /** A retired session's record is still stored because removing it
    * failed (`unavailable`); signing out again retries the removal. */
   cleanup: boolean;
@@ -333,7 +341,10 @@ class CommunitySession implements FederatedIdentity {
   dispose() {
     this.started = true;
     for (const unlisten of this.unlistens.splice(0))
-      void unlisten.then((release) => release());
+      void unlisten.then(
+        (release) => release(),
+        () => {},
+      );
   }
   private accept(snapshot: SessionSnapshot) {
     this.epoch++;
@@ -349,10 +360,31 @@ class CommunitySession implements FederatedIdentity {
           const id =
             this.state.authority?.id ??
             ("server" in this.target ? this.target.server : undefined);
-          if (id && payload.authority?.id === id) this.accept(payload);
-        }).catch(() => () => {}),
+          const matches = id
+            ? payload.authority?.id === id
+            : "relay" in this.target &&
+              coversCommunity(
+                payload.authority?.communityHosts ?? [],
+                this.target.relay,
+              );
+          if (matches) this.accept(payload);
+        }),
       );
-    void this.operation("federated_identity_snapshot").catch(() => {});
+    // Cache admission depends on observing revocation before reading a snapshot.
+    // An early event also identifies this community's server and fences stale IPC.
+    void Promise.all(this.unlistens)
+      .then(async () => {
+        if (this.unlistens.length)
+          await this.operation("federated_identity_snapshot");
+      })
+      .catch(() => {
+        if (this.unlistens.length)
+          this.accept({
+            ...this.state,
+            status: "unavailable",
+            failure: "native-unavailable",
+          });
+      });
   }
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {

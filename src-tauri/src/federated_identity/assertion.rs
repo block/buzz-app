@@ -515,6 +515,9 @@ impl FederatedIdentity {
                 Ok(authorization)
             }
             Err(failure) => {
+                if refused(&failure) {
+                    let _ = self.cache_result(&revision, &viewer, &relay, false).await;
+                }
                 let retired = {
                     let mut state = self.state();
                     if !state.closed && state.snapshot.revision == revision {
@@ -1380,6 +1383,11 @@ mod tests {
         let identity = IdentityHost::fixture();
         for (status, body, code) in [
             (
+                "409 Conflict",
+                r#"{"error":"binding_mismatch"}"#,
+                "binding-mismatch",
+            ),
+            (
                 "403 Forbidden",
                 r#"{"error":"authorization_denied"}"#,
                 "authorization-denied",
@@ -1399,6 +1407,11 @@ mod tests {
         ] {
             let (base, requests) = refusing_issuer(status, body).await;
             let host = super::super::testing::signed_in(base, relay, true);
+            let revision = host.snapshot().revision;
+            let viewer = identity.viewer().await.unwrap();
+            host.cache_result(&revision, &viewer, relay, true)
+                .await
+                .unwrap();
             for _ in 0..2 {
                 assert_eq!(
                     host.assertion_for_relay(&identity, &url)
@@ -1414,6 +1427,8 @@ mod tests {
                 "{status}: a later operation must keep the refusal without asking the issuer again"
             );
             assert!(host.snapshot().status == Status::SignedIn);
+            assert!(!host.snapshot().cache_admissions[0].allowed);
+            assert!(!host.0.store.cache_admissions(&revision).unwrap()[0].allowed);
         }
     }
     #[tokio::test]

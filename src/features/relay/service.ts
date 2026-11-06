@@ -14,6 +14,7 @@ import {
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 import type { ReadTransport } from "./transport";
+import { liveReconnectDelay } from "./live";
 const WAKE_TICK_MS = 5_000;
 const WAKE_GAP_MS = 15_000;
 
@@ -35,7 +36,21 @@ export type RelaySnapshot = Readonly<{
   retrying?: true;
   /** The community refused this account; not a connection problem. */
   denied?: true;
+  /** The organization session doesn't admit this community now: its saved
+   * history stays on disk but out of memory until sign-in. */
+  locked?: true;
 }>;
+/** An organization community's access to its saved history. */
+export type RelayGate = {
+  /** Whether this community needs the organization session at all. */
+  protects(): Promise<boolean | undefined>;
+  /** Whether the organization session admits its saved history now. */
+  admits(viewer?: string): boolean;
+  canConnect?(viewer?: string): boolean;
+  subscribe(listener: () => void): () => void;
+};
+/** The error a locked community carries; CommunitySignIn offers Sign in. */
+const LOCKED = "Federated sign-in is required";
 export type RelayData = {
   snapshot(): RelaySnapshot;
   subscribe(listener: () => void): () => void;
@@ -59,8 +74,11 @@ export function provideRelay(
   agentChoices?: LocalAgents,
   resume?: { viewer: string; scope: string },
   localAgents?: LocalAgentSource,
+  gate?: RelayGate,
 ) {
   let disposed = false;
+  /** The gate's answer to `protects`, once known. */
+  let guarded: boolean | undefined = gate ? undefined : false;
   let generation = 0;
   let controller: AbortController | undefined;
   let connecting = false;
@@ -78,6 +96,8 @@ export function provideRelay(
   // failure keeps its error visible and waits for the user.
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnects = 0;
+  // A policy bounce can follow successful AUTH, so it must survive `ready`.
+  let admissionReconnects = 0;
   /** Whether the latest connection failure can clear without anyone acting.
    * Later publishes of the same failure (cache handoff) keep it. */
   let transientFailure = false;
@@ -108,12 +128,32 @@ export function provideRelay(
     store.dispose();
     store = createRelaySession(null, { identityNames });
   };
+  const shut = (viewer = resume?.viewer ?? snapshot.viewer) =>
+    guarded !== false && !!gate && !gate.admits(viewer);
+  /** Drops everything this community holds in memory, keeping the disk. */
+  const lock = () => {
+    reset();
+    transientFailure = false;
+    publish({
+      status: "error",
+      generation,
+      session: store.session,
+      error: LOCKED,
+      locked: true,
+    });
+  };
   async function restoreLocal(current: number, signal: AbortSignal) {
     if (!resume) return;
     const persistence = createHeadPersistence(resume.viewer, resume.scope);
     let cached: ReturnType<typeof createRelaySession> | undefined;
     let handedOff = false;
     try {
+      // Decide before anything reaches memory: a locked organization
+      // community's history stays on disk.
+      if (gate) {
+        guarded = await gate.protects();
+        if (shut()) return;
+      }
       const saved = (await persistence.readStartup?.())?.discovery;
       if (
         !saved ||
@@ -198,7 +238,16 @@ export function provideRelay(
       };
     },
     retry() {
-      if (disposed || !connect || connecting || clearing) return;
+      if (disposed || !connect || clearing) return;
+      if (connecting) {
+        if (guarded === undefined && gate) {
+          const current = generation;
+          void gate.protects().then((value) => {
+            if (!disposed && current === generation) guarded = value;
+          });
+        }
+        return;
+      }
       const retained = snapshot.cached;
       if (!retained) reset();
       connecting = true;
@@ -212,9 +261,11 @@ export function provideRelay(
           session: store.session,
           // Only the first attempt bootstraps from disk behind the launch
           // surface; a retry after a failure keeps the app on screen.
-          ...(resume && snapshot.status !== "error"
-            ? { restoring: true as const }
-            : {}),
+          ...(shut()
+            ? { status: "error" as const, locked: true as const, error: LOCKED }
+            : resume && snapshot.status !== "error"
+              ? { restoring: true as const }
+              : {}),
         });
       else {
         const { error: _error, ...retainedSnapshot } = snapshot;
@@ -223,7 +274,7 @@ export function provideRelay(
       const restoring = retained
         ? Promise.resolve()
         : restoreLocal(current, signal);
-      const timer = setTimeout(() => {
+      const timeout = () => {
         if (disposed || current !== generation || signal !== controller?.signal)
           return;
         controller.abort();
@@ -234,13 +285,21 @@ export function provideRelay(
           status: "error",
           error: "Relay connection timed out. Try again.",
         });
-      }, 8_000);
+      };
+      let timer = setTimeout(timeout, 8_000);
       deadline = timer;
       void Promise.resolve()
-        .then(() => connect(signal))
+        .then(async () => {
+          if (gate) guarded = await gate.protects();
+          signal.throwIfAborted();
+          if (shut() && gate?.canConnect?.(resume?.viewer) === false)
+            return undefined;
+          return connect(signal);
+        })
         .then(async (transport) => {
           clearTimeout(timer);
           await restoring;
+          if (!transport) return;
           if (
             disposed ||
             signal.aborted ||
@@ -248,6 +307,72 @@ export function provideRelay(
             signal !== controller?.signal
           )
             return;
+          if (gate) guarded = await gate.protects();
+          if (shut(transport.viewer)) {
+            // Open only the socket: session construction itself reads the outbox
+            // and sidebar cache. Fresh admission costs one temporary connection;
+            // saved admission skips it. Native open allows 90s, then AUTH 10s.
+            clearTimeout(timer);
+            deadline = timer = setTimeout(timeout, 100_000);
+            let proof:
+              | ReturnType<NonNullable<ReadTransport["subscribe"]>>
+              | undefined;
+            try {
+              await new Promise<void>((resolve, reject) => {
+                let stop: (() => void) | undefined;
+                const finish = (error?: unknown) => {
+                  stop?.();
+                  signal.removeEventListener("abort", check);
+                  if (error) reject(error);
+                  else resolve();
+                };
+                const check = () => {
+                  if (signal.aborted) finish(signal.reason);
+                  else if (!shut(transport.viewer)) finish();
+                  else if (gate?.canConnect?.(transport.viewer) === false)
+                    finish(new Error(LOCKED));
+                };
+                stop = gate?.subscribe(check);
+                signal.addEventListener("abort", check, { once: true });
+                if (!transport.subscribe) {
+                  finish(
+                    new ReadError(
+                      "unavailable",
+                      "Community access could not be confirmed.",
+                    ),
+                  );
+                  return;
+                }
+                try {
+                  proof = transport.subscribe({
+                    receive: () => {},
+                    established: () => {},
+                    denied: () => {},
+                    state: (state) => {
+                      if (state.status === "error")
+                        finish(
+                          new ReadError(
+                            "unavailable",
+                            state.error ??
+                              "Community access could not be confirmed.",
+                          ),
+                        );
+                    },
+                  });
+                  check();
+                } catch (error) {
+                  finish(error);
+                }
+              });
+            } finally {
+              clearTimeout(timer);
+              proof?.dispose();
+            }
+          }
+          signal.throwIfAborted();
+          // Admission can be revoked after the waiter resolves but before this
+          // continuation runs. Constructors load saved state synchronously.
+          if (shut(transport.viewer)) throw new Error(LOCKED);
           const successor = createRelaySession(transport, {
             identityNames,
             agentChoices,
@@ -266,7 +391,13 @@ export function provideRelay(
               transportOrigin(transport),
             ),
           });
-          await successor.restore();
+          try {
+            signal.throwIfAborted();
+            await successor.restore();
+          } catch (error) {
+            successor.dispose();
+            throw error;
+          }
           if (
             disposed ||
             signal.aborted ||
@@ -274,6 +405,22 @@ export function provideRelay(
             signal !== controller?.signal
           ) {
             successor.dispose();
+            return;
+          }
+          // Without a resume, restoreLocal never asked the gate.
+          if (gate) guarded = await gate.protects();
+          if (
+            disposed ||
+            signal.aborted ||
+            current !== generation ||
+            signal !== controller?.signal
+          ) {
+            successor.dispose();
+            return;
+          }
+          if (shut(transport.viewer)) {
+            successor.dispose();
+            lock();
             return;
           }
           // Materialize retained readers before publishing so React never sees
@@ -388,16 +535,44 @@ export function provideRelay(
     },
   };
   ctx.provide("relay", service);
+  if (gate) {
+    const check = () => {
+      if (disposed || guarded === false) return;
+      if (shut()) {
+        if (!snapshot.locked) {
+          const reconnect = gate.canConnect?.(
+            resume?.viewer ?? snapshot.viewer,
+          );
+          lock();
+          if (reconnect) {
+            const backoff =
+              RECOVERY_DELAYS_MS[
+                Math.min(admissionReconnects++, RECOVERY_DELAYS_MS.length - 1)
+              ] ?? 30_000;
+            reconnectTimer = setTimeout(
+              () => service.retry(),
+              liveReconnectDelay(1008, backoff, Math.random),
+            );
+          }
+        }
+      } else if (snapshot.locked) service.retry();
+    };
+    void gate.protects().then((protects) => {
+      guarded = protects;
+      check();
+    });
+    ctx.effect(() => gate.subscribe(check));
+  }
   ctx.effect(() => {
     // Network, focus and wake are hints that the relay may answer again.
     // Failed background reads retry now; healthy sessions do no extra work.
     const online = () => {
-      if (snapshot.cached) service.retry();
+      if (snapshot.cached || snapshot.locked) service.retry();
       else store.session.recovery?.retryNow();
     };
     const visible = () => {
       if (document.visibilityState !== "visible") return;
-      if (snapshot.cached) service.retry();
+      if (snapshot.cached || snapshot.locked) service.retry();
       else store.session.recovery?.retryNow();
     };
     // Timers stop while the machine sleeps. A large gap between ticks means

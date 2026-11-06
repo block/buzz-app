@@ -1160,9 +1160,13 @@ sign-in as part of opening the app. After key setup, the launch mark stays up
 while the saved session is checked. A restored session opens the app directly.
 Otherwise a full-window screen titled "Signing you in to *organization*" opens
 the browser sign-in, and the app opens when it finishes. Cancel or a failed
-sign-in leaves **Sign in with *organization*** and **Not now**; neither reopens
-the browser by itself. Not now opens the app, where protected communities offer
-their usual sign-in recovery.
+sign-in leaves **Sign in with *organization***, which does not reopen the
+browser by itself. There is no way past the screen without a session, so the
+app's saved conversations stay hidden after a session ends, across restarts.
+Only a network failure while checking the saved session (`network-unavailable`
+or `network-timeout`) also offers **Not now**, which opens the app for offline
+reading until a check settles the session; a refused or ended session brings
+the screen back. A secure-storage failure offers Try again only.
 
 When the session ends during a run (expiry or the adapter refusing it), the same
 screen covers the app, above any dialog or menu it had open, and starts sign-in
@@ -1179,7 +1183,44 @@ is exchanged; Cancel or a failure leaves it in place, and a different account
 retires derived agent grants as any account change does. At expiry, native ends
 the session itself rather than waiting for the next relay assertion or 401, and
 the screen above takes over.
-On-demand builds are unchanged.
+On-demand builds keep the warning to at-launch builds.
+
+### Organization community history
+
+In native builds, a community on a configured sign-in server's
+`communityHosts` (native `federated_identity_protects`) shows its saved
+history only after native records the relay's acceptance of NIP-42 authentication
+for that organization session, Nostr key and community. A new sign-in, including
+a different account, inherits no admission. Unknown or failed native protection
+lookups keep history locked; connection retry, focus and session updates retry
+the lookup. A confirmed community outside the descriptor stays unaffected.
+
+Admission is saved with the native session revision. Offline
+(`network-unavailable`/`network-timeout` while checking the saved session), only
+previously admitted history stays readable, before that session's `expiresAt`.
+An older installation without saved admission needs one online connection.
+Explicit issuer refusals (including `binding-mismatch`), rejected NIP-42 AUTH
+and HTTP 403 persist denial for that key/community; restart and late success
+cannot undo it. A fresh sign-in can try again. Policy close 1008 instead invalidates
+admission and permits fresh authorization, because it also signals ordinary
+connection lifetime expiry. History stays locked across restart until a new AUTH
+succeeds; a proof started before invalidation cannot restore access. Recovery
+uses capped, jittered backoff, including repeated expiry after successful AUTH.
+
+Before admission, the relay service opens a temporary authentication socket
+without constructing any owners that load saved history, sidebar data or outbox.
+This adds one socket for a fresh admission, reusing native assertion issuance;
+existing admission uses the ordinary connection. Covered communities whose
+discovery disables NIP-FI also use a native socket, without an assertion header,
+so native observes their AUTH receipt and binds it to the current session and key.
+Uncovered ordinary communities keep their public socket. Native open keeps its
+90-second budget plus 10 seconds for authentication. Lost admission drops the community's
+in-memory session (timeline, threads, previews, unread counts, search), keeping
+its disk cache. Its pages show **Sign in to continue**. Reauthentication-required
+can open browser sign-in once (`LOCKED_SIGN_IN` in `features/federated-identity/lock.ts`);
+explicit sign-out and cancellation require the person to choose sign-in. A valid
+sign-in without confirmed access offers **Try again** and **Sign in again**.
+History returns only after admission.
 
 The Node development host retains its supported broker flow.
 

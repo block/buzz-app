@@ -37,6 +37,7 @@ import { deviceSettings } from "./device-settings";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
+import { relayGates } from "../features/federated-identity/lock";
 import { createCommunities } from "../features/communities/service";
 import { createInviteIntent } from "../features/communities/invite-intent";
 import type { InviteLink } from "../features/communities/invite-link";
@@ -119,6 +120,7 @@ export function createServices() {
     identity?.ready,
     identity ? connectNativeTransport : undefined,
     localActivity.reader,
+    relayGates(federatedIdentity),
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,

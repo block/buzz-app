@@ -94,6 +94,7 @@ fn main() {
             "identity_prepare_remote_agent_authorization",
             "identity_sign_builderlab_binding",
             "federated_identity_snapshot",
+            "federated_identity_protects",
             "federated_identity_servers",
             "federated_identity_sign_in",
             "federated_identity_cancel_sign_in",

@@ -983,8 +983,8 @@ async fn enabling_backup_while_another_copy_holds_consent_writes_it_or_reports_b
     assert_eq!(service.state.lock().unwrap().uploads.len(), 1);
 }
 
-#[test]
-fn generations_and_teardown_fence_retired_work() {
+#[tokio::test]
+async fn generations_and_teardown_fence_retired_work() {
     // No filesystem or worker is configured; exercise session ownership.
     let (fi, revision) = signed_in();
     let host = NsecBackupHost {
@@ -1014,8 +1014,8 @@ fn generations_and_teardown_fence_retired_work() {
     assert!(host.state.lock().unwrap().session.is_none());
 }
 
-#[test]
-fn a_retired_revision_is_refused() {
+#[tokio::test]
+async fn a_retired_revision_is_refused() {
     let (fi, _) = signed_in();
     let host = NsecBackupHost {
         federated: Some(fi),
@@ -1918,8 +1918,8 @@ async fn a_native_sign_out_mid_pass_stops_the_next_federated_request() {
     }
 }
 
-#[test]
-fn a_handoff_stores_only_the_revision_and_requires_the_current_one() {
+#[tokio::test]
+async fn a_handoff_stores_only_the_revision_and_requires_the_current_one() {
     if buzzodz_plugins::BUILDERLAB_ORIGIN.is_empty() {
         return;
     }

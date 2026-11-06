@@ -420,6 +420,7 @@ it("restores the selected native community and recovers discovery failure withou
   let unavailable = true;
   const destinations: string[] = [];
   vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "federated_identity_protects") return false;
     if (command === "identity_restore") return viewer;
     if (command === "deep_link_take") return [];
     if (command === "deep_link_watch") return null;
@@ -465,6 +466,7 @@ it("seeds a packaged native community after onboarding and preserves the user's 
   let unavailable = true;
   const destinations: string[] = [];
   vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "federated_identity_protects") return false;
     if (command === "identity_restore") return identified ? viewer : null;
     if (command === "identity_import") {
       identified = true;

@@ -90,10 +90,21 @@ the interface unless an available tool actually supports that action.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
-  **Not now** opens Buzz anyway, but that organization's communities stay
-  unavailable until you sign in. Sign-in, sign-out and when the current
+  Until you sign in, Buzz stays covered, including saved conversations. Only
+  when the sign-in service can't be reached does **Not now** open Buzz for
+  offline reading. Sign-in, sign-out and when the current
   sign-in ends also live under
   **Settings → Buzz → Identity → Organization sign-in**.
+- In organization builds, an organization community's conversations stay
+  hidden while your organization sign-in has ended, including after a restart.
+  Its pages show **Sign in to continue**. An expired sign-in can open the browser
+  once; after you sign out or cancel, choose **Sign in** to start again.
+  Signing in must also confirm access for your Buzz identity and that
+  community before saved conversations appear. **Try again** retries that check;
+  **Sign in again** lets you change the account. Offline, previously confirmed
+  conversations stay readable until the saved sign-in would have ended. A refused
+  account stays locked after restart. A connection lifetime expiry keeps history
+  hidden while Buzz confirms access again. Other communities are not affected.
 - When a community requires organization sign-in, the sidebar or join dialog
   explains why and offers **Sign in with** the organization’s name or server
   address. Complete sign-in to reconnect; in the join dialog, choose **Continue**.

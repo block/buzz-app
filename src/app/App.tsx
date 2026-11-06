@@ -43,6 +43,7 @@ import { Settings } from "./Settings";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { pendingManaged } from "../plugins/managed";
 import { RecoveryScreen } from "./RecoveryScreen";
+import { LockedCommunity } from "../features/federated-identity/LockedCommunity";
 import { PageView } from "../features/pages/PageView";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import { SidebarFrame } from "../features/channel-navigation/SidebarFrame";
@@ -665,7 +666,9 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             />
           }
           backdrop={<ShellBackdrops backdrops={services.backdrops} />}
-          companion={pageOwnsCompanion ? undefined : companion}
+          companion={
+            pageOwnsCompanion || connection.locked ? undefined : companion
+          }
           pages={startup === "ready" ? route.pages : []}
           selected={workspace.selected}
           navigationAttempt={workspace.attempt}
@@ -689,6 +692,24 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           <UpdateReview agents={services.agents} />
           {!settings && startup === "recovery" ? (
             <RecoveryScreen plugins={plugins} />
+          ) : !settings && connection.locked ? (
+            <LockedCommunity
+              key={connection.origin ?? client.selected ?? ""}
+              identity={
+                client.selected
+                  ? services.federatedIdentity.forCommunity(
+                      communityDestination(client.selected).url,
+                    )
+                  : services.federatedIdentity
+              }
+              relay={
+                client.selected
+                  ? communityDestination(client.selected).url
+                  : undefined
+              }
+              memberships={client.memberships}
+              retry={services.relay.retry}
+            />
           ) : !settings &&
             ((!route.state.ingress && route.failure) || failedPage) ? (
             destinationFailure

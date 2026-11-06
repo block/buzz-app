@@ -45,7 +45,7 @@ export class NativeSocket implements LiveSocket {
         return;
       }
       if (mode === "public") {
-        // Native discovery explicitly admitted a valid non-FI community.
+        // Native discovery confirmed an uncovered, valid non-FI community.
         const ws = new WebSocket(this.url);
         this.browser = ws;
         ws.onopen = (event) => {

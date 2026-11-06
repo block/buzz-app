@@ -22,7 +22,7 @@ export function recoveryMessage(code: string) {
 }
 
 /** Issuer refusals native keeps for the session revision (`refused()` in
- * assertion.rs) until the app restarts; signing in or retrying repeats them. */
+ * assertion.rs) until a fresh sign-in; a connection retry cannot clear them. */
 const ISSUER_REFUSALS = new Set([
   "adapter-refused",
   "grant-refused",
@@ -118,11 +118,10 @@ function Action({
   }
   if (ISSUER_REFUSALS.has(refusal))
     return (
-      <p role="alert" className="text-body-sm text-danger">
-        Buzz couldn’t confirm your organization sign-in for this community.
-        Restart Buzz to try again. If it keeps happening, contact your
-        administrator.
-      </p>
+      <span role="alert" className="block text-body-sm text-danger">
+        Buzz couldn’t confirm your organization sign-in for this community. Sign
+        in again. If it keeps happening, contact your administrator.
+      </span>
     );
   if (
     !error ||
@@ -158,9 +157,9 @@ function Action({
           : `Sign in with ${server}`}
       </Button>
       {(failure || state.failure) && (
-        <p role="alert" className="text-body-sm text-danger">
+        <span role="alert" className="block text-body-sm text-danger">
           {recoveryMessage(failure || state.failure || "")}
-        </p>
+        </span>
       )}
     </>
   );

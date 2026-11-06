@@ -32,6 +32,16 @@ function needsSignIn(state: SessionSnapshot) {
   );
 }
 
+/** Only a network failure leaves the session's fate unknown. A local one,
+ * such as secure storage refusing, must not reveal the app either. */
+function cannotReach(state: SessionSnapshot) {
+  return (
+    state.status === "unavailable" &&
+    (state.failure === "network-unavailable" ||
+      state.failure === "network-timeout")
+  );
+}
+
 /**
  * Builds whose descriptor says `signIn: "at-launch"` sign in to the
  * organization before the app opens, and again whenever the session ends.
@@ -56,7 +66,9 @@ export function LaunchSignIn({
     identity.apiAvailable && state.status === "restoring" && !state.authority;
   const required =
     identity.apiAvailable && state.authority?.signIn === "at-launch";
-  // "Not now" lasts until a session is established; a later end asks again.
+  // "Not now" is offered only while the sign-in can't be reached, so offline
+  // reading keeps working; it lasts until a session is established, and only
+  // while the outcome stays unknown. A refused or ended session asks again.
   const [dismissed, setDismissed] = useState(false);
   // Once asked, the screen stays up while Try again checks the saved sign-in.
   const [asked, setAsked] = useState(false);
@@ -64,9 +76,10 @@ export function LaunchSignIn({
     setDismissed(false);
     setAsked(false);
   }
+  const offline = state.status === "restoring" || cannotReach(state);
   const showing =
     required &&
-    !dismissed &&
+    !(dismissed && offline) &&
     (needsSignIn(state) || (asked && state.status === "restoring"));
   if (showing && !asked) setAsked(true);
   // The app mounts once, after launch settles, and then stays mounted (covered
@@ -392,7 +405,7 @@ function SignInScreen({
                 ? `Sign in with ${organization}`
                 : "Sign in"}
           </Button>
-          {!checking && (
+          {cannotReach(state) && (
             <Button size="lg" variant="ghost" onClick={dismiss}>
               Not now
             </Button>

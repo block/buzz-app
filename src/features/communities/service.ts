@@ -4,7 +4,7 @@ import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
-import { provideRelay, type RelayData } from "../relay/service";
+import { provideRelay, type RelayData, type RelayGate } from "../relay/service";
 import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import {
   communityDestination,
@@ -85,6 +85,8 @@ export function createCommunities(
   identityReady?: Promise<string>,
   nativeConnect?: (id: string, signal: AbortSignal) => Promise<ReadTransport>,
   localAgents?: LocalAgentSource,
+  /** Organization access to each community's saved history, by origin. */
+  gateFor?: (origin: string) => RelayGate | undefined,
 ) {
   const connect = live
     ? (id: string, signal: AbortSignal) =>
@@ -185,6 +187,7 @@ export function createCommunities(
         agentChoices,
         viewer ? { viewer, scope: communityDestination(id).url } : undefined,
         localAgents,
+        gateFor?.(communityDestination(id).url),
       );
       sessions.set(id, session);
       sessionScopes.set(id, scope);

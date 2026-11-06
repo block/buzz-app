@@ -679,6 +679,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_prepare_remote_agent_authorization,
         identity_sign_builderlab_binding,
         federated_identity::federated_identity_snapshot,
+        federated_identity::federated_identity_protects,
         federated_identity::federated_identity_servers,
         federated_identity::federated_identity_sign_in,
         federated_identity::federated_identity_cancel_sign_in,

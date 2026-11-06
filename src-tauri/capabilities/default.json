@@ -38,6 +38,7 @@
     "allow-sign-out",
     "allow-sign-out-wipe-refusal",
     "allow-federated-identity-snapshot",
+    "allow-federated-identity-protects",
     "allow-federated-identity-servers",
     "allow-federated-identity-sign-in",
     "allow-federated-identity-cancel-sign-in",

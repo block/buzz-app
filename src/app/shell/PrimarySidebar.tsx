@@ -390,11 +390,13 @@ function ScopedSidebar({
                 <p>
                   {connection.status === "connecting" || connection.retrying
                     ? "Connecting…"
-                    : connection.denied
-                      ? "You don’t have access to this community."
-                      : connection.status === "error"
-                        ? "Couldn’t load channels."
-                        : "Choose a community to see channels."}
+                    : connection.locked
+                      ? "Sign in to see this community."
+                      : connection.denied
+                        ? "You don’t have access to this community."
+                        : connection.status === "error"
+                          ? "Couldn’t load channels."
+                          : "Choose a community to see channels."}
                 </p>
                 {connection.status === "error" && !connection.retrying && (
                   <>
@@ -408,7 +410,9 @@ function ScopedSidebar({
                       relay={connection.origin}
                       memberships={props.memberships}
                     />
-                    <Button onClick={props.relay.retry}>Try again</Button>
+                    {!connection.locked && (
+                      <Button onClick={props.relay.retry}>Try again</Button>
+                    )}
                   </>
                 )}
               </div>

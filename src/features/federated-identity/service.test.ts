@@ -467,3 +467,80 @@ it("answers sign-in with the call's own result when an event arrives before it",
   // The event moved the epoch on, so the answer is not adopted over it.
   expect(service.snapshot().status).toBe("signing-in");
 });
+
+it.each([true, false])(
+  "keeps early community admission events over an older snapshot (allowed=%s)",
+  async (allowed) => {
+    const handlers: Array<(event: { payload: SessionSnapshot }) => void> = [];
+    vi.mocked(listen).mockImplementation(async (_name, handler) => {
+      handlers.push(handler as typeof publish);
+      return unlisten;
+    });
+    let finish: ((snapshot: SessionSnapshot) => void) | undefined;
+    vi.mocked(invoke).mockImplementation(async (_command, args) =>
+      args && "relay" in args
+        ? new Promise<SessionSnapshot>((resolve) => {
+            finish = resolve;
+          })
+        : signedOut,
+    );
+    const { service } = setup();
+    const community = service.forCommunity("wss://relay.example");
+    const stop = community.subscribe(() => {});
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const admission = {
+      viewer: "a".repeat(64),
+      relay: "wss://relay.example",
+      allowed,
+    };
+    const latest = { ...signedIn, cacheAdmissions: [admission] };
+    for (const handler of handlers) handler({ payload: latest });
+    expect(community.snapshot()).toBe(latest);
+    finish?.({
+      ...signedIn,
+      cacheAdmissions: [{ ...admission, allowed: !allowed }],
+    });
+    const call = vi
+      .mocked(invoke)
+      .mock.calls.findIndex(
+        ([, args]) =>
+          args !== undefined &&
+          "relay" in args &&
+          args.relay === "wss://relay.example",
+      );
+    await vi.waitFor(() =>
+      expect(vi.mocked(invoke).mock.settledResults[call]?.type).toBe(
+        "fulfilled",
+      ),
+    );
+    expect(community.snapshot()).toBe(latest);
+    stop();
+  },
+);
+
+it("registers community events before loading admission and fails closed if registration fails", async () => {
+  const { service } = setup();
+  await vi.waitFor(() => expect(service.snapshot()).toBe(signedOut));
+  let reject: ((error: Error) => void) | undefined;
+  vi.mocked(listen).mockImplementation(
+    () =>
+      new Promise((_resolve, no) => {
+        reject = no;
+      }),
+  );
+  const community = service.forCommunity("wss://relay.example");
+  community.subscribe(() => {});
+  expect(invoke).not.toHaveBeenCalledWith("federated_identity_snapshot", {
+    relay: "wss://relay.example",
+  });
+  reject?.(new Error("Listener unavailable"));
+  await vi.waitFor(() =>
+    expect(community.snapshot()).toMatchObject({
+      status: "unavailable",
+      failure: "native-unavailable",
+    }),
+  );
+  expect(invoke).not.toHaveBeenCalledWith("federated_identity_snapshot", {
+    relay: "wss://relay.example",
+  });
+});

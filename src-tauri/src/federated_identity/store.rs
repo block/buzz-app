@@ -18,6 +18,15 @@ pub(crate) type LoadedRecord = (Option<Zeroizing<Vec<u8>>>, Option<String>);
 type Item = Option<Zeroizing<Vec<u8>>>;
 
 pub(crate) trait Store: Send + Sync {
+    fn cache_admissions(
+        &self,
+        revision: &str,
+    ) -> Result<Vec<super::cache::Admission>, &'static str>;
+    fn record_cache_admission(
+        &self,
+        revision: &str,
+        admission: super::cache::Admission,
+    ) -> Result<Vec<super::cache::Admission>, &'static str>;
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str>;
     fn compare(
         &self,
@@ -218,6 +227,38 @@ pub(crate) mod items {
 }
 
 impl SecureStore {
+    fn cache_path(&self, revision: &str) -> Result<PathBuf, &'static str> {
+        let revision = uuid::Uuid::parse_str(revision).map_err(|_| "storage-corrupt")?;
+        Ok(self
+            .root
+            .join(format!("{}.{revision}.cache-admissions", self.account)))
+    }
+    fn read_cache_admissions(
+        &self,
+        revision: &str,
+    ) -> Result<Vec<super::cache::Admission>, &'static str> {
+        match fs::read(self.cache_path(revision)?) {
+            Ok(raw) if raw.len() <= 512 * 1024 => {
+                let entries: Vec<super::cache::Admission> =
+                    serde_json::from_slice(&raw).map_err(|_| "storage-corrupt")?;
+                if entries.len() > 128
+                    || entries.iter().any(|entry| {
+                        entry.viewer.len() != 64
+                            || !entry.viewer.bytes().all(|b| b.is_ascii_hexdigit())
+                            || super::config::canonical_relay(&entry.relay).as_deref()
+                                != Ok(entry.relay.as_str())
+                    })
+                {
+                    return Err("storage-corrupt");
+                }
+                Ok(entries)
+            }
+            Ok(_) => Err("storage-corrupt"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(_) => Err("storage-unavailable"),
+        }
+    }
+
     fn marker(&self, revision: &str) -> Result<PathBuf, &'static str> {
         let revision = uuid::Uuid::parse_str(revision).map_err(|_| "storage-corrupt")?;
         Ok(self
@@ -449,6 +490,32 @@ impl SecureStore {
 }
 
 impl Store for SecureStore {
+    fn cache_admissions(
+        &self,
+        revision: &str,
+    ) -> Result<Vec<super::cache::Admission>, &'static str> {
+        let _transaction = self.lock()?;
+        self.read_cache_admissions(revision)
+    }
+    fn record_cache_admission(
+        &self,
+        revision: &str,
+        admission: super::cache::Admission,
+    ) -> Result<Vec<super::cache::Admission>, &'static str> {
+        let _transaction = self.lock()?;
+        let mut entries = self.read_cache_admissions(revision)?;
+        super::cache::record(&mut entries, admission)?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(&self.root).map_err(|_| "storage-unavailable")?;
+        serde_json::to_writer(file.as_file_mut(), &entries).map_err(|_| "storage-unavailable")?;
+        file.as_file()
+            .sync_all()
+            .map_err(|_| "storage-unavailable")?;
+        file.persist(self.cache_path(revision)?)
+            .map_err(|_| "storage-unavailable")?;
+        Ok(entries)
+    }
+
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
         let (_, bundle) = self.bundle()?;
         Ok(bundle
@@ -560,6 +627,45 @@ mod tests {
         items::read(&store.root, account)
             .unwrap()
             .map(|raw| raw.to_vec())
+    }
+
+    #[test]
+    fn cache_ledger_is_revision_scoped_and_refusal_dominates_other_instances() {
+        let root = tempfile::tempdir().unwrap();
+        let first = secure(&root);
+        let second = secure(&root);
+        let revision = uuid::Uuid::new_v4().to_string();
+        let admission = super::super::cache::Admission {
+            viewer: "a".repeat(64),
+            relay: "wss://relay.example".into(),
+            allowed: true,
+            retryable: false,
+            generation: 0,
+        };
+        assert!(first.cache_admissions(&revision).unwrap().is_empty());
+        first
+            .record_cache_admission(&revision, admission.clone())
+            .unwrap();
+        assert_eq!(
+            second.cache_admissions(&revision).unwrap(),
+            vec![admission.clone()]
+        );
+        second
+            .record_cache_admission(
+                &revision,
+                super::super::cache::Admission {
+                    allowed: false,
+                    ..admission.clone()
+                },
+            )
+            .unwrap();
+        assert!(!first.record_cache_admission(&revision, admission).unwrap()[0].allowed);
+        assert!(first
+            .cache_admissions(&uuid::Uuid::new_v4().to_string())
+            .unwrap()
+            .is_empty());
+        fs::write(first.cache_path(&revision).unwrap(), b"broken").unwrap();
+        assert!(first.cache_admissions(&revision).is_err());
     }
 
     #[test]

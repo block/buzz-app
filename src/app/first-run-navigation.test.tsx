@@ -90,6 +90,7 @@ beforeEach(() => {
   );
   let created = false;
   vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "federated_identity_protects") return false;
     if (command === "identity_restore") return created ? member.pubkey : null;
     if (command === "identity_legacy_available") return false;
     if (command === "identity_create") {

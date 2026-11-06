@@ -98,7 +98,7 @@ it("opens straight away with a restored session", () => {
   expect(h.service.signIn).not.toHaveBeenCalled();
 });
 
-it("leaves the choice to the person after a cancel, and lets them continue", async () => {
+it("leaves the choice to the person after a cancel, but keeps the app covered", async () => {
   const user = userEvent.setup();
   const h = launchFixture();
   render(
@@ -116,9 +116,55 @@ it("leaves the choice to the person after a cancel, and lets them continue", asy
     screen.getByRole("button", { name: "Sign in with Block" }),
   ).toHaveFocus();
 
-  await user.click(screen.getByRole("button", { name: "Not now" }));
-  expect(screen.getByLabelText("Draft")).toBeVisible();
+  // Cached conversations stay hidden until the organization admits the person.
+  expect(
+    screen.queryByRole("button", { name: "Not now" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Draft")).not.toBeInTheDocument();
   expect(h.service.signIn).toHaveBeenCalledOnce();
+});
+
+it("lets the person continue offline, and asks again once the session is refused", async () => {
+  const user = userEvent.setup();
+  const h = launchFixture();
+  render(
+    <LaunchSignIn identity={h.service}>
+      <Workspace />
+    </LaunchSignIn>,
+  );
+  h.set({ status: "unavailable", failure: "network-unavailable" });
+  await user.click(await screen.findByRole("button", { name: "Not now" }));
+  expect(screen.getByLabelText("Draft")).toBeVisible();
+  // A later check that can't decide either leaves the app open.
+  h.set({ status: "restoring", failure: null });
+  h.set({ status: "unavailable", failure: "network-timeout" });
+  expect(screen.getByLabelText("Draft")).toBeVisible();
+
+  h.set({ status: "reauthentication-required", failure: null });
+  expect(
+    await screen.findByRole("heading", { name: "Sign in to Block again" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Not now" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Draft")).not.toBeVisible();
+});
+
+it("keeps the app covered when secure storage can't be read", async () => {
+  const h = launchFixture();
+  render(
+    <LaunchSignIn identity={h.service}>
+      <Workspace />
+    </LaunchSignIn>,
+  );
+  h.set({ status: "unavailable", failure: "storage-unavailable" });
+  expect(
+    await screen.findByRole("button", { name: "Try again" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Not now" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Draft")).not.toBeInTheDocument();
 });
 
 it("signs in again when a session ends, keeping the app and its focus", async () => {
@@ -280,8 +326,8 @@ it("returns focus to an app dialog portaled outside the app", async () => {
   await user.type(search, "query");
 
   h.set({ status: "reauthentication-required" });
-  await user.click(await screen.findByRole("button", { name: "Cancel" }));
-  await user.click(await screen.findByRole("button", { name: "Not now" }));
+  await screen.findByRole("button", { name: "Cancel" });
+  h.set({ status: "signed-in" });
   expect(search).toHaveFocus();
   expect(search).toHaveValue("query");
 });

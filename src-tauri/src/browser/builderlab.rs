@@ -375,8 +375,8 @@ mod tests {
     }
 
     #[cfg(debug_assertions)]
-    #[test]
-    fn development_viewer_auth_accepts_only_loopback_origins_and_a_public_revision() {
+    #[tokio::test]
+    async fn development_viewer_auth_accepts_only_loopback_origins_and_a_public_revision() {
         let fi = signed_in();
         for origin in ["http://127.0.0.1:1430", "http://localhost:1430"] {
             let auth: ViewerAuth = serde_json::from_value(serde_json::json!({ "broker": { "origin": origin, "revision": "public-revision" } })).unwrap();
@@ -403,8 +403,8 @@ mod tests {
         assert!(serde_json::from_value::<ViewerAuth>(serde_json::json!({"federated":"r", "broker":{"origin":"http://127.0.0.1:1430","revision":"r"}})).is_err());
     }
 
-    #[test]
-    fn federated_exchange_sends_the_session_credential_only_for_the_current_revision() {
+    #[tokio::test]
+    async fn federated_exchange_sends_the_session_credential_only_for_the_current_revision() {
         let fi = signed_in();
         let (url, name, value) =
             exchange_request(ViewerAuth::Federated(revision(&fi)), &fi).unwrap();

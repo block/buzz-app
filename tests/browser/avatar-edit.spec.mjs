@@ -334,6 +334,42 @@ test("a short avatar popup keeps Done in view on the Emoji tab", async ({
       }),
     )
     .toBe(true);
+  // The action row, not the grid beneath it, owns the gap between actions.
+  const remove = page.getByRole("button", {
+    name: "Remove avatar",
+    exact: true,
+  });
+  expect(
+    await done.evaluate(
+      (button, removeBox) => {
+        const doneBox = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          (removeBox.x + removeBox.width + doneBox.left) / 2,
+          doneBox.top + doneBox.height / 2,
+        );
+        return button.parentElement.contains(hit);
+      },
+      await remove.boundingBox(),
+    ),
+  ).toBe(true);
+  // Focus scrolling keeps a control clear of the footer that covers the end.
+  // Refocus on each poll so the scroll applies once the panel settles.
+  await expect
+    .poll(() =>
+      done.evaluate((button) => {
+        const slider = button
+          .closest("fieldset")
+          .querySelector('input[type="range"]');
+        slider.blur();
+        slider.focus();
+        const footer = button.parentElement.parentElement;
+        return (
+          slider.getBoundingClientRect().bottom <=
+          footer.getBoundingClientRect().top
+        );
+      }),
+    )
+    .toBe(true);
 });
 
 test("custom color and footer resize together without reversing direction", async ({

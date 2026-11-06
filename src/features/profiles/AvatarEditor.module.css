@@ -138,24 +138,30 @@ html[data-keyboard-navigation] .panelViewport {
   );
 }
 
-.footer {
+.footerActions {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--space-2);
 }
 
-/* Done stays in view when the popup scrolls; only the fade passes input. */
+/* Done stays in view when the popup scrolls. Only the fade above the actions
+   passes input through; the action row owns its gaps and bottom inset. */
+.popup {
+  scroll-padding-block-end: calc(2 * var(--space-3) + var(--size-control));
+}
+
 .popup .footer {
   position: sticky;
   z-index: 1;
   bottom: calc(-1 * var(--space-3));
   margin-block: calc(-1 * var(--space-3));
-  padding-block: var(--space-3);
+  padding-top: var(--space-3);
   pointer-events: none;
 }
 
-.popup .footer > :not([aria-hidden]) {
+.popup .footerActions {
+  padding-bottom: var(--space-3);
   pointer-events: auto;
 }
 

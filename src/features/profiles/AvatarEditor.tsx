@@ -777,16 +777,20 @@ function AvatarDraft({
           <div className={styles.footer}>
             {/* A short popup scrolls beneath its actions; inline, they sit in flow. */}
             {!inlinePicker && <ScrollEdgeMaterial edge="bottom" />}
-            {!inlinePicker && (
-              <Button
-                variant="destructive"
-                disabled={(!value && !picture) || disabled || busy}
-                onClick={() => done("")}
-              >
-                Remove avatar
-              </Button>
-            )}
-            {actionTarget ? createPortal(doneButton, actionTarget) : doneButton}
+            <div className={styles.footerActions}>
+              {!inlinePicker && (
+                <Button
+                  variant="destructive"
+                  disabled={(!value && !picture) || disabled || busy}
+                  onClick={() => done("")}
+                >
+                  Remove avatar
+                </Button>
+              )}
+              {actionTarget
+                ? createPortal(doneButton, actionTarget)
+                : doneButton}
+            </div>
           </div>
         )}
       </fieldset>

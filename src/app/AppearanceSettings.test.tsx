@@ -386,6 +386,15 @@ it("chooses a theme by pointer and keyboard, saves only the theme, and recovers 
   expect(buzz).toBeChecked();
   expect(localStorage.getItem("buzz-theme.v1")).toBe("buzz");
   expect(document.documentElement.dataset.theme).toBe("buzz");
+
+  const baton = within(group).getByRole("radio", { name: "Baton" });
+  expect(baton).toHaveAccessibleDescription(
+    "Beige-box chrome and navy highlights. After dark, it glows green.",
+  );
+  await user.click(baton);
+  expect(baton).toBeChecked();
+  expect(document.documentElement.dataset.theme).toBe("baton");
+  expect(localStorage.getItem("buzz-theme.v1")).toBe("baton");
   appearance.dispose();
 });
 

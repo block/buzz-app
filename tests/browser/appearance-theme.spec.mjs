@@ -96,7 +96,7 @@ const FRAMED_THEMES = [
     },
   },
 ];
-const UNFRAMED_THEMES = ["troupe", "cacophony", "cable"];
+const UNFRAMED_THEMES = ["troupe", "cacophony", "cable", "baton"];
 const THEME_COUNT = 1 + FRAMED_THEMES.length + UNFRAMED_THEMES.length;
 
 for (const [index, theme] of FRAMED_THEMES.entries()) {
@@ -419,4 +419,55 @@ test("Cable fills own bubbles with green under the Theme accent and yields to a 
   await page.getByRole("button", { name: "Theme accent color" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-accent", "theme");
   expect((await ownBubble()).fill).toBe("rgb(232, 247, 219)");
+});
+
+test("Baton keeps its frame on the page mode and changes accent between modes", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await appearance(page);
+  const group = page.getByRole("radiogroup", { name: "Theme", exact: true });
+  await group.getByText("Baton", { exact: true }).click();
+  await expect(group.getByRole("radio", { name: /^Baton/ })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "baton");
+  expect(await page.evaluate((k) => localStorage.getItem(k), themeKey)).toBe(
+    "baton",
+  );
+  await expect(
+    page.getByRole("button", { name: "Theme accent color" }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  await chooseColorMode(page, "Light");
+  await expectFramed(page, false);
+  expect(await resolved(page, "--surface-sidebar", "#shell-navigation")).toBe(
+    "rgb(255, 255, 255)",
+  );
+  expect(await resolved(page, "--bg-app", "header.shell-header")).toBe(
+    "rgb(196, 193, 184)",
+  );
+  expect(await resolved(page, "--accent-9")).toBe("rgb(16, 16, 138)");
+  expect(await resolved(page, "--border-standard")).toBe("rgb(128, 128, 128)");
+  expect(
+    (
+      await group
+        .locator('svg[data-theme="relax"]')
+        .evaluate((node) =>
+          getComputedStyle(node).getPropertyValue("--border-standard"),
+        )
+    ).trim(),
+    "a card keeps its own hairline instead of the page theme's",
+  ).toBe("#e6dfe5");
+
+  await chooseColorMode(page, "Dark");
+  await expectFramed(page, false);
+  expect(await resolved(page, "--surface-sidebar", "#shell-navigation")).toBe(
+    "rgb(8, 8, 8)",
+  );
+  expect(await resolved(page, "--bg-app", "header.shell-header")).toBe(
+    "rgb(30, 30, 30)",
+  );
+  expect(await resolved(page, "--surface-panel", "body")).toBe("rgb(0, 0, 0)");
+  expect(await resolved(page, "--accent-9")).toBe("rgb(43, 209, 43)");
+  expect(await resolved(page, "--border-standard")).toBe("rgb(58, 58, 58)");
 });

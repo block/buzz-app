@@ -42,7 +42,8 @@ function check(css) {
     const result = spawnSync(
       process.execPath,
       [join(fixture, "scripts/design-system/check-contrast.mjs")],
-      { encoding: "utf8" },
+      // A failing report lists every theme and passes spawnSync's 1 MiB default.
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     );
     return { status: result.status, output: result.stdout + result.stderr };
   } finally {
@@ -573,6 +574,12 @@ describe("semantic contrast contract", () => {
       "--theme-bubble-received-dark: var(--cable-bubble-received-dark);",
       "--theme-bubble-received-dark: var(--cable-4-dark);",
       /cable\/mono\/neutral\/dark: --text-message-link #\w+ is gray on --surface-message #\w+/,
+    ],
+    [
+      "dark ink on shade overlays",
+      "--theme-accent-overlay-dark: var(--tint-fill);",
+      "--theme-accent-overlay-dark: var(--shade-fill);",
+      /baton\/theme\/high\/dark --text-mention-own \(#\w+\) on --affordance-mention-own \(/,
     ],
   ])("measures a theme in its own scope: %s", (_name, from, to, pairing) => {
     expect(tokens).toContain(from);

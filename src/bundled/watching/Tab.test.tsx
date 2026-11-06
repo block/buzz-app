@@ -158,14 +158,14 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   fireEvent.click(
     screen.getByRole("button", { name: "Watch status for task" }),
   );
-  expect(screen.getByRole("menuitem", { name: "Activate" })).toBeTruthy();
+  expect(screen.getByRole("menuitem", { name: "Resume" })).toBeTruthy();
   expect(within(ada).getByText("Paused")).toBeTruthy();
   expect(
     within(ada).getByRole("button", {
       name: "Attention status for Ada",
     }),
   ).toBeTruthy();
-  fireEvent.click(screen.getByRole("menuitem", { name: "Activate" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Save failed"),
   );
@@ -192,7 +192,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   fireEvent.click(
     within(
       screen.getByRole("menu", { name: "Attention status for Ada" }),
-    ).getByRole("menuitem", { name: "Activate" }),
+    ).getByRole("menuitem", { name: "Resume" }),
   );
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith("membership-a", {
@@ -297,9 +297,41 @@ it.each(["source", "event", "timer"] as const)(
     );
     expect(
       screen
-        .getByRole("button", { name: "Delete Interest release" })
+        .getByRole("button", { name: "Interest status for release" })
         .hasAttribute("disabled"),
-    ).toBe(true);
+    ).toBe(false);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Interest status for release" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Interest status for release" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete interest and watches" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "Interest save failed",
+      ),
+    );
+    expect(save).toHaveBeenLastCalledWith("membership-a", {
+      attentionExpected: expect.objectContaining({
+        "interest/release": expect.objectContaining({
+          slug: "interest/release",
+        }),
+      }),
+      attention: { "watch/check": null, "interest/release": null },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("button", { name: "Watch status for release" }),
+    ).toBeTruthy();
+    save.mockClear();
     expect(screen.queryByRole("menuitem", { name: "Pause" })).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Watch status for release" }),
@@ -310,7 +342,7 @@ it.each(["source", "event", "timer"] as const)(
       await waitFor(() =>
         expect(
           screen
-            .getByRole("menuitem", { name: "Pause" })
+            .getByRole("menuitem", { name: "Resume" })
             .getAttribute("aria-disabled"),
         ).toBe("true"),
       );
@@ -334,7 +366,7 @@ it.each(["source", "event", "timer"] as const)(
     if (type === "timer") {
       expect(
         screen
-          .getByRole("menuitem", { name: "Activate" })
+          .getByRole("menuitem", { name: "Resume" })
           .getAttribute("aria-disabled"),
       ).toBe("true");
       expect(
@@ -353,9 +385,10 @@ it.each(["source", "event", "timer"] as const)(
       screen.getByRole("region", { name: "Interest release" }),
     ).toBeTruthy();
     const removeInterest = screen.getByRole("button", {
-      name: "Delete Interest release",
+      name: "Interest status for release",
     });
     fireEvent.click(removeInterest);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toBe(
         "Interest save failed",
@@ -363,11 +396,16 @@ it.each(["source", "event", "timer"] as const)(
     );
     expect(agent.attention["interest/release"]).toBeTruthy();
     rejectInterest = false;
-    fireEvent.click(removeInterest);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "Attention" })).toBeTruthy(),
     );
     expect(save).toHaveBeenLastCalledWith("membership-a", {
+      attentionExpected: expect.objectContaining({
+        "interest/release": expect.objectContaining({
+          slug: "interest/release",
+        }),
+      }),
       attention: { "interest/release": null },
     });
   },
@@ -464,17 +502,15 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
   fireEvent.click(
     screen.getByRole("button", { name: "Watch status for Build" }),
   );
-  toggle = screen.getByRole("menuitem", { name: "Pause" }) as HTMLButtonElement;
+  toggle = screen.getByRole("menuitem", {
+    name: "Pause",
+  }) as HTMLButtonElement;
   remove = screen.getByRole("menuitem", {
     name: "Delete Build",
   }) as HTMLButtonElement;
   expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
   expect(remove.getAttribute("aria-disabled")).not.toBe("true");
-  expect(
-    screen
-      .getByRole("menuitem", { name: "Activate" })
-      .getAttribute("aria-disabled"),
-  ).toBe("true");
+  expect(screen.queryByRole("menuitem", { name: "Resume" })).toBeNull();
   expect(save).toHaveBeenCalledTimes(1);
 });
 
@@ -541,11 +577,11 @@ it("explains Attention to a new agent and switches it on this device", async () 
   });
   expect(toggle.textContent).toContain("Paused");
   fireEvent.click(toggle);
-  fireEvent.click(screen.getByRole("menuitem", { name: "Activate" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Enable failed"),
   );
-  fireEvent.click(screen.getByRole("menuitem", { name: "Activate" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
   expect(save).toHaveBeenLastCalledWith("membership-b", {
     attentionEnabled: true,

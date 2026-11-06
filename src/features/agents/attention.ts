@@ -14,6 +14,7 @@ export type Interest = Readonly<{
   /** One or two sentences under the title on the owner's card. */
   summary?: string;
   instructions: string;
+  paused?: boolean;
 }>;
 export type ClassifierQuestion = Readonly<{
   question: string;
@@ -308,7 +309,9 @@ export function validateObject(
     if (parsed.space === "interest") {
       if (object.type !== "interest")
         fail('An interest/ value has type "interest"');
-      fields(object, ["type", "instructions"], ["title", "summary"]);
+      fields(object, ["type", "instructions"], ["title", "summary", "paused"]);
+      if (object.paused !== undefined && typeof object.paused !== "boolean")
+        fail("paused must be true or false");
       filled(object.instructions, "instructions", TEXT_LIMIT);
       if (object.title !== undefined && !label(object.title, "title").trim())
         fail("title is empty");
@@ -512,4 +515,13 @@ export function sourceCompleted(
     object?.value.type === "source" &&
     runs?.[object.slug] === sourceSignature(object)
   );
+}
+
+/** Interest pause leaves each watch's own enabled setting intact. */
+export function interestPaused(
+  attention: Readonly<Record<string, AttentionObject>>,
+  id: string,
+): boolean {
+  const value = attention[`interest/${id}`]?.value;
+  return value?.type === "interest" && value.paused === true;
 }

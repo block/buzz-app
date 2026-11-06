@@ -38,6 +38,20 @@ describe("validateObject", () => {
         instructions: "x",
       }),
     ).toBeUndefined();
+    expect(
+      validateObject("interest/default", {
+        type: "interest",
+        instructions: "x",
+        paused: true,
+      }),
+    ).toBeUndefined();
+    expect(
+      validateObject("interest/default", {
+        type: "interest",
+        instructions: "x",
+        paused: "yes",
+      }),
+    ).toMatch(/paused must be/);
     expect(validateObject("watch/w", watch)).toBeUndefined();
     expect(
       validateObject("watch/t", {

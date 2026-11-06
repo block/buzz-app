@@ -804,10 +804,14 @@ confirmation.
   when each interest wakes the agent (**Triggers**), its instructions after waking
   (**Instructions**), and whether Attention is active on this device. Use its Active/Paused menu to change that.
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
+  Each interest has an Active/Paused menu. Pausing stops its triggers without changing
+  individual watch settings. Running turns may finish; activating resumes enabled
+  watches, and an overdue timer can run once. Delete in that menu
+  removes the interest; if it has watches, confirm to delete those too.
   Each watch shows its source and Active or Paused state. Expand a
   watch, then expand “Activity” for a compact event timeline. Expand an event to read its full
   content, or expand “Watch details” for conditions and the execution destination. Select its status pill to
-  activate, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
+  resume, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
   “Runs in” names its execution conversation; its instructions can specify a
   different place to report. A
   mention can still wake an agent when Attention is off; turning Attention on does not grant new access.

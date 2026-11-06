@@ -780,6 +780,10 @@
   --bubble-neutral: #e9e9ea;
   --bubble-received: #f3f3f4;
   --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
+  /* Designer-requested light status text: the brightest green and red, 35% of
+     the way from step 11 to step 12, that keep AA on every light surface. */
+  --green-text: #1e6a49;
+  --red-text: #a9252c;
   --neutral-navigation-unread: #262626; /* Tailwind neutral-800. */
   --neutral-navigation-quiet: #f7f7f7; /* Designer-requested gentle sidenav states. */
   --neutral-1: #ffffff; /* bg-panel, bg-float, bg-chrome-selected */
@@ -1128,10 +1132,10 @@
   --text-quiet-control: var(--neutral-8);
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
-  --text-danger: var(--red-12);
+  --text-danger: var(--red-text);
   --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
-  --text-success: var(--green-12);
+  --text-success: var(--green-text);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
   --icon-subtle: var(--text-subtle);
@@ -1607,6 +1611,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1647,6 +1657,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1964,6 +1980,9 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -1983,6 +2002,9 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -2117,6 +2139,8 @@
     --affordance-accent-prominent-hover
   );
   --border-color-accent: var(--border-accent);
+  --border-color-reaction-self: var(--border-reaction-self);
+  --border-color-reaction-self-own: var(--border-reaction-self-own);
 
   /* Palette utilities remain for the palette viewer and staged migration. */
   /* neutral */

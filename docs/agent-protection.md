@@ -102,6 +102,9 @@ only the captured agent's runtime and launches through that provider's captured
 host scope. It always supplies the captured containment. Missing engines refuse
 launch; provider replacement/unload kills its processes, including a launch that
 finishes after revocation. Adapters keep ownership of sessions and credentials.
+Native records the agent such a launch is for, after checking that agent's saved
+protection names the provider, so the adapter can still bind that process's Buzz
+credential to it, and to no other agent.
 
 Manifest processes may declare `artifact: {path, sha256, siblings?}` instead of
 `bundled`. Contained launches require one of these declarations; PATH-only
@@ -110,6 +113,8 @@ named siblings into a generation under the storage owner's shared Agents folder,
 then executes that worker-read-only copy. Corrupt generations fail closed;
 verification/copying runs off the async runtime. Symbolic links remain rejected.
 These paths come from the installed plugin manifest, never from model input or PATH.
+Host commands may also declare `artifact`; they are never contained, so each run
+verifies the installed bytes in place instead of copying them.
 
 `processProtection` contains `readOnlyPaths` and `hiddenPaths`, absolute or under
 the user's home written `~/…`. Hidden paths must exist. A read-only path may lack
@@ -244,10 +249,16 @@ the protected engines on demand, without compiling them during Buzz development.
 
 Protected Goose's native provider decorator gates model input,
 including tool results, and its central tool dispatcher gates arguments together
-with the native conversation. Providers with internal tool loops, command-line agent
+with the native conversation, which Buzz exports from the worker hosting that
+session. Providers with internal tool loops, command-line agent
 providers such as `codex` and `cursor-agent`, toolshim, unreviewed native command
 hooks, recipe shell callbacks and unsupported extension launches are refused.
-Protected agents have dedicated contained workers. Goose reviews read the owner's
+A protected start is refused when the engine reports its gate in the wrong state:
+on for review workers, off for agent sessions. Engines released before they
+reported it are accepted. Protected agents have dedicated contained workers.
+When an agent's provider is replaced, its next worker starts only after every
+replaced worker has exited, and retiring the agent waits for them too.
+Goose reviews read the owner's
 Goose connection settings. The security plugin lists `config.yaml`, `secrets.yaml`,
 `custom_providers` and `config.tmp`, which Goose saves `config.yaml` through, plus the
 `.tmp` beside the target when `config.yaml` is a link, so they are read-only for

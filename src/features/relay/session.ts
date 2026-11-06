@@ -28,7 +28,7 @@ import { createChannelDetails } from "./channel-details";
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported } from "./channel-labels";
 import { createWorkflows } from "../workflows/capability";
-import { isWorkflowOperation } from "../workflows/protocol";
+import { isWorkflowOperation, workflowReference } from "../workflows/protocol";
 import {
   createRelayReader,
   type Priority,
@@ -1134,6 +1134,7 @@ export function createRelaySession(
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
   });
   const workflows = createWorkflows({
+    profiles: profiles.queries,
     reader: transport ? verified : undefined,
     viewer: transport?.viewer ?? "",
     outbox: writes?.outbox,
@@ -1230,6 +1231,14 @@ export function createRelaySession(
     follows: browserThreadFollows(readScope),
   });
   const inboxFeed = createInboxFeed({
+    reactionReader: {
+      read: (filters, settings) =>
+        finiteRead(filters, settings, (signal) =>
+          relayRead(filters, { ...settings, signal }),
+        ),
+    },
+    relayAuthor: transport?.relayAuthor,
+    signingAuthority: transport?.archiveAuthority,
     // A withheld auxiliary event is not proof of an exhausted history page.
     // Fail closed at raw/admitted admission; do not relax reference visibility.
     reader: {
@@ -1412,6 +1421,15 @@ export function createRelaySession(
     if ([9000, 9001, 9022].includes(event.kind)) return;
     const id = event.tags.find(([key]) => key === "h")?.[1];
     if (!id || channels.queries.get?.(id)?.viewerRole !== "guest") return;
+    // Workflow-coordinate deletion is an ownership action, not a contribution.
+    // Full command validation still runs before signing and publication.
+    if (event.kind === 5 && isWorkflowOperation(event)) {
+      const workflow = workflowReference({
+        ...event,
+        pubkey: transport?.viewer ?? "",
+      });
+      if (workflows.capability.permissions.canDelete(workflow)) return;
+    }
     // The relay permits a verified owner to edit/delete their agent's messages.
     const targets = event.tags.filter(([key]) => key === "e");
     if (
@@ -3407,6 +3425,8 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       )
         channelActivity.accept(visible);
+      if (!closed && epoch === accessEpoch && generation === liveGeneration)
+        inboxFeed.reactions.receive(events, provenance?.phase);
       const replay = provenance?.phase === "replay";
       if (
         (provenance?.phase === "live" || replay) &&

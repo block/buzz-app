@@ -977,12 +977,12 @@ stays in the existing Join a community dialog; the card only copies the new rela
 account backend follows the same split as `HostService`: live development with a
 pinned viewer uses the broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`),
 which keep their own session credential and signing key in Node. Desktop builds use
-`native.ts`, the same routes with the plugin's shared session credential, host HTTP to
-the configured `BUZZ_BUILDERLAB_URL` grant, and `identity_sign_builderlab_binding`, which
-validates the challenge and signs only the fixed kind 24243 binding. They read the
-account after sign-in's automatic identity link settles. The desktop credential lives in
-plugin memory for the plugin's lifetime and is never persisted, so restarting the app
-signs out. Builds without a configured Builderlab URL show the unavailable notice.
+`native.ts`, the same routes through the native forwarder with the NIP-FI session,
+and `identity_sign_builderlab_binding`, which validates the challenge and signs only
+the fixed kind 24243 binding. They read the account after sign-in's automatic
+identity link settles. The session token stays native in the system keyring and
+survives a restart. A build with neither the session nor the broker has no
+Builderlab.
 
 ### Composer accessories
 
@@ -1231,15 +1231,16 @@ Stop painting while the document is hidden, and never flash more than three
 times in any one second (WCAG 2.3.1).
 
 The host keeps the shell usable over any backdrop. While one is present, each
-header control group and the sidebar resize grip keeps a solid `bg-app` floor,
-so controls, their state fills and focus rings stay on the background they were
-designed for. Panes stay opaque. When the user prefers reduced motion or reduced
+header control group and the app dock keep a solid `bg-app` floor, so controls,
+their state fills and focus rings stay on the background they were designed
+for. Panes stay opaque; the sidebar resize grip sits on the seam of the joined
+sidebar and conversation surface, so no backdrop reaches it. When the user prefers reduced motion or reduced
 transparency, or forced colors are active, the host does not mount backdrops at
 all, which also stops their animation; they return when the preference does.
 
 A backdrop that needs to stay clear of shell controls may read, but not style,
 these layout roles: `.shell-header` and its direct children (each a group of
-controls), `.shell-center-capsule` (centered pages; it moves into the header's
+controls), `.shell-side-dock` (the app dock), `.shell-center-capsule` (centered pages; it moves into the header's
 flow while `.shell-header` has `data-compact-pages`), `.shell-body`, and the
 outermost `.panel` elements inside it (nested panels are content). On macOS the
 native window controls sit in the header's leading inset, outside these roles.
@@ -1446,6 +1447,11 @@ which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and
 never searches PATH; the Goose plugin runs `goose-acp` this way.
 
+Every process also gets `BUZZ_VERSION`, the running app's version, which `env`
+cannot change or remove. A script or shell config can check for it to tell that
+it runs under Buzz; an agent's shell commands see it when its runtime passes its
+environment on, as Claude Code does.
+
 `mcp` supplies an app-held MCP session URL and headers. The bundled command
 helper initializes that session and supplies an agent-scoped `buzz` tool command
 to the worker. Agent identity, signing authority and tool authorization stay in
@@ -1497,11 +1503,10 @@ require the plugin to be enabled in the native catalog. External grants require 
 enabled current artifact and its integrity checks; safe mode pauses external
 plugins while enabled bundled plugins remain usable.
 
-Builderlab's effective manifest derives its exact origin from the validated
-[`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
-With the [FI descriptor](configuration.md#federated-identity-build-input), it
-instead gets a `host.federatedIdentity` grant of exact Builderlab routes and no
-network origins or files. Its source manifest contains no deployment origins;
+Builderlab's effective manifest has only a `host.federatedIdentity` grant of
+exact Builderlab routes for the build's
+[first sign-in server](configuration.md#federated-identity-build-input), and no
+network origins or files; a build without one grants nothing. Its source manifest contains no deployment origins;
 external plugin declarations remain fixed in their installed artifacts.
 
 The `federatedIdentity` service forwards a granted operation natively to the
@@ -2132,6 +2137,17 @@ with an open action stays mounted while it scrolls out of view. Icon, component
 and marker failures each render nothing and leave the row and menu usable. The
 bundled Reminders plugin is the first consumer.
 
+`placement: "toolbar"` puts the action in the host's message toolbar. The
+toolbar appears on hover and keyboard focus. The host supplies an icon button
+with the action title and icon. Activation mounts the same component as a menu
+action. Removal closes the component. `placement: "menu"` mounts the component
+inside the menu instead.
+Coordination rows keep toolbar contributions in their context menu.
+
+Markdown links can use a registered panel target. The host checks `canOpenLink`
+when it renders the link and again on activation. Removing the panel makes the
+target unavailable. External links retain the HTTP(S) URL checks.
+
 The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
 kind 40008. Shared history, live, thread and exact readers retain these messages
 independently of the plugin, preserving raw patches rather than interpreting them
@@ -2697,10 +2713,14 @@ app shortcuts (including live rebinds) win there; unhandled keys stay with xterm
 No plugin shortcut API or preference access is added. Ordinary editors continue
 to handle keys before the window's bubbling dispatcher.
 
-Slack-style message keys are host bindings. In an empty composer, Up selects the
-newest message (by id, not tree order) of the timeline or thread sharing its edit scope (on macOS ⌘↑ keeps editing
-the latest own message directly; elsewhere use Up, then E); a selection is
-DOM focus on that message's box (`features/messages/message-selection.ts`), so
+Slack-style message keys are host bindings. With the device-local
+**Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
+preference off (the default), Up in an empty composer selects the newest message
+(by id, not tree order) of the timeline or thread sharing its edit scope; E then
+edits an eligible own message. With the preference on, plain Up edits the latest
+eligible own message instead of selecting messages. On macOS, ⌘↑ edits directly
+with either preference value. A selection is DOM focus on that message's box
+(`features/messages/message-selection.ts`), so
 the timeline's Virtua keeps the row mounted and assistive technology follows it.
 Membership notices and folded or collapsed rows are skipped. While a message
 itself is focused, Up/Down move between rendered messages, Down past the newest and

@@ -19,6 +19,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dirs 6.0.0",
+ "dotenvy",
  "dunce",
  "fs2",
  "futures-lite",
@@ -693,7 +694,7 @@ dependencies = [
 [[package]]
 name = "buzz-audio-client"
 version = "0.1.0"
-source = "git+https://github.com/block/buzz.git?rev=7e6461242aa7d98f132919dd672f7cc5f4abbba6#7e6461242aa7d98f132919dd672f7cc5f4abbba6"
+source = "git+https://github.com/block/buzz.git?rev=e3a0f3d59dfd08696cff80badb2d80d9a5096a61#e3a0f3d59dfd08696cff80badb2d80d9a5096a61"
 dependencies = [
  "futures-util",
  "neteq",
@@ -774,6 +775,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tauri",
  "tempfile",
  "url",
 ]

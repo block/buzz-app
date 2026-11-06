@@ -22,6 +22,7 @@ import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
+import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import {
   entryPane,
@@ -31,7 +32,7 @@ import {
   useChannelTabState,
 } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
+import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
   soloDraft,
   soloDraftTarget,
@@ -228,7 +229,7 @@ export function ChannelsPage({
               </div>
               <h1>Your channels, one conversation.</h1>
               <p>
-                Use the community picker in the header to choose or add a
+                Use the community picker in the top bar to choose or add a
                 community. Your profile and settings work without a community.
               </p>
             </div>
@@ -859,7 +860,7 @@ function ChannelWorkspace({
     const signal = navigation?.signal;
     const shortcut = {
       available: () => !signal?.aborted,
-      // The menu's fresh permission read: no Archive where the menu has none.
+      // A fresh permission read: no Archive where current relay state has none.
       run: async () => {
         const trigger =
           document.activeElement instanceof HTMLElement
@@ -994,6 +995,60 @@ function ChannelWorkspace({
       threadPane,
     ],
   );
+  // Open in channel also shows the thread's root in the timeline, reading
+  // older pages to find it. The thread keeps focus; Members covers both.
+  // The target alone decides, so the list is held from the visit's start.
+  // Like exact opening, it waits for a live session: cached rows decide
+  // nothing, so they stay shown, and the seek runs beside them on connecting.
+  const contextRoot =
+    !cached &&
+    current &&
+    !current.cached &&
+    !membersRequested &&
+    !exact?.inTimeline &&
+    navigation?.target.kind === "conversation" &&
+    navigation.target.context === "channel"
+      ? requestedThread
+      : undefined;
+  // Each visit seeks again, Back and Forward included: the channel may have
+  // dropped the older pages an earlier visit read.
+  const contextVisit = useRef({ navigation, request: 0 });
+  if (contextVisit.current.navigation !== navigation)
+    contextVisit.current = {
+      navigation,
+      request: contextVisit.current.request + 1,
+    };
+  const contextInTimeline = useMessageOpening(
+    queries.channels,
+    currentId ?? "",
+    contextRoot,
+    contextVisit.current.request,
+  );
+  const contextRouted = !!routedThread;
+  const contextSignal = navigation?.signal;
+  const contextTarget = useMemo(
+    () =>
+      contextRouted && contextRoot && contextInTimeline && contextSignal
+        ? {
+            messageId: contextRoot,
+            signal: contextSignal,
+            focus: false as const,
+          }
+        : undefined,
+    [contextRouted, contextRoot, contextInTimeline, contextSignal],
+  );
+  // The channel whose list has shown since it opened. Hold only until then,
+  // so the list mounts once, at the root; a later attempt, as when Members
+  // closes, seeks with the list in place and reveals the root there.
+  const [listed, setListed] = useState<string>();
+  const contextHolding =
+    !!contextRoot && contextInTimeline === undefined && listed !== current?.id;
+  const listing =
+    listed === current?.id ||
+    (!contextHolding && contentReadyChannel === current?.id)
+      ? current?.id
+      : undefined;
+  if (listing !== listed) setListed(listing);
   const conversationIcon = (item: (typeof channels)[number]) => {
     const person = item.participants?.[0];
     return (
@@ -1009,10 +1064,23 @@ function ChannelWorkspace({
   const returnFocus = useRef<
     { trigger: HTMLElement; channelId: string | undefined } | undefined
   >(undefined);
+  // A close's native return lands a task or more after its dismissal. Until
+  // then the navigator still shows the retiring visit.
+  const pendingReturn = useRef<{
+    from: string;
+    target: string;
+    reopen?: PanelOpening;
+  }>(undefined);
   const visitPanel = useCallback(
     (entry: PanelOpening) => {
-      const target = navigator?.snapshot().entry.target;
+      const { id, target } = navigator?.snapshot().entry ?? {};
       if (!navigator || target?.kind !== "conversation") return;
+      // Opening now would revisit or stack on the retiring visit. The panel
+      // takes its own visit once the return lands.
+      if (pendingReturn.current?.from === id) {
+        pendingReturn.current.reopen = entry;
+        return;
+      }
       if (
         target.channelId === entry.channelId &&
         target.detail?.target === entry.target &&
@@ -1114,6 +1182,21 @@ function ChannelWorkspace({
       };
     }
     navigator.dismiss(visits, fallback);
+    // A later close can retire more visits before the return lands, moving
+    // where it lands.
+    const pending =
+      pendingReturn.current?.from === current.id
+        ? pendingReturn.current
+        : undefined;
+    if (
+      (pending || visits.includes(current.id)) &&
+      navigator.snapshot().entry.id === current.id
+    )
+      pendingReturn.current = {
+        ...pending,
+        from: current.id,
+        target: targetKey(fallback),
+      };
   };
   const secondary = useConversationTabs({
     state: tabState,
@@ -1298,7 +1381,7 @@ function ChannelWorkspace({
           channelConversation.current
             ?.closest("[data-main-workspace]")
             ?.querySelector<HTMLElement>(
-              '[role="tab"][data-tab-value="conversation"]',
+              '[role="tab"][data-tab-value="conversation"], [data-workspace-identity] button',
             ) ?? (solo ? historyContainer.current : settingsTrigger.current);
         target?.focus({ preventScroll: true });
       }
@@ -1358,6 +1441,20 @@ function ChannelWorkspace({
         (kept.pane === "main"
           ? tabState.getMainSelected()
           : tabState.getSelected()) === kept.id;
+      // A panel opened before the close's return landed supersedes that
+      // close, unless it has since closed or the return went elsewhere.
+      const returned = pendingReturn.current;
+      const reopen =
+        returned?.reopen &&
+        navigation.entryId !== returned.from &&
+        targetKey(navigation.target) === returned.target &&
+        [tabState.getSelected(), tabState.getMainSelected()].includes(
+          panelTabId(returned.reopen),
+        )
+          ? returned.reopen
+          : undefined;
+      if (returned && navigation.entryId !== returned.from)
+        pendingReturn.current = undefined;
       tabState.enterVisit(
         `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`,
         detail ? undefined : routedThread,
@@ -1366,7 +1463,9 @@ function ChannelWorkspace({
           ? { channelId: currentId, target: detail.target }
           : undefined,
       );
-      if (detail && currentId) {
+      // A re-render while the return is pending must not reapply the detail
+      // that was just closed.
+      if (detail && currentId && navigation.entryId !== returned?.from) {
         const entry = panelOpening(
           panels,
           currentId,
@@ -1376,6 +1475,8 @@ function ChannelWorkspace({
         if (entry && historyPanel(entry)) open(entry);
         else navigation.complete({ status: "failed", reason: "unavailable" });
       }
+      // Reselect it over the restored selection and give it its own visit.
+      if (reopen) open(reopen);
       if (kept && navigation.entryId !== kept.from) {
         keptTabReturn.current = undefined;
         if (retained && targetKey(navigation.target) === kept.target) {
@@ -1812,8 +1913,8 @@ function ChannelWorkspace({
         current.channelType !== "dm" && (
           <ChannelLifecycleActions
             key={`${current.id}:${!!current.archived}`}
-            channelId={current.id}
-            lifecycle={queries.channelLifecycle}
+            channel={current}
+            session={queries}
             noun={lifecycleNoun(current)}
             choose={(action, trigger) =>
               handoff.openLifecycle(current, action, trigger)
@@ -1902,7 +2003,7 @@ function ChannelWorkspace({
   );
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
-    <>
+    <div className={styles.conversationBody}>
       <MessageManagementStatus />
       <section
         data-channel-history
@@ -1923,6 +2024,8 @@ function ChannelWorkspace({
             navigation={
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
+            holding={contextHolding}
+            inlineTarget={contextTarget}
             onOpenThread={openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
@@ -2023,7 +2126,7 @@ function ChannelWorkspace({
             focusRequest={composerFocus}
           />
         )}
-    </>
+    </div>
   );
   const workspace = (
     <div
@@ -2080,6 +2183,7 @@ function ChannelWorkspace({
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
+              visit={navigation}
               extensions={extensions}
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
               onOpenThread={openChannelThread}
@@ -2106,6 +2210,7 @@ function ChannelWorkspace({
               ])}
               linkedId={draft.linked}
               source={linkedSource}
+              visit={navigation}
               focusRequest={
                 navigation?.focus === "preserve" ||
                 (retiredSoloDraft.generation > 0 &&
@@ -2144,7 +2249,10 @@ function ChannelWorkspace({
                   navigator &&
                   !behindSettings()
                 )
-                  void navigator.open(soloDraftTarget(scope, draft));
+                  // The chat was never made: its draft takes its place.
+                  void navigator.open(soloDraftTarget(scope, draft), {
+                    replace: true,
+                  });
               }}
             />
           ) : (
@@ -2200,6 +2308,19 @@ function ChannelWorkspace({
                     tabMenu={tabMenu}
                     drag={secondary.drag.main}
                     label="Channel tabs"
+                    identity={
+                      current && (
+                        <ChannelHeaderIdentity
+                          session={queries}
+                          channelId={current.id}
+                          name={current.name}
+                          access={memberAccess(current)}
+                          ref={membersHeaderTrigger}
+                          aria-expanded={membersOpen}
+                          onClick={(event) => openMembers(event.currentTarget)}
+                        />
+                      )
+                    }
                     focusOnMount={false}
                     adoptSelection={preservedVisit}
                     value={secondary.selectedMain}
@@ -2210,31 +2331,6 @@ function ChannelWorkspace({
                     }
                     actions={
                       <>
-                        {current && (
-                          <IconButton
-                            size="sm"
-                            variant="avatar"
-                            style={{
-                              width: "auto",
-                              minWidth: "var(--size-control-sm)",
-                              paddingInline: "var(--space-1)",
-                            }}
-                            aria-label="Manage members"
-                            title="Manage members"
-                            aria-haspopup="dialog"
-                            ref={membersHeaderTrigger}
-                            aria-expanded={membersOpen}
-                            onClick={(event) =>
-                              openMembers(event.currentTarget)
-                            }
-                            icon={
-                              <ChannelMemberAvatars
-                                session={queries}
-                                channelId={current.id}
-                              />
-                            }
-                          />
-                        )}
                         {drawer.launchers}
                         <ChannelHeaderMenu
                           startChat={

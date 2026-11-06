@@ -172,6 +172,7 @@ function fixture() {
     position: () => undefined,
     savePosition() {},
     forSession: () => navigation,
+    passThrough: () => () => {},
     complete: () => true,
     resolve: () => true,
   };
@@ -232,7 +233,7 @@ it("Messages conversion survives signed type replacement, announces completion a
       await t.confirmed;
     });
     expect(
-      screen.getByRole("button", { name: "Manage members", hidden: true }),
+      screen.getByRole("button", { name: /Manage members of/, hidden: true }),
     ).toBeInTheDocument();
     expect(
       t.session.channels.list().channels.find((channel) => channel.id === id)

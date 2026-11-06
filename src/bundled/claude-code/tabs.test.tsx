@@ -984,7 +984,7 @@ it("asks for an API key and is ready once one is saved", async () => {
   // The key's form takes the dialog over, saying once is enough.
   expect(
     await screen.findByText(
-      "Claude requires an API key to connect to your account. You only have to set this up once.",
+      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.",
     ),
   ).toBeVisible();
   expect(
@@ -1706,7 +1706,7 @@ it("asks for the key in place of Model where an agent is created, then offers it
   expect(screen.getByText("Harness row")).toBeVisible();
   expect(
     screen.getByText(
-      "Claude requires an API key to connect to your account. You only have to set this up once.",
+      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.",
     ),
   ).toBeVisible();
   expect(screen.queryByText("Model")).toBeNull();

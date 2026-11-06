@@ -19,7 +19,7 @@ const NO_KEY =
   "Claude needs an Anthropic API key. Add one in Settings → Agent setup → Harness defaults → Claude → Edit configuration.";
 /** What setup says first: the key is one for all of Claude, not per agent. */
 const KEY_ONCE =
-  "Claude requires an API key to connect to your account. You only have to set this up once.";
+  "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.";
 const REJECTED_KEY =
   "Anthropic rejected the Claude API key. It may have been revoked or run out of credit. Paste a working key in Settings → Agent setup → Harness defaults → Claude → Edit configuration.";
 
@@ -203,6 +203,7 @@ export function SignIn({
 }) {
   return (
     <div className="grid gap-3">
+      {/* One paragraph says it all; the field adds no description of its own. */}
       <p className="m-0 text-body-sm text-secondary">{KEY_ONCE}</p>
       <KeyForm
         setup={setup}
@@ -304,7 +305,10 @@ function KeyForm({
     <div className="grid gap-2" aria-busy={saving ? true : undefined}>
       <Field
         label={replace ? "Replace API key" : "Anthropic API key"}
-        description="Create a key at console.anthropic.com. Buzz keeps it on this computer and gives it only to Claude."
+        {...(replace && {
+          description:
+            "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude.",
+        })}
       >
         <Input
           type="password"

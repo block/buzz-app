@@ -39,6 +39,10 @@ pub enum Status {
     Invalid {
         reason: String,
     },
+    /// `BUZZ_PLUGIN_TRUST` names a file that does not exist. Like `Invalid`, no external
+    /// plugin may run, so a mistyped or undeployed policy never lifts the restriction;
+    /// unlike it, `update` may create the file.
+    Missing,
     Ready(Policy),
 }
 
@@ -50,6 +54,7 @@ pub struct Trust {
 
 /// `BUZZ_PLUGIN_TRUST` when set, otherwise the file beside the profile folders.
 pub fn load(root: &Path, env: Option<OsString>) -> Trust {
+    let explicit = env.as_ref().is_some_and(|value| !value.is_empty());
     let path = match env.filter(|value| !value.is_empty()) {
         Some(value) if Path::new(&value).is_absolute() => PathBuf::from(value),
         Some(_) => {
@@ -63,6 +68,11 @@ pub fn load(root: &Path, env: Option<OsString>) -> Trust {
         None => root.join(FILE_NAME),
     };
     let status = match read_file(&path, "Plugin trust file", MAX_BYTES) {
+        // A link whose target is gone is a broken deployment, not an absent policy.
+        Ok(None) if std::fs::symlink_metadata(&path).is_ok() => Status::Invalid {
+            reason: "Plugin trust file is a symbolic link to a missing file".into(),
+        },
+        Ok(None) if explicit => Status::Missing,
         Ok(None) => Status::Absent,
         Ok(Some(text)) => match parse(&text) {
             Ok(policy) => Status::Ready(policy),
@@ -181,6 +191,11 @@ impl Trust {
                     "Plugin trust file is unusable ({reason}); fix or remove it to run external plugins"
                 ))
             }
+            Status::Missing => {
+                return Err(format!(
+                    "{PATH_ENV} names a plugin trust file that does not exist; create it or unset {PATH_ENV} to run external plugins"
+                ))
+            }
             Status::Ready(policy) => policy,
         };
         let Some(publisher) = publisher else {
@@ -219,7 +234,7 @@ impl Trust {
             _ => "Plugin trust file location is unknown".into(),
         })?;
         let mut policy = match &self.status {
-            Status::Absent => Policy::default(),
+            Status::Absent | Status::Missing => Policy::default(),
             Status::Ready(policy) => policy.clone(),
             Status::Invalid { reason } => {
                 return Err(format!(
@@ -463,5 +478,50 @@ mod tests {
             load(home.path(), Some(elsewhere.clone().into())).path,
             Some(elsewhere)
         );
+    }
+
+    #[test]
+    fn explicit_missing_file_fails_closed_but_can_be_created() {
+        let home = tempfile::tempdir().unwrap();
+        let explicit = home.path().join("policy.json");
+        let missing = load(home.path(), Some(explicit.clone().into()));
+        assert_eq!(missing.status, Status::Missing);
+        assert!(missing.is_restricted());
+        assert!(missing
+            .check(Some(KEY), unreachable_own)
+            .unwrap_err()
+            .contains("does not exist"));
+        // The default location stays optional.
+        assert_eq!(load(home.path(), None).status, Status::Absent);
+        missing
+            .update(|policy| {
+                policy.allow_self_developed = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(matches!(
+            load(home.path(), Some(explicit.into())).status,
+            Status::Ready(_)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_fails_closed_at_either_location() {
+        let home = tempfile::tempdir().unwrap();
+        let target = home.path().join("deployed.json");
+        std::os::unix::fs::symlink(&target, home.path().join(FILE_NAME)).unwrap();
+        let explicit = home.path().join("explicit.json");
+        std::os::unix::fs::symlink(&target, &explicit).unwrap();
+        for trust in [
+            load(home.path(), None),
+            load(home.path(), Some(explicit.into())),
+        ] {
+            assert!(trust
+                .check(Some(KEY), unreachable_own)
+                .unwrap_err()
+                .contains("symbolic link to a missing file"));
+            assert!(trust.update(|_| Ok(())).is_err());
+        }
     }
 }

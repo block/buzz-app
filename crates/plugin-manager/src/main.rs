@@ -1,9 +1,9 @@
 use buzzodz_plugins::{
     automatic::Action,
     managed::{Install, Managed, ManagedSource, ManagedState, Update},
+    pack_release, release_manifest, sign_policy, sign_release_saved,
     trust::{self, Publisher, Trust},
-    pack_release, release_manifest, sign_policy, sign_release_saved, valid_id, Catalog, Manager,
-    Manifest, Result,
+    valid_id, Catalog, Manager, Manifest, Result,
 };
 use serde_json::json;
 use std::{
@@ -303,6 +303,11 @@ fn print_trust(trust: &Trust) {
     match &trust.status {
         trust::Status::Absent => println!(
             "Trust file: {path} (not present)\nAny publisher with a valid signature can run external plugins."
+        ),
+        trust::Status::Missing => println!(
+            "Trust file: {path} (named by {}, but not present)\nStatus: no external plugin can run until the file exists or {} is unset",
+            trust::PATH_ENV,
+            trust::PATH_ENV
         ),
         trust::Status::Invalid { reason } => println!(
             "Trust file: {path}\nStatus: unusable, so no external plugin can run\nProblem: {reason}"

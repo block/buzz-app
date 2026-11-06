@@ -56,6 +56,12 @@ export const OpenCommunitySwitcher = createContext<(() => void) | undefined>(
   undefined,
 );
 
+/** A host that opens the switcher from elsewhere owns its open state, so it
+ * passes both props; otherwise the picker keeps the state itself. */
+type SwitcherState =
+  | { open: boolean; onOpenChange: (open: boolean) => void }
+  | { open?: undefined; onOpenChange?: undefined };
+
 /** Shell navigation only: selecting a community remains owned by Communities. */
 export function CommunityPicker({
   communities,
@@ -76,10 +82,7 @@ export function CommunityPicker({
   onSelect?: ((id: string | null) => void) | undefined;
   /** Menu destinations (Invites, hosting) open through the host's navigation. */
   onOpenTarget?: ((target: OpenTarget) => void) | undefined;
-  /** A host that opens the switcher from elsewhere owns its open state. */
-  open?: boolean | undefined;
-  onOpenChange?: ((open: boolean) => void) | undefined;
-}) {
+} & SwitcherState) {
   const [localOpen, setLocalOpen] = useState(false);
   const switcherOpen = open ?? localOpen;
   const setSwitcherOpen = onOpenChange ?? setLocalOpen;

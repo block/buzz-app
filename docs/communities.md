@@ -15,10 +15,10 @@ Configure `BUZZ_DEV_VIEWER` with your existing Buzz public key in `.env.local`
 development broker runs on macOS and Linux and refuses an OS-store identity
 that does not match your explicit public pin.
 Click the avatar → **Settings → Profile**. With a community selected in the
-dock's community picker, Save updates only your profile in that community;
+dock's community switcher, Save updates only your profile in that community;
 there is no separate profile-destination selector. In Personal space, Save edits
 the local default for new communities without publishing. Open the dock's
-community picker, choose **Join a community** and type a **Community URL**. With
+community switcher, choose **Join a community** and type a **Community URL**. With
 no community saved, the picker is labeled **Communities**; otherwise it shows the
 selected community's icon or the Personal space globe. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
@@ -104,7 +104,7 @@ re-reads the effective name/picture/description after the accepted receipt; a fa
 conflicting current profile retains the draft for explicit Save retry instead of
 reporting success. This confirmation is not a transaction against other clients.
 
-Use the dock's community picker to select a saved community or Personal
+Use the dock's community switcher to select a saved community or Personal
 space. Personal space
 clears selection without forgetting memberships. Its **Join a community** item opens the
 existing join dialog; displaying saved communities reads relay metadata but does not open sessions for them.

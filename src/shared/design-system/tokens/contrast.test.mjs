@@ -502,6 +502,24 @@ describe("semantic contrast contract", () => {
       "--theme-sidebar-selected-text-dark: var(--relax-sidebar-selected-dark);",
       /relax\/theme\/neutral\/dark --text-sidebar-selected \(#\w+\) on --surface-sidebar-selected \(/,
     ],
+    [
+      "a light frame sidebar under light navigation text (Utmost)",
+      "--theme-frame-sidebar-light: var(--utmost-frame-sidebar-light);",
+      "--theme-frame-sidebar-light: var(--utmost-neutral-1-light);",
+      /utmost\/theme\/neutral\/frame --text-navigation \(#\w+\) on --surface-sidebar \(/,
+    ],
+    [
+      "an unreadable filled blue selection (Utmost)",
+      "--theme-sidebar-selected-text-light: var(--utmost-sidebar-selected-text-light);",
+      "--theme-sidebar-selected-text-light: var(--utmost-sidebar-selected-light);",
+      /utmost\/theme\/neutral\/frame --text-sidebar-selected \(#\w+\) on --surface-sidebar-selected \(/,
+    ],
+    [
+      "an unreadable badge pair (Utmost)",
+      "--theme-badge-text-light: var(--utmost-badge-text-light);",
+      "--theme-badge-text-light: var(--utmost-badge-light);",
+      /utmost\/theme\/neutral\/light --text-on-badge \(#\w+\) on --surface-badge \(/,
+    ],
   ])("measures a theme in its own scope: %s", (_name, from, to, pairing) => {
     expect(tokens).toContain(from);
     const result = check(tokens.replaceAll(from, to));

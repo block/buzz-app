@@ -172,7 +172,7 @@ const reserved = (name: string) =>
 
 /** Collapse `<Base> Light` / `<Base> Dark` into one entry when both exist. */
 function collapse(schemes: readonly ColorScheme[], imported: boolean) {
-  // Names are unique and pair suffixes match regardless of case, as in Nexus.
+  // Names are unique and pair suffixes match regardless of case.
   const byName = new Map(
     schemes.map((scheme) => [scheme.name.toLowerCase(), scheme]),
   );

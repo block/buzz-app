@@ -1143,6 +1143,9 @@ function ChannelWorkspace({
     target: string;
     id: string;
     pane: "main" | "side";
+    /** The side pane's visibility to restore: a kept tab shows, and a
+     * launcher's side panel keeps the visibility it had before the close. */
+    paneOpen: boolean;
   }>(undefined);
   const dismissContent = (
     visits: readonly string[],
@@ -1174,6 +1177,8 @@ function ChannelWorkspace({
         target: targetKey(fallback),
         id: keep,
         pane,
+        paneOpen:
+          !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
       };
     }
     navigator.dismiss(visits, fallback);
@@ -1234,11 +1239,16 @@ function ChannelWorkspace({
       );
       const keptTab = tabState.tabs.find((tab) => tab.id === keep);
       const keptEntry = remaining[0];
+      // A launcher's side panel outlives the tabs, as when its last tab
+      // closes. The return keeps the pane as it was, shown or hidden, even
+      // when the channel visit it lands on had saved an open pane.
       const pane = keptTab
         ? tabPane(keptTab)
         : keptEntry
           ? entryPane(tabState.mainEntries, keptEntry)
-          : "main";
+          : tabState.sidePanel
+            ? "side"
+            : "main";
       const fallback = closeTarget(pane, remaining);
       if (!navigator || !fallback) return;
       const visits = [
@@ -1478,7 +1488,7 @@ function ChannelWorkspace({
           if (kept.pane === "main") tabState.selectMain(kept.id);
           else {
             tabState.select(kept.id);
-            tabState.setPaneOpen(true);
+            tabState.setPaneOpen(kept.paneOpen);
           }
           focusKept.current = kept.id;
         }

@@ -440,6 +440,7 @@ export function useConversationTabs({
       tabState.setPaneOpen(true);
     },
     {
+      paneOpen: tabState.paneOpen,
       pressed: (panel, context) => {
         const entry = channelTab(panel, context.channelId);
         return !!entry && tabState.paneOpen && selectedTab === tabId(entry);

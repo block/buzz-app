@@ -461,7 +461,8 @@ closing that profile or losing authorization also removes its log tab.
 Right-click any channel tab and choose **Close all tabs** to close this channel's
 thread, plugin and settings tabs across both panes, including hidden side-pane
 tabs. The permanent channel conversation stays; focus returns there if its previous
-target closed, while typing in surviving content remains uninterrupted. Other
+target closed, while typing in surviving content remains uninterrupted. A
+launcher's side panel, such as Todos, is not a tab, so it stays open. Other
 channels and saved message drafts are untouched. **Close other tabs** in the
 same menu does the same, except that the right-clicked tab stays open, selected
 and focused. On the channel conversation it is the same as Close all tabs. On a

@@ -827,6 +827,7 @@ export function useChannelTabState(
           (!!tab && tabPane(tab) === "main") ||
           (!!entry && entryPane(s.mainEntries, entry) === "main");
         // The channel conversation is not stored: keeping it closes them all.
+        // A launcher's side panel is not a tab, so a pane showing one stays.
         const side = !main && !!(tab || entry || settings);
         return {
           ...s,
@@ -835,7 +836,7 @@ export function useChannelTabState(
           tabs: tab ? [tab] : [],
           selected: (side && keep) || "",
           mainSelected: main ? keep : undefined,
-          paneOpen: side,
+          paneOpen: side || (s.paneOpen && !!s.sidePanel),
           thread: undefined,
           settings,
         };

@@ -2094,7 +2094,9 @@
   .buzz-menu-popup {
     min-width: 11.5rem;
     max-width: min(20rem, var(--available-width), calc(100vw - var(--space-4)));
-    max-height: min(24rem, var(--available-height));
+    /* Only the viewport bounds a menu: macOS hides overlay scrollbars until scrolled,
+       so rows past a fixed cap look absent. */
+    max-height: var(--available-height);
     overflow-y: auto;
     @apply floating-surface;
     color: var(--text-standard);

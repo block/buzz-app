@@ -458,7 +458,8 @@ export function AgentsPage({
     );
   };
   useEffect(() => {
-    if (!routedAgent || !routedEntry) return;
+    // Back to an agent's visit leaves a busy team editor open too.
+    if (!routedAgent || !routedEntry || teamBusy.current) return;
     setEditingTeam(undefined);
     setSharedSelection(undefined);
     setTab("yours");

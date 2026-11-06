@@ -3421,7 +3421,7 @@ it("updates decorated unread data and a selected unread sort without rewriting p
   }
 });
 
-it("lets the hide-muted plugin hide muted rows except open, starred and attention rows", async () => {
+it("lets the hide-muted plugin hide confirmed muted rows except open and starred rows", async () => {
   const user = userEvent.setup();
   let muted = ["beta"];
   let settle: () => void = () => {};

@@ -150,9 +150,9 @@ blindly. These UI policies do not replace relay authorization.
 `accessSettings` replaces built-in General access (`null` hides it). The optional
 GeneralAccess policy supplies a generic subject and visibility-change disclosure;
 `allowPublic: false` removes Public participation while keeping Private and View
-only. Existing Public access is displayed and can be reduced. Its capability
-retains signed fresh-read, save and uncertain-write recovery behavior. Copy link
-uses `shareLink` and grants no access. Omitted overrides preserve chat/channel
+only. Existing Public access is displayed as Public; reducing it confirms that
+the picker cannot restore it. Its capability retains signed fresh-read, save and
+uncertain-write recovery behavior. Copy link uses `shareLink` and grants no access. Omitted overrides preserve chat/channel
 behavior. Hosts predating this extension lack the two UI entries; check their
 presence before offering sharing when supporting those hosts.
 

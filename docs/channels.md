@@ -825,7 +825,9 @@ keep their individual roles. Private is displayed for every private policy,
 including an older Guest admission default; opening or reselecting it never
 normalizes that stored default. Choosing Public or View only explicitly replaces
 it. The shared editor restricts Solo-labelled chats to Private / View only; a
-legacy public Member policy is shown as **Public (existing)** until changed.
+legacy public Member policy is shown as **Public** until changed. Leaving that
+policy confirms that you cannot switch back to Public here. The same warning
+applies when a plugin’s access policy omits Public.
 
 Each selection opens a consequence confirmation. Cancel/Escape returns focus to
 the unchanged Select. **Change access** saves immediately through the existing

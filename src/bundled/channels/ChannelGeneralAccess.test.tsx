@@ -225,6 +225,9 @@ for (const policy of policies) {
           "People already in the channel keep their access.",
         );
       }
+      expect(confirm).not.toHaveTextContent(
+        "You won’t be able to switch back to Public here.",
+      );
       await waitFor(() =>
         expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
       );
@@ -293,7 +296,7 @@ it.each(["private", "view-only", "legacy-public"])(
       policy === "private"
         ? "Private"
         : policy === "legacy-public"
-          ? "Public (existing)"
+          ? "Public"
           : "View only",
     );
     await user.click(control);
@@ -324,7 +327,7 @@ it.each(["private", "view-only", "legacy-public"])(
     expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
       policy === "view-only"
         ? "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in People."
-        : `Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions.${policy === "legacy-public" ? " People already in the chat keep their access." : ""}`,
+        : `Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions.${policy === "legacy-public" ? " People already in the chat keep their access. You won’t be able to switch back to Public here." : ""}`,
     );
     h.load.mockResolvedValue(next);
     await user.click(screen.getByRole("button", { name: "Change access" }));
@@ -356,7 +359,7 @@ it.each([
     joinRole: "member",
     option: "Private",
     expected:
-      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People.",
+      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People. You won’t be able to switch back to Public here.",
   },
 ] as const)(
   "explains $visibility/$joinRole → $option with existing members",
@@ -558,7 +561,7 @@ it("retires an open confirmation and late reads when the destination changes", a
 });
 
 it.each([true, false])(
-  "warns Public (existing) → Private retains Members regardless of Guests: %s",
+  "warns Public → Private retains Members regardless of Guests: %s",
   async (mayHaveGuestMembers) => {
     const h = harness();
     h.load.mockResolvedValue({
@@ -577,7 +580,7 @@ it.each([true, false])(
     const user = userEvent.setup();
     await select(user, "General access", "Private");
     expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People.",
+      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People. You won’t be able to switch back to Public here.",
     );
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(h.save).not.toHaveBeenCalled();
@@ -626,6 +629,9 @@ it("uses plugin policy for choices and disclosure while saving fresh signed deta
   expect(screen.getByRole("alertdialog")).not.toHaveTextContent(
     "channel’s full history",
   );
+  expect(screen.getByRole("alertdialog")).not.toHaveTextContent(
+    "You won’t be able to switch back to Public here.",
+  );
   await user.click(screen.getByRole("button", { name: "Change access" }));
   expect(h.save).toHaveBeenCalledExactlyOnceWith(
     fresh,
@@ -634,25 +640,58 @@ it("uses plugin policy for choices and disclosure while saving fresh signed deta
   );
 });
 
-it("shows existing Public access without offering it under a stricter plugin policy", async () => {
-  const h = harness();
-  h.load.mockResolvedValue({ ...base, joinRole: "member" });
-  const user = userEvent.setup();
-  render(
-    <ChannelGeneralAccess
-      capability={h.capability}
-      channelId="alpha"
-      policy={recordPolicy}
-    />,
-  );
-  await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
-  expect(screen.getByRole("combobox")).toHaveTextContent("Public (existing)");
-  await select(user, "General access", "Private");
-  expect(await screen.findByRole("alertdialog")).toHaveTextContent(
-    recordPolicy.visibilityDescription("private"),
-  );
-  expect(h.save).not.toHaveBeenCalled();
-});
+it.each(["Private", "View only"])(
+  "warns before leaving Public for %s when a plugin cannot restore it",
+  async (option) => {
+    const h = harness();
+    const current = { ...base, joinRole: "member" as const };
+    h.load.mockResolvedValue(current);
+    const user = userEvent.setup();
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        policy={recordPolicy}
+      />,
+    );
+    const control = screen.getByRole("combobox");
+    await waitFor(() => expect(control).toBeEnabled());
+    expect(control).toHaveTextContent(/^Public$/);
+    await select(user, "General access", option);
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(
+      "You won’t be able to switch back to Public here.",
+    );
+    if (option === "Private")
+      expect(confirm).toHaveTextContent(
+        recordPolicy.visibilityDescription("private"),
+      );
+    expect(h.save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(control).toHaveFocus());
+    expect(control).toHaveTextContent(/^Public$/);
+    expect(h.save).not.toHaveBeenCalled();
+    await select(user, "General access", option);
+    const next = {
+      ...current,
+      ...(option === "Private"
+        ? { visibility: "private" as const }
+        : { joinRole: "guest" as const }),
+    };
+    h.load.mockResolvedValue(next);
+    await user.click(screen.getByRole("button", { name: "Change access" }));
+    await waitFor(() => expect(control).toHaveTextContent(option));
+    expect(h.save).toHaveBeenCalledExactlyOnceWith(
+      current,
+      next,
+      expect.any(AbortSignal),
+    );
+    await user.click(control);
+    expect(
+      screen.queryByRole("option", { name: "Public" }),
+    ).not.toBeInTheDocument();
+  },
+);
 
 it("uses plugin resource wording in read-only access without editing reads", () => {
   const h = harness();

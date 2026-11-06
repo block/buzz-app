@@ -327,9 +327,7 @@ function ChannelGeneralAccessEditor({
               label="General access"
               value={access}
               valueLabel={
-                restrictPublic && access === "public"
-                  ? "Public (existing)"
-                  : undefined
+                restrictPublic && access === "public" ? "Public" : undefined
               }
               placeholder={loading ? "Loading access…" : "Access unavailable"}
               disabled={locked}
@@ -385,6 +383,9 @@ function ChannelGeneralAccessEditor({
               choice.visibility === "public" &&
               choice.joinRole === "guest"
                 ? "People already in the chat keep their access."
+                : "",
+              restrictPublic && access === "public"
+                ? "You won’t be able to switch back to Public here."
                 : "",
               // The relay keeps the flag but refuses changing it on a private channel.
               choice.visibility === "private" && autoJoin

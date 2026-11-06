@@ -183,6 +183,14 @@ export function PopoutWindowView({
         ask(() => client.markRead({ messageId: row.id, unread })),
       follow: (following: boolean) => ask(() => client.follow({ following })),
       report: (row: CompanionRow) => setReporting(row),
+      handoff: (row: CompanionRow, action: { key: string; revision: string }) =>
+        ask(() =>
+          client.handoff({
+            messageId: row.id,
+            key: action.key,
+            revision: action.revision,
+          }),
+        ),
     };
   }, [client, reactions, view.following, view.isDm, operations, ask]);
   const deleteOperation = deleting?.operationId

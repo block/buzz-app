@@ -2,10 +2,15 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import {
+  type CompanionAction,
   type CompanionManagement,
   type CompanionRow,
   projectCompanionRow,
 } from "../companion/row";
+import type {
+  ContributionReader,
+  MessageAction,
+} from "../conversation/contracts";
 import type { MainOperation } from "../companion/operations";
 import { lastEditableMessage } from "../messages/useMessageEdit";
 import { createAgentOwnerEvidence } from "../profiles/agent-owner-evidence";
@@ -54,6 +59,10 @@ export function createPopoutThread(
   channelId: string,
   rootId: string,
   changed: () => void,
+  /** Registered plugin message actions, offered as main-window handoffs.
+   * The pop-out's own spawn action is never offered to a thread window. */
+  actions?: ContributionReader<MessageAction>,
+  excludedActions: ReadonlySet<string> = new Set(["open-thread-window"]),
 ) {
   let disposed = false;
   let version = 0;
@@ -99,7 +108,27 @@ export function createPopoutThread(
     session.unread.subscribe({ kind: "channel", channelId }, notify),
     session.unread.subscribe({ kind: "thread", channelId, rootId }, notify),
     session.unread.subscribeSync(notify),
+    actions?.subscribe(notify),
   ];
+  /** Actions main would offer for a row, by exact contribution instance. */
+  function actionsFor(row: ChannelMessage): CompanionAction[] {
+    return (actions?.snapshot() ?? []).flatMap((action) => {
+      if (excludedActions.has(action.id)) return [];
+      try {
+        return action.matches(row, session)
+          ? [
+              {
+                key: action.key,
+                revision: action.revision,
+                title: action.title,
+              },
+            ]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+  }
   const channel = () =>
     session.channels.get?.(channelId) ??
     session.channels.list().channels.find((c) => c.id === channelId);
@@ -157,6 +186,20 @@ export function createPopoutThread(
     available,
     rootVerified,
     writable,
+    /** The registered action instance for a handoff, if it still exists and
+     * still matches the shown message; disable/reinstall invalidates it. */
+    handoff(messageId: string, key: string, revision: string) {
+      const row = this.shown(messageId);
+      const action = actions
+        ?.snapshot()
+        .find((entry) => entry.key === key && entry.revision === revision);
+      if (!row || !action || excludedActions.has(action.id)) return undefined;
+      try {
+        return action.matches(row, session) ? action : undefined;
+      } catch {
+        return undefined;
+      }
+    },
     /** Verified agent-owner authority for a shown message, or none. */
     authorization(id: string) {
       const row = this.shown(id);
@@ -326,8 +369,10 @@ export function createPopoutThread(
           channelWritable && own && !!lastEditableMessage(session, [row]);
         const owned = !archived && !!authorization(row);
         const attention = session.unread.attention(channelId, row.id);
+        const offered = actionsFor(row);
         return {
           ...projected,
+          ...(offered.length ? { actions: offered } : {}),
           management: {
             unread: attention.unread || attention.forced,
             canEdit,

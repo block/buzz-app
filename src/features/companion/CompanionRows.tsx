@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { CompanionRow } from "./row";
+import { profileActivityViewKey } from "../profiles/target";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { ImageReviewStage } from "../messages/ImageReviewStage";
 import { MessageRow } from "../messages/MessageRow";
@@ -144,7 +145,9 @@ export function CompanionRows({
                 row.attachments.some(
                   (attachment) =>
                     attachment.kind === "image" && attachment.url === url,
-                )
+                ) ||
+                // An agent's activity view opens in the main window.
+                (!!openLink && !!profileActivityViewKey(url))
               }
               onOpenLink={(url) => {
                 if (

@@ -4,6 +4,7 @@ import type { RelaySession } from "../relay/session";
 import type { ComposerReader } from "../huddle/composer-contract";
 import { createHuddleComposerOwner } from "../huddle/composer-owner";
 import { isBuzzLink } from "../navigation/buzz-links";
+import { profileActivityViewKey } from "../profiles/target";
 import { createReadingOwner } from "./reading-bridge";
 import { createPopoutThread, type PopoutThreadView } from "./thread";
 
@@ -79,6 +80,18 @@ export function createPopoutWindows(
     extensions?: ComposerReader | undefined;
     openLink?: (target: string) => boolean;
     agents?: import("../agents/service").Agents;
+    /** Registered plugin message actions, offered as main-window handoffs. */
+    actions?: import("../conversation/contracts").ContributionReader<
+      import("../conversation/contracts").MessageAction
+    >;
+    /** Bring main to this message and name the action to choose there. */
+    handoff?: (
+      target: PopoutTarget,
+      messageId: string,
+      action: import("../conversation/contracts").MessageAction,
+    ) => void;
+    /** Open an agent's activity view beside this conversation in main. */
+    openActivity?: (activityTarget: string, target: PopoutTarget) => void;
   } = {},
 ) {
   const bridge = options.bridge ?? nativePopoutWindow;
@@ -150,8 +163,12 @@ export function createPopoutWindows(
     const text = control.text;
     switch (control.action) {
       case "openLink":
-        if (text && isBuzzLink(text) && text.length <= 8192)
-          options.openLink?.(text);
+        if (!text || !isBuzzLink(text) || text.length > 8192) return;
+        // An agent's activity view opens beside this conversation in main,
+        // through the existing target opener; other Buzz links navigate.
+        if (profileActivityViewKey(text))
+          options.openActivity?.(text, entry.target);
+        else options.openLink?.(text);
         return;
       case "openInMain":
         options.openLink?.(
@@ -231,6 +248,7 @@ export function createPopoutWindows(
             );
           else sync(entry);
         },
+        options.actions,
       ),
       composer: undefined as unknown as Entry["composer"],
       reading: undefined as unknown as Entry["reading"],
@@ -258,6 +276,12 @@ export function createPopoutWindows(
           sync(entry);
         },
         authorization: (id) => entry.thread.authorization(id),
+        handoff: (messageId, key, revision) => {
+          const action = entry.thread.handoff(messageId, key, revision);
+          if (!action || !current(entry)) return false;
+          options.handoff?.(entry.target, messageId, action);
+          return true;
+        },
         acknowledge: (ids) => {
           // Retiring reports may let a capped presentation show others.
           if (entry.thread.acknowledge(ids)) sync(entry);
@@ -330,6 +354,7 @@ export function createPopoutWindows(
   return {
     open,
     notices: {
+      push: notify,
       snapshot: () => notices,
       subscribe(listener: () => void) {
         noticeListeners.add(listener);

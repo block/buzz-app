@@ -1,4 +1,4 @@
-import type { CompanionRow } from "./row";
+import type { CompanionAction, CompanionRow } from "./row";
 import { useMessageEditScope } from "../messages/MessageEditScope";
 import {
   MenuIcon,
@@ -6,6 +6,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import {
+  ArrowSquareOutIcon,
   BellIcon,
   BellSlashIcon,
   EnvelopeIcon,
@@ -29,6 +30,8 @@ export type CompanionManagementActions = {
   markRead(row: CompanionRow, unread: boolean): void;
   follow(following: boolean): void;
   report(row: CompanionRow): void;
+  /** Hand a plugin action for this message to the main window. */
+  handoff(row: CompanionRow, action: CompanionAction): void;
 };
 
 /** The same items, labels and icons as the main window's message menu, for
@@ -87,6 +90,17 @@ export function CompanionManagementItems({
           {actions.following ? "Unfollow thread" : "Follow thread"}
         </MenuItem>
       )}
+      {row.actions?.map((action) => (
+        <MenuItem
+          key={`${action.key}@${action.revision}`}
+          onClick={() => actions.handoff(row, action)}
+        >
+          <MenuIcon>
+            <ArrowSquareOutIcon size={14} />
+          </MenuIcon>
+          {action.title} in main window
+        </MenuItem>
+      ))}
       {management.canReport && (
         <>
           <MenuSeparator />
@@ -126,5 +140,6 @@ export function toMessage(row: CompanionRow) {
     replyCount: 0,
     participants: [],
     ...(row.delivery !== "seen" ? { delivery: row.delivery } : {}),
+    ...(row.authorIsAgent ? { agentEnvelope: true as const } : {}),
   };
 }

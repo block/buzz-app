@@ -17,6 +17,7 @@ export const inject = [
   "navigation",
   "agents",
   "communityReader",
+  "panels",
 ];
 
 /** The thread a message belongs to, when it has one to pop out. */
@@ -54,10 +55,47 @@ export const apply: PluginModule["apply"] = (ctx) => {
     void ctx.navigation.open(target);
     return true;
   };
+  const messageTarget = (
+    target: { channelId: string; threadRootId: string },
+    messageId: string,
+  ) => {
+    const connection = ctx.relay.snapshot();
+    if (!connection.viewer || !connection.origin) return null;
+    return buzzLinkTarget(
+      `buzz://message?channel=${encodeURIComponent(target.channelId)}&id=${messageId}&thread=${target.threadRootId}`,
+      { viewer: connection.viewer, communityOrigin: connection.origin },
+    );
+  };
   const windows = createPopoutWindows(ctx.relay, {
     extensions: ctx.conversation,
     openLink,
     agents: ctx.agents,
+    actions: ctx.conversation.actions,
+    // Interim handoff: main shows the message and names the action to pick
+    // there; the companion never runs a plugin action itself.
+    handoff: (target, messageId, action) => {
+      const open = messageTarget(target, messageId);
+      if (!open) return;
+      void ctx.navigation.open(open).then((result) => {
+        if (result.status === "opened")
+          windows.notices.push(
+            `Choose “${action.title}” from this message's menu.`,
+          );
+      });
+    },
+    // The agent's activity view opens beside the conversation once main
+    // shows it, through the existing panel opener with this channel context.
+    openActivity: (activityTarget, target) => {
+      const open = messageTarget(target, target.threadRootId);
+      if (!open) return;
+      void ctx.navigation.open(open).then(() => {
+        ctx.panels.requestOpen({
+          target: activityTarget,
+          channelId: target.channelId,
+          rootId: target.threadRootId,
+        });
+      });
+    },
   });
   ctx.conversation.registerAccessory({
     id: "popout-notices",

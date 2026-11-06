@@ -94,6 +94,19 @@ pub(crate) struct DiscussionRow {
     /// Edit baseline for messages the viewer may edit (pop-outs).
     #[serde(default)]
     editable: Option<Editable>,
+    /// The author is an agent, by profile hint (pop-outs).
+    #[serde(default)]
+    author_is_agent: bool,
+    /// Plugin actions main would offer, for a labelled main-window handoff.
+    #[serde(default)]
+    actions: Vec<HandoffAction>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HandoffAction {
+    key: String,
+    revision: String,
+    title: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -186,6 +199,11 @@ impl DiscussionRow {
             && self.editable.as_ref().is_none_or(|e| {
                 e.source_content.len() <= 65536 && e.attachment_source_id.len() <= 128
             })
+            && self.actions.len() <= 32
+            && self
+                .actions
+                .iter()
+                .all(|a| a.key.len() <= 256 && a.revision.len() <= 256 && a.title.len() <= 256)
     }
 }
 impl DiscussionAttachment {
@@ -703,6 +721,8 @@ mod tests {
                 reactions_limited: false,
                 management: None,
                 editable: None,
+                author_is_agent: false,
+                actions: vec![],
             }],
         });
         let encoded = serde_json::to_value(&presentation).unwrap();

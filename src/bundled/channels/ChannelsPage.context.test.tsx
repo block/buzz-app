@@ -253,6 +253,7 @@ async function channelsPage({ root = true, cached = false } = {}) {
       position: () => undefined,
       savePosition() {},
       forSession: () => navigation,
+      passThrough: () => () => {},
       resolve: () => true,
       complete: () => true,
     };

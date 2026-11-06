@@ -844,7 +844,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await page.keyboard.press("Tab");
     await expect(hide).toBeFocused();
     await expect(hide).toHaveCSS("outline-style", "solid");
-    await expect(hide).toHaveCSS("outline-width", "2px");
+    await expect(hide).toHaveCSS("outline-width", "3px");
     for (const mode of ["light", "dark"]) {
       if (mode === "dark") await button("Toggle theme").click();
       await expectToken(launcher, "color", "--text-standard");

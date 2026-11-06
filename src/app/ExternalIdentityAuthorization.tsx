@@ -160,14 +160,13 @@ export function ExternalIdentityAuthorization({ viewer }: { viewer: string }) {
           onClose={() => setConfirmKey(null)}
           actions={
             <>
-              <Button
-                ref={cancelButton}
-                variant="prominent"
-                onClick={() => setConfirmKey(null)}
-              >
+              <Button ref={cancelButton} onClick={() => setConfirmKey(null)}>
                 Cancel
               </Button>
-              <Button onClick={() => void authorize(confirmKey)}>
+              <Button
+                variant="prominent"
+                onClick={() => void authorize(confirmKey)}
+              >
                 Authorize this key
               </Button>
             </>

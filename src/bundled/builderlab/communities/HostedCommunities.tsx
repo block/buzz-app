@@ -61,7 +61,7 @@ type Confirm = {
   title: string;
   description: string;
   action: string;
-  /** Both start on Cancel: permanent shows the action in red, guarded highlights Cancel. */
+  /** Both start on Cancel; permanent also shows the action in red. */
   caution?: "permanent" | "guarded";
   run(): Promise<void>;
 };
@@ -959,21 +959,13 @@ export function HostedCommunities({
           {...(failure ? { children: failure } : {})}
           actions={
             <>
-              <Button
-                variant={confirm.caution === "guarded" ? "prominent" : "subtle"}
-                disabled={busy}
-                onClick={() => setConfirm(null)}
-              >
+              <Button disabled={busy} onClick={() => setConfirm(null)}>
                 Cancel
               </Button>
               <Button
                 ref={proceed}
                 variant={
-                  confirm.caution === "permanent"
-                    ? "destructive"
-                    : confirm.caution
-                      ? "subtle"
-                      : "prominent"
+                  confirm.caution === "permanent" ? "destructive" : "prominent"
                 }
                 loading={busy}
                 onClick={() =>

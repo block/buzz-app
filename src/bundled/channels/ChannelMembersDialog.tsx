@@ -2394,13 +2394,16 @@ export function ChannelMembersDialog({
             <>
               <Button
                 ref={cancelShare}
-                variant="prominent"
                 disabled={share.busy}
                 onClick={share.cancelConfirmation}
               >
                 Cancel
               </Button>
-              <Button loading={share.busy} onClick={() => void share.confirm()}>
+              <Button
+                variant="prominent"
+                loading={share.busy}
+                onClick={() => void share.confirm()}
+              >
                 Share
               </Button>
             </>

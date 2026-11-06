@@ -71,7 +71,7 @@ test("production composer catalogue preserves source and controls at responsive 
   const tool = page.locator(":focus");
   await expect(tool).toHaveRole("button");
   await expect(tool).toHaveCSS("outline-style", "solid");
-  await expect(tool).toHaveCSS("outline-width", "2px");
+  await expect(tool).toHaveCSS("outline-width", "3px");
   await page.keyboard.press("Shift+Tab");
   await expect(input).toBeFocused();
   await expect(input).toHaveCSS("outline-style", "none");

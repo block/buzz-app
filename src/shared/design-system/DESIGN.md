@@ -753,10 +753,14 @@ panel grid must have a shrinkable column so tabs do not widen other content.
 ## Focus appearance
 
 Keyboard focus is visible, and the component recipes in this guide own the ring.
-Every recipe is gated on the app-root modality fact `html[data-keyboard-navigation]`,
-so a pointer press leaves nothing behind. Keep focusability, Tab order, input
-modality, selection, and focus restoration intact, and do not add a local
-replacement ring where a component recipe already exists.
+Buttons use a 3px `border-focus` outline with a 2px offset. In Dialog and AlertDialog,
+the focused button always shows this ring, including automatic focus after pointer
+entry: it identifies what Enter will activate without changing the primary and
+secondary action styling. Other button contexts and control recipes are gated on
+the app-root modality fact `html[data-keyboard-navigation]`, so ordinary pointer
+use leaves no keyboard ring. Keep focusability, Tab order, input modality, selection,
+and focus restoration intact, and do not add a local replacement ring where a
+component recipe already exists.
 
 Shared text fields are the one deliberate exception, and they replace the ring
 rather than removing it. `styles/forms.css` drops the outline for editable

@@ -6,14 +6,17 @@ import { TABLER_ICONS } from "../../../src/shared/design-system/icons/inventory"
 const viewer = "/tests/fixtures/design-system.html";
 
 /**
- * The keyboard focus ring: 2px solid, drawn 2px outside the control, or inset
- * where a scrolling list would clip an outside ring. Every recipe is gated on
- * html[data-keyboard-navigation], so pointer and programmatic focus assert
- * `outline-style: none` instead of calling this.
+ * Keyboard focus rings are 2px, or 3px for Buttons, with a 2px offset or an
+ * inset where a scrolling list would clip an outside ring. Outside dialogs,
+ * html[data-keyboard-navigation] gates pointer and programmatic focus.
  */
-const expectKeyboardRing = async (control: Locator, offset = "2px") => {
+const expectKeyboardRing = async (
+  control: Locator,
+  offset = "2px",
+  width = "2px",
+) => {
   await expect(control).toHaveCSS("outline-style", "solid");
-  await expect(control).toHaveCSS("outline-width", "2px");
+  await expect(control).toHaveCSS("outline-width", width);
   await expect(control).toHaveCSS("outline-offset", offset);
 };
 
@@ -790,7 +793,7 @@ test("button loading keeps focus and labels stay single-line in constrained layo
   await expect(save).toHaveAttribute("aria-busy", "true");
   await expect(save).toBeFocused();
   // Tab reached this button, so the busy state must keep its keyboard ring.
-  await expectKeyboardRing(save);
+  await expectKeyboardRing(save, "2px", "3px");
   await page.keyboard.press("Enter");
   await expect(save).toHaveAttribute("aria-busy", "true");
   await page
@@ -1809,7 +1812,7 @@ test("dialog footer focus rings remain visible in both themes and widths", async
           exact: true,
         });
         await button.focus();
-        await expectKeyboardRing(button);
+        await expectKeyboardRing(button, "2px", "3px");
         await expect
           .poll(async () =>
             button.evaluate((element) => {

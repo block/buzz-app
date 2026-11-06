@@ -74,10 +74,12 @@ export function PairingPrompt({
       onClose={() => answer(false)}
       actions={
         <>
-          <Button ref={deny} variant="prominent" onClick={() => answer(false)}>
+          <Button ref={deny} onClick={() => answer(false)}>
             Deny
           </Button>
-          <Button onClick={() => answer(true)}>Allow</Button>
+          <Button variant="prominent" onClick={() => answer(true)}>
+            Allow
+          </Button>
         </>
       }
     >

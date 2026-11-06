@@ -195,9 +195,12 @@ it.each(["hosted", "elsewhere"] as const)(
       "Some bestie features aren’t available with remote agents.",
     );
     expect(f.session.mainAgent?.write).not.toHaveBeenCalled();
-    // It starts on the highlighted Cancel, so Enter backs out.
+    // Initial focus and primary styling are independent: Enter still backs out.
     const cancel = within(dialog).getByRole("button", { name: "Cancel" });
-    expect(cancel).toHaveAttribute("data-variant", "prominent");
+    expect(cancel).toHaveAttribute("data-variant", "subtle");
+    expect(
+      within(dialog).getByRole("button", { name: "Use as bestie" }),
+    ).toHaveAttribute("data-variant", "prominent");
     await waitFor(() => expect(cancel).toHaveFocus());
     await user.keyboard("{Enter}");
     await waitFor(() => expect(dialog).not.toBeInTheDocument());

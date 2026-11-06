@@ -675,6 +675,48 @@ it("scopes its reading leases to its thread while the original is unavailable", 
   for (const call of reading.mock.calls)
     expect(call).toEqual(["channel", row.id]);
 });
+it("scopes its reading leases to an exact reply's signed root while the original is unavailable", () => {
+  const h = messagesHarness();
+  h.resize(600);
+  vi.mocked(document.hasFocus).mockReturnValue(true);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 500, 500),
+  ] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const reading = vi.fn((_channelId: string, _rootId?: string) => ({
+    view: vi.fn(),
+    observe: vi.fn(async () => {}),
+    catchUp: vi.fn(async () => {}),
+    dispose: vi.fn(),
+  }));
+  Object.assign(h.session.unread, {
+    sync: () => ({ capability: "frontier-sync" }),
+    reading,
+  });
+  const reply = {
+    ...row,
+    id: "d".repeat(64),
+    content: "reply",
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [reply];
+  h.snapshot.target = reply;
+  h.snapshot.targetStatus = "ready";
+  h.props.messageId = reply.id;
+  h.render();
+  expect(screen.getByText("Original message unavailable.")).toBeVisible();
+  h.element.focus();
+  // The reply's signed root, not the reply, names the thread: its siblings
+  // are inside the thread, not outside it.
+  expect(reading.mock.calls).not.toHaveLength(0);
+  for (const call of reading.mock.calls)
+    expect(call).toEqual(["channel", row.id]);
+});
 it("renders replies after the original without a reply-count divider", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, replyCount: 0 };

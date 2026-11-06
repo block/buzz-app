@@ -85,9 +85,10 @@ catch-up (including a message taller than the viewport):
   dwell stops the frontier just before the earliest message outside that thread
   that the frontier still leaves unread: a top-level message or a reply in
   another thread. A reply belongs to the thread its marked root names, even when
-  that root is not retained. That message stays unread, and so do the thread's
-  replies from it on, since one frontier cannot skip a message; a whole-DM read
-  covers them. A message kept unread by Mark unread does not stop it, since
+  that root is not retained. A thread view opened at a reply whose root it cannot
+  resolve names that reply's marked root as its thread. That message stays
+  unread, and so do the thread's replies from it on, since one frontier cannot
+  skip a message; a whole-DM read covers them. A message kept unread by Mark unread does not stop it, since
   advancing the frontier leaves that message unread. An Inbox DM row opened as a
   thread reads the same way on click, through retained evidence rather than the
   click time. A message outside the thread that this client receives only after

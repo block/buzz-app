@@ -1766,8 +1766,9 @@ function ThreadMessages({
         channelId={channelId}
         scroller={scroller}
         settled={readingSettled}
-        // The thread opened bounds DM reads even before its root resolves.
-        rootId={snapshot.root?.id ?? messageId}
+        // The thread opened bounds DM reads even before its root resolves: an
+        // exact reply names its signed root, so its siblings stay inside it.
+        rootId={snapshot.root?.id ?? snapshot.target?.threadRootId ?? messageId}
         // A visible exact reply can outlive its unavailable root. Until resolved,
         // observe rows individually; an absent root must not mean channel catch-up.
         latestMessageId={

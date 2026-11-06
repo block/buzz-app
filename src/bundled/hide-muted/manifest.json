@@ -1,0 +1,7 @@
+{
+  "id": "buzz.hide-muted",
+  "name": "Hide muted channels",
+  "apiVersion": 1,
+  "description": "Keep muted channels out of the sidebar until they need you.",
+  "discovery": { "category": "productivity" }
+}

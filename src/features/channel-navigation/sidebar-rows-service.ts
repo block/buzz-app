@@ -15,6 +15,8 @@ export type SidebarRow = Readonly<{
   sectionKey: string;
   channel: ChannelSummary;
   unread: UnreadSnapshot;
+  /** The conversation the sidebar currently shows as open. */
+  selected: boolean;
 }>;
 export type SidebarRowSortMode = Readonly<{
   id: string;
@@ -122,6 +124,7 @@ export function sidebarRow(
   channel: ChannelSummary,
   sectionKey: string,
   unread: UnreadSnapshot,
+  selected: boolean,
 ): SidebarRow {
   return {
     id: channel.id,
@@ -130,6 +133,7 @@ export function sidebarRow(
     sectionKey,
     channel,
     unread,
+    selected,
   };
 }
 

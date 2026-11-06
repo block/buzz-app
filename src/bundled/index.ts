@@ -46,6 +46,8 @@ import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import draftsSentManifest from "./drafts-sent/manifest.json";
 import * as draftsSent from "./drafts-sent";
+import hideMutedManifest from "./hide-muted/manifest.json";
+import * as hideMuted from "./hide-muted";
 import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
@@ -178,6 +180,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...hideMutedManifest, apiVersion: 1 },
+    module: hideMuted,
     enabledByDefault: false,
   },
   {

@@ -314,6 +314,7 @@ function ChannelSidebarItemCore({
         <ContributedChannelRow
           channel={channel}
           sectionKey={sectionKey}
+          selected={selected === channel.id}
           session={session}
           entries={rowContributions}
           onHiddenChange={onHiddenChange}
@@ -355,6 +356,7 @@ function ChannelSidebarItemCore({
 function ContributedChannelRow({
   channel,
   sectionKey,
+  selected,
   session,
   entries,
   children,
@@ -362,6 +364,7 @@ function ContributedChannelRow({
 }: {
   channel: ChannelSummary;
   sectionKey: string;
+  selected: boolean;
   session: RelaySession;
   entries: readonly RegisteredSidebarRows[];
   children: ReactElement;
@@ -381,8 +384,8 @@ function ContributedChannelRow({
   );
   const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
   const row = useMemo(
-    () => sidebarRow(channel, sectionKey, unread),
-    [channel, sectionKey, unread],
+    () => sidebarRow(channel, sectionKey, unread, selected),
+    [channel, sectionKey, unread, selected],
   );
   return (
     <SidebarRowRenderer

@@ -21,6 +21,7 @@ it("leaves host output identical with no plugin", () => {
     label: "Host row",
     sectionKey: "channels",
     channel: { id: "row", name: "Host row" },
+    selected: false,
     unread: {
       target: { kind: "channel", channelId: "row" },
       observedCount: null,

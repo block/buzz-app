@@ -54,6 +54,7 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
+import { hideMutedRows } from "../../bundled/hide-muted/muted";
 import styles from "../../app/shell/PrimarySidebar.module.css";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { PageNavigation } from "../../app/shell/PageNavigation";
@@ -3417,5 +3418,66 @@ it("updates decorated unread data and a selected unread sort without rewriting p
     expect(writeSort).toHaveBeenCalledOnce();
   } finally {
     prefs.dispose();
+  }
+});
+
+it("lets the hide-muted plugin hide muted rows except open, starred and attention rows", async () => {
+  const user = userEvent.setup();
+  let muted = ["beta"];
+  let settle: () => void = () => {};
+  const writes = vi.fn();
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: ["gamma"],
+      muted: [...muted, "gamma"],
+    }),
+    available: true,
+    writeMute: ({ channelId, muted: next }) =>
+      new Promise<readonly string[]>((resolve) => {
+        writes();
+        settle = () => {
+          muted = next
+            ? [...muted, channelId]
+            : muted.filter((id) => id !== channelId);
+          resolve([...muted, "gamma"]);
+        };
+      }),
+  });
+  await preferences.queries.ensure();
+  const relay = {
+    snapshot: () => ({ session: { sidebarPreferences: preferences.queries } }),
+  } as unknown as RelayData;
+  const h = fixture(
+    preferences.queries,
+    "ready",
+    undefined,
+    undefined,
+    rowRegistry(hideMutedRows(relay)),
+  );
+  try {
+    const mounted = render(h.view("alpha"));
+    await screen.findByRole("button", { name: "alpha" });
+    expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /^gamma/ })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: "alpha" }), {
+      key: "ContextMenu",
+    });
+    await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+    await waitFor(() => expect(writes).toHaveBeenCalledOnce());
+    await act(async () => settle());
+    await waitFor(() =>
+      expect(preferences.queries.snapshot().data?.muted).toContain("alpha"),
+    );
+    expect(screen.getByRole("button", { name: /^alpha/ })).toBeInTheDocument();
+    mounted.rerender(h.view("beta"));
+    await screen.findByRole("button", { name: /^beta/ });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^alpha/ })).toBeNull(),
+    );
+  } finally {
+    settle();
+    preferences.dispose();
   }
 });

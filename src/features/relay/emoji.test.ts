@@ -116,6 +116,7 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     expect(contentEmojiTags(content, entries)).toEqual([]);
     expect(referencedEmoji(content)).toEqual([]);
   }
+  expect(referencedEmoji("see :http://")).toEqual(["http"]);
 });
 it("unions latest complete member sets; empty replacements and ties survive stale reads", async () => {
   const h = session();

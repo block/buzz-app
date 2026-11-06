@@ -84,7 +84,8 @@ export function emojiTags(event: {
  * `](url)` destination, a URL ends only at whitespace or `<>"\``. */
 const destinations =
   /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^\s<>]*|\]\\?\(\s*(?:<[^<>\r\n]*|\S*)/.source;
-const links = new RegExp(`(${destinations}|https?://${BARE_URL_REST})`, "g");
+const scheme = /https?:\/\/(?=[^\s<>"`])/.source;
+const links = new RegExp(`(${destinations}|${scheme}${BARE_URL_REST})`, "g");
 const runs = /(https?:\/\/[^\s<>"`]+)/;
 export const messageParts = (content: string) =>
   content.split(links).flatMap((part) => part.split(runs));

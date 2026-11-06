@@ -494,7 +494,7 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Drafts & sent** is part of Messages. Opening it keeps the conversation
   sidebar available, so you can switch straight back to a chat. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
-  Rows use Activity’s message layout, with recipient identities in Sent. It lists
+  Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by
@@ -503,8 +503,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   draft to edit and send in a conversation preview beside the list; **Open
   conversation** opens its original destination. Narrow windows show the preview
   with **Back to drafts**. After confirmed delivery the preview closes; failed
-  sends stay in its message history with Retry. Select a sent message to jump to it.
-  Search matches the conversation name and what you wrote. It reads only this
+  sends stay in its message history with Retry. Select a sent message to preview
+  it in context and reply in place; Sent previews stay open after sending. Both
+  previews use the conversation’s saved draft, if one exists. The popout icon
+  opens the original conversation.
+  Search above the list matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on

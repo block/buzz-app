@@ -32,6 +32,7 @@ import styles from "./DraftsSent.module.css";
 
 export function DraftPreview({
   entry,
+  mode = "draft",
   title,
   channel,
   loading = false,
@@ -44,6 +45,7 @@ export function DraftPreview({
   onSaved,
 }: {
   entry: Entry;
+  mode?: "draft" | "sent";
   title: string;
   channel: ChannelSummary | undefined;
   loading?: boolean;
@@ -76,6 +78,7 @@ export function DraftPreview({
   }>();
   useEffect(() => {
     if (
+      mode === "draft" &&
       cleaned &&
       sent &&
       received === sent &&
@@ -85,7 +88,7 @@ export function DraftPreview({
         document.activeElement === document.body ||
           !!region.current?.contains(document.activeElement),
       );
-  }, [cleaned, sent, received, session, entry.id, onSaved]);
+  }, [cleaned, sent, received, session, entry.id, onSaved, mode]);
   const sentMessage = (id: string) => {
     sending.current = id;
     setSent(id);
@@ -127,7 +130,7 @@ export function DraftPreview({
     <section
       ref={region}
       className={styles.draftPreview}
-      aria-label={`Draft for ${title}`}
+      aria-label={`${mode === "draft" ? "Draft for" : "Sent message in"} ${title}`}
       onKeyDown={(event) => {
         if (
           event.key !== "Escape" ||
@@ -161,7 +164,9 @@ export function DraftPreview({
             <IconButton
               ref={close}
               size="sm"
-              aria-label="Close draft preview"
+              aria-label={
+                mode === "draft" ? "Close draft preview" : "Close sent preview"
+              }
               icon={<XIcon size="1rem" />}
               onClick={onClose}
             />
@@ -170,7 +175,7 @@ export function DraftPreview({
       />
       <div className={styles.draftBack}>
         <Button size="sm" variant="ghost" onClick={onClose}>
-          Back to drafts
+          {mode === "draft" ? "Back to drafts" : "Back to sent"}
         </Button>
       </div>
       {waiting ? (
@@ -189,8 +194,9 @@ export function DraftPreview({
         >
           {entry.threadRootId ? (
             <ConversationThread
-              messageId={entry.threadRootId}
-              requireReadyRoot
+              messageId={mode === "sent" ? entry.id : entry.threadRootId}
+              revealSelected={mode === "sent"}
+              requireReadyRoot={mode === "draft"}
               autoFocus={autoFocus}
               onDraftSaved={draftSaved}
               onSend={sentMessage}
@@ -199,6 +205,7 @@ export function DraftPreview({
           ) : (
             <DraftChannel
               title={title}
+              target={mode === "sent" ? entry : undefined}
               autoFocus={autoFocus}
               onSaved={draftSaved}
               onSend={sentMessage}
@@ -208,13 +215,17 @@ export function DraftPreview({
       ) : (
         <div className={styles.draftUnavailable}>
           <p className="text-body-sm text-subtle">
-            {channel
-              ? `You can’t post in ${title} anymore. Your draft is still saved.`
-              : "This conversation isn’t available right now. Your draft is still saved."}
+            {mode === "sent"
+              ? "This conversation is not available for replying right now."
+              : channel
+                ? `You can’t post in ${title} anymore. Your draft is still saved.`
+                : "This conversation isn’t available right now. Your draft is still saved."}
           </p>
-          <Button size="sm" onClick={() => void copy()}>
-            Copy text
-          </Button>
+          {mode === "draft" && (
+            <Button size="sm" onClick={() => void copy()}>
+              Copy text
+            </Button>
+          )}
           <p role="status" className="text-body-sm text-subtle">
             {copyStatus}
           </p>
@@ -227,20 +238,43 @@ export function DraftPreview({
 /** Uses the canonical channel reader without changing its saved scroll position. */
 function DraftChannel({
   title,
+  target,
   autoFocus,
   onSaved,
   onSend,
 }: {
   title: string;
+  target?: Entry | undefined;
   autoFocus: boolean;
   onSaved(): void;
   onSend(id: string): void;
 }) {
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
+  const [seekError, setSeekError] = useState(false);
   useEffect(() => {
-    session.channels.refresh?.(channelId);
-  }, [session, channelId]);
+    if (!target) return;
+    if (window.status !== "ready") return;
+    const request = new AbortController();
+    setSeekError(false);
+    void session.channels
+      .seek?.(channelId, target.createdAt ?? 0, request.signal)
+      .then(() => {
+        if (!request.signal.aborted)
+          setSeekError(
+            !session.channels
+              .window(channelId)
+              .rows.some((row) => row.id === target.id),
+          );
+      })
+      .catch(() => {
+        if (!request.signal.aborted) setSeekError(true);
+      });
+    return () => request.abort();
+  }, [session, channelId, target, window.status]);
+  useEffect(() => {
+    if (!target) session.channels.refresh?.(channelId);
+  }, [session, channelId, target]);
   useEffect(() => {
     if (window.status === "idle") session.channels.ensure(channelId);
   }, [session, channelId, window.status]);
@@ -248,8 +282,17 @@ function DraftChannel({
     <MessageEditScope>
       <div className={styles.draftConversation}>
         <div className={styles.draftHistory} data-reading-surface="">
+          {seekError && (
+            <p role="status" className={styles.sectionCopy}>
+              The selected message could not be found in this conversation.
+            </p>
+          )}
           {!!window.rows.length && (
-            <ConversationTimeline window={window} transient />
+            <ConversationTimeline
+              window={window}
+              transient
+              revealMessageId={target?.id}
+            />
           )}
           {window.status === "error" || window.error ? (
             <div className={styles.draftUnavailable}>

@@ -11,6 +11,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { DraftsSentBadge } from "./DraftsSentNavigation";
 import { DraftPreview } from "./DraftPreview";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
@@ -162,6 +163,24 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   } as unknown as Panels;
   return {
     session,
+    relay,
+    seedSent: (thread: boolean) => {
+      const sent = message(
+        viewer,
+        "room",
+        "Already sent",
+        25,
+        thread
+          ? [
+              ["e", root.id, "", "root"],
+              ["e", root.id, "", "reply"],
+            ]
+          : [],
+      );
+      events.push(sent);
+      emit([sent]);
+      return sent;
+    },
     panels,
     host: { panels, relay, navigation: { open } as unknown as Navigation },
     root,
@@ -685,4 +704,92 @@ it("clears the live announcement between two sends to the same conversation", as
     await screen.findByText("Sent to #Design.");
   }
   expect(h.published).toHaveLength(2);
+});
+
+it.each([false, true])(
+  "previews sent messages and shares one saved draft across tabs (thread=%s)",
+  async (thread) => {
+    const h = fixture();
+    const sent = h.seedSent(thread);
+    const key = thread ? `draft:room:thread:${h.root.id}` : "draft:room";
+    writeView(h.session.scope, key, "Saved reply");
+    h.render();
+    render(<DraftsSentBadge relay={h.relay} />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Continue draft.*Saved reply/,
+      }),
+    );
+    let editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+    act(() => {
+      editor.value = "Edited reply";
+      fireEvent.input(editor);
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+    expect(
+      screen.queryByRole("region", { name: "Draft for #Design" }),
+    ).toBeNull();
+    const row = await screen.findByRole("button", {
+      name: /View message.*Already sent/,
+    });
+    fireEvent.click(row);
+    const region = screen.getByRole("region", {
+      name: "Sent message in #Design",
+    });
+    editor = (await within(region).findByRole(
+      "textbox",
+    )) as ComposerInputElement;
+    await waitFor(() => expect(editor).toHaveTextContent("Edited reply"));
+    await waitFor(() =>
+      expect(
+        region.querySelector(`[data-message-id="${sent.id}"]`),
+      ).toBeInTheDocument(),
+    );
+    expect(h.open).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Open conversation" }),
+    );
+    expect(h.open).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: sent.id }),
+    );
+    fireEvent.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() =>
+      expect(
+        h.published.some((event) => event.content === "Edited reply"),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(screen.queryByLabelText("1 draft")).toBeNull());
+    expect(region).toBeInTheDocument();
+    fireEvent.keyDown(editor, { key: "Escape" });
+    expect(
+      screen.queryByRole("region", { name: "Sent message in #Design" }),
+    ).toBeNull();
+    expect(row).toHaveFocus();
+    fireEvent.click(screen.getByRole("tab", { name: /^Drafts/ }));
+    expect(screen.getByText("No drafts")).toBeInTheDocument();
+  },
+);
+
+it("opens a cold sent channel preview with an empty composer and locates the message", async () => {
+  const h = fixture();
+  const sent = h.seedSent(false);
+  h.render();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /View message.*Already sent/ }),
+  );
+  const region = screen.getByRole("region", {
+    name: "Sent message in #Design",
+  });
+  const editor = await within(region).findByRole("textbox");
+  expect(editor).toHaveTextContent("");
+  await waitFor(() =>
+    expect(
+      region.querySelector(`[data-message-id="${sent.id}"]`),
+    ).toBeInTheDocument(),
+  );
+  expect(within(region).queryByText(/could not be found/)).toBeNull();
 });

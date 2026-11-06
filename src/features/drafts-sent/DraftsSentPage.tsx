@@ -190,7 +190,12 @@ function ScopedPage({
   host: ConversationHostServices;
   extensions?: ConversationExtensions | undefined;
 }) {
-  type Visit = { entry: Entry; trigger: HTMLButtonElement; autoFocus: boolean };
+  type Visit = {
+    entry: Entry;
+    draft: boolean;
+    trigger: HTMLButtonElement;
+    autoFocus: boolean;
+  };
   const [selected, setSelected] = useState<Visit>();
   const visit = useRef<Visit | undefined>(undefined);
   const focusAfterClose = useRef<HTMLElement | null>(null);
@@ -296,14 +301,14 @@ function ScopedPage({
   }
 
   // Keep an emptied editor in its last list position until it is closed.
-  const currentIndex = selected
+  const currentIndex = selected?.draft
     ? drafts.entries.findIndex((entry) => entry.id === selected.entry.id)
     : -1;
   useLayoutEffect(() => {
     if (currentIndex >= 0) selectedIndex.current = currentIndex;
   }, [currentIndex]);
   const entries: (Entry & { placeholder?: boolean })[] = [...drafts.entries];
-  if (selected && currentIndex < 0)
+  if (selected?.draft && currentIndex < 0)
     entries.splice(selectedIndex.current, 0, {
       ...selected.entry,
       text:
@@ -505,7 +510,7 @@ function ScopedPage({
     const row = current.trigger.closest("li");
     const neighbor = (
       row?.nextElementSibling ?? row?.previousElementSibling
-    )?.querySelector<HTMLElement>("[data-draft-row]");
+    )?.querySelector<HTMLElement>("[data-preview-row]");
     neighborAfterClose.current = restoreFocus ? (neighbor ?? null) : null;
     focusAfterClose.current = !restoreFocus
       ? null
@@ -564,24 +569,20 @@ function ScopedPage({
       <MessageListRow
         aria-label={label}
         disabled={!draft && !place.available}
-        selected={draft && selected?.entry.id === entry.id}
-        aria-current={
-          draft && selected?.entry.id === entry.id ? "true" : undefined
-        }
+        selected={selected?.entry.id === entry.id}
+        aria-current={selected?.entry.id === entry.id ? "true" : undefined}
         data-draft-row={draft ? "" : undefined}
+        data-preview-row=""
         title={
           draft || place.available
             ? undefined
             : "This conversation is not available right now"
         }
         onClick={(event) => {
-          if (!draft) {
-            void open(entry, false);
-            return;
-          }
           if (visit.current?.entry.id === entry.id) return;
           const next = {
             entry,
+            draft,
             trigger: event.currentTarget,
             autoFocus:
               (event.nativeEvent as PointerEvent).pointerType !== "touch",
@@ -679,6 +680,30 @@ function ScopedPage({
     context.refresh.current();
     refreshDeletions.current();
   };
+
+  const previewPanel =
+    selected && !selectedExcluded ? (
+      <DraftPreview
+        key={selected.entry.id}
+        entry={selected.entry}
+        mode={selected.draft ? "draft" : "sent"}
+        title={place(selected.entry.channelId).title}
+        channel={byId.get(selected.entry.channelId)}
+        session={session}
+        host={host}
+        extensions={extensions}
+        autoFocus={selected.autoFocus}
+        onClose={() => closePreview(selected)}
+        onOpen={() => void open(selected.entry, selected.draft)}
+        loading={
+          !byId.get(selected.entry.channelId) &&
+          (channelListStatus === "idle" || channelListStatus === "loading")
+        }
+        onSaved={(restoreFocus) =>
+          selected.draft && closePreview(selected, true, restoreFocus)
+        }
+      />
+    ) : null;
 
   const searchField = (
     <div className={styles.toolbar}>
@@ -800,31 +825,11 @@ function ScopedPage({
               )}
             </div>
           </div>
-          {selected && !selectedExcluded && view === "drafts" && (
-            <DraftPreview
-              key={selected.entry.id}
-              entry={selected.entry}
-              title={place(selected.entry.channelId).title}
-              channel={byId.get(selected.entry.channelId)}
-              session={session}
-              host={host}
-              extensions={extensions}
-              autoFocus={selected.autoFocus}
-              onClose={() => closePreview(selected)}
-              onOpen={() => void open(selected.entry, true)}
-              loading={
-                !byId.get(selected.entry.channelId) &&
-                (channelListStatus === "idle" ||
-                  channelListStatus === "loading")
-              }
-              onSaved={(restoreFocus) =>
-                closePreview(selected, true, restoreFocus)
-              }
-            />
-          )}
+          {view === "drafts" && previewPanel}
         </section>
         <section
           role="tabpanel"
+          data-selected={!!selected || undefined}
           id="sent-view"
           aria-labelledby="sent-view-tab"
           hidden={view !== "sent"}
@@ -898,6 +903,7 @@ function ScopedPage({
               )}
             </div>
           </div>
+          {view === "sent" && previewPanel}
         </section>
       </div>
     </div>

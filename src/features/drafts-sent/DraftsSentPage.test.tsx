@@ -438,6 +438,11 @@ it("sent groups by day, updates live, and opens the exact message", async () => 
       name: /View message in #launch-room: Recently shipped/,
     }),
   );
+  expect(h.open).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("region", { name: "Sent message in #launch-room" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open conversation" }));
   await waitFor(() =>
     expect(h.open).toHaveBeenLastCalledWith(
       expect.objectContaining({ channelId: "team", messageId: id }),

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createEmojiDirectory } from "./emoji-directory";
 import {
   EMOJI_SET,
+  contentEmojiTags,
   emojiTags,
   referencedEmoji,
   suggestShortcode,
@@ -81,6 +82,27 @@ it("normalizes first-wins scheme-agnostic emoji tags and leaves URL fragments ou
       ":PARTY: :party: https://a.test/:link: http://localhost:3000/:dev: :other:",
     ),
   ).toEqual(["party", "other"]);
+});
+it("tags a shortcode after a bare link that ends at CJK punctuation, but not inside links", () => {
+  const entries = [{ shortcode: "party", url }];
+  for (const content of [
+    "看这个 https://example.com，:party:",
+    "https://example.com/a。:party:",
+  ]) {
+    expect(contentEmojiTags(content, entries)).toEqual([
+      ["emoji", "party", url],
+    ]);
+    expect(referencedEmoji(content)).toEqual(["party"]);
+  }
+  for (const content of [
+    "https://example.com/a:party:",
+    "HTTPS://example.com/a:party:",
+    "<https://example.com/a，:party:>",
+    "[a](https://example.com/a，:party:)",
+  ]) {
+    expect(contentEmojiTags(content, entries)).toEqual([]);
+    expect(referencedEmoji(content)).toEqual([]);
+  }
 });
 it("unions latest complete member sets; empty replacements and ties survive stale reads", async () => {
   const h = session();

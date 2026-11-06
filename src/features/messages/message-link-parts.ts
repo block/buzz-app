@@ -1,4 +1,5 @@
 import { parseBuzzLink } from "../navigation/buzz-links";
+import { BARE_URL_REST } from "../relay/message-content";
 
 type LinkPart = { text: string; url?: string; label?: string };
 
@@ -82,6 +83,12 @@ function closingParenthesis(content: string, start: number, escaped: boolean) {
   return undefined;
 }
 
+const linkPattern = new RegExp(
+  /(?<!\\)\[((?:\\[^\r\n]|[^[\]\\\r\n])+)\]\\?\(|<(?:https?|buzz):\/\/[^\s<>"`]+>|(?:https?|buzz):\/\//
+    .source + BARE_URL_REST,
+  "gi",
+);
+
 /** Display-only link syntax. Message storage and navigation keep the original destination. */
 export function messageLinkParts(
   content: string,
@@ -95,10 +102,7 @@ export function messageLinkParts(
 ): LinkPart[] {
   const parts: LinkPart[] = [];
   let offset = 0;
-  // CJK punctuation ends a bare URL, except 。．｡ before a host label (URLs read them as dots).
-  for (const match of content.matchAll(
-    /(?<!\\)\[((?:\\[^\r\n]|[^[\]\\\r\n])+)\]\\?\(|<(?:https?|buzz):\/\/[^\s<>"`]+>|(?:https?|buzz):\/\/(?:[^\s<>"`:/?#，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜]|[。．｡](?=[a-z\d-]+(?![a-z\d-]|:\/\/)))*(?:[:/?#][^\s<>"`，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜]*)?/gi,
-  )) {
+  for (const match of content.matchAll(linkPattern)) {
     if (match.index < offset) continue;
     if (match[1] !== undefined) {
       const start = match.index + match[0].length;

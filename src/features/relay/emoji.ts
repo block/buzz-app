@@ -1,4 +1,5 @@
 import type { EventData } from "./events.ts";
+import { BARE_URL_REST } from "./message-content.ts";
 
 export type CustomEmoji = Readonly<{ shortcode: string; url: string }>;
 export const EMOJI_SET = "buzz:custom-emoji";
@@ -78,10 +79,12 @@ export function emojiTags(event: {
   }
   return Object.freeze([...entries.values()]);
 }
-/** Share token boundaries with the renderer: never substitute inside HTTP(S) links. */
-export const messageParts = (content: string) =>
-  content.split(/(https?:\/\/[^\s<>"`]+)/g);
-export const linkPart = (part: string) => /^https?:\/\//.test(part);
+/** Share token boundaries with the renderer: never substitute inside HTTP(S) links.
+ * Bare links end where rendered ones do; `<url>` and `](url)` keep CJK punctuation. */
+const written = /(?<=<|\]\()https?:\/\/[^\s<>"`]+/.source;
+const links = new RegExp(`(${written}|https?://${BARE_URL_REST})`, "gi");
+export const messageParts = (content: string) => content.split(links);
+export const linkPart = (part: string) => /^https?:\/\//i.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
 export function* emojiMatches(
   content: string,

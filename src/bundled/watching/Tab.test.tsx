@@ -1301,6 +1301,73 @@ it("shows a minimal activity timeline with full message and output previews", ()
   expect(within(build).queryByText("third", { selector: "pre" })).toBeNull();
 });
 
+it("keeps spoilers hidden in activity summaries", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a".repeat(64),
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attentionHistory: {
+      "watch/pr": { events: [{ at: 1, text: "Status: ||private result||" }] },
+    },
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        value: { type: "interest", instructions: "Follow releases." },
+      },
+      "watch/pr": {
+        slug: "watch/pr",
+        value: {
+          type: "source",
+          name: "Release PR",
+          enabled: true,
+          interest_id: "release",
+          provider: "github/pr",
+          config: {},
+        },
+      },
+    },
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const list = { channels: [] };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: {
+      channels: {
+        ensureList() {},
+        subscribeList: () => () => {},
+        list: () => list,
+      },
+    },
+  };
+  const ctx = {
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+    },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Details for Release PR" }),
+  );
+  fireEvent.click(screen.getByLabelText("Show activity for Release PR"));
+  const row = within(
+    screen.getByRole("list", { name: "Activity for Release PR" }),
+  ).getByLabelText(/^Open activity/);
+  expect(row.getAttribute("aria-label")).toBe(
+    "Open activity: Status: [Spoiler]",
+  );
+  expect(row.textContent).not.toContain("private");
+});
+
 it("does not repeat consecutive sonar messages across sweeps", () => {
   const random = vi.spyOn(Math, "random").mockReturnValue(0.25);
   try {

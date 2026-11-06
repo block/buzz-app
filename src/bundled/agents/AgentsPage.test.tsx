@@ -159,6 +159,7 @@ function setup(
   saved: Agent[],
   {
     shown = true,
+    scope = undefined as string | undefined,
     model = false,
     status = "ready" as AgentsSnapshot["status"],
     more = [] as RegisteredAgentType[],
@@ -362,6 +363,7 @@ function setup(
     remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
     unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
     interruptible: () => false,
+    hostedInstructions: () => undefined,
     interrupt: vi.fn(async () => false),
     note: () => false,
     classifier: () => "unavailable",
@@ -421,7 +423,7 @@ function setup(
     execution: async () => undefined,
     harness: {} as Agents["harness"],
   } satisfies Agents;
-  const disconnected = { status: "disconnected", generation: 0 };
+  const disconnected = { status: "disconnected", generation: 0, scope };
   const relay = {
     snapshot: () => disconnected,
     subscribe: () => () => {},
@@ -701,6 +703,7 @@ it("restores provider links and retires only that provider's visits after close 
       position: () => undefined,
       savePosition() {},
       forSession: () => navigation,
+      passThrough: () => () => {},
       resolve: () => true,
       complete: () => true,
     };
@@ -785,6 +788,7 @@ it("lets the Back shortcut hide a routed provider's blocking work and Forward re
         signal: attempt.signal,
         position: () => undefined,
         savePosition() {},
+        passThrough: () => () => {},
         forSession: () => request,
         resolve: () => true,
         complete: () => true,
@@ -858,6 +862,7 @@ it("opens the agent a link names, on Your agents", async () => {
     forSession: () => navigation,
     resolve: () => true,
     complete: () => true,
+    passThrough: () => () => {},
   };
   setup([agent("Ada", 1), agent("Bea", 2)], {
     page: { navigator, navigation },
@@ -3199,10 +3204,35 @@ it("opens deletion from the card menu without selecting it and requires confirma
   );
 });
 
+it.each([false, true])(
+  "keeps the production provider/model presentation on a remote card (model controls: %s)",
+  (model) => {
+    setup(
+      [{ ...agent("Ada", 1), place: "hosted", config: { reply: "Echo" } }],
+      { model },
+    );
+    const card = screen.getByRole("gridcell", { name: "Ada" });
+    expect(within(card).queryByText("Remote")).not.toBeInTheDocument();
+    if (model) {
+      expect(
+        within(card).getByRole("button", { name: "Change model" }),
+      ).toBeVisible();
+      expect(within(card).queryByText("Echo")).not.toBeInTheDocument();
+    } else {
+      const detail = within(card).getByText("Echo");
+      expect(detail.parentElement?.querySelector("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    }
+  },
+);
+
 it("saves a card model through its type and keeps failures on the card", async () => {
   const user = userEvent.setup();
   const saved = agent("Ada", 1);
   const { agents } = setup([saved], { model: true });
+  expect(screen.queryByText("Local · Desktop")).not.toBeInTheDocument();
   agents.save.mockRejectedValueOnce(new Error("Model could not save"));
   await user.click(screen.getByRole("button", { name: "Change model" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -4288,6 +4318,7 @@ it("leaves an agent a link opened while an unfinished agent's Delete was finishi
     focus: "content",
     position: () => undefined,
     savePosition() {},
+    passThrough: () => () => {},
     forSession: () => navigation,
     resolve: () => true,
     complete: () => true,
@@ -5072,6 +5103,41 @@ it("offers Make my bestie on a stand-in for a missing chosen agent", async () =>
   ).toBeNull();
 });
 
+it("restores scoped card order without menu reorder actions or remounting neighbours", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bo = agent("Bo", 2);
+  const nova = agent("Nova", 3);
+  const scope = "https://relay.example:owner";
+  const view = setup([ada, bo], { scope });
+  const order = () =>
+    screen
+      .getAllByRole("gridcell")
+      .map((card) => card.getAttribute("aria-label"));
+  await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Move earlier" }),
+  ).toBeNull();
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Move later" }),
+  ).toBeNull();
+  act(() => view.show([ada, bo, nova]));
+  expect(menu).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  act(() => writeView(scope, "agents:order", [bo.pubkey, ada.pubkey]));
+  expect(order()).toEqual(["Bo", "Ada", "Nova"]);
+  await user.click(screen.getByRole("gridcell", { name: "Bo" }));
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveFocus();
+  view.unmount();
+  const restored = setup([ada, bo, nova, agent("New", 4)], { scope });
+  expect(order()).toEqual(["Bo", "Ada", "Nova", "New"]);
+  restored.unmount();
+  setup([ada, bo], { scope: "https://other.example:owner" });
+  expect(order()).toEqual(["Ada", "Bo"]);
+});
+
 it("offers to save an automatic bestie to the account, and again after a failed save", async () => {
   const ada = agent("Ada", 1);
   const bea = agent("Bea", 2);
@@ -5201,6 +5267,7 @@ it("opens a restored version address in Settings, closes on Back, and retires on
       signal: new AbortController().signal,
       position: () => undefined,
       savePosition() {},
+      passThrough: () => () => {},
       forSession: () => navigation,
       resolve: () => true,
       complete: () => true,
@@ -5287,4 +5354,127 @@ it("opens a restored version address in Settings, closes on Back, and retires on
   expect(
     screen.getByRole("button", { name: "Previous versions" }),
   ).toHaveAttribute("aria-expanded", "false");
+});
+
+it("opens Create agent from an agent card's link and retires the link's visits when it closes", async () => {
+  const user = userEvent.setup();
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const routed = {
+    ...base,
+    route: { version: 1, params: { card: "tinker" } },
+  } as const;
+  const dismiss = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: { id: "card", target: routed } }),
+    open: vi.fn(),
+    dismiss,
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "card",
+    target: routed,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  const fetch = vi.fn(async () =>
+    Response.json({
+      id: "tinker",
+      name: "Tinker",
+      avatarUrl: "https://cdn.example/tinker/avatar.png",
+      instructions: "You are Tinker.",
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const { agents } = setup([agent("Ada", 1)], {
+      page: { navigator, navigation },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Create agent" });
+    expect(fetch).toHaveBeenCalledWith(
+      "https://d2z0pbxrxbsiz5.cloudfront.net/tinker/agent.json",
+      expect.anything(),
+    );
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Tinker");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create agent" }),
+    );
+    expect(agents.create).toHaveBeenCalledWith({
+      type: "test/echo",
+      name: "Tinker",
+      picture: "https://cdn.example/tinker/avatar.png",
+      config: { reply: "" },
+    });
+    await vi.waitFor(() => expect(dismiss).toHaveBeenCalledOnce());
+    const [matches, fallback] = dismiss.mock.calls[0] as unknown as [
+      (target: OpenTarget) => boolean,
+      OpenTarget,
+    ];
+    expect(fallback).toEqual(base);
+    expect(matches(routed)).toBe(true);
+    expect(matches(base)).toBe(false);
+    expect(
+      matches({ ...routed, route: { version: 1, params: { card: "occam" } } }),
+    ).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("explains an agent card that can't be loaded, and retries it", async () => {
+  const user = userEvent.setup();
+  const routed = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { card: "gone" } },
+  } as const;
+  const dismiss = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: { id: "card", target: routed } }),
+    open: vi.fn(),
+    dismiss,
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "card",
+    target: routed,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  const fetch = vi.fn(async () => new Response("", { status: 404 }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    setup([agent("Ada", 1)], { page: { navigator, navigation } });
+    const dialog = await screen.findByRole("dialog", { name: "Agent card" });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "This agent card isn’t available.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Close" }),
+    );
+    expect(dismiss).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "Create agent" })).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

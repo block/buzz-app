@@ -33,6 +33,8 @@ import type {
   TurnResult,
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
+import { CREDENTIAL_ENV } from "../../features/host/service";
+import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
@@ -91,6 +93,8 @@ type Request = {
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
+  /** Presentation scope, independent of the harness session and reply routing. */
+  activityScope: string;
   /** A plugin's wake, for which `event` is its local anchor. */
   wake?: ConversationWake;
   wakeText?: Delivery["wakeText"];
@@ -1432,6 +1436,10 @@ export class CodexRuntime {
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
       ...(delivery.synced ? { synced: delivery.synced } : {}),
+      activityScope: topLevel
+        ? channelId
+        : (threadReference(event)?.rootId ??
+          (channel?.dm ? channelId : event.id)),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
@@ -1531,7 +1539,7 @@ export class CodexRuntime {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake)}`,
+                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
                 ),
               });
               active.reply = request;
@@ -1786,9 +1794,7 @@ export class CodexRuntime {
    * and a top-level chat is one scope. */
   private acknowledgeActivity(active: Active, request: Request) {
     if (!request.step) return;
-    const scope = request.conversation.topLevel
-      ? request.conversation.channelId
-      : rootOf(request.event);
+    const scope = request.activityScope;
     const prior = active.activity.get(scope);
     if (prior === request) return;
     prior?.superseded?.();
@@ -2203,7 +2209,7 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey">,
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
@@ -2265,6 +2271,8 @@ export class CodexRuntime {
           hookAdapter.run(agent.key, session, event, input),
         )
       : undefined;
+    // Codex sets it on this thread's commands only; app-server has none.
+    const credential = await rpc.toolCredential(agent);
     const params = {
       model,
       cwd: workspace,
@@ -2279,6 +2287,9 @@ export class CodexRuntime {
         mcp_servers: { ...mcp, ...bridge?.config },
         "features.plugins": false,
         "features.apps": false,
+        ...(credential && {
+          [`shell_environment_policy.set.${CREDENTIAL_ENV}`]: credential,
+        }),
       },
     };
     // Ask for reasoning summaries unless the user chose a summary mode.
@@ -2460,7 +2471,7 @@ export class CodexRuntime {
         .request<{ turn: { id: string } }>("turn/start", {
           threadId: active.threadId,
           input: input(
-            `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake)}`,
+            `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
           ),
           model,
           effort,

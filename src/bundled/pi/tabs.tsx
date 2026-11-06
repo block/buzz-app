@@ -39,6 +39,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { effortLabel } from "../claude-code/runtime";
@@ -543,6 +544,7 @@ export function createTabs({
   function CreateModel({
     config,
     onChange,
+    onReadyChange,
     disabled,
     modelAppearance,
   }: AgentCreateProps<Config>) {
@@ -563,6 +565,12 @@ export function createTabs({
     );
     const unknown = unknownProvider(current, providers);
     const fallback = defaultModel(current, providers?.defaults);
+    const ready =
+      listing.status === "ready" &&
+      !unknown &&
+      !!id.trim() &&
+      !!(current.model || fallback)?.trim();
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const named = (model: string) =>
       models.value?.find((item) => item.id === model)?.label ?? model;
     const provider =
@@ -783,6 +791,7 @@ export function createTabs({
     working: readonly number[];
     openConversation: AgentViewProps<Config>["openConversation"];
   }) {
+    useClockFormat();
     const { session: here } = useOpenedSession(
       places,
       conversation,

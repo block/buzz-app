@@ -1607,6 +1607,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1647,6 +1653,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1964,6 +1976,9 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -1983,6 +1998,9 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -2117,6 +2135,8 @@
     --affordance-accent-prominent-hover
   );
   --border-color-accent: var(--border-accent);
+  --border-color-reaction-self: var(--border-reaction-self);
+  --border-color-reaction-self-own: var(--border-reaction-self-own);
 
   /* Palette utilities remain for the palette viewer and staged migration. */
   /* neutral */

@@ -36,7 +36,10 @@ const unused = {
   history: new GooseHistory(undefined),
 };
 
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => true,
+  invoke: async () => null,
+}));
 
 beforeEach(() => {
   // jsdom has no layout observers; the model picker sizes itself with one.
@@ -89,6 +92,7 @@ function created(
     reply?: string;
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
     modelAppearance?: "glass-ghost";
+    onReadyChange?: (ready: boolean) => void;
     config?: Config;
     /** Fields goose already holds, beyond Databricks' host. */
     saved?: Readonly<Record<string, readonly string[]>>;
@@ -116,8 +120,9 @@ function created(
       },
     },
   });
+  const setup = options.spawn?.(fake) ?? new GooseSetup(fake);
   const { Create, CreateModel } = createTabs({
-    setup: options.spawn?.(fake) ?? new GooseSetup(fake),
+    setup,
     ...unused,
   });
   if (!CreateModel) throw new Error("no model field");
@@ -134,6 +139,9 @@ function created(
       <>
         <Create config={config} disabled={false} onChange={onChange} />
         <CreateModel
+          {...(options.onReadyChange && {
+            onReadyChange: options.onReadyChange,
+          })}
           config={config}
           disabled={false}
           onChange={onChange}
@@ -145,7 +153,7 @@ function created(
     );
   }
   render(<Harness />);
-  return { fake, saved, changes };
+  return { fake, saved, changes, setup };
 }
 
 async function choose(label: string, option: string) {
@@ -1603,3 +1611,22 @@ it("shows the good saved records when others are damaged", () => {
     "View transcript: chan · channel",
   ]);
 });
+
+it.each([
+  [{ providerId: "", modelId: "" }, false],
+  [{ providerId: "databricks", modelId: "" }, false],
+  [{ providerId: "", modelId: "goose-claude" }, false],
+  [{ providerId: "databricks", modelId: "goose-claude" }, true],
+] as const)(
+  "reports Goose connection readiness from resolved defaults %j",
+  async (defaults, expected) => {
+    const onReadyChange = vi.fn();
+    const { setup } = created({ defaults, onReadyChange });
+    await act(async () => {
+      await setup.providers();
+    });
+    await waitFor(() =>
+      expect(onReadyChange).toHaveBeenLastCalledWith(expected),
+    );
+  },
+);

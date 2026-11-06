@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { useEffect } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import userEvent from "@testing-library/user-event";
@@ -13,7 +14,11 @@ import type { Agents, RegisteredAgentType } from "./service";
 import type { ChannelMessage } from "../relay/contracts";
 import type { PortableAgent } from "./native";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
 const candidate: PortableAgent = {
   source: "installed",
   pubkey: "a".repeat(64),
@@ -95,7 +100,7 @@ it("connects the exact identity with reviewed defaults and retains errors for re
 });
 
 it.each(["dm", "stream", "forum"] as const)(
-  "shows setup only for the exact owned %s identity and hides it when that agent is online",
+  "persists channel-scoped dismissal for the exact owned %s identity and preserves explicit connection",
   async (channelType) => {
     const { schnorr } = await import("@noble/curves/secp256k1.js");
     const { bytesToHex } = await import("nostr-tools/utils");
@@ -124,8 +129,13 @@ it.each(["dm", "stream", "forum"] as const)(
     const view = { status: "ready", events: [profile] };
     let choices: {
       complete: boolean;
+      archives: { status: "ready"; archived: string[] };
       identities: { pubkey: string; managed: boolean; messageable: boolean }[];
-    } = { complete: false, identities: [] };
+    } = {
+      complete: false,
+      identities: [],
+      archives: { status: "ready", archived: [] },
+    };
     const profiles = new Map([
       [candidate.pubkey, { name: candidate.name, isAgent: true }],
     ]);
@@ -138,7 +148,22 @@ it.each(["dm", "stream", "forum"] as const)(
       subscribe: noop,
       dispose: () => {},
     }));
+    const sendObservers = new Set<
+      Parameters<import("../relay/outbox").Outbox["observeSend"]>[0]
+    >();
     const session = {
+      outbox: {
+        observeSend: (
+          listener: Parameters<
+            import("../relay/outbox").Outbox["observeSend"]
+          >[0],
+        ) => {
+          sendObservers.add(listener);
+          return () => {
+            sendObservers.delete(listener);
+          };
+        },
+      },
       messages: { reply },
       scope: "scope",
       viewer,
@@ -195,12 +220,12 @@ it.each(["dm", "stream", "forum"] as const)(
     const { AgentConnectionSetup } = await import("./AgentConnectionSetup");
     const { AgentsContext } = await import("./react");
     const { act } = await import("@testing-library/react");
-    render(
+    const setup = (sessionValue = session, channelValue = channel) => (
       <ToastProvider>
         <AgentsContext.Provider value={agents}>
           <AgentConnectionSetup
-            session={session}
-            channel={channel}
+            session={sessionValue}
+            channel={channelValue}
             rows={[
               {
                 id: "b".repeat(64),
@@ -218,13 +243,57 @@ it.each(["dm", "stream", "forum"] as const)(
             ]}
           />
         </AgentsContext.Provider>
-      </ToastProvider>,
+      </ToastProvider>
     );
+    const sendMention = (
+      kind = 9,
+      author = viewer,
+      destination = channel.id,
+    ) => {
+      const event = {
+        id: "b".repeat(64),
+        kind,
+        pubkey: author,
+        created_at: 1,
+        content: "Hello",
+        tags: [
+          ["h", destination],
+          ["p", candidate.pubkey],
+        ],
+      };
+      return [...sendObservers].map((observer) =>
+        observer(event, new AbortController().signal),
+      );
+    };
+    const deliverMention = (destination = channel.id) => {
+      act(() => {
+        for (const delivered of sendMention(9, viewer, destination))
+          delivered?.([]);
+      });
+    };
+    let mounted = render(setup());
+    if (channelType !== "dm") {
+      // History hydration alone does not even start candidate discovery.
+      expect(portable).not.toHaveBeenCalled();
+      for (const args of [
+        [40003, viewer, channel.id],
+        [9, "other", channel.id],
+        [9, viewer, "elsewhere"],
+      ] as const) {
+        expect(sendMention(args[0], args[1], args[2])).toEqual([undefined]);
+      }
+      const pending = sendMention();
+      expect(portable).not.toHaveBeenCalled();
+      act(() => {
+        for (const delivered of pending) delivered?.([]);
+      });
+    }
     await waitFor(() => expect(portable).toHaveBeenCalledOnce());
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     act(() => {
       choices = {
         complete: true,
+        archives: { status: "ready", archived: [] },
         identities: [
           { pubkey: candidate.pubkey, managed: false, messageable: true },
         ],
@@ -233,7 +302,16 @@ it.each(["dm", "stream", "forum"] as const)(
     });
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     act(() => {
-      choices = { complete: true, identities: [] };
+      choices = {
+        complete: true,
+        identities: [],
+        archives: { status: "ready", archived: [candidate.pubkey] },
+      };
+      for (const listener of [...listeners]) listener();
+    });
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    act(() => {
+      choices = { ...choices, archives: { status: "ready", archived: [] } };
       for (const listener of [...listeners]) listener();
     });
     expect(
@@ -244,7 +322,47 @@ it.each(["dm", "stream", "forum"] as const)(
       { kinds: [0], authors: [candidate.pubkey], limit: 1 },
     ]);
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Connect" }));
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementationOnce(() => {
+        throw new Error("Storage unavailable");
+      });
+    await user.click(
+      screen.getByRole("button", {
+        name: "Dismiss connection setup for Helper",
+      }),
+    );
+    expect(
+      await screen.findByText("Could not save dismissal. Try again."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeVisible();
+    storage.mockRestore();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Dismiss connection setup for Helper",
+      }),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Agent connection setup" }),
+    ).toBeNull();
+    expect(agents.port).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    // Navigation to another channel remains eligible; returning retains dismissal.
+    mounted.rerender(setup(session, { ...channel, id: "other-channel" }));
+    deliverMention("other-channel");
+    await screen.findByRole("button", { name: "Connect" });
+    mounted.rerender(setup());
+    deliverMention();
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    // A fresh mount reads durable state, as after reload. A new scope is independent.
+    mounted.unmount();
+    mounted = render(setup());
+    deliverMention();
+    await waitFor(() => expect(observe).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    mounted.rerender(setup({ ...session, scope: "other-viewer-community" }));
+    deliverMention();
+    await user.click(await screen.findByRole("button", { name: "Connect" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Import interrupted",
     );
@@ -278,6 +396,50 @@ it.each(["dm", "stream", "forum"] as const)(
     }
   },
 );
+
+it("keeps dismissal disabled while an explicit import is pending", async () => {
+  let finish!: (result: { notes: string[] }) => void;
+  const port = vi.fn(
+    () =>
+      new Promise<{ notes: string[] }>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const types = [type];
+  const snapshot = {};
+  const agents = {
+    types: () => types,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    port,
+  } as unknown as Agents;
+  const onDismiss = vi.fn();
+  render(
+    <AgentConnectionForm
+      agents={agents}
+      candidate={candidate}
+      scope="scope"
+      onDismiss={onDismiss}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Connect" }));
+  const dismiss = screen.getByRole("button", {
+    name: "Dismiss connection setup for Helper",
+  });
+  try {
+    expect(port).toHaveBeenCalledOnce();
+    expect(dismiss).toBeDisabled();
+    await user.click(dismiss);
+    expect(onDismiss).not.toHaveBeenCalled();
+  } finally {
+    finish({ notes: [] });
+  }
+  await screen.findByRole("heading", { name: "Helper connected" });
+  expect(dismiss).toBeEnabled();
+  await user.click(dismiss);
+  expect(onDismiss).toHaveBeenCalledOnce();
+});
 
 it("removes a disabled harness from the choices and never imports from a preview", async () => {
   const { act } = await import("@testing-library/react");
@@ -390,4 +552,118 @@ it("requires an explicit follow-up after import and preserves send failure for r
   ).toBeDisabled();
   expect(sendAgain).toHaveBeenCalledTimes(2);
   expect(port).toHaveBeenCalledOnce();
+});
+
+it("requires the model control to resolve provider and model, and revokes readiness after edits", async () => {
+  const port = vi.fn(async () => ({ notes: [] }));
+  const types: RegisteredAgentType[] = [
+    {
+      ...type,
+      createModelReportsReadiness: true,
+      CreateModel: ({ config, onChange, onReadyChange }) => {
+        const values = config as { provider: string; model: string };
+        const ready = !!values.provider?.trim() && !!values.model?.trim();
+        useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
+        return (
+          <>
+            <input
+              aria-label="Provider"
+              value={values.provider ?? ""}
+              onChange={(event) =>
+                onChange({ ...values, provider: event.target.value })
+              }
+            />
+            <input
+              aria-label="Model"
+              value={values.model}
+              onChange={(event) =>
+                onChange({ ...values, model: event.target.value })
+              }
+            />
+          </>
+        );
+      },
+    },
+  ];
+  const snapshot = {};
+  const agents = {
+    types: () => types,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    port,
+  } as unknown as Agents;
+  render(
+    <AgentConnectionForm
+      agents={agents}
+      candidate={{ ...candidate, connection: { runtime: "goose" } }}
+      scope="scope"
+    />,
+  );
+  const user = userEvent.setup();
+  const connect = screen.getByRole("button", { name: "Connect" });
+  expect(connect).toBeDisabled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Provider" }),
+    "anthropic",
+  );
+  expect(connect).toBeDisabled();
+  await user.click(connect);
+  expect(port).not.toHaveBeenCalled();
+  await user.type(screen.getByRole("textbox", { name: "Model" }), "model-a");
+  expect(connect).toBeEnabled();
+  await user.clear(screen.getByRole("textbox", { name: "Provider" }));
+  expect(connect).toBeDisabled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Provider" }),
+    "anthropic",
+  );
+  await user.click(connect);
+  expect(port).toHaveBeenCalledWith(
+    expect.objectContaining({
+      config: expect.objectContaining({
+        provider: "anthropic",
+        model: "model-a",
+      }),
+    }),
+  );
+});
+
+it("offers another harness when the saved plugin cannot report model readiness", async () => {
+  const unsupported = {
+    ...type,
+    CreateModel: () => <span>Old plugin model</span>,
+  };
+  const replacement = {
+    ...type,
+    key: "replacement",
+    title: "Replacement",
+    importShared: () => undefined,
+  };
+  const snapshot = {};
+  const port = vi.fn(async () => ({ notes: [] }));
+  const types = [unsupported, replacement];
+  const agents = {
+    types: () => types,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    port,
+  } as unknown as Agents;
+  render(
+    <AgentConnectionForm agents={agents} candidate={candidate} scope="scope" />,
+  );
+  expect(screen.getByText(/Choose a harness to continue/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+  expect(screen.queryByText("Old plugin model")).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Replacement" }));
+  expect(
+    screen.queryByText(/Choose a harness to continue/),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Connect" }));
+  await waitFor(() =>
+    expect(port).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "replacement" }),
+    ),
+  );
 });

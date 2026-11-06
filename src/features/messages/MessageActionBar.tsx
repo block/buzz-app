@@ -16,6 +16,7 @@ import {
   CopyIcon,
   DotsThreeIcon,
   LinkIcon,
+  ForwardIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -48,10 +49,12 @@ type Props = {
   menuTriggerRef?: Ref<HTMLButtonElement>;
   onSendToChannel?: (() => void) | undefined;
   onReply?: (() => void) | undefined;
+  onForward?: (() => void) | undefined;
   replyDisabled?: boolean | undefined;
   link?: string | undefined;
   copyText(): string;
   quickControls?: ReactNode;
+  toolbarItems?: ReactNode;
   /** Menu items rendered above the built-in actions. */
   leadingItems?: ReactNode;
   overflowItems?: ReactNode;
@@ -90,10 +93,12 @@ function MessageActionBarControls({
   children,
   onSendToChannel,
   onReply,
+  onForward,
   replyDisabled,
   link,
   copyText,
   quickControls,
+  toolbarItems,
   leadingItems,
   overflowItems,
   messageId,
@@ -224,6 +229,21 @@ function MessageActionBarControls({
           </MenuIcon>
           Copy link
         </MenuItem>
+        {onForward && (
+          <MenuItem
+            disabled={!link}
+            title={!link ? "Message link unavailable" : undefined}
+            onClick={() => {
+              setHandingOffFocus(true);
+              afterClose.current = onForward;
+            }}
+          >
+            <MenuIcon>
+              <ForwardIcon />
+            </MenuIcon>
+            Forward message
+          </MenuItem>
+        )}
         {overflowItems}
       </AfterMenuClose.Provider>
     </MenuPopup>
@@ -298,6 +318,7 @@ function MessageActionBarControls({
             aria-label="Message actions"
           >
             {quickControls}
+            {toolbarItems}
             {onReply && (
               <IconButton
                 hint={replyDisabled ? "helpful" : "familiar"}
@@ -325,6 +346,20 @@ function MessageActionBarControls({
                 if (link) void copy(() => link, "Link");
               }}
             />
+            {onForward && (
+              <IconButton
+                hint={link ? "familiar" : "helpful"}
+                aria-label="Forward message"
+                title={link ? "Forward message" : "Message link unavailable"}
+                size="sm"
+                disabled={!link}
+                icon={<ForwardIcon />}
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onForward();
+                }}
+              />
+            )}
             <MenuRoot
               open={open}
               onOpenChange={(next, details) => {

@@ -19,6 +19,7 @@ import {
   useProfileGeneration,
 } from "../../features/relay/react";
 import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
+import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { canMessageAgent } from "../../features/agents/choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
@@ -47,6 +48,7 @@ import type {
 } from "./SearchChoices";
 import { type SearchChip, SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
+import { useUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import {
   noSearchUsage,
   readSearchUsage,
@@ -86,6 +88,7 @@ import {
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useVerifiedNames } from "../../features/profiles/useVerifiedNames";
+import { verifiedLabel } from "../../features/profiles/name-preference";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
 
 function conversationName(
@@ -108,8 +111,16 @@ function conversationName(
   );
 }
 
+const noMutes: readonly string[] = [];
+/** Confirmed mutes only: optimistic menu intents do not quiet unread. */
+const confirmedMutes = (
+  snapshot: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
+) => (snapshot.cached ? noMutes : (snapshot.data?.muted ?? noMutes));
+
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
+/** The most unread conversations an empty search leads with. */
+const UNREAD_ROWS = 6;
 const noMembers: readonly string[] = [];
 
 /** "Search in this conversation" narrows the search and "Show more messages"
@@ -119,10 +130,18 @@ const isSearchAction = (key: string) =>
 
 function useDelayedSearch(pending: boolean) {
   const [slow, setSlow] = useState(false);
+  const shown = useRef(false);
   useEffect(() => {
-    setSlow(false);
+    // Even a no-op set re-renders, and re-ranks, the results on every key.
+    if (shown.current) {
+      shown.current = false;
+      setSlow(false);
+    }
     if (!pending) return;
-    const timer = setTimeout(() => setSlow(true), 1000);
+    const timer = setTimeout(() => {
+      shown.current = true;
+      setSlow(true);
+    }, 1000);
     return () => clearTimeout(timer);
   }, [pending]);
   return pending && slow;
@@ -819,7 +838,7 @@ export function SearchResults({
       sources.set(
         person.pubkey,
         found
-          ? { ...source, name: found.displayName, username: found.username }
+          ? { ...source, name: verifiedLabel(found), username: found.username }
           : source,
       );
     }
@@ -898,6 +917,12 @@ export function SearchResults({
       });
     }
   }
+  // Several passes below rank the same names; rank each once per render.
+  const ranks = new Map<string, MatchRank | undefined>();
+  const rankName = (label: string) => {
+    if (!ranks.has(label)) ranks.set(label, matchRank(label, needle));
+    return ranks.get(label);
+  };
   // What the viewer chose before for this typed text. Only candidates that
   // match count, so a stale choice cannot add a row.
   const picked = usage.pick(
@@ -906,7 +931,7 @@ export function SearchResults({
       ...channels
         .filter(
           ({ id }) =>
-            parsed.text && matchRank(names.get(id) ?? "", needle) !== undefined,
+            parsed.text && rankName(names.get(id) ?? "") !== undefined,
         )
         .map(({ id }) => `channel:${id}`),
       ...publicChannels.channels.map(({ id }) => `channel:${id}`),
@@ -919,7 +944,7 @@ export function SearchResults({
   // The shared search order, with archived channels half a step behind live
   // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
-    const rank = matchRank(label, needle) ?? MatchRank.inOrder + 1;
+    const rank = rankName(label) ?? MatchRank.inOrder + 1;
     return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
   /** Whether a search order is an exact name, live (-2) or archived (-1.5). */
@@ -940,7 +965,7 @@ export function SearchResults({
       (channel) =>
         parsed.text &&
         !sidebarHidden(channel) &&
-        matchRank(names.get(channel.id) ?? "", needle) !== undefined,
+        rankName(names.get(channel.id) ?? "") !== undefined,
     ),
     channelRank,
   );
@@ -1243,7 +1268,7 @@ export function SearchResults({
     .filter(({ person }) => person.agent)
     .slice(0, PERSON_ROWS)
     .map(personDestination);
-  const recent: SearchDestination[] = channels
+  const suggestions = channels
     .filter(
       (channel) =>
         (!channel.readOnly || channel.viewerRole === "guest") &&
@@ -1254,12 +1279,37 @@ export function SearchResults({
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
         (a.lastActivityAt ?? a.updatedAt ?? 0),
-    )
+    );
+  // Other unread conversations lead an empty search, so Enter opens the
+  // latest, unless turned off. Muted ones stay quiet, as in the app's unread
+  // indicator.
+  const unreadFirst = useUnreadFirstPreference().enabled;
+  const unreadIds = useUnreadChannelIds(
+    session.unread,
+    JSON.stringify(suggestions.map(({ id }) => id)),
+  );
+  const muted = useSyncExternalStore(
+    session.sidebarPreferences.subscribe,
+    () => confirmedMutes(session.sidebarPreferences.snapshot()),
+    () => confirmedMutes(session.sidebarPreferences.snapshot()),
+  );
+  const isUnread = ({ id }: ChannelSummary) =>
+    unreadFirst &&
+    id !== currentChannelId &&
+    unreadIds.has(id) &&
+    !muted.includes(id);
+  const suggestion = (channel: ChannelSummary): SearchDestination => ({
+    ...conversationDestination(channel),
+    ...(channel.preview ? { detail: channel.preview } : {}),
+  });
+  const unread = suggestions
+    .filter(isUnread)
+    .slice(0, UNREAD_ROWS)
+    .map(suggestion);
+  const recent = suggestions
+    .filter((channel) => !isUnread(channel))
     .slice(0, 4)
-    .map((channel) => ({
-      ...conversationDestination(channel),
-      ...(channel.preview ? { detail: channel.preview } : {}),
-    }));
+    .map(suggestion);
   const currentChannel = currentChannelId
     ? channels.find((channel) => channel.id === currentChannelId)
     : undefined;
@@ -1411,17 +1461,24 @@ export function SearchResults({
             ]
           : !query.trim()
             ? [
+                ...(unread.length
+                  ? [{ label: "Unread", destinations: unread }]
+                  : []),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),
-                {
-                  label: "Recent activity",
-                  destinations: recent,
-                  empty:
-                    list.status === "loading"
-                      ? "Loading recent conversations…"
-                      : "No recent activity yet.",
-                },
+                ...(recent.length || !unread.length
+                  ? [
+                      {
+                        label: "Recent activity",
+                        destinations: recent,
+                        empty:
+                          list.status === "loading"
+                            ? "Loading recent conversations…"
+                            : "No recent activity yet.",
+                      },
+                    ]
+                  : []),
               ]
             : [
                 // Named destinations lead, so typed text selects one first.
@@ -1599,6 +1656,7 @@ export function SearchResults({
       }
       groups={groups}
       open={open}
+      highlightEmpty={!scopedChannelId && !query.trim() && unread.length > 0}
       // Enter before any row, or on search actions alone, waits for a
       // channel or person row, or for the lookups to settle, rather than
       // opening a message that lands first. A cold joined list has not yet

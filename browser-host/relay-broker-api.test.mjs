@@ -1033,6 +1033,26 @@ test("media proxy rejects malformed ranges before upstream I/O", async () => {
   }
 });
 
+test("media proxy falls back to the JPEG thumbnail an older relay has", async () => {
+  const webp = `${fixtureRelayUrl}/media/${blob}.thumb.webp`;
+  const jpeg = `${fixtureRelayUrl}/media/${blob}.thumb.jpg`;
+  const h = await harness((call) =>
+    call.url.endsWith(".thumb.webp")
+      ? new Response("missing", { status: 404 })
+      : new Response("jpeg", { headers: { "Content-Type": "image/jpeg" } }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(webp)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("jpeg");
+    expect(h.calls.map((call) => call.url)).toEqual([webp, jpeg]);
+  } finally {
+    await h.close();
+  }
+});
+
 test("media proxy accepts only the media URLs the native proxy accepts", async () => {
   const relayHost = new URL(fixtureRelayUrl).host;
   const scheme = new URL(fixtureRelayUrl).protocol;
@@ -1051,6 +1071,7 @@ test("media proxy accepts only the media URLs the native proxy accepts", async (
     `${fixtureRelayUrl}/media/${blob}.PNG`,
     `${fixtureRelayUrl}/media/${blob}.toolongext`,
     `${fixtureRelayUrl}/media/${blob}.tar.gz`,
+    `${fixtureRelayUrl}/media/${blob}.thumb.png`,
     `${fixtureRelayUrl}/media/${blob}/nested.png`,
     `${fixtureRelayUrl}/other/${blob}.png`,
   ];
@@ -1058,6 +1079,7 @@ test("media proxy accepts only the media URLs the native proxy accepts", async (
     `${fixtureRelayUrl}/media/${blob}`,
     still,
     `${fixtureRelayUrl}/media/${blob}.thumb.jpg`,
+    `${fixtureRelayUrl}/media/${blob}.thumb.webp`,
   ];
   const h = await harness(
     () => new Response("ok", { headers: { "Content-Type": "image/png" } }),
@@ -1492,6 +1514,7 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
       tags: [
         ["h", "c"],
         ["e", "a".repeat(64)],
+        ["p", "b".repeat(64)],
         ["emoji", "party", "https://a.test/party.png"],
       ],
     };

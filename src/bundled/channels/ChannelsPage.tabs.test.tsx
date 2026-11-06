@@ -51,6 +51,8 @@ import type { BrowserPlatform } from "../../features/browser/platform";
 composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
+const visitSnapshot = { entry: { id: "visit" }, attempt: {} };
+const threadVisitSnapshot = { entry: { id: "thread-visit" }, attempt: {} };
 beforeEach(() => {
   // jsdom has no layout/ResizeObserver. Only geometry is substituted; the page,
   // composer, session, tab store and menu interaction are production owners.
@@ -221,6 +223,7 @@ async function page(
         },
         resolve: () => true,
         complete: () => true,
+        passThrough: () => () => {},
       }
     : undefined;
   render(
@@ -264,7 +267,7 @@ it.each(["side", "main"] as const)(
       "stream",
       {
         open,
-        snapshot: () => ({ entry: { id: "thread-visit" }, attempt: {} }),
+        snapshot: () => threadVisitSnapshot,
       } as unknown as Navigation,
       true,
     );
@@ -382,6 +385,7 @@ function workspace(
           signal: new AbortController().signal,
           position: () => undefined,
           savePosition() {},
+          passThrough: () => () => {},
           forSession() {
             return this;
           },
@@ -564,6 +568,7 @@ it("moving the last side app adopts its guest before the dock exit finishes", as
     available: true,
     attach: attached,
     detach: detached,
+    openExternal: vi.fn(async () => {}),
     setBounds: async () => {},
     navigate: async (id, url) => {
       pages.set(id, url);
@@ -764,17 +769,19 @@ it.each(["stream", "solo"] as const)(
       }),
     ).not.toBeInTheDocument();
     if (type === "stream")
-      expect(screen.getByRole("tab", { name: "Alpha" })).toHaveFocus();
+      expect(
+        screen.getByRole("button", { name: "Manage members of Alpha" }),
+      ).toHaveFocus();
     else
       expect(screen.getByRole("region", { name: "Chat Alpha" })).toHaveFocus();
   },
 );
 
-it("an empty tab menu returns keyboard focus to its surviving tab", async () => {
+it("an empty tab menu returns keyboard focus to the conversation identity", async () => {
   const h = await page();
-  const channel = within(
-    screen.getByRole("tablist", { name: "Channel tabs" }),
-  ).getByRole("tab", { name: "Alpha" });
+  const channel = screen.getByRole("button", {
+    name: "Manage members of Alpha",
+  });
   channel.focus();
   await h.user.keyboard("{Shift>}{F10}{/Shift}");
   const action = await screen.findByRole("menuitem", {
@@ -782,16 +789,18 @@ it("an empty tab menu returns keyboard focus to its surviving tab", async () => 
   });
   action.focus();
   await h.user.keyboard("{Enter}");
-  expect(await screen.findByRole("tab", { name: "Alpha" })).toHaveFocus();
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(
+    await screen.findByRole("button", { name: "Manage members of Alpha" }),
+  ).toHaveFocus();
+  expect(screen.queryAllByRole("tab")).toHaveLength(0);
 });
 
-it("the main tab's menu clears the real page's side tabs too", async () => {
+it("the conversation identity menu clears the page's side tabs too", async () => {
   const h = await page();
   await h.open();
-  const channel = within(
-    screen.getByRole("tablist", { name: "Channel tabs" }),
-  ).getByRole("tab", { name: "Alpha" });
+  const channel = screen.getByRole("button", {
+    name: "Manage members of Alpha",
+  });
   await h.user.pointer({ target: channel, keys: "[MouseRight]" });
   await h.user.click(
     await screen.findByRole("menuitem", { name: "Close all tabs" }),
@@ -813,8 +822,10 @@ it("close-all works while a main-pane thread covers the channel conversation", a
     ),
   ).toHaveLength(2);
   expect(closeTabs()).toBe(true);
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
-  expect(screen.getByRole("tab", { name: "Alpha" })).toHaveFocus();
+  expect(screen.queryAllByRole("tab")).toHaveLength(0);
+  expect(
+    screen.getByRole("button", { name: "Manage members of Alpha" }),
+  ).toHaveFocus();
 });
 
 it.each([false, true])(
@@ -872,7 +883,7 @@ it.each(["side", "main"] as const)(
     await h.user.click(
       await screen.findByRole("menuitem", { name: "Close other tabs" }),
     );
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getAllByRole("tab")).toHaveLength(kept === "side" ? 1 : 2);
     expect(target).toBeInTheDocument();
     expect(target).toHaveAttribute("aria-selected", "true");
     expect(target).toHaveFocus();
@@ -883,7 +894,7 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {
     open,
-    snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+    snapshot: () => visitSnapshot,
   } as unknown as Navigation);
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   act(() =>
@@ -958,7 +969,7 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
     "stream",
     {
       open: vi.fn(async () => ({ status: "opened" as const })),
-      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+      snapshot: () => visitSnapshot,
     } as unknown as Navigation,
     false,
     undefined,
@@ -1053,7 +1064,7 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
     "stream",
     {
       open: vi.fn(async () => ({ status: "opened" as const })),
-      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+      snapshot: () => visitSnapshot,
     } as unknown as Navigation,
     false,
     undefined,
@@ -1108,7 +1119,7 @@ it("opens another conversation's tab in its channel, but not the current channel
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {
     open,
-    snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+    snapshot: () => visitSnapshot,
   } as unknown as Navigation);
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "d".repeat(64);

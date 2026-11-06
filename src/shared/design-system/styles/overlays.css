@@ -239,6 +239,9 @@
     padding: var(--space-1);
     margin: calc(-1 * var(--space-1));
   }
+  .buzz-dialog-action-row {
+    display: contents;
+  }
   /* This gutter stays outside the scrollport when long content is clipped. */
   :where(.buzz-dialog-body) + .buzz-dialog-actions {
     padding-top: calc(var(--space-4) + var(--space-1));
@@ -415,6 +418,15 @@
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
   }
+  /* A hint over a top-layer surface keeps Base UI's geometry, not popover UA chrome. */
+  .buzz-tooltip-positioner[popover] {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+    color: inherit;
+  }
   .buzz-tooltip {
     @apply text-caption;
     max-width: min(24rem, calc(100vw - 2rem), var(--available-width, 100vw));
@@ -458,6 +470,7 @@
   .buzz-tooltip[data-ending-style] {
     transition-duration: var(--duration-fast);
   }
+  .buzz-tooltip[data-hint="dock"],
   .buzz-tooltip[data-instant],
   html[data-keyboard-navigation] .buzz-tooltip {
     transition: none;
@@ -531,7 +544,7 @@
     .buzz-dialog {
       --dialog-padding: var(--space-4);
     }
-    .buzz-dialog-actions > .buzz-button {
+    :is(.buzz-dialog-actions, .buzz-dialog-action-row) > .buzz-button {
       flex: 1 0 auto;
     }
   }
@@ -730,12 +743,38 @@ html[data-keyboard-navigation]
       padding-bottom: var(--space-6);
     }
 
+    > .buzz-dialog-header:has(
+        + .buzz-dialog-content[data-header-gap="compact"]
+      ) {
+      padding-bottom: 0;
+    }
+
     > .buzz-dialog-actions {
-      /* Preserve access to oversized actions at narrow widths/enlarged text. */
-      overflow-x: auto;
+      /* Only the gradient gutter passes input through to the form beneath it. */
+      display: block;
+      pointer-events: none;
+      padding-inline: 0;
       bottom: calc(-1 * var(--dialog-padding));
       margin-bottom: calc(-1 * var(--dialog-padding));
-      padding-bottom: var(--dialog-padding);
+      padding-bottom: 0;
+
+      @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+        /* ScrollEdgeMaterial is fully opaque, including its former fade gutter. */
+        pointer-events: auto;
+      }
+
+      > .buzz-dialog-action-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: safe end;
+        gap: var(--space-3);
+        pointer-events: auto;
+        /* Keep ring space, the opaque bottom band and overflow input in this row. */
+        overflow-x: auto;
+        margin-top: calc(-1 * var(--space-1));
+        padding: var(--space-1) var(--dialog-padding) var(--dialog-padding);
+      }
     }
   }
 }

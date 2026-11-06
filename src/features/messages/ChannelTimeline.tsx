@@ -39,6 +39,7 @@ import {
   continuesMessageGroup,
   publicMessageNeighbor,
 } from "./message-grouping";
+import { calendarDay } from "../../shared/datetime";
 import type {
   Attachment,
   ChannelMessage,
@@ -125,6 +126,7 @@ const visitBoundaries = new WeakMap<
   { boundary: NewMessageBoundary; baseline: NewMessageBoundaryBaseline }
 >();
 const unknownUnreadSync = Object.freeze({ completeness: "unknown" as const });
+const TIMELINE_PLACE = "timeline";
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -249,14 +251,23 @@ function Timeline({
       : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
+  // The place a reveal left: for its visit, with the exact follow state; for
+  // the channel, with the 80 px rule every other place is saved with. The
+  // channel's applies until a newer place replaces the reveal's.
+  const revealedPlace = useRef<{
+    visit: ReadingPosition;
+    channel: ReadingPosition;
+  }>(undefined);
   // Reload and quit never unmount: also save where scrolling settles. Only a
   // changed place is written; a following reader's own end scrolls are not.
   const written = useRef<string | undefined>(undefined);
   const savePosition = useCallback(() => {
+    const position =
+      revealedPlace.current?.visit === savedPosition.current
+        ? revealedPlace.current.channel
+        : savedPosition.current;
     // A bottom place restores at the latest message; its row is noise.
-    const place = savedPosition.current?.bottom
-      ? { bottom: true }
-      : savedPosition.current;
+    const place = position?.bottom ? { bottom: true } : position;
     const revision = JSON.stringify(place);
     if (transient || revision === written.current) return;
     if (writeView(scope, `scroll:${channelId}`, place))
@@ -567,9 +578,17 @@ function Timeline({
     undefined,
     false,
   );
+  // Back/Forward to a link's visit returns to where the reader left it instead
+  // of replaying the link, unless that place can no longer be shown.
+  const [lostPlace, setLostPlace] = useState<AbortSignal>();
+  const returning =
+    !inlineTarget &&
+    !!navigation?.traversal &&
+    lostPlace !== navigation.signal &&
+    navigation.position(TIMELINE_PLACE) !== undefined;
   const targetId =
     inlineTarget?.messageId ??
-    (navigation?.target.kind === "conversation"
+    (navigation?.target.kind === "conversation" && !returning
       ? navigation.target.messageId
       : undefined);
   // Activity updates rebuild the hidden-row filter without changing its
@@ -670,11 +689,9 @@ function Timeline({
       ?.querySelector<HTMLButtonElement>("button")
       ?.focus({ preventScroll: true });
   }, [rows, focusedActivityId]);
-  const contentSignature = useMemo(
-    () => geometrySignature(visibleRows, profiles, resolveName),
-    [visibleRows, profiles, resolveName],
-  );
-  const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
+  // Only read at mount and unmount, so build it on demand.
+  const signature = () =>
+    `${geometrySignature(visibleRows, profiles, resolveName)}:${JSON.stringify([...foldedActivity].sort())}`;
   // Mount the saved boundary before restoration measures its divider inset.
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
@@ -828,7 +845,7 @@ function Timeline({
         previous &&
         (upwardGesture.current ||
           (!layoutOwned &&
-            element.clientWidth === previous.width &&
+            edge.current?.clientWidth === previous.width &&
             element.clientHeight === previous.viewport &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
@@ -847,7 +864,7 @@ function Timeline({
       measuredPosition.current = {
         offset: element.scrollTop,
         height: element.scrollHeight,
-        width: element.clientWidth,
+        width: edge.current?.clientWidth ?? 0,
         viewport: element.clientHeight,
       };
     },
@@ -926,6 +943,19 @@ function Timeline({
   // Positioning waits for the exact reveal, then must run again: a reveal that
   // leaves the reader at the bottom keeps following late row measurement.
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
+  // The row the last reveal focused; a return may take focus back from it.
+  const revealedRow = useRef<string | undefined>(undefined);
+  // The visit last revealed or returned to. A relay rebind brings it back with
+  // a new signal, and a thread visit leaves it shown; neither moves the reader.
+  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
+    undefined,
+  );
+  // The attempt that presented it; leaving records that visit's place.
+  const [presented, setPresented] = useState<AbortSignal>();
+  const present = useCallback((visit: PageNavigation) => {
+    presentedVisit.current = { entryId: visit.entryId, signal: visit.signal };
+    setPresented(visit.signal);
+  }, []);
   const completeTarget = useCallback(() => {
     const element = scroller.current;
     // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
@@ -935,15 +965,27 @@ function Timeline({
       element.scrollHeight - element.clientHeight - element.scrollTop > 1
     )
       follow.current = false;
+    // The reveal's placement is the reader's place even when it moved nothing
+    // and so no scroll event records it. Its visit keeps the follow state, so
+    // Back doesn't re-align the row; the channel's place keeps the 80 px rule.
+    if (element) {
+      const channel = positionAt(element);
+      savedPosition.current = { ...channel, bottom: follow.current };
+      revealedPlace.current = { visit: savedPosition.current, channel };
+    }
+    revealedRow.current = targetId;
+    if (navigation && targetSignal === navigation.signal) present(navigation);
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetSignal]);
+  }, [navigation, targetId, targetSignal, present]);
+  // A covering Members dialog owns focus.
+  const focusesTarget = !(
+    navigation?.target.kind === "conversation" &&
+    navigation.target.panel === "members"
+  );
   useMessageReveal({
     scroller,
-    focus: !(
-      navigation?.target.kind === "conversation" &&
-      navigation.target.panel === "members"
-    ),
+    focus: focusesTarget,
     settled,
     messageId: targetId,
     signal: targetSignal,
@@ -953,6 +995,88 @@ function Timeline({
     complete: completeTarget,
     hold: holdTarget,
   });
+  // A return restores its visit's place the way an opening restores the
+  // channel's, whether the timeline mounts for it or showed another visit. The
+  // visit still presented only completes. A place whose row isn't loaded opens
+  // as the link first did.
+  useLayoutEffect(() => {
+    if (!navigation || navigation.signal.aborted) return;
+    if (presentedVisit.current?.entryId !== navigation.entryId)
+      presentedVisit.current = undefined;
+    const prior = presentedVisit.current;
+    if (!returning || prior?.signal === navigation.signal) return;
+    if (prior) {
+      present(navigation);
+      navigation.complete({ status: "opened" });
+      return;
+    }
+    const place = navigation.position(TIMELINE_PLACE) as ReadingPosition;
+    const id = place.anchor?.id ?? "";
+    if (
+      place.anchor &&
+      !place.bottom &&
+      renderedRowIndex(rows, visibleRows, containedOwners.get(id) ?? id) < 0
+    ) {
+      setLostPlace(navigation.signal);
+      return;
+    }
+    present(navigation);
+    // A place inside agent activity opens its group, as an opening's place does.
+    const steps =
+      place.anchor && !place.bottom
+        ? activity.find((group) => group.ids.includes(id))?.ids
+        : undefined;
+    if (steps)
+      setExpandedActivity((expanded) => new Set([...expanded, ...steps]));
+    intent.current++;
+    savedPosition.current = place;
+    follow.current = place.bottom;
+    restoredAnchor.current = undefined;
+    measuredPosition.current = null;
+    userScrolled.current = false;
+    upwardGesture.current = false;
+    settled.current = false;
+    navigation.complete({ status: "opened" });
+    // Focus left on the page, or on the row the last reveal focused, moves to
+    // the restored reading. Focus placed anywhere else stays.
+    const element = scroller.current;
+    const focused = document.activeElement;
+    if (
+      element &&
+      focusesTarget &&
+      navigation.focus !== "preserve" &&
+      (!focused ||
+        focused === document.body ||
+        (focused instanceof HTMLElement &&
+          revealedRow.current !== undefined &&
+          element.contains(focused) &&
+          focused.dataset.messageId === revealedRow.current))
+    )
+      element.focus({ preventScroll: true });
+  }, [
+    navigation,
+    returning,
+    rows,
+    visibleRows,
+    containedOwners,
+    activity,
+    focusesTarget,
+    present,
+  ]);
+  // Leaving a link's visit once it was presented, revealed or returned to, by
+  // navigating on or unmounting, records where the reader was for Back/Forward.
+  useLayoutEffect(() => {
+    if (
+      navigation?.target.kind !== "conversation" ||
+      !navigation.target.messageId ||
+      presented !== navigation.signal
+    )
+      return;
+    return () => {
+      if (savedPosition.current)
+        navigation.savePosition(TIMELINE_PLACE, savedPosition.current);
+    };
+  }, [navigation, presented]);
   // A pending saved row is the reader's place: following the latest message
   // until it loads is not catching up past it.
   const restoring = useCallback(
@@ -1193,16 +1317,18 @@ function Timeline({
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
-    const measured = element.clientWidth;
+    // The observed spacer shares the message column's capped width. Using the
+    // outer scrollport misses rewraps caused by the Appearance preference.
+    const measured = edge.current?.clientWidth ?? 0;
     initialCache.current = geometry.get(
       channelId,
-      latest.current.signature,
+      latest.current.signature(),
       measured,
     );
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
       const next = {
-        width: element.clientWidth,
+        width: edge.current?.clientWidth ?? 0,
         height: element.clientHeight,
         edgeHeight: edge.current?.getBoundingClientRect().height ?? 0,
       };
@@ -1244,7 +1370,7 @@ function Timeline({
       if (handle.current)
         geometry.set(
           channelId,
-          latest.current.signature,
+          latest.current.signature(),
           latest.current.width,
           handle.current.cache,
         );
@@ -1621,7 +1747,7 @@ function Timeline({
         const element = event.currentTarget;
         if (
           settled.current &&
-          element.clientWidth === size.width &&
+          edge.current?.clientWidth === size.width &&
           element.clientHeight === size.height
         )
           recordPosition(
@@ -1656,7 +1782,7 @@ function Timeline({
         if (
           v &&
           settled.current &&
-          element.clientWidth === size.width &&
+          edge.current?.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
           recordPosition(
@@ -1719,7 +1845,7 @@ function Timeline({
             if (
               element &&
               settled.current &&
-              element.clientWidth === size.width &&
+              edge.current?.clientWidth === size.width &&
               element.clientHeight === size.height &&
               !follow.current &&
               !restoredAnchor.current &&
@@ -1748,10 +1874,8 @@ function Timeline({
             const day =
               index === 0
                 ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+                : calendarDay(rows[index - 1]?.createdAt ?? 0) !==
+                  calendarDay(row.createdAt);
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
@@ -1821,10 +1945,8 @@ function Timeline({
                         const before = rows[first - 1];
                         return (
                           (!before ||
-                            new Date(before.createdAt * 1000).toDateString() !==
-                              new Date(
-                                row.createdAt * 1000,
-                              ).toDateString()) && (
+                            calendarDay(before.createdAt) !==
+                              calendarDay(row.createdAt)) && (
                             <DayDivider createdAt={row.createdAt} />
                           )
                         );

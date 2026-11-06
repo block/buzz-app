@@ -415,6 +415,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--affordance-reaction-self",
+        variable: "--affordance-reaction-self",
+        pointsAt: "accent step 3",
+        use: "A reaction you made, on received bubbles and the panel, paired with --border-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "--affordance-reaction-self-own",
+        variable: "--affordance-reaction-self-own",
+        pointsAt:
+          "affordance-reaction-self; at Buzzin’, the accent's strong overlay on its fill",
+        use: "A reaction you made inside your own bubble, paired with --border-reaction-self-own.",
+        status: "core",
+      },
+      {
         token: "bg-surface-message-highlight",
         variable: "--surface-message-highlight",
         pointsAt: "accent step 3",
@@ -892,6 +907,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--border-accent",
         pointsAt: "border-focus (neutral compatibility role)",
         use: "An identity accent boundary.",
+        status: "core",
+      },
+      {
+        token: "border-reaction-self",
+        variable: "--border-reaction-self",
+        pointsAt: "accent-link",
+        use: "Ring around a reaction you made, on received bubbles and the panel. It clears 3:1 on the tint and its host.",
+        status: "core",
+      },
+      {
+        token: "border-reaction-self-own",
+        variable: "--border-reaction-self-own",
+        pointsAt: "border-reaction-self; at Buzzin’, text-message-own",
+        use: "Ring around a reaction you made inside your own bubble, where the accent ring would vanish at Buzzin’.",
         status: "core",
       },
     ],

@@ -2580,6 +2580,79 @@ it("exposes immutable verified member facts through the shared session without I
   stop();
 });
 
+it("coalesces live Inbox notifications per window while read marks notify synchronously", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const h = setup();
+    h.grant("room");
+    const first = message(h.alice, "room", "Mention 0", 20, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([first]);
+    const unread = h.session.unread;
+    const listener = vi.fn();
+    const stop = unread.subscribeInbox(listener);
+    const mentions = Array.from({ length: 5 }, (_, i) =>
+      message(h.alice, "room", `Mention ${i + 1}`, 21 + i, [
+        ["p", h.viewer.pubkey],
+      ]),
+    );
+    for (const mention of mentions) h.emit([mention]);
+    expect(listener).not.toHaveBeenCalled();
+    // A direct read is fresh immediately and must not swallow the notification.
+    expect(unread.inbox().items).toHaveLength(6);
+    vi.advanceTimersByTime(199);
+    expect(listener).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1000);
+    expect(listener).toHaveBeenCalledTimes(1);
+    // A read mark settles the Inbox now and supersedes a pending window.
+    h.emit([
+      message(h.alice, "room", "Mention 6", 30, [["p", h.viewer.pubkey]]),
+    ]);
+    const item = unread.inbox().items[0];
+    assert(item);
+    await unread.markThrough(item.target, item.messageId);
+    const settled = listener.mock.calls.length;
+    expect(settled).toBeGreaterThan(1);
+    vi.advanceTimersByTime(1000);
+    expect(listener).toHaveBeenCalledTimes(settled);
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("a synchronous publish delivers a pending Inbox window after a direct read", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const h = setup();
+    h.grant("room");
+    h.grant("other");
+    const chatter = message(h.alice, "other", "Chatter", 20);
+    h.emit([chatter]);
+    const unread = h.session.unread;
+    const listener = vi.fn();
+    const stop = unread.subscribeInbox(listener);
+    const before = unread.inbox().items.length;
+    h.emit([message(h.alice, "room", "Mention", 21, [["p", h.viewer.pubkey]])]);
+    expect(listener).not.toHaveBeenCalled();
+    expect(unread.inbox().items).toHaveLength(before + 1);
+    // This publish leaves the Inbox as the direct read saw it, but listeners
+    // have not seen the mention yet.
+    await unread.markThrough(
+      { kind: "channel", channelId: "other" },
+      chatter.id,
+    );
+    expect(unread.inbox().items).toHaveLength(before + 1);
+    expect(listener).toHaveBeenCalled();
+    stop();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("inbox projects only matching mention evidence when a followed thread has newer unread progress", async () => {
   const h = setup();
   h.grant("room");
@@ -4099,4 +4172,92 @@ it("catch-up applies to agent-audience rows, and unread intent cannot make them 
   ).toMatchObject({ observedCount: 0, attentionCount: 0 });
   expect(unread.activity("room").items).toHaveLength(0);
   expect(unread.inbox().items).toHaveLength(0);
+});
+
+it("live content events extend the evidence index and match a full rebuild", () => {
+  const run = (live: boolean) => {
+    const h = setup();
+    h.grant("room");
+    h.grant("other");
+    const { alice, viewer } = h;
+    const mention = [["p", viewer.pubkey]];
+    const root = message(alice, "room", "root", 11);
+    const old = [1, 2].map((i) =>
+      message(alice, "other", `old ${i}`, 20 + i, mention),
+    );
+    // A rebuild of the index reads every retained event, including these
+    // messages of another channel.
+    let tagReads = 0;
+    for (const event of old) {
+      const tags = event.tags;
+      Object.defineProperty(event, "tags", {
+        get() {
+          tagReads++;
+          return tags;
+        },
+      });
+    }
+    const replyTo = (id: string) => [["e", id, "", "reply"]];
+    const m1 = message(alice, "room", "live one", 40, mention);
+    const quiet = message(alice, "room", "quiet reply", 41, replyTo(root.id));
+    const own = message(viewer, "room", "own reply", 42, replyTo(root.id));
+    const answer = message(alice, "room", "answer", 43, replyTo(root.id));
+    // A deletion of a live message, and a reply whose parent arrives after it.
+    const late = message(alice, "room", "late parent", 46);
+    const child = message(alice, "room", "child", 45, [
+      ...mention,
+      ...replyTo(late.id),
+    ]);
+    const removal = signed(alice, {
+      kind: 5,
+      content: "",
+      created_at: 47,
+      tags: [
+        ["h", "room"],
+        ["e", m1.id],
+        ["k", "9"],
+      ],
+    });
+    const last = message(alice, "room", "last", 48, mention);
+    const sequence = [m1, quiet, own, answer, removal, last, child, late];
+    const labels = new Map<string, string>([
+      [alice.pubkey, "alice"],
+      [viewer.pubkey, "viewer"],
+      ...[root, ...old, ...sequence].map(
+        (event, i) => [event.id, `event${i}`] as const,
+      ),
+    ]);
+    const read = () => {
+      const { unread } = h.session;
+      let text = JSON.stringify({
+        inbox: unread.inbox().items,
+        snapshot: h.snapshot(),
+        activity: unread.activity("room"),
+        attention: [root, ...sequence].map(({ id }) =>
+          unread.attention("room", id),
+        ),
+        other: unread.activity("other"),
+      });
+      for (const [id, label] of labels) text = text.split(id).join(label);
+      return text;
+    };
+    h.emit([root, ...old]);
+    read();
+    if (live) {
+      tagReads = 0;
+      h.emit([m1]);
+      h.session.unread.attention("room", m1.id);
+      // The index was extended by the new message, not rebuilt over the rest.
+      expect(tagReads).toBe(0);
+      read();
+      for (const event of sequence.slice(1)) {
+        h.emit([event]);
+        read();
+      }
+    } else {
+      h.emit(sequence);
+    }
+    return read();
+  };
+  expect(run(true)).toBe(run(false));
 });

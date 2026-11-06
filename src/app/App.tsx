@@ -20,6 +20,7 @@ import {
 import { ModalWindowDragProvider } from "../shared/design-system/ui/ModalWindowDrag";
 import { modalWindowDragHandlers } from "./shell/title-bar";
 import { isTauri } from "@tauri-apps/api/core";
+import { PairingPrompt } from "../features/credential-pairing/PairingPrompt";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { PluginUpdates } from "./PluginUpdates";
@@ -57,6 +58,7 @@ import {
 import { pagePresentation, shellPresentation } from "./shell/presentation";
 import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
+import { ShellBackdrops } from "../features/backdrops/ShellBackdrops";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
@@ -570,6 +572,11 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   return (
     <>
       <SignInEnding identity={services.federatedIdentity} />
+      {isTauri() && (
+        <PairingPrompt
+          communities={client.memberships.map((membership) => membership.id)}
+        />
+      )}
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
           creationInSidebar={!workspace.page?.sidebar}
@@ -620,6 +627,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               <PrimarySidebar
                 creationAction={creationAction}
                 federatedIdentity={services.federatedIdentity}
+                memberships={client.memberships}
                 relay={services.relay}
                 navigator={services.navigation}
                 agents={services.agents}
@@ -656,6 +664,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               launch={launcher.launch}
             />
           }
+          backdrop={<ShellBackdrops backdrops={services.backdrops} />}
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
           selected={workspace.selected}

@@ -17,6 +17,8 @@ import type {
 import { AgentSaveButton } from "./AgentSaveButton";
 import { AgentConfigHistoryRow } from "./AgentConfigHistoryRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { AgentExecutionNote } from "./AgentExecutionNote";
+import { agentExecution } from "./execution-location";
 
 export type AgentSection = Readonly<{
   /** `agent:<type tab id>`, `agent:settings`, `agent:activity`,
@@ -68,6 +70,8 @@ export function agentSections({
       </SettingsGroup>
     ) : undefined;
   const details = settingsContent ?? historyContent;
+  // Remote harnesses own their availability-dependent execution guidance.
+  const execution = type?.remote ? undefined : agentExecution(agent, type);
   const typeTabs = type?.tabs ?? [];
   const settingsTab = typeTabs.find((tab) => tab.role === "settings");
   const orderedTabs =
@@ -79,30 +83,42 @@ export function agentSections({
     label: title,
     render: () => (
       <EditorBase agents={agents} agent={agent}>
-        {(save) => (
-          <Component
-            agent={agent}
-            {...(role === "settings" && settingsSection
-              ? { settingsSection }
-              : {})}
-            {...(role === "settings" && details
-              ? { settingsContent: details }
-              : {})}
-            {...(conversation && { conversation })}
-            {...(role === "activity" &&
-              conversation &&
-              initialTranscript && { initialTranscript })}
-            {...(role === "activity" && close && { close })}
-            {...(role === "activity" &&
-              openConversation && { openConversation })}
-            save={(config) =>
-              settingsHost?.pendingSave
-                ? settingsHost.pendingSave(config)
-                : save(config)
-            }
-            {...(role === "settings" && settingsHost ? { settingsHost } : {})}
-          />
-        )}
+        {(save) => {
+          const content = (
+            <Component
+              agent={agent}
+              {...(role === "settings" && settingsSection
+                ? { settingsSection }
+                : {})}
+              {...(role === "settings" && details
+                ? { settingsContent: details }
+                : {})}
+              {...(conversation && { conversation })}
+              {...(role === "activity" &&
+                conversation &&
+                initialTranscript && { initialTranscript })}
+              {...(role === "activity" && close && { close })}
+              {...(role === "activity" &&
+                openConversation && { openConversation })}
+              save={(config) =>
+                settingsHost?.pendingSave
+                  ? settingsHost.pendingSave(config)
+                  : save(config)
+              }
+              {...(role === "settings" && settingsHost ? { settingsHost } : {})}
+            />
+          );
+          return role === "settings" &&
+            settingsSection !== "runtime" &&
+            execution === "remote" ? (
+            <div className="grid gap-4">
+              <AgentExecutionNote runtime={agent.type} />
+              {content}
+            </div>
+          ) : (
+            content
+          );
+        }}
       </EditorBase>
     ),
   }));
@@ -114,20 +130,23 @@ export function agentSections({
       value: "agent:settings",
       label: "Settings",
       render: () => (
-        <>
+        <div className="grid gap-4">
+          {execution === "remote" && (
+            <AgentExecutionNote runtime={agent.type} />
+          )}
           {settingsHost && <HostSettings host={settingsHost} />}
           {historyContent}
-        </>
+        </div>
       ),
     });
-  if (agent.place === "here")
-    for (const { key, title, component: Component, when } of agents.addedTabs())
-      if (!when || shows(when, agent, key))
-        tabs.push({
-          value: `agent:added:${key}`,
-          label: title,
-          render: () => <Component agent={agent} />,
-        });
+  // A tab for local agents only says so in its `when`.
+  for (const { key, title, component: Component, when } of agents.addedTabs())
+    if (!when || shows(when, agent, key))
+      tabs.push({
+        value: `agent:added:${key}`,
+        label: title,
+        render: () => <Component agent={agent} />,
+      });
   return [
     ...tabs,
     {

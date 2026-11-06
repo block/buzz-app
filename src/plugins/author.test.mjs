@@ -33,7 +33,7 @@ test("generated author package in a path with spaces exposes shared message fact
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability } from "@buzz/author";
+import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -174,6 +174,10 @@ export function apply(ctx: Context) {
     select: () => ({ version: 1, kind: "home" }),
     actions: [{ id: "new", label: "New", icon: createElement("span"), onSelect: () => {} }],
   };
+  const backdrops: Backdrops | undefined = ctx.reflect.get("backdrops");
+  backdrops?.register({ id: "glow", component: () => null });
+  // @ts-expect-error A backdrop must be a React component.
+  backdrops?.register({ id: "bad-glow", component: "div" });
   const sidebar: SidebarSections | undefined = ctx.reflect.get("sidebarSections");
   sidebar?.register(section);
   // @ts-expect-error Sidebar contribution versions are explicit.
@@ -238,6 +242,38 @@ import type { createServices } from "@buzz/author";
 `,
     );
     await writeFile(
+      join(dir, "plugin-status-consumer.ts"),
+      `
+import type { Context } from "@buzz/author";
+export function observePlugin(ctx: Context) {
+  const owner = ctx.pluginOwner;
+  if (!owner) return;
+  const id: string = owner.id;
+  const revision: string = owner.revision;
+  const active: boolean = ctx.pluginStatus.isActive(id, revision);
+  const stop: () => void = ctx.pluginStatus.subscribe(() => {
+    const current: boolean = ctx.pluginStatus.isActive(id, revision);
+    void current;
+  });
+  stop();
+  const settled: boolean | undefined = ctx.pluginStatus.settled?.();
+  const withoutReadiness: Context["pluginStatus"] = {
+    isActive: () => true,
+    subscribe: () => () => {},
+  };
+  void [active, settled, withoutReadiness];
+  // @ts-expect-error A revision is a string, not a generation number.
+  ctx.pluginStatus.isActive(id, 1);
+  // @ts-expect-error Subscription requires a callback.
+  ctx.pluginStatus.subscribe("changed");
+  // @ts-expect-error Readiness is optional and must be checked.
+  ctx.pluginStatus.settled();
+  // @ts-expect-error Installed ownership is readonly.
+  owner.revision = "replacement";
+}
+`,
+    );
+    await writeFile(
       join(dir, "tsconfig.json"),
       JSON.stringify({
         compilerOptions: {
@@ -252,7 +288,7 @@ import type { createServices } from "@buzz/author";
             "@buzz/author": ["./author package/types/plugins/author.d.ts"],
           },
         },
-        files: ["consumer.ts"],
+        files: ["consumer.ts", "plugin-status-consumer.ts"],
       }),
     );
     // Only generated declarations and the external consumer, never host source.

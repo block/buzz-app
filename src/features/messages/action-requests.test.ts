@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { messageActionRequests } from "./action-requests";
 
+const session = {} as import("../relay/session").RelaySession;
 const request = {
+  session,
   scope: "wss://relay:viewer",
   channelId: "channel",
   messageId: "m1",
@@ -18,16 +20,14 @@ it("is taken only by the row showing that message in that connection, once", () 
   const stop = messageActionRequests.subscribe(seen);
   messageActionRequests.request(request);
   expect(seen).toHaveBeenCalledTimes(1);
-  expect(messageActionRequests.take("other", "channel", "m1")).toBeUndefined();
-  expect(
-    messageActionRequests.take(request.scope, "channel", "m2"),
-  ).toBeUndefined();
-  expect(messageActionRequests.take(request.scope, "channel", "m1")).toEqual(
-    request,
-  );
-  expect(
-    messageActionRequests.take(request.scope, "channel", "m1"),
-  ).toBeUndefined();
+  const take = (s = session, scope = request.scope, id = "m1") =>
+    messageActionRequests.take(s, scope, "channel", id);
+  expect(take(session, "other")).toBeUndefined();
+  expect(take(session, request.scope, "m2")).toBeUndefined();
+  // Another session for the same scope is not the one the handoff came from.
+  expect(take({} as typeof session)).toBeUndefined();
+  expect(take()).toEqual(request);
+  expect(take()).toBeUndefined();
   expect(messageActionRequests.snapshot()).toBeUndefined();
   stop();
 });

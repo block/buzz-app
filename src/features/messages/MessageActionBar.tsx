@@ -58,8 +58,9 @@ type Props = {
   /** Menu items rendered above the built-in actions. */
   leadingItems?: ReactNode;
   overflowItems?: ReactNode;
-  /** Increment to open the menu from outside, as a handed-off action does. */
-  openRequest?: number | undefined;
+  /** Open the menu from outside and activate one contribution's item (by
+   * its `data-contribution` group), as a handed-off menu action does. */
+  openRequest?: { id: number; activate: number } | undefined;
 };
 
 export function MessageActionBar(props: Props) {
@@ -109,9 +110,27 @@ function MessageActionBarControls({
   openRequest,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const activate = useRef<number>(undefined);
   useEffect(() => {
-    if (openRequest) setOpen(true);
+    if (!openRequest) return;
+    activate.current = openRequest.activate;
+    setOpen(true);
   }, [openRequest]);
+  // The item is activated once the popup shows it; the contribution's own
+  // click handler runs, exactly as a chosen item's would.
+  const activateRequested = () => {
+    const key = activate.current;
+    if (key === undefined || messageId === undefined) return;
+    const item = document.querySelector<HTMLElement>(
+      `[role="menu"][data-message-id="${CSS.escape(messageId)}"] [data-contribution="${key}"] [role="menuitem"]`,
+    );
+    if (!item) return;
+    activate.current = undefined;
+    if (item.getAttribute("aria-disabled") !== "true") item.click();
+  };
+  useEffect(() => {
+    if (open) activateRequested();
+  });
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingActionBar(
@@ -267,6 +286,8 @@ function MessageActionBarControls({
     </MenuPopup>
   );
   const closed = (opened: boolean) => {
+    if (opened) activateRequested();
+    else activate.current = undefined;
     if (!opened) {
       const action = afterClose.current;
       afterClose.current = undefined;

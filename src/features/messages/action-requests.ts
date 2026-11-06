@@ -5,7 +5,12 @@
  * opens, a menu-placement action opens the message's menu with the action
  * visible. One request at a time; an unconsumed request expires.
  */
+import type { RelaySession } from "../relay/session";
+
 export type MessageActionRequest = Readonly<{
+  /** The exact session the handoff was made from: a replaced session for
+   * the same scope is another conversation and does not take it. */
+  session: RelaySession;
   scope: string;
   channelId: string;
   messageId: string;
@@ -35,10 +40,16 @@ export const messageActionRequests = {
     };
   },
   /** The row showing this message takes the request; nobody else sees it. */
-  take(scope: string, channelId: string, messageId: string) {
+  take(
+    session: RelaySession,
+    scope: string,
+    channelId: string,
+    messageId: string,
+  ) {
     const current = messageActionRequests.snapshot();
     if (
       !current ||
+      current.session !== session ||
       current.scope !== scope ||
       current.channelId !== channelId ||
       current.messageId !== messageId

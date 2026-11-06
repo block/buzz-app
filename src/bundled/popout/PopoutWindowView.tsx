@@ -183,16 +183,19 @@ export function PopoutWindowView({
         ask(() => client.markRead({ messageId: row.id, unread })),
       follow: (following: boolean) => ask(() => client.follow({ following })),
       report: (row: CompanionRow) => setReporting(row),
+      // Main admits the handoff, then this window brings main forward so
+      // the action opens where the user is looking.
       handoff: (row: CompanionRow, action: { key: string; revision: string }) =>
-        ask(() =>
-          client.handoff({
+        ask(async () => {
+          await client.handoff({
             messageId: row.id,
             key: action.key,
             revision: action.revision,
-          }),
-        ),
+          });
+          act("focusMain");
+        }),
     };
-  }, [client, reactions, view.following, view.isDm, operations, ask]);
+  }, [client, reactions, view.following, view.isDm, operations, ask, act]);
   const deleteOperation = deleting?.operationId
     ? operations.find((item) => item.event.id === deleting.operationId)
     : undefined;

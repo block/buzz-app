@@ -88,7 +88,9 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
   for (const content of [
     "看这个 https://example.com，:party:",
     "https://example.com/a。:party:",
+    "链接=https://example.com，:party:",
     "[a](HTTPS://example.com)，:party:",
+    "[a](HTTPS://example.com)，:party:https://b.com",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([
       ["emoji", "party", url],
@@ -104,6 +106,8 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "HTTPS://example.com/?redirect=https://other.com/:party:",
     "[a](HTTPS://example.com/?redirect=https://other.com/a，:party:)",
     "<HTTPS://example.com/?redirect=https://other.com/a，:party:>",
+    "[a](HTTPS://x.com/(https://y.com/a，:party:))",
+    "[a](HTTPS://x.com/?urls=HTTPS://one.com,https://two.com/a，:party:)",
     "https://github。COM/:party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([]);

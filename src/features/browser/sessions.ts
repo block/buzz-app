@@ -43,13 +43,19 @@ export class BrowserSessions {
       if (park !== undefined && parked) {
         clearTimeout(parked.timer);
         this.parked.delete(park);
+        let resumed = true;
         try {
           await this.platform.setMediaSuspended(parked.sessionId, false);
-          return parked.sessionId;
         } catch {
-          // A page that cannot play again opens fresh instead.
-          await this.close(parked.sessionId);
+          resumed = false;
         }
+        // The view may have gone while the page resumed; then nothing would
+        // ever detach it again.
+        if (resumed && current() && !builderlab?.signal.aborted)
+          return parked.sessionId;
+        await this.close(parked.sessionId);
+        // A page that cannot play again opens fresh instead.
+        if (resumed) return undefined;
       }
       while (this.live.length >= MAX_GUESTS) await this.close(this.victim());
       const sessionId = await this.platform.attach(

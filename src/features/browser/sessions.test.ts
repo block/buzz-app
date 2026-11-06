@@ -62,6 +62,38 @@ it("detaches an attach result whose view was disposed in flight", async () => {
   expect(browserPlatform.detach).toHaveBeenCalledWith("session-1");
 });
 
+it("closes a parked guest whose view was disposed while it resumed", async () => {
+  const resumed = deferred<void>();
+  const browserPlatform = platform();
+  vi.mocked(browserPlatform.attach).mockResolvedValue("a");
+  const sessions = new BrowserSessions(browserPlatform);
+  await sessions.attach("https://a.example", bounds, () => true, "s", "a");
+  await sessions.detach("a", "a");
+  vi.mocked(browserPlatform.setMediaSuspended).mockImplementationOnce(
+    () => resumed.promise,
+  );
+  let current = true;
+  const result = sessions.attach(
+    "https://a.example",
+    bounds,
+    () => current,
+    "s",
+    "a",
+  );
+  await vi.waitFor(() =>
+    expect(browserPlatform.setMediaSuspended).toHaveBeenLastCalledWith(
+      "a",
+      false,
+    ),
+  );
+  current = false;
+  resumed.resolve();
+  await expect(result).resolves.toBeUndefined();
+  expect(browserPlatform.detach).toHaveBeenCalledWith("a");
+  expect(sessions.owns("a")).toBe(false);
+  expect(browserPlatform.attach).toHaveBeenCalledTimes(1);
+});
+
 it("closes a parked guest after it waits too long", async () => {
   vi.useFakeTimers();
   try {

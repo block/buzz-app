@@ -419,6 +419,7 @@ function setup(
     registerHook: vi.fn(),
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
+    teamHistory: () => undefined,
     addedTabs: () =>
       linkTab
         ? [
@@ -5759,6 +5760,107 @@ it("opens a restored version address in Settings, closes on Back, and retires on
   expect(
     screen.getByRole("button", { name: "Previous versions" }),
   ).toHaveAttribute("aria-expanded", "false");
+});
+
+it("opens a team's version link in its editor", async () => {
+  const id = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const revision = {
+    id: "a".repeat(64),
+    pubkey: "o".repeat(64),
+    sig: "b".repeat(128),
+    kind: 45010,
+    created_at: 1700000000,
+    content: JSON.stringify({ version: 1, name: "Crew", instructions: "Hi." }),
+    tags: [
+      ["h", "c"],
+      ["d", "team"],
+      ["type", "buzz.team"],
+      ["op", "create"],
+      ["team", id],
+    ],
+  };
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { team: id, revision: "" } },
+  } as const;
+  const opened = {
+    ...base,
+    route: {
+      version: 1,
+      params: { team: id, revision: `instructions/${revision.id}` },
+    },
+  } as const;
+  const navigator = {
+    snapshot: () => ({ entry: { id: "version", target: opened } }),
+    open: vi.fn(),
+    dismiss: vi.fn(),
+  } as unknown as Navigation;
+  const navigation = {
+    entryId: "version",
+    target: opened,
+    signal: new AbortController().signal,
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  } as unknown as PageNavigation;
+  const view = setup([], {
+    teams: [
+      {
+        id,
+        name: "Crew",
+        instructions: "Hi.",
+        members: [],
+        revision: revision.id,
+      },
+    ],
+    page: { navigation, navigator },
+  });
+  Object.assign(view.agents, {
+    teamHistory: (team: string) =>
+      team === id
+        ? {
+            read: vi.fn(async () => [revision]),
+            revise: vi.fn(),
+            sides: [
+              {
+                side: "instructions",
+                expected: {
+                  channel: "c",
+                  d: "team",
+                  type: "buzz.team",
+                  team: id,
+                },
+                head: revision,
+                version: 0,
+              },
+            ],
+          }
+        : undefined,
+  });
+  view.rerender(
+    <AgentsPage
+      agents={view.agents}
+      relay={view.relay}
+      navigation={navigation}
+      navigator={navigator}
+    />,
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Instructions version Current" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Previous versions", hidden: true }),
+  ).toHaveAttribute("aria-expanded", "true");
 });
 
 it("opens Create agent from an agent card's link and retires the link's visits when it closes", async () => {

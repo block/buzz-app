@@ -1,3 +1,4 @@
+import { gitScope } from "./git-scope";
 import { managedBy } from "./managed";
 import type { PluginManager } from "./manager";
 import type { ImportPreview, PluginInfo } from "./types";
@@ -118,7 +119,12 @@ export function createPluginUpdates(
     lastSources = sources;
     const repositories = new Map<string, Promise<ImportPreview | null>>();
     const discover = (source: GitUpdateSource) => {
-      const key = JSON.stringify([source.repository, source.reference]);
+      const key = JSON.stringify([
+        source.repository,
+        source.reference,
+        source.path,
+        source.commit,
+      ]);
       let result = repositories.get(key);
       if (!result) {
         result = (async () => {
@@ -131,7 +137,9 @@ export function createPluginUpdates(
               const current = pluginUpdateSource(plugins, plugin.manifest.id);
               return (
                 current?.repository === source.repository &&
-                current.reference === source.reference
+                current.reference === source.reference &&
+                current.path === source.path &&
+                current.commit === source.commit
               );
             })
           )
@@ -141,6 +149,7 @@ export function createPluginUpdates(
               signed?.repository ?? source.repository,
               source.reference,
               signed?.token,
+              ...gitScope(source.commit, source.path),
             ) ?? null
           );
         })();

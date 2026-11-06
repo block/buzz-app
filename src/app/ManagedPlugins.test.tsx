@@ -158,7 +158,7 @@ it("reviews at the pinned commit, then installs and enables only after confirmat
     "https://example.com/plugins",
     "v1",
     undefined,
-    commit,
+    { commit, path: "dist" },
   );
   expect(within(dialog).getByText(/Recommended by Example Org/)).toBeVisible();
   expect(manager.installImport).not.toHaveBeenCalled();
@@ -501,7 +501,7 @@ it("reviews again when the recommendation changes while the review is open", asy
     "https://example.com/plugins",
     "v1",
     undefined,
-    other,
+    { commit: other, path: "dist" },
   );
   expect(imports.discard).toHaveBeenCalledWith("preview");
   fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));

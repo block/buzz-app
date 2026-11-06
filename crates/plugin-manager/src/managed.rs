@@ -274,7 +274,7 @@ fn entry_plugin(entry: Value) -> Result<ManagedPlugin> {
     })
 }
 
-fn canonical_path(path: &str) -> Result<()> {
+pub(crate) fn canonical_path(path: &str) -> Result<()> {
     if path != "." {
         let canonical = path.split('/').all(|segment| {
             !segment.is_empty()

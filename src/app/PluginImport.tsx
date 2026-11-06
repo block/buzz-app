@@ -21,6 +21,7 @@ import {
   PluginAccessReview,
   pluginAccessIncreases,
 } from "./PluginAccessReview";
+import { gitScope } from "../plugins/git-scope";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 import {
@@ -41,6 +42,8 @@ const shortCommit = (commit: string) => commit.slice(0, 12);
 const sourceLabel = (repository: string, path: string) =>
   path === "." ? repository : `${repository} · ${path}`;
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
+const folderText = (path: string | undefined) =>
+  !path || path === "." ? "" : path;
 const requester = ({ id, name }: PluginInstallRequest["origin"]) =>
   name === id ? id : `${name} (${id})`;
 
@@ -144,6 +147,7 @@ export function PluginImport({
     initialGit?.reference ??
       (savedSource && "reference" in savedSource ? savedSource.reference : ""),
   );
+  const [folder, setFolder] = useState("");
   // A link is newer than a plugin's request, so it replaces it rather than
   // inheriting the request's pinned commit and folder.
   const dropRequestForLink = useEffectEvent(() => {
@@ -571,6 +575,10 @@ export function PluginImport({
   ) {
     if (!imports) return;
     const { commit, path } = (linked ? initialGit : constraint) ?? {};
+    const scope = gitScope(
+      commit,
+      path ?? (folder.trim().replace(/\/+$/, "") || undefined),
+    );
     await load(async () => {
       const signed = await authorizeGit?.(repository);
       const result = signed
@@ -578,10 +586,10 @@ export function PluginImport({
             signed.repository,
             reference,
             signed.token,
-            ...(commit ? [commit] : []),
+            ...scope,
           )
-        : commit
-          ? await imports.git(repository, reference, undefined, commit)
+        : scope.length
+          ? await imports.git(repository, reference, undefined, ...scope)
           : await imports.git(repository, reference);
       return requestedFolder(result, path);
     }, linked);
@@ -674,9 +682,7 @@ export function PluginImport({
         signed?.repository ?? source.repository,
         source.reference,
         signed?.token,
-        ...(!checkOnly && updateAction?.source.commit
-          ? [updateAction.source.commit]
-          : []),
+        ...gitScope(updateAction?.source.commit, source.path),
       );
     };
     if (!checkOnly) {
@@ -1233,16 +1239,29 @@ export function PluginImport({
                         onChange={(event) => setReference(event.target.value)}
                       />
                     </Field>
+                    <Field label="Folder (optional)">
+                      <Input
+                        value={
+                          bound || linkConstrained
+                            ? folderText(constraint?.path)
+                            : folder
+                        }
+                        disabled={blocked}
+                        readOnly={!!bound || linkConstrained}
+                        placeholder="Whole repository"
+                        onChange={(event) => setFolder(event.target.value)}
+                      />
+                    </Field>
                     {(bound || linkConstrained) && (
                       <p className="m-0 break-all text-caption text-muted">
                         {bound
                           ? `Opened from ${requester(bound.origin)}. `
                           : "Opened from a link. "}
                         {constraint?.commit
-                          ? `Pinned to commit ${shortCommit(constraint.commit)}. Nothing is installed unless the fetched repository matches it. `
+                          ? `Pinned to commit ${shortCommit(constraint.commit)} on ${constraint.reference || "the repository default branch"}. Nothing is installed unless that commit is verified to be on it. `
                           : ""}
-                        {constraint?.path
-                          ? `Plugin folder: ${constraint.path}. `
+                        {constraint?.path && constraint.path !== "."
+                          ? `Plugin folder: ${constraint.path}. Only this folder is read. `
                           : ""}
                         {bound
                           ? "Review the source, then choose Find to read it. Nothing is installed until you confirm."
@@ -1389,7 +1408,7 @@ export function PluginImport({
                   <p className="m-0 break-all text-caption text-muted">
                     Commit {shortCommit(preview.commit)}
                     {pinned && !pinError
-                      ? " (matches the requested commit)"
+                      ? ` (matches the requested commit, verified on ${constraint?.reference || "the repository default branch"})`
                       : ""}
                   </p>
                 )}

@@ -17,6 +17,9 @@ import {
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("./virtua.testing"));
+
 // Isolate thread acquisition from composer emoji demand and DOM reading dwell.
 // Actual React effects, ThreadPanel, MessageRow, session and HTTP verification run.
 // jsdom observes DOM commit, NOT browser layout/paint or native interaction.

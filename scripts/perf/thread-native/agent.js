@@ -43,6 +43,14 @@
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const workloadNow = async () => (await fetch("/__perf/workload")).json();
 
+  // The panel mounts only the top-level replies near its viewport; each
+  // item's aria-setsize counts every one it holds.
+  const heldTopLevel = (element) =>
+    Number(
+      element
+        .querySelector("[data-thread-rows] > ol > li")
+        ?.getAttribute("aria-setsize") ?? 0,
+    );
   function geometry(element) {
     if (!element) return null;
     const box = element.getBoundingClientRect();
@@ -52,9 +60,7 @@
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
       mounted: element.querySelectorAll("[data-message-id]").length,
-      topLevel: element.querySelectorAll(
-        ":scope > [data-thread-rows] > ol > li[data-layout]",
-      ).length,
+      topLevel: heldTopLevel(element),
       positioning: element.hasAttribute("data-positioning"),
     };
   }
@@ -126,10 +132,7 @@
     if (!element) throw new Error("thread is not open");
     const { topLevel } = await workloadNow();
     const deadline = performance.now() + timeoutMs;
-    const count = () =>
-      element.querySelectorAll(
-        ":scope > [data-thread-rows] > ol > li[data-layout]",
-      ).length;
+    const count = () => heldTopLevel(element);
     while (count() < topLevel) {
       const before = count();
       element.scrollTop = 0;

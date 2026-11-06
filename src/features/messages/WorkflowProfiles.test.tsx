@@ -9,6 +9,9 @@ import { keypair, message, profile } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("./virtua.testing"));
+
 stubAvatarBrowserApis();
 vi.mock("./MessageComposer", () => ({ MessageComposer: () => null }));
 afterEach(() => cleanup());

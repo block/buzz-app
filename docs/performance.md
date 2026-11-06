@@ -290,10 +290,16 @@ without fixed delays.
 Scroll cases report the scrolling cadence metrics above, `domGapFrames` (sampled
 frames inside the gesture with no loaded reply intersecting the viewport) and the
 traversed range,
-and require real wheel input, no older-page reads and at least 5000px of travel.
+and require real wheel input, no older-page reads and at least ten replies of
+travel (`repliesTraversed`, from the first reply in view). Virtua turns estimated
+row heights into measured ones by moving the offset, so `scrollTopRangePx` is
+not the distance read.
 `thread-scroll-deep-page` reports the cadence across the read, `readingShiftPx`
 (how far the row being read moved) and the window's top-level rows, and requires
 one older read, evicted newest replies and a window of at most 500 top-level rows.
+The panel mounts only the replies near its viewport, so samples count the rows
+the window holds from its items' `aria-setsize` and report the rows actually
+mounted as `mountedRows`.
 The pointer rests mid-pane over replies, after a press in the empty gutter sets
 pointer modality.
 

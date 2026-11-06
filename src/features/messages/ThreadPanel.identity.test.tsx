@@ -25,6 +25,9 @@ import { createAgentActivity } from "../agents/activity";
 import { createLocalAgentActivity } from "../agents/local-activity";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("./virtua.testing"));
+
 stubAvatarBrowserApis();
 
 vi.mock("./MessageMarkdown", () => ({

@@ -21,6 +21,9 @@ import type { MessageRowProps } from "./MessageRow";
 import { DayDivider } from "./MessageTimestamp";
 import { ThreadPanel } from "./ThreadPanel";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("./virtua.testing"));
+
 vi.mock("./use-reading", () => ({
   Reading: () => null,
   readingPositioned: () => {},

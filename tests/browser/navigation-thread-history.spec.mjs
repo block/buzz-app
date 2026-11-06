@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { scrollUntilMounted, threadMessageCount } from "./thread-rows.mjs";
 import { test, expect } from "./fixture.mjs";
 import {
   activate,
@@ -193,7 +194,7 @@ for (const reading of [false, true]) {
       await trigger.click();
       await expect.poll(() => requested).toBe(true);
       // One of the 50 loaded replies is a collapsed descendant.
-      await expect(region.locator("[data-message-id]")).toHaveCount(50);
+      await expect.poll(() => threadMessageCount(region)).toBe(50);
       await expect(
         region.getByText("Broadcast descendant", { exact: true }),
       ).toHaveCount(0);
@@ -228,7 +229,7 @@ for (const reading of [false, true]) {
         );
       }
       release();
-      await expect(region.locator("[data-message-id]")).toHaveCount(123);
+      await expect.poll(() => threadMessageCount(region)).toBe(123);
       await expect(
         region.getByText("Loading thread…", { exact: true }),
       ).toHaveCount(0);
@@ -257,9 +258,13 @@ for (const reading of [false, true]) {
         ).toBeFocused();
       }
       const live = app.reply(root.id);
-      await expect(
-        region.locator(`[data-message-id="${live.id}"]`),
-      ).toBeVisible();
+      // Below a reader who scrolled up, the arrival loads without mounting.
+      if (reading)
+        await expect.poll(() => threadMessageCount(region)).toBe(124);
+      else
+        await expect(
+          region.locator(`[data-message-id="${live.id}"]`),
+        ).toBeVisible();
       if (reading) {
         expect(await region.evaluate((node) => node.scrollTop)).toBe(position);
         const jumpToLatest = region.locator("button[data-jump-to-latest]");
@@ -315,13 +320,15 @@ for (const reading of [false, true]) {
         ).toBeInViewport();
       }
       // Expansion changes visibility, not the loaded-history count.
-      await region.getByRole("button", { name: /^View 1 reply/ }).click();
+      const expand = region.getByRole("button", { name: /^View 1 reply/ });
+      await scrollUntilMounted(region, expand);
+      await expand.click();
       await expect(
         region.getByText("Broadcast descendant", { exact: true }),
       ).toBeInViewport();
-      await expect(region.locator("[data-message-id]")).toHaveCount(
-        reading ? 126 : 125,
-      );
+      await expect
+        .poll(() => threadMessageCount(region))
+        .toBe(reading ? 126 : 125);
     } finally {
       release();
       await page.unroute(routePattern);

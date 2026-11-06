@@ -60,9 +60,14 @@ test("thread stays beside the channel whenever both panes fit", async ({
       "font-size",
       `${16 * scale}px`,
     );
-    const bounds = await channel.boundingBox();
-    const pane = await thread.boundingBox();
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(pane.x);
+    // Rows re-measure after the scale change; hold the settled layout to it.
+    await expect
+      .poll(async () => {
+        const bounds = await channel.boundingBox();
+        const pane = await thread.boundingBox();
+        return bounds.x + bounds.width - pane.x;
+      })
+      .toBeLessThanOrEqual(0);
     await expect(input).toHaveText(draft.trimEnd());
     await channel
       .getByRole("button", { name: "Send message", exact: true })
@@ -458,11 +463,15 @@ test.describe("exact history resize ownership", () => {
         anchor = history.locator(`[data-message-id="${id}"]`);
       }
       if (shift === "contraction after reading") {
+        // Above the virtual list, whose rows resize only once Virtua measures
+        // them: content there shrinks within the reply's commit.
         await anchor.evaluate((el) => {
           const spacer = document.createElement("div");
           spacer.dataset.contraction = "";
           spacer.style.height = "700px";
-          el.before(spacer);
+          el.closest("[data-thread-rows]")
+            .querySelector(":scope > ol")
+            .before(spacer);
         });
         await settle(page, history);
       }

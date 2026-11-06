@@ -1005,6 +1005,15 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
+/* Virtua hides a reply until it measures it at a new index. Hiding blurs focus
+   and refuses the focus a reparented exact target takes in the same commit. */
+.threadHistory
+  > [data-thread-rows]
+  > ol
+  > li:is(:focus-within, [data-selected], :has([data-selected])) {
+  /* biome-ignore lint/complexity/noImportantStyles: Must win over Virtua's inline style. */
+  visibility: visible !important;
+}
 /* Fills whichever thread area is waiting. The mark waits one state change
    before appearing, so a thread that loads at once never flashes it. */
 .threadLoading {

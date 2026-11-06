@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { threadMessageCount } from "./thread-rows.mjs";
 import { open } from "./timeline.mjs";
 
 // Real scroll geometry and the first painted frame cannot be proven in jsdom.
@@ -88,7 +89,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   await expect(history.locator("[data-thread-rows]")).not.toHaveAttribute(
     "inert",
   );
-  await expect(history.locator("[data-message-id]")).toHaveCount(81);
+  await expect.poll(() => threadMessageCount(history)).toBe(81);
   await expect
     .poll(() => page.evaluate(() => window.firstThreadFrame))
     .toBeTruthy();

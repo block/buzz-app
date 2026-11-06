@@ -1,7 +1,7 @@
 # Virtua 0.53.5 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
-`src/features/messages/ChannelTimeline.tsx`. Only that entry is patched;
+`src/features/messages/ChannelTimeline.tsx` and `ThreadPanel.tsx`. Only that entry is patched;
 CommonJS and other-framework exports are untouched. Its store and element driver
 carry the changes below. The resize and scroll observers that entry shares with
 its window and grid drivers carry the frame-deferred item sizes, whole-edge

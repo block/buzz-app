@@ -1,6 +1,6 @@
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { frames, open } from "./timeline.mjs";
 import { settlePanelMotion } from "./navigation.mjs";
 import { generateSecretKey, getPublicKey } from "nostr-tools";
 
@@ -956,6 +956,13 @@ for (const width of [1492, 1280, 1024, 700, 390])
           history.getBoundingClientRect().top -
           history.clientHeight / 2;
       });
+      // Virtua stops hit-testing while it scrolls; a reader hovers after.
+      // The scroll reaches Virtua in a later rendering update.
+      await frames(page);
+      await expect(panel.locator("[data-thread-rows] > ol")).toHaveCSS(
+        "pointer-events",
+        "auto",
+      );
       const restingHeight = (await row.boundingBox()).height;
       await hoverMessage(row);
       expect((await row.boundingBox()).height).toBe(restingHeight);

@@ -51,6 +51,9 @@ import {
   // @ts-expect-error Node host codec, with disposable test identities only.
 } from "../../../browser-host/read-state.mjs";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("../../features/messages/virtua.testing"));
+
 const owners: ReturnType<typeof createRelaySession>[] = [];
 composerDOMFixture();
 beforeEach(() => localStorage.clear());

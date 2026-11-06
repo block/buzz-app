@@ -24,6 +24,16 @@ test.use({
 
 const historySelector = '[aria-label="Thread messages"]';
 const topLevel = ":scope > [data-thread-rows] > ol > li[data-layout]";
+// The panel mounts only the top-level replies near its viewport; each item's
+// aria-setsize counts every one it holds.
+const heldTopLevel = (element) =>
+  element.evaluate((node) =>
+    Number(
+      node
+        .querySelector("[data-thread-rows] > ol > li")
+        ?.getAttribute("aria-setsize") ?? 0,
+    ),
+  );
 // Upward is positive in Chromium's gesture distance, negative in wheel deltas.
 const gestures = {
   "thread-scroll-fling": [[6000, 6000]],
@@ -53,6 +63,15 @@ async function openThread(page, app, perf) {
 const history = (page) =>
   page.getByRole("region", { name: "Thread messages", exact: true });
 
+// Where the reader is: the position of the first top-level reply in view.
+const readingPosition = (element) =>
+  element.evaluate((node) => {
+    const top = node.getBoundingClientRect().top;
+    const item = [
+      ...node.querySelectorAll("[data-thread-rows] > ol > li[aria-posinset]"),
+    ].find((item) => item.getBoundingClientRect().bottom > top);
+    return Number(item?.getAttribute("aria-posinset") ?? 0);
+  });
 const firstTopLevel = (element) =>
   element
     .locator(`${topLevel} [data-message-id]`)
@@ -81,9 +100,12 @@ async function loadHistory(page, app, pages) {
     await expect
       .poll(() => firstTopLevel(element), { message: "older page rendered" })
       .not.toBe(before);
+    // Virtua measures the page's rows over later frames and holds the reader
+    // as they settle; the next scroll to the top must come after.
+    await settle(page, element);
   }
   await settle(page, element);
-  return element.locator(topLevel).count();
+  return heldTopLevel(element);
 }
 // Top-level replies in the full window at the newest end.
 const windowTopLevel = (app) =>
@@ -141,13 +163,17 @@ async function deepPage(page, app, perf, ids, browserName) {
   });
   Object.assign(sample.work, {
     wheels: sample.recording.wheels,
-    topLevelAfter: await element.locator(topLevel).count(),
+    topLevelAfter: await heldTopLevel(element),
     mountedRows: await element.locator("[data-message-id]").count(),
     olderReadsDuring: app.pending.length - requestsBefore,
   });
   await perf.save(sample);
   expect(sample.work.wheels, "real wheel input").toBeGreaterThan(0);
   expect(sample.work.olderReadsDuring, "one older page").toBe(1);
+  expect(
+    sample.metrics.readingShiftPx,
+    "the reply being read holds its place",
+  ).toBeLessThan(1);
   // Ten pages of 50: without eviction the panel would hold every reply read.
   expect(
     sample.work.topLevelAfter,
@@ -217,6 +243,7 @@ for (const name of [
       await settle(page, element);
       const requestsBefore = app.pending.length;
       const before = await element.evaluate((node) => node.scrollTop);
+      const startedAt = await readingPosition(element);
       const sample = await perf.measure(THREAD_CHANNEL, {
         selector: historySelector,
         ids,
@@ -257,18 +284,25 @@ for (const name of [
         domGapFrames: inside.filter((frame) => !frame.rows.length).length,
         scrollTopRangePx: Math.max(before, ...tops) - Math.min(before, ...tops),
       });
+      await settle(page, element);
       Object.assign(sample.work, {
         wheels,
         mountedRows: await element.locator("[data-message-id]").count(),
         olderReadsDuring: app.pending.length - requestsBefore,
+        // Replies the reader moved past. Virtua turns estimated row heights
+        // into measured ones by moving the offset, so the offset range is not
+        // the distance read.
+        repliesTraversed: startedAt - (await readingPosition(element)),
       });
       await perf.save(sample);
       expect(wheels, "real wheel input").toBeGreaterThan(0);
       expect(sample.work.olderReadsDuring, "history was already loaded").toBe(
         0,
       );
+      // Both gestures end at least 6000px above where they began: past 15 to
+      // 20 replies in these runs.
       expect(
-        sample.metrics.scrollTopRangePx,
+        sample.work.repliesTraversed,
         "the gestures traverse history",
-      ).toBeGreaterThan(5000);
+      ).toBeGreaterThanOrEqual(10);
     });

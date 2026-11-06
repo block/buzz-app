@@ -1423,7 +1423,18 @@ clears the thread. While newer pages are evicted the panel does not follow new
 replies: Jump to latest, and sending a reply to the root, reopen it at the newest
 page. The root, an exact target and the parents of loaded replies stay loaded, and
 a deletion the panel has seen still applies when its reply's page is read again. A window is not a
-completeness claim. An older relay returning verified replies without thread
+completeness claim.
+
+**Rendering:** the panel mounts only the top-level replies near its viewport,
+each with its branch, through the same Virtua list the channel timeline uses
+(`src/features/messages/thread-items.tsx`). The root and its divider sit above the
+list. The exact target, an own send awaiting its reveal, the focused row, a row
+with an open menu, report or edit, and the reply a Back/Forward return restores
+stay mounted wherever they are. Items carry `aria-posinset`/`aria-setsize` for
+the loaded window. A snapshot that changes both ends, an older page landing while
+a newer one is evicted, renders in two passes before paint: the start's change
+with Virtua's `shift`, which holds the position from the list's end, then the
+end's change without it. An older relay returning verified replies without thread
 bounds on the initial probe triggers a clean legacy restart: oldest-first
 traversal that walks automatically until its window fills, whose bottom may not
 be the newest reply in a long thread, and continues as you scroll down. An empty
@@ -1497,8 +1508,8 @@ scrolls to them.
   same offset. New
   replies are followed only while the reader is at or near the bottom.
 - **Bounded work:** the cost of a scroll gesture depends on the replies near the
-  viewport, not on how many are loaded. If replies far from the viewport are not
-  rendered, scrolling, exact links, keyboard selection and Back/Forward still reach
+  viewport, not on how many are loaded. Replies far from the viewport are not
+  rendered; scrolling, exact links, keyboard selection and Back/Forward still reach
   every loaded reply, and focus, selection, editing, drafts and expanded branches
   keep working for them.
 

@@ -32,6 +32,9 @@ import {
   profileActivityViewTarget,
 } from "../../features/profiles/target";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("../../features/messages/virtua.testing"));
+
 // For every test in this file: thread rows are memoized, so count real renders
 // past that boundary and keep each row's latest link opener. The composer is
 // independent UI with its own suite.

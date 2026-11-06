@@ -1,4 +1,5 @@
 import { test, expect } from "./playwright-test.mjs";
+import { scrollUntilMounted, threadMessageCount } from "./thread-rows.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -458,7 +459,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
-    await expect(history.locator("[data-message-id]")).toHaveCount(62);
+    await expect.poll(() => threadMessageCount(history)).toBe(62);
     // Loading belongs to history; the composer retains its live region idle.
     await expect(history.getByRole("status")).toHaveCount(0);
     await expect(
@@ -526,6 +527,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     const firstReply = history
       .getByText("Reply with image", { exact: true })
       .locator("xpath=ancestor::*[@data-message-id][1]");
+    await scrollUntilMounted(history, firstReply);
     await expect(firstReply.locator("[data-layout]")).not.toHaveAttribute(
       "data-stack-previous",
     );
@@ -535,6 +537,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       .locator("xpath=ancestor::*[@data-message-id][1]")
       .locator("[data-avatar-shape]")
       .first();
+    await scrollUntilMounted(history, threadHumanAvatar);
     await expect(threadHumanAvatar).toHaveAttribute(
       "data-avatar-shape",
       "circle",
@@ -678,12 +681,12 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       el.dispatchEvent(new Event("scroll"));
     });
     await page.evaluate(() => window.messagesFixture.live());
-    await expect(history.locator("[data-message-id]")).toHaveCount(63);
+    await expect.poll(() => threadMessageCount(history)).toBe(63);
     await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(100);
     await draft.fill("keep first draft");
     await choose("Second root");
     await expect(draft).toHaveJSProperty("value", "");
-    await expect(history.locator("[data-message-id]")).toHaveCount(61);
+    await expect.poll(() => threadMessageCount(history)).toBe(61);
     await expect.poll(gap).toBeLessThan(2);
     await draft.fill("reject second reply");
     await draft.press("Enter");
@@ -729,9 +732,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(draft).toHaveJSProperty("value", "keep first draft");
     for (const [index, kind] of [9, 40002].entries()) {
       await page.evaluate((value) => window.messagesFixture.deep(value), kind);
-      await expect(history.locator("[data-message-id]")).toHaveCount(
-        64 + index,
-      );
+      await expect.poll(() => threadMessageCount(history)).toBe(64 + index);
       const literal = history
         .getByText("literal deep message", { exact: false })
         .last();

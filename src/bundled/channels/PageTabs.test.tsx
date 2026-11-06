@@ -10,8 +10,8 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { use } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { use, type ContextType } from "react";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
@@ -85,6 +85,13 @@ afterEach(() => {
   localStorage.clear();
 });
 
+// The page's message links open threads through this, as its rows do.
+let linkedOpener: ContextType<typeof LinkThreadTabContext>;
+function LinkedOpener() {
+  linkedOpener = use(LinkThreadTabContext);
+  return null;
+}
+
 function fixture(visits?: boolean) {
   const channels = [
     { id: "alpha", name: "alpha" },
@@ -139,13 +146,6 @@ function fixture(visits?: boolean) {
   let close: (target: PageTabTarget) => boolean = () => false;
   let isOpen: (target: PageTabTarget) => boolean = () => false;
   const openers = new Set<typeof open>();
-  // What a message link's Open link calls for a thread in another channel.
-  let link: (channelId: string, rootId: string) => boolean = () => false;
-  function Links() {
-    const linked = use(LinkThreadTabContext);
-    link = (channelId, rootId) => !!linked?.(channelId, rootId, rootId);
-    return null;
-  }
   render(
     <PageTabs
       id="switchboard"
@@ -164,7 +164,7 @@ function fixture(visits?: boolean) {
         return (
           <>
             <p>Chat list</p>
-            <Links />
+            <LinkedOpener />
           </>
         );
       }}
@@ -186,7 +186,19 @@ function fixture(visits?: boolean) {
     link(channelId: string, rootId: string) {
       let opened = false;
       act(() => {
-        opened = link(channelId, rootId);
+        opened = !!linkedOpener?.(channelId, rootId, rootId);
+      });
+      return opened;
+    },
+    openLinked(
+      channelId: string,
+      messageId: string,
+      rootId: string,
+      returnFocus?: HTMLElement,
+    ) {
+      let opened = false;
+      act(() => {
+        opened = !!linkedOpener?.(channelId, messageId, rootId, returnFocus);
       });
       return opened;
     },
@@ -346,6 +358,45 @@ it("reopens a thread opened at a reply in its tab once its root resolves", () =>
   expect(thread()).toHaveAttribute("data-reveal", "1");
   expect(page.isOpen({ channelId: "alpha", threadId: "older" })).toBe(true);
 });
+
+it.each([
+  ["in its tab", false],
+  ["in the thread's open tab it merges with", true],
+] as const)(
+  "a thread linked at a reply returns focus where its link named once its root resolves, %s",
+  (_, merging) => {
+    const page = fixture();
+    // The media that opened a review, which the followed link left.
+    const media = document.createElement("button");
+    document.body.append(media);
+    onTestFinished(() => media.remove());
+    if (merging) page.open({ channelId: "alpha", threadId: "older" });
+    // A link at a reply, without its thread, hints the reply as the root.
+    expect(page.openLinked("alpha", "reply", "reply", media)).toBe(true);
+    const reader = screen
+      .getAllByText("thread in alpha")
+      .find((item) => item.dataset.tab === "thread:alpha:reply");
+    fireEvent.click(
+      within(reader as HTMLElement).getByRole("button", {
+        name: "Resolve root",
+      }),
+    );
+    expect(side()).toHaveLength(1);
+    expect(page.isOpen({ channelId: "alpha", threadId: "older" })).toBe(true);
+
+    const pane = screen
+      .getAllByRole("tablist")
+      .find((item) => item.getAttribute("aria-label") !== "Switchboard tabs")
+      ?.closest<HTMLElement>("[data-panel-workspace]");
+    fireEvent.click(
+      within(pane as HTMLElement).getByRole("button", {
+        name: /^Close .* tab$/,
+      }),
+    );
+    expect(page.isOpen({ channelId: "alpha", threadId: "older" })).toBe(false);
+    expect(media).toHaveFocus();
+  },
+);
 
 it("opens a page's tabs without visiting their conversations when it asks", () => {
   const page = fixture(false);

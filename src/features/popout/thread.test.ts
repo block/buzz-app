@@ -597,6 +597,24 @@ it("releases owner observations for agents that left the view before observing n
   h.thread.snapshot();
   expect(disposed).toHaveLength(32);
   expect(observed.at(-1)).toBe((1099).toString(16).padStart(64, "0"));
+  // Only the replies the window shows count: 32 older agents pushed out of
+  // the 500-row window by the viewer's replies hold no slots.
+  const viewerRow = (n: number): ChannelMessage => ({
+    ...root,
+    id: (5000 + n).toString(16).padStart(64, "0"),
+    reactions: [],
+  });
+  h.snapshot.current = {
+    ...verified,
+    replies: [
+      ...Array.from({ length: 32 }, (_, i) => agentRow(200 + i)),
+      ...Array.from({ length: 499 }, (_, i) => viewerRow(i)),
+      agentRow(300),
+    ],
+  };
+  observed.length = 0;
+  h.thread.snapshot();
+  expect(observed).toEqual([(1300).toString(16).padStart(64, "0")]);
 });
 
 it("admits a verified owner's deletion in a channel that is read-only to a guest", async () => {

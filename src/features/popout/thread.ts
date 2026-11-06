@@ -289,7 +289,10 @@ export function createPopoutThread(
       const replies = snap ? visible(snap.replies) : [];
       // Agent hints decide whose ownership to observe; evidence decides
       // authority. Observation follows the rows shown now.
-      const shownRows = snap ? [snap.root, ...replies].filter(Boolean) : [];
+      // The same bounded rows the window shows, admits and claims read.
+      const shownRows = snap
+        ? [snap.root, ...replies.slice(-MAX_REPLIES)].filter(Boolean)
+        : [];
       observeOwners(
         new Set(
           (shownRows as ChannelMessage[])

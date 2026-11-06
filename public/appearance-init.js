@@ -65,6 +65,7 @@
       "cable",
       "baton",
       "howdy",
+      "tundra",
     ];
     const saved = localStorage.getItem("buzz-theme.v1");
     if (themes.includes(saved)) theme = saved;

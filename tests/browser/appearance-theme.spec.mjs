@@ -96,7 +96,14 @@ const FRAMED_THEMES = [
     },
   },
 ];
-const UNFRAMED_THEMES = ["troupe", "cacophony", "cable", "baton", "howdy"];
+const UNFRAMED_THEMES = [
+  "troupe",
+  "cacophony",
+  "cable",
+  "baton",
+  "howdy",
+  "tundra",
+];
 const THEME_COUNT = 1 + FRAMED_THEMES.length + UNFRAMED_THEMES.length;
 
 for (const [index, theme] of FRAMED_THEMES.entries()) {

@@ -8,6 +8,7 @@ export const THEMES = [
   "cable",
   "baton",
   "howdy",
+  "tundra",
 ] as const;
 export type Theme = (typeof THEMES)[number];
 export const DEFAULT_THEME: Theme = "buzz";
@@ -92,6 +93,15 @@ export const THEME_DEFINITIONS: Readonly<Record<Theme, ThemeDefinition>> = {
     frame: { light: "light", dark: "dark" },
     accentFamily: "howdy",
     accentName: "Teal",
+  },
+  tundra: {
+    id: "tundra",
+    label: "Tundra",
+    description:
+      "Frosted gray sidebar, steel-blue highlights and a warm coral badge.",
+    frame: { light: "light", dark: "dark" },
+    accentFamily: "tundra",
+    accentName: "Steel",
   },
 };
 

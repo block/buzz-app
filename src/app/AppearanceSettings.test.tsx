@@ -353,6 +353,16 @@ it("chooses a theme by pointer and keyboard, saves only the theme, and recovers 
   ).toHaveAccessibleDescription(
     "A warm paper page, teal accents and minty replies.",
   );
+  expect(
+    within(group).getByRole("radio", { name: "Tundra" }),
+  ).toHaveAccessibleDescription(
+    "Frosted gray sidebar, steel-blue highlights and a warm coral badge.",
+  );
+  expect(
+    within(group).getByRole("radio", { name: "Tundra" }),
+  ).toHaveAccessibleDescription(
+    "Frosted gray sidebar, steel-blue highlights and a warm coral badge.",
+  );
   expect(buzz).toBeChecked();
   expect(relax).toHaveAccessibleDescription(
     "Deep plum frame around a bright, open workspace.",

@@ -234,6 +234,17 @@ export function CommunityDialog({
     mode === "join" &&
     !!original?.exists &&
     profilesEqual(profile, original.profile);
+  // While busy, the primary action names the operation its step started.
+  const [action, actionPending] =
+    step === "destination"
+      ? ["Continue", "Connecting…"]
+      : step === "access"
+        ? ["Continue", "Joining…"]
+        : mode === "profile"
+          ? ["Save profile", "Saving…"]
+          : keepsProfile
+            ? ["Continue", "Joining…"]
+            : ["Publish profile & open", "Publishing…"];
   return (
     <JoinSurface
       onboarding={onboarding}
@@ -332,15 +343,7 @@ export function CommunityDialog({
                   : !canSaveProfile(profile)))
             }
           >
-            {busy
-              ? "Working…"
-              : step === "profile"
-                ? mode === "profile"
-                  ? "Save profile"
-                  : keepsProfile
-                    ? "Continue"
-                    : "Publish profile & open"
-                : "Continue"}
+            {busy ? actionPending : action}
           </Button>
         )
       }

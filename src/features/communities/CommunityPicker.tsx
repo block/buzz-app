@@ -365,13 +365,14 @@ export function CommunityPicker({
             <>
               <Button
                 ref={cancelRef}
+                variant={leaving.intent === "leave" ? "subtle" : "prominent"}
                 disabled={leaving.pending}
                 onClick={() => setLeaving(null)}
               >
                 Cancel
               </Button>
               <Button
-                variant={leaving.intent === "leave" ? "destructive" : "primary"}
+                variant={leaving.intent === "leave" ? "destructive" : "subtle"}
                 loading={leaving.pending}
                 onClick={() => void depart()}
               >

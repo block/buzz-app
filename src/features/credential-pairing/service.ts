@@ -26,6 +26,18 @@ export type PairedTool = {
 export const answerPairing = (id: string, approve: boolean) =>
   invoke<void>("credential_pair_answer", { id, approve });
 
+/** Tells native code the communities saved here, so a tool pairs only for
+ * one of them. */
+export const setPairingCommunities = (communities: readonly string[]) =>
+  invoke<void>("credential_pairing_communities", {
+    communities: communities.flatMap((id) => {
+      try {
+        return [communityDestination(id).url];
+      } catch {
+        return [];
+      }
+    }),
+  });
 export const listPairedTools = () =>
   invoke<PairedTool[]>("credential_pairings_list");
 
@@ -54,43 +66,4 @@ export function onPairingEvents(on: {
   return () => {
     for (const stop of listening) void stop?.then((unlisten) => unlisten?.());
   };
-}
-
-/** A relay URL compared whole, as native code binds it: lowercase host, no
- * default port, `/` for an empty path, path and query kept; `wss` read as
- * `https` and `ws` as `http`. `null` for anything else. */
-function comparable(raw: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(raw.trim());
-  } catch {
-    return null;
-  }
-  const scheme = {
-    "wss:": "https:",
-    "https:": "https:",
-    "ws:": "http:",
-    "http:": "http:",
-  }[url.protocol];
-  if (!scheme || url.username || url.password || url.hash) return null;
-  if (url.hostname.endsWith(".")) url.hostname = url.hostname.slice(0, -1);
-  return `${scheme}//${url.host}${url.pathname}${url.search}`;
-}
-
-/** Whether `relay` is one of these saved communities, compared as whole
- * URLs, so `wss://host/team/` is not the community `wss://host`. A tool may
- * only pair for a community the person already uses here. */
-export function isSavedCommunity(
-  relay: string,
-  communities: readonly string[],
-) {
-  const requested = comparable(relay);
-  if (requested === null) return false;
-  return communities.some((id) => {
-    try {
-      return comparable(communityDestination(id).url) === requested;
-    } catch {
-      return false;
-    }
-  });
 }

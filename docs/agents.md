@@ -264,7 +264,7 @@ older app or remote host.
 
 ## Agent Attention
 
-Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Each Interest can be paused without changing its watches’ enabled settings. Deleting an Interest with watches asks for confirmation, then removes them together. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
@@ -325,16 +325,16 @@ Attention command processes on macOS and Linux stop when their app process exits
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
-attention tools. How to use the attention tools is in their own descriptions,
+Attention tools. How to use the Attention tools is in their own descriptions,
 not `BUZZ_PROMPT`. Every session gets the
-same list and prompt, whether attention is on or off, so turning attention on or off never
+same list and prompt, whether Attention is on or off, so turning Attention on or off never
 restarts a session or invalidates its prompt cache. `turnNote` gives the text
-to add at the end of each turn: the attention review when attention is on and
+to add at the end of each turn: the Attention review when Attention is on and
 the agent has Interests, a line that it has none when it has none, and a note
 that it is off when it is off.
 
 `sessionTools` lists every tool under one `buzz` server, each with a `load`
-of `always` or `search`. The Buzz tools load up front and the attention tools on
+of `always` or `search`. The Buzz tools load up front and the Attention tools on
 search. Only the Buzz tools choose: tools plugins add always load on search, so
 installing plugins never grows what every turn carries. `sessionHint` says what
 the searchable tools are. `respond` stays harness-neutral: a harness passes a

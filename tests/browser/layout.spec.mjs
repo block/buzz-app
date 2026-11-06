@@ -382,7 +382,7 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   await link(page, app, "https://github.com/block/buzz/pull/2");
   await button(page, "Beta").click();
   await expect(panel(page)).toHaveCount(0);
-  await button(page, "Alpha").click();
+  await button(page, "Alpha Draft").click();
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   const picker = await openCommunityPicker(page);
   await expect(
@@ -944,7 +944,7 @@ companionTest(
     near((await box(companion)).height, (await box(conversation)).height);
     await button(page, "Beta").click();
     await expect(companion).toHaveCount(1);
-    await button(page, "Alpha").click();
+    await button(page, "Alpha Draft").click();
     await expect(composer).toHaveJSProperty("value", "Companion draft");
     await selectCommunity(page, "Personal space");
     await expect(

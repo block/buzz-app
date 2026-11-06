@@ -1281,7 +1281,7 @@ it("cancels cross-community consent and discards it when the destination changes
   expect(reminder()).not.toBeChecked();
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
+      within(dialog).getByRole("button", { name: "Import" }),
     ).toHaveFocus(),
   );
   await user.click(reminder());
@@ -1531,7 +1531,7 @@ it("shows the matching community images and follows their presentation updates",
   expect(to).toHaveTextContent("destination.example");
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
+      within(dialog).getByRole("button", { name: "Import" }),
     ).toHaveFocus(),
   );
   await user.hover(from);
@@ -1542,7 +1542,8 @@ it("shows the matching community images and follows their presentation updates",
   await waitFor(() =>
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
   );
-  // Return through Close to the destination illustration using the keyboard.
+  // Return through Cancel and Close to the destination illustration using the keyboard.
+  await user.tab({ shift: true });
   await user.tab({ shift: true });
   await user.tab({ shift: true });
   expect(to).toHaveFocus();
@@ -4808,8 +4809,12 @@ it("removes a Bestie on another device from its card, asking first", async () =>
       name: "Remove Ada as your Bestie?",
     });
   };
-  // Cancel saves nothing; its settings are on the device it runs on.
+  // Removal starts on the highlighted Cancel, which saves nothing; its
+  // settings are on the device it runs on.
   let dialog = await ask();
+  const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+  expect(cancel).toHaveAttribute("data-variant", "prominent");
+  await waitFor(() => expect(cancel).toHaveFocus());
   expect(dialog).toHaveTextContent(
     "turn them off in its Former Bestie tab on the device it runs on.",
   );

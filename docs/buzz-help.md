@@ -15,6 +15,25 @@ Keep a first explanation brief: Solo, Team, agents, and one useful next step.
 Offer more detail when asked. Do not pretend to highlight controls or navigate
 the interface unless an available tool actually supports that action.
 
+## Agents in Huddles
+
+On supported desktop hosts, a running local agent with voice support joins your
+connected Huddle when it is also a member of that Huddle's room. Membership of
+the parent conversation alone is insufficient. Several agents can participate.
+Your own active agents show “listening to you” in the Huddle. Remote participants
+see no listening badge: the agent’s own client enforces who it hears, and other
+clients cannot verify that. Each filters for audio from your connected devices
+and speaks to everyone. The current audio protocol can briefly misattribute delayed
+audio when a connection slot is reused; this is not a strict privacy guarantee.
+Other people or speakers near your microphones can also be heard. Simultaneous
+audio from your devices is mixed together.
+Voice work uses the same permissions as your text requests. Joining on another
+device does not seat an agent running here. Leaving closes its voice connection.
+If agent voice stops, the compact player and Huddle window show the reason;
+leave and rejoin to retry.
+Final voice transcripts appear in the room with speaker credit and do not
+mention anyone. Explicit agent watches on that room can still receive them.
+
 ## Identity and getting connected
 
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
@@ -183,6 +202,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
   or removes your reaction. Capsules you reacted with are tinted and outlined.
+- In the fullscreen video viewer, comments and emoji reactions at the current
+  frame stay attached to that video when you move through a thread's media.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
@@ -404,9 +425,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
 - **Message density**: **Settings → Appearance → Message density → Compact**
-  shows conversations as a flat, left-aligned list without bubbles, across the
-  window's full width, to fit more on screen. Text size stays with **Interface
-  size**. The choice applies on this device only.
+  shows conversations, including threads, as a flat, left-aligned list without
+  bubbles, across the window's full width, to fit more on screen. Hover or focus
+  a row to show its timestamp; grouped messages show it in the left gutter.
+  Text size stays with **Interface size**.
+  Hover a row to highlight it and show message actions at the right
+  edge. The choice applies on this device only.
 - **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
   24-hour times. System, the default, follows the desktop app's operating
   system: the 24-hour time setting on macOS, the short time format on Windows,
@@ -503,7 +527,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   draft to continue it in its conversation, or a sent message to jump to it.
   Search matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
-  attached files without opening the conversation.
+  attached files without opening the conversation. The same drafts show where
+  you left them: a pencil at the right edge of a channel or DM's sidebar row
+  when it, or one of its threads, holds a draft (hidden while that conversation is
+  open), and **Draft** on a message's reply line, or **Draft reply** when no
+  one has replied yet (hidden while that thread is open).
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
@@ -559,6 +587,11 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
+- In communities where your build restricts workflows, workflow messages do
+  not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
+  have one act on a workflow result, send it a direct request explaining what
+  to do with that result. Other communities still let a workflow you or your
+  agents created mention your agents.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -679,6 +712,18 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
+- Each Claude agent running on this computer keeps its own `claude` process for
+  each active conversation. While an unprotected one runs here, Buzz also keeps
+  one shared process ready for the next new conversation. Each of these starts
+  its own copies of the local MCP servers in your Claude Code configuration, so
+  memory use grows with active conversations times those servers. A
+  conversation's process stops after 15 minutes with no message, turn or
+  background work. Protected agents load none of your MCP servers and don't use
+  the shared process. To lower the cost, remove servers agents don't need, or
+  move heavy servers from user scope to local or project scope in the folders
+  where you use them. Agents work in their **Workspace** folder (`~/.buzz` by
+  default), so keep those servers out of that folder, the folders above it,
+  and any Git repository it is in.
 - **Settings → Agent details → Previous versions** expands saved revisions for
   agents whose configuration syncs here. Settings and instructions appear together
   in one feed, newest first, with a label on each version. Versions are kept
@@ -831,10 +876,14 @@ confirmation.
   when each interest wakes the agent (**Triggers**), its instructions after waking
   (**Instructions**), and whether Attention is active on this device. Use its Active/Paused menu to change that.
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
+  Each interest has an Active/Paused menu. Pausing stops its triggers without changing
+  individual watch settings. Running turns may finish; activating resumes enabled
+  watches, and an overdue timer can run once. Delete in that menu
+  removes the interest; if it has watches, confirm to delete those too.
   Each watch shows its source and Active or Paused state. Expand a
   watch, then expand “Activity” for a compact event timeline. Expand an event to read its full
   content, or expand “Watch details” for conditions and the execution destination. Select its status pill to
-  activate, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
+  resume, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
   “Runs in” names its execution conversation; its instructions can specify a
   different place to report. A
   mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
@@ -882,7 +931,7 @@ even when no session is connected. Full access requires new approval.
 
 ### Reconnecting an old agent in a DM
 
-On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
+On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open, if that agent is still a member of the channel. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
 
 ## Deleting an agent’s workflow
 

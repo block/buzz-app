@@ -11,6 +11,7 @@ import { newer } from "./events";
 import type { EventData } from "./events";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
+  MEDIA_TARGET_TAG,
   type Attachment,
   type ChannelMessage,
 } from "./contracts";
@@ -408,6 +409,13 @@ export function foldMessages(
     for (const { url, name } of projected.names)
       if (!attachmentNames.has(url)) attachmentNames.set(url, name);
     const authorId = messageAuthor(event, signingAuthority);
+    const mediaTargets = event.tags.filter(
+      (tag) => tag.length === 2 && tag[0] === MEDIA_TARGET_TAG,
+    );
+    const mediaTargetUrl =
+      mediaTargets.length === 1
+        ? safeMessageUrl(mediaTargets[0]?.[1] ?? "")
+        : undefined;
     const pluginRequest = pluginRequestId(event);
     const summary = parseSummary(summaries.get(event.id));
     const pending = includeReplies
@@ -429,6 +437,7 @@ export function foldMessages(
         channelId,
         threadRootId: threadReference(event)?.rootId,
         replyParentId: threadReference(event)?.parentId,
+        ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
         sentFromThread: (() => {
           const tag = event.tags.find(
             ([name, id]) =>

@@ -178,7 +178,7 @@ describe("the tool list", () => {
 
 describe("the attention tools", () => {
   it("creates, shows and replaces an Interest with expected-state tokens", async () => {
-    const { call } = agent();
+    const { call, api } = agent();
     const created = await call("interest_set", {
       id: "triage",
       instructions: "Triage asks.",
@@ -198,11 +198,19 @@ describe("the attention tools", () => {
     ).rejects.toThrow(/^conflict:[\s\S]*\(classifier: unavailable\)$/);
     const shown = await call("interest_show", { id: "triage" });
     expect(shown.expected_state).toBe(created.expected_state);
+    const paused = await api.write(
+      "interest/triage",
+      { type: "interest", instructions: "Triage asks.", paused: true },
+      { expected: shown.expected_state },
+    );
     await call("interest_set", {
       id: "triage",
       instructions: "Triage every ask.",
-      expected_state: shown.expected_state,
+      expected_state: paused.expected_state,
     });
+    expect(
+      (await call("interest_show", { id: "triage" })).object,
+    ).toMatchObject({ paused: true, instructions: "Triage every ask." });
     expect(await call("interest_list")).toEqual({
       classifier: "unavailable",
       interests: ["triage"],

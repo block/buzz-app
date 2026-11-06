@@ -147,6 +147,8 @@ export function useBringAgents(
           pending && describe(pending.agents, canAdd, !!pending.reviewed)
         }
         preventClose={!!pending?.busy}
+        // Bringing an agent changes who is in the channel, so Enter starts on
+        // declining; Send, once it is here, is highlighted where Bring was.
         initialFocus={safeAction}
         finalFocus={() => {
           restoreFocus();
@@ -157,6 +159,7 @@ export function useBringAgents(
             <Button
               ref={safeAction}
               type="button"
+              variant={pending?.reviewed ? "subtle" : "prominent"}
               disabled={pending?.busy}
               onClick={() => pending?.finish(null)}
             >
@@ -164,7 +167,7 @@ export function useBringAgents(
             </Button>
             <Button
               type="button"
-              variant="prominent"
+              variant={pending?.reviewed ? "prominent" : "subtle"}
               // Keeps its label and focus, so Enter goes on to Send.
               loading={!!pending?.busy}
               onClick={() =>

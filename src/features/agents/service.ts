@@ -25,7 +25,7 @@ import type {
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
-import { sourceCompleted, sourceSignature } from "./attention";
+import { interestPaused, sourceCompleted, sourceSignature } from "./attention";
 import {
   AgentProtectionService,
   type AgentProtection,
@@ -258,6 +258,8 @@ export type AgentChange<Config = unknown> = Readonly<{
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
+  /** Rejects an Attention edit if any displayed object changed before saving. */
+  attentionExpected?: Readonly<Record<string, AttentionObject>>;
   /** Sets only a watch's enabled state, if the displayed object is still current. */
   watchEnabled?: Readonly<
     Record<string, Readonly<{ enabled: boolean; expected: AttentionObject }>>
@@ -754,7 +756,43 @@ export type ConfigBinding = Readonly<{
   instructions?: Readonly<{ mode: Mode; subject: Subject }>;
 }>;
 
+/** A room audio pipe, not authorization to run tools. The harness obtains its
+ * own AgentHandle and applies its ordinary per-turn authorization. */
+export type AgentVoiceSeat<Config = unknown> = Readonly<
+  {
+    agent: Agent<Config>;
+    /** Always channel-scoped, regardless of the harness setting; never invent a root. */
+    conversation: Readonly<{ channelId: string }>;
+    signal: AbortSignal;
+    /** Final lines only: h-tag-only agent posts; own events never trigger this agent. */
+    transcript(speaker: "owner" | "agent", text: string): Promise<void>;
+    /** 48 kHz mono; native accepts exactly 960 finite samples with |s| <= 1,
+     * dropping frames when its capacity-5 queue is full. */
+    output(samples: number[]): Promise<void>;
+    /** Idempotent disconnect notification, ignored after signal aborts. */
+    ended(error?: Error): void;
+  } & Pick<Delivery<Config>, "config" | "revisions" | "synced" | "team">
+>;
+
+/** Host pipe before the agents service resolves launch settings and transcript policy. */
+export type AgentVoicePipe = Omit<
+  AgentVoiceSeat,
+  "config" | "revisions" | "synced" | "team" | "transcript"
+>;
+type HostedAgentType = Omit<AgentType, "voice"> & {
+  voice?(seat: AgentVoicePipe): Promise<AgentVoiceConnection>;
+};
+export type AgentVoiceConnection = Readonly<{
+  /** Owner-only 48 kHz mono frames of up to 5760 samples (native plays out 10 ms frames). Borrowed for this call. */
+  input(samples: number[]): void;
+  /** Host aborts signal, then awaits close to finish teardown. Idempotent. */
+  close(): void | Promise<void>;
+}>;
+
 export type AgentType<Config = unknown> = {
+  /** Huddles supplies a running agent owned by the current viewer.
+   * Full-duplex voice on the existing room conversation; abort closes the pipe. */
+  voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
   /** Native callback events this harness exposes to plugins. */
   hooks?: Readonly<{ events: readonly string[] }>;
   id: string;
@@ -1003,7 +1041,7 @@ export type HostedInstructions = Readonly<{
 /** A hosted agent's instructions changed since the caller read them. */
 export const HOSTED_INSTRUCTIONS_CHANGED =
   "Its instructions were changed elsewhere. Check the latest, then try again.";
-export type RegisteredAgentType = Contribution<AgentType>;
+export type RegisteredAgentType = Contribution<HostedAgentType>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
   config: unknown;
@@ -1449,6 +1487,12 @@ const ownRecord = (
 /** `record` with the owner's `change` to its settings; throws when the
  * change is not valid for it. */
 function changed(record: AgentRecord, change: AgentChange): AgentRecord {
+  for (const [slug, expected] of Object.entries(
+    change.attentionExpected ?? {},
+  )) {
+    if (JSON.stringify(record.attention[slug]) !== JSON.stringify(expected))
+      throw new Error("Attention changed. Review it and try again.");
+  }
   let next = record;
   if (change.config !== undefined) next = { ...next, config: change.config };
   if (change.attentionEnabled !== undefined) {
@@ -1862,7 +1906,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
-    this.contributions = createContributions<AgentType>(ctx);
+    this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
@@ -2383,7 +2427,9 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A hosted agent type has provision, activate, profile and remove, and no run, models or timeoutMs",
       );
+    const voice = (type as unknown as AgentType).voice;
     const models = type.models;
+    const pluginId = this.ctx.pluginOwner?.id;
     this.contributions.register(this.ctx, {
       ...type,
       ...(models && {
@@ -2392,7 +2438,13 @@ export class AgentsService extends Service implements Agents {
           return models(agent);
         },
       }),
-    } as unknown as AgentType);
+      ...(voice
+        ? {
+            voice: (seat: AgentVoicePipe) =>
+              this.runners.openVoice(seat, voice, pluginId),
+          }
+        : {}),
+    } as unknown as HostedAgentType);
   }
   types = () => this.contributions.snapshot();
   registerTab(tab: AgentAddedTab) {
@@ -2721,7 +2773,8 @@ export class AgentsService extends Service implements Agents {
           if (
             !agent?.attentionEnabled ||
             agent.attention[object.slug] !== object ||
-            !object.value.enabled
+            !object.value.enabled ||
+            interestPaused(agent.attention, object.value.interest_id)
           )
             throw new Error("This source watch is no longer enabled");
           // Output keeps its end, where a failure is summarised.

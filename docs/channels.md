@@ -1695,13 +1695,14 @@ and OS notifications are not enabled by this feature.
 
 The Channels plugin registers Slack-style shortcuts through the shared dispatcher, so
 each is listed in Settings → Shortcuts and can be rebound. All run while typing in the
-message editor and are ignored behind a dialog. None run in a terminal, which keeps
-Escape and Option+Arrow for the shell.
+message editor, except as noted below, and are ignored behind a dialog. None run in a
+terminal, which keeps Escape and Option+Arrow for the shell.
 
 - **Previous/next conversation** (Option+Up/Down) and **previous/next unread
   conversation** (Option+Shift+Up/Down) step through the sidebar's rendered order,
-  Solo chats and team rows alike. `conversation-rows.ts` scans the sidebar's
-  `Subscribed channels` list, so sorting, sections, filters and the All/Solo/Team pane
+  Solo chats and team rows alike. As in Slack, plain Option+Up/Down steps from the
+  composer only while its draft is empty; with text it moves the caret by paragraph
+  instead. `conversation-rows.ts` scans the sidebar's `Subscribed channels` list, so sorting, sections, filters and the All/Solo/Team pane
   are already applied; rows in a collapsed section or the inactive pane are skipped. A
   row is unread when it shows the unread or thread-activity marker that
   `SidebarUnread` also reads. The open conversation is the row marked `aria-current`.

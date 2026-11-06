@@ -52,6 +52,7 @@ import {
   type AgentHandle,
   AgentsService,
   type AgentType,
+  type AgentVoiceSeat,
   type ConfigBinding,
   type Delivery,
   type Trigger,
@@ -169,6 +170,7 @@ async function setup({
   history = [] as RelayEvent[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
+  voice = undefined as AgentType<Config>["voice"],
   jev = undefined as FakeJev | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
   sessionControls = undefined as
@@ -293,6 +295,7 @@ async function setup({
       ],
     }),
     run,
+    ...(voice ? { voice } : {}),
     ...(protection ? { protection } : {}),
     ...(retire ? { retire } : {}),
     ...(readFile ? { readFile } : {}),
@@ -1188,6 +1191,55 @@ it.each(["edit", "delete"])(
     expect(service.find(bot)?.attention).toEqual(before);
   },
 );
+
+it.each(["pause", "delete"])(
+  "rejects a stale interest %s without overwriting a newer edit",
+  async (operation) => {
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const expected = service.find(bot)?.attention["interest/default"];
+    if (expected?.value.type !== "interest") throw new Error("fixture");
+    await service.save(bot, {
+      attention: {
+        "interest/default": {
+          ...expected.value,
+          instructions: "New instructions",
+        },
+      },
+    });
+    const before = service.find(bot)?.attention;
+    await expect(
+      service.save(bot, {
+        attentionExpected: { "interest/default": expected },
+        attention: {
+          "interest/default":
+            operation === "pause" ? { ...expected.value, paused: true } : null,
+        },
+      }),
+    ).rejects.toThrow(/changed/);
+    expect(service.find(bot)?.attention).toEqual(before);
+  },
+);
+
+it("rejects deleting a displayed interest when a new child was added without saving a partial deletion", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const interest = service.find(bot)?.attention["interest/default"];
+  const watch = service.find(bot)?.attention["watch/channel"];
+  if (!interest || watch?.value.type !== "event") throw new Error("fixture");
+  await service.save(bot, { attention: { "watch/new": { ...watch.value } } });
+  const before = service.find(bot)?.attention;
+  await expect(
+    service.save(bot, {
+      attentionExpected: {
+        "interest/default": interest,
+        "watch/channel": watch,
+      },
+      attention: { "watch/channel": null, "interest/default": null },
+    }),
+  ).rejects.toThrow(/Remove or move/);
+  expect(service.find(bot)?.attention).toEqual(before);
+});
 
 it("sets a watch's target enabled value without changing its configuration", async () => {
   const { service } = await setup();
@@ -2293,6 +2345,163 @@ it("starts each run from the start resolver, local with no synced revisions", as
   expect(run.mock.calls[0]?.[0]).toMatchObject({
     config: { reply: "local" },
     revisions: [],
+  });
+});
+
+describe("voice launch and transcripts", () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  it("resolves synced opening config and refuses an unresolved launch", async () => {
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    let synced = false;
+    const f = await setup({
+      voice,
+      binding: () =>
+        synced ? { instructions: { mode: "synced", subject } } : {},
+    });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await f.service.save(bot, {
+        config: { reply: "local", instructions: "stale local" },
+      });
+      const agent = f.service.find(bot);
+      const open = f.service
+        .types()
+        .find((type) => type.key === "example/echo")?.voice;
+      if (!agent || !open) throw new Error("Missing voice fixture");
+      const pipe = {
+        agent,
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        output: async () => {},
+        ended: () => {},
+      };
+      synced = true;
+      await expect(open(pipe)).rejects.toThrow(
+        "Waiting for this agent's config to sync",
+      );
+      expect(voice).not.toHaveBeenCalled();
+      const head = finalizeEvent(
+        {
+          kind: 45010,
+          created_at: 1,
+          content: JSON.stringify({ version: 1, text: "synced instructions" }),
+          tags: [["op", "create"]],
+        },
+        generateSecretKey(),
+      ) as RelayEvent;
+      const store = internals(f.service).configStore;
+      store.applyRead(subject, store.capture(subject), {
+        kind: "head",
+        event: head,
+      });
+      await open(pipe);
+      expect(voice.mock.calls[0]?.[0]).toMatchObject({
+        config: { reply: "local", instructions: "synced instructions" },
+      });
+      expect(voice.mock.calls[0]?.[0].revisions).toEqual([head.id]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+  it("refuses protected voice before calling a runtime without protection integration", async () => {
+    const identities: AgentIdentity[] = [];
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    const f = await setup({ identities, voice });
+    try {
+      await f.service.create({ type: "example/echo", name: "Worker" });
+      const identity = identities[0];
+      if (!identity) throw new Error("Missing native identity");
+      identities[0] = {
+        ...identity,
+        protection: { provider: "example", policy: {} },
+        protectionRevision: 1,
+      };
+      await f.service.refresh();
+      await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+      const agent = f.service.find(bot);
+      const open = f.service
+        .types()
+        .find((type) => type.key === "example/echo")?.voice;
+      if (!agent || !open) throw new Error("Missing voice fixture");
+      await expect(
+        open({
+          agent,
+          conversation: { channelId: channel },
+          signal: new AbortController().signal,
+          output: async () => {},
+          ended: () => {},
+        }),
+      ).rejects.toThrow(
+        "This runtime does not support the agent's protection policy",
+      );
+      expect(voice).not.toHaveBeenCalled();
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+  it("publishes final h-only transcripts without triggering its own agent", async () => {
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    const f = await setup({ voice });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await f.service.save(bot, {
+        attentionEnabled: true,
+        attention: { ...chat, "watch/channel": null },
+      });
+      await settle();
+      const agent = f.service.find(bot);
+      const open = f.service
+        .types()
+        .find((type) => type.key === "example/echo")?.voice;
+      if (!agent || !open) throw new Error("Missing voice fixture");
+      const controller = new AbortController();
+      await open({
+        agent,
+        conversation: { channelId: channel },
+        signal: controller.signal,
+        output: async () => {},
+        ended: () => {},
+      });
+      const seat = voice.mock.calls[0]?.[0];
+      if (!seat) throw new Error("Missing opened seat");
+      await seat.transcript("agent", "Spoken answer");
+      const lines = await published(f.native, 9);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        pubkey: bot,
+        tags: [["h", channel]],
+        content: "Echo (transcribed by Echo): Spoken answer",
+      });
+      await seat.transcript("owner", "  ");
+      controller.abort();
+      await seat.transcript("owner", "late");
+      expect(await published(f.native, 9)).toHaveLength(1);
+      f.emit({ events: lines, channelId: channel });
+      await settle();
+      expect(f.run).not.toHaveBeenCalled();
+      f.emit({
+        events: [event("voice-control", { tags: [["h", channel]] })],
+        channelId: channel,
+      });
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
   });
 });
 
@@ -4896,6 +5105,39 @@ const tick = {
   },
 } as const;
 
+it("pauses an interest's timer without changing its enabled setting and resumes overdue work", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      ...tick,
+      "interest/default": {
+        type: "interest",
+        instructions: "Be brief.",
+        paused: true,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  expect(service.find(bot)?.attention["watch/tick"]?.value).toMatchObject({
+    enabled: true,
+  });
+  await service.save(bot, {
+    attention: {
+      "interest/default": {
+        type: "interest",
+        instructions: "Be brief.",
+        paused: false,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
 it("keeps a settings change still being saved when a timer saves its progress", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const disk = new Map<string, string>();
@@ -6505,26 +6747,38 @@ it("classifies a reply without its parent when the parent lookup does not answer
   }
 });
 
-it("sends nothing to the classifier for a watch stopped while its event waited", async () => {
-  const jev = fakeJev();
-  let known!: (value: boolean) => void;
-  jev.status.mockImplementationOnce(
-    () => new Promise<boolean>((resolve) => (known = resolve)),
-  );
-  const { service, run, emit } = await classifiedAgent(jev);
-  emit({ events: [event("w")] });
-  await settle();
-  const watch = service.find(bot)?.attention["watch/channel"]?.value;
-  if (watch?.type !== "event") throw new Error("no watch");
-  await service.save(bot, {
-    attention: { "watch/channel": { ...watch, enabled: false } },
-  });
-  known(true);
-  await settle();
-  await settle();
-  expect(jev.decide).not.toHaveBeenCalled();
-  expect(run).not.toHaveBeenCalled();
-});
+it.each(["watch", "interest"])(
+  "sends nothing to the classifier for a paused %s while its event waited",
+  async (target) => {
+    const jev = fakeJev();
+    let known!: (value: boolean) => void;
+    jev.status.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (known = resolve)),
+    );
+    const { service, run, emit } = await classifiedAgent(jev);
+    emit({ events: [event("w")] });
+    await settle();
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("no watch");
+    await service.save(bot, {
+      attention:
+        target === "watch"
+          ? { "watch/channel": { ...watch, enabled: false } }
+          : {
+              [`interest/${watch.interest_id}`]: {
+                type: "interest",
+                instructions: "Be brief.",
+                paused: true,
+              },
+            },
+    });
+    known(true);
+    await settle();
+    await settle();
+    expect(jev.decide).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  },
+);
 
 it("a copy of the app that does not hold the agent sends nothing to the classifier", async () => {
   const jev = fakeJev();

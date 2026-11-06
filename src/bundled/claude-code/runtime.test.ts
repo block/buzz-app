@@ -166,6 +166,7 @@ function setup(
       status: "ready",
       session,
       viewer: alice,
+      origin: "https://agent.example",
       scope: `https://agent.example:${alice}`,
     }),
   } as unknown as RelayData;
@@ -1993,6 +1994,48 @@ it.each([true, false])(
       }
     } finally {
       f.runtime.dispose();
+    }
+  },
+);
+
+it.each([
+  ["https://agent.example", false],
+  ["https://other.example", true],
+])(
+  "refuses an owner's workflow mention where the build restricts %s",
+  async (restricted, runs) => {
+    vi.stubEnv("VITE_BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES", restricted);
+    const relay = keypair();
+    const event = eventDto(
+      signed(relay, {
+        kind: 9,
+        content: "@Claude workflow",
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["buzz:workflow", "true"],
+          ["buzz:workflow-owner", alice],
+          ["buzz:workflow-mention", self],
+        ],
+      }),
+    );
+    const f = setup([event], { workflowAuthority: relay.pubkey });
+    try {
+      await f.deliver({ type: "mention", event });
+      if (runs) {
+        await vi.waitFor(() =>
+          expect(f.claudes().some((process) => process.prompts.length)).toBe(
+            true,
+          ),
+        );
+      } else {
+        await flush(10);
+        expect(f.claudes()).toHaveLength(0);
+        expect(f.workingUntil).not.toHaveBeenCalled();
+      }
+    } finally {
+      f.runtime.dispose();
+      vi.unstubAllEnvs();
     }
   },
 );

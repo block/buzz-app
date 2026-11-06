@@ -1,3 +1,4 @@
+import { interestPaused } from "./attention";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -8,6 +9,8 @@ import type { ProtectionAction } from "../agent-protection/service";
 import type {
   Agent,
   AgentAttention,
+  AgentVoicePipe,
+  AgentType,
   AgentHandle,
   AgentCreationInput,
   AgentUpdateInput,
@@ -781,6 +784,58 @@ export class AgentRunners {
     ]);
     return true;
   }
+  private assertProtected(
+    agent: Agent,
+    type: RegisteredAgentType,
+    handle: AgentHandle,
+  ) {
+    if (!agent.protection) return;
+    if (!type.protection || !handle.protection)
+      throw new Error(
+        type.protectionUnavailable ??
+          "This runtime does not support the agent's protection policy",
+      );
+    handle.protection.assertAvailable();
+  }
+  /** Resolve voice exactly as a text launch; the owning plugin retains its handle. */
+  async openVoice(
+    seat: AgentVoicePipe,
+    voice: NonNullable<AgentType["voice"]>,
+    pluginId?: string,
+  ) {
+    const agent = this.host.ready(seat.agent.key);
+    const handle = agent && this.handle(agent.key, pluginId);
+    const type = this.runners.get(seat.agent.key)?.type;
+    if (!agent || !handle || !type)
+      throw new Error("This agent is no longer running");
+    // Huddle seats close on protectionRevision changes, so this gate is reapplied.
+    this.assertProtected(agent, type, handle);
+    const start = await this.host.start(agent);
+    if (!start.ok) throw new Error(start.reason);
+    const team = this.host.team(agent.key);
+    seat.signal.throwIfAborted();
+    const ownerName = this.host.displayName(agent, agent.owner) ?? agent.owner;
+    return voice({
+      ...seat,
+      agent,
+      config: start.config,
+      revisions: start.revisions,
+      ...(start.synced && { synced: start.synced }),
+      ...(team && { team }),
+      async transcript(speaker, text) {
+        if (seat.signal.aborted || !text.trim()) return;
+        const name = speaker === "owner" ? ownerName : agent.name;
+        await handle.publish(
+          {
+            kind: 9,
+            content: `${name} (transcribed by ${agent.name}): ${text}`,
+            tags: [["h", seat.conversation.channelId]],
+          },
+          () => seat.signal.throwIfAborted(),
+        );
+      },
+    });
+  }
   /** The agent's handle outside any run, while this copy runs it with a
    * type of `pluginId` when specified, not changing it, and its community is live. Each
    * call through the handle checks that again, so a kept handle stops
@@ -938,7 +993,12 @@ export class AgentRunners {
     const watches: CompiledWatch[] = [];
     for (const object of Object.values(agent.attention)) {
       const watch = object.value;
-      if (watch.type !== "event" || !watch.enabled) continue;
+      if (
+        watch.type !== "event" ||
+        !watch.enabled ||
+        interestPaused(agent.attention, watch.interest_id)
+      )
+        continue;
       const interest = agent.attention[`interest/${watch.interest_id}`]?.value;
       watches.push({
         slug: object.slug,
@@ -2115,7 +2175,8 @@ export class AgentRunners {
         epoch === runner.epoch &&
         agent.attention[object.slug] === object &&
         object.value.type === "source" &&
-        object.value.enabled
+        object.value.enabled &&
+        !interestPaused(agent.attention, object.value.interest_id)
         ? job
         : undefined;
     }
@@ -2185,7 +2246,8 @@ export class AgentRunners {
       job.matched.epoch === runner.epoch &&
       object === job.matched.object &&
       object.value.type === "timer" &&
-      object.value.enabled
+      object.value.enabled &&
+      !interestPaused(agent.attention, object.value.interest_id)
     );
   }
 
@@ -2218,7 +2280,12 @@ export class AgentRunners {
       | undefined;
     for (const object of Object.values(agent.attention)) {
       const timer = object.value;
-      if (timer.type !== "timer" || !timer.enabled) continue;
+      if (
+        timer.type !== "timer" ||
+        !timer.enabled ||
+        interestPaused(agent.attention, timer.interest_id)
+      )
+        continue;
       const saved = timers[object.slug];
       const state = timerState(timer, saved, now);
       if (state !== saved)
@@ -2506,14 +2573,7 @@ export class AgentRunners {
       return run(delivery);
     };
     const completion = Promise.resolve().then(async () => {
-      if (agent.protection) {
-        if (!type.protection || !handle.protection)
-          throw new Error(
-            type.protectionUnavailable ??
-              "This runtime does not support the agent's protection policy",
-          );
-        handle.protection.assertAvailable();
-      }
+      this.assertProtected(agent, type, handle);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);

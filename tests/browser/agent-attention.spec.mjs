@@ -66,6 +66,19 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
     path: testInfo.outputPath("watching-recent-events.png"),
     fullPage: true,
   });
+  await page
+    .getByRole("button", { name: "Watch status for Release discussion" })
+    .click();
+  await expect(
+    page.getByRole("menu", {
+      name: "Watch status for Release discussion",
+      exact: true,
+    }),
+  ).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: testInfo.outputPath("trigger-status-menu.png"),
+  });
+  await page.keyboard.press("Escape");
   for (const theme of ["light", "dark"]) {
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 900 });
@@ -84,12 +97,46 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
       ).toBe(true);
     }
   }
+  const interestStatus = page.getByRole("button", {
+    name: "Interest status for Release planning",
+  });
+  const watched = page.getByRole("button", {
+    name: "Watch status for Release discussion",
+  });
+  await interestStatus.click();
+  await expect(
+    page.getByRole("menu", {
+      name: "Interest status for Release planning",
+      exact: true,
+    }),
+  ).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: testInfo.outputPath("interest-status-menu.png"),
+  });
+  await page
+    .getByRole("menu", {
+      name: "Interest status for Release planning",
+      exact: true,
+    })
+    .getByRole("menuitem", { name: "Pause", exact: true })
+    .click();
+  await expect(interestStatus).toHaveText("Paused");
+  await expect(watched).toHaveText("Paused");
+  await page.keyboard.press("Escape");
+  await interestStatus.click();
+  await page.getByRole("menuitem", { name: "Resume", exact: true }).click();
+  await expect(interestStatus).toHaveText("Active");
+  await expect(watched).toHaveText("Active");
+  await page.keyboard.press("Escape");
   const runtime = page.getByRole("button", {
     name: "Attention status for Ada",
   });
   await runtime.focus();
   await page.keyboard.press("Space");
-  await page.getByRole("menuitem", { name: "Pause", exact: true }).click();
+  await page
+    .getByRole("menu", { name: "Attention status for Ada", exact: true })
+    .getByRole("menuitem", { name: "Pause", exact: true })
+    .click();
   await expect(runtime).toHaveText("Paused");
   await expect(
     page.locator(".attention-setting .attention-sonar-sweep"),
@@ -103,7 +150,7 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
     page.getByRole("button", { name: "Watch status for Release discussion" }),
   ).toBeVisible();
   await runtime.click();
-  await page.getByRole("menuitem", { name: "Activate", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Resume", exact: true }).click();
   await expect(runtime).toHaveText("Active");
   await expect(
     page.locator(".attention-setting .attention-sonar-sweep"),
@@ -189,19 +236,22 @@ test("watch and interest deletion restore focus without taking it from another c
   });
   await expect(interest).toBeVisible();
   const removeInterest = page.getByRole("button", {
-    name: "Delete Interest Release planning",
+    name: "Interest status for Release planning",
   });
-  await expect(removeInterest).toHaveText("");
-  await expect(removeInterest.locator("..")).toHaveCSS("opacity", "0");
+  await expect(removeInterest).toHaveText("Active");
+  await expect(removeInterest.locator("..")).toHaveCSS("opacity", "1");
   await page.evaluate(() => window.attentionFixture.holdSave());
   await removeInterest.focus();
   await expect(removeInterest.locator("..")).toHaveCSS("opacity", "1");
   await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   try {
     await expect
       .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
       .toBe(true);
-    await expect(removeInterest).toBeFocused();
+    await expect(
+      page.getByRole("menuitem", { name: "Delete", exact: true }),
+    ).toBeFocused();
   } finally {
     await page.evaluate(() => window.attentionFixture.releaseSave());
   }
@@ -236,7 +286,7 @@ test.describe("touch delete actions", () => {
   test.use({ hasTouch: true });
   test("keeps watch and Interest deletion available without hover", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.goto("/tests/fixtures/agent-attention.html");
     expect(await page.evaluate(() => matchMedia("(hover: none)").matches)).toBe(
       true,
@@ -252,11 +302,34 @@ test.describe("touch delete actions", () => {
     await remove.tap();
     await expect(remove).toHaveCount(0);
     const interest = page.getByRole("button", {
-      name: "Delete Interest Release planning",
+      name: "Interest status for Release planning",
     });
     await expect(interest.locator("..")).toHaveCSS("opacity", "1");
     await interest.tap();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).tap();
     await expect(interest).toHaveCount(0);
+    const remaining = page.getByRole("button", {
+      name: /^Interest status for /,
+    });
+    await remaining.tap();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).tap();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveCSS("opacity", "1");
+    await page.screenshot({
+      path: testInfo.outputPath("delete-interest-confirmation.png"),
+    });
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).tap();
+    await expect(remaining).toBeVisible();
+    await remaining.tap();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).tap();
+    await dialog
+      .getByRole("button", { name: "Delete interest and watches", exact: true })
+      .tap();
+    await expect(remaining).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /^Watch status for / }),
+    ).toHaveCount(0);
   });
 });
 
@@ -277,14 +350,16 @@ test("empty Attention retains its card and sonar at both widths in the profile h
     ).toHaveCount(0);
   }
   const removeInterest = page.getByRole("button", {
-    name: /^Delete Interest /,
+    name: /^Interest status for /,
   });
   await expect(removeInterest).toHaveCount(2);
   await removeInterest.first().focus();
   await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await expect(removeInterest).toHaveCount(1);
   await removeInterest.first().focus();
   await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   const empty = page.getByRole("region", {
     name: "Start watching",
     exact: true,

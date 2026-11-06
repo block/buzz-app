@@ -142,6 +142,7 @@ function Members({
   const refreshing = membershipState.refreshing;
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [inviting, setInviting] = useState(false);
   const profiles = useSyncExternalStore(
@@ -378,6 +379,7 @@ function Members({
                   : "They will no longer be able to invite people or manage members."
           }
           pending={busy}
+          initialFocus={pending.action === "remove" ? undefined : proceed}
           onClose={() => setPending(null)}
           actions={
             <>
@@ -385,6 +387,7 @@ function Members({
                 Cancel
               </Button>
               <Button
+                ref={proceed}
                 variant={
                   pending.action === "remove" ? "destructive" : "primary"
                 }

@@ -134,6 +134,7 @@ import {
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
+import { useShowingDraft } from "./draft-places";
 import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
@@ -324,6 +325,8 @@ export type MessageComposerProps = {
    * seedMentions); other composers read their own channel window. */
   threadSeed?: Pick<ChannelMessage, "id" | "mentions"> | undefined;
   replyParentId?: string | undefined;
+  /** Bind a timecoded reply to the selected gallery attachment. */
+  mediaTargetUrl?: string | undefined;
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
@@ -510,6 +513,7 @@ function Composer({
   threadRootId,
   threadSeed,
   replyParentId,
+  mediaTargetUrl,
   replyContext,
   mediaTimeSeconds,
   clearMediaTime,
@@ -551,7 +555,10 @@ function Composer({
     if (disabled || !active) sendAttempt.current?.abort();
   }, [disabled, active]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
-  useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
+  useLayoutEffect(
+    () => () => sendAttempt.current?.abort(),
+    [replyParentId, mediaTargetUrl],
+  );
   const inputId = useId();
   const draftKey =
     submission?.draftKey ??
@@ -699,6 +706,7 @@ function Composer({
   // subscribe only while they could seed. Nothing is loaded here: the host
   // owns the window.
   const presented = active && shown;
+  useShowingDraft(scope, draftKey, presented);
   const seeking =
     seedsFromWindow &&
     presented &&
@@ -2889,11 +2897,14 @@ function Composer({
               content,
               recipients,
               uploaded,
-              ...(replyParentId || references.length || tuned
+              ...(replyParentId || references.length || tuned || mediaTargetUrl
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned ? [references] : []),
-              ...(tuned ? [sentPicks] : []),
+              ...(references.length || tuned || mediaTargetUrl
+                ? [references]
+                : []),
+              ...(tuned || mediaTargetUrl ? [sentPicks] : []),
+              ...(mediaTargetUrl ? [mediaTargetUrl] : []),
             )
           : references.length || tuned
             ? sender.messages.send(

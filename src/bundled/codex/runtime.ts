@@ -1,3 +1,5 @@
+import { openVoice } from "./voice";
+import { isHuddleRoom } from "../../features/huddle/lifecycle";
 import type {
   AgentExecution,
   AgentExecutionSession,
@@ -26,6 +28,7 @@ import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
+  AgentVoiceSeat,
   Agents,
   Delivery,
   Models,
@@ -89,7 +92,8 @@ type Request = {
   current?: () => boolean;
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
-  event: EventData;
+  /** Publish/activity root; unlike toolRoot, retained in DMs. */
+  replyRoot?: string;
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
@@ -127,6 +131,7 @@ type Request = {
    * one that fails or is cancelled before then leaves them for the next. */
   notes?: readonly string[];
 };
+type TextRequest = Request & { event: EventData; adopted?: never };
 /** `at` is when the binding last took in a message or ended a turn; bindings
  * saved before it existed have none. `tools` is the `addedKey` of the
  * thread's tools, absent when plugins added none. `protection` is the
@@ -147,6 +152,7 @@ type Active = {
   threadId?: string;
   turnId?: string;
   ready: Promise<void>;
+  released: Promise<void>;
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
@@ -182,6 +188,7 @@ type Lane = {
   /** Turns waiting on `tail` to start; steering past them would reorder. */
   queued: number;
   active?: Active;
+  voice?: { loaded: Loaded; signal: AbortSignal };
 };
 type Entry = {
   storageKey: string;
@@ -195,6 +202,7 @@ type Entry = {
   /** Requests delivered and not yet taken into a turn, nor ended. */
   waiting: Set<Request>;
 };
+type Loaded = Awaited<ReturnType<CodexRuntime["loadThread"]>>;
 type Server = {
   protection?: AgentProtection;
   rpc: AppServer;
@@ -1361,6 +1369,201 @@ export class CodexRuntime {
 
     for (const listener of this.listeners) listener();
   }
+  async voice(seat: AgentVoiceSeat, agent: AgentHandle) {
+    if (this.disposed) throw new Error("Codex runtime is disposed");
+    seat.signal.throwIfAborted();
+    // Protection is not known to review realtime input, so voice refuses it.
+    if (seat.agent.protection || agent.protection)
+      throw new Error("Voice is unavailable for protected agents");
+    // Voice runs on this computer; a plugin execution target has no voice seat.
+    if (await this.inspect?.(agent.key))
+      throw new Error("Voice is unsupported for agents on an execution target");
+    const reads = this.reads(agent.key);
+    if (!reads) throw new Error("Connect to the agent's community first");
+    const settings = this.resolveConfig(seat.config);
+    if (!validWorkspace(settings.workspace))
+      throw new Error("Choose an absolute Codex workspace first");
+    const { channelId } = seat.conversation;
+    const key = JSON.stringify([channelId, "channel"]);
+    const entry = this.entry(agent.key, reads.scope);
+    const lane = entry.lanes.get(key) ?? { tail: entry.after, queued: 0 };
+    if (lane.voice)
+      throw new Error("This conversation already has a voice seat");
+    entry.lanes.set(key, lane);
+    const abort = new AbortController();
+    const signal = AbortSignal.any([
+      seat.signal,
+      entry.abort.signal,
+      abort.signal,
+    ]);
+    const request: Request = {
+      scope: reads.scope,
+      agent,
+      settings,
+      team: seat.team ?? "",
+      ...(seat.synced ? { synced: seat.synced } : {}),
+      activityScope: channelId,
+      conversation: {
+        channelId,
+        name: reads.channelLabel(channelId)?.name ?? channelId,
+        topLevel: true,
+      },
+      answered() {},
+      failActivity: (reason) =>
+        this.status(agent.key, key, "Needs attention", reason),
+    };
+    const server = this.open(agent);
+    let loaded: Loaded | undefined;
+    let media: Awaited<ReturnType<typeof openVoice>> | undefined;
+    let off = () => {};
+    let closing: Promise<void> | undefined;
+    const close = () => {
+      if (closing) return closing;
+      signal.removeEventListener("abort", onAbort);
+      abort.abort();
+      off();
+      // Stop media, await the surviving typed turn, then unsubscribe.
+      // New text waits on closing, installed as lane.tail below.
+      const tail = lane.tail;
+      const opened = media;
+      const stopped = opened?.close();
+      closing = (async () => {
+        await stopped;
+        await tail.catch(() => {});
+        if (media !== opened) await media?.close();
+        if (loaded) {
+          await server.rpc
+            .request("thread/unsubscribe", { threadId: loaded.threadId })
+            .catch(() => {});
+          await loaded.bridge?.close();
+        }
+        delete lane.voice;
+        if (!lane.active && !lane.queued && entry.lanes.get(key) === lane)
+          entry.lanes.delete(key);
+      })();
+      lane.tail = closing;
+      return closing;
+    };
+    const onAbort = () => {
+      void close();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    const opening = lane.tail
+      .catch(() => {})
+      .then(async () => {
+        signal.throwIfAborted();
+        const rpc = await server.opening;
+        const memory = await this.core(agent.key, signal);
+        const instructions =
+          Object.values(
+            turnContext(
+              agent,
+              settings,
+              request.team,
+              memory,
+              this.repositories(reads.scope),
+            ),
+          )
+            .map((item) => item.value)
+            .join("\n") +
+          `\nVoice work acts for owner ${agent.owner}. Buzz tools default to room ${channelId} at top level. This is the room's existing conversation. A turn that starts with <realtime_delegation> is a spoken request: the voice model speaks only your final answer, so put the result there in a few plain spoken sentences, not in a send. When you delegate, say only a short acknowledgement, then wait: never state a fact the delegated work has not returned yet.`;
+        loaded = await this.loadThread(
+          request,
+          entry,
+          key,
+          signal,
+          server,
+          rpc,
+          instructions,
+        );
+        // A resumed thread keeps its first developer message, not resume's.
+        if (!loaded.fresh)
+          await rpc.request("thread/inject_items", {
+            threadId: loaded.threadId,
+            items: [
+              {
+                type: "message",
+                role: "developer",
+                content: [{ type: "input_text", text: instructions }],
+              },
+            ],
+          });
+        signal.throwIfAborted();
+        lane.voice = { loaded, signal };
+        const threadId = loaded.threadId;
+        off = rpc.onMessage(({ method, params }) => {
+          const p = params as
+            | {
+                threadId?: string;
+                turn?: { id: string };
+                role?: string;
+                text?: string;
+              }
+            | undefined;
+          if (signal.aborted || p?.threadId !== threadId) return;
+          if (
+            method === "turn/started" &&
+            p.turn &&
+            (!lane.active || lane.active.finished)
+          ) {
+            // execute installs the normal Request synchronously, before the next RPC tool call.
+            const previous = lane.tail;
+            const delegated = this.execute(
+              { ...request, adopted: p.turn.id },
+              "",
+              key,
+              lane,
+              entry,
+            );
+            lane.tail = Promise.all([previous, delegated]).then(() => {});
+          }
+          if (
+            method === "thread/realtime/transcript/done" &&
+            p.text?.trim() &&
+            ["user", "assistant"].includes(p.role ?? "")
+          ) {
+            void seat
+              .transcript(p.role === "user" ? "owner" : "agent", p.text)
+              .catch((error) => {
+                if (!signal.aborted) seat.ended(new Error(message(error)));
+              });
+          }
+        });
+        media = await openVoice(
+          rpc,
+          threadId,
+          signal,
+          seat.output,
+          (error) => {
+            void close();
+            seat.ended(error);
+          },
+          instructions,
+        );
+        signal.throwIfAborted();
+        this.save(request, entry, key, {
+          threadId,
+          workspace: loaded.workspace,
+          at: Date.now(),
+          ...(loaded.tools ? { tools: loaded.tools } : {}),
+          ...(agent.protection
+            ? { protection: agent.protection.stateKey }
+            : {}),
+        });
+        return { input: media.input, close };
+      });
+    // Reserve startup in the ordinary lane; later text work waits for it.
+    lane.tail = opening.then(
+      () => {},
+      () => {},
+    );
+    try {
+      return await opening;
+    } catch (error) {
+      await close();
+      throw error;
+    }
+  }
   async run(delivery: Delivery): Promise<void> {
     if (this.disposed) throw new Error("Codex runtime is disposed");
     delivery.signal.throwIfAborted();
@@ -1397,7 +1600,8 @@ export class CodexRuntime {
     const settings = this.resolveConfig(delivery.config);
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
-    const topLevel = solo || wake?.topLevel === true;
+    const huddle = isHuddleRoom(channel?.about);
+    const topLevel = solo || huddle || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
@@ -1440,10 +1644,11 @@ export class CodexRuntime {
     delivery.workingUntil(replied);
     // Codex makes one more model call after a final send before its turn
     // ends; the agent is done working on this request once it has replied.
-    const request: Request = {
+    const request: TextRequest = {
       scope: reads.scope,
       ...(wake ? { current: delivery.current } : {}),
       event,
+      ...(!topLevel ? { replyRoot: rootOf(event) } : {}),
       ...(wake ? { wake } : {}),
       ...(delivery.wakeText ? { wakeText: delivery.wakeText } : {}),
       agent,
@@ -1461,7 +1666,7 @@ export class CodexRuntime {
         name: channel?.name ?? channelId,
         ...(root ? { root } : {}),
         ...(topLevel ? { topLevel } : {}),
-        ...(topLevel && !solo ? { threadReplies: true } : {}),
+        ...(topLevel && !solo && !huddle ? { threadReplies: true } : {}),
       },
       team: delivery.team ?? "",
       ...(project ? { project: `${project}\n` } : {}),
@@ -1863,7 +2068,7 @@ export class CodexRuntime {
   }
 
   private start(
-    request: Request,
+    request: TextRequest,
     text: string,
     key: string,
     lane: Lane,
@@ -1874,6 +2079,8 @@ export class CodexRuntime {
     const job = lane.tail
       .catch(() => undefined)
       .then(async () => {
+        // A server-started voice turn can arrive after this job was queued.
+        while (current.active) await current.active.released;
         current.queued--;
         entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
@@ -1905,14 +2112,14 @@ export class CodexRuntime {
         );
       })
       .finally(() => {
-        if (current.tail === job && !current.active) {
+        if (current.tail === job && !current.active && !current.voice) {
           entry.lanes.delete(key);
           for (const listener of this.listeners) listener();
         }
       });
     return job;
   }
-  private async history(request: Request, signal: AbortSignal) {
+  private async history(request: TextRequest, signal: AbortSignal) {
     signal.throwIfAborted();
     const reads = this.reads(request.agent.key);
     if (reads?.scope !== request.scope)
@@ -1937,9 +2144,9 @@ export class CodexRuntime {
       content,
       tags: [
         ["h", request.conversation.channelId],
-        ...(request.conversation.topLevel
-          ? []
-          : [["e", rootOf(request.event), "", "reply"]]),
+        ...(request.replyRoot !== undefined
+          ? [["e", request.replyRoot, "", "reply"]]
+          : []),
         ["p", request.agent.owner],
       ],
     });
@@ -2221,23 +2428,13 @@ export class CodexRuntime {
     }
   }
 
-  /** What a thread for `agent` starts or resumes with in `workspace`, and the
-   * model and effort its turn runs on: `pick`'s when available. */
-  private async prepare(
+  /** The model and effort a turn runs on: `pick`'s when available. */
+  private async turnModel(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
     settings: Config,
-    workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
     synced?: Delivery["synced"],
   ) {
-    const normalized = await rpc.request<{
-      config: {
-        mcp_servers?: Record<string, Record<string, unknown>>;
-        model_reasoning_summary?: string | null;
-        features?: { hooks?: boolean; codex_hooks?: boolean };
-      };
-    }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
     const own = resolveModel(settings.model, models);
     // Model and effort are per turn, so a pick changes nothing after it.
@@ -2260,6 +2457,27 @@ export class CodexRuntime {
     const kept = synced?.effort;
     if (kept && !pick.model && !pick.effort && effort !== kept)
       throw new Error(unsupportedSynced("effort", kept, `Codex's ${model}`));
+    return { model, effort };
+  }
+
+  /** What a thread for `agent` starts or resumes with in `workspace`, and the
+   * model and effort its turn runs on: `pick`'s when available. */
+  private async prepare(
+    rpc: AppServer,
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
+    settings: Config,
+    workspace: string,
+    pick: Readonly<{ model?: string; effort?: string }>,
+    synced?: Delivery["synced"],
+  ) {
+    const normalized = await rpc.request<{
+      config: {
+        mcp_servers?: Record<string, Record<string, unknown>>;
+        model_reasoning_summary?: string | null;
+        features?: { hooks?: boolean; codex_hooks?: boolean };
+      };
+    }>("config/read", { cwd: workspace });
+    const { model, effort } = await this.turnModel(rpc, settings, pick, synced);
     const mcp = Object.fromEntries(
       Object.entries(normalized.config.mcp_servers ?? {}).map(
         ([name, server]) => [
@@ -2314,74 +2532,40 @@ export class CodexRuntime {
       : { summary: "auto" };
     return { params, model, effort, summary, bridge };
   }
-  private async execute(
+  /** Shared thread setup; a voice seat retains it between delegated turns. */
+  async loadThread(
     request: Request,
-    text: string,
-    key: string,
-    lane: Lane,
     entry: Entry,
+    key: string,
+    signal: AbortSignal,
+    server: Server,
+    rpc: AppServer,
+    voiceInstructions?: string,
   ) {
-    let ready!: () => void;
-    let notReady!: (error: unknown) => void;
-    const turnAbort = new AbortController();
-    const server = this.open(request.agent);
-    // No deadline of our own: a turn runs until Codex ends it.
-    const signal = AbortSignal.any([entry.abort.signal, turnAbort.signal]);
-    const active: Active = {
-      rpc: server.rpc,
-      ready: new Promise((resolve, reject) => {
-        ready = resolve;
-        notReady = reject;
-      }),
-      steering: Promise.resolve(),
-      reply: request,
-      finished: false,
-      workspace: request.settings.workspace,
-      signal,
-      requests: [request],
-      activity: new Map(),
-    };
-    void active.ready.catch(() => undefined);
-    lane.active = active;
     const { settings, agent } = request;
-    const followed = follow(server.rpc, signal, active, (method, item) => {
-      const step = method === "item/started" ? codexStep(item) : undefined;
-      if (step)
-        for (const taken of active.activity.values())
-          taken.step?.(step.tool, step.target);
-      if (method === "item/started" && item.command)
-        this.status(agent.key, key, "Working", item.command);
-      if (method === "item/completed" && item.type === "commandExecution")
-        this.status(
-          agent.key,
-          key,
-          "Working",
-          `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
-        );
-    });
-    let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
-    let explain: (() => string | undefined) | undefined;
+    // The process host expands ~/… and creates the directory; Codex's RPC needs
+    // an absolute path rather than shell-style home notation.
+    const workspace = await this.workspace(settings.workspace);
+    signal.throwIfAborted();
+    const saved = entry.saved[key];
+    const existing = resumable(saved, agent.protection);
+    const { params, model, effort, summary, bridge } = await this.prepare(
+      rpc,
+      agent,
+      settings,
+      workspace,
+      request,
+      request.synced,
+    );
+    if (voiceInstructions) {
+      Object.assign(params.config, {
+        "realtime.type": "conversational",
+        "features.realtime_conversation": true,
+      });
+      params.developerInstructions += `\n${voiceInstructions}`;
+    }
+    let threadId: string | undefined;
     try {
-      const rpc = await server.opening;
-      signal.throwIfAborted();
-      // The process host expands ~/… and creates the directory; Codex's RPC needs
-      // an absolute path rather than shell-style home notation.
-      const workspace = await this.workspace(settings.workspace);
-      signal.throwIfAborted();
-      active.workspace = workspace;
-      const saved = entry.saved[key];
-      const existing = resumable(saved, agent.protection);
-      const { params, model, effort, summary, bridge } = await this.prepare(
-        rpc,
-        agent,
-        settings,
-        workspace,
-        request,
-        request.synced,
-      );
-      hookBridge = bridge;
-      active.model = model;
-      active.effort = effort;
       // Resume restores the thread's tools, so one started with other added
       // tools starts fresh.
       const added = this.added();
@@ -2442,111 +2626,226 @@ export class CodexRuntime {
         const { pending: _, ...accepted } = existing;
         await this.save(request, entry, key, accepted);
       }
-      active.threadId = started.thread.id;
-      // A refusal outside this turn does not explain how it ends.
-      explain = server.explainer?.(active.threadId);
-      bridge?.bind(active.threadId);
-      server.threads.set(active.threadId, agent.key);
+      threadId = started.thread.id;
+      bridge?.bind(threadId);
+      server.threads.set(threadId, agent.key);
       signal.throwIfAborted();
       await rpc.request("thread/name/set", {
-        threadId: active.threadId,
+        threadId: threadId,
         name: sessionName(agent, request.conversation),
       });
-      const [context, memory] = await Promise.all([
-        this.history(request, signal),
-        this.core(request.agent.key, signal),
-      ]);
-      const wake = request.wake && {
-        ...request.wake,
-        text: (await request.wakeText?.()) ?? request.wake.text,
+      return {
+        threadId,
+        workspace,
+        params,
+        model,
+        effort,
+        summary,
+        bridge,
+        tools,
+        saved,
+        existing,
+        resuming,
+        fresh,
       };
+    } catch (error) {
+      if (threadId)
+        await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
+      await bridge?.close();
+      throw error;
+    }
+  }
+
+  private async execute(
+    request: TextRequest | (Request & { adopted: string }),
+    text: string,
+    key: string,
+    lane: Lane,
+    entry: Entry,
+  ) {
+    const { adopted } = request;
+    let ready!: () => void;
+    let notReady!: (error: unknown) => void;
+    let release!: () => void;
+    const turnAbort = new AbortController();
+    const server = this.open(request.agent);
+    // No deadline of our own: a turn runs until Codex ends it.
+    const signal = AbortSignal.any([
+      entry.abort.signal,
+      turnAbort.signal,
+      ...(adopted && lane.voice ? [lane.voice.signal] : []),
+    ]);
+    const active: Active = {
+      rpc: server.rpc,
+      ...(adopted && lane.voice
+        ? { threadId: lane.voice.loaded.threadId, turnId: adopted }
+        : {}),
+      ready: new Promise((resolve, reject) => {
+        ready = resolve;
+        notReady = reject;
+      }),
+      released: new Promise((resolve) => {
+        release = resolve;
+      }),
+      steering: Promise.resolve(),
+      reply: request,
+      finished: false,
+      workspace: lane.voice?.loaded.workspace ?? request.settings.workspace,
+      signal,
+      requests: [request],
+      activity: new Map(),
+    };
+    void active.ready.catch(() => undefined);
+    lane.active = active;
+    const { settings, agent } = request;
+    const followed = follow(server.rpc, signal, active, (method, item) => {
+      const step = method === "item/started" ? codexStep(item) : undefined;
+      if (step)
+        for (const taken of active.activity.values())
+          taken.step?.(step.tool, step.target);
+      if (method === "item/started" && item.command)
+        this.status(agent.key, key, "Working", item.command);
+      if (method === "item/completed" && item.type === "commandExecution")
+        this.status(
+          agent.key,
+          key,
+          "Working",
+          `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
+        );
+    });
+    let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
+    let explain: (() => string | undefined) | undefined;
+    try {
+      const rpc = await server.opening;
       signal.throwIfAborted();
-      if (request.current && !request.current()) {
-        restoreNotes(request);
-        request.answered();
-        this.status(agent.key, key, "Idle");
-        active.finished = true;
+      const seat = lane.voice;
+      const loaded =
+        seat?.loaded ??
+        (await this.loadThread(request, entry, key, signal, server, rpc));
+      // A typed turn on a seat's thread still runs on its own picks.
+      const { model, effort } =
+        seat && adopted === undefined
+          ? await this.turnModel(rpc, settings, request, request.synced)
+          : loaded;
+      const {
+        threadId,
+        workspace,
+        params,
+        summary,
+        bridge,
+        tools,
+        saved,
+        resuming,
+        fresh,
+      } = loaded;
+      active.threadId = threadId;
+      // A refusal outside this turn does not explain how it ends.
+      explain = server.explainer?.(threadId);
+      active.workspace = workspace;
+      active.model = model;
+      active.effort = effort;
+      // The seat owns its retained bridge; individual turns must not close it.
+      hookBridge = lane.voice ? undefined : bridge;
+      if (request.adopted !== undefined) {
         ready();
-        return;
-      }
-      const additionalContext = turnContext(
-        agent,
-        settings,
-        request.team,
-        memory,
-        this.repositories(request.scope),
-      );
-      if (this.target && !resuming)
+      } else {
+        const [context, memory] = await Promise.all([
+          this.history(request, signal),
+          this.core(request.agent.key, signal),
+        ]);
+        const wake = request.wake && {
+          ...request.wake,
+          text: (await request.wakeText?.()) ?? request.wake.text,
+        };
+        signal.throwIfAborted();
+        if (request.current && !request.current()) {
+          restoreNotes(request);
+          request.answered();
+          this.status(agent.key, key, "Idle");
+          active.finished = true;
+          ready();
+          return;
+        }
+        const additionalContext = turnContext(
+          agent,
+          settings,
+          request.team,
+          memory,
+          this.repositories(request.scope),
+        );
+        if (this.target && !resuming)
+          await this.save(request, entry, key, {
+            pending: true,
+            threadId,
+            workspace,
+            at: Date.now(),
+            ...(tools ? { tools } : {}),
+          });
+        const turn = await rpc
+          .request<{ turn: { id: string } }>("turn/start", {
+            threadId: active.threadId,
+            input: input(
+              `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
+            ),
+            model,
+            effort,
+            ...summary,
+            // Application context is a developer message that updates on each turn.
+            additionalContext,
+          })
+          .catch(async (error: unknown) => {
+            if (this.target && !resuming && error instanceof Refused) {
+              const { [key]: _, ...kept } = entry.saved;
+              await this.storage.set(entry.storageKey, JSON.stringify(kept));
+              entry.saved = kept;
+            }
+            throw error;
+          });
+        active.turnId = turn.turn.id;
+        if (fresh)
+          void this.prompts(agent.key).save(
+            this.targetKey
+              ? JSON.stringify([this.targetKey, active.threadId])
+              : active.threadId,
+            [
+              {
+                label: "base",
+                text: params.developerInstructions,
+              },
+              {
+                label: EACH_TURN,
+                text: Object.values(additionalContext)
+                  .map(({ value }) => value)
+                  .join(""),
+              },
+            ],
+          );
+        this.acknowledgeActivity(active, request);
+        // A conversation new to this agent: name its Solo chat meanwhile.
+        if (request.named && !saved && !server.protection)
+          void this.offerTitle(
+            rpc,
+            request.named,
+            text,
+            entry.abort.signal,
+            params,
+          ).catch((error) => {
+            if (!entry.abort.signal.aborted)
+              console.warn("Codex could not title the chat", error);
+          });
+        // Empty threads have no resumable rollout until a user turn is accepted.
         await this.save(request, entry, key, {
-          pending: true,
-          threadId: started.thread.id,
+          threadId,
           workspace,
           at: Date.now(),
           ...(tools ? { tools } : {}),
+          ...(agent.protection
+            ? { protection: agent.protection.stateKey }
+            : {}),
         });
-      const turn = await rpc
-        .request<{ turn: { id: string } }>("turn/start", {
-          threadId: active.threadId,
-          input: input(
-            `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
-          ),
-          model,
-          effort,
-          ...summary,
-          // Application context is a developer message that updates on each turn.
-          additionalContext,
-        })
-        .catch(async (error: unknown) => {
-          if (this.target && !resuming && error instanceof Refused) {
-            const { [key]: _, ...saved } = entry.saved;
-            await this.storage.set(entry.storageKey, JSON.stringify(saved));
-            entry.saved = saved;
-          }
-          throw error;
-        });
-
-      active.turnId = turn.turn.id;
-      if (fresh)
-        void this.prompts(agent.key).save(
-          this.targetKey
-            ? JSON.stringify([this.targetKey, active.threadId])
-            : active.threadId,
-          [
-            {
-              label: "base",
-              text: params.developerInstructions,
-            },
-            {
-              label: EACH_TURN,
-              text: Object.values(additionalContext)
-                .map(({ value }) => value)
-                .join(""),
-            },
-          ],
-        );
-      this.acknowledgeActivity(active, request);
-      // A conversation new to this agent: name its Solo chat meanwhile.
-      if (request.named && !saved && !server.protection)
-        void this.offerTitle(
-          rpc,
-          request.named,
-          text,
-          entry.abort.signal,
-          params,
-        ).catch((error) => {
-          if (!entry.abort.signal.aborted)
-            console.warn("Codex could not title the chat", error);
-        });
-      // Empty threads have no resumable rollout until a user turn is accepted.
-      await this.save(request, entry, key, {
-        threadId: started.thread.id,
-        workspace,
-        at: Date.now(),
-        ...(tools ? { tools } : {}),
-        ...(agent.protection ? { protection: agent.protection.stateKey } : {}),
-      });
-      ready();
-      this.status(agent.key, key, "Working");
+        ready();
+        this.status(agent.key, key, "Working");
+      }
       const status = await followed.completed;
       await active.steering;
       signal.throwIfAborted();
@@ -2594,7 +2893,7 @@ export class CodexRuntime {
         }
       }
       const why = explain?.();
-      if (!entry.abort.signal.aborted) {
+      if (!signal.aborted) {
         const reason = `Codex could not finish: ${message(error)}.`;
         await this.publish(active.reply, reason).catch((failure) =>
           console.error("Codex could not publish its failure", failure),
@@ -2618,12 +2917,13 @@ export class CodexRuntime {
       turnAbort.abort(new Error("The Codex turn has ended"));
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.
-      if (active.threadId)
+      if (active.threadId && !lane.voice)
         await server.rpc
           .request("thread/unsubscribe", { threadId: active.threadId })
           .catch(() => server.rpc.close());
       await hookBridge?.close();
       if (lane.active === active) delete lane.active;
+      release();
     }
   }
 }
@@ -2666,7 +2966,9 @@ function follow(
       fail(new Error(p?.message ?? "Codex connection closed"));
       return;
     }
-    if (!p || !turn.threadId || p.threadId !== turn.threadId) return;
+    if (!p || !turn.threadId || p.threadId !== turn.threadId || turn.finished)
+      return;
+    if (p.turn && turn.turnId && p.turn.id !== turn.turnId) return;
     if (wire.method === "turn/started" && p.turn) turn.turnId = p.turn.id;
     if (p.item && wire.method) onItem?.(wire.method, p.item);
     if (wire.method === "turn/completed" && p.turn) {

@@ -200,21 +200,26 @@ function BestieReplacement({
   onChoose(): void;
   onClose(): void;
 }) {
-  const keep = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog
       title={`Make ${bestieName(replacing)} your bestie?`}
       description={`Your existing chats with ${bestieName(current)} will still be available in your DMs.${remote ? ` ${REMOTE_BESTIE_WARNING}` : ""}`}
-      initialFocus={keep}
+      initialFocus={proceed}
       pending={pending}
       onClose={onClose}
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button ref={keep} disabled={pending} onClick={onClose}>
+          <Button disabled={pending} onClick={onClose}>
             Keep {bestieName(current)}
           </Button>
-          <Button variant="prominent" loading={pending} onClick={onChoose}>
+          <Button
+            ref={proceed}
+            variant="prominent"
+            loading={pending}
+            onClick={onChoose}
+          >
             Switch to {bestieName(replacing)}
           </Button>
         </>
@@ -249,10 +254,15 @@ export function RemoteBestieConfirm({
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button ref={cancel} disabled={pending} onClick={onClose}>
+          <Button
+            ref={cancel}
+            variant="prominent"
+            disabled={pending}
+            onClick={onClose}
+          >
             Cancel
           </Button>
-          <Button variant="prominent" loading={pending} onClick={onConfirm}>
+          <Button loading={pending} onClick={onConfirm}>
             Use as bestie
           </Button>
         </>
@@ -288,11 +298,15 @@ function RemoveBestie({
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button ref={keep} disabled={pending} onClick={onClose}>
+          <Button
+            ref={keep}
+            variant="prominent"
+            disabled={pending}
+            onClick={onClose}
+          >
             Cancel
           </Button>
           <Button
-            variant="prominent"
             loading={pending}
             onClick={() => {
               setPending(true);

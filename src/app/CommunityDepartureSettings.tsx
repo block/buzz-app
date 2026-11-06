@@ -177,11 +177,15 @@ export function CommunityDepartureSettings({
           onClose={() => setIntent(null)}
           actions={
             <>
-              <Button disabled={pending} onClick={() => setIntent(null)}>
+              <Button
+                variant={intent === "leave" ? "subtle" : "prominent"}
+                disabled={pending}
+                onClick={() => setIntent(null)}
+              >
                 Cancel
               </Button>
               <Button
-                variant={intent === "leave" ? "destructive" : "primary"}
+                variant={intent === "leave" ? "destructive" : "subtle"}
                 loading={pending}
                 onClick={() => void run()}
               >

@@ -370,14 +370,14 @@ function ChannelGeneralAccessEditor({
             finalFocus={origin}
             actions={
               <>
-                <Button ref={cancel} onClick={() => setChoice(undefined)}>
+                <Button
+                  ref={cancel}
+                  variant="prominent"
+                  onClick={() => setChoice(undefined)}
+                >
                   Cancel
                 </Button>
-                <Button
-                  variant="prominent"
-                  disabled={locked}
-                  onClick={() => void apply()}
-                >
+                <Button disabled={locked} onClick={() => void apply()}>
                   Change access
                 </Button>
               </>

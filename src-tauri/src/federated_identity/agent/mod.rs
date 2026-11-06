@@ -156,6 +156,10 @@ impl Admission {
         self.header()
             .and_then(|header| header.strip_prefix("Bearer "))
     }
+    /// When its assertion expires; `None` where the community takes none.
+    pub(crate) fn expires_at(&self) -> Option<tokio::time::Instant> {
+        self.cached.as_ref().map(|cached| cached.expires_at)
+    }
     pub(crate) fn dispatch(&self) -> Result<(), String> {
         self.commit(false, || Ok(()))?;
         if self

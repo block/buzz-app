@@ -106,6 +106,8 @@ export type Attachment = Readonly<{
   /** Signed video poster or media thumbnail URL. */
   previewUrl?: string;
 }>;
+/** Signed URL binding a timecoded reply to one attachment in a media gallery. */
+export const MEDIA_TARGET_TAG = "buzz:media";
 /** Relay-authored membership activity, not a membership grant or user message. */
 export type MembershipChange = Readonly<{
   type: "member_joined" | "member_left" | "member_removed";
@@ -172,6 +174,8 @@ export type ChannelMessage = Readonly<{
   threadRootId?: string | undefined;
   /** Immediate signed reply target; separate from the canonical thread root. */
   replyParentId?: string | undefined;
+  /** Exact signed media target for a timecoded reply. */
+  mediaTargetUrl?: string | undefined;
   sentFromThread?:
     | Readonly<{ rootId: string; excerpt?: string | undefined }>
     | undefined;

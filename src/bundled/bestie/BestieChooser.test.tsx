@@ -195,7 +195,11 @@ it.each(["hosted", "elsewhere"] as const)(
       "Some bestie features aren’t available with remote agents.",
     );
     expect(f.session.mainAgent?.write).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    // It starts on the highlighted Cancel, so Enter backs out.
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    expect(cancel).toHaveAttribute("data-variant", "prominent");
+    await waitFor(() => expect(cancel).toHaveFocus());
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(f.session.mainAgent?.write).not.toHaveBeenCalled();
     await selectPollen();

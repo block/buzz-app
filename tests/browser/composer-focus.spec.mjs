@@ -88,7 +88,13 @@ test("selecting a channel or DM focuses its composer and retains drafts", async 
     "Beta",
     "Alice Fixture",
   ].entries()) {
-    await sidebar.getByRole("button", { name, exact: true }).click();
+    // A row left with a draft adds its Draft pencil to its name.
+    await sidebar
+      .getByRole("button", {
+        name: index < 2 ? name : `${name} Draft`,
+        exact: true,
+      })
+      .click();
     await expect(input).toBeFocused();
     if (index < 2) {
       await page.keyboard.type(`Draft for ${name}`);

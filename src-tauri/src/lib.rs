@@ -652,6 +652,7 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         credential_service::credential_pair_answer,
+        credential_service::credential_pairing_communities,
         credential_service::credential_pairings_list,
         credential_service::credential_pairing_revoke,
         window_state::onboarding_preserve_window,
@@ -924,12 +925,14 @@ pub fn run() {
                 if let Some(settings) = gtk::Settings::default() {
                     settings.set_gtk_xft_hintstyle(Some("hintslight"));
                 }
-                // WebKitGTK hides `navigator.mediaDevices` unless media streams are on.
+                // WebKitGTK hides `navigator.mediaDevices` unless media streams are
+                // on, and `RTCPeerConnection` (agent voice) unless WebRTC is.
                 if let Some(main) = app.get_webview_window("main") {
                     main.with_webview(|webview| {
                         use webkit2gtk::{SettingsExt, WebViewExt};
                         if let Some(settings) = webview.inner().settings() {
                             settings.set_enable_media_stream(true);
+                            settings.set_enable_webrtc(true);
                         }
                     })?;
                 }

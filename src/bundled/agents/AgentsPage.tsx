@@ -2010,7 +2010,7 @@ function CommunityImportDialog({
   onClose(): void;
   onImport(remember: boolean): void;
 }) {
-  const cancel = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   const [remember, setRemember] = useState(false);
   const known = useSyncExternalStore(
     communities?.subscribe ?? noSubscribe,
@@ -2063,17 +2063,19 @@ function CommunityImportDialog({
           </div>
         </div>
       }
-      initialFocus={cancel}
+      initialFocus={proceed}
       finalFocus={finalFocus}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
       actions={
         <>
-          <Button ref={cancel} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="prominent" onClick={() => onImport(remember)}>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            ref={proceed}
+            variant="prominent"
+            onClick={() => onImport(remember)}
+          >
             Import
           </Button>
         </>

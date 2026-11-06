@@ -818,6 +818,15 @@ it.each([
     });
     renderCard();
     fireEvent.click(await screen.findByRole("button", { name: action }));
+    // Archive stops every connection, so Enter cancels; unarchive confirms.
+    const dialog = await screen.findByRole("alertdialog");
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", {
+          name: kind === "archive" ? "Cancel" : action,
+        }),
+      ).toHaveFocus(),
+    );
     routes["/api/builderlab/list"] = () => ({
       error: { code: "relay_unavailable" },
     });

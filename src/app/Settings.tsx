@@ -902,12 +902,22 @@ export function Settings({
   // Set while Settings dismisses its own visit: the visit it lands on keeps
   // what is shown rather than what it last showed.
   const closingVisit = useRef(false);
+  // Open in Buzz and a finished install can call back after the visit changed.
+  const currentNavigation = useRef(navigation);
+  useLayoutEffect(() => {
+    currentNavigation.current = navigation;
+  }, [navigation]);
   const requestedPluginId =
     navigation?.target.kind === "settings"
       ? navigation.target.pluginId
       : undefined;
   useEffect(() => {
-    if (selected !== "plugins" || !navigation?.entryId) return;
+    if (
+      selected !== "plugins" ||
+      requestedSection !== "plugins" ||
+      !navigation?.entryId
+    )
+      return;
     const leftAddressed = addressedPlugin.current;
     const closed = closingVisit.current;
     addressedPlugin.current = !!requestedPluginId;
@@ -922,10 +932,10 @@ export function Settings({
       setSelectedPluginId(shown);
       navigation.savePosition(PLUGIN_DETAILS, shown ?? null);
     }
-  }, [requestedPluginId, navigation, selected]);
+  }, [requestedPluginId, requestedSection, navigation, selected]);
   const showPluginDetails = (id: string | undefined) => {
     setSelectedPluginId(id);
-    navigation?.savePosition(PLUGIN_DETAILS, id ?? null);
+    currentNavigation.current?.savePosition(PLUGIN_DETAILS, id ?? null);
   };
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
@@ -1548,10 +1558,12 @@ export function Settings({
                 }
                 requestSignal={navigation?.signal}
                 onClosed={() => {
-                  // "Open in Buzz" shows its plugin before this dismissal lands.
+                  // "Open in Buzz" shows its plugin before this dismissal
+                  // lands. An install finishing after Back closes nothing.
                   if (
                     navigation?.target.kind === "settings" &&
-                    navigation.target.pluginImport
+                    navigation.target.pluginImport &&
+                    navigation.entryId === currentNavigation.current?.entryId
                   )
                     closingVisit.current = true;
                   onPluginImportClosed?.();

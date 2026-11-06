@@ -24,7 +24,7 @@ test("shared avatars defer offscreen artwork, omit the referrer and recover from
   await page.goto("/tests/fixtures/avatar-loading.html");
   const region = page.getByRole("region", { name: "Avatars", exact: true });
   await expect(region).not.toBeInViewport();
-  const avatar = region.getByRole("img", { name: "A Brann identity" });
+  const avatar = region.getByRole("img", { name: "A Brain identity" });
   const image = avatar.locator("img");
   // The offscreen avatar must exist with its source before the barrier can
   // say anything about whether it was deferred.

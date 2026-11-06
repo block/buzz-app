@@ -21,21 +21,21 @@ it("orders names alphabetically before bounding, with the full namesake comparis
     expect(resolve).toHaveBeenCalledWith(key, "Same", keys);
 });
 it("matches the sidebar's alphabetical order, ignoring case", () => {
-  const [kestrel, bramble, wen, cynthia] = ["k", "b", "w", "c"].map((c) =>
+  const [kenny, baxen, wes, cynthia] = ["k", "b", "w", "c"].map((c) =>
     c.repeat(64),
   ) as [string, string, string, string];
   const profiles = new Map([
-    [kestrel, { name: "Kestrel Vane" }],
-    [bramble, { name: "bramble" }],
-    [wen, { name: "Wen" }],
+    [kenny, { name: "Kenny Lopez" }],
+    [baxen, { name: "baxen" }],
+    [wes, { name: "Wes" }],
     [cynthia, { name: "Cynthia" }],
   ]);
   const resolve = (_key: string, fallback: string) => fallback;
-  expect(dmLabel([kestrel, bramble, wen], profiles, resolve)).toBe(
-    "bramble, Kestrel Vane, Wen",
+  expect(dmLabel([kenny, baxen, wes], profiles, resolve)).toBe(
+    "baxen, Kenny Lopez, Wes",
   );
-  expect(dmLabel([wen, kestrel, cynthia, bramble], profiles, resolve)).toBe(
-    "bramble, Cynthia, Kestrel Vane +1",
+  expect(dmLabel([wes, kenny, cynthia, baxen], profiles, resolve)).toBe(
+    "baxen, Cynthia, Kenny Lopez +1",
   );
 });
 it("preserves missing-roster versus self-DM fallback and uses public labels for unnamed participants", () => {

@@ -50,7 +50,7 @@ const EXCEPTIONS = new Map([
     `--text-inverse on --${surface}`,
     "Product-directed bright incoming-call fills with inverse labels; below normal text targets, limited to Join and Decline.",
   ]),
-  // Red 10 was requested for Huddle Leave during the 2026-10-01 tryout.
+  // Kenneth requested Red 10 for Huddle Leave during the 2026-10-01 tryout.
   // Limit this deliberate text-contrast tradeoff to the actual control fills.
   ...[
     "surface-panel",

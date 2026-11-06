@@ -318,12 +318,12 @@ it("retains a labelled DM across roster and profile recomputations until its sou
 });
 
 it("names group DMs with participants in alphabetical order", async () => {
-  const kestrel = "k".repeat(64),
-    bramble = "b".repeat(64),
+  const kenny = "k".repeat(64),
+    baxen = "b".repeat(64),
     cynthia = "c".repeat(64);
   const profiles = new Map([
-    [kestrel, { name: "Kestrel Vane" }],
-    [bramble, { name: "bramble" }],
+    [kenny, { name: "Kenny Lopez" }],
+    [baxen, { name: "baxen" }],
     [cynthia, { name: "Cynthia" }],
   ]);
   const queries = {
@@ -339,7 +339,7 @@ it("names group DMs with participants in alphabetical order", async () => {
           id: "group",
           name: "",
           channelType: "dm",
-          participants: [kestrel, cynthia, bramble],
+          participants: [kenny, cynthia, baxen],
         },
       ],
       queries,
@@ -349,7 +349,7 @@ it("names group DMs with participants in alphabetical order", async () => {
   const root = createRoot(container());
   try {
     await act(async () => root.render(createElement(Probe)));
-    expect(label).toBe("bramble, Cynthia, Kestrel Vane");
+    expect(label).toBe("baxen, Cynthia, Kenny Lopez");
   } finally {
     await act(async () => root.unmount());
   }

@@ -83,12 +83,12 @@ it("replaces the earlier choice for the same text, and keeps pickers apart", () 
 
 it("scores a row by the sum of its keys", () => {
   recordVisit(scope, "channel:dm", now);
-  recordChoice(scope, "", "person:lomax", now);
+  recordChoice(scope, "", "person:logan", now);
   const usage = readSearchUsage(scope, now);
-  expect(usage.boost("person:lomax", "channel:dm")).toBeGreaterThan(
-    usage.boost("person:lomax"),
+  expect(usage.boost("person:logan", "channel:dm")).toBeGreaterThan(
+    usage.boost("person:logan"),
   );
-  expect(usage.boost("person:lomax", "channel:dm")).toBeLessThan(MAX_BOOST);
+  expect(usage.boost("person:logan", "channel:dm")).toBeLessThan(MAX_BOOST);
   expect(usage.boost()).toBe(0);
 });
 

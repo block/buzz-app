@@ -1,4 +1,4 @@
-// Regression controls; see WS_RETRY_REVIEW_2026_09_09.
+// Regression controls contributed by Brain; see WS_RETRY_REVIEW_2026_09_09.
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { keypair, message, signed } from "./testing";
 import { connectBrokerTransport } from "./transport";

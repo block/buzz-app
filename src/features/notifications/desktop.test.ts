@@ -204,17 +204,17 @@ it("the production desktop adapter forwards the message title and preview unchan
           messageId: "b".repeat(64),
           authorId: "c".repeat(64),
           createdAt: 1,
-          previewContent: "Hello **Wen**",
+          previewContent: "Hello **Wes**",
         },
         "mention",
         { id: "room", name: "Room" },
-        { name: "Pippa" },
+        { name: "Pinky" },
       ),
   );
   await flush();
   expect(sdk.show).toHaveBeenCalledExactlyOnceWith("notification_show", {
-    title: "Pippa mentioned you in #Room",
-    body: "Hello Wen",
+    title: "Pinky mentioned you in #Room",
+    body: "Hello Wes",
     id: expect.any(String),
     onEvent: expect.objectContaining({ onmessage: expect.any(Function) }),
   });

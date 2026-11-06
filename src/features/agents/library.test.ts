@@ -5,12 +5,12 @@ import { createRelaySession } from "../relay/session";
 import { keypair, metadata, roster } from "../relay/testing";
 const library: AgentLibrary = {
   definitions: [
-    { id: "brann", name: "Brann" },
-    { id: "other", name: "Brann" },
+    { id: "brain", name: "Brain" },
+    { id: "other", name: "Brain" },
   ],
   identities: [
-    { pubkey: "a".repeat(64), name: "Brann", definitionId: "brann" },
-    { pubkey: "b".repeat(64), name: "Brann", definitionId: "brann" },
+    { pubkey: "a".repeat(64), name: "Brain", definitionId: "brain" },
+    { pubkey: "b".repeat(64), name: "Brain", definitionId: "brain" },
     { pubkey: "c".repeat(64), name: "Custom" },
     { pubkey: "d".repeat(64), name: "Other setup", definitionId: "unselected" },
   ],
@@ -150,13 +150,13 @@ it("establishment retries a failed retained read without turning idle inventory 
 
 it("every library snapshot carries definition art to identities without their own", async () => {
   const owner = createAgentLibrary(async () => ({
-    definitions: [{ id: "local:brann", name: "Brann", avatar: "art" }],
+    definitions: [{ id: "local:brain", name: "Brain", avatar: "art" }],
     identities: [
-      { pubkey: "a".repeat(64), name: "One", definitionId: "local:brann" },
+      { pubkey: "a".repeat(64), name: "One", definitionId: "local:brain" },
       {
         pubkey: "b".repeat(64),
         name: "Two",
-        definitionId: "local:brann",
+        definitionId: "local:brain",
         avatar: "own",
       },
       { pubkey: "c".repeat(64), name: "Custom" },

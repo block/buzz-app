@@ -59,12 +59,12 @@ const message = {
   messageId: "b".repeat(64),
   authorId: "a".repeat(64),
   createdAt: 1,
-  previewContent: "**Hello** [Wen](https://example.com/private)",
+  previewContent: "**Hello** [Wes](https://example.com/private)",
 };
 it.each([
-  ["mention", "Pippa mentioned you in #new-notifications"],
-  ["thread", "Pippa replied in #new-notifications"],
-  ["direct", "Pippa sent you a direct message"],
+  ["mention", "Pinky mentioned you in #new-notifications"],
+  ["thread", "Pinky replied in #new-notifications"],
+  ["direct", "Pinky sent you a direct message"],
 ] as const)(
   "formats %s with sender, conversation and plain preview",
   (category, title) => {
@@ -73,9 +73,9 @@ it.each([
         message,
         category,
         { id: "room", name: "new-notifications" },
-        { name: "Pippa" },
+        { name: "Pinky" },
       ),
-    ).toEqual({ title, body: "Hello Wen" });
+    ).toEqual({ title, body: "Hello Wes" });
   },
 );
 it("DM mentions do not expose an internal DM name; missing names use key fragments", () => {
@@ -111,8 +111,8 @@ it("bounds source, Unicode output and nesting, with a nonempty fallback", () => 
   expect(messagePreview("<harness stuff goes here>")).toBe(
     "<harness stuff goes here>",
   );
-  expect(messagePreview("<!-- buzz:wave:v1 -->\nLomax waved at you.")).toBe(
-    "Lomax waved at you.",
+  expect(messagePreview("<!-- buzz:wave:v1 -->\nLogan waved at you.")).toBe(
+    "Logan waved at you.",
   );
   expect(messagePreview("<!-- buzz:wave:v1 -->")).toBe("New message");
 });
@@ -131,10 +131,10 @@ it("normalizes whitespace/control characters in names and body", () => {
     { ...message, previewContent: "hello\u202E\nworld" },
     "mention",
     { id: "room", name: "room\nname" },
-    { name: "Pippa\u202E\nMouse" },
+    { name: "Pinky\u202E\nMouse" },
   );
   expect(text).toEqual({
-    title: "Pippa Mouse mentioned you in #room name",
+    title: "Pinky Mouse mentioned you in #room name",
     body: "hello world",
   });
   expect(
@@ -151,9 +151,9 @@ it("labels workflow ownership without making the owner the sender, preserving na
   const workflow = { ...message, workflowOwnerId: "b".repeat(64) };
   expect(
     messageNotificationText(workflow, "mention", undefined, {
-      name: "Wen\u202E\nOwner",
+      name: "Wes\u202E\nOwner",
     }).title,
-  ).toBe("Workflow · owned by Wen Owner mentioned you in #room");
+  ).toBe("Workflow · owned by Wes Owner mentioned you in #room");
   expect(
     messageNotificationText(workflow, "thread", undefined, undefined).title,
   ).toBe("Workflow · owned by bbbbbbbbbb replied in #room");

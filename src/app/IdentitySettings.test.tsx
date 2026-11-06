@@ -475,8 +475,8 @@ it("follows the status store as it publishes a higher seq", async () => {
 
 /** bb-acme first, then bb-public, each with its own session. */
 function twoServers() {
-  const block = federatedFixture("block", "ada@acme.example");
-  const pub = federatedFixture("public", "ada@example.com");
+  const block = federatedFixture("block", "will@acme.example");
+  const pub = federatedFixture("public", "will@example.com");
   block.publish({
     authority: {
       id: "bb-acme",
@@ -509,15 +509,15 @@ function twoServers() {
 }
 const memberships = [
   { id: "wss://buzz.acme.builderlab.xyz", name: "Acme" },
-  { id: "wss://ada.communities.buzz.xyz", name: "ada" },
-  { id: "wss://grace.communities.buzz.xyz", name: "grace" },
+  { id: "wss://will.communities.buzz.xyz", name: "will" },
+  { id: "wss://kalvin.communities.buzz.xyz", name: "kalvin" },
   { id: "wss://buzz.homelab.example", name: "homelab" },
 ];
 
 it("lists each signed-in server and signs out of one without touching the other", async () => {
   const { block, pub, root, servers } = twoServers();
-  block.publish({ status: "signed-in", email: "ada@acme.example" });
-  pub.publish({ status: "signed-in", email: "ada@example.com" });
+  block.publish({ status: "signed-in", email: "will@acme.example" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
   render(
     <IdentitySettings
       viewer={viewer}
@@ -530,7 +530,7 @@ it("lists each signed-in server and signs out of one without touching the other"
   expect(await screen.findByText("Acme (acme.builderlab.xyz)")).toBeVisible();
   expect(screen.getByText("app.builderlab.xyz")).toBeVisible();
   expect(screen.getByText(/Used by: Acme$/)).toBeVisible();
-  expect(screen.getByText(/Used by: ada, grace$/)).toBeVisible();
+  expect(screen.getByText(/Used by: will, kalvin$/)).toBeVisible();
   // A self-hosted relay has no sign-in server.
   expect(screen.queryByText(/homelab/)).not.toBeInTheDocument();
   await userEvent.click(
@@ -564,7 +564,7 @@ it("keeps the first server's sign-in row, named, beside a signed-in server", asy
     status: "reauthentication-required",
     failure: "reauthentication-required",
   });
-  pub.publish({ status: "signed-in", email: "ada@example.com" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
   render(
     <IdentitySettings
       viewer={viewer}
@@ -592,7 +592,7 @@ it("keeps the first server's sign-in row, named, beside a signed-in server", asy
 it("names the first server's failed restore beside a signed-in server, without controls", async () => {
   const { block, pub, root, servers } = twoServers();
   block.publish({ status: "unavailable", failure: "storage-denied" });
-  pub.publish({ status: "signed-in", email: "ada@example.com" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
   render(
     <IdentitySettings
       viewer={viewer}
@@ -612,8 +612,8 @@ it("names the first server's failed restore beside a signed-in server, without c
 
 it("keeps a per-server sign-out that native couldn't finish visible, named, with Try again", async () => {
   const { block, pub, root, servers } = twoServers();
-  block.publish({ status: "signed-in", email: "ada@acme.example" });
-  pub.publish({ status: "signed-in", email: "ada@example.com" });
+  block.publish({ status: "signed-in", email: "will@acme.example" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
   // Native resolves a storage failure as an unavailable snapshot.
   vi.mocked(pub.service.signOut).mockImplementation(async () => {
     pub.publish({
@@ -656,8 +656,8 @@ it("keeps a per-server sign-out that native couldn't finish visible, named, with
 
 it("restores an unfinished per-server sign-out's Try again when Settings opens again", async () => {
   const { block, pub, root, servers } = twoServers();
-  block.publish({ status: "signed-in", email: "ada@acme.example" });
-  pub.publish({ status: "signed-in", email: "ada@example.com" });
+  block.publish({ status: "signed-in", email: "will@acme.example" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
   vi.mocked(pub.service.signOut).mockImplementation(async () => {
     pub.publish({
       status: "unavailable",
@@ -701,7 +701,7 @@ it("restores an unfinished per-server sign-out's Try again when Settings opens a
 // A failed restore keeps a stored session that may still be valid.
 it("offers no sign-out retry for a server whose restore failed", async () => {
   const { block, pub, root, servers } = twoServers();
-  block.publish({ status: "signed-in", email: "ada@acme.example" });
+  block.publish({ status: "signed-in", email: "will@acme.example" });
   pub.publish({ status: "unavailable", failure: "network-unavailable" });
   render(
     <IdentitySettings

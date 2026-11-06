@@ -181,7 +181,7 @@ test("Close before successor reply resolution retires the inherited verified thr
     .getByRole("button", { name: "View thread: 1 reply", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "View Pippa profile", exact: true }),
+    page.getByRole("button", { name: "View Pinky profile", exact: true }),
   ).toBeVisible();
   await page.evaluate(() => {
     const fixture = window.profilesFixture;
@@ -328,23 +328,23 @@ test("closing a profile beside a main thread preserves the thread destination", 
   const thread = main.locator('[role="tab"][data-tab-value^="thread:"]');
   await expect(thread).toHaveAttribute("aria-selected", "true");
   await page
-    .getByRole("button", { name: "View Pippa profile", exact: true })
+    .getByRole("button", { name: "View Pinky profile", exact: true })
     .click();
   const panel = page.getByRole("complementary", {
     name: "Profile",
     exact: true,
   });
   await expect(
-    panel.getByRole("heading", { name: "Pippa", exact: true }),
+    panel.getByRole("heading", { name: "Pinky", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("tablist", { name: "Panel tabs" })
-    .getByRole("button", { name: "Close Pippa tab", exact: true })
+    .getByRole("button", { name: "Close Pinky tab", exact: true })
     .click();
   await expect(panel).toHaveCount(0);
   await expect(thread).toHaveAttribute("aria-selected", "true");
   await expect(
-    main.getByRole("button", { name: "View Pippa profile", exact: true }),
+    main.getByRole("button", { name: "View Pinky profile", exact: true }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -460,16 +460,16 @@ test("a Profile opened after closing a thread and its Profile stays open with a 
     .getByRole("button", { name: "View thread: 1 reply", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "View Pippa profile", exact: true })
+    .getByRole("button", { name: "View Pinky profile", exact: true })
     .click();
-  await expect(panel.locator("code")).toHaveText(npubs.pippa);
+  await expect(panel.locator("code")).toHaveText(npubs.pinky);
   const closed = (await read()).id;
   const tabs = page.getByRole("tablist", { name: "Panel tabs" });
   const release = await holdCloseReturn(page);
   let held;
   try {
     await tabs
-      .getByRole("button", { name: "Close Pippa tab", exact: true })
+      .getByRole("button", { name: "Close Pinky tab", exact: true })
       .click();
     // The second close retires the thread under the pending return, which
     // then lands on the channel instead.
@@ -673,18 +673,18 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     .getByRole("button", { name: "View thread: 1 reply", exact: true })
     .click();
   const threadMention = page.getByRole("button", {
-    name: "View Pippa profile",
+    name: "View Pinky profile",
     exact: true,
   });
   await expect(threadMention).toBeVisible();
   await threadMention.click();
-  await expect(key).toHaveText(npubs.pippa);
+  await expect(key).toHaveText(npubs.pinky);
   await expect(panel.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
     "squircle",
   );
   await expect(
-    panel.getByRole("img", { name: "Pippa avatar" }),
+    panel.getByRole("img", { name: "Pinky avatar" }),
   ).toHaveAttribute("data-size", "fill");
   await expect(panel.getByText("Agent profile", { exact: true })).toBeVisible();
   const identity = panel.getByRole("region", { name: "Agent identity" });
@@ -700,7 +700,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   ).toHaveCount(0);
   const nip05 = panel.getByRole("button", { name: /^Copy NIP-05:/ });
   await expect(
-    panel.getByText("pippa@example.test", { exact: true }),
+    panel.getByText("pinky@example.test", { exact: true }),
   ).toBeVisible();
   await expect(nip05).toHaveText("Copy");
   // The explicit copy action remains keyboard reachable.
@@ -717,7 +717,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(page.getByText("Copied nip-05", { exact: true })).toBeVisible();
   await expect(nip05).toHaveText("Copied");
   expect(await page.evaluate(() => window.profileCopies.slice(-1))).toEqual([
-    "pippa@example.test",
+    "pinky@example.test",
   ]);
 
   await panel.getByRole("tab", { name: "Channels" }).click();
@@ -822,7 +822,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   ).toBeVisible();
   const reads = await page.evaluate(() => ({
     reads: window.profilesFixture.report.profileReads,
-    key: window.profilesFixture.keys.pippa,
+    key: window.profilesFixture.keys.pinky,
   }));
   expect(reads.reads.some((batch) => batch.includes(reads.key))).toBe(true);
   expect(errors.unexplained()).toEqual([]);
@@ -915,7 +915,7 @@ for (const local of [false, true]) {
       .getByRole("button", { name: "View thread: 1 reply", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "View Pippa profile", exact: true })
+      .getByRole("button", { name: "View Pinky profile", exact: true })
       .click();
     await expect(
       panel.getByText("Agent profile", { exact: true }),
@@ -930,7 +930,7 @@ for (const local of [false, true]) {
       await expect
         .poll(() => page.evaluate(() => window.profilesFixture.dmOpens))
         .toEqual([
-          [await page.evaluate(() => window.profilesFixture.keys.pippa)],
+          [await page.evaluate(() => window.profilesFixture.keys.pinky)],
         ]);
     }
     expect(errors.unexplained()).toEqual([]);

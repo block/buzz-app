@@ -35,7 +35,7 @@ const noSubscribe = () => () => {};
 const noSnapshot = () => null;
 
 /** A section opens Settings on Enter, so letters merely in order do not match
- * it: "fae" would find Software updates before a person Fae is found. Word
+ * it: "wes" would find Software updates before a person Wes is found. Word
  * runs still do, as in channel completion. */
 function matchSection(label: string, needle: string) {
   const found = matchName(label, needle);

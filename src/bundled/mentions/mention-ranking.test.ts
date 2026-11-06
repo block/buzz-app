@@ -27,11 +27,11 @@ const choice = (
 it("breaks visible match ties by base-name quality, then the full displayed label", () => {
   const rows = [
     choice("3", "Fast Fizz", { agent: true }),
-    choice("0", "Fizz", { agent: true, label: "bramble’s Fizz · oncp" }),
-    choice("4", "Fizz", { agent: true, label: "bramble’s Fizz · s03j" }),
-    choice("5", "Fizz", { agent: true, label: "Kestrel Vane’s Fizz" }),
-    choice("b", "Fizz", { agent: true, label: "bramble’s Fizz · 4prr" }),
-    choice("c", "Fizz", { agent: true, label: "bramble’s Fizz · 06pl" }),
+    choice("0", "Fizz", { agent: true, label: "baxen’s Fizz · oncp" }),
+    choice("4", "Fizz", { agent: true, label: "baxen’s Fizz · s03j" }),
+    choice("5", "Fizz", { agent: true, label: "Kenny Lopez’s Fizz" }),
+    choice("b", "Fizz", { agent: true, label: "baxen’s Fizz · 4prr" }),
+    choice("c", "Fizz", { agent: true, label: "baxen’s Fizz · 06pl" }),
   ];
   const expected = [rows[5], rows[4], rows[1], rows[2], rows[3], rows[0]];
   expect(rankMentions(rows, "fizz")).toEqual(expected);
@@ -130,7 +130,7 @@ it("orders mixed people and agents the same way from every input order", () => {
   const managed = choice("e", "Honey", {
     agent: true,
     managed: true,
-    label: "Wen’s Honey",
+    label: "Wes’s Honey",
   });
   const online = choice("f", "Honey", { agent: true, label: "Honey · aa" });
   const human = choice("1", "Honey · b");

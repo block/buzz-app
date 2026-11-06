@@ -26,7 +26,7 @@ import { BestieChooser } from "./BestieChooser";
 import { BestieConversation } from "./BestieConversation";
 
 /** Account-saved Besties use their canonical verified DM. No saved choice means
- * the caller keeps the hosted setup page. */
+ * the caller keeps Riley's hosted setup page. */
 export function PinnedBestie({
   relay,
   host,

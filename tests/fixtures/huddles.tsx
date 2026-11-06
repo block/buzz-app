@@ -68,7 +68,7 @@ const destination = {
 const store = createRelaySession(null);
 const guestKeys = ["de", "ef", "fa", "bc"].map((key) => key.repeat(32));
 const profiles = new Map<string, Profile>([
-  [viewer, { name: "Kendall" }],
+  [viewer, { name: "Kenneth" }],
   [
     peer,
     {

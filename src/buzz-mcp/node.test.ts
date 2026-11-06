@@ -223,25 +223,25 @@ it("reports a media folder it cannot write as a tool error", async () => {
 });
 
 it("searches profile names, signed, and reports a community without the search", async () => {
-  const wen = signed(owner, { kind: 0, content: '{"name":"Wen"}', tags: [] });
+  const wes = signed(owner, { kind: 0, content: '{"name":"Wes"}', tags: [] });
   const fetch = vi.mocked(globalThis.fetch);
-  fetch.mockResolvedValueOnce(new Response(JSON.stringify([wen])));
-  expect(await client().searchProfiles?.("wen", 100)).toMatchObject([
-    { id: wen.id },
+  fetch.mockResolvedValueOnce(new Response(JSON.stringify([wes])));
+  expect(await client().searchProfiles?.("wes", 100)).toMatchObject([
+    { id: wes.id },
   ]);
   const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
   expect(url).toBe("https://relay.test/profiles/search");
-  expect(JSON.parse(String(init.body))).toEqual({ query: "wen", limit: 100 });
+  expect(JSON.parse(String(init.body))).toEqual({ query: "wes", limit: 100 });
   const header = (init.headers as Record<string, string>).authorization ?? "";
   const auth = JSON.parse(atob(header.replace(/^Nostr /, "")));
   expect(auth.kind).toBe(27235);
   expect(auth.tags).toContainEqual(["u", url]);
   for (const status of [404, 405]) {
     fetch.mockResolvedValueOnce(new Response("", { status }));
-    expect(await client().searchProfiles?.("wen", 100)).toBeUndefined();
+    expect(await client().searchProfiles?.("wes", 100)).toBeUndefined();
   }
   fetch.mockResolvedValueOnce(new Response("broken", { status: 500 }));
-  await expect(client().searchProfiles?.("wen", 100)).rejects.toThrow(
+  await expect(client().searchProfiles?.("wes", 100)).rejects.toThrow(
     "500 broken",
   );
 });

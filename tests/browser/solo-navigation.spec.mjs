@@ -39,7 +39,7 @@ membershipTest(
     await expect(history(page)).toBeVisible();
     // The Solo chat must pass the active viewer through to its shared timeline.
     await expect(history(page).locator("[data-membership-row]")).toContainText(
-      "Pippa added by you, along with Brann",
+      "Pinky added by you, along with Brain",
     );
     await settle(page);
     const root = app.append("primary", "alpha", "Solo chat prompt");

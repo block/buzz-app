@@ -60,7 +60,7 @@ it("keeps Solo chat, roster and agent-invite limits", () => {
   expect(
     mentionAdmission(session({ channelType: "dm" }), "channel", true)(library),
   ).toBe(false);
-  const roster = [{ pubkey: outside, name: "Wen" }];
+  const roster = [{ pubkey: outside, name: "Wes" }];
   const draft = mentionAdmission(session(undefined), "draft", false, roster);
   expect(draft(outside)).toBe(true);
   expect(draft(member)).toBe(false);

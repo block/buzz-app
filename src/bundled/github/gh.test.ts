@@ -13,11 +13,9 @@ import {
 type HostSpawn = NonNullable<Host["spawn"]>;
 
 it("gives GitHub's data, GitHub's own error, or says gh is unavailable", () => {
-  expect(parseAnswer('{"data":{"viewer":{"login":"bramble"}}}', "", 0)).toEqual(
-    {
-      viewer: { login: "bramble" },
-    },
-  );
+  expect(parseAnswer('{"data":{"viewer":{"login":"baxen"}}}', "", 0)).toEqual({
+    viewer: { login: "baxen" },
+  });
   // gh exits 1 on a GraphQL error, but still prints the reason.
   const refused = () =>
     parseAnswer(

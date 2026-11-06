@@ -149,7 +149,7 @@ it("gives what the panel shows with details, from the panel's read when it has o
         state: "OPEN",
         isDraft: false,
         body: "",
-        author: { login: "wen" },
+        author: { login: "wes" },
         baseRefName: "main",
         headRefName: "fix",
         headRefOid: "abc123",
@@ -191,7 +191,7 @@ it("gives what the panel shows with details, from the panel's read when it has o
     state: "open",
     details: {
       title: "A change",
-      author: "wen",
+      author: "wes",
       branch: "fix -> main",
       files_changed: 2,
       changes: "+3 -1",

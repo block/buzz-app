@@ -624,7 +624,7 @@ it("shows the real read failure, retains conversation choices, and retries to an
   const viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const discovery = [
-    metadata(relay, "crew", "wen-crew"),
+    metadata(relay, "crew", "wes-crew"),
     roster(relay, "crew", [viewer.pubkey]),
   ];
   const owner = createRelaySession({
@@ -649,7 +649,7 @@ it("shows the real read failure, retains conversation choices, and retries to an
     render(
       <SearchResults
         session={owner.session}
-        query="wen-cr"
+        query="wes-cr"
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
@@ -663,7 +663,7 @@ it("shows the real read failure, retains conversation choices, and retries to an
     expect(request.filters).toEqual([
       {
         kinds: [40002, 40008, 9], // The real reader canonicalizes set order.
-        search: "wen-cr",
+        search: "wes-cr",
         search_mode: "prefix",
         limit: 20,
       },
@@ -678,22 +678,22 @@ it("shows the real read failure, retains conversation choices, and retries to an
         /Message search couldn’t finish: Relay response was invalid/,
       ),
     ).toBeVisible();
-    expect(screen.getByRole("option", { name: /wen-crew/ })).toBeVisible();
+    expect(screen.getByRole("option", { name: /wes-crew/ })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry messages" }));
     expect(screen.queryByText(/Message search couldn’t finish/)).toBeNull();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
     });
-    const hit = message(viewer, "crew", "wen-crew exact message", 1700000001);
+    const hit = message(viewer, "crew", "wes-crew exact message", 1700000001);
     await act(async () => wire.next().respond([hit]));
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
     // Typed text selects the first result; the late message sits below it.
     expect(
-      screen.getByRole("option", { name: /^wen-crew(?! exact)/ }),
+      screen.getByRole("option", { name: /^wes-crew(?! exact)/ }),
     ).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(
-      screen.getByRole("option", { name: /wen-crew exact message/ }),
+      screen.getByRole("option", { name: /wes-crew exact message/ }),
     ).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(input, { key: "Enter" });
     expect(open).toHaveBeenCalledExactlyOnceWith("crew", hit.id);
@@ -3168,7 +3168,7 @@ it("runs operator-only date and author searches without a text predicate", async
   const before = message(alice, channel, "before the cutoff", 1700000001);
   const after = message(alice, channel, "after the cutoff", 1800000001);
   const discovery = [
-    metadata(relay, channel, "Wen"),
+    metadata(relay, channel, "Wes"),
     roster(relay, channel, [viewer.pubkey]),
   ];
   const reads: Filter[][] = [];
@@ -3247,7 +3247,7 @@ it("runs operator-only date and author searches without a text predicate", async
   }
 });
 
-it.each(["from:br", "from:@br"])(
+it.each(["from:ba", "from:@ba"])(
   "%s opens the same prefix picker and never reads messages before identity selection",
   async (query) => {
     const relay = keypair(),
@@ -3260,7 +3260,7 @@ it.each(["from:br", "from:@br"])(
         if (filters.some((filter) => filter.kinds?.includes(9)))
           reads.push(filters as Filter[]);
         if (filters.some((filter) => filter.kinds?.includes(0)))
-          return Promise.resolve([profile(human, { display_name: "Bramble" })]);
+          return Promise.resolve([profile(human, { display_name: "Baxen" })]);
         return Promise.resolve([]);
       },
     });
@@ -3277,7 +3277,7 @@ it.each(["from:br", "from:@br"])(
         />,
       );
       const people = within(screen.getByRole("group", { name: "People" }));
-      const choice = await people.findByRole("option", { name: /Bramble/ });
+      const choice = await people.findByRole("option", { name: /Baxen/ });
       expect(reads).toHaveLength(0);
       fireEvent.click(choice);
       expect(change).toHaveBeenCalledWith(`from:${human.pubkey} `);
@@ -3291,14 +3291,14 @@ it.each(["from:br", "from:@br"])(
 it("requests a bounded prefix page before declaring a short name absent", async () => {
   const relay = keypair(),
     viewer = keypair(),
-    wen = keypair();
+    wes = keypair();
   const reads: Filter[][] = [];
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
     query(filters) {
       if (filters.some((filter) => filter.kinds?.includes(0))) {
         reads.push(filters as Filter[]);
-        return Promise.resolve([profile(wen, { display_name: "Wen" })]);
+        return Promise.resolve([profile(wes, { display_name: "Wes" })]);
       }
       return Promise.resolve([]);
     },
@@ -3314,7 +3314,7 @@ it("requests a bounded prefix page before declaring a short name absent", async 
         openConversation={() => {}}
       />,
     );
-    expect(await screen.findByRole("option", { name: /Wen/ })).toBeVisible();
+    expect(await screen.findByRole("option", { name: /Wes/ })).toBeVisible();
     expect(reads).toContainEqual([
       { kinds: [0], search: "we", search_mode: "prefix", limit: 40 },
     ]);
@@ -3329,11 +3329,11 @@ it.each(["from:we"])(
   async (query) => {
     const relay = keypair(),
       viewer = keypair(),
-      wen = keypair();
+      wes = keypair();
     const channel = "crew";
     const discovery = [
       metadata(relay, channel, "crew"),
-      roster(relay, channel, [viewer.pubkey, wen.pubkey]),
+      roster(relay, channel, [viewer.pubkey, wes.pubkey]),
     ];
     const owner = createRelaySession({
       ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
@@ -3341,7 +3341,7 @@ it.each(["from:we"])(
         if (filters.some((filter) => filter.search === "we"))
           return Promise.reject(new Error("prefix lookup unavailable"));
         if (filters.some((filter) => filter.kinds?.includes(0)))
-          return Promise.resolve([profile(wen, { display_name: "Wen" })]);
+          return Promise.resolve([profile(wes, { display_name: "Wes" })]);
         return Promise.resolve(
           discovery.filter((event) =>
             filters.some((filter) => matchFilter(filter as Filter, event)),
@@ -3364,9 +3364,9 @@ it.each(["from:we"])(
       );
       const choice = await within(
         screen.getByRole("group", { name: "People" }),
-      ).findByRole("option", { name: /Wen/ });
+      ).findByRole("option", { name: /Wes/ });
       fireEvent.click(choice);
-      expect(change).toHaveBeenCalledWith(`from:${wen.pubkey} `);
+      expect(change).toHaveBeenCalledWith(`from:${wes.pubkey} `);
     } finally {
       cleanup();
       owner.dispose();
@@ -3422,8 +3422,8 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
     query(filters) {
       if (filters.some((filter) => filter.kinds?.includes(0)))
         return Promise.resolve([
-          profile(first, { display_name: "Bramble" }),
-          profile(second, { display_name: "Bramble" }),
+          profile(first, { display_name: "Baxen" }),
+          profile(second, { display_name: "Baxen" }),
         ]);
       if (filters.some((filter) => filter.kinds?.includes(9))) {
         reads.push(filters as Filter[]);
@@ -3443,7 +3443,7 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
     const mounted = render(
       <SearchResults
         session={owner.session}
-        query="from:@bramble"
+        query="from:@baxen"
         onQueryChange={change}
         input={createRef()}
         pages={[]}
@@ -3456,7 +3456,7 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
     mounted.rerender(
       <SearchResults
         session={owner.session}
-        query="from:bramble"
+        query="from:baxen"
         onQueryChange={change}
         input={createRef()}
         pages={[]}
@@ -3677,9 +3677,9 @@ it("opens the identity picker for bare from: without an unfiltered message read"
 });
 
 it.each([
-  "from:bramble deploy",
-  "from:@bramble ",
-  "deploy from:bramble after:2024-01-15",
+  "from:baxen deploy",
+  "from:@baxen ",
+  "deploy from:baxen after:2024-01-15",
 ])(
   "resolves a completed ambiguous %s without losing surrounding query text",
   async (query) => {
@@ -3692,8 +3692,8 @@ it.each([
       query(filters) {
         if (filters.some((filter) => filter.kinds?.includes(0)))
           return Promise.resolve([
-            profile(first, { display_name: "Bramble" }),
-            profile(second, { display_name: "Bramble" }),
+            profile(first, { display_name: "Baxen" }),
+            profile(second, { display_name: "Baxen" }),
           ]);
         return Promise.resolve([]);
       },
@@ -3716,7 +3716,7 @@ it.each([
       expect(await people.findAllByRole("option")).toHaveLength(2);
       fireEvent.click(people.getAllByRole("option")[1] as HTMLElement);
       expect(change).toHaveBeenCalledWith(
-        `from:${second.pubkey} ${query.replace(/from:@?bramble\s*/i, "")}`,
+        `from:${second.pubkey} ${query.replace(/from:@?baxen\s*/i, "")}`,
       );
     } finally {
       cleanup();
@@ -4088,14 +4088,14 @@ it("renders from:<author chip> without exposing the signed operand in the input"
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
     query(filters) {
       if (filters.some((filter) => filter.kinds?.includes(0)))
-        return Promise.resolve([profile(human, { display_name: "Wen" })]);
+        return Promise.resolve([profile(human, { display_name: "Wes" })]);
       if (filters.some((filter) => filter.kinds?.includes(9)))
         reads.push(filters as Filter[]);
       return Promise.resolve([]);
     },
   });
   function Search() {
-    const [query, setQuery] = useState("from:@wen");
+    const [query, setQuery] = useState("from:@wes");
     return (
       <SearchResults
         session={owner.session}
@@ -4112,11 +4112,11 @@ it("renders from:<author chip> without exposing the signed operand in the input"
     fireEvent.click(
       await within(screen.getByRole("group", { name: "People" })).findByRole(
         "option",
-        { name: /Wen/ },
+        { name: /Wes/ },
       ),
     );
-    const chip = screen.getByRole("button", { name: "Remove author Wen" });
-    expect(chip).toHaveTextContent("from:@Wen");
+    const chip = screen.getByRole("button", { name: "Remove author Wes" });
+    expect(chip).toHaveTextContent("from:@Wes");
     expect(chip).toHaveAttribute("title", npubEncode(human.pubkey));
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
     expect(input).toHaveValue("");
@@ -4153,7 +4153,7 @@ it("renders from:<author chip> without exposing the signed operand in the input"
     );
     fireEvent.click(chip);
     expect(
-      screen.queryByRole("button", { name: "Remove author Wen" }),
+      screen.queryByRole("button", { name: "Remove author Wes" }),
     ).toBeNull();
     expect(input).toHaveValue("deploy");
   } finally {
@@ -4264,10 +4264,10 @@ it("keeps a person visible when agent candidates exceed the picker cap", async (
 it("retains a member of the in: channel when global author lookup fails", async () => {
   const relay = keypair(),
     viewer = keypair(),
-    wen = keypair();
+    wes = keypair();
   const discovery = [
     metadata(relay, "crew", "crew"),
-    roster(relay, "crew", [viewer.pubkey, wen.pubkey]),
+    roster(relay, "crew", [viewer.pubkey, wes.pubkey]),
   ];
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
@@ -4275,7 +4275,7 @@ it("retains a member of the in: channel when global author lookup fails", async 
       if (filters.some((filter) => filter.search === "we"))
         return Promise.reject(new Error("prefix lookup unavailable"));
       if (filters.some((filter) => filter.kinds?.includes(0)))
-        return Promise.resolve([profile(wen, { display_name: "Wen" })]);
+        return Promise.resolve([profile(wes, { display_name: "Wes" })]);
       return Promise.resolve(
         discovery.filter((event) =>
           filters.some((filter) => matchFilter(filter as Filter, event)),
@@ -4297,7 +4297,7 @@ it("retains a member of the in: channel when global author lookup fails", async 
     expect(
       await within(screen.getByRole("group", { name: "People" })).findByRole(
         "option",
-        { name: /Wen/ },
+        { name: /Wes/ },
       ),
     ).toBeVisible();
   } finally {
@@ -4390,7 +4390,7 @@ it("offers during: periods and an on: calendar that insert local dates", async (
 it("picks an in: channel from the joined channels and an in:@ person like from:@", async () => {
   const relay = keypair(),
     viewer = keypair(),
-    bramble = keypair();
+    baxen = keypair();
   const { owner } = operatorSession(viewer, relay, [
     metadata(relay, "bugs", "buzz-bugs"),
     roster(relay, "bugs", [viewer.pubkey]),
@@ -4398,12 +4398,12 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
     roster(relay, "builds", [viewer.pubkey]),
     metadata(relay, "crew", "crew"),
     roster(relay, "crew", [viewer.pubkey]),
-    profile(bramble, { display_name: "Bramble" }),
+    profile(baxen, { display_name: "Baxen" }),
   ]);
   const session = {
     ...owner.session,
     searchProfiles: async () => [
-      eventDto(profile(bramble, { display_name: "Bramble" })),
+      eventDto(profile(baxen, { display_name: "Baxen" })),
     ],
   };
   const change = vi.fn();
@@ -4432,10 +4432,10 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
         await screen.findByRole("group", { name: "Channels" }),
       ).findAllByRole("option"),
     ).toHaveLength(3);
-    view.rerender(<SearchResults {...props} query="deploy in:@bra" />);
+    view.rerender(<SearchResults {...props} query="deploy in:@bax" />);
     const people = within(await screen.findByRole("group", { name: "People" }));
-    fireEvent.click(await people.findByRole("option", { name: /Bramble/ }));
-    expect(change).toHaveBeenLastCalledWith(`in:@${bramble.pubkey} deploy `);
+    fireEvent.click(await people.findByRole("option", { name: /Baxen/ }));
+    expect(change).toHaveBeenLastCalledWith(`in:@${baxen.pubkey} deploy `);
   } finally {
     cleanup();
     owner.dispose();
@@ -4695,28 +4695,28 @@ it("shows only messages once text sits beside an operator", async () => {
     [
       metadata(relay, "bugs", "buzz-bugs"),
       roster(relay, "bugs", [viewer.pubkey]),
-      metadata(relay, "kr", "tamsin-reviewers"),
+      metadata(relay, "kr", "kalvin-reviewers"),
       roster(relay, "kr", [viewer.pubkey]),
     ],
-    [message(viewer, "bugs", "tamsin found it", 1700000001)],
+    [message(viewer, "bugs", "kalvin found it", 1700000001)],
   );
   try {
     render(
       <SearchResults
         session={owner.session}
-        query="in:#buzz-bugs tamsin"
+        query="in:#buzz-bugs kalvin"
         {...operatorProps}
       />,
     );
     expect(
-      await screen.findByRole("option", { name: /tamsin found it/ }),
+      await screen.findByRole("option", { name: /kalvin found it/ }),
     ).toBeVisible();
     expect(reads.flat()).toEqual([
-      expect.objectContaining({ "#h": ["bugs"], search: "tamsin" }),
+      expect.objectContaining({ "#h": ["bugs"], search: "kalvin" }),
     ]);
     expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
     expect(
-      screen.queryByRole("option", { name: /tamsin-reviewers/ }),
+      screen.queryByRole("option", { name: /kalvin-reviewers/ }),
     ).toBeNull();
   } finally {
     cleanup();
@@ -5362,8 +5362,8 @@ it("leads a message hit's conversation name with its type icon and words", async
     ["board", "hash", "Public channel", "board"],
     ["vault", "lock", "Private channel", "vault"],
     ["notes", "message-circle", "Chat", "Notes"],
-    ["dm", "message-circle", "Direct message", "Pippa"],
-    ["group", "message-circle", "Direct message", "Brann, Pippa"],
+    ["dm", "message-circle", "Direct message", "Pinky"],
+    ["group", "message-circle", "Direct message", "Brain, Pinky"],
   ] as const;
   const dm = [
     ["t", "dm"],
@@ -5398,8 +5398,8 @@ it("leads a message hit's conversation name with its type icon and words", async
             : [viewer.pubkey],
       ),
     ),
-    profile(peer, { name: "Pippa" }),
-    profile(other, { name: "Brann" }),
+    profile(peer, { name: "Pinky" }),
+    profile(other, { name: "Brain" }),
   ];
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
@@ -6894,7 +6894,7 @@ it("holds an early Enter for a person still being found over a section holding t
   } as unknown as AppServices["settingsCards"];
   const openSection = vi.fn();
   const openConversation = vi.fn();
-  // "wen" finds Software updates the same way, but in the shipped palette
+  // "wes" finds Software updates the same way, but in the shipped palette
   // plugin rows still take its early Enter: plugin descriptions hold most
   // names' letters in order. Of the bundled plugins, controls and a member's
   // sections, "champ" matched only Channel templates, so this Enter turns on

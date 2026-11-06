@@ -19,8 +19,8 @@ import { rowProfileIds } from "./membership";
 
 const relay = keypair(),
   viewer = keypair(),
-  pippa = keypair(),
-  brann = keypair();
+  pinky = keypair(),
+  brain = keypair();
 const activity = (body: unknown, time = 20, signer = relay, channel = "a") =>
   signed(signer, {
     kind: 40099,
@@ -28,50 +28,50 @@ const activity = (body: unknown, time = 20, signer = relay, channel = "a") =>
     created_at: time,
     tags: [["h", channel]],
   });
-const addition = (target = pippa.pubkey, time = 20) =>
+const addition = (target = pinky.pubkey, time = 20) =>
   activity({ type: "member_joined", actor: viewer.pubkey, target }, time);
 const end = () =>
   bounds(relay, "a", "head", { has_more: false, next_cursor: null });
 
 it("admits only recognized, channel-scoped relay-authored membership payloads", () => {
   const joined = addition();
-  const left = activity({ type: "member_left", actor: pippa.pubkey });
+  const left = activity({ type: "member_left", actor: pinky.pubkey });
   const removed = activity({
     type: "member_removed",
     actor: viewer.pubkey,
-    target: brann.pubkey,
+    target: brain.pubkey,
   });
   const rows = foldMessages("a", relay.pubkey, [joined, left, removed]);
   expect(rows).toHaveLength(3);
   expect(rows.find((r) => r.id === left.id)?.membership?.target).toBe(
-    pippa.pubkey,
+    pinky.pubkey,
   );
   expect(
     rows.every((r) => !r.content && !r.mentions.length && !r.replyCount),
   ).toBe(true);
   const joinedRow = rows.find((r) => r.id === joined.id);
   assert.exists(joinedRow);
-  expect(rowProfileIds(joinedRow)).toEqual([viewer.pubkey, pippa.pubkey]);
+  expect(rowProfileIds(joinedRow)).toEqual([viewer.pubkey, pinky.pubkey]);
   const invalid = [
     null,
     [],
     {},
     { type: "channel_created", actor: viewer.pubkey },
     { type: "member_joined", actor: viewer.pubkey },
-    { type: "member_joined", actor: "fake", target: pippa.pubkey },
+    { type: "member_joined", actor: "fake", target: pinky.pubkey },
     { type: "member_removed", actor: viewer.pubkey, target: "fake" },
-    { type: "member_left", actor: pippa.pubkey, target: brann.pubkey },
+    { type: "member_left", actor: pinky.pubkey, target: brain.pubkey },
   ];
   expect(
     foldMessages("a", relay.pubkey, [
       ...invalid.map((body) => activity(body)),
       activity(
-        { type: "member_joined", actor: viewer.pubkey, target: pippa.pubkey },
+        { type: "member_joined", actor: viewer.pubkey, target: pinky.pubkey },
         20,
         viewer,
       ),
       activity(
-        { type: "member_left", actor: pippa.pubkey },
+        { type: "member_left", actor: pinky.pubkey },
         20,
         relay,
         "other",
@@ -149,33 +149,33 @@ it.each([false, true])(
         { kinds: [40099], "#h": ["a"], authors: [relay.pubkey], limit: 500 },
       ]);
       // One below the oldest page waits for the page that reaches it.
-      const row = addition(pippa.pubkey, 21);
-      const below = addition(brann.pubkey, 19);
+      const row = addition(pinky.pubkey, 21);
+      const below = addition(brain.pubkey, 19);
       notices.respond([row, below]);
       await flush();
       expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, row.id]);
-      expect(q.window("a").rows[1]?.membership?.target).toBe(pippa.pubkey);
+      expect(q.window("a").rows[1]?.membership?.target).toBe(pinky.pubkey);
       // Render before enrichment, with no per-row blocking request.
       take(wire, isNames).respond([
-        profile(viewer, { name: "Wen" }),
-        profile(pippa, { name: "Pippa" }),
+        profile(viewer, { name: "Wes" }),
+        profile(pinky, { name: "Pinky" }),
       ]);
       await flush();
-      const chat = message(pippa, "a", "Conversation preview", 22);
-      live.receive([chat, addition(brann.pubkey, 23)]);
+      const chat = message(pinky, "a", "Conversation preview", 22);
+      live.receive([chat, addition(brain.pubkey, 23)]);
       await flush();
       expect(q.window("a").rows.map((r) => r.id)).toEqual([
         hello.id,
         row.id,
         chat.id,
-        addition(brann.pubkey, 23).id,
+        addition(brain.pubkey, 23).id,
       ]);
       expect(q.list().channels[0]?.preview).toBe("Conversation preview");
       expect(
         owner.session.unread.snapshot({ kind: "channel", channelId: "a" })
           .observedCount,
       ).toBe(1);
-      take(wire, isNames).respond([profile(brann, { name: "Brann" })]);
+      take(wire, isNames).respond([profile(brain, { name: "Brain" })]);
       await flush();
       q.loadOlder("a");
       const older = take(wire, isWindow);
@@ -184,7 +184,7 @@ it.each([false, true])(
         before_id: hello.id,
       });
       expect(older.filters[0]?.kinds).not.toContain(40099);
-      const old = message(pippa, "a", "First", 18);
+      const old = message(pinky, "a", "First", 18);
       older.respond([
         old,
         bounds(relay, "a", `20:${hello.id}`, {
@@ -199,7 +199,7 @@ it.each([false, true])(
         hello.id,
         row.id,
         chat.id,
-        addition(brann.pubkey, 23).id,
+        addition(brain.pubkey, 23).id,
       ]);
       // The first notice read reached the start; nothing is left to read.
       expect(wire.pending.some((entry) => entry.filters.some(isNotices))).toBe(
@@ -208,9 +208,9 @@ it.each([false, true])(
       const before = q.window("a").rows;
       live.receive([
         activity(
-          { type: "member_joined", actor: viewer.pubkey, target: brann.pubkey },
+          { type: "member_joined", actor: viewer.pubkey, target: brain.pubkey },
           24,
-          pippa,
+          pinky,
         ),
       ]);
       expect(q.window("a").rows).toEqual(before);
@@ -292,7 +292,7 @@ it("reads notices in relay pages down to the window floor, and a failed read nev
       until: last?.created_at,
       before_id: last?.id,
     });
-    const early = addition(pippa.pubkey, 995);
+    const early = addition(pinky.pubkey, 995);
     retry.respond([early]);
     await flush();
     expect(
@@ -328,9 +328,9 @@ it("live activity obeys the same retained row budget as messages", async () => {
     wire.next().respond([end()]);
     await flush();
     live.receive([
-      addition(pippa.pubkey, 1),
-      addition(pippa.pubkey, 2),
-      addition(brann.pubkey, 3),
+      addition(pinky.pubkey, 1),
+      addition(pinky.pubkey, 2),
+      addition(brain.pubkey, 3),
     ]);
     expect(owner.session.channels.window("a")).toMatchObject({
       historyLimited: true,
@@ -376,8 +376,8 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
     wire
       .next()
       .respond([
-        profile(viewer, { name: "Wen" }),
-        profile(pippa, { name: "Pippa" }),
+        profile(viewer, { name: "Wes" }),
+        profile(pinky, { name: "Pinky" }),
       ]);
     await flush();
     expect(saved[0]?.events).toContainEqual(
@@ -407,10 +407,10 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
     await vi.waitFor(() =>
       expect(
         second.session.channels.window("a").rows[0]?.membership?.target,
-      ).toBe(pippa.pubkey),
+      ).toBe(pinky.pubkey),
     );
-    expect(second.session.profiles.snapshot().get(pippa.pubkey)?.name).toBe(
-      "Pippa",
+    expect(second.session.profiles.snapshot().get(pinky.pubkey)?.name).toBe(
+      "Pinky",
     );
   } finally {
     second.dispose();
@@ -458,7 +458,7 @@ it("a catch-up head rereads the newest notices, and restarts the descent only wh
     q.ensure("a");
     head();
     await flush();
-    const held = addition(pippa.pubkey, 1_001);
+    const held = addition(pinky.pubkey, 1_001);
     take(wire, isNotices).respond([held]);
     await flush();
     expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, held.id]);

@@ -345,7 +345,7 @@ it("shows each saved conversation's channel with the sidebar's icon", () => {
       channels: [
         { id: "public", name: "general", channelType: "stream" },
         { id: "private", name: "plans", channelType: "stream", private: true },
-        { id: "dm", name: "Pippa", channelType: "dm", hidden: true },
+        { id: "dm", name: "Pinky", channelType: "dm", hidden: true },
         { id: "solo", name: "Notes", channelType: "solo", private: true },
       ],
     }).type,
@@ -362,7 +362,7 @@ it("shows each saved conversation's channel with the sidebar's icon", () => {
   ).toEqual([
     "tabler-icon-hash general",
     "tabler-icon-lock plans",
-    "tabler-icon-message-circle Pippa",
+    "tabler-icon-message-circle Pinky",
     "tabler-icon-message-circle Notes",
   ]);
   expect(

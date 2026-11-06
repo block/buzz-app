@@ -539,7 +539,7 @@ test.describe("reading", () => {
 // Owner-authored inventory supplies choices; signed membership remains authority.
 test.describe("personal recipients", () => {
   test.use({
-    soloAgentNames: ["Owned Honey", "Owned Brann"],
+    soloAgentNames: ["Owned Honey", "Owned Brain"],
     soloOutsideAgentNames: ["Outside Agent"],
   });
   test("Solo chat signs only explicit owned recipients and never offers an outside identity, in a linked tab too", async ({
@@ -601,7 +601,7 @@ test.describe("personal recipients", () => {
         name: "Message your agents",
         exact: true,
       });
-      const [, brann, outsider] = app.soloAgents;
+      const [, brain, outsider] = app.soloAgents;
       // Agents-only Solo chats address agents from the composer's pill.
       const pill = (scope) =>
         scope.getByRole("button", { name: /Change agents$|^Choose agent$/ });
@@ -611,7 +611,7 @@ test.describe("personal recipients", () => {
         /^Sending to .+\. Change agents$/,
       );
       // Choose an owned recipient from the pill.
-      await sendOnlyTo(page, pill(workspace), brann);
+      await sendOnlyTo(page, pill(workspace), brain);
       await composer.press("End");
       await page.keyboard.insertText("Only this agent from Beta");
       await composer.press("Enter");
@@ -622,12 +622,12 @@ test.describe("personal recipients", () => {
       expect(verifyEvent(sent)).toBe(true);
       expect(sent.tags.filter(([key]) => key === "h")).toEqual([["h", other]]);
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
-        ["p", brann.pubkey],
+        ["p", brain.pubkey],
       ]);
       // The next draft retains the last notified agent, not the account
       // default, and keeps it out of the text.
       await expect(pill(workspace)).toHaveAccessibleName(
-        `Sending to ${brann.name}. Change agents`,
+        `Sending to ${brain.name}. Change agents`,
       );
       await expect(composer).toHaveText("");
       // A draft from the ordinary Messages reader may retain a channel member
@@ -655,7 +655,7 @@ test.describe("personal recipients", () => {
       await expect(
         linkedPicker
           .getByRole("button")
-          .and(page.locator(`[data-mention-choice="${brann.pubkey}"]`)),
+          .and(page.locator(`[data-mention-choice="${brain.pubkey}"]`)),
       ).toBeVisible();
       await expect(
         linkedPicker

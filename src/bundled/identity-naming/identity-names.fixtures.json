@@ -7,11 +7,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -36,11 +36,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -75,7 +75,7 @@
           "qualifier": null
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey",
+          "name": "Wes’s Honey",
           "qualifier": null
         }
       }
@@ -85,11 +85,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -115,7 +115,7 @@
           "qualifier": null
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey",
+          "name": "Wes’s Honey",
           "qualifier": null
         }
       }
@@ -125,11 +125,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -151,7 +151,7 @@
       ],
       "expected": {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
-          "name": "Lomax’s Honey",
+          "name": "Logan’s Honey",
           "qualifier": null
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
@@ -165,11 +165,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -205,11 +205,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -231,11 +231,11 @@
       ],
       "expected": {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
-          "name": "Wen’s Honey · rcaj",
+          "name": "Wes’s Honey · rcaj",
           "qualifier": "rcaj"
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey · 04hu",
+          "name": "Wes’s Honey · 04hu",
           "qualifier": "04hu"
         }
       }
@@ -245,11 +245,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -294,11 +294,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -330,11 +330,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -366,11 +366,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -386,7 +386,7 @@
         },
         {
           "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-          "name": "Wen’s Honey"
+          "name": "Wes’s Honey"
         }
       ],
       "viewer": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -401,11 +401,11 @@
           "qualifier": null
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey · 04hu",
+          "name": "Wes’s Honey · 04hu",
           "qualifier": "04hu"
         },
         "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
-          "name": "Wen’s Honey",
+          "name": "Wes’s Honey",
           "qualifier": null
         }
       }
@@ -415,11 +415,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -462,11 +462,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -491,7 +491,7 @@
           "qualifier": null
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey",
+          "name": "Wes’s Honey",
           "qualifier": null
         }
       }
@@ -501,11 +501,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -539,11 +539,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -567,7 +567,7 @@
           "qualifier": null
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey",
+          "name": "Wes’s Honey",
           "qualifier": null
         }
       }
@@ -577,11 +577,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -617,15 +617,15 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "3333333333333333333333333333333333333333333333333333333333333333",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -647,11 +647,11 @@
       ],
       "expected": {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
-          "name": "Wen’s Honey · rcaj",
+          "name": "Wes’s Honey · rcaj",
           "qualifier": "rcaj"
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey · 04hu",
+          "name": "Wes’s Honey · 04hu",
           "qualifier": "04hu"
         }
       }
@@ -661,11 +661,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "3ee51d04715939ef0e492f7b87bf1dcaf2c0b4a16b753f19d7a92e96ba01b8db",
@@ -712,11 +712,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -845,11 +845,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -885,7 +885,7 @@
           "qualifier": null
         },
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
-          "name": "Wen’s Honey",
+          "name": "Wes’s Honey",
           "qualifier": null
         }
       }
@@ -895,11 +895,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -930,11 +930,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -952,11 +952,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1000,11 +1000,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1052,11 +1052,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1093,11 +1093,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1146,11 +1146,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -1190,11 +1190,11 @@
       "identities": [
         {
           "pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
-          "name": "Lomax"
+          "name": "Logan"
         },
         {
           "pubkey": "2222222222222222222222222222222222222222222222222222222222222222",
-          "name": "Wen"
+          "name": "Wes"
         },
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

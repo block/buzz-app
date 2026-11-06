@@ -18,7 +18,7 @@ The shell palette and proportions are adapted from the supplied Buzz screenshots
 
 `public/bestie.png` is the snake portrait supplied by the user for the shell.
 
-`public/shell-gradient.png` is the background image supplied for the bento
+`public/shell-gradient.png` is the background image supplied by Wes for the bento
 shell on 2026-09-09 (SHA-256
 `618ce821eaea22dd30bddb0c2a933284f0a49f6b4f0cefff5ae0b51e2b3ea651`).
 The repeating dots are drawn in CSS, not baked into the image.

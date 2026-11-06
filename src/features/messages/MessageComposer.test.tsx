@@ -743,9 +743,9 @@ it("retires reply controls immediately and preserves the draft when replying aga
   expect(h.input()).toHaveValue("Draft in progress");
 
   h.retarget({
-    replyContext: <button type="button">Cancel reply to Wen</button>,
+    replyContext: <button type="button">Cancel reply to Wes</button>,
   });
-  const current = screen.getByRole("button", { name: "Cancel reply to Wen" });
+  const current = screen.getByRole("button", { name: "Cancel reply to Wes" });
   expect(current.closest("[inert]")).toBeNull();
   expect(screen.queryByText("Cancel reply to Honey")).toBeNull();
   expect(h.input()).toHaveValue("Draft in progress");

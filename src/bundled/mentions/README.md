@@ -48,7 +48,7 @@ MUST, MUST NOT, SHOULD, and MAY have their RFC 2119 meanings.
   payload of another length, is a name search.
 - **Choice**: one key the user can mention. It has a **name** (the identity's own
   name), a **label** (the name shown in the chooser, possibly qualified, for
-  example `Wen’s Honey` or `Honey · 4prr`), and **aliases** (the real names known
+  example `Wes’s Honey` or `Honey · 4prr`), and **aliases** (the real names known
   for that key). A choice with no known name has no aliases. Its label is only a
   key fallback.
 - **Member**: a key in the channel's current member list.

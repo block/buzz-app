@@ -79,7 +79,7 @@ test("profile channel focus ring paints on one row and both list boundaries", as
   await page
     .getByRole("button", { name: "View thread: 1 reply", exact: true })
     .click();
-  await page.getByRole("button", { name: "View Pippa profile" }).click();
+  await page.getByRole("button", { name: "View Pinky profile" }).click();
   await panel.getByRole("tab", { name: "Channels" }).click();
   const single = channels.locator("ul");
   await expect(single.locator("li")).toHaveCount(1);

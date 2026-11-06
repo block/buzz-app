@@ -251,8 +251,8 @@ second
   });
 
   it("hides complete HTML comments, such as Buzz Desktop's wave marker", () => {
-    const wave = render("<!-- buzz:wave:v1 -->\nLomax waved at you.");
-    expect(wave).toContain("<p>Lomax waved at you.</p>");
+    const wave = render("<!-- buzz:wave:v1 -->\nLogan waved at you.");
+    expect(wave).toContain("<p>Logan waved at you.</p>");
     expect(wave).not.toContain("buzz:wave");
     expect(render("a <!-- hidden --> b")).toContain("<p>a  b</p>");
     expect(render("<!-- x --> <harness>")).toContain("<p> &lt;harness&gt;</p>");

@@ -954,19 +954,19 @@ it("renders task Markdown outside checkbox labels and shows a legacy named assig
   f.canvas.read.mockResolvedValue({
     ...head,
     content:
-      "## Todos\n\n- [ ] **Ship** [release](https://example.com) · Assignee: Jory\n",
+      "## Todos\n\n- [ ] **Ship** [release](https://example.com) · Assignee: John\n",
   });
   render(<TodosPanel {...f.props} />);
   const link = await screen.findByRole("link", { name: "release" });
   expect(link.closest("label")).toBeNull();
   expect(screen.getByText("Ship").tagName).toBe("STRONG");
-  expect(screen.queryByText(/Assignee: Jory/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Assignee: John/)).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: /Assignee for/ }),
-  ).toHaveTextContent("Jory");
+  ).toHaveTextContent("John");
   expect(screen.getByRole("button", { name: /Assignee for/ })).toHaveAttribute(
     "aria-description",
-    "Jory (from Canvas; choose a member to link)",
+    "John (from Canvas; choose a member to link)",
   );
 });
 
@@ -997,7 +997,7 @@ it("uses rendered Markdown and the displayed assignee in accessible names", asyn
   f.canvas.read.mockResolvedValue({
     ...head,
     content:
-      "## Todos\n\n- [ ] **Build** [release](https://example.com) · Assignee: Jory\n    - [ ] Child\n",
+      "## Todos\n\n- [ ] **Build** [release](https://example.com) · Assignee: John\n    - [ ] Child\n",
   });
   render(<TodosPanel {...f.props} />);
   await screen.findByRole("checkbox", { name: "Build release" });
@@ -1008,14 +1008,14 @@ it("uses rendered Markdown and the displayed assignee in accessible names", asyn
     screen.getByRole("button", { name: "Status for Build release" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Assignee for Build release: Jory" }),
-  ).toHaveTextContent("Jory");
+    screen.getByRole("button", { name: "Assignee for Build release: John" }),
+  ).toHaveTextContent("John");
 });
 it("keeps a later subtree collapsed after adding and assigning an earlier task", async () => {
   const f = fixture(),
     user = userEvent.setup();
   const content =
-    "## Todos\n\n- [ ] Earlier · Assignee: Jory\n- [ ] Parent\n    - [ ] Child\n";
+    "## Todos\n\n- [ ] Earlier · Assignee: John\n- [ ] Parent\n    - [ ] Child\n";
   f.canvas.read.mockResolvedValue({ ...head, content });
   render(<TodosPanel {...f.props} />);
   await user.click(
@@ -1050,7 +1050,7 @@ it("keeps a later subtree collapsed when removing an earlier assignment", async 
   f.canvas.read.mockResolvedValue({
     ...head,
     content:
-      "## Todos\n\n- [ ] Earlier · Assignee: Jory\n- [ ] Parent\n    - [ ] Child\n",
+      "## Todos\n\n- [ ] Earlier · Assignee: John\n- [ ] Parent\n    - [ ] Child\n",
   });
   render(<TodosPanel {...f.props} />);
   await user.click(

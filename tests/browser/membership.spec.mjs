@@ -46,18 +46,18 @@ test("Channels renders grouped history and live membership without turning activ
   const groups = feed.locator("[data-membership-row]");
   await expect(groups).toHaveCount(1);
   await expect(groups.first()).toContainText(
-    "Pippa added by you, along with Brann",
+    "Pinky added by you, along with Brain",
   );
   // Member names open profiles; the row carries no message actions.
-  await expect(groups.locator("button")).toHaveText(["Pippa", "you", "Brann"]);
-  await groups.getByRole("button", { name: "View Pippa profile" }).click();
+  await expect(groups.locator("button")).toHaveText(["Pinky", "you", "Brain"]);
+  await groups.getByRole("button", { name: "View Pinky profile" }).click();
   const profile = page.getByRole("complementary", {
     name: "Profile",
     exact: true,
   });
-  await expect(profile).toContainText("Pippa");
+  await expect(profile).toContainText("Pinky");
   await page
-    .getByRole("button", { name: "Close Pippa tab", exact: true })
+    .getByRole("button", { name: "Close Pinky tab", exact: true })
     .click();
   await expect(profile).toHaveCount(0);
   // Count each identity once; its overlap frame and shared artwork both
@@ -116,16 +116,16 @@ test("Channels renders grouped history and live membership without turning activ
   app.membership("member_left", 1, 1);
   await expect(groups).toHaveCount(1);
   await expect(groups.last()).toContainText(
-    "Pippa added by you, along with Brann",
+    "Pinky added by you, along with Brain",
   );
   app.membership("member_removed", 0);
   await expect(groups).toHaveCount(1);
   await expect(groups.last()).toContainText(
-    "Brann was added · Pippa was removed",
+    "Brain was added · Pinky was removed",
   );
   await expect(groups.last().locator("p")).toHaveAttribute(
     "title",
-    /Pippa was removed by you/,
+    /Pinky was removed by you/,
   );
   await groups.last().screenshot({
     path: testInfo.outputPath("latest-membership-change.png"),
@@ -138,7 +138,7 @@ test("Channels renders grouped history and live membership without turning activ
   // A normal message is a grouping barrier, never swallowed by an activity cohort.
   app.membership("member_joined", 0);
   await expect(groups).toHaveCount(2);
-  await expect(groups.last()).toContainText("Pippa added by you");
+  await expect(groups.last()).toContainText("Pinky added by you");
   await expect(groups.last()).toBeVisible();
   // Wait for the scheduled bottom-follow before leaving; an overscan count is
   // not evidence that the newly appended activity has reached the viewport.
@@ -170,7 +170,7 @@ keyboardTest(
     const distance = () =>
       feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
     await expect(feed.locator("[data-membership-row]")).toContainText(
-      "Pippa added by you, along with Brann",
+      "Pinky added by you, along with Brain",
     );
     await settle(page);
     await expect.poll(distance).toBeLessThan(2);
@@ -320,7 +320,7 @@ burstTest(
     expect(notices.filter).toMatchObject({ kinds: [40099], "#h": ["alpha"] });
     expect(notices.filter.until).toEqual(expect.any(Number));
     notices.release();
-    await expect(groups).toContainText("Pippa and 601 others were added");
+    await expect(groups).toContainText("Pinky and 601 others were added");
     await expect(groups).toHaveCount(1);
     await settle(page);
     expect(app.pending).toHaveLength(0);
@@ -340,8 +340,8 @@ burstTest(
       exact: true,
     });
     await expect(people.getByRole("listitem")).toHaveCount(602);
-    await expect(people.getByRole("listitem").first()).toHaveText("Pippa");
-    await expect(people.getByRole("listitem").nth(1)).toHaveText("Brann");
+    await expect(people.getByRole("listitem").first()).toHaveText("Pinky");
+    await expect(people.getByRole("listitem").nth(1)).toHaveText("Brain");
     await people.hover();
     await page.screenshot({
       path: testInfo.outputPath("membership-people.png"),

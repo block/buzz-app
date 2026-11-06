@@ -212,24 +212,24 @@ create extra entries in this key-indexed result.
 
 ## Examples
 
-Here the viewer is Lomax; Wen is another owner. All agents are named Honey.
+Here the viewer is Logan; Wes is another owner. All agents are named Honey.
 `<a4>` and `<b4>` stand for the last four npub characters of distinct agent keys;
 these examples assume those suffixes differ and no other labels collide.
 
 | Identities in the context | Labels, in the same order |
 | --- | --- |
-| One Wen-owned agent | `Honey` |
-| Human, Lomax's agent, Wen's agent | `Honey`; `Honey (agent)`; `Wen’s Honey` |
-| Lomax's agent, Wen's agent | `Honey`; `Wen’s Honey` |
-| Two Lomax-owned agents | `Honey · <a4>`; `Honey · <b4>` |
-| Two Wen-owned agents | `Wen’s Honey · <a4>`; `Wen’s Honey · <b4>` |
-| Human and two Lomax-owned agents | `Honey`; `Honey (agent) · <a4>`; `Honey (agent) · <b4>` |
+| One Wes-owned agent | `Honey` |
+| Human, Logan's agent, Wes's agent | `Honey`; `Honey (agent)`; `Wes’s Honey` |
+| Logan's agent, Wes's agent | `Honey`; `Wes’s Honey` |
+| Two Logan-owned agents | `Honey · <a4>`; `Honey · <b4>` |
+| Two Wes-owned agents | `Wes’s Honey · <a4>`; `Wes’s Honey · <b4>` |
+| Human and two Logan-owned agents | `Honey`; `Honey (agent) · <a4>`; `Honey (agent) · <b4>` |
 | Two humans, neither the viewer | `Honey · <a4>`; `Honey · <b4>` |
 | Viewer named Honey, another human named Honey | `Honey`; `Honey · <b4>` |
-| Unknown-owner agent, Wen's agent | `Honey`; `Wen’s Honey` |
+| Unknown-owner agent, Wes's agent | `Honey`; `Wes’s Honey` |
 
-If a human's literal name is `Wen’s Honey`, that human wins a collision with a
-generated agent label of the same text. The agent becomes `Wen’s Honey · <b4>`.
+If a human's literal name is `Wes’s Honey`, that human wins a collision with a
+generated agent label of the same text. The agent becomes `Wes’s Honey · <b4>`.
 If a literal name occupies that result too, the algorithm rechecks and extends
 only the rows that lose or tie at that new collision.
 

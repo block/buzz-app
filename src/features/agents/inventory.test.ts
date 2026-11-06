@@ -121,13 +121,13 @@ it("actual session reads owner-signed relay inventory and clears/disposes it", a
   const query = vi.fn().mockResolvedValue([
     signed(viewer, {
       kind: 30175,
-      tags: [["d", "brann"]],
-      content: JSON.stringify({ display_name: "Brann" }),
+      tags: [["d", "brain"]],
+      content: JSON.stringify({ display_name: "Brain" }),
     }),
     signed(viewer, {
       kind: 30177,
       tags: [["d", "a".repeat(64)]],
-      content: JSON.stringify({ name: "Brann", persona_id: "brann" }),
+      content: JSON.stringify({ name: "Brain", persona_id: "brain" }),
     }),
   ]);
   const owner = createRelaySession({
@@ -144,7 +144,7 @@ it("actual session reads owner-signed relay inventory and clears/disposes it", a
   expect(query.mock.calls[0]?.[3]).toBe("background");
   expect(
     owner.session.agentLibrary.snapshot().identities[0]?.definitionId,
-  ).toBe("profile:brann");
+  ).toBe("profile:brain");
   await owner.clearCache();
   expect(owner.session.agentLibrary.snapshot().definitions).toEqual([]);
   await owner.session.agentLibrary.refresh();

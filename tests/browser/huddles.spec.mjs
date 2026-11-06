@@ -666,7 +666,7 @@ test("live participant avatars enter on top and reflow without growing the shell
     exact: true,
   });
   const stack = capsule.getByRole("img", {
-    name: "In this Huddle: Kendall, Alex",
+    name: "In this Huddle: Kenneth, Alex",
   });
   await expect(stack).toBeVisible();
   expect(
@@ -686,7 +686,7 @@ test("live participant avatars enter on top and reflow without growing the shell
   });
   await page.getByRole("button", { name: "Simulate someone joining" }).click();
   const updated = capsule.getByRole("img", {
-    name: "In this Huddle: Kendall, Alex, Sam",
+    name: "In this Huddle: Kenneth, Alex, Sam",
   });
   await expect(updated).toHaveAttribute("data-arrival-motion", "true");
   const avatars = updated.locator("[data-participant]");
@@ -912,7 +912,7 @@ test("Huddle chat expands beside the call and stays separate from Live transcrip
   await card.getByRole("button", { name: "Join", exact: true }).click();
   await expect(
     card.getByRole("img", {
-      name: "In this Huddle: Kendall, Alex",
+      name: "In this Huddle: Kenneth, Alex",
       exact: true,
     }),
   ).toBeVisible();

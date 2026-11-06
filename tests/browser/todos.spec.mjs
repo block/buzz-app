@@ -33,7 +33,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   app,
 }) => {
   const original =
-    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n    - [ ] **Read** [guide](https://example.com) [Beta](buzz://channel/beta)\n- [ ] Legacy · Assignee: Jory\n\n## Decisions\nKeep these too.\n";
+    "# Notes\nKeep this prose.\n\n## Todos\n\n- [ ] First\n    - [ ] Build\n        - [/] Review\n    - [ ] **Read** [guide](https://example.com) [Beta](buzz://channel/beta)\n- [ ] Legacy · Assignee: John\n\n## Decisions\nKeep these too.\n";
   let head = app.sign({
     kind: 40100,
     content: original,
@@ -126,12 +126,12 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(drawer.locator("strong", { hasText: "Read" })).toBeVisible();
   await expect(
     drawer.getByRole("button", {
-      name: "Assignee for Legacy: Jory",
+      name: "Assignee for Legacy: John",
       exact: true,
     }),
   ).toHaveAttribute(
     "aria-description",
-    "Jory (from Canvas; choose a member to link)",
+    "John (from Canvas; choose a member to link)",
   );
   await input.fill("Ship it");
   await input.press("Enter");

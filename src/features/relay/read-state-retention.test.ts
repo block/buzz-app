@@ -88,7 +88,7 @@ it("keeps an old channel mark when newer message reads fill the budget", () => {
 it("at the synced limit, recent catch-up never pushes out a quiet channel's mark", () => {
   const id = (prefix: string, n: number) =>
     `${prefix}${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
-  // Lomax's Sep 28 state had 295 channel marks. Every channel and thread
+  // Logan's Sep 28 state had 295 channel marks. Every channel and thread
   // mark is older and less recently used than every catch-up mark.
   const channels = Array.from({ length: 300 }, (_, n) => id("", n));
   const threads = Array.from(

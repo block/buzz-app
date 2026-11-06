@@ -2462,12 +2462,12 @@ const imp = { pubkey: "a".repeat(64), name: "Imp" };
 const jitter = { pubkey: "b".repeat(64), name: "Jitter" };
 // Display names with a space are one token too; the label never splits.
 const maryJane = { pubkey: "c".repeat(64), name: "Mary Jane" };
-const ruthHollis = { pubkey: "d".repeat(64), name: "Ruth Hollis" };
+const mattToohey = { pubkey: "d".repeat(64), name: "Matt Toohey" };
 /** Every `@Name` of these people in the text is an explicit, resolved recipient. */
 function mentioned(text: string): MentionDraft {
   return {
     text,
-    recipients: [imp, jitter, maryJane, ruthHollis].flatMap((recipient) => {
+    recipients: [imp, jitter, maryJane, mattToohey].flatMap((recipient) => {
       const start = text.indexOf(`@${recipient.name}`);
       return start < 0
         ? []
@@ -2610,7 +2610,7 @@ it.each([
   // then the editor extends over the first mention in the same direction.
   [
     "extends a backward selection over the first of two two-word mentions",
-    "@Mary Jane @Ruth Hollis ",
+    "@Mary Jane @Matt Toohey ",
     10,
     24,
     "backward",
@@ -2619,7 +2619,7 @@ it.each([
   ],
   [
     "extends a forward selection over the second of two two-word mentions",
-    "@Mary Jane @Ruth Hollis ",
+    "@Mary Jane @Matt Toohey ",
     0,
     11,
     "forward",

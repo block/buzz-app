@@ -1049,7 +1049,7 @@ const text = (ids: string[]) => ({
       ? {
           __typename: "PullRequestReview",
           id,
-          author: { login: "wen" },
+          author: { login: "wes" },
           state: id === "R2" ? "COMMENTED" : "CHANGES_REQUESTED",
           body: id === "R2" ? " " : "Fix it",
           url: `u/${id}`,
@@ -1077,7 +1077,7 @@ const ghFor = (answer: () => Record<string, unknown>) =>
   mockGh(async (_query: string, variables: Variables) =>
     "ids" in variables
       ? text(variables.ids as string[])
-      : { viewer: { login: "bramble" }, ...answer() },
+      : { viewer: { login: "baxen" }, ...answer() },
   );
 /** The feedback items held for `url`. */
 const itemsOf = (states: ReturnType<typeof createPullStates>, url: string) => {
@@ -1114,7 +1114,7 @@ it("reads a pull request once at every level its readers ask for", async () => {
     settled: true,
     failed: ["unit"],
     feedback: {
-      viewer: "bramble",
+      viewer: "baxen",
       ids: ["review/R1", "inline/C1", "review/R2", "comment/I1"],
     },
     details: {

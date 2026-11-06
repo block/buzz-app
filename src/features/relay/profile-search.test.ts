@@ -14,7 +14,7 @@ import { keypair, signed } from "./testing";
 const profiles = Array.from({ length: 5 }, (_, index) =>
   signed(keypair(), {
     kind: 0,
-    content: JSON.stringify({ name: `Wen ${index}` }),
+    content: JSON.stringify({ name: `Wes ${index}` }),
     tags: [],
   }),
 );
@@ -55,9 +55,9 @@ const signal = () => new AbortController().signal;
 it("asks the name-only endpoint and never sends NIP-50 search", async () => {
   const { searchProfiles, endpoint, reads } = setup(async () => profiles);
   expect(
-    await searchProfiles(" wen ", { limit: 40, signal: signal() }),
+    await searchProfiles(" wes ", { limit: 40, signal: signal() }),
   ).toEqual(profiles);
-  expect(endpoint).toHaveBeenCalledWith("wen", 40, 1, {
+  expect(endpoint).toHaveBeenCalledWith("wes", 40, 1, {
     signal: expect.any(AbortSignal),
     priority: "foreground",
     fresh: true,
@@ -70,16 +70,16 @@ it("passes the requested page to the endpoint", async () => {
     profiles.slice((page - 1) * limit, page * limit),
   );
   expect(
-    await searchProfiles("wen", { limit: 2, page: 2, signal: signal() }),
+    await searchProfiles("wes", { limit: 2, page: 2, signal: signal() }),
   ).toEqual(profiles.slice(2, 4));
-  expect(endpoint).toHaveBeenLastCalledWith("wen", 2, 2, {
+  expect(endpoint).toHaveBeenLastCalledWith("wes", 2, 2, {
     signal: expect.any(AbortSignal),
     priority: "foreground",
     fresh: true,
   });
   // No total cap: a page past the first hundred results still reaches the relay.
-  await searchProfiles("wen", { limit: 30, page: 5, signal: signal() });
-  expect(endpoint).toHaveBeenLastCalledWith("wen", 30, 5, {
+  await searchProfiles("wes", { limit: 30, page: 5, signal: signal() });
+  expect(endpoint).toHaveBeenLastCalledWith("wes", 30, 5, {
     signal: expect.any(AbortSignal),
     priority: "foreground",
     fresh: true,
@@ -95,7 +95,7 @@ it.each([404, 405])(
       return profiles;
     });
     expect(
-      await searchProfiles("wen", { limit: 30, page: 2, signal: signal() }),
+      await searchProfiles("wes", { limit: 30, page: 2, signal: signal() }),
     ).toEqual([nip50]);
     clock.now += PROFILE_SEARCH_RETRY_MS - 1;
     expect(await searchProfiles("we", { limit: 40, signal: signal() })).toEqual(
@@ -106,7 +106,7 @@ it.each([404, 405])(
       [
         {
           kinds: [0],
-          search: "wen",
+          search: "wes",
           search_mode: "prefix",
           limit: 30,
           page: 2,
@@ -118,7 +118,7 @@ it.each([404, 405])(
     missing = false;
     clock.now += 1;
     expect(
-      await searchProfiles("wen", { limit: 40, signal: signal() }),
+      await searchProfiles("wes", { limit: 40, signal: signal() }),
     ).toEqual(profiles);
     expect(endpoint).toHaveBeenCalledTimes(2);
     expect(reads).toHaveLength(2);
@@ -131,7 +131,7 @@ it("reports other endpoint failures instead of hiding them behind NIP-50", async
       throw new ReadError("unavailable", "failed", status);
     });
     await expect(
-      searchProfiles("wen", { limit: 40, signal: signal() }),
+      searchProfiles("wes", { limit: 40, signal: signal() }),
     ).rejects.toMatchObject({ status });
     expect(reads).toEqual([]);
   }
@@ -143,13 +143,13 @@ it("falls back when a relay that served the endpoint loses it", async () => {
     if (missing) throw new ReadError("unavailable", "missing", 404);
     return profiles;
   });
-  await searchProfiles("wen", { limit: 40, signal: signal() });
+  await searchProfiles("wes", { limit: 40, signal: signal() });
   missing = true;
-  expect(await searchProfiles("wen", { limit: 40, signal: signal() })).toEqual([
+  expect(await searchProfiles("wes", { limit: 40, signal: signal() })).toEqual([
     nip50,
   ]);
   expect(reads).toEqual([
-    [{ kinds: [0], search: "wen", search_mode: "prefix", limit: 40 }],
+    [{ kinds: [0], search: "wes", search_mode: "prefix", limit: 40 }],
   ]);
 });
 
@@ -169,25 +169,25 @@ it("sends a query over the relay's character limit to NIP-50 search", async () =
     [{ kinds: [0], search: over, search_mode: "prefix", limit: 40 }],
   ]);
   // Not a missing endpoint: the next short query uses it right away.
-  await searchProfiles("wen", { limit: 40, signal: signal() });
+  await searchProfiles("wes", { limit: 40, signal: signal() });
   expect(endpoint).toHaveBeenCalledTimes(2);
 });
 
 it("keeps non-profile events out of the result", async () => {
-  const message = signed(keypair(), { kind: 9, content: "wen", tags: [] });
+  const message = signed(keypair(), { kind: 9, content: "wes", tags: [] });
   const { searchProfiles } = setup(async () => [message, ...profiles]);
-  expect(await searchProfiles("wen", { limit: 40, signal: signal() })).toEqual(
+  expect(await searchProfiles("wes", { limit: 40, signal: signal() })).toEqual(
     profiles,
   );
 });
 
 it("uses NIP-50 search when the transport has no endpoint", async () => {
   const { searchProfiles, reads } = setup();
-  expect(await searchProfiles("wen", { limit: 15, signal: signal() })).toEqual([
+  expect(await searchProfiles("wes", { limit: 15, signal: signal() })).toEqual([
     nip50,
   ]);
   expect(reads).toEqual([
-    [{ kinds: [0], search: "wen", search_mode: "prefix", limit: 15 }],
+    [{ kinds: [0], search: "wes", search_mode: "prefix", limit: 15 }],
   ]);
 });
 

@@ -70,14 +70,14 @@ it.each(["binding-mismatch", "authorization-denied"])(
 
 const memberships = [
   { id: "wss://buzz.acme.builderlab.xyz", name: "Acme" },
-  { id: "wss://ada.communities.buzz.xyz", name: "ada" },
-  { id: "wss://tamsin.communities.buzz.xyz", name: "tamsin" },
+  { id: "wss://will.communities.buzz.xyz", name: "will" },
+  { id: "wss://kalvin.communities.buzz.xyz", name: "kalvin" },
 ];
 function publicServer() {
-  const h = federatedFixture("public", "ada@example.com");
+  const h = federatedFixture("public", "will@example.com");
   h.publish({
     status: "signed-in",
-    email: "ada@example.com",
+    email: "will@example.com",
     authority: {
       id: "bb-public",
       identityOrigin: "https://app.builderlab.xyz",
@@ -102,19 +102,19 @@ it.each(["binding-mismatch", "authorization-denied"])(
         identity={pub.service}
         error={failure}
         retry={retry}
-        relay="wss://tamsin.communities.buzz.xyz"
+        relay="wss://kalvin.communities.buzz.xyz"
         memberships={memberships}
       />,
     );
     const alert = screen.getAllByRole("alert")[0];
     expect(alert).toHaveTextContent("Builderlab account");
-    expect(alert).toHaveTextContent("ada@example.com");
+    expect(alert).toHaveTextContent("will@example.com");
     if (failure === "binding-mismatch")
       expect(alert).toHaveTextContent("app.builderlab.xyz");
     expect(alert).not.toHaveTextContent("Builderlab hosting");
     // The others on that server, never the refusing one or another server's.
     expect(
-      screen.getByText("Switching accounts also affects: ada."),
+      screen.getByText("Switching accounts also affects: will."),
     ).toBeVisible();
     await userEvent
       .setup()
@@ -136,7 +136,7 @@ it("closes the switch prompt on Not now without changing any session", async () 
       identity={pub.service}
       error="authorization-denied"
       retry={retry}
-      relay="wss://tamsin.communities.buzz.xyz"
+      relay="wss://kalvin.communities.buzz.xyz"
       memberships={memberships}
     />,
   );
@@ -175,7 +175,7 @@ it("keeps the switch's controls through sign-out, a pending sign-in, Cancel and 
       identity={pub.service}
       error="authorization-denied"
       retry={retry}
-      relay="wss://tamsin.communities.buzz.xyz"
+      relay="wss://kalvin.communities.buzz.xyz"
       memberships={memberships}
     />,
   );
@@ -280,7 +280,7 @@ it.each([
     );
     expect(pub.service.signIn).not.toHaveBeenCalled();
     // The old account is still signed in: retrying must not renew it.
-    act(() => pub.publish({ status: "signed-in", email: "ada@example.com" }));
+    act(() => pub.publish({ status: "signed-in", email: "will@example.com" }));
     signOut.mockImplementationOnce(async () => pub.service.snapshot());
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(signOut).toHaveBeenCalledTimes(2);

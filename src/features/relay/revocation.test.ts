@@ -686,7 +686,7 @@ it("an ambiguous multi-channel read failure does not revoke unrelated evidence",
   expect(h.session.observe(filters).snapshot().events).toHaveLength(2);
 });
 
-// Independent regression probes.
+// Independent regression probes contributed by Brain.
 it("profile purge subscribers cannot read stale denied owned views", () => {
   const h = setup();
   const secret = message(alice, "a", "secret", 10);

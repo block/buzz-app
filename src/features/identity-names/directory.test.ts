@@ -259,8 +259,8 @@ it("applies viewer and owner metadata through the shared view and follows owner 
     b = "b".repeat(64);
   const listeners = new Set<() => void>();
   let profiles = new Map([
-    [me, { name: "Lomax" }],
-    [other, { name: "Wen" }],
+    [me, { name: "Logan" }],
+    [other, { name: "Wes" }],
     [a, { name: "Honey", isAgent: true as const, ownerPubkey: me }],
     [b, { name: "Honey", isAgent: true as const, ownerPubkey: other }],
   ]);
@@ -289,9 +289,9 @@ it("applies viewer and owner metadata through the shared view and follows owner 
     subscribe: () => () => {},
   });
   expect(names.resolve(a)).toBe("Honey");
-  expect(names.resolve(b)).toBe("Wen’s Honey");
+  expect(names.resolve(b)).toBe("Wes’s Honey");
   expect(provider.scope({ ...source, viewer: other })(a)?.name).toBe(
-    "Lomax’s Honey",
+    "Logan’s Honey",
   );
   expect(names.resolve(a)).toBe("Honey");
   const changed = vi.fn();
@@ -321,7 +321,7 @@ it("preserves agent ownership for an authored alias when the public name is synt
             },
           ],
           [human, { name: "Honey" }],
-          [owner, { name: "Odette" }],
+          [owner, { name: "Salman" }],
         ]),
       subscribe: () => () => {},
       ensure: async () => {},
@@ -339,7 +339,7 @@ it("preserves agent ownership for an authored alias when the public name is synt
     [{ pubkey: agent, name: "Honey" }],
   );
   expect(label(human)?.name).toBe("Honey");
-  expect(label(agent)?.name).toBe("Odette’s Honey");
+  expect(label(agent)?.name).toBe("Salman’s Honey");
 });
 
 it("reuses one policy run per candidate scope across mixed case, outside keys, and updates", () => {
@@ -417,10 +417,10 @@ it("reuses one policy run per candidate scope across mixed case, outside keys, a
   expect(resolve).toHaveBeenCalledTimes(31);
   expect(scoped(c)?.name).toBe(suffixed(c));
   expect(resolve).toHaveBeenCalledTimes(32);
-  profiles = new Map([...profiles, [b, { name: "Orrin" }]]);
+  profiles = new Map([...profiles, [b, { name: "Blake" }]]);
   for (const listener of listeners) listener();
   expect(scoped(a)?.name).toBe("Alex");
-  expect(scoped(b)?.name).toBe("Orrin");
+  expect(scoped(b)?.name).toBe("Blake");
   expect(scoped(c)?.name).toBe(suffixed(c));
   expect(resolve).toHaveBeenCalledTimes(34);
 });
@@ -615,7 +615,7 @@ it("labels a scope from its own keys and their owners, not the whole profile cac
     { name: string; isAgent?: true; ownerPubkey?: string }
   >([
     ...crowd,
-    [owner, { name: "Wen" }],
+    [owner, { name: "Wes" }],
     [a, { name: "Honey", isAgent: true, ownerPubkey: owner }],
     [b, { name: "Honey", isAgent: true, ownerPubkey: me }],
   ]);
@@ -638,7 +638,7 @@ it("labels a scope from its own keys and their owners, not the whole profile cac
   const provider = createNameProvider({ ...defaultNamingPolicy, resolve });
   const scoped = provider.scope(source, [a, b]);
   // The owner outside the scope still qualifies its agent's name.
-  expect(scoped(a)?.name).toBe("Wen’s Honey");
+  expect(scoped(a)?.name).toBe("Wes’s Honey");
   expect(scoped(b)?.name).toBe("Honey");
   const rows = resolve.mock.calls[0]?.[0] ?? [];
   expect(new Set(rows.map((row) => row.pubkey))).toEqual(

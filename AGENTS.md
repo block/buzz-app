@@ -238,7 +238,7 @@ Block: Block's employee-only community and its hosts (bb-block:
 `block.builderlab.xyz`, `buzz.block.builderlab.xyz`, `*.communities.block.xyz`),
 private GitHub organizations, repositories or org SSH users, internal hosts,
 cloud accounts, IAM roles or buckets, internal ticket keys, go/ links, Slack
-channels, or real employees' names and personal setups. Public Builderlab
+channels, or personal setups. Public Builderlab
 (`app.builderlab.xyz`, `*.communities.builderlab.xyz`) is a supported public
 service and is fine.
 
@@ -262,7 +262,7 @@ one is missing, add a generic setting; never hardcode the value or special-case
 a host or organization.
 
 Tests, fixtures, docs and examples use example values (`example.org`,
-`example-org`, fictional names). Reviewers treat a violation as a blocking
+`example-org`). Reviewers treat a violation as a blocking
 finding.
 
 ## Commit attribution and DCO

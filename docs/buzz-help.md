@@ -201,7 +201,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   Consecutive addition and removal notices collapse into one row between
   conversation entries, even across long gaps or midnight. Large or mixed groups
   keep one name per action,
-  such as “Pippa and 182 others were added.” Hover or activate “182 others” to see
+  such as “Pinky and 182 others were added.” Hover or activate “182 others” to see
   the full, scrollable list of names. Messages and huddle entries split groups.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag

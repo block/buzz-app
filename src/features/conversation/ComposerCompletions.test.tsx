@@ -126,7 +126,7 @@ function mountPeople(pluginId: string) {
     {
       id: "a".repeat(64),
       label: "Honey",
-      detail: "Managed by Wen",
+      detail: "Managed by Wes",
       agent: true,
       edit: { mention: { pubkey: "a".repeat(64), name: "Honey" } },
     },
@@ -185,7 +185,7 @@ it("marks and announces agents and shows their manager in mention completion", a
   mountPeople("buzz.mentions");
   expect(
     await screen.findByRole("option", {
-      name: /^Honey\s*Agent\s*Managed by Wen$/,
+      name: /^Honey\s*Agent\s*Managed by Wes$/,
     }),
   ).not.toBeNull();
   expect(screen.getByRole("option", { name: /^Hannah$/ })).not.toBeNull();
@@ -193,6 +193,6 @@ it("marks and announces agents and shows their manager in mention completion", a
 it("ignores the agent flag from providers outside the bundled people providers", async () => {
   mountPeople("acme.people");
   expect(
-    await screen.findByRole("option", { name: /^Honey\s*Managed by Wen$/ }),
+    await screen.findByRole("option", { name: /^Honey\s*Managed by Wes$/ }),
   ).not.toBeNull();
 });

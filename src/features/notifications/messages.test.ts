@@ -42,13 +42,13 @@ it("does not notify workflow owners for another recipient, but still notifies ex
   const explicit = message(
     h.relay,
     "room",
-    "@Wen review the result",
+    "@Wes review the result",
     1_780_000_000,
     [...tags, ["buzz:workflow-mention", h.viewer.pubkey]],
   );
   h.emit([explicit], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
-  expect(h.show.mock.calls[0]?.[0].body).toBe("@Wen review the result");
+  expect(h.show.mock.calls[0]?.[0].body).toBe("@Wes review the result");
   h.click();
   expect(h.navigation.navigation.snapshot().entry.target).toMatchObject({
     messageId: explicit.id,
@@ -244,7 +244,7 @@ it("never alerts for coordination between agents, even when it mentions the view
   const tags = [["p", h.viewer.pubkey]];
   h.emit(
     [
-      message(h.relay, "room", "@Wen run the suite", 1_780_000_000, [
+      message(h.relay, "room", "@Wes run the suite", 1_780_000_000, [
         ...tags,
         ["audience", "agents"],
       ]),
@@ -254,11 +254,11 @@ it("never alerts for coordination between agents, even when it mentions the view
   await flush();
   expect(h.show).not.toHaveBeenCalled();
   h.emit(
-    [message(h.relay, "room", "@Wen the suite passed", 1_780_000_000, tags)],
+    [message(h.relay, "room", "@Wes the suite passed", 1_780_000_000, tags)],
     "live",
   );
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
-  expect(h.show.mock.calls[0]?.[0].body).toBe("@Wen the suite passed");
+  expect(h.show.mock.calls[0]?.[0].body).toBe("@Wes the suite passed");
 });
 
 it.each([9, 40002])(
@@ -529,16 +529,16 @@ it("live message wiring supplies the signed author and body, resolving names at 
         release = resolve;
       }),
   );
-  const row = h.make("**Hello** [Wen](https://example.com/private)");
+  const row = h.make("**Hello** [Wes](https://example.com/private)");
   h.emit([row], "live");
   await vi.waitFor(() => expect(release).toBeTypeOf("function"));
   // Profile can arrive from the existing shared stream while permission is pending.
-  h.emit([profile(h.peer, { display_name: "Pippa" })]);
+  h.emit([profile(h.peer, { display_name: "Pinky" })]);
   release("granted");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
   expect(h.show.mock.calls[0]?.[0]).toMatchObject({
-    title: "Pippa mentioned you in #Room",
-    body: "Hello Wen",
+    title: "Pinky mentioned you in #Room",
+    body: "Hello Wes",
   });
   expect(h.query.mock.calls.map(([filters]) => filters)).toEqual([
     [{ authors: [h.viewer.pubkey], kinds: [30175, 30177], limit: 200 }],
@@ -554,7 +554,7 @@ it.each([
   "live kind-%s %s messages carry the correct title and preview",
   async (kind, category) => {
     const h = await setup();
-    h.emit([profile(h.peer, { name: "Pippa" })]);
+    h.emit([profile(h.peer, { name: "Pinky" })]);
     const now = Math.floor(Date.now() / 1000);
     const root = message(h.viewer, "room", "Own thread", now - 1);
     if (category === "direct") {
@@ -591,8 +591,8 @@ it.each([
     expect(h.show.mock.calls[0]?.[0]).toMatchObject({
       title:
         category === "direct"
-          ? "Pippa sent you a direct message"
-          : "Pippa replied in #Room",
+          ? "Pinky sent you a direct message"
+          : "Pinky replied in #Room",
       body: "A new reply",
     });
   },
@@ -600,7 +600,7 @@ it.each([
 
 it("classifies p-tagged DM messages as direct, not mention", async () => {
   const h = await setup();
-  h.emit([profile(h.peer, { name: "Pippa" })]);
+  h.emit([profile(h.peer, { name: "Pinky" })]);
   const now = Math.floor(Date.now() / 1000);
   h.emit([
     signed(h.relay, {
@@ -619,7 +619,7 @@ it("classifies p-tagged DM messages as direct, not mention", async () => {
   h.emit([h.make("hello")], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
   expect(h.show.mock.calls[0]?.[0].title).toBe(
-    "Pippa sent you a direct message",
+    "Pinky sent you a direct message",
   );
 });
 
@@ -787,12 +787,12 @@ it("scopes notification author collisions to the message channel", async () => {
   const h = await setup();
   const stranger = keypair();
   h.emit([
-    profile(h.peer, { name: "Pippa" }),
-    profile(stranger, { name: "Pippa" }),
+    profile(h.peer, { name: "Pinky" }),
+    profile(stranger, { name: "Pinky" }),
   ]);
   h.emit([h.make("first scoped notification")], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
-  expect(h.show.mock.calls[0]?.[0].title).toContain("Pippa");
+  expect(h.show.mock.calls[0]?.[0].title).toContain("Pinky");
   expect(h.show.mock.calls[0]?.[0].title).not.toContain(" · ");
   h.emit([
     roster(
@@ -804,7 +804,7 @@ it("scopes notification author collisions to the message channel", async () => {
   ]);
   h.emit([h.make("second scoped notification")], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
-  expect(h.show.mock.calls[1]?.[0].title).toContain("Pippa · ");
+  expect(h.show.mock.calls[1]?.[0].title).toContain("Pinky · ");
 });
 
 it.each(["direct", "thread"] as const)(

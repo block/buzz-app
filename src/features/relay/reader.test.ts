@@ -405,7 +405,7 @@ it("keeps local inventory consumers independent and ignores an abandoned read's 
   const current = owner.readAgentLibrary(new AbortController().signal);
   expect(local).toHaveBeenCalledTimes(2);
   const library = {
-    definitions: [{ id: "local", name: "Brann" }],
+    definitions: [{ id: "local", name: "Brain" }],
     identities: [],
   };
   wires[1]?.respond(library);

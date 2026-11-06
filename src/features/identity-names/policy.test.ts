@@ -4,7 +4,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { resolveIdentityNames, type NamingIdentity } from "./policy";
 
 const me = "1".repeat(64),
-  wen = "2".repeat(64);
+  wes = "2".repeat(64);
 const a = "a".repeat(64),
   b = "b".repeat(64),
   c = "c".repeat(64);
@@ -23,7 +23,7 @@ const agent = (
   ...(ownerPubkey ? { ownerPubkey } : {}),
 });
 const suffix = (key: string) => npubEncode(key).slice(-4);
-const owners = [person(me, "Lomax"), person(wen, "Wen")];
+const owners = [person(me, "Logan"), person(wes, "Wes")];
 function labels(rows: NamingIdentity[], viewer = me) {
   const resolved = resolveIdentityNames([...owners, ...rows], viewer);
   expect(resolveIdentityNames([...owners, ...rows].reverse(), viewer)).toEqual(
@@ -32,24 +32,24 @@ function labels(rows: NamingIdentity[], viewer = me) {
   return rows.map((row) => resolved.get(row.pubkey)?.name);
 }
 it("prefers humans before agents, then mine before others", () => {
-  expect(labels([person(c), agent(a, me), agent(b, wen)])).toEqual([
+  expect(labels([person(c), agent(a, me), agent(b, wes)])).toEqual([
     "Honey",
     "Honey (agent)",
-    "Wen’s Honey",
+    "Wes’s Honey",
   ]);
-  expect(labels([agent(a, me), agent(b, wen)])).toEqual([
+  expect(labels([agent(a, me), agent(b, wes)])).toEqual([
     "Honey",
-    "Wen’s Honey",
+    "Wes’s Honey",
   ]);
-  expect(labels([agent(a, me), agent(b, wen)], wen)).toEqual([
-    "Lomax’s Honey",
+  expect(labels([agent(a, me), agent(b, wes)], wes)).toEqual([
+    "Logan’s Honey",
     "Honey",
   ]);
 });
 it("keeps the viewer plain in human collisions and otherwise suffixes both", () => {
-  expect(labels([person(me, "Lomax"), person(a, "Lomax")])).toEqual([
-    "Lomax",
-    `Lomax · ${suffix(a)}`,
+  expect(labels([person(me, "Logan"), person(a, "Logan")])).toEqual([
+    "Logan",
+    `Logan · ${suffix(a)}`,
   ]);
   expect(labels([person(a), person(b)])).toEqual([
     `Honey · ${suffix(a)}`,
@@ -60,17 +60,17 @@ it("keeps the viewer plain in human collisions and otherwise suffixes both", () 
 it("normalizes viewer, owner, candidates and repeated keys at the API boundary", () => {
   const viewer = "d".repeat(64);
   const identities = [
-    person(viewer, "Lomax"),
+    person(viewer, "Logan"),
     agent(a, viewer.toUpperCase()),
-    agent(b, wen),
-    person(wen, "Wen"),
+    agent(b, wes),
+    person(wes, "Wes"),
   ];
   const names = resolveIdentityNames(identities, viewer.toUpperCase(), [
     a.toUpperCase(),
     b.toUpperCase(),
   ]);
   expect(names.get(a)?.name).toBe("Honey");
-  expect(names.get(b)?.name).toBe("Wen’s Honey");
+  expect(names.get(b)?.name).toBe("Wes’s Honey");
   expect(names.size).toBe(2);
   expect(
     resolveIdentityNames(
@@ -90,11 +90,11 @@ it("reads only the selected keys and their owners from the directory", () => {
     },
   }));
   const names = resolveIdentityNames(
-    [...directory, person(wen, "Wen"), agent(a, wen), person(b)],
+    [...directory, person(wes, "Wes"), agent(a, wes), person(b)],
     me,
     [a, b],
   );
-  expect(names.get(a)?.name).toBe("Wen’s Honey");
+  expect(names.get(a)?.name).toBe("Wes’s Honey");
   expect(names.get(b)?.name).toBe("Honey");
   expect(read).toBe(0);
 });

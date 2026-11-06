@@ -371,7 +371,7 @@
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "name": "Honey",
-          "label": "Wen’s Honey",
+          "label": "Wes’s Honey",
           "aliases": ["Honey", "Legacy Bee"],
           "member": true,
           "agent": true
@@ -395,7 +395,7 @@
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "name": "Honey",
-          "label": "Wen’s Honey",
+          "label": "Wes’s Honey",
           "aliases": ["Honey", "Legacy Bee"],
           "member": true,
           "agent": true
@@ -413,12 +413,12 @@
     },
     {
       "name": "owner_qualified_label_is_searchable",
-      "query": "Wen’s",
+      "query": "Wes’s",
       "choices": [
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "name": "Honey",
-          "label": "Wen’s Honey",
+          "label": "Wes’s Honey",
           "aliases": ["Honey"],
           "member": true,
           "agent": true
@@ -519,7 +519,7 @@
         {
           "pubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
           "name": "Honey",
-          "label": "Wen’s Honey",
+          "label": "Wes’s Honey",
           "member": true,
           "agent": true,
           "managed": true
@@ -792,35 +792,35 @@
         {
           "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
           "name": "Fizz",
-          "label": "bramble’s Fizz · oncp",
+          "label": "baxen’s Fizz · oncp",
           "member": true,
           "agent": true
         },
         {
           "pubkey": "4444444444444444444444444444444444444444444444444444444444444444",
           "name": "Fizz",
-          "label": "bramble’s Fizz · s03j",
+          "label": "baxen’s Fizz · s03j",
           "member": true,
           "agent": true
         },
         {
           "pubkey": "5555555555555555555555555555555555555555555555555555555555555555",
           "name": "Fizz",
-          "label": "Kestrel Vane’s Fizz",
+          "label": "Kenny Lopez’s Fizz",
           "member": true,
           "agent": true
         },
         {
           "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "name": "Fizz",
-          "label": "bramble’s Fizz · 4prr",
+          "label": "baxen’s Fizz · 4prr",
           "member": true,
           "agent": true
         },
         {
           "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
           "name": "Fizz",
-          "label": "bramble’s Fizz · 06pl",
+          "label": "baxen’s Fizz · 06pl",
           "member": true,
           "agent": true
         }
@@ -1119,7 +1119,7 @@
     },
     {
       "name": "qualified_label_selects_its_identity",
-      "query": "Wen’s Honey",
+      "query": "Wes’s Honey",
       "choices": [
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1130,7 +1130,7 @@
         {
           "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "name": "Honey",
-          "label": "Wen’s Honey",
+          "label": "Wes’s Honey",
           "member": true,
           "agent": true
         }
@@ -1150,7 +1150,7 @@
         {
           "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "name": "Honey",
-          "label": "Wen’s Honey",
+          "label": "Wes’s Honey",
           "member": true,
           "agent": true
         }
@@ -1164,7 +1164,7 @@
         {
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "name": "Honey",
-          "label": "Wen’s Honey",
+          "label": "Wes’s Honey",
           "aliases": ["Honey", "Legacy Bee"],
           "member": true,
           "agent": true

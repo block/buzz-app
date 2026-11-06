@@ -46,10 +46,10 @@ const soloProbe = new URLSearchParams(location.search).has("solo");
 const viewer = keypair(),
   authority = keypair(),
   mic = keypair(),
-  pippa = keypair(),
+  pinky = keypair(),
   missing = keypair();
 const fixtureOrigin = "https://relay.example.test";
-// Pippa is one of this machine's own agents in this community.
+// Pinky is one of this machine's own agents in this community.
 const localAgentProbe = new URLSearchParams(location.search).has("local-agent");
 const memberMessageProbe = new URLSearchParams(location.search).has(
   "member-message",
@@ -75,14 +75,14 @@ const unknown = signed(missing, {
   created_at: 11,
   tags: [["h", "one"]],
 });
-const reply = message(viewer, "one", "Thread @Pippa", 12, [
+const reply = message(viewer, "one", "Thread @Pinky", 12, [
   ["e", root.id, "", "reply"],
-  ["p", pippa.pubkey],
+  ["p", pinky.pubkey],
 ]);
 const picture = "https://images.test/avatar.png";
-const pippaPicture = "https://images.test/pippa-animated.gif";
+const pinkyPicture = "https://images.test/pinky-animated.gif";
 const pictureFixture = "/tests/fixtures/design-system/assets/avatar.png";
-const pippaPictureFixture = "/tests/fixtures/design-system/assets/avatar.png";
+const pinkyPictureFixture = "/tests/fixtures/design-system/assets/avatar.png";
 const report = {
   profileReads: [] as string[][],
   media: [] as [string, "small" | undefined][],
@@ -100,14 +100,14 @@ let data = [
       : "Mic",
     about: "Mic biography",
   }),
-  signed(pippa, {
+  signed(pinky, {
     kind: 0,
     content: JSON.stringify({
-      name: "Pippa",
-      nip05: "pippa@example.test",
+      name: "Pinky",
+      nip05: "pinky@example.test",
       about: "Agent profile",
       is_agent: true,
-      picture: pippaPicture,
+      picture: pinkyPicture,
     }),
     tags: [],
   }),
@@ -115,14 +115,14 @@ let data = [
 async function attestAgentProfile() {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`nostr:agent-auth:${pippa.pubkey}:`),
+    new TextEncoder().encode(`nostr:agent-auth:${pinky.pubkey}:`),
   );
   const ownerSignature = bytesToHex(
     schnorr.sign(new Uint8Array(digest), viewer.secret),
   );
   data = data.map((head) =>
-    head.pubkey === pippa.pubkey
-      ? signed(pippa, {
+    head.pubkey === pinky.pubkey
+      ? signed(pinky, {
           kind: 0,
           content: head.content,
           tags: [["auth", viewer.pubkey, "", ownerSignature]],
@@ -198,8 +198,8 @@ function session() {
         report.media.push([url, size]);
         return url === picture
           ? pictureFixture
-          : url === pippaPicture
-            ? pippaPictureFixture
+          : url === pinkyPicture
+            ? pinkyPictureFixture
             : url;
       },
       async query(filters) {
@@ -227,7 +227,7 @@ function session() {
               roster(authority, "one", [
                 viewer.pubkey,
                 mic.pubkey,
-                pippa.pubkey,
+                pinky.pubkey,
               ]),
               roster(authority, "two", [viewer.pubkey]),
             ];
@@ -326,8 +326,8 @@ function session() {
       ? {
           agentChoices: localAgentsFixture([
             {
-              pubkey: pippa.pubkey,
-              name: "Pippa",
+              pubkey: pinky.pubkey,
+              name: "Pinky",
               relayUrl: fixtureOrigin,
               owner: viewer.pubkey,
             },
@@ -436,7 +436,7 @@ Object.assign(window, {
       for (const listener of listeners) listener();
     },
     npubs: Object.fromEntries(
-      Object.entries({ viewer, mic, pippa, missing }).map(([name, key]) => [
+      Object.entries({ viewer, mic, pinky, missing }).map(([name, key]) => [
         name,
         profileTarget(key.pubkey)?.slice(6),
       ]),
@@ -444,7 +444,7 @@ Object.assign(window, {
     keys: {
       viewer: viewer.pubkey,
       mic: mic.pubkey,
-      pippa: pippa.pubkey,
+      pinky: pinky.pubkey,
       missing: missing.pubkey,
     },
     change: manager.change,

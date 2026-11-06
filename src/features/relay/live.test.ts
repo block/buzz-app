@@ -2810,7 +2810,7 @@ it("disposal from a live state notification fences the following established cal
   expect(vi.getTimerCount()).toBe(0);
 });
 
-// Reentrant remove/re-add control.
+// Reentrant remove/re-add control contributed by Brain.
 it("EOSE from a removed incarnation cannot establish its replacement", async () => {
   vi.useFakeTimers();
   const h = setup();

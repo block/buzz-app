@@ -373,7 +373,7 @@ function pullData(over: Record<string, unknown> = {}) {
         state: "OPEN",
         isDraft: false,
         body: "Why it changes",
-        author: { login: "bramble" },
+        author: { login: "baxen" },
         baseRefName: "main",
         headRefName: "fix",
         headRefOid: "abc123",
@@ -393,7 +393,7 @@ function pullData(over: Record<string, unknown> = {}) {
         autoMergeRequest: null,
         reviewRequests: { nodes: [] },
         latestOpinionatedReviews: {
-          nodes: [{ author: { login: "wen" }, state: "APPROVED" }],
+          nodes: [{ author: { login: "wes" }, state: "APPROVED" }],
         },
         reviewThreads: { nodes: [] },
         commits: {
@@ -440,7 +440,7 @@ it("reads a private pull request with gh as one checklist, without the public AP
       mergeStateStatus: "BLOCKED",
       reviewDecision: "CHANGES_REQUESTED",
       latestOpinionatedReviews: {
-        nodes: [{ author: { login: "wen" }, state: "CHANGES_REQUESTED" }],
+        nodes: [{ author: { login: "wes" }, state: "CHANGES_REQUESTED" }],
       },
       reviewThreads: {
         nodes: [
@@ -500,7 +500,7 @@ it("reads a private pull request with gh as one checklist, without the public AP
   expect(
     within(row("Checks")).getByRole("link", { name: "e2e" }),
   ).toHaveAttribute("href", "https://github.com/block/private/runs/1");
-  expect(row("Review")).toHaveTextContent("Changes requested by wen");
+  expect(row("Review")).toHaveTextContent("Changes requested by wes");
   expect(row("Threads")).toHaveTextContent("2 unresolved");
   expect(row("Merge")).toHaveTextContent("Blocked by main’s rules");
   expect(row("Merge")).not.toHaveTextContent("bypass");
@@ -557,7 +557,7 @@ it("merges after confirming, at the head it showed, then shows it merged", async
     return merged
       ? pullData({
           state: "MERGED",
-          mergedBy: { login: "bramble" },
+          mergedBy: { login: "baxen" },
           mergedAt: new Date().toISOString(),
         })
       : pullData();
@@ -571,7 +571,7 @@ it("merges after confirming, at the head it showed, then shows it merged", async
   );
   await screen.findByRole("heading", { name: "Private change #9" });
   expect(row("Checks")).toHaveTextContent("All 2 passed");
-  expect(row("Review")).toHaveTextContent("Approved by wen");
+  expect(row("Review")).toHaveTextContent("Approved by wes");
   expect(row("Threads")).toHaveTextContent("None unresolved");
   expect(row("Merge")).toHaveTextContent("Ready to merge into main");
   await user.click(screen.getByRole("button", { name: "Squash and merge" }));
@@ -580,7 +580,7 @@ it("merges after confirming, at the head it showed, then shows it merged", async
   await user.click(within(dialog).getByRole("button", { name: "Merge" }));
   await screen.findByText(/Merged into/);
   expect(screen.getByText(/Merged into/)).toHaveTextContent(
-    "Merged into main by bramble",
+    "Merged into main by baxen",
   );
   expect(gh.mock.calls[1]).toEqual([
     "mutation($input:MergePullRequestInput!){mergePullRequest(input:$input){clientMutationId}}",
@@ -984,7 +984,7 @@ it("marks a draft ready for review, and offers auto-merge while blocked", async 
       reviewDecision: "REVIEW_REQUIRED",
       latestOpinionatedReviews: { nodes: [] },
       reviewRequests: {
-        nodes: [{ requestedReviewer: { login: "wen" } }],
+        nodes: [{ requestedReviewer: { login: "wes" } }],
       },
     });
   });
@@ -1007,7 +1007,7 @@ it("marks a draft ready for review, and offers auto-merge while blocked", async 
     ).not.toBeInTheDocument(),
   );
   expect(gh.mock.calls[1]?.[0]).toContain("markPullRequestReadyForReview");
-  expect(row("Review")).toHaveTextContent("Required · waiting on wen");
+  expect(row("Review")).toHaveTextContent("Required · waiting on wes");
   expect(
     screen.queryByRole("button", { name: "Merge when ready" }),
   ).not.toBeInTheDocument();
@@ -1060,7 +1060,7 @@ it("keeps a required review pending while an approval is in", async () => {
     pullData({
       reviewDecision: "REVIEW_REQUIRED",
       reviewRequests: {
-        nodes: [{ requestedReviewer: { login: "tamsin" } }],
+        nodes: [{ requestedReviewer: { login: "kalvin" } }],
       },
     }),
   );
@@ -1073,7 +1073,7 @@ it("keeps a required review pending while an approval is in", async () => {
   );
   await screen.findByRole("heading", { name: "Private change #9" });
   expect(row("Review")).toHaveTextContent(
-    "Required · approved by wen · waiting on tamsin",
+    "Required · approved by wes · waiting on kalvin",
   );
 });
 
@@ -1405,7 +1405,7 @@ it("asks before a review goes in against a push that arrived mid-draft", async (
                 : {
                     headRefOid: "def456",
                     state: "MERGED",
-                    mergedBy: { login: "bramble" },
+                    mergedBy: { login: "baxen" },
                   },
           ),
     );

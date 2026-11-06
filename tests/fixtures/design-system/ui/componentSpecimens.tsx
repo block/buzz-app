@@ -287,7 +287,7 @@ function TypingDotsSpecimen() {
 function AvatarStackSpecimen() {
   const items = [
     { id: "alex", name: "Alex", shape: "circle" as const },
-    { id: "brann", name: "Brann", shape: "squircle" as const },
+    { id: "brain", name: "Brain", shape: "squircle" as const },
     { id: "casey", name: "Casey", shape: "circle" as const },
     { id: "helper", name: "Helper", shape: "squircle" as const },
   ];
@@ -296,7 +296,7 @@ function AvatarStackSpecimen() {
       <Button
         size="xs"
         variant="subtle"
-        aria-label="Alex, Brann, Casey, and Helper"
+        aria-label="Alex, Brain, Casey, and Helper"
       >
         <AvatarStack items={items} />
       </Button>
@@ -311,7 +311,7 @@ function AvatarStackSpecimen() {
       </Button>
       <Button
         variant="ghost"
-        aria-label="Thread with Alex, Brann, Casey, and Helper"
+        aria-label="Thread with Alex, Brain, Casey, and Helper"
       >
         <AvatarStack items={items} size="small" /> 4 replies
       </Button>
@@ -342,7 +342,7 @@ function AvatarSpecimen() {
     <Avatar alt="Alex Lee" fallback="Alex" shape="circle" />
 
 
-    <Avatar alt="Brann" fallback="Brann" shape="squircle" />
+    <Avatar alt="Brain" fallback="Brain" shape="squircle" />
 
 </div>`}
       >
@@ -351,7 +351,7 @@ function AvatarSpecimen() {
             <Avatar alt="Alex Lee" fallback="Alex" shape="circle" />
           </Specimen>
           <Specimen prop='shape="squircle" · agent'>
-            <Avatar alt="Brann" fallback="Brann" shape="squircle" />
+            <Avatar alt="Brain" fallback="Brain" shape="squircle" />
           </Specimen>
         </div>
       </SpecimenGroup>

@@ -17,7 +17,7 @@ const workflowRelay = keypair();
 const workflowOwner = keypair();
 const missingWorkflowOwner = keypair();
 export const profiles = new Map<string, Profile>([
-  [workflowOwner.pubkey, { name: "Wen" }],
+  [workflowOwner.pubkey, { name: "Wes" }],
   [reader, { name: "Alex Morgan", picture: "https://fixture.test/avatar" }],
   [teammate, { name: "Sam Rivera" }],
   [agent, { name: "Studio assistant", isAgent: true }],

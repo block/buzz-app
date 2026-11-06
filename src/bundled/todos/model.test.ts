@@ -194,23 +194,23 @@ it("recognizes first-line assignment when continuation prose has another link", 
 });
 
 it("recognizes a plain Canvas assignment and replaces or clears it without duplicating the suffix", () => {
-  const source = "## Todos\n\n- [ ] Ship · Assignee: Jory\n    - [ ] Child\n";
+  const source = "## Todos\n\n- [ ] Ship · Assignee: John\n    - [ ] Child\n";
   const item = first(source);
   expect(item.label).toBe("Ship");
-  expect(item.namedAssignee?.name).toBe("Jory");
+  expect(item.namedAssignee?.name).toBe("John");
   expect(assignTodo(source, item.offset)).toBe(
-    source.replace(" · Assignee: Jory", ""),
+    source.replace(" · Assignee: John", ""),
   );
   const assigned = assignTodo(source, item.offset, {
     pubkey: "a".repeat(64),
     name: "Alice",
   });
   expect(readTodos(assigned).items[0]?.assignee?.name).toBe("Alice");
-  expect(assigned).not.toContain("Assignee: Jory");
+  expect(assigned).not.toContain("Assignee: John");
 });
 
 it("does not clear a named assignment lookalike inside multiline code", () => {
-  const before = "## Todos\n- [ ] Task ` · Assignee: Jory\n  continued`\n";
+  const before = "## Todos\n- [ ] Task ` · Assignee: John\n  continued`\n";
   const item = first(before);
   expect(item.namedAssignee).toBeUndefined();
   expect(assignTodo(before, item.offset)).toBe(before);

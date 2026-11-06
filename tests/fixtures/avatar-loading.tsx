@@ -17,7 +17,7 @@ function Fixture() {
     <main>
       <div style={{ height: "20000px" }} />
       <section aria-label="Avatars">
-        <Avatar src={artwork} alt="A Brann identity" fallback="A Brann" />
+        <Avatar src={artwork} alt="A Brain identity" fallback="A Brain" />
       </section>
     </main>
   );

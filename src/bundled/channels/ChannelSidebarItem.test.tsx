@@ -190,8 +190,8 @@ it("shows the viewer's agents typing in the channel or its threads as working", 
   const library = { identities: [{ pubkey: agent }] };
   const state = owner(
     new Map<string, Profile>([
-      [agent, { name: "Pippa" }],
-      [hinted, { name: "Brann", isAgent: true }],
+      [agent, { name: "Pinky" }],
+      [hinted, { name: "Brain", isAgent: true }],
     ]),
   );
   const session = {
@@ -218,7 +218,7 @@ it("shows the viewer's agents typing in the channel or its threads as working", 
   expect(document.querySelector("[data-channel-working]")).toBeNull();
   set([{ channelId: "alpha", threadRootId: "d".repeat(64), pubkey: agent }]);
   expect(
-    screen.getByRole("img", { name: "Pippa working in Alpha" }),
+    screen.getByRole("img", { name: "Pinky working in Alpha" }),
   ).toBeInTheDocument();
   // Another person's agent only declares itself in its profile.
   set([{ channelId: "alpha", pubkey: hinted }]);
@@ -230,14 +230,14 @@ it("shows the viewer's agents typing in the channel or its threads as working", 
     <ChannelSidebarItem
       {...itemProps(session, false, {
         id: "beta",
-        name: "Pippa",
+        name: "Pinky",
         channelType: "dm",
         participants: [agent],
       })}
     />,
   );
   expect(
-    screen.getByRole("img", { name: "Pippa working in Pippa" }),
+    screen.getByRole("img", { name: "Pinky working in Pinky" }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("img", { name: /typing/ })).toBeNull();
 });

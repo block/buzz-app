@@ -140,19 +140,19 @@ it("shows the owner's identity in the row and detail and follows profile updates
         screen.getByText(`Owner: ${formatPublicKey(owner.pubkey)}`),
       ).toBeVisible(),
     );
-    await act(async () => releaseRead([profile(owner, { name: "Odette" })]));
-    expect(screen.getByText("Owner: Odette")).toBeVisible();
+    await act(async () => releaseRead([profile(owner, { name: "Salman" })]));
+    expect(screen.getByText("Owner: Salman")).toBeVisible();
     fireEvent.click(
       screen.getByRole("button", { name: /^Open Message helper:/ }),
     );
-    expect(detailPane().getByText("Owner: Odette")).toBeVisible();
+    expect(detailPane().getByText("Owner: Salman")).toBeVisible();
     act(() =>
       profiles.accept([
         profile(owner, { name: "Updated name" }, 1_700_000_001),
       ]),
     );
     expect(detailPane().getByText("Owner: Updated name")).toBeVisible();
-    expect(screen.queryByText("Owner: Odette")).toBeNull();
+    expect(screen.queryByText("Owner: Salman")).toBeNull();
     act(() => {
       alias = "Local owner alias";
       renamed();

@@ -546,7 +546,7 @@ test("profile search forwards only the name-search shape to the relay endpoint, 
       : new Response(null, { status: 500 }),
   );
   try {
-    const body = { query: "wen", limit: 40, page: 2 };
+    const body = { query: "wes", limit: 40, page: 2 };
     const response = await h.post("profile-search", body);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(profiles);
@@ -581,12 +581,12 @@ test("profile search forwards only the name-search shape to the relay endpoint, 
       { query: "", limit: 1 },
       { query: "x".repeat(101), limit: 1 },
       { query: "𠮷".repeat(101), limit: 1 },
-      { query: "wen", limit: 0 },
-      { query: "wen", limit: 101 },
-      { query: "wen", limit: 1, search_mode: "prefix" },
-      { query: "wen", limit: 1, page: 0 },
-      { query: "wen", limit: 1, page: 1001 },
-      { query: "wen", limit: 1, page: 1.5 },
+      { query: "wes", limit: 0 },
+      { query: "wes", limit: 101 },
+      { query: "wes", limit: 1, search_mode: "prefix" },
+      { query: "wes", limit: 1, page: 0 },
+      { query: "wes", limit: 1, page: 1001 },
+      { query: "wes", limit: 1, page: 1.5 },
     ])
       expect((await h.post("profile-search", rejected)).status).toBe(400);
     expect(h.calls).toHaveLength(3);
@@ -1379,7 +1379,7 @@ test("strong channel confirmation filters reach the upstream query unchanged", a
   }
 });
 
-// Reader-to-host priority propagation control.
+// Reader-to-host priority propagation control contributed by Brain.
 test("reader and transport start foreground work without waiting for background completion", async () => {
   let release;
   const held = new Promise((resolve) => {

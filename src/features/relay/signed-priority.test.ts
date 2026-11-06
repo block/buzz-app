@@ -1,4 +1,4 @@
-// Reader-to-host priority propagation control.
+// Reader-to-host priority propagation control contributed by Brain.
 
 import { afterEach, expect, it, vi } from "vitest";
 import { connectSignedTransport } from "./transport";

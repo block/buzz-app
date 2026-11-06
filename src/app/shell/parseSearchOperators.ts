@@ -131,7 +131,7 @@ function cleanOperatorValue(value: string): string {
  * whose value is not a recognized date, and operators inside quotes, stay in
  * the returned `text`.
  *
- * Multi-word handles (`from:@Ada Lovelace`) are a known limitation: only the
+ * Multi-word handles (`from:@Will Pfleger`) are a known limitation: only the
  * first whitespace-delimited token is captured.
  */
 export function parseSearchOperators(

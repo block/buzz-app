@@ -53,16 +53,16 @@ const rows = [
   {
     pubkey: "",
     name: "legacy",
-    display_name: "Brann",
-    slug: "brann",
+    display_name: "Brain",
+    slug: "brain",
     private_key_nsec: "secret",
     system_prompt: "private instructions",
     env_vars: { TOKEN: "private token" },
   },
   {
     pubkey: key,
-    name: "Brann",
-    persona_id: "brann",
+    name: "Brain",
+    persona_id: "brain",
     private_key_nsec: "secret",
     auth_tag: "private auth",
   },
@@ -71,12 +71,12 @@ const rows = [
 ];
 it("projects selected definitions and exact linked keys, never arbitrary config/secrets", () => {
   expect(projectAgentLibrary(rows)).toEqual({
-    definitions: [{ id: "brann", name: "Brann" }],
-    identities: [{ pubkey: key, name: "Brann", definitionId: "brann" }],
+    definitions: [{ id: "brain", name: "Brain" }],
+    identities: [{ pubkey: key, name: "Brain", definitionId: "brain" }],
   });
 });
 it("projects only safe optional avatar artwork without broadening the public fields", () => {
-  const avatar = "https://images.example/brann.png";
+  const avatar = "https://images.example/brain.png";
   const data = "data:image/png;base64,aGVsbG8=";
   expect(
     projectAgentLibrary([
@@ -84,8 +84,8 @@ it("projects only safe optional avatar artwork without broadening the public fie
       { ...rows[1], avatar_url: avatar },
     ]),
   ).toEqual({
-    definitions: [{ id: "brann", name: "Brann", avatar: data }],
-    identities: [{ pubkey: key, name: "Brann", definitionId: "brann", avatar }],
+    definitions: [{ id: "brain", name: "Brain", avatar: data }],
+    identities: [{ pubkey: key, name: "Brain", definitionId: "brain", avatar }],
   });
   for (const avatar_url of [
     "file:///secret",
@@ -98,7 +98,7 @@ it("projects only safe optional avatar artwork without broadening the public fie
   ]) {
     expect(
       projectAgentLibrary([{ ...rows[0], avatar_url }]).definitions,
-    ).toEqual([{ id: "brann", name: "Brann" }]);
+    ).toEqual([{ id: "brain", name: "Brain" }]);
   }
 });
 it("read is byte-preserving, treats a missing source as empty, and rejects linked/malformed/nonregular/oversized sources without copying data into errors", async () => {
@@ -170,7 +170,7 @@ it.each(["legacy", "current"])(
             agents: [
               {
                 pubkey: key,
-                name: "Brann",
+                name: "Brain",
                 environment: { TOKEN: "secret" },
                 systemPrompt: "private instructions",
               },

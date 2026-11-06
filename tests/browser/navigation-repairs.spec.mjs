@@ -7,7 +7,7 @@ test.use({
   enabledPlugins: ["buzz.workflows"],
   historyCounts: { alpha: 1, beta: 1 },
 });
-// Regressions reproduced against the first wiring handoff.
+// Regressions independently reproduced by Pinky against the first wiring handoff.
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const entry = (page) =>
   page.evaluate(() => history.state.buzzNavigationV1.entry);

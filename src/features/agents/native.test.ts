@@ -56,26 +56,26 @@ it.each([
 it("searches profile names natively and reports a community without the search", async () => {
   const profile = signed(agent, {
     kind: 0,
-    content: '{"name":"Wen"}',
+    content: '{"name":"Wes"}',
     tags: [],
   });
   vi.mocked(invoke).mockResolvedValueOnce([
     JSON.parse(JSON.stringify(profile)),
   ]);
-  const found = await native.searchProfiles(member, "wen", 100);
+  const found = await native.searchProfiles(member, "wes", 100);
   expect(found).toMatchObject([{ id: profile.id }]);
   expect(found?.every(hasEventProof)).toBe(true);
   expect(invoke).toHaveBeenLastCalledWith("app_agent_search_profiles", {
     ...member,
-    query: "wen",
+    query: "wes",
     limit: 100,
   });
   vi.mocked(invoke).mockResolvedValueOnce(null);
-  expect(await native.searchProfiles(member, "wen", 100)).toBeUndefined();
+  expect(await native.searchProfiles(member, "wes", 100)).toBeUndefined();
   vi.mocked(invoke).mockResolvedValueOnce([
     { ...profile, sig: "0".repeat(128) },
   ]);
-  await expect(native.searchProfiles(member, "wen", 100)).rejects.toThrow(
+  await expect(native.searchProfiles(member, "wes", 100)).rejects.toThrow(
     /malformed or invalidly signed/,
   );
 });

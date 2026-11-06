@@ -70,7 +70,7 @@ let snapshot = {
             },
             {
               at: now - 120,
-              text: "New feedback on https://github.com/example/project/pull/42, quoted from GitHub:\n- review by wen: approved\n  > Looks good, ship it.",
+              text: "New feedback on https://github.com/example/project/pull/42, quoted from GitHub:\n- review by wes: approved\n  > Looks good, ship it.",
             },
           ],
         },

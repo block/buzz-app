@@ -30,7 +30,7 @@ it("names what a channel's icon shows", () => {
 it("prefixes a channel's name with # only where its icon is a hash", () => {
   expect(channelText({ name: "general" })).toBe("#general");
   expect(channelText({ name: "plans", private: true })).toBe("plans");
-  expect(channelText({ name: "Pippa", channelType: "dm" })).toBe("Pippa");
+  expect(channelText({ name: "Pinky", channelType: "dm" })).toBe("Pinky");
   expect(
     channelText({ name: "Notes", channelType: "solo", private: true }),
   ).toBe("Notes");

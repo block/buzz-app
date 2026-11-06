@@ -104,7 +104,7 @@ test("the launched card works with an empty Channels roster", async ({
   await expect(button(page, "Notes")).toBeFocused();
 });
 
-// Independent reviewer controls.
+// Independent reviewer controls: Brain.
 test("old close cannot dismiss a later opening of the same contribution", async ({
   page,
   app,

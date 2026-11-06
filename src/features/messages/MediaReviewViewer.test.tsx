@@ -143,7 +143,7 @@ it("keeps fullscreen comment avatar hints in sync without loading the agent libr
 
 it("renders comment mentions as names even though comment links stay inert", async () => {
   const viewer = keypair(),
-    tycho = keypair();
+    tyler = keypair();
   const attachment = {
     url: "https://fixture.test/image.png",
     kind: "image" as const,
@@ -151,13 +151,13 @@ it("renders comment mentions as names even though comment links stay inert", asy
   const root = message(viewer, "one", "Image", 1, [
     ["imeta", `url ${attachment.url}`, "m image/png"],
   ]);
-  const reply = message(viewer, "one", "I think @Tycho is looking at that", 2, [
+  const reply = message(viewer, "one", "I think @Tyler is looking at that", 2, [
     ["e", root.id, "", "reply"],
-    ["p", tycho.pubkey],
+    ["p", tyler.pubkey],
   ]);
   const profiles = [
     profile(viewer, { name: "Human" }),
-    profile(tycho, { name: "Tycho" }),
+    profile(tyler, { name: "Tyler" }),
   ];
   const owner = createRelaySession({
     viewer: viewer.pubkey,
@@ -196,7 +196,7 @@ it("renders comment mentions as names even though comment links stay inert", asy
       close={() => {}}
     />,
   );
-  const mention = await screen.findByText("Tycho", {
+  const mention = await screen.findByText("Tyler", {
     selector: "[data-mention-kind]",
   });
   expect(mention).toHaveAttribute("data-mention-kind", "person");

@@ -7617,7 +7617,7 @@ it("ignores a lookup for an earlier address once another address is looked up", 
   await waitFor(() => expect(answers).toHaveLength(1));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   await user.clear(urlField());
-  await user.type(urlField(), "tamsin.communities.buzz.xyz{Enter}");
+  await user.type(urlField(), "kalvin.communities.buzz.xyz{Enter}");
   await waitFor(() => expect(answers).toHaveLength(2));
   // The earlier address's late "hosted" does not sign in…
   await act(async () => answers[0]?.resolve(await publicServers()));

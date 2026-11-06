@@ -13,13 +13,13 @@ import {
 } from "./membership-rows";
 import { MembershipRow } from "./MembershipRow";
 import { geometrySignature } from "./geometry";
-const wen = "a".repeat(64),
-  pippa = "b".repeat(64),
-  brann = "c".repeat(64);
+const wes = "a".repeat(64),
+  pinky = "b".repeat(64),
+  brain = "c".repeat(64);
 const profiles = new Map([
-  [wen, { name: "Wen" }],
-  [pippa, { name: "Pippa" }],
-  [brann, { name: "Brann" }],
+  [wes, { name: "Wes" }],
+  [pinky, { name: "Pinky" }],
+  [brain, { name: "Brain" }],
 ]);
 function row(
   id: string,
@@ -58,45 +58,45 @@ const removed = (actor: string, target: string): MembershipChange => ({
 it("matches the grouped invitation wording and keeps pronouns grammatical", () => {
   expect(
     membershipDescription(
-      [row("1", joined(wen, pippa)), row("2", joined(wen, brann))],
+      [row("1", joined(wes, pinky)), row("2", joined(wes, brain))],
       profiles,
-      wen,
+      wes,
     ).text,
-  ).toBe("Pippa added by you, along with Brann");
+  ).toBe("Pinky added by you, along with Brain");
   expect(
-    membershipDescription([row("1", joined(pippa, wen))], profiles, wen).text,
-  ).toBe("You were added by Pippa");
+    membershipDescription([row("1", joined(pinky, wes))], profiles, wes).text,
+  ).toBe("You were added by Pinky");
   // Every member name, and only a member name, is tagged with its identity.
   expect(
     membershipDescription(
-      [row("1", joined(wen, pippa)), row("2", joined(wen, brann))],
+      [row("1", joined(wes, pinky)), row("2", joined(wes, brain))],
       profiles,
-      wen,
+      wes,
     ).parts,
   ).toEqual([
-    { id: pippa, text: "Pippa" },
+    { id: pinky, text: "Pinky" },
     { text: " added by " },
-    { id: wen, text: "you" },
+    { id: wes, text: "you" },
     { text: ", along with " },
-    { id: brann, text: "Brann" },
+    { id: brain, text: "Brain" },
   ]);
   expect(
-    membershipDescription([row("1", removed(pippa, wen))], profiles, wen).text,
-  ).toBe("You were removed by Pippa");
+    membershipDescription([row("1", removed(pinky, wes))], profiles, wes).text,
+  ).toBe("You were removed by Pinky");
 });
 it("groups removals without attributing a removal to the wrong actor", () => {
-  const rows = [row("3", removed(wen, pippa)), row("4", removed(brann, wen))];
+  const rows = [row("3", removed(wes, pinky)), row("4", removed(brain, wes))];
   expect(membershipRows(rows).map((r) => r.id)).toEqual(["4"]);
   const summary = membershipDescription(rows, profiles);
-  expect(summary.text).toBe("Pippa and 1 other were removed");
-  expect(summary.title).toContain("Pippa was removed by Wen");
-  expect(summary.title).toContain("Wen was removed by Brann");
+  expect(summary.text).toBe("Pinky and 1 other were removed");
+  expect(summary.title).toContain("Pinky was removed by Wes");
+  expect(summary.title).toContain("Wes was removed by Brain");
 });
 it("only conversation entries break membership groups; long gaps and midnight keep stable keys", () => {
-  const a = row("a", joined(wen, pippa), 200),
-    b = row("b", joined(wen, brann), 210);
+  const a = row("a", joined(wes, pinky), 200),
+    b = row("b", joined(wes, brain), 210);
   expect(membershipRows([a, b]).map((r) => r.id)).toEqual(["b"]);
-  const old = row("old", joined(pippa, pippa), 100);
+  const old = row("old", joined(pinky, pinky), 100);
   expect(membershipRows([old, a, b]).map((r) => r.id)).toEqual(["b"]);
   expect(membershipRows([a, row("chat"), b])).toHaveLength(3);
   expect(
@@ -114,11 +114,11 @@ it("only conversation entries break membership groups; long gaps and midnight ke
   ).toHaveLength(1);
 });
 it("hides self-joins and voluntary leaves before grouping, preserving messages and visible keys", () => {
-  const hidden = [row("join", joined(pippa, pippa)), row("leave", left(pippa))];
+  const hidden = [row("join", joined(pinky, pinky)), row("leave", left(pinky))];
   expect(membershipRows(hidden)).toEqual([]);
   expect(membershipDescription(hidden, profiles).text).toBe("");
-  const addition = row("added", joined(wen, pippa));
-  const removal = row("removed", removed(wen, brann));
+  const addition = row("added", joined(wes, pinky));
+  const removal = row("removed", removed(wes, brain));
   const message = row("message");
   expect(membershipRows([addition, ...hidden])).toEqual([addition]);
   expect(
@@ -132,10 +132,10 @@ it("hides self-joins and voluntary leaves before grouping, preserving messages a
 });
 it("resolves a saved anchor on a hidden membership event to the nearest rendered row", () => {
   const first = row("first");
-  const join = row("join", joined(pippa, pippa));
-  const addition = row("added", joined(wen, pippa));
-  const leave = row("leave", left(brann));
-  const removal = row("removed", removed(wen, brann));
+  const join = row("join", joined(pinky, pinky));
+  const addition = row("added", joined(wes, pinky));
+  const leave = row("leave", left(brain));
+  const removal = row("removed", removed(wes, brain));
   const events = [first, join, addition, leave, removal];
   const rows = membershipRows(events);
   expect(rows.map(({ id }) => id)).toEqual(["first", "removed"]);
@@ -158,7 +158,7 @@ it("collapses high-volume mixed activity and deduplicates repeat arrivals withou
   });
   const activity = [
     ...arrivals.slice(0, 25),
-    row("remove", removed(wen, pippa)),
+    row("remove", removed(wes, pinky)),
     ...arrivals.slice(25),
     ...arrivals,
   ];
@@ -170,7 +170,7 @@ it("collapses high-volume mixed activity and deduplicates repeat arrivals withou
     profiles,
   );
   expect(summary.text).toBe(
-    "member-0 and 147 others were added · Pippa was removed",
+    "member-0 and 147 others were added · Pinky was removed",
   );
   const preview = summary.parts.find((part) => part.preview)?.preview;
   expect(preview?.members).toHaveLength(148);
@@ -179,40 +179,40 @@ it("collapses high-volume mixed activity and deduplicates repeat arrivals withou
     id: "member-147",
     name: "member-147",
   });
-  expect(summary.title).toContain("Pippa was removed by Wen");
+  expect(summary.title).toContain("Pinky was removed by Wes");
   expect(summary.title.match(/member-0 was added by adder/g)).toHaveLength(1);
   expect(grouped[1]?.id).toBe("message");
 });
 it("describes each person by their latest visible change in the run", () => {
   const changes = [
-    row("added", joined(wen, pippa)),
-    row("removed", removed(brann, pippa)),
-    row("added-back", joined(brann, pippa)),
+    row("added", joined(wes, pinky)),
+    row("removed", removed(brain, pinky)),
+    row("added-back", joined(brain, pinky)),
   ];
   const group = membershipRows(changes)[0];
   expect(group?.membershipRows).toEqual(changes);
   expect(membershipDescription(changes, profiles).text).toBe(
-    "Pippa added by Brann",
+    "Pinky added by Brain",
   );
   expect(membershipDescription(changes.slice(0, 2), profiles).text).toBe(
-    "Pippa was removed by Brann",
+    "Pinky was removed by Brain",
   );
   const mixed = membershipDescription(
-    [...changes, row("other-removal", removed(wen, brann))],
+    [...changes, row("other-removal", removed(wes, brain))],
     profiles,
   );
-  expect(mixed.text).toBe("Pippa was added · Brann was removed");
+  expect(mixed.text).toBe("Pinky was added · Brain was removed");
   expect(mixed.title).toBe(
-    "Pippa was added by Brann; Brann was removed by Wen",
+    "Pinky was added by Brain; Brain was removed by Wes",
   );
-  expect(mixed.targets).toEqual([pippa, brann]);
+  expect(mixed.targets).toEqual([pinky, brain]);
 });
 it("every grouped input remains represented for mixed three-event sequences", () => {
   const changes = [
-    joined(wen, pippa),
-    joined(brann, pippa),
-    removed(wen, pippa),
-    removed(brann, pippa),
+    joined(wes, pinky),
+    joined(brain, pinky),
+    removed(wes, pinky),
+    removed(brain, pinky),
   ];
   for (const a of changes)
     for (const b of changes)
@@ -237,7 +237,7 @@ it("every grouped input remains represented for mixed three-event sequences", ()
       }
 });
 it("keeps one visible name and a labelled overflow control with capped decorative avatars", () => {
-  const rows = [pippa, brann, wen, "d".repeat(64)].map((id, i) =>
+  const rows = [pinky, brain, wes, "d".repeat(64)].map((id, i) =>
     row(String(i), joined("adder", id)),
   );
   const group = membershipRows(rows)[0];
@@ -247,12 +247,12 @@ it("keeps one visible name and a labelled overflow control with capped decorativ
       row={group}
       profiles={profiles}
       media={() => undefined}
-      viewer={wen}
+      viewer={wes}
       day={false}
     />,
   );
   expect(view.container.querySelector("p")).toHaveTextContent(
-    "Pippa and 3 others were added",
+    "Pinky and 3 others were added",
   );
   expect(screen.getByRole("button", { name: "3 others" })).toHaveAttribute(
     "aria-haspopup",
@@ -263,7 +263,7 @@ it("keeps one visible name and a labelled overflow control with capped decorativ
   ).toHaveTextContent("+1");
   expect(view.container.querySelector("p")).toHaveAttribute(
     "title",
-    "Pippa was added by adder; Brann was added by adder; You were added by adder; dddddddddd was added by adder",
+    "Pinky was added by adder; Brain was added by adder; You were added by adder; dddddddddd was added by adder",
   );
   view.unmount();
 });
@@ -274,9 +274,9 @@ it.each([false, true])(
     const media = vi.fn((url: string) => url);
     const html = renderToStaticMarkup(
       <MembershipRow
-        row={row("join", joined(wen, pippa))}
-        profiles={new Map([[pippa, { name: "Pippa", picture }]])}
-        agentPubkeys={new Set(agent ? [pippa] : [])}
+        row={row("join", joined(wes, pinky))}
+        profiles={new Map([[pinky, { name: "Pinky", picture }]])}
+        agentPubkeys={new Set(agent ? [pinky] : [])}
         media={media}
         day={false}
       />,
@@ -290,26 +290,26 @@ it.each([false, true])(
   },
 );
 it("actor/subject profile enrichment invalidates cached system-row geometry", () => {
-  const rows = [row("a", joined(wen, pippa))];
+  const rows = [row("a", joined(wes, pinky))];
   const original = geometrySignature(rows, profiles);
   expect(
     geometrySignature(
       rows,
-      new Map([...profiles, [pippa, { name: "Longer Pippa" }]]),
+      new Map([...profiles, [pinky, { name: "Longer Pinky" }]]),
     ),
   ).not.toBe(original);
   expect(
     geometrySignature(
       rows,
-      new Map([...profiles, [wen, { name: "Longer Wen" }]]),
+      new Map([...profiles, [wes, { name: "Longer Wes" }]]),
     ),
   ).not.toBe(original);
 });
 it("member names open the subject's and the actor's profiles when the host can", () => {
   const open = vi.fn(() => true);
   const group = membershipRows([
-    row("1", joined(wen, pippa)),
-    row("2", joined(wen, brann)),
+    row("1", joined(wes, pinky)),
+    row("2", joined(wes, brain)),
   ])[0];
   assert.exists(group);
   const mount = (canOpenLink: (target: string) => boolean) =>
@@ -317,96 +317,96 @@ it("member names open the subject's and the actor's profiles when the host can",
       <MembershipRow
         row={group}
         profiles={profiles}
-        agentPubkeys={new Set([brann])}
+        agentPubkeys={new Set([brain])}
         media={() => undefined}
-        viewer={wen}
+        viewer={wes}
         day={false}
         onOpenLink={open}
         canOpenLink={canOpenLink}
       />,
     );
   mount(() => true);
-  const paragraph = screen.getByTitle("Pippa and Brann");
-  expect(paragraph.textContent).toBe("Pippa added by you, along with Brann");
-  const subject = screen.getByRole("button", { name: "View Pippa profile" });
+  const paragraph = screen.getByTitle("Pinky and Brain");
+  expect(paragraph.textContent).toBe("Pinky added by you, along with Brain");
+  const subject = screen.getByRole("button", { name: "View Pinky profile" });
   fireEvent.click(subject);
-  expect(open).toHaveBeenLastCalledWith(profileTarget(pippa));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(pinky));
   // jsdom clicks never focus, so this proves the explicit focus that keeps a
   // return target for the profile tab under WebKit.
   expect(subject).toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "View your profile" }));
-  expect(open).toHaveBeenLastCalledWith(profileTarget(wen));
-  const agent = screen.getByRole("button", { name: "View Brann profile" });
+  expect(open).toHaveBeenLastCalledWith(profileTarget(wes));
+  const agent = screen.getByRole("button", { name: "View Brain profile" });
   // System notices name people as quiet text, never as mention chips.
   expect(agent).not.toHaveAttribute("data-mention-kind");
   fireEvent.click(agent);
-  expect(open).toHaveBeenLastCalledWith(profileTarget(brann, { agent: true }));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(brain, { agent: true }));
   expect(screen.getAllByRole("button")).toHaveLength(3);
   cleanup();
   // A host that cannot open a profile keeps that name as plain prose.
-  mount((target) => target === profileTarget(pippa));
+  mount((target) => target === profileTarget(pinky));
   expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
-    "Pippa",
+    "Pinky",
   ]);
-  expect(screen.getByTitle("Pippa and Brann").textContent).toBe(
-    "Pippa added by you, along with Brann",
+  expect(screen.getByTitle("Pinky and Brain").textContent).toBe(
+    "Pinky added by you, along with Brain",
   );
   cleanup();
   render(
     <MembershipRow
-      row={row("1", removed(pippa, brann))}
+      row={row("1", removed(pinky, brain))}
       profiles={profiles}
       media={() => undefined}
-      viewer={wen}
+      viewer={wes}
       day={false}
       onOpenLink={open}
       canOpenLink={() => true}
     />,
   );
-  expect(screen.getByTitle("Brann").textContent).toBe(
-    "Brann was removed by Pippa",
+  expect(screen.getByTitle("Brain").textContent).toBe(
+    "Brain was removed by Pinky",
   );
-  fireEvent.click(screen.getByRole("button", { name: "View Pippa profile" }));
-  expect(open).toHaveBeenLastCalledWith(profileTarget(pippa));
-  // Without agent evidence, Brann opens as a person.
-  fireEvent.click(screen.getByRole("button", { name: "View Brann profile" }));
-  expect(open).toHaveBeenLastCalledWith(profileTarget(brann));
+  fireEvent.click(screen.getByRole("button", { name: "View Pinky profile" }));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(pinky));
+  // Without agent evidence, Brain opens as a person.
+  fireEvent.click(screen.getByRole("button", { name: "View Brain profile" }));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(brain));
   expect(document.querySelector("[data-profile-target]")).toBeNull();
 });
 
 it("omits only the owner's starting agents once history reaches the start", () => {
   const added = (id: string, actor: string, target: string) =>
     row(id, { type: "member_joined", actor, target });
-  const message = { ...row("message"), authorId: wen, content: "Hi" };
-  const agents = new Set([pippa, brann]);
+  const message = { ...row("message"), authorId: wes, content: "Hi" };
+  const agents = new Set([pinky, brain]);
   const rows = [
-    added("starting", wen, pippa),
-    added("person", wen, "d".repeat(64)),
-    added("by-agent", pippa, brann),
+    added("starting", wes, pinky),
+    added("person", wes, "d".repeat(64)),
+    added("by-agent", pinky, brain),
     message,
-    added("later", wen, brann),
+    added("later", wes, brain),
   ];
   expect(
-    withoutStartingAgents(rows, wen, agents, true).map((row) => row.id),
+    withoutStartingAgents(rows, wes, agents, true).map((row) => row.id),
   ).toEqual(["person", "by-agent", "message", "later"]);
   // Partial history cannot prove a leading arrival started the chat.
-  expect(withoutStartingAgents(rows, wen, agents, false)).toBe(rows);
+  expect(withoutStartingAgents(rows, wes, agents, false)).toBe(rows);
   expect(withoutStartingAgents(rows, undefined, agents, true)).toBe(rows);
   // A chat with no messages yet still started with its agents.
   expect(
-    withoutStartingAgents([added("only", wen, pippa)], wen, agents, true),
+    withoutStartingAgents([added("only", wes, pinky)], wes, agents, true),
   ).toEqual([]);
   // Setup churn hides as a whole, so no removal outlives its hidden addition.
   expect(
     withoutStartingAgents(
       [
-        added("first", wen, pippa),
-        row("removed", removed(wen, pippa)),
-        row("left", left(brann)),
-        added("again", wen, pippa),
+        added("first", wes, pinky),
+        row("removed", removed(wes, pinky)),
+        row("left", left(brain)),
+        added("again", wes, pinky),
         message,
       ],
-      wen,
+      wes,
       agents,
       true,
     ).map((row) => row.id),

@@ -62,7 +62,7 @@ export type SearchGroup = {
 export type SearchChip = {
   /** As the query holds it, e.g. `from:<key>` or `in:<channel id>`. */
   operand: string;
-  /** What the chip shows, e.g. `from:@Wen`. */
+  /** What the chip shows, e.g. `from:@Wes`. */
   text: string;
   /** The text Backspace restores for editing. */
   edit: string;

@@ -278,7 +278,7 @@ export function relayHttpBase(
     : undefined;
 }
 
-async function parseEvents(
+export async function parseEvents(
   raw: unknown,
   verify: EventVerifier,
   signal?: AbortSignal,

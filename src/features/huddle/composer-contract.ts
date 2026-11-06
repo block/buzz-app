@@ -56,22 +56,50 @@ export type ComposerOperations = {
     };
     result: string;
   };
-  /** Pop-out windows: add a reaction to a message this window shows. */
+  /** Pop-out windows: operations on messages this window shows, admitted in
+   * main against its own view of them. Each answers with the outbox event id
+   * main will carry and the projection version at admission. */
   react: {
     args: {
       messageId: string;
       content: string;
       emoji?: import("../relay/emoji").CustomEmoji | undefined;
     };
-    result: string;
+    result: import("../companion/operations").Admission;
   };
-  /** Pop-out windows: remove the viewer's own reactions on a shown message. */
   removeReactions: {
     args: { messageId: string; ids: readonly string[] };
+    result: import("../companion/operations").Admission;
+  };
+  deleteMessage: {
+    args: { messageId: string };
+    result: import("../companion/operations").Admission;
+  };
+  edit: {
+    args: {
+      messageId: string;
+      content: string;
+      attachmentSourceId: string;
+      /** The source text the companion edited; main refuses a stale one. */
+      baseline: string;
+    };
+    result: import("../companion/operations").Admission;
+  };
+  sendToChannel: {
+    args: { messageId: string };
+    result: import("../companion/operations").Admission;
+  };
+  retryOperation: { args: { id: string }; result: undefined };
+  markRead: { args: { messageId: string; unread: boolean }; result: undefined };
+  follow: { args: { following: boolean }; result: undefined };
+  report: {
+    args: {
+      messageId: string;
+      type: import("../relay/messages").ReportType;
+      note: string;
+    };
     result: undefined;
   };
-  /** Pop-out windows: retry main's own admitted reaction event. */
-  retryReaction: { args: { id: string }; result: undefined };
   release: { args: UploadedAttachment; result: undefined };
   agents: {
     args: { refresh: boolean; legacy: boolean | "templates" };

@@ -315,13 +315,24 @@ export function createHuddleComposerClient(token: string) {
   post({ kind: "hello", client });
   return {
     models: (pubkeys: readonly string[]) => request("models", pubkeys),
-    /** Pop-out reactions: admitted in main against the messages it shows. */
+    /** Pop-out operations: admitted in main against the messages it shows. */
     react: (args: ComposerOperations["react"]["args"]) =>
       request("react", args),
     removeReactions: (args: ComposerOperations["removeReactions"]["args"]) =>
       request("removeReactions", args),
-    retryReaction: (args: ComposerOperations["retryReaction"]["args"]) =>
-      request("retryReaction", args),
+    deleteMessage: (args: ComposerOperations["deleteMessage"]["args"]) =>
+      request("deleteMessage", args),
+    edit: (args: ComposerOperations["edit"]["args"]) => request("edit", args),
+    sendToChannel: (args: ComposerOperations["sendToChannel"]["args"]) =>
+      request("sendToChannel", args),
+    retryOperation: (args: ComposerOperations["retryOperation"]["args"]) =>
+      request("retryOperation", args),
+    markRead: (args: ComposerOperations["markRead"]["args"]) =>
+      request("markRead", args),
+    follow: (args: ComposerOperations["follow"]["args"]) =>
+      request("follow", args),
+    report: (args: ComposerOperations["report"]["args"]) =>
+      request("report", args),
     gifs: {
       supports: (_community, signal?: AbortSignal) =>
         request("gifSupport", undefined, signal),

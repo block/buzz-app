@@ -88,6 +88,27 @@ pub(crate) struct DiscussionRow {
     pub(crate) reactions: Vec<ReactionGroup>,
     #[serde(default)]
     reactions_limited: bool,
+    /// What the viewer may do to this message, decided by main (pop-outs).
+    #[serde(default)]
+    management: Option<Management>,
+    /// Edit baseline for messages the viewer may edit (pop-outs).
+    #[serde(default)]
+    editable: Option<Editable>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Management {
+    unread: bool,
+    can_edit: bool,
+    can_delete: bool,
+    can_send_to_channel: bool,
+    can_report: bool,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Editable {
+    source_content: String,
+    attachment_source_id: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -162,6 +183,9 @@ impl DiscussionRow {
             && self.picture_url.as_ref().is_none_or(|p| p.len() <= 8192)
             && self.reactions.len() <= 64
             && self.reactions.iter().all(|r| r.valid())
+            && self.editable.as_ref().is_none_or(|e| {
+                e.source_content.len() <= 65536 && e.attachment_source_id.len() <= 128
+            })
     }
 }
 impl DiscussionAttachment {
@@ -677,6 +701,8 @@ mod tests {
                 delivery: "unknown".into(),
                 reactions: vec![],
                 reactions_limited: false,
+                management: None,
+                editable: None,
             }],
         });
         let encoded = serde_json::to_value(&presentation).unwrap();

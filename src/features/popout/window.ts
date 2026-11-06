@@ -250,7 +250,9 @@ export function createPopoutWindows(
       {
         message: (id) => entry.thread.shown(id),
         reactionBusy: (id) => entry.thread.reactionBusy(id),
-        retryReaction: (id) => entry.thread.retryReaction(id),
+        retryOperation: (id) => entry.thread.retryOperation(id),
+        version: () => entry.thread.snapshot().version,
+        root: () => entry.thread.shown(target.threadRootId),
       },
     );
     entry.reading = createReadingOwner(

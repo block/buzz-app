@@ -38,6 +38,19 @@ export type CompanionRow = {
   reactions?: MessageReaction[];
   /** Some reaction groups or events were left out of this projection. */
   reactionsLimited?: boolean;
+  /** What the viewer may do to this message, decided by main with the same
+   * predicates as its own menu; absent for rows that take no management. */
+  management?: CompanionManagement | undefined;
+  /** For messages the viewer may edit: the exact source text and attachment
+   * source main expects an edit to build on. */
+  editable?: { sourceContent: string; attachmentSourceId: string } | undefined;
+};
+export type CompanionManagement = {
+  unread: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  canSendToChannel: boolean;
+  canReport: boolean;
 };
 const MAX_REACTION_GROUPS = 64;
 const MAX_REACTION_EVENTS = 128;

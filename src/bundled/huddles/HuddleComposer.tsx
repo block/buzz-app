@@ -14,6 +14,10 @@ import {
 } from "../../features/messages/attachment-draft";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { huddleComposerExtensions } from "./composer-extensions";
+import type { ChannelMessage } from "../../features/relay/contracts";
+import type { ComposerSession } from "../../features/messages/composer-session";
+
+const noEdits: readonly ChannelMessage[] = [];
 
 /** How the hosting window presents the editor; the Huddle defaults apply. */
 export type CompanionComposerPresentation = {
@@ -24,6 +28,11 @@ export type CompanionComposerPresentation = {
   /** Reply to this message within the thread (pop-out windows). */
   replyParentId?: string | undefined;
   replyContext?: ReactNode;
+  /** Messages the editor may edit (pop-out windows); Huddle edits nothing. */
+  editMessages?: readonly ChannelMessage[] | undefined;
+  /** A session wrapping the bridge client's with more operations (pop-out
+   * windows: the operations outbox, so edits follow one id to delivery). */
+  session?: ComposerSession | undefined;
 };
 export type CompanionComposerClient = ReturnType<
   typeof createHuddleComposerClient
@@ -102,7 +111,7 @@ function ConnectedComposer({
   return session && data ? (
     <MentionModelsContext.Provider value={models}>
       <MessageComposer
-        session={session}
+        session={presentation?.session ?? session}
         extensions={extensions}
         scope={data.scope}
         channelId={data.room}
@@ -114,7 +123,7 @@ function ConnectedComposer({
         replyContext={presentation?.replyContext}
         onHeld={onHeld ? setEditorHeld : undefined}
         disabled={!data.writable}
-        editMessages={[]}
+        editMessages={presentation?.editMessages ?? noEdits}
       />
     </MentionModelsContext.Provider>
   ) : (

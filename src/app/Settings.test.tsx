@@ -3264,7 +3264,7 @@ it("recommends managed plugins in Settings and points to them from navigation", 
     "https://example.com/plugins",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned, path: "dist" },
   );
 });
 
@@ -3382,7 +3382,7 @@ it("routes a managed plugin's updates through the managed review instead of the 
     "https://example.com/plugins",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned, path: "dist" },
   );
   expect(checkGit).not.toHaveBeenCalled();
 });

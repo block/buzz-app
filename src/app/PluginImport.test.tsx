@@ -1497,6 +1497,7 @@ it("rechecks Git with fresh authorization before opening a requested row review"
     repository,
     "release/one",
     "fresh",
+    { path: "dist" },
   );
   expect(authorizeGit).toHaveBeenCalledExactlyOnceWith(repository);
   expect(handled).toHaveBeenCalled();
@@ -1647,6 +1648,7 @@ it.each([
         updateSource.repository,
         "release/one",
         "fresh-authorization",
+        { path: "dist" },
       );
     }
     expect(
@@ -2043,6 +2045,7 @@ it("retains known Git updates on reopen and reacquires before review", async () 
     "https://example.com/plugins.git",
     "main",
     undefined,
+    { path: "dist" },
   );
 });
 
@@ -2733,10 +2736,10 @@ it("prefills a requested source, reads nothing until Find, and installs only aft
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned },
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(
-    "Commit 0123456789ab (matches the requested commit)",
+    "Commit 0123456789ab (matches the requested commit, verified on v1)",
   );
   expect(installImport).not.toHaveBeenCalled();
   expect(settled).not.toHaveBeenCalled();
@@ -2763,7 +2766,7 @@ it("shows the native refusal when the reference no longer resolves to the pinned
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned },
   );
   expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
   expect(
@@ -3302,7 +3305,7 @@ it("carries a pinned commit through the signed community branch", async () => {
     "https://example.com/plugins.git?signed",
     "v1",
     "signed-token",
-    pinned,
+    { commit: pinned },
   );
 });
 
@@ -3350,10 +3353,10 @@ it("pins a linked source to its commit and installs the linked folder", async ()
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned, path: "plugins/b" },
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(
-    "Commit 0123456789ab (matches the requested commit)",
+    "Commit 0123456789ab (matches the requested commit, verified on v1)",
   );
   expect(installImport).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
@@ -3408,7 +3411,7 @@ it("locks a pinned link's source and keeps the pin when Find is retried", async 
     within(dialog).getByLabelText("Git or GitHub repository"),
   ).toHaveAttribute("readonly");
   expect(dialog).toHaveTextContent(
-    "Opened from a link. Pinned to commit 0123456789ab.",
+    "Opened from a link. Pinned to commit 0123456789ab on v1. Nothing is installed unless that commit is verified to be on it.",
   );
   fireEvent.click(within(dialog).getByRole("button", { name: "Find plugins" }));
   await waitFor(() => expect(git).toHaveBeenCalledTimes(2));
@@ -3416,7 +3419,7 @@ it("locks a pinned link's source and keeps the pin when Find is retried", async 
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned },
   );
 });
 
@@ -3466,7 +3469,7 @@ it("reviews a pinned link to the installed plugin's source as an update instead 
   });
   expect(dialog).not.toHaveTextContent(/already installed/i);
   expect(dialog).toHaveTextContent(
-    "Commit 0123456789ab (matches the requested commit)",
+    "Commit 0123456789ab (matches the requested commit, verified on v1)",
   );
   expect(dialog).not.toHaveTextContent("This plugin will stay disabled.");
   expect(dialog).not.toHaveTextContent("Future updates will follow");
@@ -3699,4 +3702,77 @@ it("refuses a plugin's requested update when the installed plugin changed after 
   );
   expect(installImport).not.toHaveBeenCalled();
   expect(settled).not.toHaveBeenCalled();
+});
+
+it("lists only the folder typed into the Git form, repo-relative, and nothing outside it", async () => {
+  const user = userEvent.setup();
+  const preview: ImportPreview = {
+    token: "folder-preview",
+    source: "https://example.com/plugins.git",
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    warnings: [],
+    candidates: [
+      {
+        path: "plugins/one",
+        revision: "one",
+        manifest: { id: "example.one", name: "One", apiVersion: 1 },
+      },
+    ],
+  };
+  const git = vi.fn(async () => preview);
+  const manager = {
+    imports: {
+      checkFolder: vi.fn(),
+      previewFolder: vi.fn(),
+      folder: vi.fn(),
+      git,
+      install: vi.fn(),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  const folder = screen.getByLabelText("Folder (optional)");
+  expect(folder).not.toHaveAttribute("readonly");
+  fireEvent.change(screen.getByLabelText("Git or GitHub repository"), {
+    target: { value: "https://example.com/plugins.git" },
+  });
+  fireEvent.change(folder, { target: { value: " plugins/one/ " } });
+  await user.click(screen.getByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("region", { name: "Plugin import preview" });
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/plugins.git",
+    "",
+    undefined,
+    { path: "plugins/one" },
+  );
+});
+
+it("shows a link's folder as read-only and sends it with the pinned commit", async () => {
+  const { git, element } = linkedHarness(
+    requestedPreview(pinned, ["plugins/b"]),
+    { commit: pinned, path: "plugins/b" },
+  );
+  render(element);
+  await screen.findByRole("dialog", { name: /^Review .+ access$/ });
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/plugins.git",
+    "v1",
+    undefined,
+    { commit: pinned, path: "plugins/b" },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  const folder = screen.getByLabelText("Folder (optional)");
+  expect(folder).toHaveValue("plugins/b");
+  expect(folder).toHaveAttribute("readonly");
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Pinned to commit 0123456789ab on v1. Nothing is installed unless that commit is verified to be on it. Plugin folder: plugins/b. Only this folder is read.",
+  );
 });

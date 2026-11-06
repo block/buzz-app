@@ -584,6 +584,10 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
           dialog.getByRole("textbox", { name: "Branch or tag (optional)" }),
         ).toBeFocused();
         await page.keyboard.press("Tab");
+        await expect(
+          dialog.getByRole("textbox", { name: "Folder (optional)" }),
+        ).toBeFocused();
+        await page.keyboard.press("Tab");
         await expect(button(page, "Find plugins")).toBeFocused();
         await expect(button(page, "Find plugins")).toBeInViewport({ ratio: 1 });
       }
@@ -1003,6 +1007,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Add").click();
   await page.getByLabel("Git or GitHub repository").fill("example/plugins");
   await page.getByLabel("Branch or tag (optional)").fill("feature/plugins");
+  await page.getByLabel("Folder (optional)").fill("plugins/");
   await button(page, "Find plugins").click();
   await expect(page.getByRole("radio")).toHaveCount(2);
   expect(
@@ -1010,7 +1015,11 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       () =>
         window.importCalls.find((c) => c.command === "plugin_import_git").args,
     ),
-  ).toEqual({ repository: "example/plugins", reference: "feature/plugins" });
+  ).toEqual({
+    repository: "example/plugins",
+    reference: "feature/plugins",
+    path: "plugins",
+  });
   await button(page, "Back").click();
   await expect(button(page, "Find plugins")).toBeFocused();
   await expect(page.getByLabel("Git or GitHub repository")).toHaveValue(
@@ -1019,6 +1028,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(page.getByLabel("Branch or tag (optional)")).toHaveValue(
     "feature/plugins",
   );
+  await expect(page.getByLabel("Folder (optional)")).toHaveValue("plugins/");
   await page.getByLabel("Git or GitHub repository").fill("bad");
   await page.evaluate(() => {
     window.importDelay = true;

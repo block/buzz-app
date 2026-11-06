@@ -395,9 +395,13 @@ async fn plugin_import_git(
     authorization: Option<String>,
     check_only: Option<bool>,
     commit: Option<String>,
+    path: Option<String>,
 ) -> Result<Option<Preview>, String> {
     if let Some(commit) = &commit {
         buzzodz_plugins::imports::RequiredCommit::parse(commit)?;
+    }
+    if let Some(path) = &path {
+        buzzodz_plugins::imports::repository_folder(path)?;
     }
     let repository = buzzodz_plugins::imports::repository_url(&repository)?;
     let url = url::Url::parse(&repository).map_err(|_| "Invalid repository")?;
@@ -433,6 +437,7 @@ async fn plugin_import_git(
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
+                path.as_deref(),
                 required,
                 authorization.as_deref(),
                 assertion
@@ -461,6 +466,7 @@ async fn plugin_import_git(
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
+                path.as_deref(),
                 required,
                 authorization.as_deref(),
                 assertion
@@ -1441,6 +1447,7 @@ mod tests {
                 None,
                 Some(check_only),
                 None,
+                None,
             ))
             .err()
             .unwrap()
@@ -1460,10 +1467,32 @@ mod tests {
                 None,
                 Some(check_only),
                 Some(commit.into()),
+                None,
             ))
             .err()
             .unwrap()
         };
+        let folder = |path: &str, check_only| {
+            tauri::async_runtime::block_on(super::plugin_import_git(
+                app.state(),
+                app.state(),
+                app.state(),
+                app.state(),
+                "https://example.invalid/plugins".into(),
+                "main".into(),
+                None,
+                Some(check_only),
+                None,
+                Some(path.into()),
+            ))
+            .err()
+            .unwrap()
+        };
+        for path in ["/plugins", "plugins/../one", "plugins\\one", "plugins//one"] {
+            for check_only in [false, true] {
+                assert!(folder(path, check_only).contains("path"), "{path}");
+            }
+        }
         for commit in ["main", "abc123", &"a".repeat(41), &"g".repeat(40)] {
             for check_only in [false, true] {
                 assert!(

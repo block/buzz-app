@@ -5,6 +5,7 @@ import { InlineHeader } from "../shared/design-system/ui/Header";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Switch } from "../shared/design-system/ui/Switch";
+import { gitScope } from "../plugins/git-scope";
 import type { PluginManager } from "../plugins/manager";
 import type {
   Catalog,
@@ -358,7 +359,7 @@ export function ManagedPluginReview({
           signed?.repository ?? wanted.repository,
           wanted.reference,
           signed?.token,
-          wanted.commit,
+          ...gitScope(wanted.commit, wanted.path),
         );
         if (!preview) throw new Error("No plugin source found.");
         if (!current.active) {

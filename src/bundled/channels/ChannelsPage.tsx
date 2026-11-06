@@ -1516,6 +1516,14 @@ function ChannelWorkspace({
     const keptEntry = entries.find((entry) => panelTabId(entry) === keep);
     const current = navigator.snapshot().entry;
     const closesCurrent = dismissalOf([current], visits)(current);
+    // A later close can retire more visits before the return lands, moving
+    // where it lands. It takes that return even when it retires no visit of
+    // its own, as for a profile queued behind it.
+    const pending =
+      pendingReturn.current?.from === current.id
+        ? pendingReturn.current
+        : undefined;
+    const returns = !!pending || closesCurrent;
     const kept =
       keep !== undefined &&
       (keptTab ||
@@ -1536,7 +1544,7 @@ function ChannelWorkspace({
     // A local survivor has no routed address, and a Solo opener's header
     // remounts. Restore them only on this dismissal's matching return, never
     // for unrelated later navigation.
-    if ((kept || opener) && closesCurrent)
+    if ((kept || opener) && returns)
       dismissalReturn.current = {
         from: current.id,
         target: targetKey(fallback),
@@ -1544,16 +1552,7 @@ function ChannelWorkspace({
         opener,
       };
     navigator.dismiss(visits, fallback);
-    // A later close can retire more visits before the return lands, moving
-    // where it lands.
-    const pending =
-      pendingReturn.current?.from === current.id
-        ? pendingReturn.current
-        : undefined;
-    if (
-      (pending || closesCurrent) &&
-      navigator.snapshot().entry.id === current.id
-    )
+    if (returns && navigator.snapshot().entry.id === current.id)
       pendingReturn.current = {
         ...pending,
         from: current.id,

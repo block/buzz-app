@@ -750,6 +750,12 @@ confirmation.
   whether supported GitHub links and the linked-PR shortcut open in a side
   panel or your browser. It starts on and is saved on this device across all
   communities. Turning it off keeps pull request indicators and agent tools enabled.
+- **Settings → Plugins → Terminal → Colors** chooses the desktop terminal's
+  color scheme. **Buzz** follows the app's colors and is the default; Selenized
+  is built in. **Appearance** picks the Light or Dark version of a scheme, or
+  matches the app. To add your own, name it and paste an Alacritty theme's
+  colors (TOML) under **Import a color scheme**; **Remove** deletes it. Changes apply to open
+  terminals without restarting their shells and are saved on this device.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.

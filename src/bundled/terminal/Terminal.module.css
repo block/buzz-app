@@ -53,7 +53,7 @@
   background: var(--surface-panel);
   user-select: none;
 }
-[data-color-mode="dark"] .splash {
+.emulator[data-color-mode="dark"] .splash {
   --splash-start: oklch(
     from var(--art-terminal-start) calc(l + 0.02) calc(c * 1.21) calc(h + 1)
   );

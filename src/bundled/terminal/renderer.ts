@@ -11,6 +11,11 @@ import {
   type TerminalFontPreference,
 } from "./font-preference";
 import { createSplash } from "./splash";
+import {
+  resolveTerminalTheme,
+  type TerminalThemePreference,
+} from "./theme-preference";
+import { parseColorMode } from "../../shared/theme/service";
 import styles from "./Terminal.module.css";
 
 export type TerminalInputSource = "user" | "reply";
@@ -23,6 +28,7 @@ export function createScreen(
   input: (data: string, source: TerminalInputSource) => void,
   resize: (cols: number, rows: number) => void,
   font?: Pick<TerminalFontPreference, "snapshot" | "subscribe">,
+  colors?: Pick<TerminalThemePreference, "snapshot" | "subscribe">,
 ): TerminalScreen {
   const element = document.createElement("div");
   element.dataset.buzzUi = "";
@@ -105,19 +111,38 @@ export function createScreen(
   let receivedOutput = false;
   let detach: (() => void) | undefined;
   const pending = new Set<() => void>();
-  const applyFont = () => {
+  const appearance = (host: HTMLElement) => {
     const { family, size = DEFAULT_FONT_SIZE } = font?.snapshot() ?? {};
     element.style.fontSize = `${size}px`;
     element.style.fontFamily = family
       ? `"${family}", var(--font-system-mono)`
       : "";
+    const appMode = parseColorMode(document.documentElement.dataset.colorMode);
+    const preference = colors?.snapshot();
+    const { mode, scheme } = preference
+      ? resolveTerminalTheme(preference, appMode)
+      : { mode: appMode, scheme: null };
+    // An explicit terminal appearance scopes the host's roles to the emulator.
+    const scoped = !!preference && preference.appearance !== "system";
+    element.classList.toggle("light", scoped && mode === "light");
+    element.classList.toggle("dark", scoped && mode === "dark");
+    element.dataset.colorMode = mode;
+    // The emulator and its welcome are renderer-owned surfaces, so they take the
+    // scheme's background in place of the host panel role.
+    if (scheme) element.style.setProperty("--surface-panel", scheme.background);
+    else element.style.removeProperty("--surface-panel");
+    const options = terminalAppearance(element, scheme);
+    // The screen's padding frames the emulator in the same background.
+    host.style.background =
+      scheme || scoped ? String(options.theme.background) : "";
+    return options;
   };
   return {
     mount(host) {
       detach?.();
       host.append(element);
-      applyFont();
-      terminal.options = { theme: terminalAppearance(element).theme };
+      const { theme, minimumContrastRatio } = appearance(host);
+      terminal.options = { theme, minimumContrastRatio };
       if (!opened) {
         terminal.open(element);
         opened = true;
@@ -127,8 +152,7 @@ export function createScreen(
       const update = async () => {
         if (!attached || disposed) return;
         const current = ++revision;
-        applyFont();
-        const options = terminalAppearance(element);
+        const options = appearance(host);
         // Other windows have independent FontFaceSets. Load before assigning
         // xterm's options: assigning the same family again won't remeasure it.
         try {
@@ -148,10 +172,11 @@ export function createScreen(
         }
       };
       const observer = new ResizeObserver(update);
-      const unsubscribe = font?.subscribe(update);
+      const unsubscribeFont = font?.subscribe(update);
+      const unsubscribeColors = colors?.subscribe(update);
       observer.observe(host);
-      const appearance = new MutationObserver(update);
-      appearance.observe(document.documentElement, {
+      const root = new MutationObserver(update);
+      root.observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["data-color-mode", "data-accent", "style", "class"],
       });
@@ -160,9 +185,11 @@ export function createScreen(
       terminal.focus();
       const cleanup = () => {
         attached = false;
-        unsubscribe?.();
+        unsubscribeFont?.();
+        unsubscribeColors?.();
         observer.disconnect();
-        appearance.disconnect();
+        root.disconnect();
+        host.style.background = "";
         element.removeEventListener("keydown", splash.dismiss);
         splash.dismiss();
         element.remove();

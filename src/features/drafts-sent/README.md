@@ -5,5 +5,5 @@ Built into Messages, with the conversation sidebar retained while you browse. Br
 ## Getting started
 
 1. Open **Drafts & sent** in the sidebar. The pencil count beside it is how many drafts you have.
-2. Select a draft to edit and send in the conversation preview. **Open conversation** opens its original channel or thread; **Back to drafts** returns to the list on narrow windows. Confirmed delivery closes the preview; failed sends stay in its history with Retry. Select a sent message to jump to it. Use a draft’s trash button to clear it.
+2. Select a draft to edit and send in the conversation preview. The **Open conversation** popout button opens its original channel or thread; **Back to drafts** returns to the list on narrow windows. Confirmed delivery closes the preview; failed sends stay in its history with Retry. Select a sent message to jump to it. Use a draft’s trash button to clear it.
 3. Search by conversation or by what you wrote.

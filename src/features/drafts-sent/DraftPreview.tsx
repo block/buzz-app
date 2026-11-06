@@ -22,7 +22,11 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { ChatCircleIcon, XIcon } from "../../shared/design-system/icons";
+import {
+  ArrowSquareOutIcon,
+  ChatCircleIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import type { Entry } from "./model";
 import styles from "./DraftsSent.module.css";
 
@@ -146,14 +150,14 @@ export function DraftPreview({
         }
         actions={
           <>
-            <Button
+            <IconButton
               size="sm"
-              variant="ghost"
+              aria-label="Open conversation"
+              title="Open conversation"
+              icon={<ArrowSquareOutIcon size="1rem" />}
               onClick={onOpen}
               disabled={!channel || channel.cached || channel.pending}
-            >
-              Open conversation
-            </Button>
+            />
             <IconButton
               ref={close}
               size="sm"

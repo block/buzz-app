@@ -416,7 +416,6 @@ function MessageActivity(
           {shown.map((entry) => (
             <TypingReplacement
               shared
-              presence={bubble.some((row) => row.agent === entry.agent)}
               key={entry.agent}
               {...props}
               agent={entry.agent}
@@ -881,19 +880,24 @@ function TypingReplacement({
   messageLayout,
   agent,
   shared = false,
-  presence = false,
 }: ComposerAccessoryProps & {
   agent: string;
+  /** Only the live bubble shares its registration. It shows the agent working,
+   * so the conversation shows no second cue (presence). */
   shared?: boolean;
-  /** This bubble shows the agent working, so the conversation shows no second cue. */
-  presence?: boolean;
 }) {
   // A thread's root row has no thread root of its own, but its bubble shows in
   // that thread's conversation, so it owns that thread's indicator.
   const shownIn =
     threadRootId ?? (messageLayout === "thread" ? message?.id : undefined);
   useActivityTypingReplacement(
-    { session, channelId, threadRootId: shownIn, pubkey: agent, presence },
+    {
+      session,
+      channelId,
+      threadRootId: shownIn,
+      pubkey: agent,
+      presence: shared,
+    },
     shared,
   );
   useTypingReplacement(

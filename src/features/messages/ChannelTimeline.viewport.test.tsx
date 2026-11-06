@@ -20,25 +20,29 @@ import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 import {
+  ActivityIndicatorPresentation,
   TypingPresentation,
+  useActivityTypingReplacement,
   useTypingReplacement,
 } from "../conversation/typing-presentation";
 import type { RelaySession } from "../relay/session";
 
-function RecordedTyping({
-  session,
-  presence = false,
-}: {
-  session: RelaySession;
-  presence?: boolean;
-}) {
+function RecordedTyping({ session }: { session: RelaySession }) {
   useTypingReplacement(
+    { session, channelId: "alpha", threadRootId: undefined, pubkey: "agent" },
+    true,
+  );
+  return null;
+}
+/** A message's live bubble registers presence in the conversation's store. */
+function LiveBubble({ session }: { session: RelaySession }) {
+  useActivityTypingReplacement(
     {
       session,
       channelId: "alpha",
       threadRootId: undefined,
       pubkey: "agent",
-      presence,
+      presence: true,
     },
     true,
   );
@@ -382,17 +386,18 @@ it.each([
         },
       };
       const view = render(
-        <TypingPresentation active>
-          {replaced && (
-            <RecordedTyping session={queries} presence={presented} />
-          )}
-          {content(
-            [...history, { ...reply, id: "reply", content: "Main reply" }],
-            undefined,
-            true,
-            queries,
-          )}
-        </TypingPresentation>,
+        <ActivityIndicatorPresentation>
+          <TypingPresentation active>
+            {replaced && !presented && <RecordedTyping session={queries} />}
+            {presented && <LiveBubble session={queries} />}
+            {content(
+              [...history, { ...reply, id: "reply", content: "Main reply" }],
+              undefined,
+              true,
+              queries,
+            )}
+          </TypingPresentation>
+        </ActivityIndicatorPresentation>,
       );
       expect(screen.queryByText("2 completed steps")).toBeNull();
       if (presented) {

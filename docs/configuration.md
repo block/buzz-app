@@ -10,6 +10,7 @@ Build defaults are readable binary data, **never secret storage**.
 | --- | --- |
 | `BUZZ_EXTERNAL_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins allowed to authorize external MCP access. Empty disables access. See below. |
 | `BUZZ_OWNER_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins where an agent's app-hosted runs can read its owner's channels and members with the owner's access. Empty disables them. See below. |
+| `BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` | Frontend build: space-separated secure community origins where workflow messages cannot start or steer local agents. Empty keeps checked workflow delegation everywhere. See below. |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
@@ -53,6 +54,19 @@ is not an employee entitlement and grants no external app or plugin access.
 The Agents service compares the agent's exact canonical community origin when
 it starts a run and again on each call. See
 [owner tools](agents.md#owner-tools).
+
+## Workflow restriction community flag
+
+`BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` is a space-separated list of `https://`
+or `wss://` community origins, parsed as the external flag is. The default is
+empty: in every community, a workflow mention can start or steer a local Claude,
+Codex, Goose or Pi agent when its creator is the agent's owner or a sibling the
+owner attested. The desktop preview workflow sets the flag to
+`https://buzz.block.builderlab.xyz` for bb-block only. In a listed community no
+workflow-marked message authorizes a local agent request, in bundled or plugin
+harnesses; the message stays visible. While any community is listed, an agent
+whose community cannot be read is restricted too. See
+[workflows](workflows.md).
 
 ## Packaged community default
 

@@ -255,6 +255,16 @@ Workflows created and maintained under an owned agent's own key remain owned by
 that agent and can wake agents with the same proven human owner. This does not
 grant an agent permission to edit a workflow owned by a different signing identity.
 
+Builds can withhold this delegation per community. In communities listed by
+`BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES`, no message carrying a `buzz:workflow` tag
+authorizes a local agent request, whatever its signer, owner or mention tags, in
+bundled or plugin harnesses. Workflow messages there stay visible but do not start
+or steer local Claude, Codex, Goose or Pi agents, including for owner-created
+static templates and scheduled workflows. Desktop preview releases list bb-block
+only; bb-public and other communities keep the delegation above. The restriction
+does not prevent workflow output from influencing a later authorized turn. See
+[configuration](configuration.md#workflow-restriction-community-flag).
+
 Cached-only startup intentionally shows the actual signer until a live connection
 establishes explicit relay authority. Saved operator-contact `relayAuthor` is not
 promoted to `self`, and no new trusted storage is introduced. Signer-based search

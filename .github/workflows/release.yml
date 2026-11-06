@@ -20,6 +20,7 @@ permissions:
 env:
   BUZZ_EXTERNAL_MCP_COMMUNITIES: https://buzz.block.builderlab.xyz
   BUZZ_OWNER_MCP_COMMUNITIES: https://buzz.block.builderlab.xyz
+  BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES: https://buzz.block.builderlab.xyz
   # Automatic key backup to bb-public production, only for builds that sign in to
   # app.builderlab.xyz: every build without an FI descriptor does, through the
   # built-in server. The namespace must match that service's configuration.

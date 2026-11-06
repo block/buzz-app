@@ -155,6 +155,7 @@ export function parseAlacrittyScheme(name: string, text: string): ColorScheme {
 }
 
 const BUNDLED = [selenizedLight, selenizedDark].map(parseColorScheme);
+const sameName = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const pairBase = (name: string) => /^(.+) (?:light|dark)$/i.exec(name)?.[1];
 const RESERVED = new Set(
   [
@@ -171,20 +172,21 @@ const reserved = (name: string) =>
 
 /** Collapse `<Base> Light` / `<Base> Dark` into one entry when both exist. */
 function collapse(schemes: readonly ColorScheme[], imported: boolean) {
-  // Match pair suffixes case-insensitively, as Nexus does.
+  // Names are unique and pair suffixes match regardless of case, as in Nexus.
   const byName = new Map(
     schemes.map((scheme) => [scheme.name.toLowerCase(), scheme]),
   );
   const entries = new Map<string, SchemeEntry>();
   for (const scheme of schemes) {
-    const base = pairBase(scheme.name);
-    const key = base?.toLowerCase();
+    const key = pairBase(scheme.name)?.toLowerCase();
     const light = key && byName.get(`${key} light`);
     const dark = key && byName.get(`${key} dark`);
-    if (base && key && light && dark && !byName.has(key))
-      entries.set(base, { name: base, light, dark, imported });
-    else
-      entries.set(scheme.name, {
+    if (key && light && dark && !byName.has(key)) {
+      // One entry per pair, named as its Light half spells the base.
+      const name = pairBase(light.name) ?? key;
+      entries.set(key, { name, light, dark, imported });
+    } else
+      entries.set(scheme.name.toLowerCase(), {
         name: scheme.name,
         light: scheme,
         dark: scheme,
@@ -266,7 +268,7 @@ function decode(raw: string | null | undefined) {
       if (
         imported.length < MAX_IMPORTED_SCHEMES &&
         !reserved(scheme.name) &&
-        !imported.some(({ name }) => name === scheme.name)
+        !imported.some(({ name }) => sameName(name, scheme.name))
       )
         imported.push(scheme);
     } catch {
@@ -367,7 +369,9 @@ export function createTerminalThemePreference(
     importScheme(scheme: ColorScheme) {
       if (reserved(scheme.name))
         throw new Error(`“${scheme.name}” is a built-in scheme name.`);
-      const others = state.imported.filter(({ name }) => name !== scheme.name);
+      const others = state.imported.filter(
+        ({ name }) => !sameName(name, scheme.name),
+      );
       if (others.length >= MAX_IMPORTED_SCHEMES)
         throw new Error(
           `You can import up to ${MAX_IMPORTED_SCHEMES} schemes. Remove one first.`,

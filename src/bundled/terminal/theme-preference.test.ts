@@ -136,7 +136,7 @@ it("collapses Light/Dark pairs and resolves appearance with a Buzz fallback", ()
   const names = listSchemes([lone, dark, light]).map(({ name }) => name);
   expect(names).toEqual([BUZZ_SCHEME, "Selenized", "Lone Dark", "Paper"]);
   expect(
-    listSchemes([scheme("Ink light"), scheme("Ink DARK")]).map(
+    listSchemes([scheme("ink DARK"), scheme("Ink light")]).map(
       ({ name }) => name,
     ),
   ).toEqual([BUZZ_SCHEME, "Selenized", "Ink"]);
@@ -206,8 +206,9 @@ it("drops damaged saved imports, caps imports and syncs other windows", () => {
   expect(() => colors.importScheme(scheme("One too many"))).toThrow(
     "Remove one first",
   );
-  colors.importScheme(scheme("Kept", "#202020"));
+  colors.importScheme(scheme("KEPT", "#202020"));
   expect(colors.snapshot().imported).toHaveLength(MAX_IMPORTED_SCHEMES);
+  expect(colors.snapshot().imported.at(-1)).toMatchObject({ name: "KEPT" });
 
   localStorage.setItem(
     TERMINAL_THEME_KEY,

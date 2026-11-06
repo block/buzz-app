@@ -628,6 +628,41 @@ it("renders the signed whole-thread total rather than only direct replies", () =
   expect(html).toContain('aria-label="View thread: 3 replies"');
   expect(html).toContain("3 replies</span>");
 });
+it("names when the latest reply arrived and keeps it current in a quiet row", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 8, 24, 12));
+  const now = Date.now() / 1000;
+  const author = keypair(),
+    relay = keypair();
+  const root = message(author, "channel", "Root", now - 3600);
+  const [folded] = foldMessages("channel", relay.pubkey, [
+    root,
+    summary(relay, "channel", root.id, {
+      reply_count: 3,
+      descendant_count: 3,
+      last_reply_at: now - 300,
+      participants: [author.pubkey],
+    }),
+  ]);
+  if (!folded) throw new Error("Missing root");
+  try {
+    renderMessage({ row: folded, onOpenThread: () => {} });
+    const thread = screen.getByRole("button", {
+      name: "View thread: 3 replies. Last reply 5 minutes ago",
+    });
+    expect(within(thread).getByText("Last reply 5 minutes ago")).toHaveClass(
+      "text-metadata",
+    );
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(thread).toHaveAccessibleName(
+      "View thread: 3 replies. Last reply 6 minutes ago",
+    );
+    within(thread).getByText("Last reply 6 minutes ago");
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
 it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
   const { html, snapshot } = render({ observedCount: 2 });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({

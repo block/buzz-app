@@ -174,7 +174,7 @@ export function parseAttachments(
 
 function parseSummary(
   event: EventData | undefined,
-): Pick<ChannelMessage, "replyCount" | "participants"> {
+): Pick<ChannelMessage, "replyCount" | "participants" | "lastReplyAt"> {
   if (!event) return { replyCount: 0, participants: Object.freeze([]) };
   try {
     const body = objectBody(event.content);
@@ -195,9 +195,15 @@ function parseSummary(
             typeof value === "string" && HEX64.test(value),
         )
       : [];
+    const lastReplyAt = body.last_reply_at;
     return {
       replyCount,
       participants: Object.freeze([...new Set(participants)]),
+      ...(typeof lastReplyAt === "number" &&
+      Number.isSafeInteger(lastReplyAt) &&
+      lastReplyAt > 0
+        ? { lastReplyAt }
+        : {}),
     };
   } catch {
     return { replyCount: 0, participants: Object.freeze([]) };
@@ -253,8 +259,9 @@ export function deletionApplies(
 /** Folds one window's top-level messages with their aux overlays: author deletes (5/9005),
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
  * Replies stay out of the top level; when they are not rows, the non-deleted `pendingReplies`
- * of a root layer on top of its summary: they add to `replyCount` and their authors lead
- * `participants`, so an own reply counts and shows before the relay's summary round trip.
+ * of a root layer on top of its summary: they add to `replyCount`, their authors lead
+ * `participants` and a later one moves `lastReplyAt`, so an own reply counts and shows
+ * before the relay's summary round trip.
  * Output is ascending by time; ties break on id so windows merge deterministically. */
 export function foldMessages(
   channelId: string,
@@ -423,6 +430,10 @@ export function foldMessages(
         ? reply.pubkey
         : author;
     });
+    const lastReplyAt = Math.max(
+      summary.lastReplyAt ?? 0,
+      ...pending.map((reply) => reply.created_at),
+    );
     rows.push(
       Object.freeze({
         id: event.id,
@@ -517,6 +528,7 @@ export function foldMessages(
         participants: Object.freeze([
           ...new Set([...repliers, ...summary.participants]),
         ]),
+        ...(lastReplyAt ? { lastReplyAt } : {}),
       }),
     );
   }

@@ -520,6 +520,39 @@ describe("message fold", () => {
       ),
     ).toEqual([[2, [relay.pubkey]]]);
   });
+  it("dates the newest counted reply from the summary body or a later pending reply", () => {
+    const root = message(alice, channel, "root", 10);
+    const own = message(bob, channel, "re", 40, [["e", root.id, "", "reply"]]);
+    // The relay signs a summary when it answers, so its created_at is not a reply time.
+    const fold = (body: Record<string, unknown>, pending: string[] = []) =>
+      foldMessages(
+        channel,
+        relay.pubkey,
+        [root, own, summary(relay, channel, root.id, body)],
+        { pendingReplies: new Set(pending) },
+      );
+    const lastReplyAt = (body: Record<string, unknown>, pending?: string[]) =>
+      fold({ descendant_count: 1, participants: [], ...body }, pending)[0]
+        ?.lastReplyAt;
+    expect(lastReplyAt({ last_reply_at: 30 })).toBe(30);
+    expect(lastReplyAt({ last_reply_at: 30 }, [own.id])).toBe(40);
+    expect(lastReplyAt({ last_reply_at: 50 }, [own.id])).toBe(50);
+    for (const invalid of [null, 0, -1, 1.5, "30"]) {
+      expect(lastReplyAt({ last_reply_at: invalid })).toBeUndefined();
+      expect(lastReplyAt({ last_reply_at: invalid }, [own.id])).toBe(40);
+    }
+    // When the relay counts the send, the row stays the same object.
+    const sending = fold(
+      { descendant_count: 1, last_reply_at: 30, participants: [carol.pubkey] },
+      [own.id],
+    );
+    const counted = fold({
+      descendant_count: 2,
+      last_reply_at: 40,
+      participants: [bob.pubkey, carol.pubkey],
+    });
+    expect(shareMessageRows(sending, counted)).toBe(sending);
+  });
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
       alice,

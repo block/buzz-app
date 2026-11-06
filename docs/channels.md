@@ -1408,6 +1408,9 @@ count, participants come from the relay's summary, with the authors of replies
 this client has sent since that summary placed first, so your own reply's avatar
 is among the visible three as soon as you send it.
 They reuse the channel's existing shared profile/media path, not extra per-row reads.
+After the count, “Last reply 5 minutes ago” says when the newest counted reply
+arrived: the summary's `last_reply_at`, or a later reply you have sent since. One
+shared timer keeps every mounted label current; rows do not run their own.
 On a supporting relay, the panel opens at the newest 10 replies and loads older
 pages of 50 when you scroll upward; there is no Load more replies button. It validates
 signed NIP-CW thread bounds on every page. A prior scroll gesture wins over initial

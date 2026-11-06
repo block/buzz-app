@@ -96,6 +96,12 @@ export function appClient(
         channel: (id) => owned((signal) => ownerAccess.channel(id, signal)),
         members: (id, page) =>
           owned((signal) => ownerAccess.members(id, page, signal)),
+        messages: (request) =>
+          owned((signal) => ownerAccess.messages(request, signal)),
+        canvas: (channel, revision) =>
+          owned((signal) => ownerAccess.canvas(channel, revision, signal)),
+        canvasHistory: (channel, cursor) =>
+          owned((signal) => ownerAccess.canvasHistory(channel, cursor, signal)),
         held: (execution) => {
           check();
           ownerAccess.held(execution);

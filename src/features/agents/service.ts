@@ -2905,9 +2905,10 @@ export class AgentsService extends Service implements Agents {
     const run = this.runners.handle(key, undefined, true);
     if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
-    const { handoff } = run;
+    // External apps never get the owner's access a bundled harness's run has.
+    const { handoff, ownerAccess: _, ...agentRun } = run;
     const handle: AgentHandle = {
-      ...run,
+      ...agentRun,
       ...(handoff && {
         handoff: ({ from: _, ...wake }: AgentHandoff) =>
           handoff({ ...wake, from: { external: true } }),

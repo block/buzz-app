@@ -392,6 +392,9 @@ it("offers the handle's owner reads with the turn's signal, withholding answers 
       return answer;
     }),
     members: vi.fn(async () => answer),
+    messages: vi.fn(async () => answer),
+    canvas: vi.fn(async () => answer),
+    canvasHistory: vi.fn(async () => answer),
     held: vi.fn(),
   };
   let ended = false;
@@ -417,6 +420,24 @@ it("offers the handle's owner reads with the turn's signal, withholding answers 
     { offset: 2, limit: 5 },
     controller.signal,
   );
+  // Each read runs with the turn's signal.
+  await client.ownerAccess?.messages({ channel: "c", limit: 5 });
+  expect(ownerAccess.messages).toHaveBeenCalledExactlyOnceWith(
+    { channel: "c", limit: 5 },
+    controller.signal,
+  );
+  await client.ownerAccess?.canvas("c", "r");
+  expect(ownerAccess.canvas).toHaveBeenCalledExactlyOnceWith(
+    "c",
+    "r",
+    controller.signal,
+  );
+  await client.ownerAccess?.canvasHistory("c", { before: 1 });
+  expect(ownerAccess.canvasHistory).toHaveBeenCalledExactlyOnceWith(
+    "c",
+    { before: 1 },
+    controller.signal,
+  );
   const execution = { agent: "agent", owner: "owner", community: "c" };
   client.ownerAccess?.held(execution);
   expect(ownerAccess.held).toHaveBeenCalledExactlyOnceWith(execution);
@@ -425,7 +446,11 @@ it("offers the handle's owner reads with the turn's signal, withholding answers 
   held.resolve();
   await expect(pending).rejects.toThrow("ended");
   await expect(client.ownerAccess?.channels()).rejects.toThrow("ended");
+  await expect(
+    client.ownerAccess?.messages({ channel: "c", limit: 5 }),
+  ).rejects.toThrow("ended");
   expect(ownerAccess.channels).toHaveBeenCalledOnce();
+  expect(ownerAccess.messages).toHaveBeenCalledOnce();
   // An answer read before the turn ended is not released after it.
   expect(() => client.ownerAccess?.held(execution)).toThrow("ended");
   expect(ownerAccess.held).toHaveBeenCalledOnce();

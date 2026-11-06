@@ -806,11 +806,6 @@ it("Close retires a plugin install link's Settings visit with the others", async
   );
   const beneath = current.navigation.snapshot().entry;
   const plugins = { version: 1, kind: "settings", section: "plugins" } as const;
-  void current.navigation.open(plugins);
-  const settings = await screen.findByRole("dialog", { name: "Settings" });
-  await waitFor(() =>
-    expect(current.navigation.snapshot().status).toBe("opened"),
-  );
   // A buzz://plugin-install link opens this target. jsdom has no desktop
   // importer, so its review dialog stays hidden, but the visit is recorded.
   const link = {
@@ -820,23 +815,43 @@ it("Close retires a plugin install link's Settings visit with the others", async
       reference: "main",
     },
   };
-  void current.navigation.open(link);
-  await waitFor(() =>
-    expect(current.navigation.snapshot()).toMatchObject({
-      status: "opened",
-      entry: { target: link },
-    }),
-  );
+  const openLink = async () => {
+    void current.navigation.open(plugins);
+    await screen.findByRole("dialog", { name: "Settings" });
+    await waitFor(() =>
+      expect(current.navigation.snapshot().status).toBe("opened"),
+    );
+    void current.navigation.open(link);
+    await waitFor(() =>
+      expect(current.navigation.snapshot()).toMatchObject({
+        status: "opened",
+        entry: { target: link },
+      }),
+    );
+    return current.navigation.snapshot().entry.id;
+  };
+  const close = async () => {
+    await waitFor(() =>
+      expect(current.navigation.snapshot().entry.target).toEqual(plugins),
+    );
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Settings" }), {
+      key: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+    );
+    expect(current.navigation.snapshot().entry).toEqual(beneath);
+    expect(current.navigation.snapshot().canGoForward).toBe(false);
+  };
+  // Closing the review dismisses its visit as dismissPluginImport does. The
+  // driver steps back onto the same Plugins visit and keeps the dismissed one.
+  const visit = await openLink();
+  current.navigation.dismiss([visit], plugins);
+  await close();
+  // After Back, the link's visit is a Forward stop until Close retires it.
+  await openLink();
   current.navigation.back();
-  await waitFor(() =>
-    expect(current.navigation.snapshot().entry.target).toEqual(plugins),
-  );
-  fireEvent.keyDown(settings, { key: "Escape" });
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
-  );
-  expect(current.navigation.snapshot().entry).toEqual(beneath);
-  expect(current.navigation.snapshot().canGoForward).toBe(false);
+  await close();
 });
 
 it("Back closes Settings onto the view beneath and Forward reopens it; other shortcuts stay blocked", async () => {

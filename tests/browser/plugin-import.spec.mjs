@@ -1,3 +1,4 @@
+import { documentPlugin } from "./document-plugin.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import {
   activate,
@@ -33,14 +34,22 @@ async function nativeImports(
   previewOptions = {},
   links = [],
   hold = false,
+  persistInstalled = false,
 ) {
-  const input = { samples, previewOptions, links, hold };
-  await page.addInitScript(({ samples, previewOptions, links, hold }) => {
+  const input = { samples, previewOptions, links, hold, persistInstalled };
+  await page.addInitScript((input) => {
+    const { samples, previewOptions, links, hold, persistInstalled } = input;
     window.isTauri = true;
     window.importCalls = [];
     window.importDelay = hold;
-    const plugins = ["channels", "github", "bestie", "repos", "workflows"].map(
-      (name) => ({
+    const saved = persistInstalled
+      ? JSON.parse(
+          sessionStorage.getItem("fixture.installed-plugins") ?? "null",
+        )
+      : null;
+    const plugins =
+      saved ??
+      ["channels", "github", "bestie", "repos", "workflows"].map((name) => ({
         manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
         source: "bundled",
         enabled: true,
@@ -48,19 +57,25 @@ async function nativeImports(
         previous: null,
         reloadable: false,
         error: null,
-      }),
-    );
-    const ready = () => ({
-      status: "ready",
-      externalPluginsPaused: false,
-      // Real IPC serializes a new snapshot; don't let later fixture writes mutate
-      // the manager's previously accepted catalog and bypass reconciliation.
-      catalog: {
-        profile: "fixture",
-        location: "isolated IPC",
-        plugins: structuredClone(plugins),
-      },
-    });
+      }));
+    const ready = () => {
+      if (persistInstalled)
+        sessionStorage.setItem(
+          "fixture.installed-plugins",
+          JSON.stringify(plugins),
+        );
+      return {
+        status: "ready",
+        externalPluginsPaused: false,
+        // Real IPC serializes a new snapshot; don't let later fixture writes mutate
+        // the manager's previously accepted catalog and bypass reconciliation.
+        catalog: {
+          profile: "fixture",
+          location: "isolated IPC",
+          plugins: structuredClone(plugins),
+        },
+      };
+    };
     let importSource = null;
     let pendingPreview = null;
     let importLocked = false;
@@ -1719,4 +1734,106 @@ test("a linked preview can close during acquisition and a later link still opens
         .map((call) => call.args.reference),
     ),
   ).toEqual(["first", "next"]);
+});
+
+// Browser-only boundary: an external blob module uses the host React tree,
+// host styles, focus targets and durable split across a real document reload.
+test("installed documents reuse host Markdown, workspace tabs and persisted split", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(
+    page,
+    [
+      {
+        path: "documents",
+        revision: "documents",
+        manifest: { id: "example.documents", name: "Documents", apiVersion: 1 },
+        code: `export const inject = ["react", "pages", "conversation", "panels", "relay"]; export const apply = ${documentPlugin.toString()};`,
+      },
+    ],
+    {},
+    [],
+    false,
+    true,
+  );
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await button(page, "Install plugin").click();
+  await expectOnlySettings(page);
+  await closeSettings(page);
+  await openPage(page, "Documents");
+  const reader = page.getByRole("region", {
+    name: "Document reader",
+    exact: true,
+  });
+  const tab = (name) => reader.getByRole("tab", { name, exact: true });
+  const draft = (name) =>
+    reader.getByRole("textbox", { name: `${name} draft` });
+  await expect(tab("Guide")).toHaveAttribute("aria-selected", "true");
+  await expect(reader.getByRole("heading", { name: "Guide" })).toBeVisible();
+  await expect(
+    reader
+      .getByRole("tabpanel", { name: "Guide", exact: true })
+      .getByText("Tracking image", { exact: true }),
+  ).toBeVisible();
+  await expect(reader.locator("img")).toHaveCount(0);
+  await expect(reader.getByRole("link", { name: "Unsafe" })).toHaveCount(0);
+  await expect(
+    reader.getByRole("link", { name: "#Alpha", exact: true }),
+  ).toBeVisible();
+  await expect(
+    reader.getByRole("link", { name: "the alpha room" }).locator("strong"),
+  ).toHaveText("alpha");
+  await draft("Guide").fill("Retain this document");
+  await tab("Reference").click();
+  await expect(draft("Reference")).toBeFocused();
+  await tab("Guide").click();
+  await expect(draft("Guide")).toHaveValue("Retain this document");
+  await tab("Guide").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tab("Reference")).toBeFocused();
+  await reader
+    .getByRole("button", { name: "Close Reference tab", exact: true })
+    .click();
+  await expect(tab("Reference")).toHaveCount(0);
+  await expect(draft("Guide")).toHaveValue("Retain this document");
+
+  const handle = reader.getByRole("separator");
+  await handle.focus();
+  await page.keyboard.press("Home");
+  await expect(handle).toHaveAttribute("aria-valuenow", "320");
+  await expect
+    .poll(async () => Math.round((await reader.boundingBox()).width))
+    .toBe(320);
+  await page.reload();
+  await openPage(page, "Documents");
+  await expect(handle).toHaveAttribute("aria-valuenow", "320");
+  await expect
+    .poll(async () => Math.round((await reader.boundingBox()).width))
+    .toBe(320);
+  await handle.dblclick();
+  await expect(handle).toHaveAttribute("aria-valuenow", "448");
+  for (const mode of ["Dark", "Light"]) {
+    await openSettings(page);
+    await selectSettingsSection(page, "Appearance");
+    await chooseColorMode(page, mode);
+    await closeSettings(page);
+    await page.setViewportSize({ width: 480, height: 850 });
+    await page.evaluate(
+      () => (document.documentElement.style.fontSize = "20px"),
+    );
+    await expect(tab("Guide")).toBeVisible();
+    await expect(draft("Guide")).toBeVisible();
+    const bounds = await reader.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(480);
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.evaluate(() =>
+      document.documentElement.style.removeProperty("font-size"),
+    );
+  }
+  await reader.getByRole("link", { name: "the alpha room" }).click();
+  await expect(page.locator('[data-channel-timeline="alpha"]')).toBeVisible();
 });

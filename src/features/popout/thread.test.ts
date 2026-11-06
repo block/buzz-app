@@ -173,6 +173,8 @@ const shownFor = (h: ReturnType<typeof fixture>) => ({
   retryOperation: (id: string) => h.thread.retryOperation(id),
   version: () => h.thread.snapshot().version,
   root: () => h.thread.shown(ROOT),
+  admit: (id: string, messageId: string | undefined, kind: 7 | 5 | 40003 | 9) =>
+    h.thread.admit(id, messageId, kind),
 });
 const OWN_EVENT = "c".repeat(64);
 const OTHER_EVENT = "d".repeat(64);
@@ -325,7 +327,12 @@ it("fences reactions while main still has one in flight, and retries only main's
     client.react({ messageId: ROOT, content: "🎉" }),
   ).rejects.toThrow(/still being sent/);
   expect(h.react).not.toHaveBeenCalled();
-  // Retry is admitted only for main's own reaction event on a shown message.
+  // Retry is admitted only for operations main admitted for this window —
+  // not for every operation in the channel, however shown its target is.
+  await expect(client.retryOperation({ id: sending })).rejects.toThrow(
+    /no longer be retried/,
+  );
+  h.thread.admit(sending, ROOT, 7);
   await expect(client.retryOperation({ id: sending })).resolves.toBeUndefined();
   expect(h.retry).toHaveBeenCalledWith(sending, expect.any(Function));
   await expect(client.retryOperation({ id: "8".repeat(64) })).rejects.toThrow(
@@ -370,9 +377,38 @@ it("fences and retries from the whole operation collection, capping only the pre
   expect(h.thread.snapshot().operations).toHaveLength(64);
   expect(h.thread.operations()).toHaveLength(65);
   expect(h.thread.reactionBusy(ROOT)).toBe(true);
-  expect(h.thread.retryOperation((999).toString(16).padStart(64, "0"))).toBe(
-    true,
-  );
+  const rootOp = (999).toString(16).padStart(64, "0");
+  expect(h.thread.retryOperation(rootOp)).toBe(false);
+  h.thread.admit(rootOp, ROOT, 7);
+  expect(h.thread.retryOperation(rootOp)).toBe(true);
+  // This window's admitted operations lead the capped presentation.
+  expect(h.thread.snapshot().operations[0]?.id).toBe(rootOp);
+  // Dropped from main's outbox: reported delivered once, then forgotten.
+  h.outbox.items = [];
+  expect(h.thread.operations()).toEqual([
+    { id: rootOp, messageId: ROOT, kind: 7, delivery: "accepted" },
+  ]);
+  expect(h.thread.operations()).toEqual([]);
+  // A message deletion names its message, unlike a reaction removal.
+  h.outbox.items = [
+    {
+      event: {
+        id: "7".repeat(64),
+        pubkey: VIEWER,
+        created_at: 1,
+        kind: 5,
+        content: "",
+        tags: [
+          ["h", "channel"],
+          ["e", ROOT],
+          ["k", "9"],
+        ],
+      },
+      delivery: "failed",
+      error: "Relay refused",
+    },
+  ];
+  expect(h.thread.operations()[0]).toMatchObject({ messageId: ROOT, kind: 5 });
 });
 
 it("projects main's own management policy per row and admits each action by the same rules", async () => {

@@ -98,16 +98,59 @@ it("keeps one local id from request through main's delivery", async () => {
   expect(h.session.outbox?.snapshot()).toEqual([]);
 });
 
-it("treats main dropping an admitted operation from a newer projection as delivered", async () => {
+it("never infers delivery from absence; main's terminal report ends it, in either order", async () => {
   const h = setup();
-  h.deleteMessage.mockResolvedValueOnce({ id: "f".repeat(64), version: 3 });
+  const MAIN = "f".repeat(64);
+  h.deleteMessage.mockResolvedValueOnce({ id: MAIN, version: 3 });
   const id = h.session.messages.deleteMessage(MESSAGE);
   await flush();
   expect(h.session.outbox?.snapshot()[0]?.event).toMatchObject({ id, kind: 5 });
-  h.session.setMainOperations([], 3);
-  expect(h.session.outbox?.snapshot()).toHaveLength(1);
+  // A capped newer projection that omits it changes nothing.
   h.session.setMainOperations([], 4);
+  expect(h.session.outbox?.snapshot()).toHaveLength(1);
+  h.session.setMainOperations(
+    [{ id: MAIN, messageId: MESSAGE, kind: 5, delivery: "accepted" }],
+    5,
+  );
   expect(h.session.outbox?.snapshot()).toEqual([]);
+  // Terminal report before the admission reply: reconciled on admission.
+  let settle: (a: { id: string; version: number }) => void = () => {};
+  h.edit.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  const EDIT = "e".repeat(64);
+  const editId = h.session.messages.edit(MESSAGE, "x", "src");
+  h.session.setMainOperations(
+    [{ id: EDIT, messageId: MESSAGE, kind: 40003, delivery: "accepted" }],
+    6,
+  );
+  expect(h.session.outbox?.snapshot().some((i) => i.event.id === editId)).toBe(
+    true,
+  );
+  settle({ id: EDIT, version: 5 });
+  await flush();
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  // An older projection never regresses a newer status.
+  h.react.mockResolvedValueOnce({ id: "a".repeat(64), version: 7 });
+  const reactId = h.session.messages.react(MESSAGE, "👍");
+  await flush();
+  h.session.setMainOperations(
+    [
+      {
+        id: "a".repeat(64),
+        messageId: MESSAGE,
+        kind: 7,
+        delivery: "failed",
+        error: "x",
+      },
+    ],
+    8,
+  );
+  h.session.setMainOperations(
+    [{ id: "a".repeat(64), messageId: MESSAGE, kind: 7, delivery: "sending" }],
+    7,
+  );
+  expect(
+    h.session.outbox?.snapshot().find((i) => i.event.id === reactId)?.delivery,
+  ).toBe("failed");
 });
 
 it("shows main's refusal as a failed operation that can be retried with the same request", async () => {
@@ -126,7 +169,10 @@ it("shows main's refusal as a failed operation that can be retried with the same
   expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("sending");
   await flush();
   expect(h.react).toHaveBeenCalledTimes(2);
-  h.session.setMainOperations([], 2);
+  h.session.setMainOperations(
+    [{ id: "e".repeat(64), messageId: MESSAGE, kind: 7, delivery: "seen" }],
+    2,
+  );
   expect(h.session.outbox?.snapshot()).toEqual([]);
 });
 
@@ -146,7 +192,10 @@ it("removes own reactions through main, naming the message they belong to", asyn
     /Load the reaction/,
   );
   await flush();
-  h.session.setMainOperations([], 2);
+  h.session.setMainOperations(
+    [{ id: "e".repeat(64), messageId: MESSAGE, kind: 5, delivery: "accepted" }],
+    2,
+  );
   expect(h.session.outbox?.snapshot()).toEqual([]);
 });
 

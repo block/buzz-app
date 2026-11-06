@@ -253,6 +253,10 @@ export function createPopoutWindows(
         retryOperation: (id) => entry.thread.retryOperation(id),
         version: () => entry.thread.snapshot().version,
         root: () => entry.thread.shown(target.threadRootId),
+        admit: (id, messageId, kind) => {
+          entry.thread.admit(id, messageId, kind);
+          sync(entry);
+        },
       },
     );
     entry.reading = createReadingOwner(

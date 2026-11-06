@@ -42,6 +42,12 @@ export function createHuddleComposerOwner(
     /** The projection version now, answered with each admission. */
     version(): number;
     root(): import("../relay/contracts").ChannelMessage | undefined;
+    /** Record an operation main admitted for this window. */
+    admit(
+      id: string,
+      messageId: string | undefined,
+      kind: 7 | 5 | 40003 | 9,
+    ): void;
   },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
@@ -346,7 +352,10 @@ export function createHuddleComposerOwner(
             : undefined;
         if (!target || target.channelId !== room)
           throw new Error("This message is not shown in this window.");
-        const admitted = (id: string) => ({ id, version: shown.version() });
+        const admitted = (id: string, kind: 7 | 5 | 40003 | 9) => {
+          shown.admit(id, messageId, kind);
+          return { id, version: shown.version() };
+        };
         const delivered =
           !target.delivery || ["accepted", "seen"].includes(target.delivery);
         const own = target.authorId === session.viewer;
@@ -369,7 +378,10 @@ export function createHuddleComposerOwner(
                 emoji.url.length > 8192)
             )
               throw new Error("Invalid custom emoji.");
-            return admitted(session.messages.react(messageId, content, emoji));
+            return admitted(
+              session.messages.react(messageId, content, emoji),
+              7,
+            );
           }
           case "removeReactions": {
             if (shown.reactionBusy(messageId))
@@ -391,14 +403,14 @@ export function createHuddleComposerOwner(
               ids.some((id) => typeof id !== "string" || !ownEvents.has(id))
             )
               throw new Error("Only your own reactions can be removed here.");
-            return admitted(session.messages.remove(ids));
+            return admitted(session.messages.remove(ids), 5);
           }
           case "deleteMessage": {
             // Own, delivered messages only here; agent-owner deletion needs
             // main's verified evidence and stays in the main window.
             if (!own || !delivered || !session.outbox?.supports(5))
               throw new Error("Only your own messages can be deleted here.");
-            return admitted(session.messages.remove([messageId]));
+            return admitted(session.messages.remove([messageId]), 5);
           }
           case "edit": {
             const { content, attachmentSourceId, baseline } = request.args;
@@ -423,6 +435,7 @@ export function createHuddleComposerOwner(
               throw new Error("This message's attachments changed.");
             return admitted(
               session.messages.edit(messageId, content, attachmentSourceId),
+              40003,
             );
           }
           case "sendToChannel": {
@@ -439,6 +452,7 @@ export function createHuddleComposerOwner(
               );
             return admitted(
               session.messages.sendToChannel(target, shown.root()),
+              9,
             );
           }
           case "markRead": {

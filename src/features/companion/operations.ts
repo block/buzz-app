@@ -14,8 +14,9 @@ export type MainOperation = {
   error?: string | undefined;
 };
 /** What main answers when it admits an operation: the outbox event id it will
- * carry, and the projection version at that moment, so a later projection that
- * lacks the id means delivered, while an earlier one means nothing yet. */
+ * carry and the projection version at that moment. Main keeps projecting an
+ * admitted operation, whatever its delivery, until it has reported it
+ * delivered once, so the companion never has to infer anything from absence. */
 export type Admission = { id: string; version: number };
 /** The bridge a companion operates through; the composer client provides it. */
 export type OperationBridge = {
@@ -50,10 +51,13 @@ type Local = {
  * synchronous operation id they can follow in an outbox until delivery; here
  * each request keeps that **local** id for its whole life: pending until main
  * answers, failed with main's refusal, then — once admitted — mirroring main's
- * own operation (projected with the window) until it is delivered or main
- * drops it from a projection newer than the admission. Main's operations the
- * companion did not start (another window's, or from before a reload) are
- * shown too, so recovery is never hidden by row withdrawal or projection lag.
+ * own operation (projected with the window, in every state, until main has
+ * reported it delivered) until that terminal report. A projection may arrive
+ * before the admission reply and projections may be reordered, so the latest
+ * known status of every main operation is kept and reconciled on both paths;
+ * an older projection never regresses state. Main's operations the companion
+ * did not start (another window's, or from before a reload) are shown too, so
+ * recovery is never hidden by row withdrawal or projection lag.
  */
 export function createCompanionOperations(
   session: ComposerSession,
@@ -82,6 +86,9 @@ export function createCompanionOperations(
   };
 } {
   const locals = new Map<string, Local>();
+  // Latest status main reported for each of its operations, by main id.
+  const latest = new Map<string, MainOperation>();
+  let latestVersion = -1;
   let foreign: readonly OutgoingEvent[] = [];
   let operations: readonly OutgoingEvent[] = [];
   const listeners = new Set<() => void>();
@@ -107,7 +114,8 @@ export function createCompanionOperations(
       (admission) => {
         if (disposed) return;
         local.admitted = admission;
-        // Still "sending" until main's projection reports delivery.
+        // A projection may already have reported this operation.
+        reconcile(local);
         recompute();
       },
       (cause: unknown) => {
@@ -122,6 +130,16 @@ export function createCompanionOperations(
         recompute();
       },
     );
+  }
+  /** Mirror main's latest status for an admitted local; done when terminal. */
+  function reconcile(local: Local) {
+    const admitted = local.admitted;
+    if (!admitted) return;
+    const mirrored = latest.get(admitted.id);
+    if (!mirrored) return;
+    patch(local, { delivery: mirrored.delivery, error: mirrored.error });
+    if (mirrored.delivery === "accepted" || mirrored.delivery === "seen")
+      locals.delete(local.item.event.id);
   }
   function enqueue(
     kind: MainOperation["kind"],
@@ -234,44 +252,43 @@ export function createCompanionOperations(
             : undefined,
     },
     setMainOperations(main, version) {
-      if (disposed) return;
-      const byId = new Map(main.map((op) => [op.id, op]));
-      for (const [id, local] of locals) {
-        const admitted = local.admitted;
-        if (!admitted) continue;
-        const mirrored = byId.get(admitted.id);
-        if (mirrored) {
-          byId.delete(admitted.id);
-          patch(local, {
-            delivery: mirrored.delivery,
-            error: mirrored.error,
-          });
-          if (mirrored.delivery === "accepted" || mirrored.delivery === "seen")
-            locals.delete(id);
-        } else if (version > admitted.version) {
-          // Main no longer carries it after the admission: delivered.
-          locals.delete(id);
-        }
-      }
-      foreign = [...byId.values()].map((op) => ({
-        event: {
-          id: op.id,
-          pubkey: session.viewer ?? "",
-          created_at: 0,
-          kind: op.kind,
-          content: "",
-          tags: op.messageId
-            ? [[op.kind === 9 ? "buzz:copy-of" : "e", op.messageId]]
-            : [],
-        },
-        delivery: op.delivery,
-        ...(op.error ? { error: op.error } : {}),
-      }));
+      if (disposed || version < latestVersion) return;
+      latestVersion = version;
+      // Remember every status seen; a later projection updates, never erases.
+      for (const op of main) latest.set(op.id, op);
+      for (const local of [...locals.values()]) reconcile(local);
+      const mine = new Set(
+        [...locals.values()].flatMap((local) =>
+          local.admitted ? [local.admitted.id] : [],
+        ),
+      );
+      foreign = main
+        .filter(
+          (op) =>
+            !mine.has(op.id) &&
+            op.delivery !== "accepted" &&
+            op.delivery !== "seen",
+        )
+        .map((op) => ({
+          event: {
+            id: op.id,
+            pubkey: session.viewer ?? "",
+            created_at: 0,
+            kind: op.kind,
+            content: "",
+            tags: op.messageId
+              ? [[op.kind === 9 ? "buzz:copy-of" : "e", op.messageId]]
+              : [],
+          },
+          delivery: op.delivery,
+          ...(op.error ? { error: op.error } : {}),
+        }));
       recompute();
     },
     dispose() {
       disposed = true;
       locals.clear();
+      latest.clear();
       foreign = [];
       operations = [];
       listeners.clear();

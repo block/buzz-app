@@ -3,19 +3,27 @@ import { ShortcutsService } from "../../src/features/shortcuts/service";
 import { createShortcutBindings } from "../../src/features/shortcuts/preferences";
 import { ShortcutSettings } from "../../src/app/ShortcutSettings";
 import type { PluginManager } from "../../src/plugins/manager";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource-variable/inter/wght.css";
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { useChannelPanels } from "../../src/bundled/channels/useChannelPanels";
+import { useConversationTabs } from "../../src/bundled/channels/useConversationTabs";
+import { useChannelTabState } from "../../src/bundled/channels/useChannelTabState";
+import { PanelWorkspace } from "../../src/features/panels/PanelWorkspace";
+import { PanelDock } from "../../src/features/panels/PanelDock";
+import { Dialog } from "../../src/shared/design-system/ui/Dialog";
+import { PanelsService } from "../../src/features/panels/service";
+import type { RelaySession } from "../../src/features/relay/session";
+import type { RelayData } from "../../src/features/relay/service";
+import type { ChannelSummary } from "../../src/features/relay/contracts";
 import channelStyles from "../../src/bundled/channels/Channels.module.css";
 import { apply } from "../../src/bundled/terminal";
 import { nativeBridge } from "../../src/bundled/terminal/bridge";
 import type { TerminalBridge } from "../../src/bundled/terminal/bridge";
 import { SettingsCardsService } from "../../src/features/settings/service";
 import type {
-  Panel,
   Panels,
   RegisteredPanel,
   ChannelPanelContext,
@@ -95,12 +103,7 @@ const bridge: TerminalBridge = {
   closeOwner: async () => {},
 };
 Object.assign(nativeBridge, bridge);
-let contribution: Panel | undefined;
-scope.provide("panels", {
-  register: (panel: Panel) => {
-    contribution = panel;
-  },
-} as unknown as typeof scope.panels);
+const panels = new PanelsService(scope);
 scope.provide("relay", {
   snapshot: () => ({
     scope: context.scope,
@@ -117,6 +120,7 @@ const plugins = {
   subscribe: () => () => {},
   snapshot: () => pluginState,
 } as unknown as Pick<PluginManager, "subscribe" | "snapshot">;
+const contribution = panels.snapshot()[0];
 if (!contribution?.channelLauncher)
   throw new Error("Missing terminal contribution");
 const Launcher = contribution.channelLauncher;
@@ -226,15 +230,17 @@ const registered: RegisteredPanel = {
   revision: "fixture",
 };
 const entries = [registered];
-const panels: Panels = {
+const motionPanels: Panels = {
   snapshot: () => entries,
   subscribe: () => () => {},
   register: () => {},
   resolve: () => registered,
+  requestOpen: () => false,
+  handleOpenRequests: () => () => {},
 };
 function MotionFixture() {
   useKeyboardFocusVisibility();
-  const drawer = useChannelPanels(panels, context);
+  const drawer = useChannelPanels(motionPanels, context);
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       {drawer.launchers}
@@ -243,10 +249,133 @@ function MotionFixture() {
     </div>
   );
 }
+
+// Real contribution disposal, channel openings and tab cleanup own movement.
+const channel = {
+  id: context.channelId,
+  name: context.channelName,
+} as ChannelSummary;
+const otherChannel = { ...channel, id: "other-channel", name: "Other channel" };
+const channels = [channel, otherChannel];
+const session = {
+  viewer: context.viewer,
+  channels: {
+    list: () => ({ channels }),
+    window: () => ({ rows: [] }),
+  },
+} as unknown as RelaySession;
+const relayState = { status: "ready", session };
+const relay = { snapshot: () => relayState } as unknown as RelayData;
+function PlacementFixture() {
+  const [current, select] = useState(channel);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <button
+        type="button"
+        onClick={() => select(current === channel ? otherChannel : channel)}
+      >
+        Switch channel
+      </button>
+      <PlacementWorkspace key={current.id} current={current} />
+    </div>
+  );
+}
+function PlacementWorkspace({ current }: { current: ChannelSummary }) {
+  useKeyboardFocusVisibility();
+  const [settings, showSettings] = useState(false);
+  const state = useChannelTabState(session, current.id);
+  const workspace = useConversationTabs({
+    state,
+    relay,
+    session,
+    panels,
+    current,
+    channels,
+    profiles: new Map(),
+    scope: context.scope,
+    conversationIcon: () => null,
+    leadingIds: [],
+    continuingVisit: true,
+    mainPane: true,
+    isLive: () => true,
+    openLink: () => false,
+  });
+  const hasPanel = !!(workspace.drawer.side || workspace.items.length);
+  return (
+    <div
+      className={channelStyles.root}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+      }}
+    >
+      <button type="button" onClick={() => showSettings(true)}>
+        Terminal settings
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          document.documentElement.dataset.colorMode =
+            document.documentElement.dataset.colorMode === "dark"
+              ? "light"
+              : "dark";
+        }}
+      >
+        Toggle theme
+      </button>
+      {workspace.drawer.launchers}
+      <div className={channelStyles.board} style={{ flex: 1, minHeight: 0 }}>
+        <div className={channelStyles.conversation}>
+          <div style={{ flex: 1 }}>Conversation</div>
+          {workspace.drawer.content}
+        </div>
+        <PanelDock
+          open={hasPanel && state.paneOpen}
+          keepMounted={
+            state.entries.length > 0 || (hasPanel && !state.paneOpen)
+          }
+          className={channelStyles.panelStack}
+        >
+          {hasPanel && (
+            <>
+              {workspace.items.length > 0 && (
+                <div className={channelStyles.retainedPanel}>
+                  <PanelWorkspace
+                    value={workspace.selectedTab}
+                    select={workspace.selectPanelTab}
+                    items={workspace.items}
+                  />
+                </div>
+              )}
+              {workspace.drawer.side && (
+                <div className={channelStyles.retainedPanel}>
+                  {workspace.drawer.side}
+                </div>
+              )}
+            </>
+          )}
+        </PanelDock>
+      </div>
+      <Dialog
+        open={settings}
+        onOpenChange={showSettings}
+        title="Terminal settings"
+      >
+        {FontSettings && <FontSettings active={() => settings} />}
+      </Dialog>
+    </div>
+  );
+}
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing root");
 createRoot(root).render(
-  new URLSearchParams(location.search).has("motion") ? (
+  new URLSearchParams(location.search).has("placement") ? (
+    <StrictMode>
+      <PlacementFixture />
+    </StrictMode>
+  ) : new URLSearchParams(location.search).has("motion") ? (
     <MotionFixture />
   ) : (
     <Fixture />

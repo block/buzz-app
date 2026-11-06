@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { StrictMode } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
@@ -11,6 +12,101 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+test("thread context changes keep the mounted screen and reply focus", () => {
+  const input = document.createElement("textarea");
+  const context = {
+    scope: "test",
+    viewer: "viewer",
+    channelId: "alpha",
+    channelName: "Alpha",
+    relayUrl: "wss://example.test",
+  };
+  const mount = vi.fn((host: HTMLElement, focus?: boolean) => {
+    host.append(input);
+    if (focus) input.focus();
+    return () => input.remove();
+  });
+  const entry: TerminalSession = {
+    context,
+    status: "running",
+    screen: { mount, output: async () => {}, dispose() {} },
+  };
+  const sessions: TerminalSessions = {
+    available: true,
+    get: () => entry,
+    snapshot: () => 0,
+    subscribe: () => () => {},
+    ensure: () => entry,
+    end: async () => {},
+    dispose: async () => {},
+  };
+  const focusRequested = vi.fn(() => true);
+  const requestFocus = vi.fn();
+  const content = (threadId: string) => (
+    <StrictMode>
+      <textarea aria-label="Thread reply" />
+      <TerminalPanel
+        target="alpha"
+        channelContext={{ ...context, threadId }}
+        sessions={sessions}
+        placement="side"
+        close={() => {}}
+        focusRequested={focusRequested}
+        requestFocus={requestFocus}
+      />
+    </StrictMode>
+  );
+  const view = render(content("first"));
+  const mounts = mount.mock.calls.length;
+  expect(input).toHaveFocus();
+  expect(focusRequested).toHaveBeenCalledOnce();
+  const reply = screen.getByRole("textbox", { name: "Thread reply" });
+  reply.focus();
+  view.rerender(content("second"));
+  expect(mount).toHaveBeenCalledTimes(mounts);
+  expect(reply).toHaveFocus();
+});
+test.each([
+  ["bottom", "Hide terminal", "tabler-icon-chevron-down"],
+  ["side", "Hide terminal", "tabler-icon-chevron-right"],
+  ["tab", "Close terminal tab", "tabler-icon-x"],
+] as const)(
+  "%s has the matching hide action",
+  async (placement, label, icon) => {
+    const close = vi.fn();
+    const sessions: TerminalSessions = {
+      available: false,
+      get: () => undefined,
+      snapshot: () => 0,
+      subscribe: () => () => {},
+      ensure: vi.fn(),
+      end: vi.fn(async () => {}),
+      dispose: vi.fn(async () => {}),
+    };
+    render(
+      <TerminalPanel
+        target="alpha"
+        channelContext={{
+          scope: "test",
+          viewer: "viewer",
+          channelId: "alpha",
+          channelName: "Alpha",
+          relayUrl: "wss://example.test",
+        }}
+        sessions={sessions}
+        placement={placement}
+        focusRequested={() => false}
+        requestFocus={() => {}}
+        close={close}
+      />,
+    );
+    const hide = screen.getByRole("button", { name: label });
+    expect(hide.querySelector("svg")).toHaveClass(icon);
+    await userEvent.setup().click(hide);
+    expect(close).toHaveBeenCalledOnce();
+    expect(sessions.end).not.toHaveBeenCalled();
+  },
+);
 test.each(["button", "native menu"])(
   "terminal input owns Escape and %s close detaches without ending the shell",
   async (closeAction) => {
@@ -63,6 +159,9 @@ test.each(["button", "native menu"])(
                 target="alpha"
                 channelContext={context}
                 sessions={sessions}
+                placement="tab"
+                focusRequested={() => false}
+                requestFocus={() => {}}
                 close={close}
               />
             ),

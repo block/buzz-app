@@ -4,6 +4,197 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
 
+// Browser-only: real xterm reparenting/fitting, modal focus and cross-window
+// storage must cooperate with the production panel and tab owners.
+test("terminal placement moves the retained shell and syncs across windows", async ({
+  page,
+  context,
+}) => {
+  await context.addInitScript(() =>
+    Object.defineProperty(navigator, "platform", {
+      value: "Linux x86_64",
+      configurable: true,
+    }),
+  );
+  const server = await createServer({
+    configFile: false,
+    envDir: false,
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const second = await context.newPage();
+  const errors = [watchPageErrors(page), watchPageErrors(second)];
+  try {
+    await server.listen();
+    const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-panel.html?placement`;
+    for (const target of [page, second]) {
+      await target.goto(url);
+      await target
+        .getByRole("button", { name: "Toggle channel terminal", exact: true })
+        .click();
+      await expect(
+        target
+          .getByRole("region", { name: "Terminal drawer" })
+          .locator(".xterm-rows"),
+      ).toContainText("FIXTURE_SHELL_READY");
+      await expect(target.locator(".xterm-helper-textarea")).toBeFocused();
+      await target.evaluate(() => {
+        window.retainedTerminal = document.querySelector(".xterm");
+      });
+    }
+    await page
+      .getByRole("button", { name: "Terminal settings", exact: true })
+      .click();
+    const settings = page.getByRole("dialog", { name: "Terminal settings" });
+    for (const [choice, placement] of [
+      ["Side panel", "side"],
+      ["Bottom drawer (default)", "bottom"],
+      ["Side panel", "side"],
+      ["Tab", "tab"],
+      ["Bottom drawer (default)", "bottom"],
+    ]) {
+      const radio = settings.getByRole("radio", { name: choice, exact: true });
+      await radio.click();
+      await expect(radio).toBeChecked();
+      await expect(radio).toBeFocused();
+      for (const target of [page, second]) {
+        // A moved screen must survive the previous dock's eventual unmount.
+        await expect(
+          target.locator("[data-panel-dock][data-closing]:not([hidden])"),
+        ).toHaveCount(0);
+        const terminal =
+          placement === "tab"
+            ? target.getByRole("tabpanel", { includeHidden: true })
+            : target.getByRole("region", {
+                name:
+                  placement === "side" ? "Terminal panel" : "Terminal drawer",
+                includeHidden: true,
+              });
+        await expect(terminal.locator(".xterm-rows")).toContainText(
+          "FIXTURE_SHELL_READY",
+        );
+        if (placement === "tab")
+          await expect(
+            target.getByRole("tab", {
+              name: "Terminal",
+              exact: true,
+              includeHidden: true,
+            }),
+          ).toHaveAttribute("aria-selected", "true");
+        expect(
+          await target.evaluate(
+            () => window.retainedTerminal === document.querySelector(".xterm"),
+          ),
+        ).toBe(true);
+        expect(await target.evaluate(() => window.terminalPanel.spawns())).toBe(
+          1,
+        );
+        // The native-input handoff still reaches the real shortcut dispatcher.
+        if (target === second) {
+          await target.locator(".xterm-helper-textarea").focus();
+          await target.keyboard.press("Control+j");
+          await expect(target.locator(".xterm")).toHaveCount(0);
+          await target.keyboard.press("Control+j");
+          await expect(terminal.locator(".xterm-rows")).toContainText(
+            "FIXTURE_SHELL_READY",
+          );
+          expect(
+            await target.evaluate(() => window.terminalPanel.spawns()),
+          ).toBe(1);
+          expect(
+            await target.evaluate(() => window.terminalPanel.written()),
+          ).toBe("");
+        }
+      }
+      await expect(radio).toBeFocused();
+    }
+    await page.keyboard.press("Escape");
+    await expect(settings).toBeHidden();
+    // Restored Side/Tab panes retain their shell without taking navigation focus.
+    for (const choice of ["Side panel", "Tab"]) {
+      await page
+        .getByRole("button", { name: "Terminal settings", exact: true })
+        .click();
+      await settings.getByRole("radio", { name: choice, exact: true }).click();
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeHidden();
+      await page
+        .getByRole("button", { name: "Switch channel", exact: true })
+        .click();
+      await expect(page.locator(".xterm")).toHaveCount(0);
+      await page
+        .getByRole("button", { name: "Switch channel", exact: true })
+        .click();
+      await expect(page.locator(".xterm-rows")).toContainText(
+        "FIXTURE_SHELL_READY",
+      );
+      expect(
+        await page.evaluate(
+          () => window.retainedTerminal === document.querySelector(".xterm"),
+        ),
+      ).toBe(true);
+      await expect(page.locator(".xterm-helper-textarea")).not.toBeFocused();
+      expect(await page.evaluate(() => window.terminalPanel.spawns())).toBe(1);
+      // An explicit shortcut open still hands focus to shell input.
+      await page.keyboard.press("Control+j");
+      await expect(page.locator(".xterm")).toHaveCount(0);
+      await page.keyboard.press("Control+j");
+      await expect(page.locator(".xterm-helper-textarea")).toBeFocused();
+    }
+    await page
+      .getByRole("button", { name: "Terminal settings", exact: true })
+      .click();
+    await settings
+      .getByRole("radio", { name: "Side panel", exact: true })
+      .click();
+    await page.keyboard.press("Escape");
+    await expect(settings).toBeHidden();
+    const side = page.getByRole("region", { name: "Terminal panel" });
+    // Browser-only: production overlay geometry must still fit the same xterm.
+    await page.setViewportSize({ width: 600, height: 800 });
+    await expect(side).toBeVisible();
+    await expect(side.locator(".xterm-screen")).toHaveCSS(
+      "visibility",
+      "visible",
+    );
+    await expect
+      .poll(() =>
+        side.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const screen = element
+            .querySelector(".xterm-screen")
+            .getBoundingClientRect();
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.left >= 0 &&
+            rect.right <= innerWidth &&
+            screen.height > 0 &&
+            screen.width <= rect.width
+          );
+        }),
+      )
+      .toBe(true);
+    await expect(
+      page.locator("[data-panel-dock]:not([hidden], [data-closing])"),
+    ).toHaveCSS("position", "absolute");
+    await page.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+j");
+    await expect(page.locator(".xterm")).toHaveCount(0);
+    await page.keyboard.press("Control+j");
+    await expect(side.locator(".xterm-rows")).toContainText(
+      "FIXTURE_SHELL_READY",
+    );
+    expect(
+      await page.evaluate(
+        () => window.retainedTerminal === document.querySelector(".xterm"),
+      ),
+    ).toBe(true);
+    expect(errors.flatMap((error) => error.unexplained())).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
 // Browser-only: real same-origin storage events must carry the registered
 // Settings card's changes to another mounted xterm, without replacing it.
 test("terminal settings apply, persist and reset across windows", async ({
@@ -827,6 +1018,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(drawer.locator(".xterm-rows")).toContainText(
       "FIXTURE_SHELL_READY",
     );
+    await expect(drawer.locator(".xterm-helper-textarea")).toBeFocused();
     await button("End session").focus();
     await page.keyboard.press("Tab");
     await expect(hide).toBeFocused();
@@ -921,6 +1113,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(drawer.locator(".xterm-rows")).toContainText(
       "FIXTURE_SHELL_READY",
     );
+    await expect(drawer.locator(".xterm-helper-textarea")).toBeFocused();
     await page.evaluate(() => window.terminalPanel.holdClose());
     await button("End session").focus();
     await page.keyboard.press("Enter");
@@ -935,6 +1128,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(drawer.locator(".xterm-rows")).toContainText(
       "FIXTURE_SHELL_READY",
     );
+    await expect(drawer.locator(".xterm-helper-textarea")).toBeFocused();
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-panel.html?short`,
     );

@@ -1079,7 +1079,8 @@ it under Settings → Plugins → Manage plugins. Its channel-header ListChecks 
 side panel, grouping items as To do, In progress and Done, with add, a per-item status
 selector, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
-tokens; Channels still owns panel geometry, responsive placement and selection. Terminal remains in the bottom drawer.
+tokens; Channels still owns panel geometry, responsive placement and selection.
+Terminal offers bottom, side or tab placement via its settings card.
 
 The source of truth is ordinary Markdown in one root level-two `Todos` section:
 

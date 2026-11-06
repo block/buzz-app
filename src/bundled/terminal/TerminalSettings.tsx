@@ -5,6 +5,8 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
+import type { TerminalPlacementPreference } from "./placement-preference";
 import { useFontAvailability } from "./font-availability";
 import {
   parseFontFamily,
@@ -40,13 +42,19 @@ export function createTerminalSettingsDraft() {
 
 export function TerminalSettings({
   font,
+  placement,
   drafts,
   active,
 }: {
   font: TerminalFontPreference;
+  placement: TerminalPlacementPreference;
   drafts: ReturnType<typeof createTerminalSettingsDraft>;
   active(): boolean;
 }) {
+  const { placement: position, error: placementError } = useSyncExternalStore(
+    placement.subscribe,
+    placement.snapshot,
+  );
   const { family, size, error } = useSyncExternalStore(
     font.subscribe,
     font.snapshot,
@@ -81,129 +89,182 @@ export function TerminalSettings({
         title="Terminal"
         subtitle="Customize your terminal."
       />
-      <InlineHeader title="Font" />
-      <SettingsGroup layout="form">
-        <form
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            drafts.update({ blurredValue: value });
-            if (!canApply || parsedSize === null) return;
-            font.set(parsed, parsedSize);
-            drafts.update({ family: null, size: null, blurredValue: null });
-          }}
-        >
-          <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-section-gap">
+        <div>
+          <InlineHeader title="Placement" />
+          <SettingsGroup layout="form">
             <Field
-              label="Font family"
-              description="Type an installed font family name. For Nerd Fonts, use a Mono variant for cell alignment."
-              error={
-                invalid
-                  ? "Enter one font family name, up to 64 characters, without quotes, commas, or CSS syntax. Use default to clear this choice."
-                  : unavailable
-                    ? `Couldn’t load “${parsed}”. Check the font name or install it, then try again.`
-                    : undefined
-              }
+              label="Placement"
+              nativeLabel={false}
+              labelVisibility="hidden"
             >
-              <Input
-                ref={familyInput}
-                value={value}
-                onValueChange={(next) => {
-                  drafts.update({ family: next, blurredValue: null });
-                }}
-                onBlur={() => drafts.update({ blurredValue: value })}
-                aria-busy={availability.status === "checking"}
-                placeholder="JetBrains Mono"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-            </Field>
-            {unavailable && (
-              <Button
-                type="button"
-                size="sm"
-                variant="subtle"
-                onClick={() => {
-                  familyInput.current?.focus();
-                  availability.retry();
+              <RadioGroup
+                aria-label="Placement"
+                value={position}
+                onValueChange={(value) => {
+                  if (active()) placement.set(value);
                 }}
               >
-                Retry font check
-              </Button>
-            )}
-            {family && savedStatus === "unavailable" && (
-              <p role="status" className="text-body-sm text-subtle">
-                Couldn’t load your saved font “{family}”. The terminal is using
-                JetBrains Mono.
-              </p>
-            )}
-            <Field
-              label="Font size (px)"
-              description={`Terminal text size, independent of interface text size. Default: ${DEFAULT_FONT_SIZE} px.`}
-              error={
-                sizeInvalid
-                  ? `Enter a number from ${MIN_FONT_SIZE} to ${MAX_FONT_SIZE}.`
-                  : undefined
-              }
-            >
-              <Input
-                type="number"
-                min={MIN_FONT_SIZE}
-                max={MAX_FONT_SIZE}
-                step="any"
-                value={sizeValue}
-                onValueChange={(next) => drafts.update({ size: next })}
-              />
+                <Radio
+                  value="bottom"
+                  label="Bottom drawer (default)"
+                  description="Below the conversation. Threads stay visible on the right."
+                />
+                <Radio
+                  value="side"
+                  label="Side panel"
+                  description="In the right column. When a thread is open, the terminal appears below it so both stay visible."
+                />
+                <Radio
+                  value="tab"
+                  label="Tab"
+                  description="A tab beside your thread tabs. The pane shows one tab at a time."
+                />
+              </RadioGroup>
             </Field>
-          </div>
-          <p
-            className="mt-4 text-mono"
-            style={{
-              fontSize: `${parsedSize ?? DEFAULT_FONT_SIZE}px`,
-              letterSpacing: 0,
-              fontFamily: parsed
-                ? `"${parsed}", var(--font-system-mono)`
-                : "var(--font-system-mono)",
-            }}
-          >
-            Preview: ABC 0123
-          </p>
-          <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-            <Button
-              type="button"
-              variant="subtle"
-              onClick={() => {
-                font.reset();
+          </SettingsGroup>
+          {active() && placementError && (
+            <ToastNotice
+              title="Terminal placement preference needs attention"
+              description={placementError}
+            >
+              <Button type="button" size="sm" onClick={placement.retry}>
+                Retry terminal placement preference
+              </Button>
+            </ToastNotice>
+          )}
+        </div>
+        <div>
+          <InlineHeader title="Font" />
+          <SettingsGroup layout="form">
+            <form
+              noValidate
+              onSubmit={(event) => {
+                event.preventDefault();
+                drafts.update({ blurredValue: value });
+                if (!canApply || parsedSize === null) return;
+                font.set(parsed, parsedSize);
                 drafts.update({ family: null, size: null, blurredValue: null });
               }}
             >
-              Use default
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={
-                !canApply ||
-                sizeInvalid ||
-                (parsed === family && parsedSize === size)
-              }
+              <div className="flex flex-col gap-4">
+                <Field
+                  label="Font family"
+                  description="Type an installed font family name. For Nerd Fonts, use a Mono variant for cell alignment."
+                  error={
+                    invalid
+                      ? "Enter one font family name, up to 64 characters, without quotes, commas, or CSS syntax. Use default to clear this choice."
+                      : unavailable
+                        ? `Couldn’t load “${parsed}”. Check the font name or install it, then try again.`
+                        : undefined
+                  }
+                >
+                  <Input
+                    ref={familyInput}
+                    value={value}
+                    onValueChange={(next) => {
+                      drafts.update({ family: next, blurredValue: null });
+                    }}
+                    onBlur={() => drafts.update({ blurredValue: value })}
+                    aria-busy={availability.status === "checking"}
+                    placeholder="JetBrains Mono"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                  />
+                </Field>
+                {unavailable && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => {
+                      familyInput.current?.focus();
+                      availability.retry();
+                    }}
+                  >
+                    Retry font check
+                  </Button>
+                )}
+                {family && savedStatus === "unavailable" && (
+                  <p role="status" className="text-body-sm text-subtle">
+                    Couldn’t load your saved font “{family}”. The terminal is
+                    using JetBrains Mono.
+                  </p>
+                )}
+                <Field
+                  label="Font size (px)"
+                  description={`Terminal text size, independent of interface text size. Default: ${DEFAULT_FONT_SIZE} px.`}
+                  error={
+                    sizeInvalid
+                      ? `Enter a number from ${MIN_FONT_SIZE} to ${MAX_FONT_SIZE}.`
+                      : undefined
+                  }
+                >
+                  <Input
+                    type="number"
+                    min={MIN_FONT_SIZE}
+                    max={MAX_FONT_SIZE}
+                    step="any"
+                    value={sizeValue}
+                    onValueChange={(next) => drafts.update({ size: next })}
+                  />
+                </Field>
+              </div>
+              <p
+                className="mt-4 text-mono"
+                style={{
+                  fontSize: `${parsedSize ?? DEFAULT_FONT_SIZE}px`,
+                  letterSpacing: 0,
+                  fontFamily: parsed
+                    ? `"${parsed}", var(--font-system-mono)`
+                    : "var(--font-system-mono)",
+                }}
+              >
+                Preview: ABC 0123
+              </p>
+              <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                <Button
+                  type="button"
+                  variant="subtle"
+                  onClick={() => {
+                    font.reset();
+                    placement.reset();
+                    drafts.update({
+                      family: null,
+                      size: null,
+                      blurredValue: null,
+                    });
+                  }}
+                >
+                  Use default
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={
+                    !canApply ||
+                    sizeInvalid ||
+                    (parsed === family && parsedSize === size)
+                  }
+                >
+                  Apply
+                </Button>
+              </div>
+            </form>
+          </SettingsGroup>
+          {active() && error && (
+            <ToastNotice
+              title="Terminal font preference needs attention"
+              description={error}
             >
-              Apply
-            </Button>
-          </div>
-        </form>
-      </SettingsGroup>
-      {active() && error && (
-        <ToastNotice
-          title="Terminal font preference needs attention"
-          description={error}
-        >
-          <Button type="button" size="sm" onClick={font.retry}>
-            Retry terminal font preference
-          </Button>
-        </ToastNotice>
-      )}
+              <Button type="button" size="sm" onClick={font.retry}>
+                Retry terminal font preference
+              </Button>
+            </ToastNotice>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

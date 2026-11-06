@@ -21,8 +21,12 @@ import {
   createTerminalSettingsDraft,
   TerminalSettings,
 } from "./TerminalSettings";
+import {
+  createTerminalPlacementPreference,
+  TERMINAL_PLACEMENT_KEY,
+} from "./placement-preference";
 
-const stores: TerminalFontPreference[] = [];
+const stores: Pick<TerminalFontPreference, "dispose">[] = [];
 const loadFont = vi.fn<(font: string) => Promise<FontFace[]>>();
 const fontsDescriptor = Object.getOwnPropertyDescriptor(document, "fonts");
 beforeEach(() => {
@@ -52,16 +56,22 @@ beforeEach(() => {
 });
 function setup() {
   const font = createTerminalFontPreference();
+  const placement = createTerminalPlacementPreference();
   const drafts = createTerminalSettingsDraft();
-  stores.push(font);
+  stores.push(font, placement);
   const content = (active = true) => (
     <StrictMode>
       <ToastProvider>
-        <TerminalSettings font={font} drafts={drafts} active={() => active} />
+        <TerminalSettings
+          font={font}
+          placement={placement}
+          drafts={drafts}
+          active={() => active}
+        />
       </ToastProvider>
     </StrictMode>
   );
-  return { font, content, view: render(content()) };
+  return { font, placement, content, view: render(content()) };
 }
 afterEach(() => {
   cleanup();
@@ -72,6 +82,61 @@ afterEach(() => {
     Object.defineProperty(document, "fonts", fontsDescriptor);
   else Reflect.deleteProperty(document, "fonts");
   localStorage.clear();
+});
+
+it("restores placement, applies immediately without losing font drafts, and resets all preferences", async () => {
+  localStorage.setItem(TERMINAL_PLACEMENT_KEY, "side");
+  localStorage.setItem(
+    TERMINAL_FONT_KEY,
+    JSON.stringify({ family: null, size: 18 }),
+  );
+  const { placement, font } = setup();
+  expect(screen.getByRole("radio", { name: "Side panel" })).toBeChecked();
+  const size = screen.getByRole("spinbutton", { name: "Font size (px)" });
+  fireEvent.change(size, { target: { value: "22" } });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("radio", { name: "Tab" }));
+  expect(placement.snapshot().placement).toBe("tab");
+  expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe("tab");
+  expect(size).toHaveValue(22);
+  expect(font.snapshot().size).toBe(18);
+  await user.click(screen.getByRole("button", { name: "Use default" }));
+  expect(
+    screen.getByRole("radio", { name: "Bottom drawer (default)" }),
+  ).toBeChecked();
+  expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBeNull();
+  expect(localStorage.getItem(TERMINAL_FONT_KEY)).toBeNull();
+  expect(size).toHaveValue(12);
+});
+
+it("keeps placement saves active, hides inactive recovery, and retries", async () => {
+  const { placement, content, view } = setup();
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("Unavailable");
+    });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("radio", { name: "Side panel" }));
+  expect(placement.snapshot().placement).toBe("side");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "could not be saved",
+  );
+  view.rerender(content(false));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  view.rerender(content(true));
+  write.mockRestore();
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Retry terminal placement preference",
+    }),
+  );
+  expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe("side");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
 });
 
 it("blocks pending and unavailable submissions without changing the active font", async () => {

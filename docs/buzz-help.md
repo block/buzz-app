@@ -760,6 +760,15 @@ confirmation.
   A saved plugin sort can briefly wait for its plugin at startup, within the
   sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z
   without forgetting the saved choice.
+- On macOS and Linux desktop, the **Terminal** plugin opens your local shell
+  from the conversation header or Cmd/Ctrl+J. In **Settings → Plugins → Terminal →
+  Placement**, choose Bottom drawer (default), Side panel, or Tab. Changing this
+  moves a visible terminal with its shell and scrollback intact. A side panel sits
+  under an open thread; a tab shares the thread tab strip, showing one tab at a
+  time. Side and Tab reappear when you return to the channel without taking keyboard
+  focus; Bottom closes when you leave. The choice is saved on this device. **Use default** resets both
+  placement and font. Hiding the terminal keeps its shell running; **End session**
+  stops it. Browser-only and Windows hosts do not offer a local terminal.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without

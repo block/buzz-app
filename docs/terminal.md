@@ -1,11 +1,24 @@
 # Terminal plugin
 
 In a channel, click **Terminal** in the conversation header or press **Cmd+J**
-(macOS) / **Ctrl+J** (Linux desktop). The bottom drawer starts a login shell the
+(macOS) / **Ctrl+J** (Linux desktop). The terminal starts a login shell the
 first time it opens for that community/account/channel. **Hide** and the shortcut
-hide the drawer without stopping work; reopening reattaches the same emulator and
+hide the terminal without stopping work; reopening reattaches the same emulator and
 shell. **End session** explicitly terminates it; **Restart** starts a fresh shell.
 An exited shell remains visible until ended/restarted and never respawns automatically.
+
+In **Settings → Plugins → Terminal → Placement**, choose **Bottom drawer**
+(the default, below the conversation), **Side panel** (the right column, under
+an open thread), or **Tab** (beside thread tabs). A terminal tab shares its
+pane with threads, showing one tab at a time. Terminal tabs stay in that pane.
+Changing placement moves a visible terminal immediately, preserving its shell
+and scrollback. Settings keeps keyboard focus while the terminal moves behind it.
+Placement is saved on this device and syncs across its Buzz windows.
+Bottom closes when you leave a channel; Side and Tab stay open in that channel
+and reappear on return without taking keyboard focus.
+An unselected terminal tab or a closed pane stays hidden after a placement change;
+reopen with Cmd/Ctrl+J to reattach the same shell. Changing placement may reorder
+the Terminal launcher among the other channel tools until the app restarts.
 
 Pointer openings reuse the panel dock’s 180ms fade and strong ease-out, with 12px
 of upward travel. Closing reclaims the conversation height immediately, matching
@@ -62,7 +75,8 @@ use a Mono variant for cell alignment. Applying a new family requires a successf
 load check; failures show an inline error with Retry. The preview is a plain
 text sample and follows drafts; Apply updates open terminals without
 restarting their shells. Choices are saved on this device and sync across its
-Buzz windows. **Use default** resets both choices to JetBrains Mono at 12 CSS px.
+Buzz windows. **Use default** resets placement to the bottom drawer and the font
+to JetBrains Mono at 12 CSS px.
 Size accepts 8–32 CSS px, including fractions, independently of interface text
 size. Terminal letter spacing is zero; its line-height multiplier is 1.0 for
 compact rows and closer prompt-glyph joins. The renderer remains xterm's DOM renderer.

@@ -1356,6 +1356,9 @@ export class CodexRuntime {
   async voice(seat: AgentVoiceSeat, agent: AgentHandle) {
     if (this.disposed) throw new Error("Codex runtime is disposed");
     seat.signal.throwIfAborted();
+    // Protection is not known to review realtime input, so voice refuses it.
+    if (seat.agent.protection || agent.protection)
+      throw new Error("Voice is unavailable for protected agents");
     // Voice runs on this computer; a plugin execution target has no voice seat.
     if (await this.inspect?.(agent.key))
       throw new Error("Voice is unsupported for agents on an execution target");
@@ -2409,23 +2412,13 @@ export class CodexRuntime {
     }
   }
 
-  /** What a thread for `agent` starts or resumes with in `workspace`, and the
-   * model and effort its turn runs on: `pick`'s when available. */
-  private async prepare(
+  /** The model and effort a turn runs on: `pick`'s when available. */
+  private async turnModel(
     rpc: AppServer,
-    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
     settings: Config,
-    workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
     synced?: Delivery["synced"],
   ) {
-    const normalized = await rpc.request<{
-      config: {
-        mcp_servers?: Record<string, Record<string, unknown>>;
-        model_reasoning_summary?: string | null;
-        features?: { hooks?: boolean; codex_hooks?: boolean };
-      };
-    }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
     const own = resolveModel(settings.model, models);
     // Model and effort are per turn, so a pick changes nothing after it.
@@ -2448,6 +2441,27 @@ export class CodexRuntime {
     const kept = synced?.effort;
     if (kept && !pick.model && !pick.effort && effort !== kept)
       throw new Error(unsupportedSynced("effort", kept, `Codex's ${model}`));
+    return { model, effort };
+  }
+
+  /** What a thread for `agent` starts or resumes with in `workspace`, and the
+   * model and effort its turn runs on: `pick`'s when available. */
+  private async prepare(
+    rpc: AppServer,
+    agent: Pick<AgentHandle, "key" | "name" | "pubkey" | "relay">,
+    settings: Config,
+    workspace: string,
+    pick: Readonly<{ model?: string; effort?: string }>,
+    synced?: Delivery["synced"],
+  ) {
+    const normalized = await rpc.request<{
+      config: {
+        mcp_servers?: Record<string, Record<string, unknown>>;
+        model_reasoning_summary?: string | null;
+        features?: { hooks?: boolean; codex_hooks?: boolean };
+      };
+    }>("config/read", { cwd: workspace });
+    const { model, effort } = await this.turnModel(rpc, settings, pick, synced);
     const mcp = Object.fromEntries(
       Object.entries(normalized.config.mcp_servers ?? {}).map(
         ([name, server]) => [
@@ -2687,15 +2701,19 @@ export class CodexRuntime {
     try {
       const rpc = await server.opening;
       signal.throwIfAborted();
+      const seat = lane.voice;
       const loaded =
-        lane.voice?.loaded ??
+        seat?.loaded ??
         (await this.loadThread(request, entry, key, signal, server, rpc));
+      // A typed turn on a seat's thread still runs on its own picks.
+      const { model, effort } =
+        seat && adopted === undefined
+          ? await this.turnModel(rpc, settings, request, request.synced)
+          : loaded;
       const {
         threadId,
         workspace,
         params,
-        model,
-        effort,
         summary,
         bridge,
         tools,

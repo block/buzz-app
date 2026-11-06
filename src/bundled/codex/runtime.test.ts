@@ -5892,6 +5892,31 @@ describe("voice seats", () => {
     expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toContain("NEW CORE");
     await connection.close();
   });
+  it("refuses a protected agent before any setup", async () => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const f = fixture();
+    const d = f.delivery("hello");
+    await expect(
+      f.runtime.voice(
+        {
+          config: d.config,
+          agent: {
+            ...d.agent,
+            protection: {},
+            config: d.config,
+          } as unknown as Agent,
+          conversation: { channelId: "channel" },
+          signal: new AbortController().signal,
+          async output() {},
+          async transcript() {},
+          ended() {},
+        },
+        d.agent,
+      ),
+    ).rejects.toThrow("protected agents");
+    expect(f.spawn).not.toHaveBeenCalled();
+    expect(vi.mocked(openVoice)).not.toHaveBeenCalled();
+  });
   it("preserves the mention path's synced-effort refusal", async () => {
     await expect(
       seated({
@@ -6029,6 +6054,48 @@ describe("voice seats", () => {
     expect(result?.result).toMatchObject({ success: true });
     expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(false);
     f.complete(0, "DONE");
+    await f.connection.close();
+  });
+  it("runs a typed turn on its own picks while a seat is open, idle or queued", async () => {
+    const f = await seated();
+    const settings = () =>
+      f.starts().map((wire) => {
+        const { threadId, model, effort } = wire.params as Record<
+          string,
+          string
+        >;
+        return { threadId, model, effort };
+      });
+    // Idle: the seat's thread, the pick's model and effort.
+    await f.runtime.run({
+      ...f.delivery("@Codex deeper"),
+      model: "deep-model",
+      effort: "xhigh",
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    // Queued behind adopted voice work: still its own pick once it drains.
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "voice-1" } },
+    });
+    await f.runtime.run({ ...f.delivery("@Codex harder"), effort: "high" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.starts()).toHaveLength(1);
+    f.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "voice-1", status: "completed" },
+      },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(settings()).toEqual([
+      { threadId: "thread-1", model: "deep-model", effort: "xhigh" },
+      { threadId: "thread-1", model: "test-model", effort: "high" },
+    ]);
+    f.complete(1, "DONE");
     await f.connection.close();
   });
   it("does not let queued text overwrite a backend turn arriving during media open", async () => {

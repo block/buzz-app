@@ -199,6 +199,15 @@ export function useAppNavigation(
       waiting = true;
     else if (!providerAvailable) failure = "unavailable";
   }
+  // An installed plugin that is turned off has no pages: say so, not "removed".
+  const turnedOff =
+    failure === "unavailable" &&
+    (target.kind === "page" || target.kind === "plugin") &&
+    plugins.configuration.status === "ready"
+      ? plugins.configuration.catalog.plugins.find(
+          (plugin) => plugin.manifest.id === target.pluginId && !plugin.enabled,
+        )?.manifest
+      : undefined;
   // Legacy Home resolves to Messages; version-1 placeholder routes resolve to
   // their standalone plugins. Preserve scope so normalization never grants access.
   // Resolve in place before paint: links and history share one policy.
@@ -435,6 +444,8 @@ export function useAppNavigation(
     select,
     waiting,
     failure,
+    /** The installed, turned-off plugin whose page or link failed. */
+    turnedOff,
     selected: pageKey ?? target.kind,
     /** The connection is down, including a settled refusal. */
     offline: !failure && offline,

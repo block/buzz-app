@@ -1233,3 +1233,64 @@ it("Close returns to the immediately preceding failed destination, not an older 
     }),
   );
 });
+
+it("says when the open page's plugin is turned off, and its Manage plugins opens that plugin and returns to the page", async () => {
+  const current = legacyPageFixture();
+  await userEvent.click(await screen.findByRole("tab", { name: "Activity" }));
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { target: { kind: "page", pluginId: "buzz.inbox" } },
+    }),
+  );
+  const visit = current.navigation.snapshot().entry.id;
+  await act(() => current.plugins.change("disable", "buzz.inbox"));
+  const card = (
+    await screen.findByRole("heading", { name: "Activity is turned off" })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText("Turn it on in Manage plugins to open this page."),
+  ).toBeVisible();
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Manage plugins", "Go to Messages"]);
+
+  await userEvent.click(
+    within(card).getByRole("button", { name: "Manage plugins" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+      pluginId: "buzz.inbox",
+      scope: { viewer, communityOrigin: origin },
+    }),
+  );
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  await userEvent.click(
+    await within(settings).findByRole("button", { name: "Enable" }),
+  );
+  await waitFor(() =>
+    expect(
+      current.pages.snapshot().some((page) => page.key === "buzz.inbox/inbox"),
+    ).toBe(true),
+  );
+  await userEvent.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { id: visit, target: { kind: "page", pluginId: "buzz.inbox" } },
+    }),
+  );
+  expect(current.navigation.snapshot().reason).toBeUndefined();
+  expect(screen.queryByText(pageFailure)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "Activity is turned off" }),
+  ).not.toBeInTheDocument();
+});

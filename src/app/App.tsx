@@ -387,12 +387,13 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         }
       />
     );
-  const openSettingsSection = (section: string) => {
+  const openSettingsSection = (section: string, pluginId?: string) => {
     const client = services.communities.snapshot();
     void services.navigation.open({
       version: 1,
       kind: "settings",
       section,
+      ...(pluginId ? { pluginId } : {}),
       ...(client.viewer && client.selected
         ? {
             scope: {
@@ -523,6 +524,27 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           action={
             <>
               {retryButton("primary")}
+              {messagesButton("quiet")}
+            </>
+          }
+        />
+      ) : route.turnedOff ? (
+        // Its details' Enable owns every restriction and admin gate.
+        <EmptyState
+          icon={<WarningCircleIcon />}
+          title={`${route.turnedOff.name} is turned off`}
+          description="Turn it on in Manage plugins to open this page."
+          action={
+            <>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() =>
+                  openSettingsSection("plugins", route.turnedOff?.id)
+                }
+              >
+                Manage plugins
+              </Button>
               {messagesButton("quiet")}
             </>
           }

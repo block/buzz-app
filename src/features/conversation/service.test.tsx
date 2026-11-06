@@ -151,6 +151,24 @@ it("waits for successful activation and rolls back both surfaces on apply failur
   );
   expect(h.service.tools.snapshot()).toHaveLength(0);
 });
+it("rejects a tool placement the host does not support", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerTool({
+        id: "tool",
+        title: "Tool",
+        placement: "header" as "send",
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.runtime.snapshot()[h.plugin.manifest.id]?.status).toBe("failed"),
+  );
+  expect(h.service.tools.snapshot()).toHaveLength(0);
+});
 it("validates ranges, skips failures, and deterministically resolves overlap", () => {
   const renderers = [
     () => {

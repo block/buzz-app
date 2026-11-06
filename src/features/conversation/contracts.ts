@@ -117,6 +117,9 @@ export type ComposerTool = Readonly<{
   title: string;
   /** Lower values appear first; defaults to zero. Equal values sort by contribution key. */
   order?: number;
+  /** `send` places a compact status control just before Send instead of in
+   * the tool row. The host hides it while a sent message is being edited. */
+  placement?: "send" | undefined;
   component: ComponentType<ComposerToolProps>;
   /** Optional emoji-only chooser for the message reaction row. */
   reactionComponent?: ComponentType<ReactionToolProps>;

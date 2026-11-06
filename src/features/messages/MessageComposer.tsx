@@ -3271,6 +3271,24 @@ function Composer({
       )}
     </>
   );
+  // The tool row and the tools placed beside Send get the same host commands.
+  const hostToolProps = {
+    session,
+    scope,
+    channelId,
+    threadRootId,
+    disabled: editingDisabled,
+    inviteAgents: agentChoices && !editing.target,
+    recipients,
+    audience,
+    insertText: (text: string) => attachGif(text) ?? insert(text),
+    insertMention,
+    insertMentions,
+    replaceRecipients,
+    replaceRecipientsIfEmpty,
+    insertResource,
+    focus: () => input.current?.focus(),
+  };
   if (readingOnly)
     return (
       <>
@@ -3688,21 +3706,7 @@ function Composer({
                       ? { capture: voice.begin }
                       : {})}
                     renderLeading={renderLeadingTools}
-                    session={session}
-                    scope={scope}
-                    channelId={channelId}
-                    threadRootId={threadRootId}
-                    disabled={editingDisabled}
-                    inviteAgents={agentChoices && !editing.target}
-                    recipients={recipients}
-                    audience={audience}
-                    insertText={(text) => attachGif(text) ?? insert(text)}
-                    insertMention={insertMention}
-                    insertMentions={insertMentions}
-                    replaceRecipients={replaceRecipients}
-                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
-                    insertResource={insertResource}
-                    focus={() => input.current?.focus()}
+                    {...hostToolProps}
                   />
                 ) : (
                   renderLeadingTools(null)
@@ -3739,6 +3743,13 @@ function Composer({
                   place={sessionPlace}
                 />
               )}
+            {active && !editing.target && extensions && (
+              <ComposerTools
+                registry={extensions.tools}
+                placement="send"
+                {...hostToolProps}
+              />
+            )}
             <IconButton
               variant={
                 draft.trim() ||

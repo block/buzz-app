@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { StartLinkedChat } from "../../bundled/channels/StartLinkedChat";
+import { MenuGroup, MenuItem } from "../../shared/design-system/ui/Menu";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { MessageActionBar } from "./MessageActionBar";
 import { createRelaySession } from "../relay/session";
 import { messageActionRequests } from "./action-requests";
 import { MessageRow } from "./MessageRow";
@@ -110,4 +119,41 @@ it("activates a handed-off Start Solo chat through its own menu item, opening th
   } finally {
     owner.dispose();
   }
+});
+
+it("activates the requested contribution in the requesting bar's own menu, not another rendering's", async () => {
+  const first = vi.fn();
+  const second = vi.fn();
+  const bar = (
+    handler: () => void,
+    label: string,
+    request?: { id: number; activate: number },
+  ) => (
+    <MessageActionBar
+      messageId="same-message"
+      copyText={() => label}
+      openRequest={request}
+      overflowItems={
+        <MenuGroup data-contribution={1}>
+          <MenuItem onClick={handler}>{label}</MenuItem>
+        </MenuGroup>
+      }
+    />
+  );
+  const view = (request?: { id: number; activate: number }) => (
+    <ToastProvider>
+      {bar(first, "First rendering")}
+      {bar(second, "Second rendering", request)}
+    </ToastProvider>
+  );
+  const rendered = render(view());
+  fireEvent.click(
+    screen.getAllByRole("button", {
+      name: "More message actions",
+    })[0] as HTMLElement,
+  );
+  await screen.findByRole("menuitem", { name: "First rendering" });
+  rendered.rerender(view({ id: 1, activate: 1 }));
+  await waitFor(() => expect(second).toHaveBeenCalledTimes(1));
+  expect(first).not.toHaveBeenCalled();
 });

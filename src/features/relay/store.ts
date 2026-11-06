@@ -1786,7 +1786,7 @@ export function createChannelStore(
     let denyAllOnFailure = true;
     let outcome: RosterRefresh = { state: "deferred" };
     /** Previews the pass's metadata reads omitted (see `denyOmitted`). */
-    const omitted = new Map<string, RelayEvent | undefined>();
+    const omittedPreviews = new Map<string, RelayEvent | undefined>();
     try {
       const ids = new Set<string>();
       let scannedBytes = 0;
@@ -2010,6 +2010,7 @@ export function createChannelStore(
           [
             {
               kinds: [39000],
+              authors: [transport.relayAuthor],
               ...consistency,
               "#d": batch,
               limit: DISCOVERY_LIMIT,
@@ -2025,7 +2026,7 @@ export function createChannelStore(
             !discovery.authorized(id) &&
             omittedPreview(id, metadata, versions)
           )
-            omitted.set(id, versions.get(id));
+            omittedPreviews.set(id, versions.get(id));
         if (disposed || generation !== epoch) return;
       }
       if (!disposed && generation === epoch) {
@@ -2097,7 +2098,7 @@ export function createChannelStore(
         else transport.rosterChanged?.();
         if (outcome.state === "verified")
           for (const id of windows.keys()) revalidateCached(id);
-        denyOmitted(omitted);
+        denyOmitted(omittedPreviews);
       }
     }
   }
@@ -4128,7 +4129,7 @@ export function createChannelStore(
       controllers.add(controller);
       confirmingMetadata = true;
       let finished = false;
-      const omitted = new Map<string, RelayEvent | undefined>();
+      const omittedPreviews = new Map<string, RelayEvent | undefined>();
       try {
         for (let offset = 0; offset < ids.length; offset += DISCOVERY_LIMIT) {
           const batch = ids.slice(offset, offset + DISCOVERY_LIMIT);
@@ -4153,10 +4154,10 @@ export function createChannelStore(
               !discovery.authorized(id) &&
               omittedPreview(id, metadata, versions)
             )
-              omitted.set(id, versions.get(id));
+              omittedPreviews.set(id, versions.get(id));
         }
         finished = true;
-        denyOmitted(omitted);
+        denyOmitted(omittedPreviews);
       } catch (error) {
         if (
           !disposed &&

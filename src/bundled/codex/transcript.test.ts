@@ -695,6 +695,46 @@ it("fails a transcript with an item over app-server's output frame", async () =>
   ).toEqual([50, 25, 13, 7, 4, 2, 1]);
 });
 
+it("refuses a remembered rollout that grew past a full read's limit, and forgets it", async () => {
+  const half = `${"x".repeat(30 * 1024 * 1024)}\n`;
+  let file = half;
+  const path = "/sessions/large.jsonl";
+  const { spawn } = server(
+    paged([turn({ items: [], status: "inProgress", completedAt: null })]),
+    [],
+    () => file,
+    path,
+  );
+  const lookupOne = { ...lookup, threadId: "thread-1" };
+  const signal = new AbortController().signal;
+  await readTranscript(spawn, lookupOne, signal);
+  file = half + half;
+  const grown = await readTranscript(spawn, lookupOne, signal);
+  expect(JSON.stringify(grown?.turns)).toContain("larger than 50 MB");
+  // Forgotten, so the next read is a full one again.
+  await readTranscript(spawn, lookupOne, signal);
+  expect(spawn).toHaveBeenLastCalledWith(
+    "read",
+    expect.objectContaining({ args: [path] }),
+  );
+});
+
+it("remembers a rollout while a thread found by name is in progress", async () => {
+  const tag = sessionTag(agent.key, lookup);
+  const path = "/sessions/named.jsonl";
+  const { spawn } = server(
+    paged([turn({ items: [], status: "inProgress", completedAt: null })]),
+    [{ id: "tagged", name: `Named · ${tag}`, updatedAt: 1 }],
+    '{"type":"event_msg"}\n',
+    path,
+  );
+  const signal = new AbortController().signal;
+  expect(lookup).not.toHaveProperty("threadId");
+  await readTranscript(spawn, lookup, signal);
+  await readTranscript(spawn, lookup, signal);
+  expect(spawn).toHaveBeenLastCalledWith("read-from", expect.anything());
+});
+
 it("merges the threads other builds started, found by tag or by their earlier name", async () => {
   const tag = sessionTag(agent.key, lookup);
   const title = `Buzz #dev · thread ${root.slice(0, 8)} · Sol`;

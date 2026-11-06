@@ -177,9 +177,11 @@ export function useLiveTranscript<T extends Transcript>({
       const abort = new AbortController();
       running.current = { key, again, working, abort };
       queued.current = undefined;
-      const prior =
-        held.current.key === key ? held.current.transcript : undefined;
-      if (!auto || prior === undefined) setLoading(true);
+      const same = held.current.key === key;
+      const prior = same ? held.current.transcript : undefined;
+      // A settled read, even a failed one, keeps automatic reads quiet.
+      if (!auto || (prior === undefined && !(same && held.current.error)))
+        setLoading(true);
       const began = Date.now();
       const reading =
         kind === "latest" && readLatest && prior

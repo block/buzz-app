@@ -111,6 +111,23 @@ it("reads on open and keeps its result while the next read runs", async () => {
   });
 });
 
+it("keeps automatic reads quiet after the first read failed", async () => {
+  const { calls, view } = setup();
+  view.rerender({ key: "a", working: true });
+  await act(async () => nth(calls, calls.length - 1).reject(new Error("busy")));
+  expect(view.result.current.shown.error).toBe("busy");
+  for (const _ of [1, 2]) {
+    const before = calls.length;
+    act(() => vi.advanceTimersByTime(LIVE_READ_MS));
+    expect(calls).toHaveLength(before + 1);
+    expect(view.result.current.loading).toBe(false);
+    await act(async () => nth(calls, before).reject(new Error("busy")));
+  }
+  // Refresh still shows loading.
+  act(() => view.result.current.refresh());
+  expect(view.result.current.loading).toBe(true);
+});
+
 it("polls only while working, and stops when idle", async () => {
   const { calls, view } = setup();
   await settle(nth(calls, 0), "a");

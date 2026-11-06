@@ -11,7 +11,7 @@ import {
 import type { AgentKey } from "../../features/agents/membership";
 import { sessionTag, sessionTitle } from "./prompt";
 import { AppServer, Oversized, type Spawn } from "./rpc";
-import { readFile } from "../../buzz-mcp/app-client";
+import { READ_LIMIT, readFile } from "../../buzz-mcp/app-client";
 import { recordedLines, restoreRecordedTools } from "./recorded-tools";
 
 /** The latest turns shown; earlier ones stay in Codex's own history. */
@@ -462,6 +462,9 @@ async function rollout(
     known = undefined;
     added = await readFile(spawn, directory, path, signal);
   }
+  // Remembered lines are held to a full read's limit.
+  if ((known?.bytes ?? 0) + added.length > READ_LIMIT)
+    throw new Error(`${path} is larger than 50 MB`);
   // Only whole lines are kept, so no record or character is split.
   const end = added.lastIndexOf(10) + 1;
   const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -495,6 +498,8 @@ export async function readTranscript(
     let found = false;
     let more = false;
     let working = false;
+    // Any thread in progress keeps the rollouts' cache.
+    let active = false;
     const paths: string[] = [];
     for (const [threadId, legacy] of threads) {
       const read = await page(rpc, threadId, TURN_LIMIT, signal);
@@ -503,6 +508,7 @@ export async function readTranscript(
       more ||= read.more;
       if (threadId === lookup.threadId)
         working = read.data[0]?.status === "inProgress";
+      active ||= read.data[0]?.status === "inProgress";
       const mapped = codexTurns([...read.data].reverse(), lookup, name);
       for (const turn of mapped) turn.sessionId = threadId;
       // With no earlier turns, the first read starts the thread.
@@ -534,7 +540,7 @@ export async function readTranscript(
       all.push(...mapped);
     }
     // Once the turn ends, the next read reads its rollouts whole.
-    if (!working) for (const path of paths) rollouts.delete(path);
+    if (!active) for (const path of paths) rollouts.delete(path);
     if (!found) return undefined;
     all.sort((a, b) => a.startedAt - b.startedAt);
     return {

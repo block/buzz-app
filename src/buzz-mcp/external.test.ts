@@ -347,6 +347,7 @@ it.each([
     "about",
     "ttl",
     "join_role",
+    "workspace",
   ].map((field) => ({ name: "Triage", [field]: "override" })),
 ])("rejects external Solo overrides or invalid names (%j)", async (args) => {
   const { call, defaultWorker, query, publish } = fixture();

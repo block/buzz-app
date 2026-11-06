@@ -46,11 +46,15 @@ vi.mock("./MessageRow", () => ({
     row,
     scope,
     retry,
+    onReply,
     onOpenMediaReview,
     onMediaPlayback,
   }: MessageRowProps) => (
     <article data-message-id={row.id} data-scope={scope}>
       <span>{row.content}</span>
+      <button type="button" onClick={() => onReply?.(row.id)}>
+        Reply to {row.content}
+      </button>
       {row.attachments
         .filter((attachment) => attachment.kind === "video")
         .flatMap((attachment) =>
@@ -958,6 +962,44 @@ it("uses the resolved root with the shared composer and reveals an own send even
   h.snapshot.root = undefined;
   h.render();
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+});
+it("does not count an own nested reply sent while reading above as a new message", () => {
+  const h = messagesHarness();
+  const parent = {
+    ...row,
+    id: "parent",
+    content: "parent",
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  h.snapshot.replies = [parent];
+  h.render();
+  h.scroll(500);
+  fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  const own = {
+    ...parent,
+    id: "own-reply",
+    content: "own reply",
+    authorId: viewer,
+    replyParentId: parent.id,
+    createdAt: 3,
+  };
+  h.snapshot.replies = [parent, own];
+  h.resize(4800);
+  h.render();
+  expect(h.element.scrollTop).toBe(500);
+  expect(
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mock.contexts,
+  ).toContain(screen.getByText("own reply").closest("article"));
+  expect(screen.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+  h.snapshot.replies = [
+    parent,
+    own,
+    { ...row, id: "live", content: "live", createdAt: 4 },
+  ];
+  h.render();
+  expect(screen.getByRole("button", { name: "1 new message" })).toBeVisible();
 });
 it.each([
   {

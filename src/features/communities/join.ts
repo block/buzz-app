@@ -147,7 +147,7 @@ export async function completeJoin({
             about: publish.about?.trim() ?? "",
           };
     if (!read.exists || !profilesEqual(next, read.profile)) {
-      await publishProfile(community, next, read.existing ?? {});
+      await publishProfile(community, next);
       if (!current(transaction)) return false;
       // An accepted replaceable event may already be superseded.
       const confirmed = await inspectProfile(community);

@@ -251,7 +251,7 @@ it("publishes a differing profile, confirms it by readback, then saves the membe
     "joined",
     "setItem",
   ]);
-  expect(publishProfile).toHaveBeenCalledWith(community, next, {});
+  expect(publishProfile).toHaveBeenCalledWith(community, next);
   expect(service.joined).toHaveBeenCalledWith(
     { id: community, name: "relay.example.com" },
     next,

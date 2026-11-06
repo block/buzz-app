@@ -80,19 +80,16 @@ export function emojiTags(event: {
   return Object.freeze([...entries.values()]);
 }
 /** Share token boundaries with the renderer: never substitute inside HTTP(S) links.
- * Bare links end at the same CJK punctuation as rendered ones. Within a `<url>`,
- * `](url)` or `[label]: url` destination, a URL ends only at whitespace or `<>"\``.
- * A definition follows a line ending, never a renderer mention segment's start. */
+ * Bare links end at the same CJK punctuation as rendered ones. Within a `<url>` or
+ * `](url)` destination, a URL ends only at whitespace or `<>"\``. */
 const destinations =
-  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|(?:\]\\?\([ \t\r\n]*|(?<=[\r\n])[ \t>*+\d.)-]*\[(?:\\[\s\S]|[^\\[\]])+\]:[ \t]*(?:(?:\r\n?|\n)[ \t>]*)?)(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|(?:(?!\]\\?\([ \t\r\n]*<)[^ \t\r\n])*)/
+  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|\]\\?\([ \t\r\n]*(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|[^ \t\r\n]*)/
     .source;
 const scheme = /https?:\/\/(?=[^\s<>"`])/.source;
 const links = new RegExp(`(${destinations}|${scheme}${BARE_URL_REST})`, "g");
 const runs = /(https?:\/\/[^\s<>"`]+)/;
 export const messageParts = (content: string) =>
   content.split(links).flatMap((part) => part.split(runs));
-/** Senders store trimmed text, whose first line may hold a definition. */
-const sentParts = (content: string) => messageParts(`\n${content.trim()}`);
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
 export function* emojiMatches(
@@ -139,7 +136,7 @@ export function contentEmojiTags(
   entries: readonly CustomEmoji[],
 ): string[][] {
   const used = new Map<string, string>();
-  for (const part of sentParts(content)) {
+  for (const part of messageParts(content)) {
     if (linkPart(part)) continue;
     for (const { emoji } of emojiMatches(part, entries))
       used.set(emoji.shortcode, emoji.url);
@@ -149,7 +146,7 @@ export function contentEmojiTags(
 export function referencedEmoji(content: string): string[] {
   return [
     ...new Set(
-      sentParts(content).flatMap((part) =>
+      messageParts(content).flatMap((part) =>
         linkPart(part)
           ? []
           : [...part.matchAll(shortcodePattern())].map((m) =>

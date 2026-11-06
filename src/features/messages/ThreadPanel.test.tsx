@@ -29,6 +29,7 @@ import type {
   ChannelSummary,
 } from "../relay/contracts";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
@@ -84,6 +85,8 @@ vi.mock("./MessageRow", () => ({
     </article>
   ),
 }));
+// A send with files hands off its draft at once and reports onSend after upload.
+let heldSend: ((id: string) => void) | undefined;
 vi.mock("./MessageComposer", () => ({
   MessageComposer: ({
     threadRootId,
@@ -95,6 +98,8 @@ vi.mock("./MessageComposer", () => ({
     placeholder,
     focusRequest,
     threadSeed,
+    sendOption,
+    clearSendOption,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -107,8 +112,24 @@ vi.mock("./MessageComposer", () => ({
       data-placeholder={placeholder}
       data-focus-request={focusRequest}
     >
-      <button type="button" onClick={() => onSend?.("own-reply")}>
+      {sendOption}
+      <button
+        type="button"
+        onClick={() => {
+          clearSendOption?.();
+          onSend?.("own-reply");
+        }}
+      >
         Send fixture reply
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          clearSendOption?.();
+          heldSend = onSend;
+        }}
+      >
+        Send fixture upload
       </button>
     </section>
   ),
@@ -284,7 +305,7 @@ function messagesHarness(
     get element() {
       return element;
     },
-    render(strict = false) {
+    render(strict = false, toasts = false) {
       act(() => {
         published = { ...snapshot };
         for (const view of views)
@@ -296,7 +317,10 @@ function messagesHarness(
             <ThreadPanel {...props} />
           </div>
         );
-        mounted = render(strict ? <StrictMode>{tree}</StrictMode> : tree);
+        mounted = render(
+          strict ? <StrictMode>{tree}</StrictMode> : tree,
+          toasts ? { wrapper: ToastProvider } : undefined,
+        );
       }
       element =
         screen.queryByRole("region", { name: "Thread messages" }) ?? element;
@@ -958,6 +982,99 @@ it("uses the resolved root with the shared composer and reveals an own send even
   h.snapshot.root = undefined;
   h.render();
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+});
+it("offers Also send where Send to channel is, takes the choice at Send and copies each accepted reply once", async () => {
+  const h = messagesHarness();
+  const general = { id: "channel", name: "General" } as ChannelSummary;
+  let list: ChannelList = { status: "ready", channels: [general] };
+  let writes = true;
+  const listeners = new Set<() => void>();
+  const sendToChannel = vi.fn(() => "copy");
+  Object.assign(h.session, {
+    channels: {
+      list: () => list,
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    outbox: {
+      supports: (kind: number) => writes && kind === 9,
+      observeSend: () => () => {},
+    },
+    messages: { ...h.session.messages, sendToChannel },
+  });
+  const change = (channels: ChannelSummary[], canWrite = true) =>
+    act(() => {
+      list = { status: "ready", channels };
+      writes = canWrite;
+      for (const listener of listeners) listener();
+    });
+  const option = () =>
+    screen.queryByRole("checkbox", { name: "Also send to #General" });
+  h.render(false, true);
+  expect(
+    screen.getByRole("checkbox", { name: "Also send to #General" }),
+  ).not.toBeChecked();
+  for (const [channels, canWrite] of [
+    [[], true],
+    [[{ ...general, readOnly: true, cached: true }], true],
+    [[general], false],
+  ] as const) {
+    change([...channels], canWrite);
+    expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
+    expect(option()).toBeNull();
+  }
+  change([general]);
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Also send to #General" }),
+  );
+  expect(option()).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  expect(option()).not.toBeChecked();
+  const reply = { ...row, id: "own-reply", authorId: viewer, replyCount: 0 };
+  h.snapshot.replies = [{ ...reply, delivery: "sending" }];
+  h.render();
+  expect(sendToChannel).not.toHaveBeenCalled();
+  h.snapshot.replies = [{ ...reply, delivery: "accepted" }];
+  h.render();
+  expect(sendToChannel).toHaveBeenCalledExactlyOnceWith(
+    h.snapshot.replies[0],
+    row,
+  );
+  h.snapshot.replies = [{ ...reply, delivery: "seen" }];
+  h.render();
+  expect(sendToChannel).toHaveBeenCalledOnce();
+  // Send takes the choice. A reply whose files upload first is still copied,
+  // and a choice made for the next reply meanwhile stays.
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Also send to #General" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture upload" }));
+  expect(option()).not.toBeChecked();
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Also send to #General" }),
+  );
+  act(() => heldSend?.("upload-reply"));
+  expect(option()).toBeChecked();
+  const upload = { ...reply, id: "upload-reply" };
+  h.snapshot.replies = [upload];
+  h.render();
+  expect(sendToChannel).toHaveBeenLastCalledWith(upload, row);
+  // Write access can end before the relay accepts the reply. The refused copy
+  // is reported as the reply's Send to channel action reports it.
+  sendToChannel.mockImplementationOnce(() => {
+    throw new Error("You don’t have write access to this conversation.");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  h.snapshot.replies = [{ ...reply }];
+  h.render();
+  expect(sendToChannel).toHaveBeenCalledTimes(3);
+  expect(
+    await screen.findByText(
+      "You don’t have write access to this conversation.",
+    ),
+  ).toBeVisible();
 });
 it.each([
   {

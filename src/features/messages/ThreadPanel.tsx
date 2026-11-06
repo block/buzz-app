@@ -23,6 +23,9 @@ import { replyTree } from "./reply-tree";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { channelText } from "../channels/channel-icon";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
@@ -1007,6 +1010,39 @@ function ThreadMessages({
     navigation.complete({ status: "failed", reason: failure, presented: true });
   }, [navigation, failure]);
   const [sent, setSent] = useState<string>();
+  // Offered where an own reply's Send to channel action is (MessageRow).
+  const sendsToChannel = useListedChannel(
+    session.channels,
+    channelId,
+    (listed) =>
+      listed &&
+      !listed.archived &&
+      !listed.readOnly &&
+      session.outbox?.supports(9)
+        ? channelText({ ...listed, name: channelName })
+        : undefined,
+  );
+  const [alsoSend, setAlsoSend] = useState<string>();
+  // Send to channel copies only a reply the relay has accepted.
+  const copies = useRef(new Set<string>());
+  const [copyError, setCopyError] = useState<string>();
+  useEffect(() => {
+    for (const reply of snapshot.replies) {
+      if (
+        !copies.current.has(reply.id) ||
+        (reply.delivery && !["accepted", "seen"].includes(reply.delivery))
+      )
+        continue;
+      copies.current.delete(reply.id);
+      try {
+        session.messages.sendToChannel(reply, getThreadRoot());
+      } catch (error) {
+        setCopyError(
+          error instanceof Error ? error.message : "Couldn’t send to channel",
+        );
+      }
+    }
+  }, [snapshot.replies, session.messages, getThreadRoot]);
   const [replyFocus, setReplyFocus] = useState(0);
   useEffect(() => {
     if (!joining || (channelAccess !== "member" && channelAccess !== "guest"))
@@ -2085,7 +2121,25 @@ function ThreadMessages({
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}
+          sendOption={
+            sendsToChannel && (
+              <span className="self-start ps-2">
+                <Checkbox
+                  size="sm"
+                  label={`Also send to ${sendsToChannel}`}
+                  checked={alsoSend === composerRoot.id}
+                  onCheckedChange={(checked) =>
+                    setAlsoSend(checked ? composerRoot.id : undefined)
+                  }
+                />
+              </span>
+            )
+          }
+          clearSendOption={() => setAlsoSend(undefined)}
           onSend={(id) => {
+            // The choice at Send, also when this runs after an upload.
+            if (sendsToChannel && alsoSend === composerRoot.id)
+              copies.current.add(id);
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;
@@ -2104,6 +2158,12 @@ function ThreadMessages({
             );
             setSent(id);
           }}
+        />
+      )}
+      {copyError && (
+        <ToastNotice
+          title={copyError}
+          onDismiss={() => setCopyError(undefined)}
         />
       )}
     </MessageEditScope>

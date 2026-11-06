@@ -223,6 +223,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
+  In a thread, check **Also send to #channel** in the reply box to post your
+  reply in the channel too, as **Send to channel** in a sent reply's menu does.
+  The copy is posted once the relay accepts the reply; if you close the thread
+  before that, use **Send to channel** on the reply. The box clears after each
+  send.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders

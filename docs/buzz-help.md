@@ -674,6 +674,12 @@ available rather than silently discarding it.
   no switch to turn on. A change shows as not saved when it is active but
   could not be saved on this device.
 
+- Where a preview build enables it (bb-block), an agent running on this
+  device can list your channels, including private and archived ones it is
+  not in, and see a channel's details and members, read with your access. It
+  cannot change anything this way, and it stops working when you sign out,
+  switch accounts or disconnect.
+
 Saved teams from **Your teams** appear in the inline `@` suggestions and the
 mention picker. Select a team to insert its members as individual mentions.
 Typing its name alone does not notify it. Empty teams, teams with more than 32

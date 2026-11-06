@@ -160,8 +160,8 @@ const where = ({ workspace, model, effort }: Config) => ({
 /** How Claude lists the session tools: in full up front only those marked
  * `alwaysLoad`, and the rest by name until its tool search loads them, with
  * the server's instructions saying what they are. */
-const listing = (added: readonly AddedTool[]): Listing => ({
-  instructions: sessionHint(added),
+const listing = (added: readonly AddedTool[], owner = false): Listing => ({
+  instructions: sessionHint(added, owner),
   tool: ({ load, ...tool }) =>
     load === "always"
       ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
@@ -1344,7 +1344,7 @@ export class ClaudeRuntime {
           context,
           message,
           this.added(),
-          listing(this.added()),
+          listing(this.added(), !!client?.ownerAccess),
         );
       };
     const saved = this.savedSessions(agent);

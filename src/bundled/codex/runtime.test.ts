@@ -6498,3 +6498,58 @@ it.each(["conversation", "standalone", "preview"])(
     expect(execution).not.toHaveBeenCalled();
   },
 );
+
+it.each([true, false])(
+  "lists and runs the owner tools only for a run with owner access: %s",
+  async (owned) => {
+    const f = fixture();
+    const executedAs = { agent: "agent", owner: "owner", community: "c" };
+    const ownerAccess = {
+      channels: vi.fn(async () => ({
+        execution: executedAs,
+        channels: [],
+        partial: false,
+      })),
+      channel: vi.fn(),
+      members: vi.fn(),
+    };
+    const delivery = f.delivery("@Codex list my channels");
+    await f.runtime.run({
+      ...delivery,
+      agent: {
+        ...delivery.agent,
+        ...(owned ? { ownerAccess } : {}),
+      } as typeof delivery.agent,
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as {
+      dynamicTools: {
+        description: string;
+        tools: { name: string; deferLoading?: boolean }[];
+      }[];
+    };
+    const listed = thread.dynamicTools[0]?.tools.filter((tool) =>
+      tool.name.startsWith("owner_"),
+    );
+    expect(listed).toEqual(
+      owned
+        ? ["owner_channel_list", "owner_channel_get", "owner_member_list"].map(
+            (name) => expect.objectContaining({ name, deferLoading: true }),
+          )
+        : [],
+    );
+    // A name the model remembers or guesses is checked against the run's
+    // own access on every call.
+    const reply = (await f.tool("owner_channel_list", {}))?.result as {
+      success: boolean;
+      contentItems: { text: string }[];
+    };
+    expect(reply.success).toBe(owned);
+    expect(reply.contentItems[0]?.text).toContain(
+      owned ? '"executedAs"' : "nothing was read",
+    );
+    expect(ownerAccess.channels).toHaveBeenCalledTimes(owned ? 1 : 0);
+    await f.complete();
+  },
+);

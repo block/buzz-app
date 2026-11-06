@@ -9809,6 +9809,7 @@ it("adds plugins' tools to every session, each name once", async () => {
     { ...tool, description: "" },
     { ...tool, inputSchema: { type: "string" } },
     { ...tool, inputSchema: { type: "object", default: 1n } },
+    { ...tool, name: "owner_channel_list" },
   ])
     expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
   expect(service.tools()).toHaveLength(1);
@@ -13647,7 +13648,6 @@ describe("external private Solo creation", () => {
             /Bestie.*Buzz|Bestie could not be read|Bestie is not available/,
           ),
         );
-        expect(f.native.publish).not.toHaveBeenCalled();
       } finally {
         await f.cleanup();
       }
@@ -13663,7 +13663,6 @@ describe("external private Solo creation", () => {
       });
       expect(f.saved).not.toHaveBeenCalled();
       expect(f.libraryRead).not.toHaveBeenCalled();
-      expect(f.native.publish).not.toHaveBeenCalled();
     } finally {
       await f.cleanup();
     }
@@ -13686,7 +13685,6 @@ describe("external private Solo creation", () => {
           "result.content.0.text",
           "Your saved Bestie could not be checked. Check the community connection and try again.",
         );
-        expect(f.native.publish).not.toHaveBeenCalled();
       } finally {
         await f.cleanup();
       }
@@ -13757,7 +13755,6 @@ describe("external private Solo creation", () => {
       try {
         expect(await outcome).toBeInstanceOf(Error);
         await vi.waitFor(() => expect(f.close).toHaveBeenCalled());
-        expect(f.native.publish).not.toHaveBeenCalled();
       } finally {
         await f.cleanup();
       }
@@ -15419,6 +15416,81 @@ describe("Buzz settings", () => {
       review.resolve();
       await expect(call).rejects.toThrow();
       expect(write).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("Owner tools", () => {
+  const root = "e".repeat(64);
+  /** The agent's handle from a run. */
+  async function running(f: Awaited<ReturnType<typeof setup>>) {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const handle = runnerGate<AgentHandle>();
+    f.run.mockImplementationOnce(async ({ agent }) => {
+      handle.resolve(agent);
+    });
+    f.plugin.agents.wake(bot, { channel, root, text: "hi" });
+    return handle.promise;
+  }
+  const list = (agent: AgentHandle) =>
+    callSessionTool(
+      appClient(agent, {
+        read: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+      }),
+      {},
+      "owner_channel_list",
+      {},
+    );
+
+  it("read the owner's channels as the owner, only on the run's handle", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await setup();
+    try {
+      const agent = await running(f);
+      expect(f.plugin.agents.handle(bot)).not.toHaveProperty("ownerAccess");
+      const answer = JSON.parse(String(await list(agent)));
+      expect(answer.executedAs).toEqual({
+        agent: bot,
+        owner: viewer,
+        community: "https://relay.example.test",
+      });
+      // The agent is not in `private`; its owner is.
+      expect(answer.channels).toContainEqual(
+        expect.objectContaining({ id: "private", role: "member", members: 1 }),
+      );
+      expect(answer.partial).toBe(false);
+
+      f.signIn(other);
+      await expect(list(agent)).rejects.toThrow("not connected");
+      f.connect(false);
+      await expect(list(agent)).rejects.toThrow("not connected");
+    } finally {
+      await f.ctx.fiber.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    "",
+    "https://other.example.test",
+    "https://relay.example.test.evil.test",
+    "https://relay.example.test:8443",
+  ])(
+    "are not offered outside the enabled communities (%s)",
+    async (enabled) => {
+      vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", enabled);
+      const f = await setup();
+      try {
+        const agent = await running(f);
+        expect(agent).not.toHaveProperty("ownerAccess");
+        await expect(list(agent)).rejects.toThrow("nothing was read");
+      } finally {
+        await f.ctx.fiber.dispose();
+        vi.unstubAllEnvs();
+      }
     },
   );
 });

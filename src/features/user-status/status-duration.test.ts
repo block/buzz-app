@@ -30,3 +30,12 @@ it("chooses the closest preset when two deadlines are within tolerance", () => {
   expect(statusDuration(midnight, lateEvening)).toBe("today");
   expect(statusDuration(lateEvening + 3600, lateEvening)).toBe("3600");
 });
+
+it("reopens a 30 minute status as 30 minutes, including just before midnight", () => {
+  const thursday = new Date(2026, 8, 24, 18, 37).getTime() / 1000;
+  expect(statusDuration(thursday + 1800, thursday)).toBe("1800");
+  const midnight = new Date(2026, 8, 25).getTime() / 1000;
+  const halfHourBefore = midnight - 1800 - 30;
+  expect(statusDuration(midnight, halfHourBefore)).toBe("today");
+  expect(statusDuration(halfHourBefore + 1800, halfHourBefore)).toBe("1800");
+});

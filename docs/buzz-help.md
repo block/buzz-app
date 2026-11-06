@@ -222,6 +222,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   notice ends this recovery option.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.
+  Deleting or archiving the open chat keeps you in Solo and opens another chat
+  or a new draft.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;

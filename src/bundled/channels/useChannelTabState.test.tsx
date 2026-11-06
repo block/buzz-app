@@ -22,6 +22,7 @@ import {
   rootOfTab,
   useChannelTabState,
 } from "./useChannelTabState";
+import type { ChannelDrawerOpening } from "./useChannelPanels";
 
 import {
   setThreadPlacementPreference,
@@ -473,6 +474,22 @@ test("verified identity takes precedence over a tab's original hint id", () => {
     messageId: "reply-y",
     rootId: "y",
   });
+});
+
+test("Back to a visit whose only side content is a retained drawer shows that drawer", () => {
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  const drawer = {
+    panel: { key: "buzz.todos/todos", channelPlacement: "side" },
+    context: { channelId: "alpha" },
+    target: "todos",
+  } as unknown as ChannelDrawerOpening;
+  act(() => h.result.current.enterVisit("first:channel"));
+  act(() => h.result.current.setSideDrawer(drawer));
+  act(() => h.result.current.enterVisit("second:channel"));
+  act(() => h.result.current.enterVisit("first:channel"));
+  expect(h.result.current.sideDrawer).toBe(drawer);
+  expect(h.result.current.paneOpen).toBe(true);
 });
 
 // Back/Forward restore each visit's selected tabs and never close a thread.

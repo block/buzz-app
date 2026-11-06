@@ -100,7 +100,8 @@ const snapshotOf = (state: State): VisitSelection => ({
       state.tabs.some((tab) => tabPane(tab) === "side") ||
       sideEntries(state).length ||
       state.settings ||
-      state.thread
+      state.thread ||
+      state.sideDrawer
     ),
 });
 const remember = (state: State) => {

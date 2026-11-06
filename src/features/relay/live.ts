@@ -538,6 +538,20 @@ export function subscribeRelayTraffic(
         for (const id of scope(route)) ids.add(id);
     return ids;
   };
+  /** Channels a live route streams now, or its established predecessor does
+   * while a re-send is in flight. */
+  const streaming = () =>
+    new Set(
+      [...routes.values()]
+        .filter((route) => !route.history)
+        .flatMap((route) =>
+          route.status === "live"
+            ? scope(route)
+            : route.previous?.status === "live"
+              ? (route.previousChannels ?? [])
+              : [],
+        ),
+    );
   // Channels whose combined replay reached the limit; they replay one filter each.
   const splitReplay = new Set<string>();
   let routeSnapshots = new Map<string, LiveRoute>();
@@ -611,10 +625,9 @@ export function subscribeRelayTraffic(
     // A history replay that ended without its EOSE (it failed, stopped or no
     // longer applies) proves nothing: its channels establish now and catch up.
     if (!awaitingReplay.size) return;
+    // A channel no route streams establishes at its route's next EOSE instead.
     const pending = replaying();
-    const streamed = new Set(
-      [...routes.values()].filter((route) => !route.history).flatMap(scope),
-    );
+    const streamed = streaming();
     const released = [...awaitingReplay].filter((id) => !pending.has(id));
     for (const id of released) awaitingReplay.delete(id);
     const ready = released.filter((id) => streamed.has(id));
@@ -700,6 +713,15 @@ export function subscribeRelayTraffic(
     for (const route of [...routes.values()]) {
       if (!route.channelIds?.includes(id)) continue;
       if (route.status === "live" && !route.previous) {
+        // A grant's re-send proves no channel continuous, including one whose
+        // replay a history route still runs.
+        for (const other of routes.values())
+          if (other.history && other.resumedChannels)
+            other.resumedChannels = new Set(
+              [...other.resumedChannels].filter(
+                (channel) => !scope(route).includes(channel),
+              ),
+            );
         replace(route);
         sent = true;
         continue;
@@ -1915,8 +1937,14 @@ export function subscribeRelayTraffic(
           // A channel whose replay ended here establishes now. One combined
           // filter is complete only on a page below the limit; a channel of a
           // split replay has its own filter.
+          // One no live route streams now establishes at that route's next
+          // EOSE, which replays nothing.
+          const streamed = streaming();
           const ready = scope(route).filter(
-            (id) => !rest.includes(id) && awaitingReplay.delete(id),
+            (id) =>
+              !rest.includes(id) &&
+              awaitingReplay.delete(id) &&
+              streamed.has(id),
           );
           const continuous = ready.filter(
             (id) =>
@@ -1943,6 +1971,11 @@ export function subscribeRelayTraffic(
         route.status = "live";
         delete route.error;
         delete route.refusals;
+        // A channel whose replay the session cannot apply alone still owes
+        // the session a read. (A carried route holds no granted channel: a
+        // grant ends that channel's cursor, and a route is carried only when
+        // every cursor it resumes was live.)
+        const owed = !!route.repairs?.size;
         // Its stream holds every channel granted before its REQ was sent. A
         // grant while it was in flight marks it regranted; its re-send clears.
         if (!route.regranted)
@@ -1953,8 +1986,9 @@ export function subscribeRelayTraffic(
             ? "limited"
             : "unknown";
         // A carried route's replay covered the renewal unless the limit cut it.
-        const caughtUp = route.carried && route.replay !== "limited";
-        if (route.carried && !caughtUp) broken = true;
+        // One that owes a read establishes, so the session reads what it owes.
+        const caughtUp = route.carried && route.replay !== "limited" && !owed;
+        if (route.carried && route.replay === "limited") broken = true;
         delete route.carried;
         notify();
         if (!valid()) return;

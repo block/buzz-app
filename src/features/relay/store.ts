@@ -96,6 +96,11 @@ type WindowState = {
    * the live stream then. A continuous replay of the channel closes the gap
    * from them, so `resume` needs no read. */
   keptLive?: boolean | undefined;
+  /** `resume` verified the window with no read. `kept` still holds the rows
+   * of the drop, so a later report on this connection that the channel was
+   * not continuous (a grant the broker learned of after its replay) catches up
+   * from them; the next drop takes a new snapshot. */
+  resumed?: boolean | undefined;
   /** Relay membership notices, read apart from the pages (see `fillNotices`). */
   notices: Map<string, RelayEvent>;
   /** Where the next older notice read starts: null once a read reached the
@@ -4268,7 +4273,8 @@ export function createChannelStore(
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
       for (const state of windows.values()) {
-        if (!state.kept) {
+        if (!state.kept || state.resumed) {
+          state.resumed = undefined;
           state.kept = rowIds(state);
           state.keptLive =
             state.snapshot.freshness === "verified" &&
@@ -4330,6 +4336,7 @@ export function createChannelStore(
         );
         for (const id of kept) retained.traffic.delete(id);
         retained.kept = keptAfter();
+        retained.resumed = undefined;
         retained.floor = undefined;
         retained.atHead = true;
         moveCursor(retained, last.cursor);
@@ -4375,6 +4382,7 @@ export function createChannelStore(
           throw new DOMException("Stale live catch-up", "AbortError");
         if (retained.atHead) moveCursor(retained, page.cursor);
         retained.kept = keptAfter();
+        retained.resumed = undefined;
         // Live replay covers minutes; notices from a longer drop come by read.
         void fillNotices(retained, true);
         // A drop mid-fill has marked the window cached; the stream is retrying.
@@ -4431,8 +4439,8 @@ export function createChannelStore(
       dropped = false;
       const head = heads.peek(channelId);
       if (head) heads.set(channelId, { ...head, cached: true });
-      state.kept = undefined;
       state.keptLive = undefined;
+      state.resumed = true;
       setWindow(state, { freshness: "verified", error: undefined });
       // The replay holds only the outage's notices: finish a notice read that
       // failed or was cut before the drop. It reads nothing when none is owed.

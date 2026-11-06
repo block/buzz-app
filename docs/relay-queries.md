@@ -1034,7 +1034,19 @@ continuous only on the page where its paging ends below the limit, a split one
 by its own filter's count, and the same repairs apply. A replay that fails or
 is stopped establishes its channels at once with nothing continuous, so they
 catch up. A connection that drops before a channel's replay ends sets no cursor
-for it: the next connection resumes from the older cursor.
+for it: the next connection resumes from the older cursor. A channel whose
+live batch is not live when its replay ends (the batch failed or is being
+retried) establishes at that batch's next EOSE, with nothing continuous. A
+grant re-sends the batch live-only, so it also ends the continuity of every
+channel of that batch whose history replay has started and not ended.
+
+When access ends, the relay leaves the channel out of its batch with no frame,
+and the channel's cursor stays. A grant that restores access may reach the
+broker after the batch's EOSE, for example in the membership replay of the
+same reconnect, so the batch can first report that channel continuous. The grant then re-sends the batch, whose EOSE reports it
+again with nothing continuous. A resume keeps the rows the window held at the
+drop until the next drop, so that catch-up pages back to them, past any rows
+the stream delivered since.
 
 A retained window that was verified when the stream dropped, with a head read
 started at most 15 minutes before the drop, and a thread view that was settled
@@ -1046,7 +1058,7 @@ nothing when none is owed). Any other case keeps the catch-up above: a replay
 at the limit, a channel with no cursor, a window restored or read before the
 stream was up, a window or thread read again while the stream was down, a
 window still owed a catch-up from an earlier drop, and a live-only renewal,
-including a batch re-sent for a grant (it replays nothing, so it proves nothing), and, on an ordinary reconnect, a channel granted while its batch was not yet live (its replay starts from a cursor of a stream the relay may have left that channel out of, even when the REQ follows the grant). A planned renewal is the exception: its carried replay is trusted to cover the renewal, so its batch stays quiet when that replay ends below the limit, even for a channel granted before its REQ. A grant also ends that channel's cursor, and no connection sets it again until a REQ sent after the grant reaches EOSE, so a rebuilt batch or a later connection cannot restore it. While the session's initial five-minute
+including a batch re-sent for a grant (it replays nothing, so it proves nothing), and, on an ordinary reconnect, a channel granted while its batch was not yet live (its replay starts from a cursor of a stream the relay may have left that channel out of, even when the REQ follows the grant). A planned renewal is the exception: its carried replay is trusted to cover the renewal, so its batch stays quiet when that replay ends below the limit, even for a channel granted before its REQ, unless the replay carried a repair above: then it establishes, and those channels catch up. A grant also ends that channel's cursor, and no connection sets it again until a REQ sent after the grant reaches EOSE, so a rebuilt batch or a later connection cannot restore it. While the session's initial five-minute
 floor truncates the resume lag, channel and global routes keep their reconnect
 repair reads even when the replay ends below the limit, so the skip applies
 only once the live connection is about 11 minutes old.

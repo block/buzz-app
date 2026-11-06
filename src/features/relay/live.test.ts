@@ -2107,6 +2107,55 @@ describe("a joined batch over the replay batch size", () => {
     }
   });
 
+  it("reports no channel continuous when a grant re-sends the batch during its replay", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      const { next, replay } = await reconnected(h);
+      await grant(h, "channel-3", next);
+      const resend = next
+        .requests()
+        .filter((r) => !isReplay(r) && scopeOf(r).length === ids.length)
+        .at(-1);
+      assert.exists(resend);
+      await next.receive(["EOSE", resend[1]]);
+      expect(channels(h)).toEqual([]);
+      await next.receive(["EOSE", replay[1]]);
+      expect(channels(h)).toEqual([[ids]]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("establishes a channel whose live batch failed during its replay only when the batch is live again", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      const { next, replay } = await reconnected(h);
+      const batch = next
+        .requests()
+        .find((r) => !isReplay(r) && scopeOf(r).length === ids.length);
+      assert.exists(batch);
+      await next.receive(["CLOSED", batch[1], "error: unavailable"]);
+      await next.receive(["EOSE", replay[1]]);
+      // The replay ended, but nothing streams these channels now.
+      expect(channels(h)).toEqual([]);
+      const sent = next.requests().length;
+      h.owner.retry();
+      await vi.advanceTimersByTimeAsync(0);
+      const retry = next
+        .requests()
+        .slice(sent)
+        .find((r) => scopeOf(r).length === ids.length);
+      assert.exists(retry);
+      await next.receive(["EOSE", retry[1]]);
+      expect(channels(h).flatMap((call) => call[0])).toEqual(ids);
+      expect(channels(h).some((call) => call[2]?.length)).toBe(false);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
   it("keeps the earlier cursor of a channel whose replay a drop interrupted", async () => {
     vi.useFakeTimers({ now: 1_700_000_000_000 });
     const h = setup([], undefined, 2048, () => 0.5);
@@ -5818,6 +5867,41 @@ function renew(socket: Socket) {
   socket.readyState = 3;
   (socket.onclose as (event: { renew: true }) => void)({ renew: true });
 }
+it("establishes a carried batch whose renewal replay carried a reply", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b", "c"], ["a", "b"]);
+    await establish(h.first);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    for (const request of h.first.requests())
+      await h.first.receive(["EOSE", request[1]]);
+    h.callbacks.established.mockClear();
+    renew(h.first);
+    const second = h.sockets[1];
+    assert.exists(second);
+    await second.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const batch = second.requests().find((r) => scopeOf(r).includes("a"));
+    assert.exists(batch);
+    // A reply changes a thread summary no replay carries, so channel a owes
+    // its read even though the renewal kept the batch's cursor.
+    const reply = message(keypair(), "a", "a reply", 1700000000, [
+      ["e", "root", "", "reply"],
+    ]);
+    await second.receive(["EVENT", batch[1], reply]);
+    for (const request of second.requests())
+      await second.receive(["EOSE", request[1]]);
+    expect(h.callbacks.established).toHaveBeenCalledTimes(1);
+    const [channels, , continuous] =
+      h.callbacks.established.mock.calls[0] ?? [];
+    expect(channels).toEqual(["a", "b"]);
+    expect(continuous ?? []).not.toContain("a");
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
 it("keeps a planned renewal connected and skips catch-up for carried routes", async () => {
   vi.useFakeTimers();
   const h = setup([]);

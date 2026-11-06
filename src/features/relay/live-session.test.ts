@@ -1862,6 +1862,35 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
+  it("catches up from the rows held at the drop when a resumed channel is reported again with nothing continuous", async () => {
+    const h = reconnectHarness();
+    try {
+      const seen = await verifiedThenDropped(h);
+      await resume(h, [], true);
+      expect(h.reads()).toHaveLength(0);
+      // A live event after the resume, then a grant the broker learned of
+      // after the replay: the replay may have left the channel out.
+      const fresh = message(h.alice, "c", "fresh", 60);
+      h.live.receive([fresh]);
+      await flush();
+      h.live.established("c");
+      await flush();
+      const hidden = message(h.alice, "c", "hidden", 30),
+        newer = message(h.alice, "c", "newer", 50);
+      // The head holds the live row; the gap lies below it, above `seen`.
+      h.read().respond(h.page("head", [fresh, newer], newer));
+      await flush();
+      const older = h.read();
+      expect(older.filters[0]).toMatchObject({ before_id: newer.id });
+      older.respond(h.page(h.cursor(newer), [hidden, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, hidden.id, newer.id, fresh.id]);
+      expect(h.window().freshness).toBe("verified");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
   it("catches up as before when the replay was cut", async () => {
     const h = reconnectHarness();
     try {

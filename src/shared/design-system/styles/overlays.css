@@ -382,9 +382,9 @@
     min-height: 0;
     min-width: 0;
     display: grid;
-    /* The pane's dialog inset and a classic scrollbar (13px in macOS WebKit)
-       come out of this column; the extra 1rem keeps labels such as
-       "Channel templates" whole. */
+    /* The dialog inset and a classic scrollbar come out of this column. The
+       scrollbar (13px in macOS WebKit) does not scale with interface size;
+       1rem keeps labels such as "Channel templates" whole down to 80%. */
     grid-template-columns: calc(var(--size-navigator) + 1rem) minmax(0, 1fr);
   }
   .buzz-dialog-navigation,

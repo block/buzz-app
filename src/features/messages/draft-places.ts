@@ -2,7 +2,9 @@ import { useCallback, useLayoutEffect, useSyncExternalStore } from "react";
 import {
   draftCoordinates,
   listDraftViews,
+  MAX_DRAFT_VIEW_LENGTH,
   subscribeView,
+  viewRevision,
 } from "../../shared/view-state";
 import {
   attachmentDraftCount,
@@ -40,6 +42,27 @@ function readDraftPlaces(session: Session): readonly DraftPlace[] {
   return places;
 }
 
+// Whether one changed key leaves the set of draft places as it was, so a
+// keystroke in a draft, or a write to any other view key, skips the rescan.
+function sameMembership(
+  session: Session,
+  places: readonly DraftPlace[],
+  key: string,
+) {
+  if (!draftCoordinates(key)) return true;
+  const listed = places.some((place) => place.key === key);
+  const raw = viewRevision(session.scope, key);
+  // A forgotten key is never listed; unreadable or oversized ones are left to
+  // the full scan, as before.
+  if (raw === null) return !listed;
+  if (raw === undefined || raw.length > MAX_DRAFT_VIEW_LENGTH) return false;
+  try {
+    return listed === draftCounts(session, key, JSON.parse(raw));
+  } catch {
+    return false;
+  }
+}
+
 type Store = {
   places: readonly DraftPlace[] | undefined;
   listeners: Set<() => void>;
@@ -60,7 +83,13 @@ function subscribePlaces(session: Session, listener: () => void) {
   if (!store.listeners.size) {
     // Storage may have changed while nobody listened.
     store.places = undefined;
-    const changed = () => {
+    const changed = (key?: string) => {
+      if (
+        key !== undefined &&
+        store.places &&
+        sameMembership(session, store.places, key)
+      )
+        return;
       store.places = undefined;
       for (const notify of [...store.listeners]) notify();
     };
@@ -69,11 +98,12 @@ function subscribePlaces(session: Session, listener: () => void) {
       session as ComposerSession,
       changed,
     );
-    window.addEventListener("focus", changed);
+    const focused = () => changed();
+    window.addEventListener("focus", focused);
     store.stop = () => {
       stopViews();
       stopFiles();
-      window.removeEventListener("focus", changed);
+      window.removeEventListener("focus", focused);
     };
   }
   store.listeners.add(listener);

@@ -70,6 +70,40 @@ it("resolves a message once the session is idle, and keeps the process for the n
   expect(processes[0]?.prompts).toEqual(["hello", "again"]);
 });
 
+it("names a message's id to its submitter only once Claude has taken it", async () => {
+  const { spawn, processes } = fakeSpawn();
+  let refuse = false;
+  const claude = await ClaudeProcess.start(
+    async (id, options) => {
+      const process = await spawn(id, options);
+      return {
+        ...process,
+        write: (data: string) =>
+          refuse && data.includes('"type":"user"')
+            ? Promise.reject(new Error("stdin closed"))
+            : process.write(data),
+      };
+    },
+    { ...launch, sessionId: "s1" },
+  );
+  const submitted = vi.fn();
+  refuse = true;
+  await expect(claude.send("lost", { submitted })).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringContaining("Claude did not take the message"),
+  });
+  expect(submitted).not.toHaveBeenCalled();
+  refuse = false;
+  await expect(claude.send("taken", { submitted })).resolves.toEqual({
+    ok: true,
+  });
+  const taken = processes[0]?.received.filter(
+    (message) => message.type === "user",
+  );
+  expect(taken).toHaveLength(1);
+  expect(submitted.mock.calls).toEqual([[taken?.[0]?.uuid]]);
+});
+
 it("is active in a turn of its own or with background work, but not for ambient tasks", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {

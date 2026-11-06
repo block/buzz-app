@@ -11,10 +11,16 @@ import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
 import { ClaudeDefaults } from "./defaults";
+import { ClaudeForwarding, HARNESS } from "./forwarding";
+import { upstreamFor } from "../../features/agents/gateway/route";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
 import { readUsage } from "./usage";
+
+/** Whether Claude declares its harness to the gateway, which forwards its
+ * turns and gates compaction on the route. Off until its wire proof. */
+const GATEWAY = false;
 
 export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
@@ -64,6 +70,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
       )) ?? {}) as Record<string, unknown>;
     },
+    // Without a Claude upstream in this build, the runner sends every turn
+    // without the gateway, so nothing forwards.
+    GATEWAY && ctx.pluginOwner && upstreamFor(HARNESS)
+      ? new ClaudeForwarding(ctx.pluginOwner)
+      : undefined,
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
@@ -114,6 +125,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   agents.register<Config>({
     id: TYPE_ID,
+    ...(GATEWAY ? { gateway: { harness: HARNESS } } : {}),
     hooks: { events: CLAUDE_HOOK_EVENTS },
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,

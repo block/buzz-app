@@ -2255,6 +2255,30 @@ it("bottom catch-up reads top-level mentions and broadcasts; participating threa
   lease.dispose();
 });
 
+it("bottom catch-up leaves attention arriving during its frontier save unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const bottom = message(h.alice, "room", "bottom", 20);
+  h.emit([channelMetadata(h, "stream"), bottom]);
+  await flush();
+  const lease = h.session.unread.reading("room");
+  const held = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  const late = message(h.alice, "room", "late mention", 17, [
+    ["p", h.viewer.pubkey],
+  ]);
+  try {
+    await held.started;
+    h.emit([late]);
+    expect(h.session.unread.attention("room", late.id).unread).toBe(true);
+  } finally {
+    held.release();
+  }
+  await pending;
+  expect(h.session.unread.attention("room", late.id).unread).toBe(true);
+  lease.dispose();
+});
+
 it.each(["catchUp", "observe"] as const)(
   "reading a DM (%s) reads all of it and ends its manual unread",
   async (step) => {

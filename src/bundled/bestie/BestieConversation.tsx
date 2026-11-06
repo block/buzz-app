@@ -190,9 +190,11 @@ export function BestieConversation({
   // is loaded or found in older history; a message visit's message, or its
   // thread when it is a reply or isn't in history. Threads Bestie opens itself
   // and Back/Forward leave the history where the reader left it.
-  const opened = useRef<{ target: string; entryId?: string }>(undefined);
+  const opened = useRef<{ from: string; target: string; entryId?: string }>(
+    undefined,
+  );
   const own = opened.current;
-  if (navigation && own) {
+  if (navigation && own && navigation.entryId !== own.from) {
     if (!own.entryId && targetKey(navigation.target) === own.target)
       own.entryId = navigation.entryId;
     else if (own.entryId !== navigation.entryId) opened.current = undefined;
@@ -209,26 +211,41 @@ export function BestieConversation({
   const sought = handedOff
     ? (routed?.threadRootId ?? exact?.messageId)
     : undefined;
+  // The reader's own move in the chat during the visit, a scroll or a send,
+  // ends its context reveal: a thread's root is no longer sought, while a
+  // message visit still decides between the chat and its thread.
+  const [movedOn, setMovedOn] = useState<number>();
+  const stayed = movedOn !== visit;
+  const context = useRef<number>(undefined);
+  context.current = sought && stayed ? visit : undefined;
+  const moveOn = useCallback(() => {
+    if (context.current !== undefined) setMovedOn(context.current);
+  }, []);
   const inTimeline = useMessageOpening(
     session.channels,
     channel.id,
-    sought,
+    stayed || exact ? sought : undefined,
     visit,
   );
-  // A message visit that opened as a thread returns to that thread.
-  const resolved = useRef(new Map<string, BestieRoute>());
-  if (navigation && exact && inTimeline === false)
-    resolved.current.set(navigation.entryId, {
-      ...exact,
-      threadRootId: exact.messageId,
-    });
+  // A message visit that opened as a thread returns to that thread. The tab
+  // store's record outlives this page's mount and is pruned with history.
+  const recorded =
+    navigation && exact ? state.routedVisits?.[navigation.entryId] : undefined;
   const thread =
     routed ??
-    (navigation && exact
-      ? resolved.current.get(navigation.entryId)
-      : undefined);
+    (recorded
+      ? {
+          channelId: recorded.channelId,
+          messageId: recorded.messageId,
+          threadRootId: recorded.rootId,
+        }
+      : exact && inTimeline === false
+        ? { ...exact, threadRootId: exact.messageId }
+        : undefined);
   const revealKey =
-    sought && inTimeline ? JSON.stringify([sought, visit]) : undefined;
+    sought && stayed && inTimeline
+      ? JSON.stringify([sought, visit])
+      : undefined;
   const [reveal, setReveal] = useState<{ key: string; signal: AbortSignal }>();
   useEffect(() => {
     if (!revealKey) return;
@@ -315,9 +332,19 @@ export function BestieConversation({
       from: navigation.entryId,
       target: targetKey(fallback),
     };
-    // Predicates also retire known addresses after reload, when local tab records
-    // have not been reconstructed for every earlier visit.
-    navigator.dismiss((target) => {
+    // Visits recorded as showing a closing thread, however addressed: a
+    // message visit may have opened as its thread. Addresses also retire known
+    // visits after reload, when local tab records have not been reconstructed
+    // for every earlier visit.
+    const shown = new Set(
+      tabs.flatMap((tab) =>
+        tab.kind === "thread"
+          ? state.threadVisits(tab.channelId, rootOfTab(tab))
+          : [],
+      ),
+    );
+    navigator.dismiss((target, entryId) => {
+      if (shown.has(entryId)) return true;
       if (
         target.kind !== "page" ||
         targetKey(bestieBaseTarget(target)) !== targetKey(base)
@@ -327,8 +354,8 @@ export function BestieConversation({
         bestieRoute(target.route?.params) ??
         bestieMessageRoute(target.route?.params);
       const panel = bestieDetailRoute(target.route?.params);
-      // A message visit showed a thread only when its message was a reply:
-      // the closing tab's root differs from it. Otherwise it showed the chat.
+      // An unrecorded message visit showed a thread only when its message was
+      // a reply: the closing tab's root differs from it. Otherwise, the chat.
       return (
         !!(
           thread &&
@@ -527,7 +554,10 @@ export function BestieConversation({
         messageId,
         threadRootId: rootId,
       });
-      opened.current = { target: targetKey(target) };
+      opened.current = {
+        from: navigation.entryId,
+        target: targetKey(target),
+      };
       void navigator.open(target);
     }
   };
@@ -832,6 +862,7 @@ export function BestieConversation({
                                   }
                                   marksRead
                                   onOpenThread={openThread}
+                                  onReaderIntent={moveOn}
                                 />
                                 <ConversationComposer
                                   label={`Message ${bestie}`}
@@ -839,7 +870,10 @@ export function BestieConversation({
                                     secondary.selectedMain === "conversation"
                                   }
                                   focusRequest={composerFocus}
-                                  onSend={setSent}
+                                  onSend={(id) => {
+                                    setSent(id);
+                                    moveOn();
+                                  }}
                                 />
                                 {inlineThread && (
                                   <InlineThreadSheet

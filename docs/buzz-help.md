@@ -213,9 +213,11 @@ if that desktop app is up and running.
   Set it with **Make my bestie** in an agent's menu. With the optional
   **Bestie** plugin on, links to its DM, threads or messages, including **In DM**
   in Activity, open in Bestie. Thread links keep focus in the thread and briefly
-  mark its loaded root in the chat; message links scroll to the message or open
-  its thread for a reply. **View thread**, Back and Forward leave the chat where
-  you were. Forward and Members still open in Messages.
+  mark its loaded root in the chat, unless you scroll the chat or send first.
+  Message links scroll to the message or open its thread for a reply.
+  **View thread**, Back and Forward leave the chat where you were. Closing a
+  linked thread removes its visit from Back/Forward. Forward and Members still
+  open in Messages.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents
   and the owner's workflows. Other people can talk to it, but it won't do work
   for them.

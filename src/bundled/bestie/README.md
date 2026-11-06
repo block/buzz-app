@@ -47,10 +47,15 @@ or the DM or a message chosen in search, resolves in place to this page's visit
 before Messages presents it. On its first presentation, a thread visit opens
 the thread in its pane, which keeps focus, and marks the thread's root in the
 chat history once it is loaded or found in older history, without hiding the
-history or moving focus; a message visit holds the history until that message
+history or moving focus; a reader who scrolls the history or sends from the
+main composer first has moved on, and the root is neither sought further nor
+marked. A message visit holds the history until that message
 is found, then scrolls to and focuses it, or opens its thread when it is a
-reply or isn't in history. Threads opened here with **View thread**, and
-Back/Forward returns, leave the history where the reader left it. Links in the
+reply or isn't in history; the tab store records that resolution, so a return
+after this page unmounted reopens the thread, and closing it retires the
+visit by that record rather than by its address. Threads opened here with
+**View thread**, and Back/Forward returns, leave the history where the reader
+left it. Links in the
 chat into this DM open as this page's own visits. A visit to Forward or
 Members has no Bestie route and stays in Messages, as does a visit that
 Messages had already opened before the promotion was known. The handed-off

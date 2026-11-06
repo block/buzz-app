@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -23,7 +24,10 @@ import {
   createNavigationController,
   type Navigation,
 } from "../../features/navigation/controller";
-import { createMemoryHistory } from "../../features/navigation/history";
+import {
+  createMemoryHistory,
+  homeTarget,
+} from "../../features/navigation/history";
 import {
   provideNavigation,
   type PageNavigation,
@@ -137,9 +141,15 @@ async function fixture({
   holdHead = false,
   holdThread = false,
   withLink = false,
+  olderRoot = false,
+  holdOlder = false,
 } = {}) {
-  // jsdom has no native scrolling; thread reveals still use this DOM boundary.
-  HTMLElement.prototype.scrollIntoView = vi.fn();
+  // jsdom has no native scrolling; reveals still use this DOM boundary. Rows
+  // revealed in the chat history or a thread, in order.
+  const scrolled: HTMLElement[] = [];
+  HTMLElement.prototype.scrollIntoView = vi.fn(function (this: HTMLElement) {
+    scrolled.push(this);
+  });
   // The timeline waits for a measurable host before mounting its virtualizer.
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
@@ -190,8 +200,14 @@ async function fixture({
   const olderGate = deferred();
   const olderStarted = vi.fn();
   disposals.push(olderGate.resolve);
-  // Hold the DM's head read or its thread read, to order their reveals.
-  const reads = { head: deferred(), thread: deferred() };
+  // Hold the DM's head read, its thread read or the older page holding the
+  // root, to order their reveals.
+  const reads = { head: deferred(), thread: deferred(), older: deferred() };
+  const end = (before: RelayEvent) =>
+    bounds(relayKey, pollenDM, `${before.created_at}:${before.id}`, {
+      has_more: false,
+      next_cursor: null,
+    });
   if (existing) dm(pollen);
   const open = vi.fn(async (keys: readonly string[], _signal: AbortSignal) => {
     if (hold && keys[0] === pollen) await gate.promise;
@@ -223,6 +239,10 @@ async function fixture({
         )
           return [...discovery.values()].flat();
         const history = filters.find((filter) => filter.top_level);
+        if (withReply && olderRoot && history?.until) {
+          if (holdOlder) await reads.older.promise;
+          return [root, end(link)];
+        }
         if (history?.before_id) {
           olderStarted();
           if (hasOlder) await olderGate.promise;
@@ -240,13 +260,24 @@ async function fixture({
         }
         if (withReply && history) {
           if (holdHead) await reads.head.promise;
+          const thread = summary(relayKey, pollenDM, root.id, {
+            reply_count: 1,
+            participants: [response.pubkey],
+          });
+          // The root is older than the loaded head, behind the link to it.
+          if (olderRoot)
+            return [
+              link,
+              thread,
+              bounds(relayKey, pollenDM, "head", {
+                has_more: true,
+                next_cursor: { created_at: link.created_at, id: link.id },
+              }),
+            ];
           return [
             root,
             ...(withLink ? [link] : []),
-            summary(relayKey, pollenDM, root.id, {
-              reply_count: 1,
-              participants: [response.pubkey],
-            }),
+            thread,
             bounds(relayKey, pollenDM, "head", {
               has_more: hasOlder,
               next_cursor: hasOlder
@@ -456,7 +487,18 @@ async function fixture({
     ),
     rootId: root.id,
     replyId: response.id,
-    release: { head: reads.head.resolve, thread: reads.thread.resolve },
+    release: {
+      head: reads.head.resolve,
+      thread: reads.thread.resolve,
+      older: reads.older.resolve,
+    },
+    /** The chat history's row for a message, once revealed there. */
+    revealed: (messageId: string) =>
+      scrolled.find(
+        (row) =>
+          row.dataset.messageId === messageId &&
+          !row.closest('[aria-label="Thread"]'),
+      ),
     mount: () =>
       render(
         <ToastProvider>
@@ -656,14 +698,14 @@ async function linkedVisit(
     messageId: string;
     threadRootId?: string;
   },
-  hold: { holdHead?: boolean; holdThread?: boolean } = {},
+  hold: {
+    holdHead?: boolean;
+    holdThread?: boolean;
+    olderRoot?: boolean;
+    holdOlder?: boolean;
+  } = {},
 ) {
   const f = await fixture({ existing: true, withReply: true, ...hold });
-  // Rows revealed in the chat history or a thread, in order.
-  const scrolled: HTMLElement[] = [];
-  HTMLElement.prototype.scrollIntoView = vi.fn(function (this: HTMLElement) {
-    scrolled.push(this);
-  });
   f.choose(pollen);
   // Browser history outlives the previous test's host; start at Home.
   window.history.replaceState(null, "", "/");
@@ -734,20 +776,41 @@ async function linkedVisit(
       ...visit(f),
     });
   });
-  return {
-    f,
-    host,
-    scope,
-    /** The chat history's row for a message, once revealed there. */
-    revealed: (messageId: string) =>
-      scrolled.find(
-        (row) =>
-          row.dataset.messageId === messageId &&
-          !row.closest('[aria-label="Thread"]'),
-      ),
-  };
+  return { f, host, scope, revealed: f.revealed };
 }
 
+/** Resolves after `count` animation frames queued from now. A reveal runs two
+ * frames after its effect, so frames queued after a visit's render run after
+ * any reveal that visit could have started. */
+const frames = (count: number) =>
+  new Promise<void>((resolve) => {
+    const step = (left: number) =>
+      left ? requestAnimationFrame(() => step(left - 1)) : resolve();
+    step(count);
+  });
+/** The chat history's own element for a selector, never the thread's. */
+const inChat = (selector: string) =>
+  [...document.querySelectorAll<HTMLElement>(selector)].find(
+    (element) => !element.closest('[aria-label="Thread"]'),
+  );
+/** The chat history's row for a message, in or out of view. */
+const chatRow = (messageId: string) =>
+  inChat(`[data-message-scroller] [data-message-id="${messageId}"]`);
+
+/** Bestie's page target for a handed-off visit, at one of its routes. */
+const bestieTarget = (
+  h: Awaited<ReturnType<typeof linkedVisit>>,
+  route?: Record<string, string>,
+) => ({
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.bestie",
+  pageId: "bestie",
+  scope: h.scope,
+  ...(route && {
+    route: { version: 1, params: { channelId: pollenDM, ...route } },
+  }),
+});
 function bestieVisit(
   h: Awaited<ReturnType<typeof linkedVisit>>,
   route: Record<string, string>,
@@ -756,14 +819,9 @@ function bestieVisit(
     screen.getByRole("textbox", { name: "Message Pollen" }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
-  expect(h.host.navigation.snapshot().entry.target).toEqual({
-    version: 1,
-    kind: "page",
-    pluginId: "buzz.bestie",
-    pageId: "bestie",
-    scope: h.scope,
-    route: { version: 1, params: { channelId: pollenDM, ...route } },
-  });
+  expect(h.host.navigation.snapshot().entry.target).toEqual(
+    bestieTarget(h, route),
+  );
 }
 
 it("opens a thread linked from another page in Bestie's page, at its root, not Messages", async () => {
@@ -835,6 +893,95 @@ it("keeps focus in the thread when its root is revealed last", async () => {
   expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
 });
 
+/** A thread link whose root is behind the loaded head: the chat shows the
+ * head and reads the older page, held, while the thread opens. */
+async function olderRootVisit() {
+  const h = await linkedVisit(
+    ({ rootId, replyId }) => ({ messageId: replyId, threadRootId: rootId }),
+    { olderRoot: true, holdOlder: true },
+  );
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  expect(await screen.findByRole("link", { name: "Pollen" })).toBeVisible();
+  expect(await screen.findByText("Loading older…")).toBeVisible();
+  expect(chatRow(h.f.rootId)).toBeUndefined();
+  return h;
+}
+
+it("reveals a thread's root found in older history beside the thread", async () => {
+  const h = await olderRootVisit();
+  await act(async () => h.f.release.older());
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+});
+
+// Pulling the reader to the root seconds after they moved on would take them
+// from where they scrolled, or stop the chat following new messages.
+it.each([
+  [
+    "scrolled",
+    () =>
+      fireEvent.wheel(inChat("[data-message-scroller]") as HTMLElement, {
+        deltaY: -40,
+      }),
+  ],
+  [
+    "sent",
+    async () => {
+      const composer = screen.getByRole("textbox", { name: "Message Pollen" });
+      await userEvent.type(composer, "Still here");
+      await userEvent.click(
+        within(composer.closest("form") as HTMLElement).getByRole("button", {
+          name: "Send message",
+        }),
+      );
+      // The composer clears once the send is reported.
+      await waitFor(() => expect(composer).not.toHaveTextContent("Still here"));
+    },
+  ],
+])(
+  "leaves the chat where the reader %s while a thread's older root was sought",
+  async (_, interact) => {
+    const h = await olderRootVisit();
+    await interact();
+    await act(async () => h.f.release.older());
+    await waitFor(() => expect(chatRow(h.f.rootId)).toBeDefined());
+    await act(() => frames(2));
+    expect(h.revealed(h.f.rootId)).toBeUndefined();
+  },
+);
+
+it("returns to a reply's thread after leaving Bestie for another page", async () => {
+  // In the main pane, the thread shows only while its visit selects it.
+  localStorage.setItem("buzz-thread-placement.v1", "main");
+  const h = await linkedVisit(({ replyId }) => ({ messageId: replyId }));
+  const selected = () =>
+    within(screen.getByLabelText("Bestie conversation tabs")).getByRole("tab", {
+      selected: true,
+    });
+  expect(
+    await within(await screen.findByLabelText("Thread")).findByText(
+      "Yep, here. What’s up?",
+    ),
+  ).toBeVisible();
+  expect(selected()).toHaveTextContent("Are you there?");
+  act(() => {
+    void h.host.navigation.open(homeTarget);
+  });
+  await waitFor(() => expect(screen.queryByLabelText("Thread")).toBeNull());
+  act(() => h.host.navigation.back());
+  // The remounted page reads how the visit resolved from the tab store.
+  await waitFor(() => expect(selected()).toHaveTextContent("Are you there?"));
+  expect(
+    within(screen.getByLabelText("Thread")).getByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  expect(h.host.navigation.snapshot().entry.target).toEqual(
+    bestieTarget(h, { messageId: h.f.replyId }),
+  );
+});
+
 it("leaves the chat history in place for View thread and for Back and Forward", async () => {
   const f = await threadHistoryFixture();
   const { navigator, rerender } = f;
@@ -847,6 +994,8 @@ it("leaves the chat history in place for View thread and for Back and Forward", 
   );
   rerender();
   expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
   expect(row).toBeInTheDocument();
   expect(screen.queryByText("Loading messages…")).toBeNull();
   act(() => navigator.back());
@@ -857,6 +1006,8 @@ it("leaves the chat history in place for View thread and for Back and Forward", 
   act(() => navigator.forward());
   rerender();
   expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
   expect(row).toBeInTheDocument();
   expect(screen.queryByText("Loading messages…")).toBeNull();
 });
@@ -890,6 +1041,23 @@ it("keeps a message visit that showed the chat when its View thread tab closes",
   // Close retires the thread's visit only; the message visit remains a stop.
   act(() => navigator.back());
   expect(navigator.snapshot().entry.target).toEqual(message);
+});
+
+it("retires a message visit that opened as its thread when that thread closes", async () => {
+  // A message history no longer holds opens as its thread.
+  const h = await linkedVisit(() => ({ messageId: "f".repeat(64) }));
+  const pane = await screen.findByLabelText("Bestie panel tabs");
+  await userEvent.click(
+    within(pane).getByRole("button", { name: /^Close .* tab$/ }),
+  );
+  // Close retires the visit that showed this thread, whatever its address.
+  await waitFor(() =>
+    expect(h.host.navigation.snapshot().entry.target).toEqual(bestieTarget(h)),
+  );
+  act(() => h.host.navigation.back());
+  await waitFor(() =>
+    expect(h.host.navigation.snapshot().entry.target).toEqual(homeTarget),
+  );
 });
 
 it("opens a chat link into this DM as its own visit, without a Messages stop", async () => {

@@ -368,8 +368,10 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     use std::io::{Read, Write};
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     const CONNECT: &str = "BUZZ_PEER_TEST_CONNECT";
 
     fn v4(raw: &str) -> SocketAddrV4 {

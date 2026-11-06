@@ -10,7 +10,11 @@ import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import styles from "./Messages.module.css";
 import { HIGHLIGHT_MAX_WAIT_MS, HIGHLIGHT_QUIET_MS } from "./message-highlight";
-import { useMessageReveal } from "./use-message-reveal";
+import {
+  useMessageReveal,
+  watchArrival,
+  type RevealArrival,
+} from "./use-message-reveal";
 
 // Control frame/mutation ordering; browser journeys own real layout and inert focus.
 const frames = new Map<number, FrameRequestCallback>();
@@ -71,11 +75,13 @@ function mount(
     prepare = undefined,
     rowKey = 0,
     messageId = "target",
+    arrival = undefined,
   }: {
     signal?: AbortSignal;
     prepare?: () => void;
     rowKey?: number;
     messageId?: string;
+    arrival?: RevealArrival;
   }) {
     const scroller = useRef<HTMLDivElement>(null);
     const settled = useRef(false);
@@ -90,6 +96,7 @@ function mount(
       ...(mark === undefined ? {} : { mark }),
       ...(prepare ? { prepare } : {}),
       ...(hold ? { hold } : {}),
+      ...(arrival ? { arrival } : {}),
     });
     return (
       <>
@@ -121,8 +128,13 @@ function mount(
     composer,
     restart: () => result.rerender(<Surface prepare={() => {}} />),
     remountRow: () => result.rerender(<Surface rowKey={1} />),
-    next: () =>
-      result.rerender(<Surface signal={new AbortController().signal} />),
+    next: (arrival?: RevealArrival) =>
+      result.rerender(
+        <Surface
+          signal={new AbortController().signal}
+          {...(arrival ? { arrival } : {})}
+        />,
+      ),
     other: () =>
       result.rerender(
         <Surface signal={new AbortController().signal} messageId="other" />,
@@ -497,6 +509,29 @@ it("leaves focus with a composer the app focused once the person types into it",
   expect(focus).not.toHaveBeenCalled();
   await frame();
   expect(complete).toHaveBeenCalledOnce();
+});
+
+// A thread retargeting in place records the arrival before the read and hands
+// it to the reveal that follows; the next request records its own.
+it("adopts an arrival recorded before the signal, for that request only", async () => {
+  const { row, composer, complete, next } = mount();
+  await idle();
+  expect(document.activeElement).toBe(row);
+  const arrival = { element: document.activeElement, input: false };
+  const stop = watchArrival(arrival);
+  try {
+    moves.click(composer);
+    next(arrival);
+    await idle();
+    expect(document.activeElement).toBe(composer);
+    expect(complete).toHaveBeenCalledTimes(2);
+    next(arrival);
+    await idle();
+    expect(document.activeElement).toBe(row);
+    expect(complete).toHaveBeenCalledTimes(3);
+  } finally {
+    stop();
+  }
 });
 
 it.each([false, true])(

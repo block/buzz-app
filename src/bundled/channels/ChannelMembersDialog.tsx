@@ -1623,6 +1623,10 @@ export function ChannelMembersDialog({
   const dmAgent = useRef<(key: string) => boolean>(() => false);
   dmAgent.current = (key) =>
     agentCandidate(candidates.get(key) ?? { pubkey: key });
+  // A DM of at most one person and their agents never gains a person.
+  const dmAgentOnly = useRef(false);
+  dmAgentOnly.current =
+    (currentGroups.find((group) => group.name === "People")?.count ?? 0) < 2;
   const [dmChoice, setDmChoice] = useState<string>();
   const add = useCallback(
     async (key: string, includeHistory?: boolean) => {
@@ -1637,14 +1641,16 @@ export function ChannelMembersDialog({
       const pending = directPending.current;
       // A person joins a DM with or without its history; they choose first.
       // An agent joins with it, so someone the relay counts as a person
-      // still joins this DM instead of starting another.
+      // still joins this DM instead of starting another. A person added to a
+      // DM of one person and their agents starts a new DM without asking.
       if (dm && includeHistory === undefined) {
         if (pending.has(key)) return;
-        if (!dmAgent.current(key)) {
+        if (dmAgent.current(key)) includeHistory = true;
+        else if (dmAgentOnly.current) includeHistory = false;
+        else {
           setDmChoice(key);
           return;
         }
-        includeHistory = true;
       }
       // A Solo owner's agents and DM additions join directly; people use
       // ordinary additions.

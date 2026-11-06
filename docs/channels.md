@@ -413,7 +413,9 @@ adds them in place with `["history", "include"]`; the DM is then identified by
 the grown set of people, so messaging only the original people later starts a
 new DM. Start new DM, the default without the tag, creates a DM of everyone
 without the history. Either way, if a DM of the grown set of people already
-exists, the relay returns it and the dialog opens it. A DM holds at most nine
+exists, the relay returns it and the dialog opens it. A DM of at most one
+person and their agents never gains a person in place: adding one opens the DM
+of everyone without asking, and the relay starts that DM even with the tag. A DM holds at most nine
 people; agents do not count. The relay enforces this and decides who is an
 agent. Opening a DM still names at most eight others, agents included. The session confirms the returned DM from signed
 discovery before reporting the addition. The first kind-9 message then uses the

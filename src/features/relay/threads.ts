@@ -15,6 +15,7 @@ import { listByteSize } from "./budget";
 import { foldMessages } from "./fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
+import { RESUME_READ_AGE } from "./live";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
@@ -97,6 +98,7 @@ export function createThreadView({
   admit = (events) => events,
   clock = new MessageClock(),
   dropped: openedDropped = false,
+  now = Date.now,
 }: {
   channelId: string;
   messageId: string;
@@ -128,6 +130,8 @@ export function createThreadView({
   /** Opened while the stream was down, or before it was up: the first read
    * is the snapshot its establishment refresh must reach. */
   dropped?: boolean;
+  /** The store's clock: a thread resumes with no read on the same age rule. */
+  now?: (() => number) | undefined;
 }) {
   // These finite thread reads have no session recovery source. Their existing
   // selection/page controllers still own cancellation and stale-result fencing.
@@ -181,9 +185,12 @@ export function createThreadView({
   /** The stream is down: a completed refresh keeps `held`, taking one from
    * its replies if the view has none. Only its establishment refresh clears it. */
   let dropped = openedDropped;
-  /** The view was ready, with no read running, when the stream dropped: its
-   * replies reached the live stream then. Cleared by any establishment. */
+  /** The view was ready, with no read running, when the stream dropped, and
+   * its replies came from a refresh started at most `RESUME_READ_AGE` before:
+   * they reached the live stream then. Cleared by any establishment. */
   let liveAtDrop = false;
+  /** When the refresh whose replies the view holds started. */
+  let readAt = -Infinity;
   let controller: AbortController | undefined;
   /** A refresh requested while a read runs; the stream's return carries over. */
   let again: false | "refresh" | "established" = false;
@@ -386,6 +393,7 @@ export function createThreadView({
   function purge(clear = false) {
     // A purged view no longer holds what the stream delivered before the drop.
     liveAtDrop = false;
+    readAt = -Infinity;
     controller?.abort();
     selectionController?.abort();
     selectionController = undefined;
@@ -569,6 +577,7 @@ export function createThreadView({
     if (!replace && (!snapshot.canLoadMore || snapshot.limited)) return;
     const owned = new AbortController();
     controller = owned;
+    const startedAt = now();
     // A read after the drop can fail or replace the rows the stream kept live,
     // so only an untouched view may skip its establishment refresh.
     liveAtDrop = false;
@@ -812,6 +821,7 @@ export function createThreadView({
       rootUnavailable = false;
       cursor = nextCursor;
       pages = nextPages;
+      if (replace) readAt = startedAt;
       // While the stream is down (a drop mid-refresh ran stale() first) the
       // held replies stand; a view holding none, or a fill that gave them up,
       // takes the replies now.
@@ -864,7 +874,11 @@ export function createThreadView({
     stale() {
       // Only the first drop: a later one keeps the views the first took.
       if (!dropped)
-        liveAtDrop = snapshot.status === "ready" && !controller && !again;
+        liveAtDrop =
+          snapshot.status === "ready" &&
+          !controller &&
+          !again &&
+          now() - readAt <= RESUME_READ_AGE;
       dropped = true;
       held ??= unverified();
       // A queued establishment was for the stream that just dropped.

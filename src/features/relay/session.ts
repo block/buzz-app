@@ -215,6 +215,8 @@ export function createRelaySession(
   } = {},
 ) {
   let closed = false;
+  // Thread views share the store's clock; thread() shadows `options`.
+  const storeNow = options.now;
   const lifetime = new AbortController();
   let uploadLifetime = new AbortController();
   function cancelUploads() {
@@ -2802,6 +2804,7 @@ export function createRelaySession(
         visible: (events) => events.filter(visibility(events)),
         notify,
         dropped: streamDropped,
+        now: storeNow,
       });
       threads.add(thread);
       thread.receive(recent.entries().map(([, item]) => item.event));

@@ -1862,18 +1862,19 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
-  it("catches up from the rows held at the drop when a resumed channel is reported again with nothing continuous", async () => {
+  it("catches up from the rows held at the report when a resumed channel is reported again with nothing continuous", async () => {
     const h = reconnectHarness();
     try {
       const seen = await verifiedThenDropped(h);
       await resume(h, [], true);
       expect(h.reads()).toHaveLength(0);
-      // A live event after the resume, then a grant the broker learned of
-      // after the replay: the replay may have left the channel out.
+      // A grant the broker learned of after the replay: the relay may have
+      // left the channel out, so the stream delivered nothing for it since.
+      h.live.established("c");
+      await flush();
+      // A live event after the re-sent batch is live, before the catch-up reads.
       const fresh = message(h.alice, "c", "fresh", 60);
       h.live.receive([fresh]);
-      await flush();
-      h.live.established("c");
       await flush();
       const hidden = message(h.alice, "c", "hidden", 30),
         newer = message(h.alice, "c", "newer", 50);
@@ -1891,15 +1892,15 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
-  it("keeps the rows held at the drop when the stream drops again before a retracted resume catches up", async () => {
+  it("keeps the rows held at the report when the stream drops again before a retracted resume catches up", async () => {
     const h = reconnectHarness();
     try {
       const seen = await verifiedThenDropped(h);
       await resume(h, [], true);
+      h.live.established("c");
+      await flush();
       const fresh = message(h.alice, "c", "fresh", 60);
       h.live.receive([fresh]);
-      await flush();
-      h.live.established("c");
       await flush();
       // The retraction's head is still outstanding when the stream drops again.
       h.read();
@@ -1921,6 +1922,32 @@ describe("a reconnect whose replay was continuous", () => {
         fresh.id,
         later.id,
       ]);
+      expect(h.window().freshness).toBe("verified");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("catches up a resumed window from its current rows when the batch is later re-sent", async () => {
+    // A routine refresh after a no-read resume: the window is contiguous
+    // through the rows the stream delivered since, so the head reaching the
+    // newest of them ends the catch-up.
+    const h = reconnectHarness();
+    try {
+      const seen = await verifiedThenDropped(h);
+      await resume(h, [], true);
+      const first = message(h.alice, "c", "live 1", 61),
+        second = message(h.alice, "c", "live 2", 62),
+        third = message(h.alice, "c", "live 3", 63);
+      const live = [first, second, third];
+      h.live.receive(live);
+      await flush();
+      h.live.established("c");
+      await flush();
+      h.read().respond(h.page("head", [third, second], second));
+      await flush();
+      expect(h.reads()).toHaveLength(0);
+      expect(h.rows()).toEqual([seen.id, ...live.map((event) => event.id)]);
       expect(h.window().freshness).toBe("verified");
     } finally {
       h.owner.dispose();
@@ -1961,6 +1988,37 @@ describe("a reconnect whose replay was continuous", () => {
       expect(h.window().freshness).toBe("verified");
       const lost = message(h.alice, "c", "frame the relay dropped", 20);
       clock += 15 * 60_000 + 1;
+      await h.drop();
+      h.queries.length = 0;
+      await resume(h, [], true);
+      expect(h.window().freshness).toBe("cached");
+      h.read().respond(h.page("head", [lost, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, lost.id]);
+      expect(h.window().freshness).toBe("verified");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("catches up a window whose only recent head read was a prefetch it never took, though its replay was continuous", async () => {
+    // The prefetch's rows went to the cached head, not the open window, so
+    // they cannot show the window holds the frame the relay dropped.
+    let clock = 1_700_000_000_000;
+    const h = reconnectHarness({ now: () => clock });
+    try {
+      const seen = message(h.alice, "c", "seen", 10);
+      await h.reconnect(seen);
+      h.read().respond(h.page("head", [seen], seen));
+      await flush();
+      expect(h.window().freshness).toBe("verified");
+      const lost = message(h.alice, "c", "frame the relay dropped", 20);
+      clock += 15 * 60_000 + 1;
+      h.owner.session.channels.prepare?.("c");
+      await flush();
+      h.read().respond(h.page("head", [lost, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id]);
       await h.drop();
       h.queries.length = 0;
       await resume(h, [], true);
@@ -2138,6 +2196,55 @@ describe("a reconnect whose replay was continuous", () => {
       await resume(h, [], false);
       await answer();
       expect(threadReads().length).toBeGreaterThan(0);
+      thread.dispose();
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("refreshes an open thread whose last read is older than the replay, though its replay was continuous", async () => {
+    // A reply the relay dropped from the live stream before the replay starts
+    // reaches the view only through a read.
+    let clock = 1_700_000_000_000;
+    const h = reconnectHarness({ now: () => clock });
+    try {
+      const root = message(h.alice, "c", "root", 10);
+      await verifiedThenDropped(h);
+      await resume(h, [], true);
+      const thread = h.owner.session.thread("c", root.id);
+      const answer = async () => {
+        for (let quiet = 0; quiet < 3; ) {
+          await flush();
+          if (!h.wire.pending.length) quiet++;
+          else quiet = 0;
+          for (const entry of h.wire.pending.splice(0))
+            entry.respond(
+              entry.filters[0]?.ids?.includes(root.id) ? [root] : [],
+            );
+        }
+      };
+      const threadReads = () =>
+        h.queries.filter((filters) =>
+          filters.some(
+            (f) => f.ids?.includes(root.id) || f["#e"]?.includes(root.id),
+          ),
+        );
+      void thread.refresh();
+      await answer();
+      expect(thread.snapshot().status).toBe("ready");
+      clock += 15 * 60_000;
+      await h.drop();
+      h.queries.length = 0;
+      await resume(h, [], true);
+      await answer();
+      expect(threadReads()).toEqual([]);
+      clock += 1;
+      await h.drop();
+      h.queries.length = 0;
+      await resume(h, [], true);
+      await answer();
+      expect(threadReads().length).toBeGreaterThan(0);
+      expect(thread.snapshot().status).toBe("ready");
       thread.dispose();
     } finally {
       h.owner.dispose();

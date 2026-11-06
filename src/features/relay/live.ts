@@ -70,6 +70,15 @@ export const RELAY_TIMESTAMP_DRIFT_SECS = 900;
  * pod can trail its peers), the client clock's skew from the relay's, and the
  * relay's replica read budget for the unread repair, which uses the same margin. */
 export const LIVE_RESUME_LAG = RELAY_TIMESTAMP_DRIFT_SECS + 60;
+/** A continuous replay starts `LIVE_RESUME_LAG` before the drop, so it closes
+ * the gap only back to then. A live frame the relay dropped earlier (a full
+ * send buffer drops it without a notice) is not in it; only a read after that
+ * frame brings it back. So a view resumes with no read only when the read its
+ * rows came from started at most this long (milliseconds) before the drop; any
+ * other view reads again. The batch refresh reads each open window's head and
+ * open thread about this often. The minute under the lag absorbs read latency
+ * and clock skew. */
+export const RESUME_READ_AGE = (LIVE_RESUME_LAG - 60) * 1000;
 /** Signature proofs a live subscription keeps across its reconnects. Each resume
  * replays `LIVE_RESUME_LAG` of events the subscription already verified; a
  * fresh signature check costs about 1 ms of main thread per event, a proof hit

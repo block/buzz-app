@@ -1044,13 +1044,17 @@ When access ends, the relay leaves the channel out of its batch with no frame,
 and the channel's cursor stays. A grant that restores access may reach the
 broker after the batch's EOSE, for example in the membership replay of the
 same reconnect, so the batch can first report that channel continuous. The grant then re-sends the batch, whose EOSE reports it
-again with nothing continuous. A resume keeps the rows the window held at the
-drop until the next drop, so that catch-up pages back to them, past any rows
-the stream delivered since.
+again with nothing continuous. A report with nothing continuous makes its
+catch-up page back to the rows the window holds when the report arrives, unless
+a drop kept older ones: while the relay left the channel out, the stream
+delivered nothing for it, so those are the rows of the drop, and rows it
+delivers after the report are newer than the gap. After a resume that was
+continuous, a later re-send of the batch therefore reads only the head.
 
-A retained window that was verified when the stream dropped, with a head read
-started at most 15 minutes before the drop, and a thread view that was settled
-then, skip the head, page and thread reads for such a channel: the replay already delivered every channel event since the drop,
+A retained window that was verified when the stream dropped, and a thread view
+that was settled then, each holding rows from a read started at most 15 minutes
+before the drop, skip the head, page and thread reads for such a channel (a
+head read the window never took, such as a prefetch, does not count): the replay already delivered every channel event since the drop,
 including ones backdated within the resume lag, and the live stream had
 delivered everything before it. The window becomes verified at once, and a
 membership notice read that failed or was cut before the drop resumes (it reads

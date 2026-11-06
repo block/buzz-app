@@ -54,6 +54,7 @@ import { yieldToHost } from "./yield";
 import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
 import type { WindowPage } from "./window";
 import { MatchRank, matchRank } from "../search/match";
+import { RESUME_READ_AGE } from "./live";
 
 type Listener = () => void;
 type WindowState = {
@@ -92,15 +93,13 @@ type WindowState = {
    * gap, not overlap with it. */
   kept?: Set<string> | undefined;
   /** The window was verified when the stream dropped and `kept` was taken,
-   * and a head read started at most `RESUME_READ_AGE` before: its rows reached
+   * and its `readAt` was at most `RESUME_READ_AGE` before: its rows reached
    * the live stream then. A continuous replay of the channel closes the gap
    * from them, so `resume` needs no read. */
   keptLive?: boolean | undefined;
-  /** `resume` verified the window with no read. `kept` still holds the rows
-   * of the drop, so a later report on this connection that the channel was
-   * not continuous (a grant the broker learned of after its replay) catches up
-   * from them; the next drop takes a new snapshot. */
-  resumed?: boolean | undefined;
+  /** When the head read whose rows the window holds started. A head read the
+   * window never took (a prefetch, a cancelled catch-up) does not count. */
+  readAt?: number | undefined;
   /** Relay membership notices, read apart from the pages (see `fillNotices`). */
   notices: Map<string, RelayEvent>;
   /** Where the next older notice read starts: null once a read reached the
@@ -116,6 +115,8 @@ type Head = {
   hasMore: boolean;
   events: readonly RelayEvent[];
   savedAt: number;
+  /** When the relay read that produced it started; none for a saved head. */
+  readAt?: number;
   cached: boolean;
   restored?: true;
 };
@@ -154,15 +155,6 @@ const sameKeys = (a?: readonly string[], b?: readonly string[]) =>
     (a ?? []).every((key, index) => key === b?.[index]));
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
-/** A continuous replay starts `LIVE_RESUME_LAG` (16 minutes) before the drop,
- * so it closes the gap only back to then. A live frame the relay dropped
- * earlier (a full send buffer drops it without a notice) is not in it; only a
- * head read after that frame brings it back. The live batch refresh reads each
- * caught-up head about every 15 minutes. So a window resumes with no read only
- * when a head read started at most this long before the drop; any other
- * window catches up. The minute under the lag absorbs read latency and clock
- * skew. */
-const RESUME_READ_AGE = 15 * 60_000;
 /** Channels one creator-proof filter names. Each has one creation, so a limit
  * of twice this, the relay's maximum, leaves room for strays; a filter that
  * reaches it proves only the channels whose creation arrived. */
@@ -325,8 +317,6 @@ export function createChannelStore(
   // Full cache clears. Profiles outlive access purges (which move `epoch`),
   // so only a clear or disposal fences a profile restore.
   let cleared = 0;
-  /** When the latest head read of each channel started (see `RESUME_READ_AGE`). */
-  const headReads = new Map<string, number>();
   let listAgain = false;
   // Epoch of the latest access revocation. When that revocation is what made a
   // full read stale, it interrupted rather than failed it: a pass is still owed.
@@ -752,6 +742,7 @@ export function createChannelStore(
     moveCursor(state, head.cursor);
     state.atHead = true;
     state.restored = head.restored === true;
+    state.readAt = head.readAt;
     if (dropped) {
       state.kept = rowIds(state);
       state.keptLive = false;
@@ -976,11 +967,9 @@ export function createChannelStore(
       });
     // Head reads belong to session recovery; only manual pagination needs a
     // finite retry owner here.
-    const startedAt = now();
     const events = cursor
       ? await retryRead(read, settings.signal ?? new AbortController().signal)
       : await read();
-    if (!cursor) headReads.set(channelId, startedAt);
     return {
       events,
       page: parseWindow(channelId, cursor, transport.relayAuthor, events),
@@ -1020,6 +1009,7 @@ export function createChannelStore(
         hasMore: page.hasMore,
         events,
         savedAt: now(),
+        readAt: startedAt,
         cached: false,
       };
       if (
@@ -4273,13 +4263,11 @@ export function createChannelStore(
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
       for (const state of windows.values()) {
-        if (!state.kept || state.resumed) {
-          state.resumed = undefined;
+        if (!state.kept) {
           state.kept = rowIds(state);
           state.keptLive =
             state.snapshot.freshness === "verified" &&
-            now() - (headReads.get(state.channelId) ?? -Infinity) <=
-              RESUME_READ_AGE;
+            now() - (state.readAt ?? -Infinity) <= RESUME_READ_AGE;
         }
         setWindow(state, {
           freshness: "cached",
@@ -4336,7 +4324,6 @@ export function createChannelStore(
         );
         for (const id of kept) retained.traffic.delete(id);
         retained.kept = keptAfter();
-        retained.resumed = undefined;
         retained.floor = undefined;
         retained.atHead = true;
         moveCursor(retained, last.cursor);
@@ -4354,6 +4341,7 @@ export function createChannelStore(
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
         retained.restored = false;
+        retained.readAt = head.readAt;
         accept(head.events);
         page = head;
         const reached = (last: Page) =>
@@ -4382,7 +4370,6 @@ export function createChannelStore(
           throw new DOMException("Stale live catch-up", "AbortError");
         if (retained.atHead) moveCursor(retained, page.cursor);
         retained.kept = keptAfter();
-        retained.resumed = undefined;
         // Live replay covers minutes; notices from a longer drop come by read.
         void fillNotices(retained, true);
         // A drop mid-fill has marked the window cached; the stream is retrying.
@@ -4439,8 +4426,8 @@ export function createChannelStore(
       dropped = false;
       const head = heads.peek(channelId);
       if (head) heads.set(channelId, { ...head, cached: true });
+      state.kept = undefined;
       state.keptLive = undefined;
-      state.resumed = true;
       setWindow(state, { freshness: "verified", error: undefined });
       // The replay holds only the outage's notices: finish a notice read that
       // failed or was cut before the drop. It reads nothing when none is owed.
@@ -4477,11 +4464,15 @@ export function createChannelStore(
       if (head) heads.set(channelId, { ...head, cached: true });
       const state = windows.get(channelId);
       if (state) {
-        // This establishment's replay may stop short of the kept rows. A
-        // resumed window owes a catch-up again: a drop before it settles keeps
-        // the rows of the first drop.
+        // This establishment's replay may stop short of the kept rows. A window
+        // with none (resumed with no read, or not dropped) takes the rows it
+        // holds now: they reached the stream, and rows it delivers from here on
+        // are newer than any gap. While the relay leaves a channel out (access
+        // ended, and the grant reached the broker after its replay), the stream
+        // delivers none for it, so these are still the rows of the drop. A drop
+        // before the catch-up settles keeps them.
+        state.kept ??= rowIds(state);
         state.keptLive = false;
-        state.resumed = undefined;
         setWindow(state, {
           freshness: "cached",
           error: undefined,

@@ -1695,8 +1695,9 @@ and OS notifications are not enabled by this feature.
 
 The Channels plugin registers Slack-style shortcuts through the shared dispatcher, so
 each is listed in Settings → Shortcuts and can be rebound. All run while typing in the
-message editor and are ignored behind a dialog. None run in a terminal, which keeps
-Escape and Option+Arrow for the shell.
+message editor, except plain Option+Up/Down on macOS, which the editor keeps for moving
+the caret by paragraph. All are ignored behind a dialog. None run in a terminal, which
+keeps Escape and Option+Arrow for the shell.
 
 - **Previous/next conversation** (Option+Up/Down) and **previous/next unread
   conversation** (Option+Shift+Up/Down) step through the sidebar's rendered order,

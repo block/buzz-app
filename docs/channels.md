@@ -1432,6 +1432,9 @@ root through `session.messages.reply`. Reply on a child selects that message as 
 parent without changing the root-keyed draft; canceling the target returns to the
 root. Channel and thread drafts are separate and survive reconnection; failed
 replies remain inline with the shared retry action and retain their signed ancestry.
+Where a sent reply's menu offers **Send to channel**, the footer offers
+**Also send to** that channel for the next reply, not saved with the draft. Once
+the relay accepts the reply, the open thread runs `session.messages.sendToChannel`.
 Read-only connections keep the existing composer capability notice; missing/revoked
 roots do not expose a composer. Exact navigation can retain and focus a selected
 reply beyond the traversal range; it does not extend that range or promise complete history.

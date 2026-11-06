@@ -131,6 +131,7 @@ it("real thread composer also sends a reply to the channel once the relay accept
       await screen.findByRole("checkbox", { name: "Also send to #General" }),
     ).not.toBeChecked();
   } finally {
+    accept();
     owner.dispose();
   }
 });

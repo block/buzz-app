@@ -1027,9 +1027,10 @@ it("offers Also send where Send to channel is and copies each accepted reply onc
   h.snapshot.replies = [{ ...reply, delivery: "seen" }];
   h.render();
   expect(sendToChannel).toHaveBeenCalledOnce();
-  // A refused copy is reported as the reply's Send to channel action reports it.
+  // Write access can end before the relay accepts the reply. The refused copy
+  // is reported as the reply's Send to channel action reports it.
   sendToChannel.mockImplementationOnce(() => {
-    throw new Error("Only your own messages can be sent to the channel");
+    throw new Error("You don’t have write access to this conversation.");
   });
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Also send to #General" }),
@@ -1040,7 +1041,7 @@ it("offers Also send where Send to channel is and copies each accepted reply onc
   expect(sendToChannel).toHaveBeenCalledTimes(2);
   expect(
     await screen.findByText(
-      "Only your own messages can be sent to the channel",
+      "You don’t have write access to this conversation.",
     ),
   ).toBeVisible();
 });

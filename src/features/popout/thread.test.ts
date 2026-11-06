@@ -383,11 +383,19 @@ it("fences and retries from the whole operation collection, capping only the pre
   expect(h.thread.retryOperation(rootOp)).toBe(true);
   // This window's admitted operations lead the capped presentation.
   expect(h.thread.snapshot().operations[0]?.id).toBe(rootOp);
-  // Dropped from main's outbox: reported delivered once, then forgotten.
+  // Dropped from main's outbox: reported accepted — on every read, since
+  // reading must not consume it — until the companion has received it.
   h.outbox.items = [];
-  expect(h.thread.operations()).toEqual([
-    { id: rootOp, messageId: ROOT, kind: 7, delivery: "accepted" },
-  ]);
+  const terminal = {
+    id: rootOp,
+    messageId: ROOT,
+    kind: 7 as const,
+    delivery: "accepted" as const,
+  };
+  expect(h.thread.operations()).toEqual([terminal]);
+  expect(h.thread.reactionBusy(ROOT)).toBe(false);
+  expect(h.thread.snapshot().operations).toEqual([terminal]);
+  expect(h.thread.acknowledgePublished([terminal])).toBe(true);
   expect(h.thread.operations()).toEqual([]);
   // A message deletion names its message, unlike a reaction removal.
   h.outbox.items = [
@@ -507,4 +515,43 @@ it("projects main's own management policy per row and admits each action by the 
   await expect(
     client.report({ messageId: "f".repeat(64), type: "spam", note: "" }),
   ).rejects.toThrow(/not shown/);
+});
+
+it("keeps terminal reports for this window ahead of the cap and until they are published", () => {
+  const h = fixture();
+  const idOf = (n: number) => n.toString(16).padStart(64, "0");
+  const sendingOn = (n: number) => ({
+    event: {
+      id: idOf(n),
+      pubkey: VIEWER,
+      created_at: 1,
+      kind: 7 as const,
+      content: "👍",
+      tags: [
+        ["h", "channel"],
+        ["e", ROOT],
+      ],
+    },
+    delivery: "sending" as const,
+  });
+  // 64 unrelated channel operations and one admitted edit that main delivered.
+  h.outbox.items = Array.from({ length: 64 }, (_, i) => sendingOn(100 + i));
+  const edit = idOf(999);
+  h.thread.admit(edit, ROOT, 40003);
+  const presented = h.thread.snapshot().operations;
+  expect(presented).toHaveLength(64);
+  expect(presented[0]).toEqual({
+    id: edit,
+    messageId: ROOT,
+    kind: 40003,
+    delivery: "accepted",
+  });
+  // 65 admitted deliveries: the 65th survives a capped publication.
+  h.outbox.items = [];
+  for (let i = 0; i < 65; i++) h.thread.admit(idOf(2000 + i), ROOT, 7);
+  const first = h.thread.snapshot().operations;
+  expect(first).toHaveLength(64);
+  expect(h.thread.acknowledgePublished(first)).toBe(true);
+  const rest = h.thread.snapshot().operations;
+  expect(rest.map((op) => op.id)).toEqual([idOf(2063), idOf(2064)]);
 });

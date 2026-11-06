@@ -39,6 +39,11 @@ import type { MentionPicks } from "../relay/messages";
 import { useDefaultAgent } from "./default-agent";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
+import {
+  mentionChannel,
+  outsideMentionReferences,
+  reserveSoloMentions,
+} from "../messages/mention-admission";
 import { composerMarkdown } from "../messages/composer-markdown";
 import {
   addressingOnly,
@@ -265,6 +270,16 @@ export function SoloDraft({
   }, [scope, draftKey, settingsOpen]);
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());
+  // The first message references people as the chat's later ones do. The
+  // reservation is in place before the composer first renders, so a restored
+  // draft's references are known at once; the effect's reservation replaces
+  // it and is the one released. An abandoned render leaves one entry for an
+  // id nothing reuses.
+  useState(() => reserveSoloMentions(session, channelId));
+  useEffect(
+    () => reserveSoloMentions(session, channelId),
+    [session, channelId],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);
@@ -301,7 +316,7 @@ export function SoloDraft({
     submitting.current = true;
     setBusy(true);
     setError(undefined);
-    const recipients = [
+    const tagged = [
       ...new Set(
         (addressed ?? mentionDraft(draft).recipients).map(
           (item) => item.pubkey,
@@ -354,6 +369,27 @@ export function SoloDraft({
           }),
           canvas,
         });
+      // Only your agents join; anyone else tagged is a reference, which
+      // notifies nobody. Only a complete agent read can tell a name is not
+      // yours.
+      const outside = () =>
+        tagged.filter((key) =>
+          outsideMentionReferences(
+            mentionChannel(session, channelId),
+            session.agentChoices.snapshot().identities,
+            key,
+          ),
+        );
+      let references = outside();
+      if (references.length) {
+        await session.agentChoices.refresh();
+        if (!mounted.current) return;
+        references = outside();
+        if (references.length && !session.agentChoices.snapshot().complete)
+          throw new Error("Could not load your agents. Retry.");
+      }
+      const recipients = tagged.filter((key) => !references.includes(key));
+      if (!recipients.length) throw new Error("Tag an agent to send.");
       // The workspace's agents join in the create with the tagged ones.
       const members = [...new Set([...recipients, ...(setup?.agents ?? [])])];
       // The agents already listed decide at once; only an unknown one waits
@@ -414,14 +450,14 @@ export function SoloDraft({
         recipients,
       );
       try {
-        if (Object.keys(firstPicks).length)
+        if (references.length || Object.keys(firstPicks).length)
           session.messages.send(
             channelId,
             text,
             recipients,
             uploaded,
             undefined,
-            [],
+            references,
             firstPicks,
           );
         else
@@ -598,11 +634,14 @@ export function SoloDraft({
                 if (!writeView(scope, `${draftKey}:new-project`, project))
                   missing.push("workspace");
                 // The pill's agents, when it routed the send; the composer reads
-                // them as it mounts. Tags in the text carry their own.
+                // them as it mounts. Tags in the text carry their own; when those
+                // are only references, the pill routed the send too.
+                const typed = new Set(draft.recipients.map((p) => p.pubkey));
+                const pill =
+                  addressed?.filter((p) => !typed.has(p.pubkey)) ?? [];
                 if (
-                  addressed &&
-                  !draft.recipients.length &&
-                  !writeView(scope, `${draftKey}:new-draft:agents`, addressed)
+                  pill.length &&
+                  !writeView(scope, `${draftKey}:new-draft:agents`, pill)
                 )
                   missing.push("agents");
                 attachmentDraft(

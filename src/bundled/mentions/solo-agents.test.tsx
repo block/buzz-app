@@ -46,6 +46,11 @@ import {
   type SpaceMentionResolution,
 } from "./resolve-space-mention";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../../features/conversation/completion";
+import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
+import {
+  mentionAdmission,
+  reserveSoloMentions,
+} from "../../features/messages/mention-admission";
 import { createProfileDirectory } from "../../features/relay/profile-directory";
 import type { RelayEvent } from "../../features/relay/events";
 import {
@@ -1991,7 +1996,7 @@ it("qualifies outside directory namesakes that have no cached profile", async ()
   names.dispose();
 });
 
-it("never expands Solo chat candidates from the community directory", async () => {
+it("keeps Solo chat composers without Solo mode, like media comments, to members", async () => {
   vi.useFakeTimers();
   const t = setup();
   const people = vi.fn(async () => ({
@@ -2050,6 +2055,311 @@ it("never expands Solo chat candidates from the community directory", async () =
     "Outside",
   );
   expect(result?.status).toBeUndefined();
+});
+
+it.each(["shared", "owner"] as const)(
+  "offers directory people as references in a Solo chat's %s composer",
+  async (mode) => {
+    const t = setup(false);
+    const outside = { pubkey: "e".repeat(64), name: "Outside" };
+    const people = vi.fn(async () => ({ people: [outside], hasMore: false }));
+    const session = {
+      ...t.session,
+      directMessages: { ...t.session.directMessages, people },
+    };
+    // A shared chat's composer invites agents; the owner's composer also
+    // passes its roster of chat people and own agents.
+    const publish = vi.fn();
+    const surfaces = (
+      <>
+        <MentionPicker
+          session={session}
+          scope="test"
+          channelId="parent"
+          disabled={false}
+          select={() => true}
+          inviteAgents
+        />
+        <MentionCompletion
+          session={session}
+          scope="test"
+          channelId="parent"
+          observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+          publish={publish}
+          query={{ start: 0, end: 4, query: "Out" }}
+          inviteAgents
+        />
+      </>
+    );
+    render(
+      mode === "owner" ? (
+        <DraftMentionRoster.Provider
+          value={{
+            recipients: [
+              { pubkey: t.member, name: "Member" },
+              { pubkey: t.key, name: "Outside agent" },
+            ],
+          }}
+        >
+          {surfaces}
+        </DraftMentionRoster.Provider>
+      ) : (
+        surfaces
+      ),
+    );
+    await waitFor(() => expect(people).toHaveBeenCalled());
+    const items = () =>
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items ?? [];
+    await waitFor(() =>
+      expect(items().find((item) => item.label === "Outside")?.detail).toBe(
+        "Not in chat · Will not be notified",
+      ),
+    );
+    // The viewer's own agent still joins when tagged.
+    expect(items().find((item) => item.label === "Outside agent")?.detail).toBe(
+      mode === "owner" ? undefined : "Adds to chat",
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Mention a member" }));
+    expect(
+      screen.getByRole("searchbox", {
+        name: "Search community people and agents",
+      }),
+    ).toBeInTheDocument();
+    const row = await screen.findByRole("button", {
+      name: rowName("Outside", "Not in chat · Will not be notified"),
+    });
+    expect(row).toHaveTextContent("Not in chat · Will not be notified");
+  },
+);
+
+it("keeps a Solo owner's left-out members out of directory results", async () => {
+  const t = setup(false);
+  const stranger = "c".repeat(64);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "parent",
+        name: "Chat",
+        channelType: "solo" as const,
+        members: [t.member, stranger],
+      },
+    ],
+  };
+  // Someone else's agent is in the chat, so the owner's roster leaves it out.
+  const people = vi.fn(async () => ({
+    people: [
+      { pubkey: stranger, name: "Outsider bot", isAgent: true as const },
+      { pubkey: "e".repeat(64), name: "Outside" },
+    ],
+    hasMore: false,
+  }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    channels: { ...t.session.channels, list: () => list },
+  };
+  const publish = vi.fn();
+  render(
+    <DraftMentionRoster.Provider
+      value={{ recipients: [{ pubkey: t.member, name: "Member" }] }}
+    >
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+        inviteAgents
+      />
+    </DraftMentionRoster.Provider>,
+  );
+  const labels = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+      (item) => item.label,
+    ) ?? [];
+  await waitFor(() => expect(labels()).toContain("Outside"));
+  expect(labels()).not.toContain("Outsider bot");
+});
+
+it("keeps the Solo agent menu to agents: it searches no directory", async () => {
+  const t = setup(false);
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  } as unknown as RelaySession;
+  const toggle = vi.fn();
+  const menu = (
+    <MentionPicker
+      scope="scope"
+      session={session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      audience={{
+        recipients: [{ pubkey: t.key, name: "Outside agent" }],
+        named: false,
+        only: vi.fn(),
+        toggle,
+      }}
+      select={() => true}
+    />
+  );
+  const view = render(menu);
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Sending to Outside agent. Change agents",
+    }),
+  );
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search members and agents" }),
+    "Out",
+  );
+  // The same chat's inline completion does search the directory. Once its
+  // result arrives, a search the menu had started would have returned too.
+  const publish = vi.fn();
+  view.rerender(
+    <>
+      {menu}
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+        inviteAgents
+      />
+    </>,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.label,
+      ),
+    ).toContain("Outside"),
+  );
+  // A reference picked in the menu would go out with a message whose text
+  // never names that person.
+  expect(people).toHaveBeenCalledOnce();
+  await screen.findByRole("button", {
+    name: rowName("Outside agent", "Adds to chat when you send"),
+  });
+  expect(
+    screen.queryByRole("button", { name: /^Outside(?!\s*agent)/ }),
+  ).toBeNull();
+  expect(toggle).not.toHaveBeenCalled();
+  view.unmount();
+  t.library.dispose();
+});
+
+it("offers an outside Solo choice only after a complete agent read, so a row never calls your agent a reference", async () => {
+  const t = setup(false);
+  // Carol is the viewer's agent, but only the agent read can say so.
+  const carol = { pubkey: "e".repeat(64), name: "Carol" };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const library = createAgentLibrary(async () => {
+    await gate;
+    return { definitions: [], identities: [carol] };
+  });
+  const people = vi.fn(async () => ({ people: [carol], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    agentLibrary: library.queries,
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  } as unknown as RelaySession;
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Car", start: 4, end: 4 }}
+      publish={publish}
+      query={{ start: 0, end: 4, query: "Car" }}
+      inviteAgents
+    />,
+  );
+  const carolRows = () =>
+    publish.mock.calls.flatMap(
+      ([result]) =>
+        (result as CompletionResult | undefined)?.items.filter(
+          (item) => item.label === "Carol",
+        ) ?? [],
+    );
+  // The directory answers while the agent read is still loading.
+  await waitFor(() => expect(people).toHaveBeenCalled());
+  await act(() => people.mock.results[0]?.value);
+  expect(session.agentChoices.snapshot().complete).toBe(false);
+  expect(mentionAdmission(session, "parent", true)(carol.pubkey)).toBe(false);
+  await act(async () => release());
+  await waitFor(() => expect(carolRows().at(-1)?.detail).toBe("Adds to chat"));
+  expect(carolRows().map((row) => row.detail)).not.toContain(
+    "Not in chat · Will not be notified",
+  );
+  library.dispose();
+  t.library.dispose();
+});
+
+it("offers directory people as references in a New chat's first message", async () => {
+  // A New chat's id is not listed until it starts.
+  const t = setup(null);
+  const outside = { pubkey: "e".repeat(64), name: "Outside" };
+  const people = vi.fn(async () => ({ people: [outside], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  } as unknown as RelaySession;
+  const release = reserveSoloMentions(session, "parent");
+  const publish = vi.fn();
+  render(
+    <DraftMentionRoster.Provider
+      value={{ recipients: [{ pubkey: t.key, name: "Outside agent" }] }}
+    >
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+        inviteAgents
+      />
+    </DraftMentionRoster.Provider>,
+  );
+  const items = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items ?? [];
+  await waitFor(() =>
+    expect(items().find((item) => item.label === "Outside")?.detail).toBe(
+      "Not in chat · Will not be notified",
+    ),
+  );
+  expect(items().map((item) => item.label)).toContain("Outside agent");
+  // The pasted or chosen key is admitted only while the reservation holds.
+  expect(mentionAdmission(session, "parent", true, [])(outside.pubkey)).toBe(
+    true,
+  );
+  release();
+  expect(mentionAdmission(session, "parent", true, [])(outside.pubkey)).toBe(
+    false,
+  );
+  t.library.dispose();
 });
 
 it("offers outside directory people in a DM, like a channel", async () => {
@@ -3605,7 +3915,7 @@ type DirectoryPage = {
 function spaceFixture(
   memberName: string,
   others: Record<string, string | null> = {},
-  options: { query?: string; dm?: boolean } = {},
+  options: { query?: string; dm?: boolean; solo?: boolean } = {},
 ) {
   const h = setup();
   h.profiles.set(h.member, { name: memberName });
@@ -3616,7 +3926,11 @@ function spaceFixture(
     channels: [
       {
         id: "parent",
-        channelType: options.dm ? ("dm" as const) : ("stream" as const),
+        channelType: options.dm
+          ? ("dm" as const)
+          : options.solo
+            ? ("solo" as const)
+            : ("stream" as const),
         members: [h.member, ...Object.keys(others)],
       },
     ],
@@ -3654,6 +3968,7 @@ function spaceFixture(
       observation={{ revision: 1, text: `@${query}`, start: end, end }}
       query={{ start: 0, end, query }}
       publish={publish}
+      inviteAgents={options.solo}
     />,
   );
   return {
@@ -4223,6 +4538,34 @@ it("the resolver returns a DM outsider to prose rather than promise a notificati
       hasMore: false,
     });
     await expect(pending).resolves.toBeNull();
+  } finally {
+    h.dispose();
+  }
+});
+it("the resolver returns a Solo chat outsider to prose but still selects the viewer's agent", async () => {
+  const h = spaceFixture("Member", {}, { solo: true });
+  const solo = (name: string) =>
+    resolveSpaceMention(
+      h.session,
+      { channelId: "parent", selected: [], inviteAgents: true },
+      name,
+      new AbortController().signal,
+    );
+  try {
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+    const pending = solo("jose");
+    await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose" }],
+      hasMore: false,
+    });
+    // The chooser's "Will not be notified" row was never shown.
+    await expect(pending).resolves.toBeNull();
+    // The viewer's agent joins the chat when tagged, so its chip stands.
+    expect(outcomeOf(await solo("Outside agent"))).toEqual({
+      pubkey: h.key,
+      name: "Outside agent",
+    });
   } finally {
     h.dispose();
   }

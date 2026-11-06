@@ -822,6 +822,71 @@ it("a refused start gives the pill's chosen agent back with its prompt", async (
   // The pick was for that prompt: the next New chat starts from the default.
   expect(readView("test", "solo:new-draft:agents", null)).toBeNull();
 });
+it("a refused start whose text names only a reference gives the pill's chosen agent back", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    onFailed = vi.fn(),
+    user = userEvent.setup();
+  Object.assign(test.session.agentChoices.snapshot(), { complete: true });
+  const refuse = refusedStart(test);
+  const person = "e".repeat(64);
+  writeView("test", "solo:new-draft", {
+    text: "ask @Pat",
+    recipients: [{ pubkey: person, name: "Pat", start: 4, end: 8 }],
+  });
+  const view = () => (
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      extensions={withPill}
+      onStarted={onStarted}
+      onFailed={onFailed}
+    />
+  );
+  const first = render(view());
+  await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
+  await user.click(
+    screen.getByRole("button", { name: "Send to Outside agent" }),
+  );
+  expect(sendingTo("Outside agent")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  const id = test.channelWrites.create.mock.calls[0]?.[0];
+  expect(test.messages.send).toHaveBeenLastCalledWith(
+    id,
+    "ask @Pat",
+    ["b".repeat(64)],
+    [],
+    undefined,
+    [person],
+    {},
+  );
+  first.unmount();
+  render(view());
+  await refuse();
+  await waitFor(() =>
+    expect(onFailed).toHaveBeenCalledWith(
+      id,
+      expect.stringMatching(/\. Your message is back in New chat\.$/),
+    ),
+  );
+  // The reference addresses nobody, so the pill's pick comes back with it.
+  expect(screen.getByRole("textbox")).toHaveTextContent("ask @Pat");
+  await waitFor(() => expect(sendingTo("Outside agent")).toBeInTheDocument());
+  test.channelWrites.ready = Promise.resolve();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledTimes(2));
+  const retry = test.channelWrites.create.mock.calls[1]?.[0];
+  expect(test.messages.send).toHaveBeenLastCalledWith(
+    retry,
+    "ask @Pat",
+    ["b".repeat(64)],
+    [],
+    undefined,
+    [person],
+    {},
+  );
+});
 it("a pick after a refused start's agent comes back replaces it, unsaved", async () => {
   const test = setup(),
     onStarted = vi.fn(),
@@ -961,6 +1026,57 @@ it("cannot send on an unsupported community", async () => {
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   expect(test.channelWrites.create).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "a first message references a person outside the chat, as later ones do (complete inventory=%s)",
+  async (complete) => {
+    const test = setup(),
+      onStarted = vi.fn(),
+      user = userEvent.setup();
+    Object.assign(test.session.agentChoices.snapshot(), { complete });
+    const person = "e".repeat(64);
+    writeView("test", "solo:new-draft", {
+      text: "@Member agent ask @Pat",
+      recipients: [
+        { pubkey: "a".repeat(64), name: "Member agent", start: 0, end: 13 },
+        { pubkey: person, name: "Pat", start: 18, end: 22 },
+      ],
+    });
+    render(
+      <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+    );
+    await user.click(screen.getByRole("textbox"));
+    await user.keyboard("{Enter}");
+    if (!complete) {
+      // A partial agent read cannot tell that key from one of your agents.
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Could not load your agents. Retry.",
+      );
+      expect(test.channelWrites.start).not.toHaveBeenCalled();
+      return;
+    }
+    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+    const id = test.channelWrites.create.mock.calls[0]?.[0];
+    // Only the agent joins and is notified; the person is named, not added.
+    expect(test.channelWrites.start).toHaveBeenCalledWith(
+      id,
+      expect.any(String),
+      ["a".repeat(64)],
+      undefined,
+      false,
+      undefined,
+    );
+    expect(test.messages.send).toHaveBeenCalledWith(
+      id,
+      "@Member agent ask @Pat",
+      ["a".repeat(64)],
+      [],
+      undefined,
+      [person],
+      {},
+    );
+  },
+);
 
 it("opens the chat and sends its message before the relay confirms the create", async () => {
   const test = setup(),
@@ -1807,9 +1923,11 @@ it.each([false, true])(
       undefined,
       true,
     );
+    const agent = { pubkey: viewer.pubkey, name: "Viewer", managed: true };
     const eligible = {
       ...h.session.agentChoices.snapshot(),
-      selectable: [{ pubkey: viewer.pubkey, name: "Viewer", managed: true }],
+      identities: [agent],
+      selectable: [agent],
     };
     const session = {
       ...h.session,

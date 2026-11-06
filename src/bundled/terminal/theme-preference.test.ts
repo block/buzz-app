@@ -135,6 +135,11 @@ it("collapses Light/Dark pairs and resolves appearance with a Buzz fallback", ()
   const lone = scheme("Lone Dark");
   const names = listSchemes([lone, dark, light]).map(({ name }) => name);
   expect(names).toEqual([BUZZ_SCHEME, "Selenized", "Lone Dark", "Paper"]);
+  expect(
+    listSchemes([scheme("Ink light"), scheme("Ink DARK")]).map(
+      ({ name }) => name,
+    ),
+  ).toEqual([BUZZ_SCHEME, "Selenized", "Ink"]);
   const imported = [light, dark];
   const resolve = (
     appearance: "system" | "light" | "dark",

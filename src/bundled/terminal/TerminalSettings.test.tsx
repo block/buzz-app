@@ -346,7 +346,9 @@ it("imports a pasted color scheme, previews it, and removes it back to Buzz", as
     screen.getByRole("button", { name: "Remove One Half Dark" }),
   );
   expect(colors.snapshot()).toMatchObject({ scheme: "Buzz", imported: [] });
-  expect(
-    screen.getByRole("combobox", { name: "Terminal color scheme" }),
-  ).toHaveTextContent("Buzz");
+  const picker = screen.getByRole("combobox", {
+    name: "Terminal color scheme",
+  });
+  expect(picker).toHaveTextContent("Buzz");
+  expect(picker).toHaveFocus();
 });

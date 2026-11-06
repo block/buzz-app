@@ -155,7 +155,7 @@ export function parseAlacrittyScheme(name: string, text: string): ColorScheme {
 }
 
 const BUNDLED = [selenizedLight, selenizedDark].map(parseColorScheme);
-const pairBase = (name: string) => /^(.+) (?:Light|Dark)$/.exec(name)?.[1];
+const pairBase = (name: string) => /^(.+) (?:light|dark)$/i.exec(name)?.[1];
 const RESERVED = new Set(
   [
     BUZZ_SCHEME,
@@ -171,13 +171,17 @@ const reserved = (name: string) =>
 
 /** Collapse `<Base> Light` / `<Base> Dark` into one entry when both exist. */
 function collapse(schemes: readonly ColorScheme[], imported: boolean) {
-  const byName = new Map(schemes.map((scheme) => [scheme.name, scheme]));
+  // Match pair suffixes case-insensitively, as Nexus does.
+  const byName = new Map(
+    schemes.map((scheme) => [scheme.name.toLowerCase(), scheme]),
+  );
   const entries = new Map<string, SchemeEntry>();
   for (const scheme of schemes) {
     const base = pairBase(scheme.name);
-    const light = base && byName.get(`${base} Light`);
-    const dark = base && byName.get(`${base} Dark`);
-    if (base && light && dark && !byName.has(base))
+    const key = base?.toLowerCase();
+    const light = key && byName.get(`${key} light`);
+    const dark = key && byName.get(`${key} dark`);
+    if (base && key && light && dark && !byName.has(key))
       entries.set(base, { name: base, light, dark, imported });
     else
       entries.set(scheme.name, {

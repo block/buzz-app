@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
@@ -46,6 +46,7 @@ export function TerminalColorSettings({
   active(): boolean;
 }) {
   const appMode = useSyncExternalStore(subscribeAppMode, readAppMode);
+  const group = useRef<HTMLDivElement>(null);
   const preference = useSyncExternalStore(colors.subscribe, colors.snapshot);
   const { schemeName, schemeToml, schemeError } = useSyncExternalStore(
     drafts.subscribe,
@@ -61,70 +62,84 @@ export function TerminalColorSettings({
   return (
     <>
       <InlineHeader title="Colors" />
-      <SettingsGroup>
-        <PreferenceRow
-          title="Appearance"
-          subtitle="Chooses the light or dark version of a color scheme."
-          trailing={
-            <Select
-              variant="compact"
-              label="Terminal appearance"
-              value={preference.appearance}
-              groups={[{ label: "Appearance", options: APPEARANCES }]}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark")
-                  colors.setAppearance(value);
-              }}
-            />
-          }
-        />
-        <PreferenceRow
-          title="Color scheme"
-          trailing={
-            <Select
-              variant="compact"
-              label="Terminal color scheme"
-              value={entry.name}
-              groups={[
-                {
-                  label: "Built in",
-                  options: entries
-                    .filter((item) => !item.imported)
-                    .map(({ name }) => option(name)),
-                },
-                ...(imported.length
-                  ? [
-                      {
-                        label: "Imported",
-                        separator: true,
-                        options: imported.map(({ name }) => option(name)),
-                      },
-                    ]
-                  : []),
-              ]}
-              onValueChange={colors.setScheme}
-            />
-          }
-        />
-        {imported.map(({ name, light, dark }) => (
+      <div ref={group}>
+        <SettingsGroup>
           <PreferenceRow
-            key={name}
-            title={name}
-            subtitle={light === dark ? "Imported" : "Imported Light and Dark"}
+            title="Appearance"
+            subtitle="Chooses the light or dark version of a color scheme."
             trailing={
-              <Button
-                type="button"
-                size="sm"
-                variant="subtle"
-                aria-label={`Remove ${name}`}
-                onClick={() => colors.remove(name)}
-              >
-                Remove
-              </Button>
+              <Select
+                variant="compact"
+                label="Terminal appearance"
+                value={preference.appearance}
+                groups={[{ label: "Appearance", options: APPEARANCES }]}
+                onValueChange={(value) => {
+                  if (
+                    value === "system" ||
+                    value === "light" ||
+                    value === "dark"
+                  )
+                    colors.setAppearance(value);
+                }}
+              />
             }
           />
-        ))}
-      </SettingsGroup>
+          <PreferenceRow
+            title="Color scheme"
+            trailing={
+              <Select
+                variant="compact"
+                label="Terminal color scheme"
+                value={entry.name}
+                groups={[
+                  {
+                    label: "Built in",
+                    options: entries
+                      .filter((item) => !item.imported)
+                      .map(({ name }) => option(name)),
+                  },
+                  ...(imported.length
+                    ? [
+                        {
+                          label: "Imported",
+                          separator: true,
+                          options: imported.map(({ name }) => option(name)),
+                        },
+                      ]
+                    : []),
+                ]}
+                onValueChange={colors.setScheme}
+              />
+            }
+          />
+          {imported.map(({ name, light, dark }) => (
+            <PreferenceRow
+              key={name}
+              title={name}
+              subtitle={light === dark ? "Imported" : "Imported Light and Dark"}
+              trailing={
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="subtle"
+                  aria-label={`Remove ${name}`}
+                  onClick={() => {
+                    colors.remove(name);
+                    // The row and its button go away; keep keyboard focus in the group.
+                    group.current
+                      ?.querySelector<HTMLElement>(
+                        '[role="combobox"][aria-label="Terminal color scheme"]',
+                      )
+                      ?.focus();
+                  }}
+                >
+                  Remove
+                </Button>
+              }
+            />
+          ))}
+        </SettingsGroup>
+      </div>
       {/* Terminal colors are renderer-owned, so the preview paints them directly. */}
       <div
         role="img"

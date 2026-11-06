@@ -38,7 +38,10 @@ the interface unless an available tool actually supports that action.
   without it. An existing private key can be entered from **Welcome back**.
   Its **Use a different account** signs Buzz out of that account; the next
   sign-in asks the browser to sign in again rather than reuse the account it
-  remembers.
+  remembers. Signing in to a different account than the one saved on this
+  computer replaces it: Buzz restarts and signs you in again by itself. When
+  the saved account may not be backed up, Buzz asks first, and **Cancel**
+  leaves it in place.
   Builderlab setup backs the key up automatically;
   if backup fails temporarily, retry to complete setup. If backup is not supported
   by the build or account, choose **Continue without backup** to finish setup.

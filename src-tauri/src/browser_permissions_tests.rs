@@ -94,6 +94,7 @@ fn native_command_permissions_isolate_webviews() {
         "identity_create",
         "identity_export",
         "nsec_backup_available",
+        "nsec_backup_confirmed",
         "nsec_backup_session",
         "nsec_backup_retry",
         "nsec_backup_state",

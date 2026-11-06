@@ -23,12 +23,14 @@ export type SetupStep = Readonly<{
 /** Steps a step decided on once it ran, as an account check does. */
 export type Next = Readonly<{ next: readonly SetupStep[] }>;
 /**
- * Where setup rests for a decision: the connect choice for a found
+ * Where setup rests for a decision: replacing another account's key that
+ * isn't backed up, the connect choice for a found
  * community that is not Builderlab-hosted, an import,
  * or the returning-user pages (Welcome back, a restore from backup, the
  * start-over page for a lost key).
  */
 export type SetupPause =
+  | "replace-key"
   | "connect-choice"
   | "key-import"
   | "welcome-back"

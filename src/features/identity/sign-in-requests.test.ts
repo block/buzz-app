@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import {
   isSignInLink,
@@ -35,4 +36,24 @@ it("notifies listeners and is consumed once", () => {
 it("expires a request nobody took", () => {
   requestSignIn(0);
   expect(takeSignInRequest(2 * 60_000 + 1)).toBe(false);
+});
+
+it("a restart's note becomes one request at the next launch, unless it went stale", async () => {
+  const launch = async () => {
+    vi.resetModules();
+    return import("./sign-in-requests");
+  };
+  const first = await launch();
+  const withdraw = first.requestSignInAfterRestart();
+  const next = await launch();
+  expect(next.takeSignInRequest()).toBe(true);
+  expect(next.takeSignInRequest()).toBe(false);
+  expect((await launch()).takeSignInRequest()).toBe(false);
+
+  first.requestSignInAfterRestart(Date.now() - 10 * 60_000);
+  expect((await launch()).takeSignInRequest()).toBe(false);
+
+  first.requestSignInAfterRestart();
+  withdraw();
+  expect((await launch()).takeSignInRequest()).toBe(false);
 });

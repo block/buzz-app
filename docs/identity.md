@@ -136,6 +136,18 @@ discards the draft. A successful account-backed import links the key and automat
 unless that key already has a backup. An import without Builderlab
 sign-in skips linking and backup. Importing without a Builderlab account never uploads the key.
 
+**Another account's key on this device** (a relaunch sign-in as someone else)
+is signed out before the account's lane runs, as **Sign out of Buzz** does
+without erase. Buzz restarts and signs in again by itself (a one-time note
+honoured for two minutes), now on the lane for a device with no key. The key is
+signed out without asking only when this device has confirmed a stored backup
+of it (`nsec_backup_confirmed`: a backup record here, under any account, that
+the service receipted or a restore wrote). Otherwise **A different account is
+saved on this computer** asks first: **Replace** signs it out, and **Cancel**
+signs out of the new account and returns to the welcome screen with the
+device's key in place. Creating or importing a key still refuses while one is on
+the device.
+
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*

@@ -34,6 +34,7 @@ import type { Communities, PersonalProfile } from "../communities/service";
 import { SIGN_IN_TIMED_OUT } from "../federated-identity/CommunitySignIn";
 import type { SignInOptions } from "../federated-identity/service";
 import { readErrorKind } from "../relay/errors";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { BackupError } from "./backup";
 import { BackupConsent } from "./BackupConsent";
@@ -93,9 +94,17 @@ import {
   unlinkKey,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
-import { onSignInRequest, takeSignInRequest } from "./sign-in-requests";
+import { signOutFailure } from "./SignOut";
+import {
+  onSignInRequest,
+  requestSignInAfterRestart,
+  takeSignInRequest,
+} from "./sign-in-requests";
 import { WelcomeBack } from "./WelcomeBack";
 import { WireframeScreen } from "./Wireframe";
+
+/** How long a replaced key's sign-out may take to restart Buzz before setup says so. */
+const RESTART_WAIT_MS = 30_000;
 
 /**
  * The signed-in account: the development seed when a dev server set one
@@ -484,13 +493,38 @@ export function Welcome({
           // The account's key is already here: bring back its communities.
           if (onDevice === checkedKey)
             return { next: [...finish(checkedKey), ...open] };
-          // Another key here is never replaced unasked: Welcome back.
-          if (onDevice || !checkedBackups?.includes(checkedKey)) return;
+          // Another account's key is here. One with a confirmed backup can be
+          // signed back in to, so it is replaced without asking; otherwise
+          // replacing it is the user's call.
+          if (onDevice)
+            return (await identity.backedUp(onDevice).catch(() => false))
+              ? { next: [replaceKey] }
+              : { status: "paused", at: "replace-key" };
+          if (!checkedBackups?.includes(checkedKey)) return;
           void current.recovery.beginRecovery();
           return { status: "paused", at: "key-restore" };
         },
       },
     ]);
+  };
+  /**
+   * Signs this device's key out, which restarts Buzz; the next launch signs in
+   * again by itself and, with no key here, takes the account's lane. Setup
+   * stays on its progress page until the restart, or fails if none comes.
+   */
+  const replaceKey: SetupStep = {
+    label: "Signing in…",
+    run: async () => {
+      const withdraw = requestSignInAfterRestart();
+      try {
+        await identity.signOut({ wipe: false, removeAgents: false });
+      } catch (reason) {
+        withdraw();
+        throw new Error(signOutFailure(reason));
+      }
+      await new Promise((settle) => setTimeout(settle, RESTART_WAIT_MS));
+      throw new Error("Buzz didn’t restart. Quit and reopen Buzz to finish.");
+    },
   };
   /** Starts sign-in in a fresh browser tab, replacing one still waiting. */
   const start = (create: boolean) => {
@@ -871,6 +905,29 @@ export function Welcome({
     const link = linkKey(identity, current);
     const backUpKey = backupKey(current);
     switch (at) {
+      case "replace-key":
+        // Cancel leaves this device as it was, signed out of the new account.
+        return (
+          <>
+            <SetupProgress label="Signing in…" />
+            <AlertDialog
+              title="A different account is saved on this computer"
+              description="Replacing it removes that account from this computer to continue with the one you just signed in to. It may not be backed up. Buzz restarts to finish."
+              onClose={switchAccount}
+              actions={
+                <>
+                  <Button onClick={switchAccount}>Cancel</Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => void setup.start([replaceKey])}
+                  >
+                    Replace
+                  </Button>
+                </>
+              }
+            />
+          </>
+        );
       case "welcome-back":
         return linked ? (
           <>

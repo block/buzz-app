@@ -6,7 +6,9 @@ import type { Identity } from "./service";
 import {
   checkAccount,
   checkBackup,
+  createKey,
   createSetup,
+  importKey,
   keepBackup,
   type SetupStep,
 } from "./setup";
@@ -316,4 +318,22 @@ it("runs the steps a step decides on next, before the rest, and retries from the
   expect(setup.snapshot()).toEqual({ status: "done" });
   expect(order).toEqual(["Checking", "Decided", "After"]);
   expect(failing.run).toHaveBeenCalledTimes(2);
+});
+
+it("creating or importing a key refuses while another key is on this device, before touching it", async () => {
+  const create = vi.fn();
+  const importNsec = vi.fn();
+  const identity = {
+    snapshot: () => ({ status: "ready", viewer: "ab".repeat(32) }),
+    create,
+    importKey: importNsec,
+  } as unknown as Identity;
+  await expect(createKey(identity).run()).rejects.toThrow(
+    "already has a different Buzz key",
+  );
+  await expect(importKey(identity, "nsec1")).rejects.toThrow(
+    "already has a different Buzz key",
+  );
+  expect(create).not.toHaveBeenCalled();
+  expect(importNsec).not.toHaveBeenCalled();
 });

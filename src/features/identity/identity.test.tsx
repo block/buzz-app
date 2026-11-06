@@ -7948,33 +7948,26 @@ it("a relaunch sign-in on a device that keeps communities opens Buzz after the a
   identity.dispose();
 });
 
-it("a relaunch sign-in whose account holds a different key rests on Welcome back and never replaces the device key", async () => {
-  localStorage.setItem(ROUTE_NOTE, "builderlab");
-  keyOnDevice();
-  const identity = createIdentity();
-  const user = userEvent.setup();
-  render(
-    <Welcome
-      identity={identity}
-      communities={communitiesFor(identity)}
-      invites={invites}
-      account={linkedTo(owned.pubkey)}
-      connect={vi.fn().mockResolvedValue(credential)}
-    >
-      <p>Signed in</p>
-    </Welcome>,
-  );
-  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-  expect(
-    await screen.findByRole("heading", { name: "Continue with this key" }),
-  ).toBeVisible();
-  expect(screen.queryByText("Signed in")).toBeNull();
-  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
-  identity.dispose();
-});
-
-/** Relaunch sign-in to an account linked elsewhere, resting on Welcome back. */
-async function relaunchWelcomeBack(
+/**
+ * A key on this device that the account doesn't hold, with whether this device
+ * confirmed its backup; `sign_out` restarts Buzz, as `signedOut` reports.
+ */
+const anotherKeyOnDevice = (
+  confirmed: boolean,
+  signedOut: () => Promise<void> = () => Promise.resolve(),
+) =>
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "nsec_backup_choice")
+      return { available: false, pubkey: viewer, automatic: null };
+    if (command === "identity_restore") return viewer;
+    if (command === "identity_legacy_available") return false;
+    if (command === "nsec_backup_confirmed") return confirmed;
+    if (command === "sign_out") return signedOut();
+    throw new Error(`Unexpected command ${command}`);
+  });
+const AFTER_RESTART = "buzz.sign-in-after-restart.v1";
+/** Relaunch sign-in to an account whose key isn't this device's. */
+async function relaunchToAnotherAccount(
   user: ReturnType<typeof userEvent.setup>,
   identity: Identity,
   unbind: FirstRunAccount["unbind"] = noUnlink,
@@ -7992,32 +7985,121 @@ async function relaunchWelcomeBack(
     </Welcome>,
   );
   await user.click(await screen.findByRole("button", { name: SIGN_IN }));
-  await screen.findByRole("heading", { name: "Continue with this key" });
 }
-const OCCUPIED = /already has a different Buzz key/;
+const replaceDialog = () =>
+  screen.findByRole("alertdialog", {
+    name: "A different account is saved on this computer",
+  });
+const signOuts = () =>
+  vi.mocked(invoke).mock.calls.filter(([command]) => command === "sign_out");
 
-it("a relaunch Welcome back refuses to import the linked key over the device key", async () => {
-  keyOnDevice();
-  const identity = createIdentity();
-  const user = userEvent.setup();
-  await relaunchWelcomeBack(user, identity);
-  await importLinkedKey(user);
-  expect(await screen.findByText(OCCUPIED)).toBeVisible();
-  expect(invoke).not.toHaveBeenCalledWith("identity_import", expect.anything());
-  expect(screen.queryByText("Signed in")).toBeNull();
-  identity.dispose();
-});
-
-it("a relaunch Start over refuses before unlinking the account's key or creating one", async () => {
-  keyOnDevice();
+it("a relaunch sign-in to another account replaces a backed-up device key without asking, restarting to sign in again", async () => {
+  anotherKeyOnDevice(true);
   const unbind = vi.fn(noUnlink);
   const identity = createIdentity();
   const user = userEvent.setup();
-  await relaunchWelcomeBack(user, identity, unbind);
-  await startOver(user);
-  expect(await screen.findByText(OCCUPIED)).toBeVisible();
+  await relaunchToAnotherAccount(user, identity, unbind);
+  await waitFor(() =>
+    expect(signOuts()).toEqual([
+      ["sign_out", { wipe: false, removeAgents: false }],
+    ]),
+  );
+  expect(invoke).toHaveBeenCalledWith("nsec_backup_confirmed", {
+    pubkey: viewer,
+  });
+  expect(localStorage.getItem(AFTER_RESTART)).not.toBeNull();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
+  expect(screen.queryByText("Signed in")).toBeNull();
   expect(unbind).not.toHaveBeenCalled();
-  expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
+  for (const command of ["identity_create", "identity_import"])
+    expect(invoke).not.toHaveBeenCalledWith(command, expect.anything());
+  identity.dispose();
+});
+
+it("a relaunch sign-in to another account asks before replacing a device key with no backup, and Cancel leaves it in place", async () => {
+  anotherKeyOnDevice(false);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await relaunchToAnotherAccount(user, identity);
+  await replaceDialog();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(await screen.findByRole("button", { name: SIGN_IN })).toBeVisible();
+  expect(continueWithoutSigningIn()).toBeVisible();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(signOuts()).toEqual([]);
+  expect(localStorage.getItem(AFTER_RESTART)).toBeNull();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  identity.dispose();
+});
+
+it("a backup check that can't answer asks before replacing the device key", async () => {
+  anotherKeyOnDevice(true);
+  const fallback = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === "nsec_backup_confirmed"
+      ? Promise.reject({ message: "unavailable" })
+      : (fallback as typeof invoke)(command, args),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await relaunchToAnotherAccount(user, identity);
+  await replaceDialog();
+  expect(signOuts()).toEqual([]);
+  identity.dispose();
+});
+
+it("a sign-out that never restarts Buzz fails setup instead of waiting forever", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    anotherKeyOnDevice(true);
+    const identity = createIdentity();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await relaunchToAnotherAccount(user, identity);
+    await waitFor(() => expect(signOuts()).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(
+      await screen.findByText(
+        "Buzz didn’t restart. Quit and reopen Buzz to finish.",
+      ),
+    ).toBeVisible();
+    identity.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("Replace signs the device key out to restart and sign in again", async () => {
+  anotherKeyOnDevice(false);
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await relaunchToAnotherAccount(user, identity);
+  await replaceDialog();
+  expect(signOuts()).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Replace" }));
+  await waitFor(() =>
+    expect(signOuts()).toEqual([
+      ["sign_out", { wipe: false, removeAgents: false }],
+    ]),
+  );
+  expect(localStorage.getItem(AFTER_RESTART)).not.toBeNull();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  identity.dispose();
+});
+
+it("a refused replacement fails setup and withdraws the sign-in after restart", async () => {
+  // Native refusals arrive as `{ message }`, not as an Error.
+  anotherKeyOnDevice(true, () =>
+    Promise.reject({ message: "Couldn't revoke paired command-line tools" }),
+  );
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await relaunchToAnotherAccount(user, identity);
+  expect(
+    await screen.findByText("Couldn't revoke paired command-line tools"),
+  ).toBeVisible();
+  expect(localStorage.getItem(AFTER_RESTART)).toBeNull();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   identity.dispose();
 });
 

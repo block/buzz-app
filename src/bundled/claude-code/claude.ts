@@ -171,9 +171,11 @@ export class ClaudeProcess {
   private stopping = false;
   /** Claude ended a turn aborted while the owner was stopping it. */
   private stopped = false;
-  /** Aborts when the owner stops the work; the next message starts anew, so a
-   * stopped turn's tool calls stay stopped. */
+  /** Aborts when the owner stops the work. The next turn, sent or its own,
+   * starts anew, so a stopped turn's tool calls stay stopped. */
   private workLifetime = new AbortController();
+  /** The owner's Stop awaiting Claude's answer; another Stop shares it. */
+  private stopRequest: Promise<void> | undefined;
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   /** It runs a turn of its own, such as one a finished background task starts. */
@@ -555,8 +557,8 @@ export class ClaudeProcess {
     // The model first: effort applies to whichever model runs.
     this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
     this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
-    if (this.workLifetime.signal.aborted)
-      this.workLifetime = new AbortController();
+    // A message folded into a running turn shares its lifetime.
+    if (!this.busy && !this.working) this.renew();
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;
@@ -581,10 +583,19 @@ export class ClaudeProcess {
 
   /** Stops the running turn, as the SDK's `interrupt` does; messages folded
    * into it end with it. The turn then settles as Claude ends it. */
-  async interrupt() {
+  interrupt() {
+    // One answer for every Stop asked for meanwhile, so one's failure cannot
+    // revive work another stopped.
+    this.stopRequest ??= this.stop().finally(() => {
+      this.stopRequest = undefined;
+    });
+    return this.stopRequest;
+  }
+  private async stop() {
     if (!this.alive || !this.active) return;
     this.stopping = true;
     const work = this.workLifetime;
+    const fresh = !work.signal.aborted;
     work.abort(new Error("The owner stopped the turn"));
     if (this.protection) {
       this.protectionLifetime.abort();
@@ -594,12 +605,19 @@ export class ClaudeProcess {
       return;
     }
     const answer = await this.call({ subtype: "interrupt" });
+    // The turn goes on, and so do its calls, unless an earlier Stop stopped it.
     if (answer.subtype === "error" && this.alive) {
-      this.stopping = false;
-      // The turn goes on; calls it makes from now are not stopped.
-      if (this.workLifetime === work) this.workLifetime = new AbortController();
+      if (fresh && this.workLifetime === work) {
+        this.stopping = false;
+        this.workLifetime = new AbortController();
+      }
       throw new Error(`Claude did not stop: ${String(answer.error)}`);
     }
+  }
+
+  private renew() {
+    if (this.workLifetime.signal.aborted)
+      this.workLifetime = new AbortController();
   }
 
   kill() {
@@ -749,7 +767,10 @@ export class ClaudeProcess {
     ) {
       this.reportsState = true;
       const active = this.active;
+      const starts = !this.working && !this.busy && message.state !== "idle";
       this.working = message.state !== "idle";
+      // A turn of its own, such as a background task's, is new work.
+      if (starts) this.renew();
       if (!this.working && this.pending) this.done();
       if (!this.active) this.stopping = false;
       if (active !== this.active) this.onActivity?.();

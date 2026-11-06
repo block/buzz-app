@@ -123,6 +123,9 @@ export function BrowserHostView({
   const [page, setPage] = useState<BrowserViewerPage | null>(null);
   // A retry from that page keeps it, and its focused button, until it settles.
   const [retrying, setRetrying] = useState(false);
+  // A retry that ends in the error bar instead hands its focus to the message.
+  const errorBar = useRef<HTMLDivElement>(null);
+  const focusError = useRef(false);
 
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
@@ -300,10 +303,12 @@ export function BrowserHostView({
           if (!disposed) {
             attachFailed = true;
             setStatus({ ...EMPTY_STATUS, url: resumeUrl.current });
+            const nextPage =
+              error instanceof BrowserAttachError ? (error.page ?? null) : null;
+            focusError.current =
+              !nextPage && element.contains(document.activeElement);
             setLocalError(message(error));
-            setPage(
-              error instanceof BrowserAttachError ? (error.page ?? null) : null,
-            );
+            setPage(nextPage);
             setRetrying(false);
           }
         });
@@ -433,6 +438,11 @@ export function BrowserHostView({
   }
 
   const error = localError ?? status.error;
+  useEffect(() => {
+    if (!focusError.current || !error || page) return;
+    focusError.current = false;
+    errorBar.current?.focus();
+  }, [error, page]);
   return (
     <section className={styles.browser} aria-label="Browser">
       <div
@@ -488,7 +498,7 @@ export function BrowserHostView({
         ) : null}
       </div>
       {error && !page ? (
-        <div className={styles.error} role="alert">
+        <div ref={errorBar} className={styles.error} role="alert" tabIndex={-1}>
           {error}
         </div>
       ) : null}

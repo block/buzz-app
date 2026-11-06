@@ -799,6 +799,60 @@ it("keeps Try again focused while a refused app retries", async () => {
   );
 });
 
+it("moves focus to the error when a retry from the page fails another way", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  const refused = () =>
+    new BrowserAttachError(
+      "Your Builderlab account cannot open this app",
+      "denied",
+    );
+  let fail: (error: unknown) => void = () => {};
+  const deferred = () =>
+    new Promise<string>((_, reject) => {
+      fail = reject;
+    });
+  vi.mocked(platform.attach)
+    .mockRejectedValueOnce(refused())
+    .mockImplementationOnce(deferred)
+    .mockRejectedValueOnce(refused())
+    .mockImplementationOnce(deferred);
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  retry.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  await act(async () =>
+    fail(new BrowserAttachError("Builderlab sign-in request failed")),
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent("Builderlab sign-in request failed");
+  expect(alert).toHaveFocus();
+
+  // Focus the user has moved elsewhere in the meantime stays where it is.
+  await user.click(screen.getByRole("button", { name: "Reload" }));
+  const again = await screen.findByRole("button", { name: "Try again" });
+  again.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(4));
+  const address = screen.getByRole("textbox");
+  address.focus();
+  await act(async () =>
+    fail(new BrowserAttachError("Builderlab sign-in request failed")),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Builderlab sign-in request failed",
+  );
+  expect(address).toHaveFocus();
+});
+
 it("keeps other attach failures in the error bar", async () => {
   const platform = fakePlatform();
   vi.mocked(platform.attach).mockRejectedValue(

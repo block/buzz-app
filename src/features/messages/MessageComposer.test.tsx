@@ -15471,3 +15471,96 @@ describe("oversized paste feedback", () => {
     ).toBeVisible();
   });
 });
+
+describe("message length count", () => {
+  const count = () => screen.queryByText(/\/16,000$/);
+
+  it("shows the count only in the last 10% of the limit", () => {
+    const h = mount();
+    h.fill("x".repeat(14399));
+    expect(count()).toBeNull();
+    expect(h.input()).not.toHaveAttribute("aria-describedby");
+    h.fill("x".repeat(14400));
+    expect(screen.getByText("14,400/16,000")).toBeVisible();
+    expect(h.input()).toHaveAccessibleDescription(
+      "14,400 of 16,000 characters",
+    );
+    h.fill("x".repeat(16000));
+    expect(count()).toHaveTextContent("16,000/16,000");
+    // The paste error takes the count's place until the next accepted edit.
+    h.fill("x".repeat(15000));
+    act(() => {
+      h.input().focus();
+      fireEvent.paste(h.input(), {
+        clipboardData: {
+          items: [],
+          getData: (type: string) =>
+            type === "text/plain" ? "x".repeat(1001) : "",
+        },
+      });
+    });
+    expect(count()).toBeNull();
+    expect(h.input()).toHaveAccessibleDescription(
+      /This paste would make your message too long/,
+    );
+    h.fill("x".repeat(15001));
+    expect(count()).toHaveTextContent("15,001/16,000");
+  });
+
+  it("counts formatting and chat cards as the limit does", async () => {
+    const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
+    writeView("scope", "draft:channel", {
+      text: "",
+      recipients: [],
+      chatCards: [link],
+    });
+    const h = mount();
+    h.fill("x".repeat(14400 - link.length - 3));
+    expect(count()).toBeNull();
+    h.fill("x".repeat(14400 - link.length - 2));
+    expect(count()).toHaveTextContent("14,400/16,000");
+    h.unmount();
+    // Bold delimiters count although only the text shows.
+    const text = "x".repeat(14396);
+    writeView("scope", "draft:channel", {
+      text,
+      recipients: [],
+      document: {
+        version: 1,
+        content: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text, marks: [{ type: "bold" }] }],
+            },
+          ],
+        },
+      },
+    });
+    const bold = mount();
+    expect(count()).toHaveTextContent("14,400/16,000");
+    act(() => {
+      bold.input().focus();
+      bold.input().setSelectionRange(text.length, text.length);
+    });
+    await bold.user.keyboard("y");
+    expect(count()).toHaveTextContent("14,401/16,000");
+  });
+
+  it("follows the draft through send and editing a sent message", () => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage({ content: "x".repeat(15000) })]);
+    h.fill("x".repeat(14500));
+    expect(count()).toHaveTextContent("14,500/16,000");
+    h.submit();
+    expect(h.input()).toHaveValue("");
+    expect(count()).toBeNull();
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveValue("x".repeat(15000));
+    expect(count()).toHaveTextContent("15,000/16,000");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(h.input()).toHaveValue("");
+    expect(count()).toBeNull();
+  });
+});

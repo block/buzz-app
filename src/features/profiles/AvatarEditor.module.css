@@ -145,12 +145,9 @@ html[data-keyboard-navigation] .panelViewport {
   gap: var(--space-2);
 }
 
-/* Done stays in view when the popup scrolls. Only the fade above the actions
-   passes input through; the action row owns its gaps and bottom inset. */
-.popup {
-  scroll-padding-block-end: calc(2 * var(--space-3) + var(--size-control));
-}
-
+/* Done stays in view when the popup scrolls, which reserves the footer's
+   height as end scroll padding. Only the fade above the actions passes input
+   through; the action row owns its gaps and bottom inset. */
 .popup .footer {
   position: sticky;
   z-index: 1;

@@ -478,6 +478,22 @@ function AvatarDraft({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  // Focus scrolling stops above the sticky footer, however its actions wrap.
+  const [footer, setFooter] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const popup = footer?.closest<HTMLElement>(`.${styles.popup}`);
+    if (!footer || !popup) return;
+    const measure = () => {
+      popup.style.scrollPaddingBlockEnd = `${footer.offsetHeight}px`;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      popup.style.removeProperty("scroll-padding-block-end");
+    };
+  }, [footer]);
   const [picture, setPicture] = useState(value);
   const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
   const [emoji, setEmoji] = useState("😀");
@@ -774,7 +790,7 @@ function AvatarDraft({
           </p>
         )}
         {!(mode === "background" && customColorOpen) && (
-          <div className={styles.footer}>
+          <div ref={setFooter} className={styles.footer}>
             {/* A short popup scrolls beneath its actions; inline, they sit in flow. */}
             {!inlinePicker && <ScrollEdgeMaterial edge="bottom" />}
             <div className={styles.footerActions}>

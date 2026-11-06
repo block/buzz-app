@@ -303,8 +303,10 @@ export type AgentViewProps<Config = unknown> = {
   openConversation?: (channelId: string, threadRootId?: string) => void;
   /** Replaces the type's whole config. Spread `agent.config` to change one
    * field, or tabs that each save a part will erase each other's fields. A
-   * hosted type's tabs save to its provider instead; for them this rejects. */
-  save(config: Config): Promise<void>;
+   * hosted type's tabs save to its provider instead; for them this rejects.
+   * A tab that reconciles incoming config can supply its matching configBase;
+   * otherwise the host retains the revision the editor originally opened. */
+  save(config: Config, options?: { base: ConfigBase }): Promise<void>;
   /** Host identity/retype framing for a Settings tab. Other surfaces omit it. */
   settingsHost?: AgentSettingsHost;
   /** Optional presentation split for providers that declare splitSettings. */

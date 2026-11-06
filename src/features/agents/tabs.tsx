@@ -100,10 +100,10 @@ export function agentSections({
               {...(role === "activity" && close && { close })}
               {...(role === "activity" &&
                 openConversation && { openConversation })}
-              save={(config) =>
+              save={(config, options) =>
                 settingsHost?.pendingSave
                   ? settingsHost.pendingSave(config)
-                  : save(config)
+                  : save(config, options)
               }
               {...(role === "settings" && settingsHost ? { settingsHost } : {})}
             />
@@ -224,23 +224,27 @@ function EditorBase({
 }: {
   agents: Pick<Agents, "save" | "snapshot">;
   agent: Agent;
-  children(save: (config: unknown) => Promise<void>): ReactNode;
+  children(save: AgentViewProps["save"]): ReactNode;
 }) {
   const [base, setBase] = useState(agent.configBase);
-  const editor = children(async (config) => {
-    await agents.save(agent.key, { config, ...(base && { base }) });
+  const editor = children(async (config, options) => {
+    const revision = options ? options.base : base;
+    await agents.save(agent.key, {
+      config,
+      ...(revision && { base: revision }),
+    });
     setBase(
       agents.snapshot().agents.find((a) => a.key === agent.key)?.configBase,
     );
   });
-  return agent.configProblem ? (
+  return (
     <>
-      <p role="alert" className="buzz-field-error">
-        {agent.configProblem}
-      </p>
+      {agent.configProblem && (
+        <p role="alert" className="buzz-field-error">
+          {agent.configProblem}
+        </p>
+      )}
       {editor}
     </>
-  ) : (
-    editor
   );
 }

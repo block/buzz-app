@@ -621,6 +621,11 @@ available rather than silently discarding it.
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
   Never say changes were saved until Save succeeds.
+- Claude Code's open settings follow saved changes to fields you haven't edited.
+  Your unsaved edits stay in the form. If the same setting changed elsewhere,
+  choose **Use saved…** or **Keep my…** before saving. Model and thinking are
+  resolved together. If Save reports an error, some settings may already have
+  saved; the remaining edits stay available to retry.
 - **Make my bestie** in an agent card's menu chooses the agent initially tagged
   in new Solo chats for that community. It does not replace recipients in an
   existing chat or an edited draft. People can choose a different agent for a

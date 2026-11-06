@@ -52,6 +52,7 @@ import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
 import type { ClaudeTranscript } from "./transcript";
+import { settingLabels, useSettingsDraft } from "./settings-draft";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -1085,6 +1086,7 @@ export function createTabs({
   }: AgentViewProps<Config>) {
     const form = useId();
     const saved = readConfig(agent.config);
+    const unavailable = !!agent.configProblem && !settingsHost?.pendingSave;
     const execution = useRemote(agent);
     const remote = execution?.remote === true;
     const setupState = useSetupCatalog(execution?.remote === false);
@@ -1093,26 +1095,39 @@ export function createTabs({
       defaults.snapshot,
       defaults.snapshot,
     );
-    const [draft, setDraft] = useState(saved);
+    const {
+      draft,
+      setDraft,
+      conflicts,
+      resolve,
+      submitted,
+      settled,
+      changed: configChanged,
+    } = useSettingsDraft(`${agent.key}:${agent.type}`, saved, !unavailable);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const saveErrorRef = useRef<HTMLParagraphElement>(null);
     useEffect(() => {
       if (error) saveErrorRef.current?.focus();
     }, [error]);
-    const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
+      if (saving || conflicts.length || !changed || unavailable) return;
       setSaving(true);
       setError("");
+      const config = {
+        ...draft,
+        workspace: draft.workspace.trim() || "~/.buzz",
+      };
+      submitted(config);
       try {
-        await save({
-          ...draft,
-          workspace: draft.workspace.trim() || "~/.buzz",
-        });
+        // This draft incorporates the current props; revise that exact snapshot.
+        // The host routes staged provider changes through pendingSave instead.
+        await save(config, { base: agent.configBase ?? {} });
       } catch (reason) {
         setError(message(reason));
       } finally {
+        settled();
         setSaving(false);
       }
     };
@@ -1199,6 +1214,22 @@ export function createTabs({
             {error}
           </p>
         )}
+        {conflicts.map((group) => (
+          <div key={group} className="grid gap-2">
+            <p role="alert" className="m-0 text-body-sm text-warning">
+              {settingLabels[group]} changed elsewhere. Choose which changes to
+              keep before saving.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={saving} onClick={() => resolve(group, true)}>
+                Use saved {settingLabels[group].toLowerCase()}
+              </Button>
+              <Button disabled={saving} onClick={() => resolve(group, false)}>
+                Keep my {settingLabels[group].toLowerCase()}
+              </Button>
+            </div>
+          </div>
+        ))}
         {settingsSection !== "runtime" && (
           <>
             <SettingsGroup>
@@ -1245,7 +1276,13 @@ export function createTabs({
         <AgentSaveButton
           form={form}
           saving={saving}
-          disabled={!changed || execution?.remote === undefined}
+          dirty={changed}
+          disabled={
+            !changed ||
+            conflicts.length > 0 ||
+            unavailable ||
+            execution?.remote === undefined
+          }
         />
         {settingsSection !== "identity" && settingsContent}
       </form>

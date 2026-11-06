@@ -229,3 +229,56 @@ it("adds a plugin tab only to the agents its `when` accepts", () => {
   expect(error).toHaveBeenCalled();
   error.mockRestore();
 });
+
+it("retains opening revisions for ordinary tabs and forwards explicitly reconciled revisions", async () => {
+  let current = { ...agent, configBase: { settings: "opened" } };
+  const save = vi.fn(async () => {});
+  const agents = {
+    save,
+    snapshot: () => ({ agents: [current] }),
+    configHistory: () => undefined,
+    addedTabs: () => [],
+  } as unknown as Agents;
+  const component = ({
+    agent: shown,
+    save: submit,
+  }: import("./service").AgentViewProps) => (
+    <>
+      <button type="button" onClick={() => void submit({ model: "mine" })}>
+        Ordinary save
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void submit({ model: "merged" }, { base: shown.configBase ?? {} })
+        }
+      >
+        Reconciled save
+      </button>
+    </>
+  );
+  const type = {
+    tabs: [{ id: "settings", title: "Settings", role: "settings", component }],
+  } as unknown as import("./service").RegisteredAgentType;
+  const shown = () =>
+    agentSections({ agents, agent: current, type, memories: undefined })
+      .find((section) => section.value === "agent:settings")
+      ?.render();
+  const view = render(shown());
+  current = { ...current, configBase: { settings: "latest" } };
+  view.rerender(shown());
+  await userEvent.click(screen.getByRole("button", { name: "Ordinary save" }));
+  expect(save).toHaveBeenLastCalledWith(agent.key, {
+    config: { model: "mine" },
+    base: { settings: "opened" },
+  });
+  current = { ...current, configBase: { settings: "reconciled" } };
+  view.rerender(shown());
+  await userEvent.click(
+    screen.getByRole("button", { name: "Reconciled save" }),
+  );
+  expect(save).toHaveBeenLastCalledWith(agent.key, {
+    config: { model: "merged" },
+    base: { settings: "reconciled" },
+  });
+});

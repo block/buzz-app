@@ -134,6 +134,7 @@
 }
 
 .clear {
+  margin-inline-end: var(--space-control-inset);
   flex: none;
   align-self: center;
 }

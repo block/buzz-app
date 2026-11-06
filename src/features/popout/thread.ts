@@ -110,24 +110,33 @@ export function createPopoutThread(
     session.unread.subscribeSync(notify),
     actions?.subscribe(notify),
   ];
-  /** Actions main would offer for a row, by exact contribution instance. */
+  /** Actions main would offer for a row, by exact contribution instance,
+   * within the native DTO's bounds: at most 32, each field ≤256 UTF-8 bytes.
+   * Identities are never rewritten; an action that does not fit is left out
+   * of this window rather than rejecting the whole presentation. */
   function actionsFor(row: ChannelMessage): CompanionAction[] {
-    return (actions?.snapshot() ?? []).flatMap((action) => {
-      if (excludedActions.has(action.id)) return [];
-      try {
-        return action.matches(row, session)
-          ? [
-              {
-                key: action.key,
-                revision: action.revision,
-                title: action.title,
-              },
-            ]
-          : [];
-      } catch {
-        return [];
-      }
-    });
+    const fits = (value: string) =>
+      new TextEncoder().encode(value).length <= 256;
+    return (actions?.snapshot() ?? [])
+      .flatMap((action) => {
+        if (excludedActions.has(action.id)) return [];
+        if (!fits(action.key) || !fits(action.revision) || !fits(action.title))
+          return [];
+        try {
+          return action.matches(row, session)
+            ? [
+                {
+                  key: action.key,
+                  revision: action.revision,
+                  title: action.title,
+                },
+              ]
+            : [];
+        } catch {
+          return [];
+        }
+      })
+      .slice(0, 32);
   }
   const channel = () =>
     session.channels.get?.(channelId) ??

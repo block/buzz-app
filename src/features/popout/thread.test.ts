@@ -733,3 +733,34 @@ it("offers registered plugin actions as handoffs bound to their contribution, ne
     thread.handoff("f".repeat(64), "plugin:remind-me", "2"),
   ).toBeUndefined();
 });
+
+it("keeps projected actions within the native bounds without rewriting identities", () => {
+  const h = fixture();
+  const entry = (id: string, title = id) => ({
+    key: `plugin:${id}`,
+    pluginId: "plugin",
+    revision: "1",
+    id,
+    title,
+    matches: () => true,
+    component: () => null,
+  });
+  const entries = [
+    entry("long", "t".repeat(257)),
+    entry("wide", "é".repeat(200)), // 400 UTF-8 bytes
+    ...Array.from({ length: 40 }, (_, i) => entry(`a${i}`)),
+  ];
+  const thread = createPopoutThread(h.session, "channel", ROOT, () => {}, {
+    snapshot: () => entries,
+    subscribe: () => () => {},
+  });
+  clean.push(thread.dispose);
+  const offered = thread.snapshot().root?.actions ?? [];
+  expect(offered).toHaveLength(32);
+  expect(offered[0]).toEqual({ key: "plugin:a0", revision: "1", title: "a0" });
+  expect(
+    offered.some((a) => a.key === "plugin:long" || a.key === "plugin:wide"),
+  ).toBe(false);
+  // Left out of the wire projection, but still a valid handoff if asked for.
+  expect(thread.handoff(ROOT, "plugin:a39", "1")?.id).toBe("a39");
+});

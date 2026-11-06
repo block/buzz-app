@@ -1233,10 +1233,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   it, and edit, delete or send-to-channel your own messages there, with the
   same confirmations as the main window; a message from an agent you own can
   be deleted once Buzz has verified that ownership. Plugin-added actions
-  appear as "… in main window": choosing one brings the main window to that
-  message and names the action to pick there. View activity on an agent's
-  message opens beside the conversation in the main window. Voice notes are
-  not available in a pop-out yet. A thread pop-out
+  (Start Solo chat, Remind me) run in the main window: choosing one brings
+  the main window to that message and opens the action there. View activity
+  on an agent's message opens beside the conversation in the main window.
+  Voice notes are not available in a pop-out yet. A thread pop-out
   cannot open another pop-out. Not available
   in the browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers

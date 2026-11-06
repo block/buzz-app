@@ -190,7 +190,8 @@ function ReactionPreviewContent({
 }: {
   reaction: MessageReaction;
   authorIds: string[];
-  session: RelaySession;
+  /** A pop-out window supplies its reaction session here, as the pill does. */
+  session: ReactionSession;
   profiles: ReadonlyMap<string, Profile> | undefined;
   name: string;
   previewTilt: string;

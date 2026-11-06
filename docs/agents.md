@@ -76,8 +76,7 @@ permission. **Settings > External apps** shows the connection and **Revoke acces
 Keys stay in Buzz. Closing Settings keeps access active.
 
 Version 1 links contain `version=1`, the requesting `client` display name,
-`callback`, random `state`, `scope` (a space-separated selection of `read`, `post`,
-and `create`), `code_challenge`,
+`callback`, random `state`, `scope` (`agent`), `code_challenge`,
 and `code_challenge_method=S256`. The callback must be exactly
 `http://127.0.0.1:<port>/buzz/authorize`, with a port from 1024 through 65535.
 State and challenge each encode 32 bytes as unpadded base64url. The client name
@@ -103,52 +102,40 @@ identity change, or the end of the owning agent runtime, plugin, or app also
 stops it. A version 1 client needs new setup after its session ends. Version 2
 can use saved approval to create another session.
 
-The read scope allows `channel_list`, `channel_get`, and `read`. The post scope
-allows `send` and `reply_in_subthread`. The create scope allows only
-`channel_create({name})`: a private Solo with the authenticated owner, connected
-agent and the owner's account-saved Bestie. Buzz derives these identities and
-deduplicates them; the creating agent is an implicit member. A missing, invalid,
-unreadable or unavailable saved Bestie fails before creation with a corrective
-message. It never substitutes an automatic device fallback. The exact saved key
-must be selectable through the session's shared agent choices in this community;
-it need not run on this device. Caller-supplied members, identities, visibility,
-templates and lifecycle operations are not allowed. Publication and confirmation
-use the existing native Solo-create handler and its unconfirmed-result messages.
-Buzz classifies each built-in tool through
-its trusted external-access policy. Unclassified tools cannot run. Runtime plugin
-tools cannot enroll in this policy.
+The only scope Buzz grants is `agent`: full access as the selected agent. The
+app lists and calls the same tools that agent's sessions get, with the same
+schemas, handler and client authority: the Buzz tools, attention, Solo worker
+and plugin tools, the settings tools, and every tool an enabled plugin adds.
+A plugin's tools appear and disappear as it is enabled, disabled or removed;
+new built-in tools appear without a contract change. The agent's own refusals,
+relay permissions, owner confirmations (plugin requests, agent creation and
+updates) and plugin isolation apply unchanged; `plugin_disable` acts at once,
+as it does for the agent. `self_handoff` is unavailable: its wake would read as
+the agent's own watch or timer. Memory reads use the agent's
+own memory. There is no current conversation, so tools that default to one
+need explicit channel, thread or message IDs. File reads (`path`, `files`) are
+unavailable, because an agent's runtime reads files where its process runs.
+Protected agents cannot connect. Connection credentials must stay out of logs
+and messages.
 
-`tools/list` returns all classified tools in one page. It rejects a supplied
-`cursor`. Each tool has `_meta["buzz/requiredScopes"]`. The list result has
-`_meta["buzz/grantedScopes"]` and `_meta["buzz/supportedScopes"]`; the supported
-set is `read`, `post`, and `create`. One authorization can request all three.
-Buzz never widens an existing grant: a read/post grant permits creation only after
-the owner approves a request that includes `create`. Tool discovery does not grant
-access. Each call checks
-the grant against the trusted policy. A missing scope returns `isError: true`
-and `_meta["buzz/error"]: {code: "authorization_required", required_scopes: [...]}`.
-`required_scopes` lists the missing scopes. Each approval replaces the previous
-grant. The external app must request all scopes it still needs, including scopes
-it already has. For example, an app with `read` that needs `post` requests
-`scope=read post`. Use `buzz/grantedScopes` from discovery to retain current access.
-The app must not retry the call automatically after approval. New classified tools
-use this same contract.
+`tools/list` returns the whole catalog in one page and rejects a supplied
+`cursor`. Each tool is listed as a session lists it, plus
+`_meta["buzz/requiredScopes"]: ["agent"]`. The list result has
+`_meta["buzz/grantedScopes"]` (`["agent"]`, or `[]` for an older approval) and
+`_meta["buzz/supportedScopes"]: ["agent"]`. A call without full access returns
+`isError: true` and
+`_meta["buzz/error"]: {code: "authorization_required", required_scopes: ["agent"]}`
+before any tool runs. Request `scope=agent`, then call again; never retry
+automatically after approval.
 
-External clients must accept `create` in `buzz/grantedScopes`,
-`buzz/supportedScopes` and per-tool `buzz/requiredScopes` before this catalog is
-advertised. Older Nexus clients that accept only read/post reject an unknown
-supported scope even when their grant still contains only read/post.
-
-The shared schemas apply with explicit
-targets: `read` needs `channel`, `thread`, or `message_url`. A `message_url` uses
-the linked message's channel and thread; it cannot combine with `channel` or
-`thread`. Searches with `q` need `channel` or `message_url`;
-`channel_get` needs `channel`; `channel_create` accepts only `name`;
-`send` needs `channel`, `text`, and `audience`;
-`reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
-`mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
-Unknown fields are rejected. File access, commands, Git credentials, and plugin
-tools are unavailable. Connection credentials must stay out of logs and messages.
+Older approvals and links used `read`, `post` and `create`. Buzz never widens
+them. A saved older approval still restores and renews, but grants no tools
+until the owner approves `scope=agent`. A new link that asks for older scopes
+shows an update notice whose only action is Deny, which sends the normal
+denial callback. `agent` cannot combine with other scopes. Clients that
+accept only `read`, `post` and `create` reject this catalog's supported scopes;
+they must request `agent` and accept it in `buzz/grantedScopes`,
+`buzz/supportedScopes` and each tool's `buzz/requiredScopes`.
 
 ### Durable external approval
 

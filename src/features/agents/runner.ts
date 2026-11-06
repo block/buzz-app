@@ -783,8 +783,9 @@ export class AgentRunners {
    * type of `pluginId` when specified, not changing it, and its community is live. Each
    * call through the handle checks that again, so a kept handle stops
    * working while it no longer holds, and for good once the agent's type
-   * or its plugin is replaced. */
-  handle(key: AgentKey, pluginId?: string) {
+   * or its plugin is replaced. `run` adds what only the agent itself gets,
+   * such as device settings, for a connection that acts as the agent. */
+  handle(key: AgentKey, pluginId?: string, run = false) {
     const held = () => {
       const runner = this.runners.get(key);
       const agent = this.host.ready(key);
@@ -800,7 +801,7 @@ export class AgentRunners {
     if (!now) return;
     const { runner, agent } = now;
     const { signal } = runner.controller;
-    return guarded(this.handleFor(runner, agent), () => {
+    return guarded(this.handleFor(runner, agent, run), () => {
       if (signal.aborted || held()?.runner !== runner)
         throw new Error(
           `${agent.name} no longer runs here as this plugin's agent; ask for its handle again`,

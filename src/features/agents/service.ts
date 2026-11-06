@@ -1212,7 +1212,7 @@ export type Agents = {
     agent: AgentKey,
     signal: AbortSignal,
     connected: () => void,
-    scopes?: readonly ExternalScope[],
+    scopes: readonly ExternalScope[],
   ): Promise<HostMcpServer>;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
@@ -2778,16 +2778,20 @@ export class AgentsService extends Service implements Agents {
     key: AgentKey,
     signal: AbortSignal,
     connected: () => void,
-    scopes: readonly ExternalScope[] = ["read", "post"],
+    scopes: readonly ExternalScope[],
   ) {
     if (this.ctx.pluginOwner?.id !== "buzz.agents")
       throw new Error("Authorize external apps in Buzz.");
     const host = this.ctx.host;
     if (!host?.serveMcp)
       throw new Error("External connections require Buzz desktop.");
-    const handle = this.runners.handle(key);
-    if (!handle)
+    // A run's handle: the app acts as the agent itself, with its settings and
+    // plugin requests, not as a plugin acting through it. Not its handoff: a
+    // wake would read as the agent's own watch or timer, which this app is not.
+    const run = this.runners.handle(key, undefined, true);
+    if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
+    const { handoff: _, ...handle } = run;
     if (handle.protection)
       throw new Error("Protected agents cannot use external connections.");
     const relay = this.relay(key);
@@ -2855,60 +2859,17 @@ export class AgentsService extends Service implements Agents {
             check,
             relayAuthor: source.relayAuthor?.(),
             signingAuthority: source.workflowAuthority(),
+            // A runtime reads files where its process runs, which may be
+            // another machine; this connection has no such place.
             read: async () => {
               throw new Error("External connections cannot read files.");
             },
-            memories: async () => {
-              throw new Error("External connections cannot read memory.");
-            },
+            memories: (slug) => source.memoryListing(signal, slug),
           });
           return (message) => {
             check();
-            return respondExternal(
-              client,
-              message,
-              connected,
-              scopes,
-              async () => {
-                check();
-                if (!session.mainAgent)
-                  throw new Error(
-                    "Your saved Bestie is unavailable in this copy of Buzz.",
-                  );
-                let worker: string | null | undefined;
-                try {
-                  worker = await session.mainAgent.read();
-                } catch {
-                  check();
-                  throw new Error(
-                    "Your saved Bestie could not be read. Check the community connection and try again.",
-                  );
-                }
-                check();
-                if (!worker || !/^[0-9a-f]{64}$/.test(worker))
-                  throw new Error(
-                    "Choose and save a Bestie in Buzz, then try again.",
-                  );
-                const unavailable =
-                  "Your saved Bestie could not be checked. Check the community connection and try again.";
-                try {
-                  await session.agentChoices.refresh(true, { fresh: true });
-                } catch {
-                  check();
-                  throw new Error(unavailable);
-                }
-                check();
-                const choices = session.agentChoices.snapshot();
-                if (
-                  !choices.selectable.some((agent) => agent.pubkey === worker)
-                )
-                  throw new Error(
-                    choices.complete
-                      ? "Your saved Bestie is not available in this community. Choose another in Buzz, then try again."
-                      : unavailable,
-                  );
-                return worker;
-              },
+            return respondExternal(client, message, connected, scopes, () =>
+              this.addedTools.snapshot(),
             );
           };
         },

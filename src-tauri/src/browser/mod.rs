@@ -13,6 +13,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview};
+use url::Url;
 use wry::{PageLoadEvent, Rect, WebView, WebViewBuilder};
 
 pub use policy::BrowserBounds;
@@ -225,32 +226,45 @@ const APPROVE_IN_BROWSER: &str = "Approve this app in your web browser, then sel
 /// Hands the Builderlab tool-app approval page to the system browser, where
 /// the user's portal login lives.
 struct Handoff {
-    app: AppHandle,
     gate: Option<ApprovalGate>,
+    open: Box<dyn Fn(&str) -> bool>,
     approval: Rc<RefCell<Option<Approval>>>,
     snapshot: Rc<RefCell<BrowserSnapshot>>,
 }
 
 impl Handoff {
     /// Whether `target` is the approval gate, which the guest must not load.
-    /// Each pending approval opens the system browser once.
+    /// Only the first gate after a user action opens the system browser; any
+    /// other, for whichever app, is blocked until Reload, Back, Forward or a
+    /// typed address, so a page cannot open a stream of approval tabs.
     fn intercept(&self, target: &str) -> bool {
         let Some(next) = self.gate.as_ref().and_then(|gate| gate.approval(target)) else {
             return false;
         };
-        let mut approval = self.approval.borrow_mut();
-        if approval.as_ref() != Some(&next) {
-            use tauri_plugin_opener::OpenerExt;
-            let error = match self.app.opener().open_url(&next.gate, None::<&str>) {
-                Ok(()) => APPROVE_IN_BROWSER.to_string(),
-                Err(_) => format!(
-                    "Open {} in your web browser to approve this app, then select Reload",
-                    next.gate
-                ),
-            };
-            self.snapshot.borrow_mut().error = Some(error);
-            *approval = Some(next);
+        // Only the app the guest is opening hands off its own approval; a
+        // gate for any other app loads (and fails) in the guest as before.
+        let current = Url::parse(&self.snapshot.borrow().url).ok();
+        if current.as_ref().and_then(Url::host_str)
+            != Url::parse(&next.app).ok().as_ref().and_then(Url::host_str)
+        {
+            return false;
         }
+        if self.approval.borrow().is_some() {
+            return true;
+        }
+        let error = if (self.open)(&next.gate) {
+            APPROVE_IN_BROWSER.to_string()
+        } else {
+            format!(
+                "Open {} in your web browser to approve this app, then select Reload",
+                next.gate
+            )
+        };
+        let mut snapshot = self.snapshot.borrow_mut();
+        snapshot.error = Some(error);
+        // The cancelled load never finishes.
+        snapshot.loading = false;
+        *self.approval.borrow_mut() = Some(next);
         true
     }
 }
@@ -277,13 +291,20 @@ fn build_contents(
     let load_snapshot = snapshot.clone();
     let download_snapshot = snapshot.clone();
     let approval = Rc::new(RefCell::new(None));
+    let load_approval = approval.clone();
     let gate = app
         .try_state::<crate::federated_identity::FederatedIdentity>()
         .and_then(|identity| identity.config().map(|config| config.adapter_base.clone()))
-        .and_then(|adapter_base| ApprovalGate::new(&adapter_base));
+        .and_then(|adapter_base| {
+            ApprovalGate::new(&adapter_base, buzzodz_plugins::BUILDERLAB_APPS_DOMAIN)
+        });
+    let opener = app.clone();
     let handoff = Handoff {
-        app: app.clone(),
         gate,
+        open: Box::new(move |url| {
+            use tauri_plugin_opener::OpenerExt;
+            opener.opener().open_url(url, None::<&str>).is_ok()
+        }),
         approval: approval.clone(),
         snapshot: snapshot.clone(),
     };
@@ -310,6 +331,10 @@ fn build_contents(
             let mut snapshot = load_snapshot.borrow_mut();
             snapshot.url = url;
             snapshot.loading = matches!(event, PageLoadEvent::Started);
+            if snapshot.loading {
+                // The guest moved on; Reload reloads this page again.
+                load_approval.borrow_mut().take();
+            }
         })
         .with_download_started_handler(move |_, _| {
             download_snapshot.borrow_mut().error =
@@ -594,5 +619,77 @@ mod lifecycle_tests {
         reset_document("main", Finished, &generation, &session);
         assert_eq!(session.borrow().len(), 1);
         assert_eq!(drops.borrow().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+
+    const GATE: &str = "https://app.builderlab.xyz/api/goose/v1/hosted-app-tools/gate";
+
+    fn handoff() -> (Handoff, Rc<RefCell<Vec<String>>>) {
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let record = opened.clone();
+        let handoff = Handoff {
+            gate: ApprovalGate::new(
+                "https://app.builderlab.xyz/api/goose",
+                "apps.builderlab.xyz",
+            ),
+            open: Box::new(move |url| {
+                record.borrow_mut().push(url.to_owned());
+                true
+            }),
+            approval: Rc::new(RefCell::new(None)),
+            snapshot: Rc::new(RefCell::new(BrowserSnapshot {
+                url: "https://a.apps.builderlab.xyz/page".into(),
+                loading: true,
+                ..BrowserSnapshot::default()
+            })),
+        };
+        (handoff, opened)
+    }
+
+    #[test]
+    fn opens_one_approval_per_user_action_and_blocks_the_rest() {
+        let (handoff, opened) = handoff();
+        assert!(!handoff.intercept("https://a.apps.builderlab.xyz/"));
+        assert!(opened.borrow().is_empty());
+
+        // Another app's gate is not this page's to hand off.
+        assert!(!handoff.intercept(&format!("{GATE}?app=b.apps.builderlab.xyz")));
+        assert!(opened.borrow().is_empty());
+
+        assert!(handoff.intercept(&format!("{GATE}?app=a.apps.builderlab.xyz")));
+        assert!(handoff.intercept(&format!("{GATE}?app=a.apps.builderlab.xyz")));
+        assert_eq!(
+            *opened.borrow(),
+            [format!("{GATE}?app=a.apps.builderlab.xyz")]
+        );
+        assert_eq!(
+            handoff.approval.borrow().as_ref().map(|a| a.app.as_str()),
+            Some("https://a.apps.builderlab.xyz/")
+        );
+        let snapshot = handoff.snapshot.borrow().clone();
+        assert_eq!(snapshot.error.as_deref(), Some(APPROVE_IN_BROWSER));
+        assert!(!snapshot.loading);
+
+        // Reload, Back, Forward, typed addresses and page loads clear it.
+        handoff.approval.borrow_mut().take();
+        assert!(handoff.intercept(&format!("{GATE}?app=a.apps.builderlab.xyz")));
+        assert_eq!(opened.borrow().len(), 2);
+    }
+
+    #[test]
+    fn a_failed_open_names_the_page_to_open() {
+        let (mut handoff, _) = handoff();
+        handoff.open = Box::new(|_| false);
+        assert!(handoff.intercept(&format!("{GATE}?app=a.apps.builderlab.xyz")));
+        assert!(handoff
+            .snapshot
+            .borrow()
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("gate?app=a.apps.builderlab.xyz")));
     }
 }

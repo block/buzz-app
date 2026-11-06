@@ -151,8 +151,17 @@ const tool = (
 export const ATTENTION_TOOLS: readonly Tool[] = [
   tool(
     "interest_set",
-    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Subscriptions say what wakes you and may specify a conversation delivery address. Keep the task and reporting policy in the Interest instructions. ${WRITES}`,
-    { id, instructions: str, expected_state: token },
+    `Create an Interest, or replace its instructions. Your attention is yours to manage: Interests say what you are responsible for, event watches wake you when a matching event arrives, and timers wake you on a schedule (watch_add). Subscriptions say what wakes you and may specify a conversation delivery address. Keep the task and reporting policy in the Interest instructions. Your owner sees each Interest as a card: give it a title naming the responsibility and a summary of one or two sentences saying what wakes you and what you do, so they can tell your Interests apart without reading the instructions. When the work changes, replace the title, summary and instructions rather than appending notes; a replacement without a title or summary clears it. ${WRITES}`,
+    {
+      id,
+      title: { ...str, description: "A short name for the card, one line." },
+      summary: {
+        ...str,
+        description: "One or two sentences shown under the title.",
+      },
+      instructions: str,
+      expected_state: token,
+    },
     ["id", "instructions", "expected_state"],
   ),
   tool("interest_show", "One Interest and its expected_state.", { id }, ["id"]),
@@ -349,7 +358,12 @@ async function run(
     case "interest_set":
       return attention.write(
         `interest/${required(args, "id")}`,
-        { type: "interest", instructions: required(args, "instructions") },
+        {
+          type: "interest",
+          ...given(args, "title"),
+          ...given(args, "summary"),
+          instructions: required(args, "instructions"),
+        },
         { expected: required(args, "expected_state") },
       );
     case "interest_show":
@@ -586,6 +600,11 @@ const refuse = (message: string): never => {
 };
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** `{ [name]: text }` when the argument has text, otherwise nothing. */
+const given = (args: Args, name: string) => {
+  const value = text(args[name]);
+  return value ? { [name]: value } : {};
+};
 function required(args: Args, name: string) {
   const value = args[name];
   if (typeof value === "string" && value) return value;

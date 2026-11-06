@@ -209,6 +209,31 @@ describe("the attention tools", () => {
     });
   });
 
+  it("saves an Interest's title and summary, and a replacement without them clears them", async () => {
+    const { call } = agent();
+    const created = await call("interest_set", {
+      id: "release",
+      title: " Release checks ",
+      summary: "Wakes when CI finishes and reports failures.",
+      instructions: "Check the release.",
+      expected_state: ABSENT,
+    });
+    expect(created.object).toEqual(
+      expect.objectContaining({
+        title: "Release checks",
+        summary: "Wakes when CI finishes and reports failures.",
+      }),
+    );
+    const replaced = await call("interest_set", {
+      id: "release",
+      title: "",
+      instructions: "Check the release.",
+      expected_state: created.expected_state,
+    });
+    expect(replaced.object).not.toHaveProperty("title");
+    expect(replaced.object).not.toHaveProperty("summary");
+  });
+
   it("keeps an Interest until its watches are gone", async () => {
     const { call } = agent();
     await call("interest_set", {

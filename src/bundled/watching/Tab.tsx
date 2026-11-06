@@ -160,7 +160,9 @@ export function createAttentionComponents({
         : "No instructions saved.";
     const firstLine =
       instructions.split("\n").find((line) => line.trim()) || "";
-    const label = /^#+\s/.test(firstLine) ? heading(firstLine).text : title(id);
+    const label =
+      (interest?.type === "interest" && interest.title) ||
+      (/^#+\s/.test(firstLine) ? heading(firstLine).text : title(id));
     return (
       <SettingsGroup layout="cards">
         <section
@@ -177,6 +179,11 @@ export function createAttentionComponents({
               returnFocus={returnFocus}
             />
           </div>
+          {interest?.type === "interest" && interest.summary && (
+            <p className="attention-interest-summary text-body-sm text-subtle">
+              {interest.summary}
+            </p>
+          )}
           {subscriptions.length > 0 && (
             <div className="attention-column-headings text-caption text-subtle">
               <h5 className="text-caption">Triggers</h5>

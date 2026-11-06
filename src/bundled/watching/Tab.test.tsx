@@ -1436,6 +1436,61 @@ it("shows a fired timer's wake as activity", () => {
   ).toBeTruthy();
 });
 
+it("shows an Interest's title and summary, and no summary when it has none", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a".repeat(64),
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        value: {
+          type: "interest",
+          title: "Release checks",
+          summary: "Wakes when CI finishes and reports failures to John.",
+          instructions: "# Old heading\nFollow releases.",
+        },
+      },
+      "interest/builds": {
+        slug: "interest/builds",
+        value: { type: "interest", instructions: "Follow builds." },
+      },
+    },
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const list = { channels: [] };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: {
+      channels: {
+        ensureList() {},
+        subscribeList: () => () => {},
+        list: () => list,
+      },
+    },
+  };
+  const ctx = {
+    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  const titled = screen.getByRole("region", {
+    name: "Interest Release checks",
+  });
+  expect(titled.querySelector(".attention-interest-summary")?.textContent).toBe(
+    "Wakes when CI finishes and reports failures to John.",
+  );
+  const untitled = screen.getByRole("region", { name: "Interest builds" });
+  expect(untitled.querySelector(".attention-interest-summary")).toBeNull();
+});
+
 it("does not repeat consecutive sonar messages across sweeps", () => {
   const random = vi.spyOn(Math, "random").mockReturnValue(0.25);
   try {

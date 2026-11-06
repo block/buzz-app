@@ -173,8 +173,9 @@ revokes all of them, and a pairing unused for 30 days expires.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
   copy its link, forward it, or open More. **Copy message** is in More. Keyboard
   focus also reveals these actions; touch layouts keep actions inline.
-- “(edited)” after a message means its text changed. Hover or focus it to see
-  when it was last edited. Huddle chat shows the marker without the time.
+- “(edited)” after a message means its text changed. Hover over it to see when
+  it was last edited; screen readers read that time too. Huddle chat shows the
+  marker without the time.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.

@@ -555,19 +555,17 @@ export function MessageMarkdown({
 /** Metadata, not prose: selection copy omits it like the byline's clock. */
 export function EditedMarker({ at }: { at?: number | undefined }) {
   useLocalDay();
-  const text =
-    at === undefined ? (
-      "(edited)"
-    ) : (
-      <Tooltip content={formatFullTimestamp(at)} disableHoverablePopup>
-        <span
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need access to the edit time in the tooltip.
-          tabIndex={0}
-        >
-          (edited)
-        </span>
-      </Tooltip>
-    );
+  const fullDate = at === undefined ? undefined : formatFullTimestamp(at);
+  const text = fullDate ? (
+    <Tooltip content={fullDate} disableHoverablePopup>
+      <span style={{ cursor: "default" }}>
+        (edited)
+        <span className="sr-only select-none">{fullDate}</span>
+      </span>
+    </Tooltip>
+  ) : (
+    "(edited)"
+  );
   return <span className={`${styles.edited} select-none`}> {text}</span>;
 }
 

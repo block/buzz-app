@@ -4664,13 +4664,7 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
 
     renderDom(
       <MessageRow
-        row={{
-          ...row,
-          content: "Done",
-          edited: true,
-          editedAt: 2,
-          audience: "agents",
-        }}
+        row={{ ...row, content: "Done", edited: true, audience: "agents" }}
         profile={{ name: "Morgarita" }}
         media={() => undefined}
         onOpenLink={() => false}
@@ -4681,12 +4675,10 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     const line = screen.getByRole("button", {
       name: "Morgarita: Done (edited)",
     });
-    // The line is one button, so its marker stays out of the Tab order.
-    expect(within(line).getByText("(edited)")).not.toHaveAttribute("tabindex");
+    expect(within(line).getByText("(edited)")).toBeInTheDocument();
     fireEvent.click(line);
     expect(screen.getAllByText("(edited)")).toHaveLength(1);
     expect(line).not.toContainElement(screen.getByText("(edited)"));
-    expect(screen.getByText("(edited)")).toHaveAttribute("tabindex", "0");
     cleanup();
 
     const none: never[] = [];
@@ -4729,7 +4721,7 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
   }
 });
 
-it("dates the edit in the edited marker's hint on hover and keyboard focus", async () => {
+it("dates the edit in the edited marker's hover hint and accessible date", async () => {
   const user = userEvent.setup();
   const editedAt = new Date(2026, 9, 2, 15, 5, 9).getTime() / 1000;
   const file = { url: "https://example.com/notes.txt", kind: "file" as const };
@@ -4748,26 +4740,25 @@ it("dates the edit in the edited marker's hint on hover and keyboard focus", asy
         media: (url) => url,
       });
       const marker = screen.getByText("(edited)");
+      const date = marker.querySelector(".sr-only");
       const hint = formatFullTimestamp(editedAt);
+      // As on the byline's clock, assistive technology reads the time without
+      // a tab stop or an open hint.
+      expect(marker).not.toHaveAttribute("tabindex");
+      expect(date).toHaveTextContent(hint);
       await user.hover(marker);
       expect(await screen.findByRole("tooltip")).toHaveTextContent(hint);
-      await user.unhover(marker);
-      await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
-      expect(marker).toHaveAttribute("tabindex", "0");
-      act(() => marker.focus());
-      await waitFor(() => expect(marker).toHaveAccessibleDescription(hint));
-      // An open hint follows the time zone and the clock settings, as the
-      // byline's does; the zone is checked when the window regains focus.
+      // The time follows the time zone and the clock settings, as the byline's
+      // does; the zone is checked when the window regains focus.
       process.env.TZ = "Asia/Tokyo";
       act(() => window.dispatchEvent(new Event("focus")));
       const zoned = formatFullTimestamp(editedAt);
       expect(zoned).not.toBe(hint);
+      expect(date).toHaveTextContent(zoned);
       expect(screen.getByRole("tooltip")).toHaveTextContent(zoned);
       act(() => setClockPreference({ hourCycle: "h23" }));
       expect(formatFullTimestamp(editedAt)).not.toBe(zoned);
-      expect(screen.getByRole("tooltip")).toHaveTextContent(
-        formatFullTimestamp(editedAt),
-      );
+      expect(date).toHaveTextContent(formatFullTimestamp(editedAt));
       setClockPreference({ hourCycle: "system" });
       cleanup();
     }

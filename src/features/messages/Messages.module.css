@@ -318,6 +318,20 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }
+/* Your reactions keep their tint and ring after the pointer leaves. */
+.reactionItem[data-mine] {
+  background: var(--reaction-self-surface, var(--affordance-reaction-self));
+  box-shadow: inset 0 0 0 1px
+    var(--reaction-self-border, var(--border-reaction-self));
+}
+/* Forced colors drop the shadow and replace the tint, so a system-color
+   outline keeps the same inset ring. */
+@media (forced-colors: active) {
+  .reactionItem[data-mine] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+}
 .reactionGlyph {
   display: inline-flex;
   align-items: center;
@@ -3178,6 +3192,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
      it, under an emoji-only message, or under a table-only one, keep the panel's. */
   --reaction-surface: var(--affordance-reaction-own);
   --reaction-ink: var(--text-message-own);
+  --reaction-self-surface: var(--affordance-reaction-self-own);
+  --reaction-self-border: var(--border-reaction-self-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
   --message-icon-subtle: var(--icon-subtle-own);
   --message-metadata: var(--text-metadata-own);
@@ -3787,6 +3803,8 @@ html[data-keyboard-navigation]
      sit on the panel and drop your bubble's pairing. */
   --reaction-surface: initial;
   --reaction-ink: initial;
+  --reaction-self-surface: initial;
+  --reaction-self-border: initial;
   /* An edited marker there sits on the panel too. */
   --message-metadata: initial;
 }

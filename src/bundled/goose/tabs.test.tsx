@@ -845,7 +845,9 @@ it("lists the agent's saved conversations and reads one's transcript by id, with
       name: "View transcript: chan · thread 11111111",
     }),
   );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
   expect(searches(fake)).toEqual([]);
 });
@@ -863,7 +865,9 @@ it("searches goose's history for a conversation with no saved session only when 
   expect(done).toHaveBeenCalledTimes(1);
   expect(searches(fake)).toEqual([]);
   await userEvent.setup().click(search);
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toHaveLength(1);
 });
 
@@ -917,7 +921,9 @@ it("lists conversations by channel name, with running and standalone sessions, o
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "View transcript: timer/t" }));
-  expect(await screen.findByText("Hi from timer")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from timer", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(keyword(fake)).toEqual([]);
 });
 
@@ -955,9 +961,13 @@ it("follows the open conversation's newest session on Refresh", async () => {
       name: "View transcript: chan · thread 11111111",
     }),
   );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   change({ saved: [{ key: `chan/${ROOT}`, at: 2, sessions: ["s2", "s1"] }] });
-  expect(await screen.findByText("Hi from s2")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from s2", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toEqual([]);
 });
 
@@ -972,7 +982,9 @@ it("finds a thread's conversation in its channel's saved session", async () => {
       initialTranscript: { opening: 1, done: vi.fn() },
     },
   );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toEqual([]);
 });
 
@@ -991,7 +1003,9 @@ it("opens a channel-scoped agent's channel from a thread, following its first sa
     await screen.findByText(/Buzz saved no goose session/),
   ).toBeInTheDocument();
   change({ saved: [{ key: "chan", at: 1, sessions: ["s1"] }] });
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toEqual([]);
 });
 
@@ -1006,7 +1020,9 @@ it("searches a thread-scoped agent's thread past an empty saved channel record",
     .click(
       await screen.findByRole("button", { name: "Search older sessions" }),
     );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
 });
 
 it("keeps a standalone run listed past a full page of saved conversations", () => {

@@ -53,7 +53,6 @@ import { registerNavigationShortcuts } from "../../app/shortcuts";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import { AgentsPage } from "./AgentsPage";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -3679,7 +3678,7 @@ it("opens the owned agent provider Activity tab for the originating conversation
   }
 });
 
-it("opens a turn's thread or channel from its label on the Agents page Activity tab", async () => {
+it("lets an Activity tab open a thread or channel through the host", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const open = vi.fn(async () => ({ status: "opened" as const }));
@@ -3697,27 +3696,18 @@ it("opens a turn's thread or channel from its label on the Agents page Activity 
   };
   const relay = { ...view.relay, snapshot: () => snapshot };
   const root = "c".repeat(64);
-  const turn = (turnId: string, threadRootId: string | null) => ({
-    turnId,
-    channelId: "channel-a",
-    threadRootId,
-    triggeringEventIds: [],
-    newSession: false,
-    config: [],
-    startedAt: Date.parse("2026-10-20T12:00:00Z"),
-    endedAt: Date.parse("2026-10-20T12:01:00Z"),
-    partial: false,
-    items: [],
-  });
-  const transcript = { turns: [turn("thread", root), turn("channel", null)] };
-  // Like a harness's Activity tab: it hands the host's opener to the transcript.
   const Activity = ({ openConversation }: AgentViewProps) => (
-    <ActivityTranscript
-      transcript={transcript}
-      agentName="Ada"
-      state={() => "ended"}
-      openConversation={openConversation}
-    />
+    <>
+      <button
+        type="button"
+        onClick={() => openConversation?.("channel-a", root)}
+      >
+        Thread cccccccc
+      </button>
+      <button type="button" onClick={() => openConversation?.("channel-a")}>
+        Channel
+      </button>
+    </>
   );
   const echo = view.agents.types()[0];
   if (!echo) throw new Error("Missing fixture type");

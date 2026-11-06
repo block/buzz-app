@@ -415,6 +415,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "--affordance-reaction-self",
+        variable: "--affordance-reaction-self",
+        pointsAt: "accent step 3",
+        use: "A reaction you made, on received bubbles and the panel, paired with --border-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "--affordance-reaction-self-own",
+        variable: "--affordance-reaction-self-own",
+        pointsAt:
+          "affordance-reaction-self; at Buzzin’, the accent's strong overlay on its fill",
+        use: "A reaction you made inside your own bubble, paired with --border-reaction-self-own.",
+        status: "core",
+      },
+      {
         token: "bg-surface-message-highlight",
         variable: "--surface-message-highlight",
         pointsAt: "accent step 3",
@@ -569,7 +584,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-danger",
         variable: "--text-danger",
-        pointsAt: "red-12 light / red-12 dark",
+        pointsAt: "red-text light / red-12 dark",
         use: "Error text and destructive action labels.",
         status: "core",
       },
@@ -591,7 +606,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-success",
         variable: "--text-success",
-        pointsAt: "green-12 light / green-12 dark",
+        pointsAt: "green-text light / green-12 dark",
         use: "Success text.",
         status: "core",
       },
@@ -894,6 +909,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         use: "An identity accent boundary.",
         status: "core",
       },
+      {
+        token: "border-reaction-self",
+        variable: "--border-reaction-self",
+        pointsAt: "accent-link",
+        use: "Ring around a reaction you made, on received bubbles and the panel. It clears 3:1 on the tint and its host.",
+        status: "core",
+      },
+      {
+        token: "border-reaction-self-own",
+        variable: "--border-reaction-self-own",
+        pointsAt: "border-reaction-self; at Buzzin’, text-message-own",
+        use: "Ring around a reaction you made inside your own bubble, where the accent ring would vanish at Buzzin’.",
+        status: "core",
+      },
     ],
   },
   {
@@ -1163,6 +1192,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-warning",
         pointsAt: "amber-3 light / amber-3 dark",
         use: "A warning fill.",
+        status: "core",
+      },
+      {
+        token: "surface-status-success",
+        variable: "--surface-status-success",
+        pointsAt: "citrus step 9",
+        use: "Completed task fill, paired with text-on-status-success.",
+        status: "core",
+      },
+      {
+        token: "surface-status-danger",
+        variable: "--surface-status-danger",
+        pointsAt: "red light step 11",
+        use: "Failed task fill, paired with text-on-status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status-success",
+        variable: "--text-on-status-success",
+        pointsAt: "citrus ink",
+        use: "Foreground on solid Citrus completed task status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status",
+        variable: "--text-on-status",
+        pointsAt: "white",
+        use: "Foreground on solid failed task status.",
         status: "core",
       },
       {

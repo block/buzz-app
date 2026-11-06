@@ -52,24 +52,44 @@ it("sorts equal matches by case-insensitive displayed labels and only then keys"
   expect(rankMentions([c, a, b], "")).toEqual([b, c, a]);
 });
 
-it("never matches hex or npub keys, including short substrings", () => {
+it("matches a complete key only to its owner, never partial keys or key text in a name", () => {
   const key =
     "150b20bdf6130418df9239dd1bd082c71612c8d653b47c277200365b9be215dc";
   const row = choice("a", "Bad Janet", {
     recipient: { pubkey: key, name: "Bad Janet" },
   });
   const npub = npubEncode(key);
+  const namesake = choice("b", "Bad Janet");
+  const impostor = choice("c", npub);
   for (const query of [
     "h",
-    key,
     key.slice(0, 12),
     key.slice(-8),
-    npub,
     npub.slice(0, 15),
     npub.slice(-6),
+    // Mixed case is not bech32, and a 20-byte payload is not a public key.
+    `NPUB1${npub.slice(5)}`,
+    "npub1qurswpc8qurswpc8qurswpc8qurswpc86nz8sw",
   ]) {
     expect(rankMentions([row], query), query).toEqual([]);
     expect(exactMention([row], query), query).toBeUndefined();
+  }
+  const unnamed = { ...row, label: "npub…15dc", aliases: [] };
+  for (const query of [
+    key,
+    key.toUpperCase(),
+    npub,
+    `nostr:${npub}`,
+    npub.toUpperCase(),
+    ` ${npub} `,
+  ]) {
+    expect(rankMentions([row, impostor], query), query).toEqual([row]);
+    expect(exactMention([row, namesake, impostor], query), query).toBe(key);
+    expect(matchingMentions([row, namesake, impostor], query), query).toEqual([
+      row,
+    ]);
+    expect(rankMentions([unnamed], query), query).toEqual([unnamed]);
+    expect(exactMention([unnamed], query), query).toBe(key);
   }
   expect(rankMentions([row], "jan")).toEqual([row]);
 });
@@ -198,7 +218,7 @@ it("a known longer name continues the query, except an identity's own beside its
   ).toBe(false);
 });
 it("validates the portable mention fixture version and case lists", () => {
-  expect(mentionConformance.version).toBe(2);
+  expect(mentionConformance.version).toBe(3);
   expect(mentionConformance.matching.length).toBeGreaterThan(0);
   expect(mentionConformance.ranking.length).toBeGreaterThan(0);
   expect(mentionConformance.space.length).toBeGreaterThan(0);

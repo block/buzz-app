@@ -814,9 +814,11 @@ impl FederatedIdentity {
         revision
     }
     /// A renewal that fails returns its failure code; it changes nothing else.
+    /// `start` is what the browser step asks of the identity provider.
     pub(crate) async fn sign_in<R: tauri::Runtime>(
         &self,
         app: &tauri::AppHandle<R>,
+        start: LoginStart,
     ) -> Result<Snapshot, &'static str> {
         let (observed, attempt) = {
             let state = self.state();
@@ -876,7 +878,7 @@ impl FederatedIdentity {
                 )
             }
         };
-        let result = self.login(app, &revision, &cancel, operation).await;
+        let result = self.login(app, &revision, &cancel, operation, start).await;
         if renewing {
             self.renewed(&revision, &cancel, result)?;
         } else if let Err(failure) = result {
@@ -908,6 +910,7 @@ impl FederatedIdentity {
         revision: &str,
         cancel: &CancellationToken,
         operation: tokio::sync::MutexGuard<'_, ()>,
+        start: LoginStart,
     ) -> Result<(), Failure> {
         if cancel.is_cancelled() {
             return Err("sign-in-canceled".into());
@@ -917,11 +920,7 @@ impl FederatedIdentity {
         getrandom::fill(bytes.as_mut()).map_err(|_| "random-unavailable")?;
         let secret = Zeroizing::new(URL_SAFE_NO_PAD.encode(bytes.as_ref()));
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(secret.as_bytes()));
-        let mut login = config.endpoint("/v1/login/start");
-        login
-            .query_pairs_mut()
-            .append_pair("handoff_challenge", &challenge)
-            .append_pair("handoff_challenge_method", "S256");
+        let login = login_start(config, &challenge, start);
         let callback = app.state::<crate::oauth_callback::OAuthCallbackHost>();
         let attempt = callback
             .begin_federated(&self.0.fingerprint, login.to_string(), |url| {
@@ -943,7 +942,7 @@ impl FederatedIdentity {
         drop(operation);
         let response = tokio::select! {
             _ = cancel.cancelled() => Err(Failure::from("sign-in-canceled")),
-            result = callback.wait(&attempt.id) => result.map_err(|error| Failure::from(if error == "Sign-in canceled." { "sign-in-canceled" } else { "callback-refused" })),
+            result = callback.wait(&attempt.id) => result.map_err(|error| Failure::from(callback_failure(&error))),
         };
         {
             let mut state = self.state();
@@ -1214,6 +1213,16 @@ impl FederatedIdentity {
     }
 }
 
+/// The failure code for a browser callback that did not arrive. A timeout keeps
+/// its own code: the person may still be signing up or verifying their email.
+fn callback_failure(error: &str) -> &'static str {
+    match error {
+        "Sign-in canceled." => "sign-in-canceled",
+        crate::oauth_callback::TIMED_OUT => "sign-in-timed-out",
+        _ => "callback-refused",
+    }
+}
+
 /// When to warn that a session ends: 72 hours ahead, so a weekend can't
 /// swallow the warning, but no earlier than halfway through its lifetime.
 fn warning_at(issued: i64, expires: i64) -> i64 {
@@ -1246,6 +1255,34 @@ fn due(now: i64, warn: i64, expires: i64, warned: bool) -> Due {
     }
 }
 
+/// What the browser step asks of the identity provider (`login_start`).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LoginStart {
+    /// The sign-up screen. Only an explicit Create account asks for it: kgoose
+    /// answers the hint with Auth0's sign-up even over an existing session, so
+    /// a restart, which usually follows sign-up, must not.
+    signup: bool,
+    /// Credentials over the browser's session, which would otherwise finish
+    /// the sign-in as the account Use a different account just left.
+    force_login: bool,
+}
+
+/// The browser step's start URL.
+fn login_start(config: &Config, challenge: &str, start: LoginStart) -> url::Url {
+    let mut login = config.endpoint("/v1/login/start");
+    login
+        .query_pairs_mut()
+        .append_pair("handoff_challenge", challenge)
+        .append_pair("handoff_challenge_method", "S256");
+    if start.signup {
+        login.query_pairs_mut().append_pair("screen_hint", "signup");
+    }
+    if start.force_login {
+        login.query_pairs_mut().append_pair("prompt", "login");
+    }
+    login
+}
+
 // `relay` names the community a sign-in is for and `server` a sign-in
 // server's id; with neither, the build's Builderlab.
 #[tauri::command]
@@ -1276,9 +1313,15 @@ pub(crate) async fn federated_identity_sign_in<R: tauri::Runtime>(
     host: tauri::State<'_, FederatedIdentity>,
     relay: Option<String>,
     server: Option<String>,
+    signup: Option<bool>,
+    force_login: Option<bool>,
 ) -> Result<Snapshot, String> {
+    let start = LoginStart {
+        signup: signup.unwrap_or(false),
+        force_login: force_login.unwrap_or(false),
+    };
     let server = host.server_for_command(relay.as_deref(), server.as_deref())?;
-    server.sign_in(&app).await.map_err(String::from)
+    server.sign_in(&app, start).await.map_err(String::from)
 }
 #[tauri::command]
 pub(crate) fn federated_identity_cancel_sign_in(

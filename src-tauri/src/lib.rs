@@ -45,9 +45,9 @@ mod nsec_backup;
 mod nsec_backup_choice;
 mod nsec_backup_config;
 use nsec_backup::{
-    nsec_backup_available, nsec_backup_retry, nsec_backup_session, nsec_backup_state,
-    nsec_backup_watch, nsec_restore_begin, nsec_restore_cancel, nsec_restore_install,
-    nsec_restore_wait, NsecBackupHost,
+    nsec_backup_available, nsec_backup_confirmed, nsec_backup_retry, nsec_backup_session,
+    nsec_backup_state, nsec_backup_watch, nsec_restore_begin, nsec_restore_cancel,
+    nsec_restore_install, nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod clipboard;
@@ -767,6 +767,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_read_file,
         plugin_host_resolve_directory,
         nsec_backup_available,
+        nsec_backup_confirmed,
         nsec_backup_session,
         nsec_backup_retry,
         nsec_backup_state,

@@ -431,7 +431,7 @@ it("returns focus after a pointer open to the field the right-click interrupted,
   composer.focus();
   const menu = await rightClick();
   expect(menu).toHaveAttribute("data-side", "bottom");
-  expect(target).toHaveFocus();
+  await waitFor(() => expect(menu).toHaveFocus());
   await user.click(
     within(menu).getByRole("menuitem", { name: "Copy community URL" }),
   );

@@ -114,6 +114,7 @@ function item(
         type: "prompt",
         text: request(raw),
         ...(author ? { author } : {}),
+        ...(from ? { authorPubkey: from } : {}),
         sections,
         steer,
       };

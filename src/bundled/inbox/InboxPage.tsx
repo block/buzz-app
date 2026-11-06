@@ -120,15 +120,21 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
-/** DMs and a Solo chat's own messages open whole; others open at their message. */
+/** DMs, including their reactions, and a Solo chat's own messages open whole;
+ * others open at their message. A DM row opens as its thread only when that
+ * thread alone shows its unread messages; its read then stops before any
+ * message outside the thread. */
 const tabTarget = (
-  item: Pick<InboxItem, "channelId" | "messageId" | "rootId" | "thread"> & {
+  item: Pick<
+    InboxItem,
+    "channelId" | "messageId" | "rootId" | "thread" | "threadOnly"
+  > & {
     target?: InboxItem["target"];
   },
   channel: { channelType?: string } | undefined,
 ): PageTabTarget =>
-  item.target?.kind === "channel" ||
-  channel?.channelType === "dm" ||
+  ((item.target?.kind === "channel" || channel?.channelType === "dm") &&
+    !item.threadOnly) ||
   (channel?.channelType === "solo" && !item.thread)
     ? { channelId: item.channelId }
     : {
@@ -804,11 +810,13 @@ function InboxList({
     })();
   }
 
+  /** `threadId` is the thread an opened tab shows, which bounds a DM read. */
   function mutate(
     item: InboxItem,
     unread: boolean,
     onSuccess?: () => void,
     onFailure?: () => void,
+    threadId?: string,
   ) {
     // An open menu is not authority: recheck the current session at action entry.
     if (
@@ -861,7 +869,10 @@ function InboxList({
     const work = async () => {
       if (unread) await session.unread.markUnreadLocal(item.target);
       else if (item.target.kind === "channel") {
-        readChannel ??= session.unread.prepareChannelRead(item.channelId);
+        readChannel ??= session.unread.prepareChannelRead(
+          item.channelId,
+          threadId,
+        );
         await readChannel();
       } else if (item.timeline)
         await session.unread.markTimelineRead(item.channelId, item.messageIds);
@@ -1184,13 +1195,15 @@ function InboxList({
                           onClick={() => {
                             if (busy.current) return;
                             // The selected row reveals its current message in
-                            // its captured tab, even after regrouping would
-                            // open a whole conversation as a thread.
+                            // its captured tab, even after regrouping or
+                            // reading would open a whole conversation as a
+                            // thread. A captured thread follows the row,
+                            // which may now open whole.
                             const reselect =
                               selectedId === item.id &&
                               opened &&
-                              !opened.threadId !==
-                                !tabTarget(item, channel).threadId
+                              !opened.threadId &&
+                              tabTarget(item, channel).threadId
                                 ? opened
                                 : undefined;
                             if (
@@ -1213,7 +1226,14 @@ function InboxList({
                             if (selectedId === item.id) return;
                             cancelRetry();
                             setSelectedTarget(targetOf(item));
-                            if (unread && canRead) mutate(item, false);
+                            if (unread && canRead)
+                              mutate(
+                                item,
+                                false,
+                                undefined,
+                                undefined,
+                                tabTarget(item, channel).threadId,
+                              );
                           }}
                         />
                         {readable && (

@@ -321,6 +321,8 @@ export type MessageComposerProps = {
   threadSeed?: Pick<ChannelMessage, "id" | "mentions"> | undefined;
   replyParentId?: string | undefined;
   replyContext?: ReactNode;
+  /** A choice for the next send, on its own line under the text; hidden while editing. */
+  sendOption?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
@@ -507,6 +509,7 @@ function Composer({
   threadSeed,
   replyParentId,
   replyContext,
+  sendOption,
   mediaTimeSeconds,
   clearMediaTime,
   autoFocus = false,
@@ -3577,6 +3580,7 @@ function Composer({
               />
             </div>
           )}
+        {!editing.target && sendOption}
         {voice.element}
         <div className={styles.composerActions} hidden={voice.capturing}>
           <div className={styles.composerToolRow}>

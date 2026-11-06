@@ -257,7 +257,7 @@ impl Handoff {
     /// Only the first gate after a user action opens the system browser; a
     /// later one waits for Reload, which opens it.
     fn intercept(&self, target: &str) -> bool {
-        let Some(next) = self.gate.as_ref().and_then(|gate| gate.approval(target)) else {
+        let Some(mut next) = self.gate.as_ref().and_then(|gate| gate.approval(target)) else {
             return false;
         };
         // Only the app the guest is opening hands off its own approval; a
@@ -267,6 +267,11 @@ impl Handoff {
             != Url::parse(&next.app).ok().as_ref().and_then(Url::host_str)
         {
             return false;
+        }
+        // Reload returns to the page that was being opened, such as a deep
+        // link, rather than the app's root.
+        if let Some(current) = current.filter(|url| url.scheme() == "https") {
+            next.app = current.into();
         }
         {
             let mut approvals = self.approvals.borrow_mut();
@@ -678,7 +683,7 @@ mod handoff_tests {
             }),
             approvals: Rc::new(RefCell::new(Approvals::default())),
             snapshot: Rc::new(RefCell::new(BrowserSnapshot {
-                url: "https://a.apps.builderlab.xyz/page".into(),
+                url: "https://a.apps.builderlab.xyz/reports/42?tab=open".into(),
                 loading: true,
                 ..BrowserSnapshot::default()
             })),
@@ -709,7 +714,7 @@ mod handoff_tests {
                 .pending
                 .as_ref()
                 .map(|a| a.app.as_str()),
-            Some("https://a.apps.builderlab.xyz/")
+            Some("https://a.apps.builderlab.xyz/reports/42?tab=open")
         );
         let snapshot = handoff.snapshot.borrow().clone();
         assert_eq!(snapshot.notice.as_deref(), Some(APPROVE_IN_BROWSER));

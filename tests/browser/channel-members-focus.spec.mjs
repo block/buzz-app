@@ -209,7 +209,7 @@ test("overlapping idle additions restore focus when the suggestion list retires"
         });
         await expect(recovery).toBeVisible();
         await expect(
-          recovery.getByRole("button", { name: "Retry", exact: true }),
+          recovery.getByRole("button", { name: "Retry adding Agent 2" }),
         ).toBeEnabled();
       } else {
         await expect(
@@ -832,6 +832,10 @@ test("final invitation expansion continues keyboard focus at the first new row",
     await page.getByRole("button", { name: "Access" }).click();
     const dialog = page.getByRole("dialog", { name: "Manage members" });
     await dialog.getByRole("searchbox").fill("Helper");
+    // Late search results can move Show more between pointer down and up.
+    await expect(
+      dialog.getByRole("region", { name: "Member list" }),
+    ).toHaveAttribute("data-refreshing", "false");
     const group = dialog.getByRole("region", {
       name: "Your other agents",
       exact: true,

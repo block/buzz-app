@@ -6,7 +6,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { parseInviteLink, type InviteLink } from "../communities/invite-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
-import { parseBuzzLink } from "./buzz-links";
+import { agentCardTarget, parseBuzzLink } from "./buzz-links";
 import { entityTarget } from "../repos/routes";
 import type { Navigation, OpenFailure, OpenResult } from "./controller";
 import { parseOpenTarget, type OpenTarget } from "./targets";
@@ -14,6 +14,7 @@ import {
   parseExternalAuthorization,
   type ExternalAuthorization,
 } from "../agents/external-connection";
+import { isSignInLink, requestSignIn } from "../identity/sign-in-requests";
 
 export type DeepLinkStep =
   | Readonly<{ open: OpenTarget }>
@@ -85,6 +86,13 @@ export function deepLinkStep(
             communityOrigin: communityDestination(client.selected).url,
           },
         },
+      };
+    if (link.format === "agent-card")
+      return {
+        open: agentCardTarget(link.card, {
+          viewer: client.viewer,
+          communityOrigin: communityDestination(client.selected).url,
+        }),
       };
     if (link.format === "entity")
       return {
@@ -276,6 +284,12 @@ export function bindDeepLinks(
           }
         }
         if (url === undefined) continue;
+        // `buzz://sign-in` names no destination: first-run signs in again
+        // (`identity/sign-in-requests.ts`). Never held, bound or rejected.
+        if (isSignInLink(url)) {
+          requestSignIn();
+          continue;
+        }
         const plugin = parseBuzzLink(url)?.format === "plugin-install";
         if (epoch !== clientEpoch && !plugin) continue;
         const client = communities.snapshot();

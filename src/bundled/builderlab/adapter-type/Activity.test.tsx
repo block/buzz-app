@@ -3,7 +3,9 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { eventBody } from "../../../features/agent-harness/turn-records";
 import type { Agent } from "../../../features/agents/service";
+import type { IdentityNameView } from "../../../features/identity-names/service";
 import type { RelayData } from "../../../features/relay/service";
 import {
   ActivityPanel,
@@ -73,6 +75,43 @@ function record(
   };
 }
 
+/** A turn whose prompt is the exact record of one Buzz message. */
+function promptRecord(sender: string) {
+  const body = eventBody(
+    {
+      id: root,
+      pubkey: sender,
+      kind: 9,
+      created_at: 1,
+      content: "go",
+      tags: [],
+    },
+    "go",
+  );
+  const frame = record("t1", "Done");
+  const batch = JSON.parse(frame.plaintext);
+  batch.payload.events.splice(1, 0, {
+    ...batch.payload.events[0],
+    seq: 9,
+    kind: "acp_write",
+    payload: {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "session/prompt",
+      params: {
+        sessionId: "S",
+        prompt: [
+          {
+            type: "text",
+            text: `<buzz-event type="mention">\n${body}\n</buzz-event>`,
+          },
+        ],
+      },
+    },
+  });
+  return { ...frame, plaintext: JSON.stringify(batch) };
+}
+
 type Snapshot = ReturnType<AgentActivity["snapshot"]>;
 function fakeActivity(overrides: Partial<Snapshot> = {}) {
   let snapshot = {
@@ -99,6 +138,31 @@ function fakeActivity(overrides: Partial<Snapshot> = {}) {
   return { activity, update };
 }
 
+it.each([
+  ["ended", "Completed"],
+  ["error", "Failed"],
+  ["stopped", "Stopped"],
+] as const)(
+  "shows readback outcome %s without inventing a terminal frame",
+  (outcome, label) => {
+    const { activity } = fakeActivity({
+      records: [record("t1", "Partial response")],
+      turns: [
+        {
+          agent: pubkey,
+          turnId: "t1",
+          channelId: "alpha",
+          timestamp: Date.now(),
+          state: "ended",
+          outcome,
+        },
+      ],
+    });
+    render(<ActivityPanel agent={agent} activity={activity} />);
+    expect(screen.getByText(label, { exact: true })).toBeVisible();
+    expect(screen.getByText("Partial response")).toBeVisible();
+  },
+);
 it("shows this agent's published turns, leaving the feed's lease to the plugin", () => {
   const { activity } = fakeActivity({
     records: [
@@ -119,6 +183,7 @@ it("shows this agent's published turns, leaving the feed's lease to the plugin",
   expect(screen.getByText("Deployed the fix")).toBeInTheDocument();
   expect(screen.queryByText("Someone else's work")).not.toBeInTheDocument();
   expect(screen.getByText("Working")).toBeInTheDocument();
+  expect(screen.queryByText(/Remote workspace/)).not.toBeInTheDocument();
   expect(activity.activate).not.toHaveBeenCalled();
 });
 
@@ -172,4 +237,19 @@ it("says when older activity was dropped", () => {
   expect(
     screen.getByText("Older activity was dropped to save memory."),
   ).toBeInTheDocument();
+});
+
+it("names the person whose message prompted a turn", () => {
+  const { activity } = fakeActivity({
+    records: [promptRecord(other)] as unknown as Snapshot["records"],
+  });
+  const names = {
+    snapshot: () => 0,
+    subscribe: () => () => {},
+    resolve: (key: string, fallback?: string) =>
+      key === other ? "Salman" : fallback,
+  } as unknown as IdentityNameView;
+  render(<ActivityPanel agent={agent} activity={activity} names={names} />);
+  expect(screen.getByText("Salman")).toBeInTheDocument();
+  expect(screen.getByText("go")).toBeInTheDocument();
 });

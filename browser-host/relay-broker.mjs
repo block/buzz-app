@@ -32,6 +32,7 @@ import {
   prepareChannelKit,
   decodeChannelKit,
   admitChannelKit,
+  canvasEventFits,
   validCanvas,
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
@@ -52,6 +53,7 @@ import {
   directMessageReceipt,
 } from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
+import { CANVAS_MAX_EVENT_BYTES } from "../src/features/channel-templates/canvas-limits.ts";
 import {
   ARTIFACT_SYNC_MAX_VIEWS,
   artifactSyncFilter,
@@ -368,6 +370,7 @@ function relayMediaTarget(raw, relay) {
     /^[0-9a-f]{64}$/.test(hash) &&
     (extension === "" ||
       extension === "thumb.jpg" ||
+      extension === "thumb.webp" ||
       /^[a-z0-9]{1,8}$/.test(extension))
     ? target
     : undefined;
@@ -2225,7 +2228,7 @@ export function relayBrokerPlugin({
               cancel.signal,
               AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
             ]);
-            const upstream = await fetchUpstream(target, {
+            const init = {
               headers: {
                 Authorization:
                   "Nostr " +
@@ -2234,7 +2237,20 @@ export function relayBrokerPlugin({
               },
               redirect: "error",
               signal: mediaDeadline,
-            });
+            };
+            let upstream = await fetchUpstream(target, init);
+            // Relays before WebP thumbnails, and images uploaded before them,
+            // have only the `.thumb.jpg` that every relay writes.
+            if (
+              upstream.status === 404 &&
+              target.pathname.endsWith(".thumb.webp")
+            ) {
+              await upstream.body?.cancel();
+              upstream = await fetchUpstream(
+                new URL(target.href.replace(/\.thumb\.webp$/, ".thumb.jpg")),
+                init,
+              );
+            }
             stats.media++;
             if (!upstream.ok) {
               await upstream.body?.cancel();
@@ -2344,8 +2360,9 @@ export function relayBrokerPlugin({
             return json(res, 404, { error: "Unknown broker route" });
           const memory = route === "/api/relay/agent-memories";
           const presence = route === "/api/relay/presence-snapshot";
-          // Only NIP-AP catalog events may exceed the ordinary body bound.
-          const catalogWrite =
+          // Only NIP-AP catalog and Canvas events may exceed the ordinary
+          // body bound, each up to its own complete-event bound.
+          const largeWrite =
             route === "/api/relay/sign" || route === "/api/relay/publish";
           let raw = "";
           const uploadDeadline = memory
@@ -2358,7 +2375,10 @@ export function relayBrokerPlugin({
               if (
                 presence
                   ? Buffer.byteLength(raw) > 20 * 1024
-                  : raw.length > (catalogWrite ? CATALOG_EVENT_BYTES : 65536)
+                  : raw.length >
+                    (largeWrite
+                      ? Math.max(CATALOG_EVENT_BYTES, CANVAS_MAX_EVENT_BYTES)
+                      : 65536)
               )
                 return json(res, 413, { error: "Filter body too large" });
             }
@@ -2373,8 +2393,15 @@ export function relayBrokerPlugin({
           }
           if (
             raw.length > 65536 &&
-            (!isCatalogKind(filters?.kind) ||
-              Buffer.byteLength(raw) > CATALOG_EVENT_BYTES)
+            !(
+              largeWrite &&
+              Buffer.byteLength(raw) <=
+                (isCatalogKind(filters?.kind)
+                  ? CATALOG_EVENT_BYTES
+                  : filters?.kind === 40100
+                    ? CANVAS_MAX_EVENT_BYTES
+                    : 0)
+            )
           )
             return json(res, 413, { error: "Filter body too large" });
           let memoryAgent;
@@ -2901,7 +2928,10 @@ export function relayBrokerPlugin({
                   throw new Error("Expired operation");
                 if (filters.kind === 30078)
                   admitChannelKit(filters, key, relay);
-                else if (!validCanvas(filters))
+                else if (
+                  !validCanvas(filters) ||
+                  (!signing && !canvasEventFits(filters))
+                )
                   throw new Error("Invalid Canvas");
               } catch {
                 return json(res, 400, {
@@ -2973,6 +3003,13 @@ export function relayBrokerPlugin({
                 },
                 key,
               );
+              // The relay limits the complete event, which escaping and the
+              // id, pubkey and sig make larger than its content.
+              if (event.kind === 40100 && !canvasEventFits(event))
+                return json(res, 400, {
+                  error: "Relay event is too large",
+                  sent: false,
+                });
               res.setHeader(
                 "Server-Timing",
                 `sign;dur=${(performance.now() - started).toFixed(2)}`,

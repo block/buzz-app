@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { activate, open, virtuaIdle } from "./timeline.mjs";
+import { activate, clickRow, open, virtuaIdle } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -35,8 +35,12 @@ for (const pane of ["side", "main"]) {
     const tab = (root) =>
       host.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`);
     const showConversation = async () => {
-      if (pane === "main")
-        await main.getByRole("tab", { name: "Alpha", exact: true }).click();
+      const conversationTab = main.getByRole("tab", {
+        name: "Alpha",
+        exact: true,
+      });
+      if (pane === "main" && (await conversationTab.count()))
+        await conversationTab.click();
     };
     const openThread = async (root, keyboard = false) => {
       await showConversation();
@@ -44,7 +48,7 @@ for (const pane of ["side", "main"]) {
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
         .getByRole("button", { name: /^View thread:/ });
       if (keyboard) await activate(trigger);
-      else await trigger.click();
+      else await clickRow(page, trigger);
       await expect(reply).toBeFocused();
     };
     await openThread(roots[0]);
@@ -139,8 +143,10 @@ for (const owner of [undefined, "page draft", "menu", "dialog"]) {
         await target.click();
         await page.keyboard.type("Keep my main draft");
       } else if (owner === "menu") {
-        await page.getByRole("button", { name: "New", exact: true }).click();
-        target = page.getByRole("menuitem", { name: "New chat", exact: true });
+        await page
+          .getByRole("button", { name: "Your profile", exact: true })
+          .click();
+        target = page.getByRole("menuitem", { name: "Settings", exact: true });
         await target.focus();
       } else if (owner === "dialog") {
         await page

@@ -1,4 +1,14 @@
+import { historyPresentation } from "../../features/agents/history-presentation";
+import {
+  profileHistoryActive,
+  profileHistoryRoute,
+  profileHistoryTarget,
+} from "../../features/profiles/target";
 import { useProfileMessage } from "../../features/profiles/useProfileMessage";
+import {
+  otherVerifiedName,
+  verifiedLabel,
+} from "../../features/profiles/name-preference";
 import { AgentDetails } from "../agents/AgentDetails";
 import { AgentMessageButton } from "../agents/AgentMessageButton";
 import { useAgents } from "../../features/agents/react";
@@ -36,7 +46,6 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
   claimProfileTranscript,
-  profileActivityTranscript,
   profileActivityViewKey,
   profileTranscriptRequest,
   subscribeProfileTranscripts,
@@ -88,6 +97,20 @@ function panelCommunity(scope: string | undefined, viewer: string | undefined) {
   }
 }
 
+/** The conversation the profile was opened from. Agents keep a Solo chat or
+ * a DM as one conversation, so a message's thread there is not its own. */
+function openedFrom(session: RelaySession, context: PanelProps["context"]) {
+  if (!context) return undefined;
+  const kind = session.channels
+    .list()
+    .channels.find((item) => item.id === context.channelId)?.channelType;
+  const whole = kind === "solo" || kind === "dm";
+  return {
+    channelId: context.channelId,
+    ...(context.rootId && !whole && { rootId: context.rootId }),
+  };
+}
+
 export function ProfilePanel({
   relay,
   target,
@@ -105,14 +128,13 @@ export function ProfilePanel({
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
-  const transcript = profileActivityTranscript(target);
-  const opening = transcript ? "transcript" : activityKey ? "activity" : "info";
+  const opening = activityKey ? "activity" : "info";
   // Asked once per opening. This profile takes the opening as soon as it is
   // shown, even on another section, so remounting with the channel finds
   // nothing to reopen; changing sections back after it was offered does not
   // ask again either.
   const asked = useSyncExternalStore(subscribeProfileTranscripts, () =>
-    transcript ? profileTranscriptRequest(target) : undefined,
+    activityKey ? profileTranscriptRequest(target) : undefined,
   );
   const [held, setHeld] = useState<number>();
   const [offered, setOffered] = useState(0);
@@ -153,6 +175,7 @@ export function ProfilePanel({
   )
     return (
       <OwnedAgentProfile
+        target={target}
         key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
         agents={agents}
         communities={communities}
@@ -187,6 +210,7 @@ export function ProfilePanel({
   );
 }
 function OwnedAgentProfile({
+  target,
   agents,
   communities,
   initialActivity,
@@ -199,6 +223,7 @@ function OwnedAgentProfile({
   openConversation,
   close,
 }: {
+  target: string;
   agents: Agents;
   communities: CommunityReader | undefined;
   initialActivity: boolean;
@@ -215,8 +240,27 @@ function OwnedAgentProfile({
   const owned = useAgent(agents, pubkey);
   const channels = useChannelChoices(session.channels);
   if (!owned) return null;
+  const address = navigation?.snapshot().entry.target;
   return (
     <AgentDetails
+      historyPresentation={
+        navigation &&
+        address?.kind === "conversation" &&
+        address.detail?.target === target
+          ? historyPresentation(
+              navigation,
+              profileHistoryRoute(target),
+              (selected) => ({
+                ...address,
+                detail: {
+                  ...address.detail,
+                  target: profileHistoryTarget(target, selected),
+                },
+              }),
+              profileHistoryActive(target),
+            )
+          : undefined
+      }
       agents={agents}
       communities={communities}
       agent={owned.agent}
@@ -229,12 +273,7 @@ function OwnedAgentProfile({
       initialTranscript={initialTranscript}
       close={close}
       openConversation={openConversation}
-      conversation={
-        context && {
-          channelId: context.channelId,
-          ...(context.rootId && { rootId: context.rootId }),
-        }
-      }
+      conversation={openedFrom(session, context)}
       messageAction={(variant) => (
         <AgentMessageButton
           variant={variant}
@@ -310,6 +349,13 @@ function ProfileDetails({
   const [tab, setTab] = useState<
     "info" | "activity" | "channels" | `agent:${string}`
   >(initialTab);
+  // A new transcript request shows Activity, as choosing its tab would.
+  const opening = initialTranscript?.opening;
+  const [asked, setAsked] = useState(opening);
+  if (opening !== asked) {
+    setAsked(opening);
+    if (opening !== undefined) setTab("activity");
+  }
   // An agent's sections come from its type and the app, not the harness.
   const plugin = useAgent(agents, pubkey);
   const agentTypes = useSyncExternalStore(
@@ -331,10 +377,7 @@ function ProfileDetails({
           type: settings.type,
           memories: session.agentMemories,
           communities,
-          conversation: context && {
-            channelId: context.channelId,
-            ...(context.rootId && { rootId: context.rootId }),
-          },
+          conversation: openedFrom(session, context),
           initialTranscript,
           close,
           ...(openConversation && { openConversation }),
@@ -405,6 +448,12 @@ function ProfileDetails({
     profile?.name ??
       (displayAgent ? "Unknown agent" : (formatPublicKey(pubkey) ?? pubkey)),
   );
+  // The verification line carries the check, so it keeps the handle when the
+  // name already is it.
+  const otherName =
+    profile?.verified &&
+    (otherVerifiedName(verifiedLabel(profile.verified), profile.verified) ??
+      `@${profile.verified.username}`);
   // The portrait is 5rem (at most 240 device px), so the relay's 320 px
   // thumbnail already covers it and reuses the URL message rows have loaded.
   const picture = avatarMedia(profile?.picture, session.media) ?? null;
@@ -490,9 +539,7 @@ function ProfileDetails({
               <p
                 className={`${styles.verifiedName} text-body-sm text-secondary`}
               >
-                <span>
-                  {profile.verified.fullName ?? `@${profile.verified.username}`}
-                </span>
+                <span>{otherName}</span>
                 {profile.verified.status === "checked" && (
                   <CheckCircleIcon
                     aria-hidden="true"
@@ -506,7 +553,8 @@ function ProfileDetails({
                 {profile.verified.status === "checked"
                   ? `Name verified by ${profile.verified.issuerLabel}`
                   : `Cached verification from ${profile.verified.issuerLabel}`}{" "}
-                {profile.verified.fullName && `· @${profile.verified.username}`}
+                {otherName !== `@${profile.verified.username}` &&
+                  `· @${profile.verified.username}`}
               </p>
             )}
             {presence !== "unknown" && (

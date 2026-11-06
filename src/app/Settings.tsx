@@ -12,7 +12,10 @@ import {
 import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
 import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
-import type { DecisionsService } from "../features/decisions/service";
+import type {
+  DecisionsService,
+  RegisteredProvider,
+} from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -30,9 +33,11 @@ import { Tabs } from "../shared/design-system/ui/Tabs";
 import { SearchField } from "../shared/design-system/ui/SearchField";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import {
+  Fragment,
   type ReactNode,
   forwardRef,
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -52,6 +57,7 @@ import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { AgentPluginRequests } from "./AgentPluginRequests";
 import { ManagedPluginUpdate, ManagedPlugins } from "./ManagedPlugins";
 import { managedBy, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
@@ -61,7 +67,8 @@ import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
-import { IdentitySettings } from "./IdentitySettings";
+import { IdentitySettings, keyActivity } from "./IdentitySettings";
+import { SecuritySettings } from "./SecuritySettings";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
 
@@ -79,7 +86,12 @@ import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { CommunityDepartureSettings } from "./CommunityDepartureSettings";
-import { developerMode, settingsSections } from "./settings-sections";
+import {
+  developerMode,
+  settingsSections,
+  type SettingsSection,
+} from "./settings-sections";
+import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
 
@@ -226,6 +238,8 @@ function PluginProvenance({
 
 const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
+const noProviders: readonly RegisteredProvider[] = [];
+const noDecisionProviders = () => noProviders;
 
 function restrictedPlugin(plugin: PluginInfo) {
   return (
@@ -272,6 +286,14 @@ function scrollport(element: Element) {
   return null;
 }
 
+/** Whether any scrollport around `element` has scrolled past its start. */
+function startHidden(element: Element) {
+  const top = element.getBoundingClientRect().top;
+  for (let port = scrollport(element); port; port = scrollport(port))
+    if (top < port.getBoundingClientRect().top) return true;
+  return false;
+}
+
 function pluginToggleDisabled(
   plugin: PluginInfo,
   access: AdminAccessState,
@@ -302,6 +324,9 @@ function PluginDetails({
   onReviewHandled,
   initialUpdateAvailable,
   holdReview,
+  openUpdateSettings = false,
+  sections,
+  openSection,
 }: {
   plugin: PluginInfo;
   managed?: ReturnType<typeof managedBy>;
@@ -321,6 +346,9 @@ function PluginDetails({
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
   holdReview: (() => () => void) | undefined;
+  openUpdateSettings?: boolean;
+  sections: readonly SettingsSection[];
+  openSection: ((section: string) => void) | undefined;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
@@ -329,9 +357,6 @@ function PluginDetails({
     useState<HTMLSpanElement | null>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   const [actionTarget, setActionTarget] = useState<HTMLDivElement | null>(null);
-  const [primaryActionTarget, setPrimaryActionTarget] =
-    useState<HTMLDivElement | null>(null);
-  const updateAvailable = initialUpdateAvailable;
   useLayoutEffect(() => {
     close.current?.focus({ preventScroll: true });
   }, [close]);
@@ -415,66 +440,54 @@ function PluginDetails({
           </span>
         )}
         <div className={styles.pluginPrimaryActions}>
-          <div
-            ref={setPrimaryActionTarget}
-            className={styles.pluginPrimaryAction}
-          >
+          <div className={styles.pluginPrimaryAction}>
             {/* Channels is required and has no enable/disable control. */}
-            {!updateAvailable &&
-              (plugin.manifest.id === "buzz.channels" ? (
-                <Button variant="outline" size="sm" disabled>
-                  Required
-                </Button>
-              ) : (
-                <Tooltip
-                  content={
-                    access === "error"
-                      ? "Could not check access. Try again."
+            {plugin.manifest.id === "buzz.channels" ? (
+              <Button variant="outline" size="sm" disabled>
+                Required
+              </Button>
+            ) : (
+              <Tooltip
+                content={
+                  access === "error"
+                    ? "Could not check access. Try again."
+                    : accessReason
+                }
+                {...(accessReason ? {} : { open: false })}
+                disableHoverablePopup
+              >
+                <Button
+                  variant={
+                    plugin.enabled
+                      ? "subtle"
                       : accessReason
+                        ? "outline"
+                        : "prominent"
                   }
-                  {...(accessReason ? {} : { open: false })}
-                  disableHoverablePopup
+                  size="sm"
+                  disabled={pluginToggleDisabled(plugin, access, busy)}
+                  loading={
+                    !plugin.enabled &&
+                    restrictedPlugin(plugin) &&
+                    access === "checking"
+                  }
+                  aria-describedby={
+                    accessReason ? "plugin-detail-access" : undefined
+                  }
+                  focusableWhenDisabled
+                  ref={toggle}
+                  onClick={onToggle}
                 >
-                  <Button
-                    variant={
-                      plugin.enabled
-                        ? "subtle"
-                        : accessReason
-                          ? "outline"
-                          : "prominent"
-                    }
-                    size="sm"
-                    disabled={pluginToggleDisabled(plugin, access, busy)}
-                    loading={
-                      !plugin.enabled &&
-                      restrictedPlugin(plugin) &&
-                      access === "checking"
-                    }
-                    aria-describedby={
-                      accessReason ? "plugin-detail-access" : undefined
-                    }
-                    focusableWhenDisabled
-                    ref={toggle}
-                    onClick={onToggle}
-                  >
-                    {pluginActionLabel(plugin, access)}
-                  </Button>
-                </Tooltip>
-              ))}
+                  {pluginActionLabel(plugin, access)}
+                </Button>
+              </Tooltip>
+            )}
           </div>
           <PluginMenu
             plugin={plugin}
             plugins={plugins}
             busy={busy}
-            {...(updateAvailable
-              ? {
-                  toggle: {
-                    label: pluginActionLabel(plugin, access),
-                    disabled: pluginToggleDisabled(plugin, access, busy),
-                    run: onToggle,
-                  },
-                }
-              : {})}
+            openUpdateSettings={openUpdateSettings}
           />
         </div>
         <div ref={setActionTarget} className={styles.pluginExtraActions} />
@@ -512,7 +525,7 @@ function PluginDetails({
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
           initialUpdateAvailable={initialUpdateAvailable}
-          actionTarget={updateAvailable ? primaryActionTarget : actionTarget}
+          actionTarget={actionTarget}
           onUpdateAvailableChange={onUpdateAvailableChange}
           reviewRequested={reviewRequested}
           onReviewHandled={onReviewHandled}
@@ -525,6 +538,24 @@ function PluginDetails({
           busy={busy}
           {...(authorizeGit ? { authorizeGit } : {})}
         />
+      )}
+      {sections.length > 0 && (
+        // biome-ignore lint/a11y/useSemanticElements: This names links to Settings sections, not a fieldset of form controls.
+        <p
+          role="group"
+          aria-label={`${plugin.manifest.name} settings`}
+          className="m-0 text-body-sm text-secondary"
+        >
+          Settings:{" "}
+          {sections.map((section, index) => (
+            <Fragment key={section.id}>
+              {index > 0 && ", "}
+              <SettingsSectionLink section={section.id} open={openSection}>
+                {section.label}
+              </SettingsSectionLink>
+            </Fragment>
+          ))}
+        </p>
       )}
       {accessReason && (
         <p id="plugin-detail-access" className="sr-only">
@@ -622,6 +653,7 @@ export function Settings({
   communities,
   identity,
   federatedIdentity,
+  builderlabIdentity,
   appearance,
   shortcuts,
   shortcutBindings,
@@ -632,6 +664,7 @@ export function Settings({
   onSection,
   onProvider,
   onPluginImportClosed,
+  onPluginDetailsClosed,
   navigationPane = false,
   onDeparturePending,
   onUnsavedChange,
@@ -644,6 +677,8 @@ export function Settings({
   communities: Communities;
   identity?: Identity | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
+  /** The session as the Builderlab plugin's bundled installation, for its account reads. */
+  builderlabIdentity?: FederatedIdentity | undefined;
   appearance: Appearance;
   shortcuts: ShortcutsService;
   shortcutBindings: ShortcutBindings;
@@ -656,6 +691,7 @@ export function Settings({
   onSection?: (section: string) => void;
   onProvider?: ((provider?: string) => void) | undefined;
   onPluginImportClosed?: (() => void) | undefined;
+  onPluginDetailsClosed?: (() => void) | undefined;
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
   onUnsavedChange?: (unsaved: boolean) => void;
@@ -692,6 +728,10 @@ export function Settings({
       : moderationAccess;
   useEffect(() => communities.retainPresentation(), [communities]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
+  const decisionProviders = useSyncExternalStore(
+    decisions?.subscribe ?? noAccessSubscription,
+    decisions?.providers ?? noDecisionProviders,
+  );
   const client = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
@@ -724,13 +764,24 @@ export function Settings({
   useLayoutEffect(() => {
     if (selected !== contentFocus.current) return;
     contentFocus.current = undefined;
-    (selected === "plugins"
-      ? pluginSection.current
-      : document.getElementById(
-          navigationPane ? "settings-content" : "main-content",
-        )
-    )?.focus({ preventScroll: true });
+    const target =
+      selected === "plugins"
+        ? pluginSection.current
+        : document.getElementById(
+            navigationPane ? "settings-content" : "main-content",
+          );
+    target?.focus({ preventScroll: true });
+    // Stacked navigation shares one scrollport with the content, which keeps
+    // the previous section's offset; start the new one where the sidebar does.
+    if (target && startHidden(target))
+      target.scrollIntoView({ block: "start" });
   }, [selected, navigationPane]);
+  const openSection =
+    onSection &&
+    ((id: string) => {
+      contentFocus.current = id;
+      onSection(id);
+    });
   useEffect(() => {
     if (
       departure &&
@@ -843,6 +894,21 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const addressedPlugin = useRef(false);
+  const requestedPluginId =
+    navigation?.target.kind === "settings"
+      ? navigation.target.pluginId
+      : undefined;
+  useEffect(() => {
+    if (selected !== "plugins" || !navigation?.entryId) return;
+    if (requestedPluginId) {
+      setSelectedPluginId(requestedPluginId);
+      addressedPlugin.current = true;
+    } else if (addressedPlugin.current) {
+      setSelectedPluginId(undefined);
+      addressedPlugin.current = false;
+    }
+  }, [requestedPluginId, navigation?.entryId, selected]);
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -903,6 +969,7 @@ export function Settings({
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     setSelectedPluginId(undefined);
+    if (requestedPluginId) onPluginDetailsClosed?.();
   };
   useLayoutEffect(() => {
     const held = heldPluginRow.current;
@@ -939,6 +1006,22 @@ export function Settings({
         ? selectedRunning.error
         : null))
     : null;
+  // Only what the sidebar shows now: an inactive plugin registers no cards or
+  // providers, and community sections need a selected community. A decision
+  // provider's settings are under Decisions API.
+  const selectedSections = selectedPlugin
+    ? sections.filter((section) =>
+        section.id === "decisions"
+          ? decisionProviders.some(
+              (provider) => provider.pluginId === selectedPlugin.manifest.id,
+            )
+          : contributed.some(
+              (card) =>
+                card.key === section.id &&
+                card.pluginId === selectedPlugin.manifest.id,
+            ),
+      )
+    : [];
   const renderPluginGroup = (
     group: ReturnType<typeof groupPlugins>[number],
   ) => {
@@ -1202,6 +1285,16 @@ export function Settings({
       </PluginListEntry>
     );
   };
+  // A new connection's session reads activity again.
+  const relay = useSyncExternalStore(
+    communities.relay.subscribe,
+    communities.relay.snapshot,
+  );
+  const relaySession = relay.status === "ready" ? relay.session : undefined;
+  const lastActive = useCallback(
+    (pubkey: string) => keyActivity(relaySession, pubkey),
+    [relaySession],
+  );
   const authorizePluginGit = async (repository: string) => {
     const connection = communities.relay.snapshot();
     return connection.status === "ready"
@@ -1237,6 +1330,7 @@ export function Settings({
           <AppearanceSettings
             appearance={appearance}
             active={selected === "appearance"}
+            communities={communities}
           />
         </div>
         <div hidden={selected !== "shortcuts"}>
@@ -1261,13 +1355,7 @@ export function Settings({
             <DecisionsSettings
               decisions={decisions}
               active={() => selected === "decisions"}
-              onSection={
-                onSection &&
-                ((id) => {
-                  contentFocus.current = id;
-                  onSection(id);
-                })
-              }
+              onSection={openSection}
             />
           </div>
         )}
@@ -1336,8 +1424,12 @@ export function Settings({
             viewer={client.viewer}
             identity={identity}
             federatedIdentity={federatedIdentity}
+            memberships={client.memberships}
+            builderlabIdentity={builderlabIdentity}
+            lastActive={lastActive}
           />
         )}
+        {selected === "security" && <SecuritySettings />}
         {developerMode && (
           <div hidden={selected !== "developer"}>
             <DeveloperSettings relay={communities.relay} />
@@ -1363,6 +1455,16 @@ export function Settings({
             <AnimatePresence initial={false} mode="popLayout">
               {coreGroup && renderPluginGroup(coreGroup)}
             </AnimatePresence>
+            {catalog && (
+              <AgentPluginRequests
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                authorizeGit={authorizePluginGit}
+                holdReview={installRequests?.holdReview}
+                fallbackFocus={() => pluginSection.current}
+              />
+            )}
             {catalog && (
               <ManagedPlugins
                 plugins={plugins}
@@ -1539,8 +1641,9 @@ export function Settings({
       </div>
       {showingDetails && selectedPlugin && catalog && (
         <PluginDetails
-          key={selectedPlugin.manifest.id}
+          key={`${selectedPlugin.manifest.id}:${requestedPluginId ? navigation?.entryId : ""}`}
           plugin={selectedPlugin}
+          openUpdateSettings={requestedPluginId === selectedPlugin.manifest.id}
           managed={managedBy(managed, selectedPlugin.manifest.id)}
           catalog={catalog}
           initialUpdateAvailable={
@@ -1580,6 +1683,8 @@ export function Settings({
           onToggle={() => togglePlugin(selectedPlugin)}
           close={detailsClose}
           onClose={closePluginDetails}
+          sections={selectedSections}
+          openSection={openSection}
         />
       )}
     </>

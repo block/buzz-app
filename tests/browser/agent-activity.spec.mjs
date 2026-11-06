@@ -13,7 +13,9 @@ test.use({
 
 // Agent responses live in history; human typing stays beside the composer.
 const channelComposer = (page) =>
-  page.getByRole("tabpanel", { name: "Alpha", exact: true });
+  page
+    .getByRole("region", { name: "Alpha", exact: true })
+    .or(page.getByRole("tabpanel", { name: "Alpha", exact: true }));
 const activityTrigger = (scope) =>
   scope.locator("[data-agent-activity-trigger]");
 const responseAvatars = (trigger) =>
@@ -195,7 +197,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
     .toBe(true);
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   // A busy skip followed by a successful retry must not masquerade as recovery.
@@ -213,9 +215,10 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await expect(responseAvatars(trigger)).toHaveCount(2);
 
   await openWorkingNow(page, composer);
+  // Each agent's row is the way in; there is no separate Activity heading.
   await expect(
     popup.getByRole("button", { name: "View full activity", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   // Observer turns carry no thread identity, and the channel is already shown:
   // rows open each agent's activity instead of guessing a thread.
   for (const agent of [first, second]) {
@@ -239,9 +242,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await expect(popup).toBeVisible();
   // Keyboard opening focuses the first row a frame later. Rows can be in either
   // order, so wait for that focus, then Tab to this agent's row.
-  await expect(
-    popup.getByRole("button", { name: "View full activity" }),
-  ).toBeFocused();
+  await expect(popup.getByRole("button").first()).toBeFocused();
   const firstAction = agentActivityAction(popup, first);
   for (let step = 0; step < 3 && !(await isFocused(firstAction)); step++)
     await page.keyboard.press("Tab");
@@ -253,7 +254,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
 
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   // The popup's action has unmounted; focus returns to its floating trigger.
@@ -262,7 +263,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await expectProfile(page, second);
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   await expect(trigger).toBeFocused();
@@ -323,7 +324,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   // order, are the barrier for each transition. The route survives closing the profile.
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   app.observer(activity("turn_liveness", "alpha", "parallel"), firstKey);
@@ -614,7 +615,7 @@ test.describe("thread activity", () => {
     await expectProfile(page, agent);
     await page
       .locator(
-        '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+        '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
       )
       .click();
     // The profile and Thread share the detail pane; return to the thread.
@@ -629,17 +630,13 @@ test.describe("thread activity", () => {
     await expect(agentRow(popup, agent)).toBeVisible();
     // Keyboard opening focuses the first row a frame later. Tabbing before then
     // can skip past it and leave the non-modal popup, which closes it.
-    await expect(
-      popup.getByRole("button", { name: "View full activity" }),
-    ).toBeFocused();
-    await page.keyboard.press("Tab");
     await expect(agentRow(popup, agent)).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(popup).toHaveCount(0);
     await expectProfile(page, agent);
     await page
       .locator(
-        '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+        '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
       )
       .click();
     await openThread();
@@ -658,7 +655,7 @@ test.describe("thread activity", () => {
     await expectProfile(page, agent);
     await page
       .locator(
-        '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+        '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
       )
       .click();
     // The reply summary opens the thread; channel activity never guesses
@@ -666,7 +663,7 @@ test.describe("thread activity", () => {
     await openThread();
     await page
       .locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "]',
       )
       .click();
     await expect(thread).toHaveCount(0);
@@ -868,7 +865,7 @@ test.describe("thread activity", () => {
     await expect(humanTyping(thread)).toHaveCount(0);
     await page
       .locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "]',
       )
       .click();
     await openThread(roots[1]);
@@ -879,7 +876,7 @@ test.describe("thread activity", () => {
     await expect(workingStatus).toBeEmpty();
     await page
       .locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "]',
       )
       .click();
     await openThread(roots[0]);
@@ -899,7 +896,7 @@ test.describe("thread activity", () => {
     await expect(humanTyping(thread)).toHaveCount(0);
     await page
       .locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "]',
       )
       .click();
     // The channel composer uses the same floating control and popup rows.

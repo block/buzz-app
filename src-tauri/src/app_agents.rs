@@ -177,6 +177,58 @@ impl AppAgentHost {
         valid_for: Duration,
     ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
         let incarnation = self.tokens.stamp(&pubkey, &relay)?;
+        self.signer_at(pubkey, relay, incarnation, valid_for).await
+    }
+    /// The owner's retirements so far, for a local caller's token issued now.
+    pub(crate) fn caller_retirements(&self) -> u64 {
+        self.tokens.retirements()
+    }
+    /// Whether the owner's identity was closed for good, so no local caller
+    /// may be issued, bound or act again.
+    pub(crate) fn caller_closed(&self) -> bool {
+        self.tokens.identity_closed()
+    }
+    /// The agent and its current incarnation, for a local caller's token that
+    /// acts as it from now on.
+    pub(crate) async fn caller_stamp(
+        &self,
+        pubkey: String,
+        relay: String,
+    ) -> Result<(AppAgent, Stamp), String> {
+        let incarnation = self.tokens.stamp(&pubkey, &relay)?;
+        Ok((self.agent(pubkey, relay).await?, incarnation))
+    }
+    /// Whether a token issued at [`Self::caller_retirements`] and bound at
+    /// [`Self::caller_stamp`] still acts: the agent was not deleted and the
+    /// owner did not sign out or change account since.
+    pub(crate) fn caller_live(
+        &self,
+        pubkey: &str,
+        relay: &str,
+        incarnation: Stamp,
+        retirements: u64,
+    ) -> bool {
+        !self.tokens.identity_closed()
+            && self.tokens.retirements() == retirements
+            && self.tokens.admits(pubkey, relay, incarnation)
+    }
+    /// The agent and its key, for a local caller's operation that sends nothing.
+    pub(crate) async fn caller_key(
+        &self,
+        pubkey: String,
+        relay: String,
+    ) -> Result<(AppAgent, Arc<Secret>), String> {
+        self.key(self.agent(pubkey, relay).await?).await
+    }
+    /// As [`Self::signer_for`], for work stamped earlier with `incarnation`:
+    /// deleting the agent since then refuses it.
+    pub(crate) async fn signer_at(
+        &self,
+        pubkey: String,
+        relay: String,
+        incarnation: Stamp,
+        valid_for: Duration,
+    ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
         let (agent, key) = self.key(self.agent(pubkey, relay).await?).await?;
         let evidence = self
             .tokens
@@ -317,6 +369,46 @@ impl AppAgentHost {
             agent
         })
         .await
+    }
+}
+
+#[cfg(test)]
+impl AppAgentHost {
+    /// A host whose only agent is `agent`, saved at `path`, its key already read.
+    pub(crate) fn holding(
+        path: PathBuf,
+        agent: &AppAgent,
+        key: Secret,
+        tokens: AgentTokens,
+    ) -> Self {
+        std::fs::write(&path, serde_json::to_vec(&[agent]).unwrap()).unwrap();
+        let host = Self::new(Ok(path), Err("unused".into()), true, tokens);
+        host.keys().insert(agent.pubkey.clone(), Arc::new(key));
+        host
+    }
+    /// Saves `agents` in place of the held ones and holds `key` too.
+    pub(crate) fn also_holding_for_test(&self, path: PathBuf, agents: &[&AppAgent], key: Secret) {
+        std::fs::write(path, serde_json::to_vec(agents).unwrap()).unwrap();
+        self.keys().insert(key.pubkey().into(), Arc::new(key));
+    }
+    /// This host reading keys from `credentials`, its key cache emptied.
+    #[cfg(test)]
+    pub(crate) fn with_credentials_for_test(mut self, credentials: Arc<dyn Credentials>) -> Self {
+        self.credentials = credentials;
+        self.keys().clear();
+        self
+    }
+    pub(crate) fn forget_row_for_test(&self, pubkey: &str, relay: &str) {
+        self.tokens.forget_row(pubkey, relay).unwrap();
+    }
+    pub(crate) fn reopen_row_for_test(&self, pubkey: &str, relay: &str) {
+        self.tokens.reopen_row(pubkey, relay).unwrap();
+    }
+    /// Holds every key read until dropped, pausing work that needs a key.
+    pub(crate) fn hold_keys_for_test(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
+        self.keys()
     }
 }
 
@@ -1007,7 +1099,7 @@ async fn signed_read(
         .await
         .map_err(|_| "Agent read failed")?;
     let status = response.status();
-    Ok((status, bounded(response, 8 * 1024 * 1024).await?))
+    Ok((status, bounded(response, READ_LIMIT).await?))
 }
 
 /// Searches the agent's community for profiles whose `name` or `display_name`
@@ -1370,6 +1462,10 @@ fn client() -> Result<&'static reqwest::Client, String> {
         .as_ref()
         .map_err(|_| "Agent client unavailable".into())
 }
+
+/// The most an agent read returns. Mirrors `CANVAS_READ_BYTES` in
+/// `canvas-limits.ts`, which sizes Canvas history pages to fit it.
+const READ_LIMIT: usize = 8 * 1024 * 1024;
 
 async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
@@ -2322,7 +2418,7 @@ mod tests {
                     .await
                     .unwrap(),
                 "sign-out" => {
-                    f.tokens.sign_out().await.unwrap();
+                    f.tokens.sign_out(None).await.unwrap();
                 }
                 _ => {
                     tokio::time::pause();
@@ -2534,11 +2630,39 @@ mod tests {
         let query = admission.run(false, read(&agent, &f.key, admission.header(), &filters));
         let retire = async {
             reached.await.unwrap();
-            f.tokens.sign_out().await.unwrap();
+            f.tokens.sign_out(None).await.unwrap();
             release.send(()).unwrap();
         };
         let (result, ()) = tokio::join!(query, retire);
         assert!(result.is_err(), "a retired query returned its parsed body");
         assert!(server.await.unwrap().contains("nostr-federated-identity:"));
+    }
+    #[test]
+    fn read_limit_mirrors_the_canvas_read_budget() {
+        let policy = include_str!("../../src/features/channel-templates/canvas-limits.ts");
+        assert_eq!(READ_LIMIT, 8 * 1024 * 1024);
+        assert!(policy.contains("export const CANVAS_READ_BYTES = 8 * 1024 * 1024;"));
+    }
+    #[tokio::test]
+    async fn bounded_admits_the_limit_and_refuses_one_byte_over() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (size, admitted) in [(READ_LIMIT, true), (READ_LIMIT + 1, false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(socket.read_u8().await.unwrap());
+                }
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n");
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&vec![b'x'; size]).await;
+            });
+            let response = reqwest::get(&url).await.unwrap();
+            let body = bounded(response, READ_LIMIT).await;
+            assert_eq!(body.map(|b| b.len()).ok(), admitted.then_some(size));
+            server.abort();
+        }
     }
 }

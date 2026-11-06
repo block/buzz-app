@@ -16,6 +16,8 @@ type ActivityRun = {
   followingMessage: ChannelMessage | undefined;
 };
 export type ActivityPresentation = ActivityRun & {
+  /** Only the latest update run for an agent/request owns live work and Stop. */
+  liveParticipants: string[];
   /** Display policy only; a public reply is not lifecycle completion. */
   hidden: boolean;
   retained?: boolean;
@@ -158,6 +160,8 @@ export function activityPresentation(
   const requests = new Map<string, string>();
   if (rootId) requests.set(rootId, rootId);
   const representedAgents = new Map<string, string[]>();
+  // Each request's latest public reply row per agent.
+  const publicReplies = new Map<string, Map<string, string>>();
   const activityAuthors = new Set(
     rows
       .filter((row) => row.audience === "agents" || row.agentEnvelope)
@@ -186,9 +190,32 @@ export function activityPresentation(
       const represented = representedAgents.get(rowRequest) ?? [];
       if (!represented.includes(row.authorId)) represented.push(row.authorId);
       representedAgents.set(rowRequest, represented);
+      if (row.audience !== "agents") {
+        const replies = publicReplies.get(rowRequest) ?? new Map();
+        replies.set(row.authorId, row.id);
+        publicReplies.set(rowRequest, replies);
+      }
     }
   }
+  const repliedAgents = new Map<string, string[]>();
+  const replyRequests = new Map<string, string>();
+  for (const [requestId, replies] of publicReplies) {
+    repliedAgents.set(requestId, [...replies.keys()]);
+    for (const id of replies.values()) replyRequests.set(id, requestId);
+  }
   const groups: ActivityPresentation[] = [];
+  const activityKey = (row: ChannelMessage) =>
+    JSON.stringify([
+      row.channelId,
+      row.threadRootId,
+      requests.get(row.id) ?? row.threadRootId,
+      row.authorId,
+    ]);
+  const latestUpdates = new Map(
+    rows
+      .filter((row) => row.audience === "agents" && !row.membership)
+      .map((row) => [activityKey(row), row.id]),
+  );
   const bubbleAnchors = new Set<string>();
   const byRow = new Map<string, ActivityRowPresentation>();
   for (const history of activityRuns(rows, requests)) {
@@ -196,6 +223,13 @@ export function activityPresentation(
     const latest = history.at(-1);
     if (!first || !latest) continue;
     const participants = [...new Set(history.map((row) => row.authorId))];
+    const liveParticipants = participants.filter((agent) =>
+      history.some(
+        (row) =>
+          row.authorId === agent &&
+          latestUpdates.get(activityKey(row)) === row.id,
+      ),
+    );
     const group: ActivityRun = {
       ids: history.map((row) => row.id),
       history,
@@ -229,9 +263,13 @@ export function activityPresentation(
       const last = lastByAgent.get(row.authorId) === row.id;
       byRow.set(row.id, {
         requestId: group.requestId,
-        active: last && working.has(row.authorId),
+        active:
+          last &&
+          liveParticipants.includes(row.authorId) &&
+          working.has(row.authorId),
         ownsLive:
           last &&
+          liveParticipants.includes(row.authorId) &&
           !hidden &&
           (working.has(row.authorId) || !group.followingMessage),
         container:
@@ -244,13 +282,21 @@ export function activityPresentation(
     }
     groups.push({
       ...group,
+      liveParticipants,
       hidden,
       retained,
-      working: working.size > 0,
+      working: liveParticipants.some((agent) => working.has(agent)),
       standalone,
     });
   }
-  return { groups, byRow, representedAgents, bubbleAnchors };
+  return {
+    groups,
+    byRow,
+    representedAgents,
+    repliedAgents,
+    replyRequests,
+    bubbleAnchors,
+  };
 }
 export function useActivityPresentation(
   rows: readonly ChannelMessage[],
@@ -281,6 +327,7 @@ export function useActivityPresentation(
         ? {
             ...previous,
             hidden: true,
+            liveParticipants: group.liveParticipants,
             working: group.working,
             retained: true,
             followingMessage: group.followingMessage,

@@ -5,7 +5,8 @@ import type { Identity } from "./service";
 
 /**
  * The offer to continue with installed old Buzz's identity, a dialog over
- * Welcome's landing. Called with the gate's hooks so the folder check (once
+ * Welcome's Other options, the self-hosted route; Builderlab setup uses that
+ * identity without asking. Called with the gate's hooks so the folder check (once
  * per entry into `missing`) and a dismissal outlive a visit to another page;
  * Welcome renders the result on the landing, and `open` holds it closed while
  * a sign-in is pending. Only the click reads old Buzz's secure storage, so any

@@ -8,7 +8,8 @@ import {
   isDefinitiveCanvasConflict,
 } from "./canvas-conflict";
 import {
-  CANVAS_BYTES,
+  LIVE_CANVAS_BYTES,
+  LIVE_CANVAS_LIMIT,
   coordinate,
   KIT_TAG,
   ME_KIT_TAG,
@@ -18,7 +19,9 @@ import {
   type KitRecord,
   type KitValue,
 } from "./model";
+import { CANVAS_HISTORY_PAGE } from "./canvas-limits";
 import { TEAM_MANIFEST_TAG } from "./team-payload";
+import { approvedCanvas, CANVAS_INSTRUCTIONS } from "./canvas-approval";
 
 export type CanvasHistoryCursor = { until: number; before_id: string };
 export type CanvasHistoryPage = {
@@ -366,7 +369,7 @@ export function createChannelKit({
         {
           kinds: [40100],
           "#h": [channel],
-          limit: 25,
+          limit: CANVAS_HISTORY_PAGE,
           ...(cursor ?? { consistency: "strong" as const }),
         },
       ]);
@@ -393,21 +396,31 @@ export function createChannelKit({
       return {
         revisions,
         next:
-          rows.length >= 25 && last
+          rows.length >= CANVAS_HISTORY_PAGE && last
             ? { until: last.created_at, before_id: last.id }
             : undefined,
       };
     },
-    async save(channel: string, content: string, expected: string | undefined) {
+    async save(
+      channel: string,
+      content: string,
+      expected: string | undefined,
+      /** Partial editors retain approval; only a full-document save grants it. */
+      options?: { preserveApproval: boolean },
+    ) {
       signal.throwIfAborted();
       if (!outbox?.supports(40100) || !canWrite(channel))
         throw new Error("Canvas writing is unavailable in this channel");
-      if (new TextEncoder().encode(content).length > CANVAS_BYTES)
-        throw new Error("Keep Canvas below 24 KiB");
+      if (new TextEncoder().encode(content).length > LIVE_CANVAS_BYTES)
+        throw new Error(`Keep Canvas below ${LIVE_CANVAS_LIMIT}`);
       await ready;
       signal.throwIfAborted();
       const head = await canvas.read(channel);
       if (head?.id !== expected) throw new CanvasConflictError();
+      const unapproved =
+        options?.preserveApproval &&
+        (!head || !(await approvedCanvas(head, viewer)));
+      signal.throwIfAborted();
       const pending = local
         ?.snapshot()
         .find(
@@ -429,6 +442,7 @@ export function createChannelKit({
         tags: [
           ["h", channel],
           ["expected-revision", expected ?? "none"],
+          ...(unapproved ? [[CANVAS_INSTRUCTIONS, "unapproved"]] : []),
         ],
       });
       await confirm(id);

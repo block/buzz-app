@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, Agents } from "./service";
 import { agentSections } from "./tabs";
@@ -64,6 +65,7 @@ it("leaves the device Attention switch out of Settings", () => {
   const section = sections.find((tab) => tab.value === "agent:settings");
   render(<div>{section?.render()}</div>);
   expect(screen.getByText("Provider")).toBeInTheDocument();
+  expect(screen.queryByRole("note")).not.toBeInTheDocument();
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 });
 
@@ -86,7 +88,7 @@ it("adds no Settings tab when the host has nothing to set", () => {
   expect(sections.map((tab) => tab.value)).toEqual(["agent:memory"]);
 });
 
-it("shows each synced side's History as its own named section", () => {
+it("moves both synced histories into a collapsed Settings disclosure", async () => {
   const side = (name: "settings" | "instructions") => ({
     side: name,
     expected: { channel: "c", d: name, type: `buzz.agent.${name}` },
@@ -109,30 +111,43 @@ it("shows each synced side's History as its own named section", () => {
     registerTab: () => {},
     controlAttention: () => {},
   } as unknown as Agents;
-  const section = agentSections({
+  const sections = agentSections({
     agents,
     agent,
     type: undefined,
     memories: undefined,
-  }).find((tab) => tab.value === "agent:history");
+  });
+  expect(sections.some((tab) => tab.value === "agent:history")).toBe(false);
+  const section = sections.find((tab) => tab.value === "agent:settings");
   render(<div>{section?.render()}</div>);
+  const disclosure = screen.getByRole("button", { name: "Previous versions" });
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
   expect(
-    screen.getByRole("region", { name: "Settings history" }),
-  ).toBeInTheDocument();
+    screen.queryByRole("region", { name: "Settings" }),
+  ).not.toBeInTheDocument();
+  expect(await screen.findByText("0 versions")).toBeInTheDocument();
+  await userEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("region", { name: "Settings" })).toBeInTheDocument();
   expect(
-    screen.getByRole("region", { name: "Instructions history" }),
+    screen.getByRole("region", { name: "Instructions" }),
   ).toBeInTheDocument();
 });
 
-it("adds plugin tabs to local agents only, before History", () => {
-  const added = {
-    id: "watching",
-    key: "buzz.watching/watching",
-    pluginId: "buzz.watching",
+it("adds plugin tabs to each agent shown unless their `when` says otherwise, alongside Settings and Memory", () => {
+  const tab = (id: string, when?: (agent: Agent) => boolean) => ({
+    id,
+    key: `buzz.example/${id}`,
+    pluginId: "buzz.example",
     revision: "1",
-    title: "Watching",
-    component: ({ agent }: { agent: Agent }) => <p>Watching {agent.name}</p>,
-  };
+    title: id,
+    component: ({ agent }: { agent: Agent }) => (
+      <p>
+        {id} {agent.name}
+      </p>
+    ),
+    ...(when && { when }),
+  });
   const agents = {
     save: async () => {},
     subscribe: () => () => {},
@@ -142,7 +157,10 @@ it("adds plugin tabs to local agents only, before History", () => {
       sides: [],
       revise: async () => ({ ok: true }),
     }),
-    addedTabs: () => [added],
+    addedTabs: () => [
+      tab("every"),
+      tab("local", (shown) => shown.place === "here"),
+    ],
     registerTab: () => {},
     controlAttention: () => {},
   } as unknown as Agents;
@@ -154,18 +172,23 @@ it("adds plugin tabs to local agents only, before History", () => {
       memories: undefined,
     }).map((tab) => tab.value);
   expect(values("here")).toEqual([
-    "agent:added:buzz.watching/watching",
-    "agent:history",
+    "agent:settings",
+    "agent:added:buzz.example/every",
+    "agent:added:buzz.example/local",
     "agent:memory",
   ]);
-  expect(values("hosted")).not.toContain("agent:added:buzz.watching/watching");
+  // Settings (version history) stays local; a tab without `when` is for hosted agents too.
+  expect(values("hosted")).toEqual([
+    "agent:added:buzz.example/every",
+    "agent:memory",
+  ]);
   expect(values("elsewhere")).toEqual([]);
   render(
     agentSections({ agents, agent, type: undefined, memories: undefined })
-      .find((tab) => tab.value === "agent:added:buzz.watching/watching")
+      .find((tab) => tab.value === "agent:added:buzz.example/every")
       ?.render(),
   );
-  expect(screen.getByText("Watching Ada")).toBeInTheDocument();
+  expect(screen.getByText("every Ada")).toBeInTheDocument();
 });
 
 it("adds a plugin tab only to the agents its `when` accepts", () => {

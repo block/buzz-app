@@ -1,3 +1,10 @@
+import {
+  soloModelPicksKey,
+  parseSoloModelPicks,
+  readSoloModelPicks,
+  updateSoloModelPicks,
+} from "./solo-model-picks";
+import { subscribeModelPicks } from "./solo-model-picks-storage";
 import { useChatLinkSharing } from "./useChatLinkSharing";
 import {
   draftGif,
@@ -42,6 +49,7 @@ import { useListedChannel } from "../relay/listed-channel";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useBringAgents } from "./useBringAgents";
@@ -57,6 +65,10 @@ import {
   seedMentions,
 } from "./remembered-mentions";
 import { rememberAgentsPreference } from "./mention-preferences";
+import { useSendWithModEnterPreference } from "./send-key-preference";
+import { useEditWithUpArrowPreference } from "./edit-key-preference";
+import { matches } from "../shortcuts/bindings";
+import { isApplePlatform } from "../shortcuts/format";
 import { useChosenAgent } from "../solo/default-agent";
 import { useAgentChoices } from "../agents/use-choices";
 import {
@@ -148,6 +160,7 @@ import type {
   ComposerFormat,
 } from "./composer-dom";
 import { TargetOpenerProvider } from "../conversation/opener";
+import { channelText } from "../channels/channel-icon";
 import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
@@ -275,7 +288,7 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   soloConversation?: boolean | undefined;
   ownSoloConversation?: boolean | undefined;
-  /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
+  /** Seeds an empty draft, or an unaddressed submission that requires a recipient. */
   defaultMention?: MentionRecipient | undefined;
   /** Whether a retained tab shows this composer, apart from its read policy.
    * A composer shown again may reseed its remembered agents (see seedMentions). */
@@ -286,6 +299,11 @@ export type MessageComposerProps = {
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
+  /** A plain slash command with no recipients or attachments may be consumed by
+   * its conversation owner. Return false to send it as an ordinary message. */
+  onCommand?:
+    | ((command: string, signal: AbortSignal) => boolean | Promise<boolean>)
+    | undefined;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
   /** Before a focused form detaches, its host can hand focus to retained content. */
@@ -322,14 +340,21 @@ export type MessageComposerProps = {
     attachments?: boolean;
     /** DMs can start with files alone; named Solo chats still require text. */
     allowAttachmentOnly?: boolean;
+    /** New Solo chats keep their picks on the stable draft until creation. */
+    modelPicksKey?: string;
     /** Told after each save whether the editor holds a draft it could not
      * save, which view state then misses. */
     unsaved?: ((held: boolean) => void) | undefined;
+    /** Hears each edit, whether or not saving it succeeded. */
+    onDraftChange?: ((draft: MentionDraft) => void) | undefined;
     /** `addressed`: the toolbar's agents, when they are held apart from the text. */
     submit: (
       draft: MentionDraft,
       attachments: AttachmentDraft,
       addressed?: readonly MentionRecipient[],
+      picks?: MentionPicks,
+      draftPicks?: DraftPicks,
+      draftPicksRevision?: string | null,
     ) => void;
   };
 };
@@ -446,6 +471,13 @@ function untouchedDraft(draft: MentionDraft) {
   );
 }
 
+/** The link that opens a conversation, or a thread in it. */
+function conversationLink(channelId: string, threadRootId?: string) {
+  return threadRootId
+    ? `buzz://message?${new URLSearchParams({ channel: channelId, id: threadRootId, thread: threadRootId })}`
+    : `buzz://channel/${encodeURIComponent(channelId)}`;
+}
+
 function sameAttachmentSelection(
   left: readonly { id: string }[],
   right: readonly { id: string }[],
@@ -465,6 +497,7 @@ function Composer({
   label: customLabel,
   placeholder,
   onSend,
+  onCommand,
   onDraftSaved,
   onFocusedRemoval,
   editMessages,
@@ -696,8 +729,140 @@ function Composer({
     session.agentChoices.snapshot,
     session.agentChoices.snapshot,
   );
-  // Model and effort picked for mentioned agents' next run; cleared by each send.
-  const [picks, setPicks] = useState<DraftPicks>({});
+  // A Solo chat keeps its explicit model/effort picks across turns and mounts.
+  const stickyPicks = !!ownSoloConversation;
+  const stickyPicksKey =
+    submission?.modelPicksKey ?? soloModelPicksKey(channelId);
+  const [picksSnapshot, setPicksSnapshot] = useState<{
+    picks: DraftPicks;
+    revision: string | null | undefined;
+  }>({ picks: {}, revision: stickyPicks ? undefined : null });
+  const [pickReadFailed, setPickReadFailed] = useState(false);
+  const [picksLoaded, setPicksLoaded] = useState(!stickyPicks);
+  const [pickReadPending, setPickReadPending] = useState(stickyPicks);
+  const committedPicks = useRef(picksSnapshot);
+  const awaitingPickCommit = useRef<typeof picksSnapshot | undefined>(
+    undefined,
+  );
+  useLayoutEffect(() => {
+    committedPicks.current = picksSnapshot;
+    if (awaitingPickCommit.current === picksSnapshot)
+      awaitingPickCommit.current = undefined;
+  }, [picksSnapshot]);
+  const { picks } = picksSnapshot;
+  const picksRevision = useRef(picksSnapshot.revision);
+  const setPicks = useCallback((next: DraftPicks, acknowledgeSave = false) => {
+    const snapshot = { picks: next, revision: picksRevision.current };
+    if (acknowledgeSave || awaitingPickCommit.current)
+      awaitingPickCommit.current = snapshot;
+    setPicksSnapshot(snapshot);
+  }, []);
+  const unsavedDraft = useRef(false);
+  const unsavedPicks = useRef(
+    new Map<
+      string,
+      { pick: DraftPicks[string] | undefined; pending: boolean }
+    >(),
+  );
+  const pendingPickSaves = useRef(0);
+  const [pickStorageFailed, setPickStorageFailed] = useState(false);
+  const pickReadRequest = useRef(0);
+  const refreshPicks = useCallback(async () => {
+    const request = ++pickReadRequest.current;
+    picksRevision.current = undefined;
+    setPickReadPending(true);
+    try {
+      const { revision, version } = await readSoloModelPicks(
+        scope,
+        stickyPicksKey,
+      );
+      if (!live.current || request !== pickReadRequest.current) return;
+      picksRevision.current = version;
+      const merged = { ...parseSoloModelPicks(revision) };
+      for (const [pubkey, { pick }] of unsavedPicks.current) {
+        if (pick) merged[pubkey] = pick;
+        else delete merged[pubkey];
+      }
+      setPicks(merged, true);
+      setPickReadFailed(false);
+      setPicksLoaded(true);
+      setPickReadPending(false);
+      setPickStorageFailed(
+        [...unsavedPicks.current.values()].some((intent) => !intent.pending),
+      );
+    } catch {
+      if (live.current && request === pickReadRequest.current) {
+        setPickReadFailed(true);
+        setPickReadPending(false);
+      }
+    }
+  }, [scope, stickyPicksKey, setPicks]);
+  useEffect(() => {
+    if (!stickyPicks) return;
+    const stop = subscribeModelPicks(scope, () => void refreshPicks());
+    void refreshPicks();
+    return () => {
+      stop();
+      pickReadRequest.current++;
+    };
+  }, [scope, stickyPicks, refreshPicks]);
+  const changePicks = (
+    next: DraftPicks,
+    resetPubkeys: readonly string[] = [],
+  ) => {
+    const before = picks;
+    const changedKeys = new Set([...Object.keys(before), ...Object.keys(next)]);
+    for (const pubkey of [...changedKeys])
+      if (JSON.stringify(before[pubkey]) === JSON.stringify(next[pubkey]))
+        changedKeys.delete(pubkey);
+    for (const pubkey of resetPubkeys) changedKeys.add(pubkey);
+    if (!stickyPicks) {
+      setPicks(next);
+      return;
+    }
+    // Each queued action owns only its mutations, plus previously failed edits.
+    // Replaying another pending action here could undo a later cross-window edit.
+    const edits = new Map(
+      [...unsavedPicks.current].filter(([, intent]) => !intent.pending),
+    );
+    for (const pubkey of changedKeys) {
+      const intent = { pick: next[pubkey], pending: true };
+      unsavedPicks.current.set(pubkey, intent);
+      edits.set(pubkey, intent);
+    }
+    for (const intent of edits.values()) intent.pending = true;
+    setPicks(next);
+    submission?.unsaved?.(true);
+    pendingPickSaves.current++;
+    void updateSoloModelPicks(
+      scope,
+      stickyPicksKey,
+      new Map([...edits].map(([pubkey, { pick }]) => [pubkey, pick])),
+    )
+      .then(async () => {
+        for (const [pubkey, intent] of edits)
+          if (unsavedPicks.current.get(pubkey) === intent)
+            unsavedPicks.current.delete(pubkey);
+        // Reread after commit: a peer may already have committed another edit.
+        await refreshPicks();
+      })
+      .catch(() => {
+        for (const intent of edits.values()) intent.pending = false;
+      })
+      .finally(() => {
+        pendingPickSaves.current--;
+        if (live.current) {
+          setPickStorageFailed(
+            [...unsavedPicks.current.values()].some(
+              (intent) => !intent.pending,
+            ),
+          );
+          submission?.unsaved?.(
+            unsavedDraft.current || unsavedPicks.current.size > 0,
+          );
+        }
+      });
+  };
   // Solo, alone with agents: the toolbar holds who hears the message when its
   // text mentions no one, and always keeps at least one agent.
   const [routed, setRouted] = useState<readonly MentionRecipient[]>([]);
@@ -706,7 +871,15 @@ function Composer({
   const [replacedKey, setReplacedKey] = useState<string>();
   const replaced = replacedKey === draftKey;
   const mentionCount = useRef(0);
-  const resolvedPicks = useRef<MentionPicks>({});
+  const resolvedPicks = useRef<
+    | {
+        source: typeof picksSnapshot;
+        pubkeys: readonly string[];
+        value: MentionPicks | null;
+        error: string | undefined;
+      }
+    | undefined
+  >(undefined);
   const agents = useContext(AgentsContext);
   /** Who a draft may address here now, the owner's agents from their other
    * communities included. */
@@ -876,6 +1049,8 @@ function Composer({
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
+  const sendWithModEnter = useSendWithModEnterPreference();
+  const editWithUpArrow = useEditWithUpArrowPreference();
   const saveDraft = (next: MentionDraft, save = true) => {
     next = stageChatCards(
       {
@@ -897,7 +1072,11 @@ function Composer({
     if (save && !editing.target) {
       if (submission) {
         const saved = writeView(scope, draftKey, next);
-        submission.unsaved?.(!saved);
+        unsavedDraft.current = !saved;
+        submission.unsaved?.(
+          unsavedDraft.current || unsavedPicks.current.size > 0,
+        );
+        submission.onDraftChange?.(next);
       } else {
         dirty.current = true;
         if (!conflict && !accepted) persist(next);
@@ -921,7 +1100,11 @@ function Composer({
   }
   const [error, setError] = useState<string>();
   const [pasteTooLong, setPasteTooLong] = useState(false);
-  const [attachmentError, setAttachmentError] = useState<string>();
+  const [attachmentError, setAttachmentError] =
+    useState<Readonly<{ title: string; description: string }>>();
+  /** Nothing was attached, for this one reason. */
+  const refuseAttachment = (description: string) =>
+    setAttachmentError({ title: "Could not attach file", description });
   const focusRestoredDraft = useRef(false);
   const beforeEdit = useRef<
     { value: MentionDraft; restore(): void } | undefined
@@ -1103,7 +1286,7 @@ function Composer({
   const voice = useVoiceCapture(
     attachments.store,
     !active || editingDisabled || !!editing.target || !canAttach,
-    setAttachmentError,
+    refuseAttachment,
   );
   useEffect(() => {
     if (disabled) attachments.store.cancel();
@@ -1155,11 +1338,11 @@ function Composer({
     )
       return;
     if (editing.target) {
-      setAttachmentError("Finish editing before attaching new files.");
+      refuseAttachment("Finish editing before attaching new files.");
       return;
     }
     if (!canAttach) {
-      setAttachmentError(
+      refuseAttachment(
         submission
           ? "Create this conversation before attaching files."
           : "Uploads are unavailable on this connection.",
@@ -1167,14 +1350,26 @@ function Composer({
       return;
     }
     try {
-      attachments.store.add(files);
-      setAttachmentError(undefined);
-      return attachments.store
+      const before = attachments.store.snapshot().length;
+      const left = attachments.store.add(files);
+      const added = attachments.store
         .snapshot()
-        .slice(-files.length)
+        .slice(before)
         .map((item) => item.id);
-    } catch (reason) {
+      const refused = files.length - added.length;
       setAttachmentError(
+        left.length
+          ? {
+              title: added.length
+                ? `Could not attach ${refused} of ${files.length} files`
+                : `Could not attach ${refused} files`,
+              description: left.join(" "),
+            }
+          : undefined,
+      );
+      return added;
+    } catch (reason) {
+      refuseAttachment(
         reason instanceof Error ? reason.message : "Could not attach files.",
       );
     }
@@ -1215,8 +1410,8 @@ function Composer({
     setConflict(false);
     setStorageFailed(false);
   }
-  // Picks belong to the recovered revision alone. They return whenever the
-  // composer holds it unedited, never to a later edit that keeps a conflict.
+  // Message-local picks return with their recovered draft. Solo preferences
+  // remain the chat's current choices, including edits made during an upload.
   const reconcileDraft = useEffectEvent(
     (restored?: MentionDraft, recoveredPicks?: DraftPicks) => {
       if (submission || editing.target || writing.current) return;
@@ -1228,7 +1423,7 @@ function Composer({
         if (current !== undefined) {
           setAccepted(undefined);
           loadSaved(current);
-          if (restored && current === JSON.stringify(restored))
+          if (!stickyPicks && restored && current === JSON.stringify(restored))
             setPicks(recoveredPicks ?? {});
         }
         return;
@@ -1239,7 +1434,8 @@ function Composer({
       if (current === revision.current) {
         // The storage listener usually loads the recovered revision before
         // its notification arrives.
-        if (recovering && !dirty.current) setPicks(recoveredPicks ?? {});
+        if (!stickyPicks && recovering && !dirty.current)
+          setPicks(recoveredPicks ?? {});
         return;
       }
       // An explicit successful recovery may replace only the cleared follow-up,
@@ -1257,7 +1453,7 @@ function Composer({
         setConflict(true);
         return;
       } else loadSaved(current);
-      if (recovering) setPicks(recoveredPicks ?? {});
+      if (!stickyPicks && recovering) setPicks(recoveredPicks ?? {});
     },
   );
   const editingDraft = !!editing.target;
@@ -1397,6 +1593,50 @@ function Composer({
     caret.current = next.text.length;
     setError(undefined);
   });
+  const startQueuedEdit = (id: string) => {
+    if (
+      !host ||
+      !permitted.current ||
+      editingDisabled ||
+      submission ||
+      !input.current
+    )
+      return;
+    if (editing.target) {
+      setError("Finish or cancel your current edit first.");
+      input.current.focus();
+      return;
+    }
+    try {
+      const queue = followUpQueue(host);
+      const entry = queue
+        .snapshot()
+        .find((entry) => entry.id === id && entry.channelId === channelId);
+      if (!entry?.message)
+        throw new Error("This queued message is no longer available to edit.");
+      const lease = queue.edit(id);
+      completion.invalidate();
+      beforeEdit.current = {
+        value: valueRef.current,
+        restore: input.current.checkpoint(),
+      };
+      const body = editing.startDraft({
+        id,
+        content: entry.text,
+        saveDraft: lease.save,
+        cancelDraft: lease.cancel,
+      });
+      const next = stageChatCards(mentionDraft(body), channels());
+      valueRef.current = next;
+      updateDraft(next);
+      input.current.reset(next);
+      setLinkEdit(null);
+      caret.current = next.text.length;
+      setError(undefined);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
   useEffect(() => {
     if (!editScope) return;
     const start = (row: ChannelMessage) => startEdit(row);
@@ -2010,14 +2250,16 @@ function Composer({
         autoTagged.current = draftKey;
       return;
     }
-    // A shortcut may seed an ordinary editable link. Still add the default
-    // agent once while that freshly seeded text is untouched; a restored draft
-    // keeps its recipients as saved, so a removed tag never returns.
+    // Required submissions can restore prose or receive a default after typing.
+    // Other drafts keep their saved recipients, including an absent tag.
     const untouchedInitial =
       seededKey === draftKey &&
       typeof submission?.initialDraft === "string" &&
       draft === submission.initialDraft;
-    if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
+    if (
+      value.recipients.length ||
+      (draft.trim() && !untouchedInitial && !(submission && requireMention))
+    ) {
       autoTagged.current = draftKey;
       return;
     }
@@ -2196,6 +2438,10 @@ function Composer({
     if (!permitted.current || voice.isCapturing()) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
+      if ("saveDraft" in editing.target) {
+        editing.save(composerMarkdown(valueRef.current), undefined);
+        return;
+      }
       if (
         !valueRef.current.text.trim() &&
         !valueRef.current.chatCards?.length
@@ -2325,14 +2571,59 @@ function Composer({
       setConflict(true);
       return;
     }
+    const choicesNow = resolvedPicks.current;
+    const picksNow = choicesNow?.source ?? committedPicks.current;
+    if (pickReadFailed) return;
+    if (pendingPickSaves.current || awaitingPickCommit.current) {
+      setError(
+        "Model and effort choices are still saving. Try sending again shortly.",
+      );
+      return;
+    }
+    // A failed save acknowledgement revokes Send before its error render commits.
+    if (stickyPicks && picksRevision.current === undefined) return;
+    if (
+      stickyPicks &&
+      (choicesNow?.value === null ||
+        sessionTargets(recipientsNow.map((item) => item.pubkey)).some(
+          (pubkey) => {
+            const saved = picksNow.picks[pubkey];
+            return (
+              (saved?.model || saved?.effort) &&
+              !choicesNow?.pubkeys.includes(pubkey)
+            );
+          },
+        ))
+    ) {
+      setError(
+        choicesNow?.error ??
+          "Saved model and effort choices are still loading. Try sending again shortly.",
+      );
+      return;
+    }
     const savedRevision = revision.current;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
     const capturedRecipients = routing ? recipientsNow : captured.recipients;
     const capturedAttachments = attachments.store.snapshot();
-    const capturedPicks = picks;
-    const capturedRunPicks = { ...picks, ...resolvedPicks.current };
+    // Mention resolution can update recipients before their picker commits.
+    // Capture only a snapshot validated for the saved choices being sent.
+    const capturedPicks = picksNow.picks;
+    const capturedPicksRevision = picksNow.revision;
+    const capturedRunPicks = stickyPicks
+      ? { ...(choicesNow?.value ?? {}) }
+      : { ...capturedPicks, ...(choicesNow?.value ?? {}) };
+    const command =
+      onCommand &&
+      !captured.recipients.length &&
+      !captured.pending?.length &&
+      !captured.chatCards?.length &&
+      !captured.gifs?.length &&
+      !capturedAttachments.length &&
+      captured.text.trim().startsWith("/")
+        ? captured.text.trim()
+        : undefined;
     // A send is an agent follow-up unless it addresses a confirmed person
     // (a loaded, non-agent profile). Those, and untagged conversation in a
     // shared chat, go out now; recipients still being classified keep the
@@ -2355,6 +2646,30 @@ function Composer({
         agentKeys,
       );
     try {
+      if (command && onCommand) {
+        const handled = onCommand(command, attempt.signal);
+        if (handled !== false) {
+          setSending(true);
+          if (await handled) {
+            attempt.signal.throwIfAborted();
+            if (valueRef.current !== captured) return;
+            if (viewRevision(scope, draftKey) !== savedRevision) {
+              setConflict(true);
+              return;
+            }
+            const next = mentionDraft("");
+            saveDraft(next);
+            completion.invalidate();
+            caret.current = undefined;
+            input.current?.reset(next);
+            input.current?.focus();
+            setError(undefined);
+            automaticTag.current = undefined;
+            seedClosed.current = false;
+            return;
+          }
+        }
+      }
       const bringable = new Set(
         (agents?.joinable() ?? []).map((agent) => agent.pubkey),
       );
@@ -2382,10 +2697,14 @@ function Composer({
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
+        // SoloDraft filters the captured choices against its final recipient set.
         submission.submit(
           captured,
           attachments.store,
           routing ? capturedRecipients : undefined,
+          ownSoloConversation ? capturedRunPicks : undefined,
+          ownSoloConversation ? capturedPicks : undefined,
+          ownSoloConversation ? capturedPicksRevision : undefined,
         );
         return;
       }
@@ -2621,10 +2940,20 @@ function Composer({
       } else if (capturedAttachments.length) {
         // The revision acceptance saves; remembered agents are not a draft.
         const followup = JSON.stringify(mentionDraft(""));
+        // Name it as the sidebar does; a thread link opens the thread.
+        const listed = channels().find((channel) => channel.id === channelId);
+        const name = channelText({ ...listed, name: channelName });
         sendInBackground(
           session,
           recoveryKey,
           channelId,
+          {
+            name: threadRootId ? `thread in ${name}` : name,
+            // A huddle opens from its entry point, never by its room's link.
+            ...(listed?.huddle
+              ? {}
+              : { link: conversationLink(channelId, threadRootId) }),
+          },
           capturedAttachments,
           async (uploaded) => {
             const sent = await publish(uploaded);
@@ -2728,7 +3057,7 @@ function Composer({
         setReplacedKey(undefined);
         keepPick(null);
       }
-      setPicks({});
+      if (!stickyPicks) setPicks({});
       // An unchanged prefill may not render. Do not leave a caret command for
       // the next keystroke to consume after inserting its first character.
       caret.current = changed ? followUp.text.length : undefined;
@@ -2890,7 +3219,8 @@ function Composer({
         <QueuedFollowUps
           session={host}
           channelId={channelId}
-          disabled={disabled || !active}
+          disabled={disabled || !active || !!editing.target}
+          onEdit={startQueuedEdit}
           focusComposer={() => input.current?.focus()}
         />
       )}
@@ -2961,12 +3291,19 @@ function Composer({
             resolved={value}
           />
         )}
-        <BackgroundUploadStatus session={session} focusTarget={input} />
+        <BackgroundUploadStatus
+          session={session}
+          focusTarget={input}
+          here={
+            presented ? conversationLink(channelId, threadRootId) : undefined
+          }
+          onOpenLink={onOpenLink}
+        />
         {dragging && <FileDropOverlay composer={form} />}
         {attachmentError && (
           <ToastNotice
-            title="Could not attach file"
-            description={attachmentError}
+            title={attachmentError.title}
+            description={attachmentError.description}
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
@@ -3162,18 +3499,20 @@ function Composer({
                   !editDisabled &&
                   !submission &&
                   !editing.target &&
-                  ((event.currentTarget.value === "" &&
-                    !valueRef.current.recipients.length) ||
+                  ((valueRef.current.text === "" &&
+                    !valueRef.current.recipients.length &&
+                    composerMarkdown(valueRef.current) === "") ||
                     automaticTag.current ===
                       JSON.stringify(valueRef.current)) &&
                   !valueRef.current.chatCards?.length &&
                   !valueRef.current.gifs?.length &&
                   !attachments.items.length
                 ) {
-                  // Like Slack, Up selects the newest message; E edits it.
-                  // ⌘↑ and surfaces without a selectable list keep Up-to-edit.
+                  // The default selects the newest message; the preference
+                  // and ⌘↑ edit using the same conversation-scoped lookup.
                   if (
                     !event.metaKey &&
+                    !editWithUpArrow &&
                     selectNewestMessage(editScope?.list.current)
                   ) {
                     event.preventDefault();
@@ -3186,7 +3525,21 @@ function Composer({
                   }
                   return;
                 }
+                // With ⌘/Ctrl+Enter chosen, plain Enter falls through to the editor's line break.
                 if (
+                  sendWithModEnter &&
+                  matches(
+                    [{ key: "Enter", mod: true }],
+                    event.nativeEvent,
+                    isApplePlatform(navigator.platform),
+                  )
+                ) {
+                  event.preventDefault();
+                  if (!event.repeat) send();
+                  return;
+                }
+                if (
+                  !sendWithModEnter &&
                   event.key === "Enter" &&
                   !event.shiftKey &&
                   !event.altKey &&
@@ -3270,18 +3623,29 @@ function Composer({
             )}
             {active &&
               !editing.target &&
-              !submission &&
+              (!submission || ownSoloConversation) &&
               !!addressedKeys.length && (
                 <ComposerModels
                   profiles={session.profiles}
                   media={session.media}
                   pubkeys={addressedKeys}
                   value={picks}
-                  disabled={editingDisabled}
-                  onChange={setPicks}
-                  onResolved={(next) => {
-                    resolvedPicks.current = next;
+                  disabled={editingDisabled || pickReadFailed || !picksLoaded}
+                  resettable={stickyPicks}
+                  explicitOnly={!!submission && stickyPicks}
+                  onChange={changePicks}
+                  onResolved={(next, error) => {
+                    resolvedPicks.current =
+                      next === undefined
+                        ? undefined
+                        : {
+                            source: picksSnapshot,
+                            pubkeys: addressedKeys,
+                            value: next,
+                            error,
+                          };
                   }}
+                  onRetryInventory={() => void session.agentChoices.refresh()}
                   startsThread={startsThread}
                   place={sessionPlace}
                 />
@@ -3313,6 +3677,9 @@ function Composer({
               }
               disabled={
                 disabled ||
+                (!editing.target &&
+                  stickyPicks &&
+                  (pickReadPending || pickReadFailed)) ||
                 untagged ||
                 (!editing.target && compacting) ||
                 (!editing.target && (!!accepted || conflict || sendPending)) ||
@@ -3350,6 +3717,40 @@ function Composer({
         )}
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>
+        )}
+        {stickyPicks && (pickReadPending || pickReadFailed) && (
+          <div className={pickReadFailed ? undefined : "sr-only"}>
+            <LoadingRegion
+              pending={pickReadPending}
+              label="Loading saved model and effort…"
+              statusVisibility="screen-reader"
+              feedback={
+                pickReadFailed ? (
+                  <div>
+                    <p role="alert">
+                      Could not read saved model and effort for this chat on
+                      this device. Retry before sending.
+                    </p>
+                    <Button
+                      type="button"
+                      disabled={pickReadPending}
+                      onClick={() => void refreshPicks()}
+                    >
+                      Retry saved choices
+                    </Button>
+                  </div>
+                ) : undefined
+              }
+            >
+              {null}
+            </LoadingRegion>
+          </div>
+        )}
+        {pickStorageFailed && (
+          <p role="alert">
+            Could not save model and effort for this chat on this device. The
+            current choices remain until this composer closes.
+          </p>
         )}
         {!editing.target &&
           !submission &&

@@ -26,6 +26,11 @@ import { createAgentLibrary } from "../../features/agents/library";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { channelTabs, tabPane, useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
+import {
+  claimProfileTranscript,
+  openProfileTranscript,
+  profileActivityViewTarget,
+} from "../../features/profiles/target";
 
 // For every test in this file: thread rows are memoized, so count real renders
 // past that boundary and keep each row's latest link opener. The composer is
@@ -56,6 +61,89 @@ vi.mock("../../features/messages/MessageComposer", () => ({
 }));
 
 afterEach(cleanup);
+it("keeps a profile's content mounted while its version address changes", () => {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const panel: RegisteredPanel = {
+    key: "buzz.profiles/profile",
+    id: "profile",
+    pluginId: "buzz.profiles",
+    revision: "1",
+    title: "Profile",
+    matches: () => true,
+    component: ({ target }) => (
+      <section aria-label="Profile reader">
+        <input aria-label="Profile draft" />
+        <output>{target}</output>
+      </section>
+    ),
+  };
+  const available = [panel];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  let workspace!: ReturnType<typeof useConversationTabs>;
+  function Harness() {
+    const state = useChannelTabState(session, "alpha");
+    workspace = useConversationTabs({
+      profiles: new Map(),
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return (
+      <PanelWorkspace
+        label="Channel tabs"
+        value={workspace.selectedTab}
+        select={state.select}
+        items={workspace.items}
+      />
+    );
+  }
+  render(<Harness />);
+  const base = `buzz:agent-profile:${"a".repeat(64)}`;
+  const open = (target: string) =>
+    act(() => workspace.open({ channelId: "alpha", panel, target }));
+  open(base);
+  const reader = screen.getByLabelText("Profile reader");
+  const draft = screen.getByRole("textbox", { name: "Profile draft" });
+  fireEvent.change(draft, { target: { value: "keep this" } });
+  reader.scrollTop = 636;
+  for (const target of [
+    `${base}#versions`,
+    `${base}#version=instructions/${"b".repeat(64)}`,
+    `${base}#versions`,
+  ]) {
+    open(target);
+    expect(screen.getByLabelText("Profile reader")).toBe(reader);
+    expect(reader.scrollTop).toBe(636);
+    expect(draft).toHaveValue("keep this");
+    expect(reader).toHaveTextContent(target);
+    expect(workspace.items).toHaveLength(1);
+  }
+  open(`buzz:agent-profile:${"c".repeat(64)}`);
+  expect(screen.getByLabelText("Profile reader")).not.toBe(reader);
+  expect(screen.getByRole("textbox", { name: "Profile draft" })).toHaveValue(
+    "",
+  );
+});
+
 it("closing a main thread selects the adjacent app and keeps focus in its pane", async () => {
   const channels = [{ id: "alpha", name: "Alpha" }];
   const session = {
@@ -277,6 +365,60 @@ it("retained offline tabs can close and open threads without activating connecte
   act(() => staleOpen("beta", "another-root", "another-root"));
   const restored = renderHook(() => useChannelTabState(session, "alpha"));
   expect(restored.result.current.tabs).toHaveLength(2);
+});
+
+it("reuses an agent's open Activity tab when its transcript is asked for", () => {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }) },
+  } as unknown as RelaySession;
+  const panel = { key: "profile", title: "Profile" } as RegisteredPanel;
+  const available = [panel];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    resolve: () => panel,
+  } as unknown as Panels;
+  const snapshot = { status: "ready", session };
+  const relay = { snapshot: () => snapshot } as unknown as RelayData;
+  const h = renderHook(() =>
+    useConversationTabs({
+      profiles: new Map(),
+      state: useChannelTabState(session, "alpha"),
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+    }),
+  );
+  const agent = "ab".repeat(32);
+  const activity = profileActivityViewTarget(agent) ?? "";
+  act(() => {
+    h.result.current.openConversationLink("alpha", activity);
+  });
+  act(() => {
+    openProfileTranscript(activity, (next) =>
+      h.result.current.openConversationLink("alpha", next, {
+        rootId: "root",
+      }),
+    );
+  });
+  expect(h.result.current.items).toHaveLength(1);
+  const [item] = h.result.current.items;
+  if (!item) throw new Error("no panel tab");
+  const { context } = (item.content as { props: { context: PanelContext } })
+    .props;
+  // The one tab now serves the conversation the transcript was asked from.
+  expect(context).toMatchObject({ channelId: "alpha", rootId: "root" });
+  expect(claimProfileTranscript(activity)).toBeDefined();
 });
 
 it("gives a panel the thread its link was opened from, retargeting a reopened tab", () => {
@@ -1811,6 +1953,7 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
     messages: { retry: () => {} },
     media: () => undefined,
     unread: {
+      revision: () => 0,
       sync: () => sync,
       snapshot: () => undefined,
       subscribe: () => () => {},

@@ -11,16 +11,23 @@ import {
   ArrowsClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  CloudOffIcon,
   DotsThreeIcon,
+  LockIcon,
 } from "../../shared/design-system/icons/index";
+import { Button } from "../../shared/design-system/ui/Button";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { BrowserViewProps } from "./api";
-import type {
-  BrowserAction,
-  BrowserBounds,
-  BrowserPlatform,
-  BrowserStatus,
+import {
+  addressInputUrl,
+  BrowserAttachError,
+  type BrowserAction,
+  type BrowserBounds,
+  type BrowserPlatform,
+  type BrowserStatus,
+  type BrowserViewerPage,
 } from "./platform";
 import type { BrowserSessions } from "./sessions";
 import styles from "./BrowserHostView.module.css";
@@ -113,6 +120,14 @@ export function BrowserHostView({
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [draft, setDraft] = useState(url);
   const [localError, setLocalError] = useState<string | null>(null);
+  // Shown in the viewport instead of the error bar when attach fails this way.
+  const [page, setPage] = useState<BrowserViewerPage | null>(null);
+  const [openFailed, setOpenFailed] = useState(false);
+  // A retry from that page keeps it, and its focused button, until it settles.
+  const [retrying, setRetrying] = useState(false);
+  // A retry that ends in the error bar instead hands its focus to the message.
+  const errorBar = useRef<HTMLDivElement>(null);
+  const focusError = useRef(false);
 
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
@@ -180,6 +195,7 @@ export function BrowserHostView({
         // shown.
         if (!nextVisible) return;
         setLocalError(null);
+        setPage(null);
         session.current = undefined;
         delete element.dataset.browserSession;
         attachStarted = false;
@@ -280,6 +296,8 @@ export function BrowserHostView({
           if (!sessionId || disposed) return;
           session.current = sessionId;
           element.dataset.browserSession = sessionId;
+          setPage(null);
+          setRetrying(false);
           syncBounds(true);
           void poll();
         })
@@ -287,7 +305,13 @@ export function BrowserHostView({
           if (!disposed) {
             attachFailed = true;
             setStatus({ ...EMPTY_STATUS, url: resumeUrl.current });
+            const nextPage =
+              error instanceof BrowserAttachError ? (error.page ?? null) : null;
+            focusError.current =
+              !nextPage && element.contains(document.activeElement);
             setLocalError(message(error));
+            setPage(nextPage);
+            setRetrying(false);
           }
         });
     };
@@ -297,6 +321,8 @@ export function BrowserHostView({
       attachFailed = false;
       attachStarted = false;
       setLocalError(null);
+      setOpenFailed(false);
+      setRetrying(true);
       begin();
     };
 
@@ -350,6 +376,8 @@ export function BrowserHostView({
     setDraft(url);
     setStatus({ ...EMPTY_STATUS, url, loading: true });
     setLocalError(null);
+    setPage(null);
+    setRetrying(false);
     begin();
 
     return () => {
@@ -398,7 +426,10 @@ export function BrowserHostView({
   function navigate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     editing.current = false;
-    void run((sessionId) => platform.navigate(sessionId, draft));
+    const target = addressInputUrl(draft);
+    void run((sessionId) =>
+      platform.navigate(sessionId, target.url, target.fallbackToHttp),
+    );
   }
 
   function action(value: BrowserAction) {
@@ -410,6 +441,11 @@ export function BrowserHostView({
   }
 
   const error = localError ?? status.error;
+  useEffect(() => {
+    if (!focusError.current || !error || page) return;
+    focusError.current = false;
+    errorBar.current?.focus();
+  }, [error, page]);
   return (
     <section className={styles.browser} aria-label="Browser">
       <div
@@ -464,12 +500,71 @@ export function BrowserHostView({
           </span>
         ) : null}
       </div>
-      {error ? (
-        <div className={styles.error} role="alert">
+      {error && !page ? (
+        <div ref={errorBar} className={styles.error} role="alert" tabIndex={-1}>
           {error}
         </div>
+      ) : status.notice ? (
+        <div className={styles.notice} role="status">
+          {status.notice}
+        </div>
       ) : null}
-      <div className={styles.viewport} ref={viewport} />
+      <div className={styles.viewport} ref={viewport}>
+        {page === "denied" ? (
+          <div role="alert" className="page-status">
+            <EmptyState
+              icon={<LockIcon />}
+              title="You can’t open this app"
+              description="The link may be wrong, or the app may have been removed. Ask whoever shared it."
+              action={
+                <Button
+                  type="button"
+                  variant="primary"
+                  loading={retrying}
+                  onClick={() => retryAttach.current?.()}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          </div>
+        ) : page === "unavailable" ? (
+          <div role="alert" className="page-status">
+            <EmptyState
+              icon={<CloudOffIcon />}
+              title="Buzz couldn’t load this app"
+              description={
+                openFailed
+                  ? "Couldn’t open it in your browser. Try again in a moment."
+                  : "Something went wrong reaching Builderlab. Try again, or open the app in your browser."
+              }
+              action={
+                <>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    loading={retrying}
+                    onClick={() => retryAttach.current?.()}
+                  >
+                    Try again
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setOpenFailed(false);
+                      platform
+                        .openExternal(resumeUrl.current)
+                        .catch(() => setOpenFailed(true));
+                    }}
+                  >
+                    Open in browser
+                  </Button>
+                </>
+              }
+            />
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

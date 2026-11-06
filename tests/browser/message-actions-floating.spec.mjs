@@ -192,6 +192,7 @@ for (const own of [true, false]) {
     await row.getByText("Hi", { exact: true }).hover();
     await above(actions);
     await expect(actions).not.toHaveCSS("box-shadow", "none");
+    await expect(actions).not.toHaveCSS("backdrop-filter", "none");
     // Park the pointer first: after the resize, its narrow-pane position can
     // land on a sidebar activity badge whose hover popover covers the row.
     await page.mouse.move(0, 0);
@@ -586,6 +587,8 @@ test("thread actions and growing reactions paint beyond the scroller without mov
     .toBeLessThan(beforeWheel);
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
+  // Closed bars stay laid out in every row; only open ones carry the glass.
+  await expect(actions).toHaveCSS("backdrop-filter", "none");
 });
 
 test("compact timeline actions slide under the top edge, track scrolling and preserve keyboard order", async ({
@@ -778,7 +781,7 @@ test("keyboard search covers a toolbar under the pointer and restores its action
   ).toBeVisible();
 });
 
-test("menus and pickers retain their anchor but cover actions", async ({
+test("menus keep their actions showing; pickers and dialogs cover them", async ({
   page,
   app,
 }) => {
@@ -806,7 +809,20 @@ test("menus and pickers retain their anchor but cover actions", async ({
   await menu.hover();
   await expect(bubble).not.toHaveCSS("background-color", restingFill);
   await shown(actions);
+  // The bar's own menu opens beside it and leaves it showing.
+  await expect(actions).toHaveCSS("visibility", "visible");
+  // A modal opened over that menu still covers the bar.
+  await page.keyboard.press("ControlOrMeta+k");
+  const searchDialog = page.getByRole("dialog", {
+    name: "Search Buzz",
+    exact: true,
+  });
+  await expect(searchDialog).toBeVisible();
+  // The modal hides the menu from the accessibility tree, not the page.
+  await expect(page.locator('[role="menu"]')).toBeVisible();
   await hidden(actions);
+  await page.keyboard.press("Escape");
+  await expect(searchDialog).toBeHidden();
   await expect(row.locator("[data-layout]")).toHaveAttribute(
     "data-actions-revealed",
     "",

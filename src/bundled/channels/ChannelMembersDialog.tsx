@@ -1,3 +1,4 @@
+import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -32,6 +33,12 @@ import { splitPartition } from "../../features/relay/partition";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import { profileTarget } from "../../features/profiles/target";
+import {
+  otherVerifiedName,
+  useNamePreference,
+  verifiedLabel,
+} from "../../features/profiles/name-preference";
+import type { VerifiedProfile } from "../../features/relay/verified-profile";
 import { peopleRelationships } from "../../features/profiles/relationships";
 import { personKey, rankPeople } from "../../features/search/people-rank";
 import {
@@ -51,12 +58,13 @@ import {
   canAddMembers,
   canShareSoloChat,
 } from "../../features/channel-members/members";
-import { ownSolo } from "../../features/solo/labels";
+import { ownSolo, soloShareDisclosure } from "../../features/solo/labels";
 import { soloChatLink } from "../../features/solo/share";
 import {
   formatPublicKey,
   publicKeyLabels,
 } from "../../shared/identity/public-key";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -75,7 +83,6 @@ import {
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   PopoverRoot,
@@ -88,7 +95,6 @@ import {
   Filter2Icon,
   InfoIcon,
   UsersIcon,
-  XIcon,
 } from "../../shared/design-system/icons";
 import {
   MemberRow,
@@ -101,11 +107,7 @@ import { useSoloShare } from "./useSoloShare";
 import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
-import {
-  type ChannelLabel,
-  channelIcon,
-  channelText,
-} from "../../features/channels/channel-icon";
+import { channelIcon, channelText } from "../../features/channels/channel-icon";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
@@ -173,7 +175,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   place,
   pubkey,
   name,
-  fullName,
+  otherName,
   keyLabel,
   qualified,
   adding,
@@ -208,8 +210,8 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   place: "chat" | "channel";
   pubkey: string;
   name: string;
-  /** A community-verified full name, shown beside the name. */
-  fullName: string | undefined;
+  /** The verified name `name` is not, shown beside it. */
+  otherName: string | undefined;
   keyLabel: string | undefined;
   /** Another shown row has the same name; show the key so Add picks the right one. */
   qualified: boolean;
@@ -297,9 +299,9 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
               {name}
               {pubkey === session.viewer ? " (you)" : ""}
             </span>
-            {fullName && fullName !== name && (
+            {otherName && (
               <span className="min-w-0 truncate text-caption text-subtle">
-                {fullName}
+                {otherName}
               </span>
             )}
             {qualified && keyLabel && (
@@ -424,10 +426,12 @@ export function ChannelMembersButton({
   signal,
   owner,
   label = "Access",
+  conversationName,
 }: {
   session: RelaySession;
   channelId: string;
   label?: string;
+  conversationName?: string;
   /** Someone else's Solo chat names its owner on the Access control. */
   owner?: { name: string; picture?: string | undefined } | undefined;
   agents?: Agents | undefined;
@@ -442,24 +446,45 @@ export function ChannelMembersButton({
   const open = presentation ? presentation.open : localOpen;
   const setOpen = presentation ? presentation.onOpenChange : setLocalOpen;
   const trigger = useRef<HTMLButtonElement>(null);
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  );
+  const channel =
+    list.channels.find((item) => item.id === channelId) ??
+    session.channels.get?.(channelId);
   return (
     <>
-      <IconButton
-        ref={trigger}
-        size="sm"
-        aria-label={owner ? `${label}, ${soloOwnerLabel(owner)}` : label}
-        title={owner ? soloOwnerLabel(owner) : label}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen(true)}
-        icon={
-          owner ? (
-            <SoloOwnerAvatar owner={owner} />
-          ) : (
-            <UsersIcon size="1rem" aria-hidden="true" />
-          )
-        }
-      />
+      {conversationName !== undefined ? (
+        <ChannelHeaderIdentity
+          ref={trigger}
+          session={session}
+          channelId={channelId}
+          name={conversationName}
+          access={memberAccess(channel)}
+          detail={owner && soloOwnerLabel(owner)}
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+        />
+      ) : (
+        <IconButton
+          ref={trigger}
+          size="sm"
+          aria-label={owner ? `${label}, ${soloOwnerLabel(owner)}` : label}
+          title={owner ? soloOwnerLabel(owner) : label}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+          icon={
+            owner ? (
+              <SoloOwnerAvatar owner={owner} />
+            ) : (
+              <UsersIcon size="1rem" aria-hidden="true" />
+            )
+          }
+        />
+      )}
       {open && (
         <ChannelMembersDialog
           key={channelId}
@@ -636,16 +661,21 @@ export function ChannelMembersDialog({
     ...additions.filter((item) => item.pending).map((item) => item.pubkey),
     ...Object.keys(soloAdditions).filter((key) => soloAdditions[key]?.pending),
   ]);
-  const errors = Object.fromEntries<string | undefined>([
-    ...additions
-      .filter((item) => item.error)
-      .map((item) => [item.pubkey, item.error] as const),
-    ...Object.entries(soloAdditions)
-      .filter(([, item]) => item.error)
-      .map(([key, item]) => [key, item.error] as const),
-  ]);
+  // One alert per reason: a refused team add names its members together.
+  // Solo agents join directly, one at a time, so each keeps its own Retry.
+  const refusals = new Map<string, { error: string; keys: string[] }>();
+  const refuse = (group: string, error: string, key: string) => {
+    const item = refusals.get(group) ?? { error, keys: [] };
+    item.keys.push(key);
+    refusals.set(group, item);
+  };
+  for (const item of additions)
+    if (item.error) refuse(item.error, item.error, item.pubkey);
+  for (const [key, item] of Object.entries(soloAdditions))
+    if (item.error) refuse(key, item.error, key);
   const [notice, setNotice] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const copyFailure = copyStatus && copyStatus !== "Link copied";
   const [rosterReadError, setRosterReadError] = useState("");
   const [nameError, setNameError] = useState("");
   const [rosterReading, setRosterReading] = useState(true);
@@ -707,8 +737,6 @@ export function ChannelMembersDialog({
     enabled: soloSharing,
     signal,
     query,
-    setQuery,
-    input,
     close,
   });
   // A Solo owner adds agents directly; people join through sharing.
@@ -871,21 +899,34 @@ export function ChannelMembersDialog({
     key: query,
     settled: !search.loading,
   });
+  const preference = useNamePreference();
   const searchPeople = useMemo(
-    () => withVerifiedNames(search.people, searchVerified, profiles),
-    [search.people, searchVerified, profiles],
+    () =>
+      withVerifiedNames(search.people, searchVerified, profiles, preference),
+    [search.people, searchVerified, profiles, preference],
   );
   const searchProfiles = new Map(
     searchPeople.map((person) => [person.pubkey, person]),
   );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
+  const verifiedOf = (key: string): VerifiedProfile | undefined =>
+    profiles.get(key)?.verified ?? searchVerified.get(key);
+  const pageLabel = (verified: VerifiedProfile | undefined) =>
+    verified && verifiedLabel(verified, preference);
+  const otherName = (key: string) => {
+    const verified = verifiedOf(key);
+    return (
+      verified &&
+      otherVerifiedName(verifiedLabel(verified, preference), verified)
+    );
+  };
+  const pageVerified = (key: string) =>
+    profiles.get(key)?.verified ? undefined : searchVerified.get(key);
   const label = (key: string, fallback?: string) =>
     // A name verified for this search is the label where the shared profiles
     // show another, so the row reads as Command-K and mentions do.
-    (profiles.get(key)?.verified
-      ? undefined
-      : searchVerified.get(key)?.displayName) ??
+    pageLabel(pageVerified(key)) ??
     resolveName(
       key,
       profiles.get(key)?.name ??
@@ -901,8 +942,9 @@ export function ChannelMembersDialog({
     [
       searchProfiles.get(key)?.name,
       searchProfiles.get(key)?.username,
-      searchProfiles.get(key)?.fullName ??
-        profiles.get(key)?.verified?.fullName,
+      verifiedOf(key)?.displayName,
+      verifiedOf(key)?.username,
+      verifiedOf(key)?.fullName,
       ...(searchProfiles.get(key)?.profileNames ?? []),
     ].some((name) => name && matchPerson(name, query)) ||
     `${name} ${key} ${npubEncode(key)}`
@@ -1309,6 +1351,17 @@ export function ChannelMembersDialog({
       ? [{ team, missing }]
       : [];
   });
+  // Names refused people in a stable order: up to three, then a count.
+  const listNames = (keys: readonly string[]) => {
+    const names = keys
+      .map((key) => label(key, teamNames.get(key)))
+      .sort((a, b) => a.localeCompare(b));
+    const shown = names.slice(0, 3);
+    const rest = names.length - shown.length;
+    return new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+      rest > 0 ? [...shown, `${rest} more`] : shown,
+    );
+  };
   // Suffix search scans the whole roster; redo it only when the keys change.
   const keyList = [...members, ...candidates.keys()].join(":");
   const keys = useMemo(
@@ -1400,17 +1453,18 @@ export function ChannelMembersDialog({
     [session, channelId, canAddSoloAgents, place],
   );
 
-  const addTeam = useCallback(
-    async (team: Team, missing: readonly string[]) => {
+  // Adds a team or retries a refused group; `done` is announced only once
+  // every addition lands. Failed members share one alert and Retry per reason.
+  const addAll = useCallback(
+    async (keys: readonly string[], done: string) => {
       const signal = lifetime.current?.signal;
       if (!signal) return;
       setNotice("");
       const added = await Promise.allSettled(
-        missing.map((key) => session.memberAdditions.add(channelId, key)),
+        keys.map((key) => session.memberAdditions.add(channelId, key)),
       );
-      // A failed member shows its own error and Retry below.
       if (!signal.aborted && added.every((item) => item.status === "fulfilled"))
-        setNotice(`${team.name} is in the channel.`);
+        setNotice(done);
     },
     [session, channelId],
   );
@@ -1541,10 +1595,7 @@ export function ChannelMembersDialog({
         place={place}
         pubkey={key}
         name={name}
-        fullName={
-          profiles.get(key)?.verified?.fullName ??
-          searchProfiles.get(key)?.fullName
-        }
+        otherName={otherName(key)}
         keyLabel={keys.get(key)}
         qualified={(shownNames.get(name) ?? 0) > 1}
         adding={adding}
@@ -1623,35 +1674,6 @@ export function ChannelMembersDialog({
     selection?.expectedRole === "absent"
       ? additionRoles.find((option) => option.role === selection.role)
       : undefined;
-  /** A name in a channel share's audience; access actions stay on member rows. */
-  const audienceRow = (key: string) => (
-    <li key={key} className={styles.stagedRow}>
-      <Avatar
-        alt=""
-        fallback={share.names(key)}
-        src={avatarMedia(profiles.get(key)?.picture, session.media)}
-        size="small"
-        shape={
-          known.has(key) || profiles.get(key)?.isAgent ? "squircle" : "circle"
-        }
-      />
-      <span className={styles.stagedName}>{share.names(key)}</span>
-    </li>
-  );
-  const channelTitle = (channel: ChannelLabel, detail: string) => {
-    const Icon = channelIcon(channel);
-    return (
-      <span className={styles.choice}>
-        <Icon size={24} aria-hidden="true" />
-        <span className={styles.stagedName}>
-          <span>{channelText(channel)}</span>
-          <span className="text-body-sm text-subtle">{detail}</span>
-        </span>
-      </span>
-    );
-  };
-  const memberCount = (count: number) =>
-    `${count} member${count === 1 ? "" : "s"}`;
   const chosen = share.chosen;
   const searchFeedback = (
     <>
@@ -1685,6 +1707,8 @@ export function ChannelMembersDialog({
       )}
     </>
   );
+  const shareAction = useRef<HTMLButtonElement>(null);
+  const cancelShare = useRef<HTMLButtonElement>(null);
   const copyAction = (
     <Tooltip
       content="Copying a link does not grant access."
@@ -1813,14 +1837,7 @@ export function ChannelMembersDialog({
             : selection.expectedRole === "absent"
               ? "Add member?"
               : `Change access to ${memberAccessLabel(selection.role)}?`
-          : (title ??
-            (solo && readOnlyAccess
-              ? "Chat access"
-              : solo
-                ? "Share access"
-                : readOnlyAccess
-                  ? "Channel access"
-                  : "Manage members"))
+          : (title ?? memberAccess(channel).title)
       }
       height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
@@ -1887,26 +1904,8 @@ export function ChannelMembersDialog({
                     : `Set to ${memberAccessLabel(selection.role).toLowerCase()}`}
             </Button>
           </>
-        ) : solo ? (
-          <Button
-            variant="prominent"
-            title={
-              share.destination
-                ? "Sharing grants access and posts a link in the selected channel."
-                : undefined
-            }
-            loading={share.busy}
-            disabled={!share.eligible && !!share.destination}
-            onClick={() => void share.submit()}
-          >
-            {share.destination
-              ? share.failed
-                ? "Retry share"
-                : "Share"
-              : "Done"}
-          </Button>
         ) : (
-          <Button variant="prominent" onClick={close}>
+          <Button variant="prominent" disabled={share.busy} onClick={close}>
             Done
           </Button>
         )
@@ -1952,6 +1951,55 @@ export function ChannelMembersDialog({
               {administrationError}
             </p>
           )}
+          {(refusals.size > 0 ||
+            openingMessage ||
+            messageError ||
+            copyFailure) && (
+            <div className={styles.feedback}>
+              {[...refusals].map(([group, { error, keys }]) => {
+                const names = listNames(keys);
+                return (
+                  <p
+                    role="alert"
+                    key={group}
+                    className="text-body-sm text-danger"
+                  >
+                    {names}: {error}{" "}
+                    <Button
+                      variant="outline"
+                      aria-label={`Retry adding ${names}`}
+                      disabled={!canAdd}
+                      onClick={() => {
+                        // Land where Add does, so the next step is the search.
+                        input.current?.focus();
+                        const [only] = keys;
+                        void (only && keys.length === 1
+                          ? add(only)
+                          : addAll(keys, `${names} are in the ${place}.`));
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  </p>
+                );
+              })}
+              {openingMessage && (
+                <p role="status" className="text-body-sm text-subtle">
+                  Opening conversation…
+                </p>
+              )}
+              {messageError && (
+                <p role="alert" className="text-body-sm text-danger">
+                  {messageError}
+                </p>
+              )}
+              {copyFailure && (
+                <p role="alert" className="text-body-sm text-subtle">
+                  {copyStatus}
+                </p>
+              )}
+            </div>
+          )}
           <section
             ref={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
@@ -1979,60 +2027,6 @@ export function ChannelMembersDialog({
               >
                 {rosterError}
               </p>
-            )}
-            {chosen && (
-              <section
-                aria-label="Selected channel"
-                className={styles.stagedRow}
-              >
-                <div className={styles.stagedName}>
-                  <Accordion
-                    key={chosen.id}
-                    variant="form"
-                    onValueChange={(value) =>
-                      share.setExpandedChannel(value.length ? chosen.id : "")
-                    }
-                    items={[
-                      {
-                        value: "channel-participants",
-                        title: channelTitle(
-                          chosen,
-                          share.destinationMembers
-                            ? memberCount(share.destinationMembers.length)
-                            : share.destinationRoster?.id !== chosen.id ||
-                                share.destinationRoster.status === "loading"
-                              ? "Loading participants…"
-                              : "Participants unavailable",
-                        ),
-                        content: share.destinationMembers ? (
-                          <ul>{share.destinationMembers.map(audienceRow)}</ul>
-                        ) : (
-                          <div>
-                            <p role="status">
-                              {share.destinationRoster?.id !== chosen.id ||
-                              share.destinationRoster.status === "loading"
-                                ? "Loading participants…"
-                                : "Current participants are unavailable."}
-                            </p>
-                            {share.destinationRoster?.id === chosen.id &&
-                              share.destinationRoster.status === "error" && (
-                                <Button onClick={share.retryDestination}>
-                                  Retry participants
-                                </Button>
-                              )}
-                          </div>
-                        ),
-                      },
-                    ]}
-                  />
-                </div>
-                <IconButton
-                  aria-label={`Remove ${channelText(chosen)}`}
-                  disabled={share.busy}
-                  icon={<XIcon size={16} />}
-                  onClick={share.removeDestination}
-                />
-              </section>
             )}
             {initialLoading ? (
               !rosterError && (
@@ -2144,7 +2138,12 @@ export function ChannelMembersDialog({
                         )}
                         busy={missing.some((key) => busy.has(key))}
                         disabled={rosterBusy || !!rosterError}
-                        onAdd={() => void addTeam(team, missing)}
+                        onAdd={() =>
+                          void addAll(
+                            missing,
+                            `${team.name} is in the channel.`,
+                          )
+                        }
                       />
                     ))}
                   </ul>
@@ -2277,6 +2276,13 @@ export function ChannelMembersDialog({
                 <ul aria-busy={refreshing}>
                   {shareChannels.map((item) => {
                     const Icon = channelIcon(item);
+                    const active = share.destination === item.id;
+                    const action =
+                      active && share.checkRequired
+                        ? "Check access and share"
+                        : active && share.failed
+                          ? "Retry share"
+                          : "Share";
                     return (
                       <li key={item.id} className={styles.member}>
                         <div className={styles.profileContent}>
@@ -2291,11 +2297,15 @@ export function ChannelMembersDialog({
                           <Button
                             variant="prominent"
                             size="xs"
-                            aria-label={`Select ${channelText(item)}`}
-                            disabled={share.busy}
-                            onClick={() => share.choose(item)}
+                            aria-label={`${action} ${channelText(item)}`}
+                            loading={share.busy && active}
+                            disabled={share.busy || !share.eligible}
+                            onClick={(event) => {
+                              shareAction.current = event.currentTarget;
+                              void share.submit(item.id);
+                            }}
                           >
-                            Select
+                            {action}
                           </Button>
                         </span>
                       </li>
@@ -2324,36 +2334,9 @@ export function ChannelMembersDialog({
                 Archived identities could not be checked.
               </p>
             )}
-            {Object.entries(errors).map(([key, error]) => (
-              <p role="alert" key={key} className="text-body-sm text-danger">
-                {label(key)}: {error}{" "}
-                <Button
-                  variant="outline"
-                  disabled={busy.has(key) || !canAdd}
-                  onClick={() => void add(key)}
-                >
-                  {busy.has(key) ? "Retrying…" : "Retry"}
-                </Button>
-              </p>
-            ))}
-            {openingMessage && (
-              <p role="status" className="text-body-sm text-subtle">
-                Opening conversation…
-              </p>
-            )}
-            {messageError && (
-              <p role="alert" className="text-body-sm text-danger">
-                {messageError}
-              </p>
-            )}
             {notice && (
               <p role="status" className="sr-only">
                 {notice}
-              </p>
-            )}
-            {copyStatus && copyStatus !== "Link copied" && (
-              <p role="alert" className="text-body-sm text-subtle">
-                {copyStatus}
               </p>
             )}
             {solo &&
@@ -2371,6 +2354,45 @@ export function ChannelMembersDialog({
               ) : null)}
           </section>
         </div>
+      )}
+      {share.confirmation && chosen && (
+        <AlertDialog
+          title="Share this chat?"
+          description={
+            <>
+              {share.confirmation.visibility === "public"
+                ? `This chat is already View only. Its link will be posted in ${channelText(chosen)}. `
+                : `This changes the chat from Private to View only and posts its link in ${channelText(chosen)}. `}
+              <span className="mt-3 block">{soloShareDisclosure()}</span>
+            </>
+          }
+          pending={share.busy}
+          onClose={share.cancelConfirmation}
+          initialFocus={cancelShare}
+          finalFocus={() =>
+            shareAction.current?.isConnected
+              ? shareAction.current
+              : input.current
+          }
+          actions={
+            <>
+              <Button
+                ref={cancelShare}
+                disabled={share.busy}
+                onClick={share.cancelConfirmation}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="prominent"
+                loading={share.busy}
+                onClick={() => void share.confirm()}
+              >
+                Share
+              </Button>
+            </>
+          }
+        />
       )}
     </Dialog>
   );

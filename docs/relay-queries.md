@@ -416,6 +416,12 @@ roster, applied through shared discovery. That makes the channel a sidebar
 member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
 
+Palette channel rows show member counts. Joined rows count the roster discovery
+already holds. The rest use the Channels tab's display-only
+`channels.readMemberCounts(ids)` once the row is on screen, so they share its
+cache, retry backoff and bounded `39002` reads. The rosters never reach
+discovery, so a counted roster grants no reading, membership or sidebar row.
+
 ### Finite read recovery
 
 A finite read that has no session recovery source retries transient failures
@@ -502,7 +508,15 @@ The timeline, channel-list preview and filtered plugin views share that operatio
 
 - Reads: three active slots, at most one background request, 128 pending distinct
   requests, ten-second deadlines including queue time, four filters per request,
-  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget.
+  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget. Full-roster
+  discovery reads (scan pages and omission confirmation) and the read-state
+  snapshot, whose results can approach that budget, get 30 seconds
+  (`LARGE_READ_DEADLINE_MS`, the native per-request ceiling); a read-state
+  operation that takes a snapshot gets that plus its usual ten seconds. This lets
+  the measured large reads finish on a slow link; one that needs longer still
+  fails and enters recovery. A slow background snapshot can hold the one
+  background slot that long. The browser development broker still caps upstream
+  queries at 20 seconds.
 - Outbox: at most 256 operations / 2 MiB persisted, 32 KiB per submitted payload,
   three concurrent deliveries, ten-second delivery deadlines including queue time. Only outstanding
   operations count toward capacity; completed events move to a separate 2,048-event /
@@ -552,7 +566,10 @@ metadata/name read: a later name-fetch error does not discard membership evidenc
 Completeness cannot erase a newer signed roster received after that request began;
 metadata completion cannot replay the older membership snapshot.
 
-The session cancels all pending reads on revocation, because broad/ID/reference
+Own-author kind-30078 reads with only marker-topic or coordinate filters also finish
+across channel access changes: encrypted read state belongs to the viewer, not a
+channel. Cache clear, disconnect and session disposal still cancel those reads.
+The session cancels pending channel reads on revocation, because broad/ID/reference
 filters cannot establish event ownership before results arrive. Completion epochs
 also fence already-resolved requests. Directory browsing/searching retries one
 access-epoch invalidation through the same verified scheduler, without admitting
@@ -625,7 +642,8 @@ server-side. The opt-in dev broker accepts bounded Nostr kinds and event-ID read
 ## Current scope and validation
 
 Channels supports top-level text messages and direct thread replies, Enter to send ordinary prose,
-Shift+Enter for a newline. Inside a formatted list, Enter continues the list or exits an
+Shift+Enter for a newline (or, with **Send with ⌘ Enter** on, the reverse; see
+[the help guide](buzz-help.md)). Inside a formatted list, Enter continues the list or exits an
 empty item; the Send button sends while the caret is in the list. Channels also supports
 immediate rows and shared preview data (not currently rendered in the sidebar),
 delivery status, and retry. The dev broker
@@ -672,10 +690,13 @@ receipt, as Buzz desktop does. Nothing is persisted or restored; a rejection or
 10-second timeout rejects the call and the dialog keeps its input for retry. The
 method is undefined unless the writer supports kind 1984.
 
-In an empty composer, unmodified Up arrow selects the newest message in the
-channel timeline or thread beside it, as in Slack; E then opens a selected
-eligible own message in the same editor, and on macOS ⌘↑ still opens the latest eligible
-own message directly (elsewhere, Up then E). Surfaces without a selectable message
+With the device-local **Settings → Shortcuts → Editing messages → Edit last message
+with Up Arrow** preference off (the default), unmodified Up in an empty composer
+selects the newest message in the channel timeline or thread beside it; E then
+opens a selected eligible own message in the same editor. With the preference on,
+plain Up opens the latest eligible own message directly instead of selecting
+messages. On macOS, ⌘↑ edits directly with either preference value.
+Surfaces without a selectable message
 list (media review, Huddles), or a timeline scrolled away from its newest
 message, keep Up opening the latest eligible own message directly. Enter/the send arrow saves;
 Escape or × cancels. Edits retain raw attachment Markdown and leave original
@@ -893,9 +914,13 @@ replacement wires within the relay's limit of 1,024 subscriptions. Omitted chann
 Joined versus preview classification travels with the interest snapshot.
 
 The 100,000-channel scale case uses 49 persistent channel wires. Replay uses a
-separate queue with at most 10 singleton filters per request. Each filter requests
-up to 500 recent events. At most four setup requests run at once. A busy channel
-cannot consume another channel's replay allowance. A failed replay is visible to
+separate queue, combining up to 256 channels in each 500-event filter. Full pages
+continue at their inclusive oldest timestamp, without channels that have received
+500 events; boundary-second events do not count twice. An undecodable frame still
+fills its page slot. A cutoff that cannot move below the last one, or extra live
+frames, makes that prefix uncertain, so replay falls back to at most 10
+singleton filters per request with the original resume point. At most four setup
+requests run at once. A busy channel cannot consume another channel's replay allowance. A failed replay is visible to
 recovery and Retry. A local failure does not stop other queued channels. Shared
 quota failures pause admission. Replay stays quiet; one later live copy can emit
 one incoming-message signal.
@@ -1127,3 +1152,15 @@ edits in a writable conversation publish an empty, scoped kind-20002 pulse at
 most once every three seconds through the existing authenticated live socket.
 Opening a composer or restoring a draft does not publish. Pulses expire rather
 than retry; they never enter the durable outbox or trigger a reconnect.
+
+
+### Addressed reaction activity
+
+`session.inboxFeed.reactions` reads kind 7 with `#p: [viewer]` and a limit of 50.
+It retains at most 100 candidates, resolves exact message IDs, and reads paginated
+edit/deletion closure using `(until, before_id)`. Closure reads cap at 2,000 events
+or 4 MiB; combined evidence caps at 8 MiB. Incomplete or inaccessible overlay
+settlement fails closed. This evidence stays outside the unread projection.
+Live/replay provenance is carried through target hydration; only deduplicated eligible
+live events emit an arrival to the shell. App and MCP reaction writers now include
+the target author's `p` tag. Legacy unaddressed reactions are not searched.

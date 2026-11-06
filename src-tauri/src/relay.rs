@@ -253,12 +253,23 @@ pub(crate) async fn git_authorization(host: &IdentityHost, url: &Url) -> Result<
 /// `agent-config-artifacts.ts`.
 const ARTIFACT_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
 
+/// Content of a live channel Canvas, in UTF-8 bytes. Mirrors
+/// `LIVE_CANVAS_BYTES` in `canvas-limits.ts`.
+pub(crate) const LIVE_CANVAS_BYTES: usize = 256 * 1024;
+
+/// The largest complete signed Canvas event: the relay's default 512 KiB frame
+/// less the `["EVENT",…]` wrapper. Content within `LIVE_CANVAS_BYTES` can still
+/// escape past it. Mirrors `CANVAS_MAX_EVENT_BYTES` in `canvas-limits.ts`.
+pub(crate) const CANVAS_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
+
 /// Kinds whose events may exceed the default 64 KiB signing bound.
 fn signing_limit(kind: u16) -> Option<usize> {
     if catalog::is_catalog(kind) {
         Some(catalog::MAX_EVENT_BYTES)
     } else if kind == 45010 {
         Some(ARTIFACT_MAX_EVENT_BYTES)
+    } else if kind == 40100 {
+        Some(CANVAS_MAX_EVENT_BYTES)
     } else {
         None
     }
@@ -286,20 +297,28 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let artifact = event.kind == 45010;
+    let complete_limit = match event.kind {
+        45010 => Some(ARTIFACT_MAX_EVENT_BYTES),
+        40100 => Some(CANVAS_MAX_EVENT_BYTES),
+        _ => None,
+    };
     let signed = match signing_limit(event.kind) {
         Some(limit) => host.sign_bounded(event, limit).await?,
         None => host.sign(event).await?,
     };
     // The commitment bound above omits id, pubkey key and sig; the relay
     // limits the whole event.
-    if artifact && serde_json::to_vec(&signed).map_or(true, |b| b.len() > ARTIFACT_MAX_EVENT_BYTES)
+    if complete_limit
+        .is_some_and(|limit| serde_json::to_vec(&signed).map_or(true, |bytes| bytes.len() > limit))
     {
         return Err("Relay event is too large".into());
     }
-    if coordinate_delete
-        .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
-    {
+    // Canonical workflow deletes may target an agent owned by the signer.
+    // The relay authorizes ownership; other coordinate deletes remain author-only.
+    if coordinate_delete.is_some_and(|coordinate| {
+        !coordinate.starts_with("30620:")
+            && coordinate.split(':').nth(1) != signed["pubkey"].as_str()
+    }) {
         return Err("Only the author can delete this event".into());
     }
     Ok(signed)
@@ -414,7 +433,13 @@ fn valid_member_command(event: &EventTemplate) -> bool {
 
 // Match the broker's purpose-bound Canvas admission, including legacy untagged retries.
 fn valid_canvas(event: &EventTemplate) -> bool {
-    event.content.len() <= 24 * 1024
+    event.content.len() <= LIVE_CANVAS_BYTES
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("canvas-instructions"))
+            .count()
+            <= 1
         && event
             .tags
             .iter()
@@ -434,6 +459,7 @@ fn valid_canvas(event: &EventTemplate) -> bool {
             match tag[0].as_str() {
                 "h" => channel_writes::uuid(&tag[1]),
                 "client-id" => tag[1].encode_utf16().count() <= 128,
+                "canvas-instructions" => tag[1] == "unapproved",
                 "expected-revision" => {
                     tag[1] == "none"
                         || (tag[1].len() == 64
@@ -1587,10 +1613,7 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
         .clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
-            Ok((url, Some((start, end)))) => {
-                media_blocks::read(&host, Some(&fi), &url, start, end, WHOLE_VIDEO_MAX).await
-            }
-            Ok((url, None)) => fetch_media(&host, Some(&fi), url, None).await,
+            Ok((url, range)) => serve_media(&host, Some(&fi), url, range).await,
             Err(status) => Err(status),
         };
         let mut response = response.unwrap_or_else(|status| {
@@ -2072,6 +2095,40 @@ fn media_request(
     Ok((url, range))
 }
 
+async fn serve_media(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+    range: Option<(u64, u64)>,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    let fallback = jpeg_thumb(&url);
+    match (serve_blob(host, fi, url, range).await, fallback) {
+        (Err(404), Some(url)) => serve_blob(host, fi, url, range).await,
+        (response, _) => response,
+    }
+}
+
+async fn serve_blob(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+    range: Option<(u64, u64)>,
+) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
+    match range {
+        Some((start, end)) => media_blocks::read(host, fi, &url, start, end, WHOLE_VIDEO_MAX).await,
+        None => fetch_media(host, fi, url, None).await,
+    }
+}
+
+/// Relays before WebP thumbnails, and images uploaded before them, have only
+/// the `.thumb.jpg` that every relay writes.
+fn jpeg_thumb(url: &Url) -> Option<Url> {
+    let stem = url.path().strip_suffix(".thumb.webp")?;
+    let mut url = url.clone();
+    url.set_path(&format!("{stem}.thumb.jpg"));
+    Some(url)
+}
+
 /// Only relay-hosted blobs on an HTTPS origin; never an arbitrary URL.
 fn media_url(target: &str) -> Option<Url> {
     let url = Url::parse(target).ok()?;
@@ -2079,6 +2136,7 @@ fn media_url(target: &str) -> Option<Url> {
     let (hash, extension) = name.split_once('.').unwrap_or((name, ""));
     let extension_ok = extension.is_empty()
         || extension == "thumb.jpg"
+        || extension == "thumb.webp"
         || (extension.len() <= 8
             && extension
                 .bytes()

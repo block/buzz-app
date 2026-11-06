@@ -3005,6 +3005,100 @@ it("moves the caret for a Right Arrow reported as U+001D instead of typing it", 
   expect(snapshot(h)).toEqual(before);
 });
 
+/** Presses a key chord on the editor, returning the selection and whether the
+ * editor handled the key itself. */
+function chord(input: ComposerInputElement, init: KeyboardEventInit) {
+  let prevented = false;
+  act(() => {
+    prevented = !fireEvent.keyDown(input, init);
+  });
+  return [input.selectionStart, input.selectionEnd, prevented] as const;
+}
+const controlKey = (key: "a" | "e" | "k", shiftKey = false) => ({
+  key: shiftKey ? key.toUpperCase() : key,
+  code: `Key${key.toUpperCase()}`,
+  ctrlKey: true,
+  shiftKey,
+});
+const optionKey = (key: "ArrowUp" | "ArrowDown") => ({
+  key,
+  code: key,
+  altKey: true,
+});
+const linked = `first\nbefore https://github.com/block/buzz/pull/117/changes after\nlast`;
+const linkedLine = linked.indexOf("before");
+const linkedEnd = linked.indexOf("\nlast");
+
+/** A collapsed caret at `offset` after a key the editor handled itself. */
+const handledAt = (offset: number) => [offset, offset, true] as const;
+
+it("moves Control-A and Control-E to the paragraph edges across a link chip on Apple platforms", () => {
+  setPlatform("MacIntel");
+  const h = mount(linked, { links: true });
+  expect(h.input.querySelectorAll("[data-link]")).toHaveLength(1);
+  const before = snapshot(h);
+  act(() => h.input.setSelectionRange(linkedEnd, linkedEnd));
+  // The paragraph starts after the newline, not at the document start, and a
+  // caret already at an edge stays there.
+  expect(chord(h.input, controlKey("a"))).toEqual(handledAt(linkedLine));
+  expect(chord(h.input, controlKey("a"))).toEqual(handledAt(linkedLine));
+  expect(chord(h.input, controlKey("e"))).toEqual(handledAt(linkedEnd));
+  chord(h.input, controlKey("a", true));
+  expect(selection(h.input)).toEqual([linkedLine, linkedEnd, "backward"]);
+  // Without Shift, a selection collapses to the edge beyond its far end.
+  expect(chord(h.input, controlKey("e"))).toEqual(handledAt(linkedEnd));
+  expect(snapshot(h)).toEqual(before);
+});
+
+it("moves Option-Up and Option-Down across a link chip, then on to the neighbouring paragraph", () => {
+  setPlatform("MacIntel");
+  const h = mount(linked, { links: true });
+  const before = snapshot(h);
+  act(() => h.input.setSelectionRange(linkedEnd, linkedEnd));
+  expect(chord(h.input, optionKey("ArrowUp"))).toEqual(handledAt(linkedLine));
+  // The same key reported as a control character takes the same path.
+  expect(chord(h.input, mangled("ArrowUp", { altKey: true }))).toEqual(
+    handledAt(0),
+  );
+  expect(chord(h.input, optionKey("ArrowUp"))).toEqual(handledAt(0));
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual(handledAt(5));
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual(handledAt(linkedEnd));
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual(
+    handledAt(linked.length),
+  );
+  expect(snapshot(h)).toEqual(before);
+});
+
+it("deletes through a link chip for Control-K, leaving plain text to the browser", () => {
+  setPlatform("MacIntel");
+  const h = mount(linked, { links: true });
+  // Plain text to the paragraph's end stays native, for the native kill ring.
+  const plain = linkedEnd - 3;
+  act(() => h.input.setSelectionRange(plain, plain));
+  expect(chord(h.input, controlKey("k"))).toEqual([plain, plain, false]);
+  expect(h.input).toHaveValue(linked);
+  act(() => h.input.setSelectionRange(linkedLine, linkedLine));
+  expect(chord(h.input, controlKey("k"))).toEqual(handledAt(linkedLine));
+  expect(h.input).toHaveValue("first\n\nlast");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue(linked);
+  expect(h.input.querySelectorAll("[data-link]")).toHaveLength(1);
+});
+
+it("leaves Control-A to select all off Apple platforms", () => {
+  setPlatform("Linux x86_64");
+  const h = mount("before https://github.com/block/buzz/pull/117 after", {
+    links: true,
+  });
+  act(() => {
+    fireEvent.keyDown(h.input, { key: "a", code: "KeyA", ctrlKey: true });
+  });
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([
+    0,
+    h.input.value.length,
+  ]);
+});
+
 it("steps over a mention chip for an arrow reported as a control character, as the named key does", () => {
   const h = mount("abc");
   const modify = stubSelectionModify();
@@ -3115,11 +3209,12 @@ it.each([
     ["extend", "left", "lineboundary"],
   ],
   ["MacIntel", "ArrowUp", {}, ["move", "backward", "line"]],
+  // Plain Option-Up is a paragraph command the editor runs itself.
   [
     "MacIntel",
     "ArrowUp",
-    { altKey: true },
-    ["move", "backward", "paragraphboundary"],
+    { altKey: true, shiftKey: true },
+    ["extend", "backward", "paragraphboundary"],
   ],
   [
     "MacIntel",
@@ -4515,6 +4610,57 @@ it.each([
   [
     "Ship 🚀 guide",
     'Ship <img data-stringify-type="emoji" alt="🚀"> <a href="https://example.com">guide</a>',
+    "Ship 🚀 [guide](https://example.com/)",
+  ],
+  [
+    "Hello :wave: Review the pull request",
+    'Hello <img alt=":wave:" src="https://example.com/emoji.png"> Review <a href="https://example.com/review">the pull request</a>',
+    "Hello :wave: Review [the pull request](https://example.com/review)",
+  ],
+  [
+    "Read 🚀 guide",
+    'Read <a href="https://example.com"><img alt="🚀"> guide</a>',
+    "Read [🚀 guide](https://example.com/)",
+  ],
+  [
+    "Read 🚀",
+    'Read <a href="https://example.com"><img alt="🚀"></a>',
+    "Read [🚀](https://example.com/)",
+  ],
+  [
+    "Read guide",
+    'Read <img src="https://example.com/image.png"><img alt=""> <a href="https://example.com">guide</a>',
+    "Read  [guide](https://example.com/)",
+  ],
+  [
+    "Read <img src=x onerror=alert(1)> guide",
+    'Read <img alt="&lt;img src=x onerror=alert(1)&gt;"> <a href="https://example.com">guide</a>',
+    "Read <img src=x onerror=alert(1)> [guide](https://example.com/)",
+  ],
+])(
+  "preserves image alt text and safe external links: %s",
+  (plain, html, expected) => {
+    const h = mount();
+    paste(h.input, plain, html);
+    expect(h.markdown()).toBe(expected);
+    expect(h.input.querySelector("img")).toBeNull();
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("");
+  },
+);
+
+it.each([
+  [
+    "Ship 🚀 guide",
+    'Ship <img alt="different"> <a href="https://example.com">guide</a>',
+  ],
+  [
+    "Read guide",
+    'Read <img alt="extra"> <a href="https://example.com">guide</a>',
+  ],
+  [
+    "Ship 🚀 guide",
+    'Ship <img alt="🚀" onerror="alert(1)"> <a href="javascript:alert(1)">guide</a>',
   ],
   [
     "guide",

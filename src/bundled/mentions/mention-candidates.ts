@@ -1,6 +1,10 @@
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
+import {
+  otherVerifiedName,
+  verifiedLabel,
+} from "../../features/profiles/name-preference";
 import { knownAgentPubkeys } from "../../features/agents/known";
 import type { Agent } from "../../features/agents/service";
 import { communityHost } from "../../features/messages/community-host";
@@ -34,15 +38,36 @@ export function outsideMentionDetail(
   if (elsewhere) return `In ${elsewhere}`;
   return channel?.channelType === "dm"
     ? "Not in DM · Will not be notified"
-    : "Not in channel · Choose whether to add when you send";
+    : "Not in channel";
+}
+
+/**
+ * "Managed by" for an agent whose owner is attested (NIP-OA,
+ * `profiles.owner`), once that owner has a real name. Never the viewer.
+ */
+export function managedByDetail(
+  owner: string | undefined,
+  viewer: string | undefined,
+  profiles: ReadonlyMap<
+    string,
+    { name?: string | undefined; nameIsFallback?: true | undefined }
+  >,
+) {
+  const profile = owner && owner !== viewer ? profiles.get(owner) : undefined;
+  const name = profile && !profile.nameIsFallback && profile.name?.trim();
+  return name ? `Managed by ${name}` : undefined;
 }
 
 type DirectoryPerson = MentionRecipient & {
   isAgent?: true;
   /** A community-verified full name (useVerifiedNames). */
   fullName?: string | undefined;
+  /** A community-verified username (useVerifiedNames). */
+  username?: string | undefined;
   /** The profile name and handle a verified person was found by. */
   profileNames?: readonly string[] | undefined;
+  /** Self-declared, for naming only; never shown as a manager. */
+  ownerPubkey?: string;
 };
 type ElsewhereAgent = Pick<Agent, "pubkey" | "name" | "relay">;
 const none: readonly never[] = [];
@@ -64,6 +89,11 @@ function recent<K, V>(map: Map<K, V>, key: K, value: V, limit: number) {
   return value;
 }
 export type MentionCandidate = ReturnType<typeof buildCandidates>[number];
+
+/** A compact location caption for confirmed remote agents in both @ menus. */
+export function remoteMentionDetail(execution: MentionCandidate["execution"]) {
+  return execution === "remote" ? "Remote" : undefined;
+}
 
 /** What the chooser offers. The host admits recipients itself (mention-admission). No reads or writes. */
 export function mentionCandidates(
@@ -154,6 +184,9 @@ function buildCandidates(
   const members = roster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKeys = new Set(members);
   const agents = session.agentChoices.snapshot().identities;
+  const executions = new Map(
+    agents.map((agent) => [agent.pubkey, agent.execution]),
+  );
   const profiles = session.profiles.snapshot();
   const known = knownAgentPubkeys(profiles, {
     definitions: [],
@@ -232,13 +265,20 @@ function buildCandidates(
   return [...choices.values()]
     .filter((p) => admits(p.pubkey))
     .map((recipient) => {
-      const fullName =
-        profiles.get(recipient.pubkey)?.verified?.fullName ??
-        verified.get(recipient.pubkey)?.fullName;
+      const execution = executions.get(recipient.pubkey);
+      const shared = profiles.get(recipient.pubkey)?.verified;
+      const searched = verified.get(recipient.pubkey);
+      const fullName = shared?.fullName ?? searched?.fullName;
+      const username = shared?.username ?? searched?.username;
+      // A searched person's name already is their verified label.
+      const otherName = shared
+        ? otherVerifiedName(verifiedLabel(shared), shared)
+        : searched && otherVerifiedName(searched.name, searched);
       return {
         recipient,
-        /** A community-verified full name, shown beside the row's detail. */
-        ...(fullName ? { fullName } : {}),
+        ...(execution ? { execution } : {}),
+        /** The verified name the label is not, shown beside the row's detail. */
+        ...(otherName ? { otherName } : {}),
         member: memberKeys.has(recipient.pubkey),
         /** The host of the owner's other community this agent is in. */
         ...(hosts.has(recipient.pubkey)
@@ -261,7 +301,8 @@ function buildCandidates(
               ...(agentNames.get(recipient.pubkey) ?? []),
               hosts.has(recipient.pubkey) ? recipient.name : undefined,
               fullName,
-              ...(verified.get(recipient.pubkey)?.profileNames ?? []),
+              username,
+              ...(searched?.profileNames ?? []),
             ].filter((name): name is string => !!name),
           ),
         ],

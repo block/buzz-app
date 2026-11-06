@@ -21,6 +21,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { createRelaySession } from "../../features/relay/session";
+import type { VerifiedProfileAuthority } from "../../features/relay/verified-profile";
 import {
   keypair,
   metadata,
@@ -36,7 +37,7 @@ import {
   recordVisit,
 } from "../../features/search/usage";
 import { matchesEvent } from "../../features/relay/projection";
-import type { RelayEvent } from "../../features/relay/events";
+import { eventDto, type RelayEvent } from "../../features/relay/events";
 import { PublishRejected } from "../../features/relay/outbox";
 import type { AgentLibrary } from "../../features/agents/library";
 import { localAgentsFixture } from "../../features/agents/local-testing";
@@ -115,12 +116,14 @@ async function setup(
       page: number,
     ) => Promise<RelayEvent[]>;
     communities?: CommunityReader;
+    relay?: ReturnType<typeof keypair>;
+    verifiedProfiles?: VerifiedProfileAuthority;
     visibility?: "private" | "public";
     joinRole?: "member" | "guest";
   } = {},
 ) {
   const viewer = keypair(),
-    relay = keypair(),
+    relay = options.relay ?? keypair(),
     person = keypair();
   const agent = {
     pubkey: "ab".repeat(32),
@@ -232,6 +235,9 @@ async function setup(
       },
       ...(options.searchProfiles
         ? { searchProfiles: options.searchProfiles }
+        : {}),
+      ...(options.verifiedProfiles
+        ? { verifiedProfiles: options.verifiedProfiles }
         : {}),
       readAgentLibrary,
       writer: {
@@ -999,7 +1005,7 @@ it("remembers successful channel additions without learning from failed writes",
     readSearchUsage(t.session.scope).pick(typed, new Set([key])),
   ).toBeUndefined();
   t.fail("");
-  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Morgan is in the channel.");
   expect(readSearchUsage(t.session.scope).pick(typed, new Set([key]))).toBe(
     key,
@@ -1114,6 +1120,129 @@ it("keeps relay-only matches after shared-ranked names without duplicating rows"
     expect.stringMatching(/^Add Robin/),
     expect.stringMatching(/^Add A different name/),
   ]);
+});
+
+it.each(["name", "npub"] as const)(
+  "finds a verified person who has no kind:0 by their verified %s and adds them",
+  async (by) => {
+    const relay = keypair(),
+      gabi = keypair();
+    const head = signed(relay, {
+      kind: 30382,
+      created_at: 1_000_000,
+      content: "",
+      tags: [
+        ["d", gabi.pubkey],
+        ["p", gabi.pubkey],
+        ["active", "true"],
+        ["display_name", "glilienfeld"],
+        ["username", "glilienfeld"],
+        ["full_name", "Gabi Lilienfeld"],
+        ["issuer_label", "Example"],
+        ["verified_at", "1000000"],
+      ],
+    });
+    const t = await setup("stream", false, false, undefined, undefined, {
+      relay,
+      searchProfiles: async () => [eventDto(head)],
+      verifiedProfiles: {
+        pubkey: relay.pubkey,
+        multipleIssuers: false,
+        searchable: true,
+      },
+    });
+    // A pasted key reads no kind:0; the verified name comes from a head read.
+    const query = t.query.getMockImplementation();
+    if (!query) throw new Error("Missing query fixture");
+    t.query.mockImplementation(async (filters) =>
+      filters.some((filter) => filter.kinds?.includes(30382))
+        ? [eventDto(head)]
+        : query(filters),
+    );
+    await t.user.type(
+      screen.getByRole("searchbox"),
+      by === "name" ? "gabi" : npubEncode(gabi.pubkey),
+    );
+    await t.user.click(
+      await screen.findByRole("button", { name: /^Add glilienfeld/ }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        t.publish.mock.calls.some(([event]) =>
+          event.tags.some((tag) => tag[0] === "p" && tag[1] === gabi.pubkey),
+        ),
+      ).toBe(true),
+    );
+  },
+);
+
+it("names a pasted key once a later search returns its new verified head", async () => {
+  const relay = keypair(),
+    gabi = keypair();
+  const head = signed(relay, {
+    kind: 30382,
+    created_at: 1_000_000,
+    content: "",
+    tags: [
+      ["d", gabi.pubkey],
+      ["p", gabi.pubkey],
+      ["active", "true"],
+      ["display_name", "glilienfeld"],
+      ["username", "glilienfeld"],
+      ["full_name", "Gabi Lilienfeld"],
+      ["issuer_label", "Example"],
+      ["verified_at", "1000000"],
+    ],
+  });
+  // Neither a kind:0 nor a head exists yet; the head is published later.
+  let published = false;
+  const t = await setup("stream", false, false, undefined, undefined, {
+    relay,
+    searchProfiles: async () => (published ? [eventDto(head)] : []),
+    verifiedProfiles: {
+      pubkey: relay.pubkey,
+      multipleIssuers: false,
+      searchable: true,
+    },
+  });
+  const query = t.query.getMockImplementation();
+  if (!query) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) =>
+    filters.some((filter) => filter.kinds?.includes(30382))
+      ? published
+        ? [eventDto(head)]
+        : []
+      : query(filters),
+  );
+  const search = screen.getByRole("searchbox");
+  await t.user.type(search, npubEncode(gabi.pubkey));
+  // The missing-head lookup finishes: the row keeps its key label.
+  const label = new RegExp(`^Add ${gabi.pubkey.slice(0, 10)}`);
+  await screen.findByRole("button", { name: label });
+  await vi.waitFor(() =>
+    expect(
+      t.query.mock.calls.some(([filters]) =>
+        filters.some(
+          (filter) =>
+            filter.kinds?.includes(30382) &&
+            filter["#d"]?.includes(gabi.pubkey),
+        ),
+      ),
+    ).toBe(true),
+  );
+  published = true;
+  await t.user.clear(search);
+  await t.user.type(search, "gabi");
+  await t.user.click(
+    await screen.findByRole("button", { name: /^Add glilienfeld/ }),
+  );
+  await vi.waitFor(() =>
+    expect(
+      t.publish.mock.calls.some(([event]) =>
+        event.tags.some((tag) => tag[0] === "p" && tag[1] === gabi.pubkey),
+      ),
+    ).toBe(true),
+  );
 });
 
 it("starts every invitation group at four and expands only the selected group", async () => {
@@ -1362,7 +1491,7 @@ it("shows the real rejection and retries without discarding the query", async ()
   await screen.findByText(/Only the owner/);
   expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
   t.fail("");
-  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Morgan is in the channel.");
 });
 it("DMs are view-only and never search outside their members", async () => {
@@ -2527,6 +2656,121 @@ it("adds a team's members not in the channel with one button", async () => {
     screen.queryByRole("button", { name: "Add team Far" }),
   ).not.toBeInTheDocument();
 });
+
+async function teamSetup(names = ["Ada", "Cy"]) {
+  const keys = names.map((_name, index) => `${index}${index}`.repeat(32));
+  const ada = keys[0] ?? "";
+  const cy = keys[1] ?? "";
+  // useSyncExternalStore needs one stable snapshot object.
+  const snapshot = {
+    status: "ready",
+    agents: names.map((name, index) => ({ pubkey: keys[index], name })),
+    running: [],
+    teams: [{ id: "crew", name: "Crew", instructions: "", members: keys }],
+  };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+  } as unknown as Agents;
+  const t = await setup("stream", false, false, undefined, agents);
+  await t.user.type(screen.getByRole("searchbox"), "Crew");
+  await screen.findByRole("button", { name: "Add team Crew" });
+  return { ...t, ada, cy };
+}
+it("groups a team's refusals with one reason into one alert whose Retry adds them all", async () => {
+  const t = await teamSetup();
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  const refusals = () =>
+    screen
+      .getAllByRole("alert")
+      .map((item) => item.textContent ?? "")
+      .filter((content) => content.includes("denied"));
+  await screen.findByText(/^Ada and Cy: Invitation denied/);
+  expect(refusals()).toHaveLength(1);
+  const retry = screen.getByRole("button", { name: "Retry adding Ada and Cy" });
+  expect(retry).toHaveTextContent("Retry");
+  t.fail("");
+  await t.user.click(retry);
+  expect(screen.getByRole("searchbox")).toHaveFocus();
+  await vi.waitFor(() => expect(refusals()).toHaveLength(0));
+  // One combined notice, instead of each retry announcing its own.
+  await screen.findByText("Ada and Cy are in the channel.");
+  const added = t.publish.mock.calls
+    .filter(([event]) => event.tags.filter(([tag]) => tag === "p").length === 1)
+    .map(([event]) => event.tags.find((tag) => tag[0] === "p")?.[1])
+    .sort();
+  expect(added).toEqual([t.ada, t.ada, t.cy, t.cy].sort());
+});
+it("keeps only the still-refused member in the alert after a partial retry", async () => {
+  const t = await teamSetup();
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  await screen.findByText(/^Ada and Cy: Invitation denied/);
+  const base = t.publish.getMockImplementation();
+  if (!base) throw new Error("Missing publish fixture");
+  t.fail("");
+  t.publish.mockImplementation(async (event) => {
+    if (event.tags.find((tag) => tag[0] === "p")?.[1] === t.cy)
+      throw new PublishRejected("Invitation denied");
+    return base(event);
+  });
+  await t.user.click(
+    screen.getByRole("button", { name: "Retry adding Ada and Cy" }),
+  );
+  await screen.findByText(/^Cy: Invitation denied/);
+  expect(
+    screen
+      .getAllByRole("alert")
+      .map((item) => item.textContent)
+      .filter((content) => content?.includes("denied")),
+  ).toEqual([expect.stringMatching(/^Cy: Invitation denied/)]);
+  expect(screen.getByRole("button", { name: "Retry adding Cy" })).toBeEnabled();
+  // Ada's addition has landed; the group still announces nothing.
+  await vi.waitFor(() =>
+    expect(t.session.memberAdditions.snapshot()).toEqual([
+      expect.objectContaining({ pubkey: t.cy, pending: false }),
+    ]),
+  );
+  expect(screen.queryByText(/are in the channel/)).not.toBeInTheDocument();
+});
+it("names three refused members and counts the rest", async () => {
+  const t = await teamSetup(["Di", "Ada", "Cy", "Bo"]);
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  await screen.findByText(/^Ada, Bo, Cy, and 1 more: Invitation denied/);
+  expect(
+    screen.getByRole("button", {
+      name: "Retry adding Ada, Bo, Cy, and 1 more",
+    }),
+  ).toBeEnabled();
+});
+it("shows a team's refusals with different reasons as separate alerts", async () => {
+  const t = await teamSetup();
+  const base = t.publish.getMockImplementation();
+  if (!base) throw new Error("Missing publish fixture");
+  t.publish.mockImplementation(async (event) => {
+    const recipients = event.tags.filter(([tag]) => tag === "p");
+    if (recipients.length === 1 && recipients[0]?.[1] === t.ada)
+      throw new PublishRejected("Agent is archived");
+    return base(event);
+  });
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  const refusals = () =>
+    screen
+      .getAllByRole("alert")
+      .map((item) => item.textContent ?? "")
+      .filter((content) => /^(Ada|Cy): /.test(content));
+  await vi.waitFor(() => expect(refusals()).toHaveLength(2));
+  expect(refusals().sort()).toEqual([
+    expect.stringMatching(/^Ada: Agent is archived/),
+    expect.stringMatching(/^Cy: Invitation denied/),
+  ]);
+  expect(
+    screen.getAllByRole("button", { name: /^Retry adding (Ada|Cy)$/ }),
+  ).toHaveLength(2);
+});
 it("offers local agents to add by the shared name rule", async () => {
   const t = await setup();
   await act(async () => {
@@ -2772,7 +3016,7 @@ it("keeps Solo channel sharing search-only while suggesting your agents when alo
   await t.user.type(input, "Plan");
   const channels = await screen.findByRole("region", { name: "Channels" });
   expect(
-    within(channels).getByRole("button", { name: "Select #Planning" }),
+    within(channels).getByRole("button", { name: "Share #Planning" }),
   ).toBeVisible();
   await t.user.clear(input);
   expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
@@ -3021,7 +3265,7 @@ it("Solo agent search keeps the query after a rejected addition, then retries th
   expect(screen.queryByText("Fixture agent added.")).not.toBeInTheDocument();
   const original = t.publish.mock.calls[0]?.[0].id;
   t.fail("");
-  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Fixture agent added.");
   expect(t.publish.mock.calls.map(([event]) => event.kind)).toEqual([
     9000, 9000,

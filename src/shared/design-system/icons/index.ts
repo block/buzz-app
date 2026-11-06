@@ -83,6 +83,8 @@ export const ArrowCounterClockwiseIcon = defineIcon(
   TablerArrowCounterClockwiseIcon,
 );
 // Tabler only. Add individual exports as needed; outline icons are the default.
+import TablerSendIcon from "@tabler/icons-react/dist/esm/icons/IconSend.mjs";
+export const SendIcon = defineIcon("tabler", TablerSendIcon);
 import TablerSparklesIcon from "@tabler/icons-react/dist/esm/icons/IconSparkles.mjs";
 export const SparklesIcon = defineIcon("tabler", TablerSparklesIcon);
 import TablerStarFilledIcon from "@tabler/icons-react/dist/esm/icons/IconStarFilled.mjs";
@@ -165,6 +167,8 @@ import TablerCopyIcon from "@tabler/icons-react/dist/esm/icons/IconCopy.mjs";
 export const CopyIcon = defineIcon("tabler", TablerCopyIcon);
 import TablerCloudOffIcon from "@tabler/icons-react/dist/esm/icons/IconCloudOff.mjs";
 export const CloudOffIcon = defineIcon("tabler", TablerCloudOffIcon);
+import TablerCloudIcon from "@tabler/icons-react/dist/esm/icons/IconCloud.mjs";
+export const CloudIcon = defineIcon("tabler", TablerCloudIcon);
 import TablerCloudUploadIcon from "@tabler/icons-react/dist/esm/icons/IconCloudUpload.mjs";
 export const CloudUploadIcon = defineIcon("tabler", TablerCloudUploadIcon);
 import TablerCrownIcon from "@tabler/icons-react/dist/esm/icons/IconCrown.mjs";
@@ -335,6 +339,8 @@ import TablerSunIcon from "@tabler/icons-react/dist/esm/icons/IconSun.mjs";
 export const SunIcon = defineIcon("tabler", TablerSunIcon);
 import TablerTableIcon from "@tabler/icons-react/dist/esm/icons/IconTable.mjs";
 export const TableIcon = defineIcon("tabler", TablerTableIcon);
+import TablerTelescopeIcon from "@tabler/icons-react/dist/esm/icons/IconTelescope.mjs";
+export const TelescopeIcon = defineIcon("tabler", TablerTelescopeIcon);
 import TablerTimerIcon from "@tabler/icons-react/dist/esm/icons/IconStopwatch.mjs";
 export const TimerIcon = defineIcon("tabler", TablerTimerIcon);
 import TablerClockIcon from "@tabler/icons-react/dist/esm/icons/IconClockHour4.mjs";
@@ -352,6 +358,8 @@ import TablerUserIcon from "@tabler/icons-react/dist/esm/icons/IconUser.mjs";
 export const UserIcon = defineIcon("tabler", TablerUserIcon);
 import TablerShareIcon from "@tabler/icons-react/dist/esm/icons/IconShare2.mjs";
 export const ShareIcon = defineIcon("tabler", TablerShareIcon);
+import TablerForwardIcon from "@tabler/icons-react/dist/esm/icons/IconArrowForwardUp.mjs";
+export const ForwardIcon = defineIcon("tabler", TablerForwardIcon);
 import TablerUsersIcon from "@tabler/icons-react/dist/esm/icons/IconUsers.mjs";
 export const UsersIcon = defineIcon("tabler", TablerUsersIcon);
 import TablerUsersPlusIcon from "@tabler/icons-react/dist/esm/icons/IconUsersPlus.mjs";

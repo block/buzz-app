@@ -117,8 +117,23 @@ it.each([
   [{ authors: [alice.pubkey], kinds: [30177] }],
   [{ authors: [viewer.pubkey], kinds: [30177], "#h": ["a"] }],
   [{ authors: [viewer.pubkey], kinds: [30177], ids: ["a".repeat(64)] }],
+  [{ authors: [viewer.pubkey], kinds: [30078, 9] }],
+  [{ authors: [viewer.pubkey], kinds: [30078] }, { kinds: [9] }],
+  [{ authors: [alice.pubkey], kinds: [30078] }],
+  [{ authors: [viewer.pubkey, alice.pubkey], kinds: [30078] }],
+  [{ authors: [viewer.pubkey], kinds: [30078], "#h": ["a"] }],
+  [{ authors: [viewer.pubkey], kinds: [30078], ids: ["a".repeat(64)] }],
+  [{ authors: [viewer.pubkey], kinds: [30078], "#t": ["other-topic"] }],
+  [{ authors: [viewer.pubkey], kinds: [30078], "#d": ["other-setting"] }],
+  [
+    {
+      authors: [viewer.pubkey],
+      kinds: [30078],
+      "#d": [`read-state:${"a".repeat(32)}`, "other-setting"],
+    },
+  ],
 ])(
-  "does not exempt mixed or non-owner inventory-shaped reads from revocation: %j",
+  "does not exempt mixed, channel-scoped or non-owner personal reads from revocation: %j",
   async (...filters) => {
     const h = setup();
     h.emit([roster(relay, "a", [viewer.pubkey], 10)]);
@@ -269,6 +284,39 @@ it.each([false, true])(
     expect(new Set(view.snapshot().events.map((e) => e.id))).toEqual(
       new Set([entity.id, publicReaction.id]),
     );
+  },
+);
+
+it.each([
+  { kind: 40007, channelBound: true },
+  { kind: 30023, channelBound: false },
+  { kind: 46020, channelBound: false },
+])(
+  "requires a channel-bound target for a scoped reaction (kind $kind)",
+  ({ kind, channelBound }) => {
+    const h = setup();
+    const target = signed(alice, {
+      kind,
+      content: "target",
+      tags: [["h", "a"]],
+    });
+    const reaction = (channel: string) =>
+      signed(bob, {
+        kind: 7,
+        content: "+",
+        tags: [
+          ["h", channel],
+          ["e", target.id],
+        ],
+      });
+    const matching = reaction("a");
+    h.emit([matching, reaction("b"), target]);
+    expect(
+      h.session
+        .observe([{ kinds: [7], limit: 20 }])
+        .snapshot()
+        .events.map((e) => e.id),
+    ).toEqual(channelBound ? [matching.id] : []);
   },
 );
 

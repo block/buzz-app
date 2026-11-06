@@ -10,7 +10,12 @@ import type { RelayWriter } from "./transport";
 
 const id = "11111111-1111-4111-8111-111111111111";
 function setup(
-  options: { badRoster?: boolean; untrusted?: boolean; lagging?: boolean } = {},
+  options: {
+    badRoster?: boolean;
+    untrusted?: boolean;
+    lagging?: boolean;
+    human?: boolean;
+  } = {},
 ) {
   const viewer = keypair(),
     other = keypair(),
@@ -36,21 +41,25 @@ function setup(
     if (filters.some((f) => f.kinds?.includes(0)))
       return [
         profile(viewer, { name: "Me" }),
-        signed(other, {
-          kind: 0,
-          content: JSON.stringify({
-            name: "Other",
-            picture: "https://example.com/avatar.png",
-            is_agent: true,
-            about: "Unused biography",
-          }),
-          tags: [["auth", agentOwner.pubkey, "", "a".repeat(128)]],
-        }),
+        options.human
+          ? profile(other, { name: "Other" })
+          : signed(other, {
+              kind: 0,
+              content: JSON.stringify({
+                name: "Other",
+                picture: "https://example.com/avatar.png",
+                is_agent: true,
+                about: "Unused biography",
+              }),
+              tags: [["auth", agentOwner.pubkey, "", "a".repeat(128)]],
+            }),
       ];
     return options.lagging &&
       !filters.every((filter) => filter.consistency === "strong")
       ? []
-      : discovery;
+      : discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        );
   });
   const publish = vi.fn<RelayWriter["publish"]>(async () => {});
   const openDirectMessage = vi.fn(async () => id);
@@ -113,6 +122,30 @@ it("opens using signed exact membership, then confirms the regular outbox messag
     t.owner.dispose();
   }
 });
+it.each([
+  { human: false, tagged: true },
+  { human: true, tagged: false },
+])(
+  "a first plain message to a fresh 1:1 DM wakes only an agent partner: %j",
+  async ({ human, tagged }) => {
+    // New Message reads people outside the shared profile cache, so open is
+    // the first point that can classify the partner before the first send.
+    const t = setup({ human });
+    try {
+      expect(t.owner.session.profiles.snapshot().has(t.other.pubkey)).toBe(
+        false,
+      );
+      await t.dm.open([t.other.pubkey], new AbortController().signal);
+      t.owner.session.messages.send(id, "hello", []);
+      await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+      const tags = t.publish.mock.calls[0]?.[0].tags ?? [];
+      expect(tags.some(([name]) => name === "p")).toBe(tagged);
+      if (tagged) expect(tags).toContainEqual(["p", t.other.pubkey]);
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
 it("opens a DM before its signed discovery reaches the replica", async () => {
   const t = setup({ lagging: true });
   try {
@@ -122,7 +155,7 @@ it("opens a DM before its signed discovery reaches the replica", async () => {
     expect(t.owner.session.channels.get?.(id)?.members).toEqual(
       [t.viewer.pubkey, t.other.pubkey].sort(),
     );
-    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+    expect(t.query.mock.calls.map(([filters]) => filters)).toContainEqual([
       expect.objectContaining({ consistency: "strong", "#d": [id] }),
     ]);
   } finally {
@@ -453,6 +486,67 @@ describe("verified names for a search page", () => {
     }
   });
 
+  it.each([true, false])(
+    "names a searched page without a read where the relay is searchable (%s)",
+    async (searchable) => {
+      const viewer = keypair(),
+        relay = keypair(),
+        fake = keypair(),
+        plain = keypair();
+      const head = assertion(relay, fake.pubkey, {
+        display: "fname",
+        full: "Fake Name",
+      });
+      const query = vi.fn(async (_filters: readonly ReadFilter[]) => [
+        eventDto(head),
+      ]);
+      const owner = createRelaySession({
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        media: () => undefined,
+        query,
+        searchProfiles: async () =>
+          [
+            profile(fake, { name: "Fak" }),
+            head,
+            profile(plain, { name: "Plain" }),
+          ].map((event) => eventDto(event)),
+        verifiedProfiles: {
+          pubkey: relay.pubkey,
+          multipleIssuers: false,
+          ...(searchable ? { searchable: true as const } : {}),
+        },
+      });
+      try {
+        const signal = new AbortController().signal;
+        const { people } = await owner.session.directMessages.people(
+          "fname",
+          1,
+          signal,
+        );
+        expect(people.map(({ pubkey }) => pubkey)).toEqual([
+          fake.pubkey,
+          plain.pubkey,
+        ]);
+        const verified = await owner.session.directMessages.verified(
+          [fake.pubkey, plain.pubkey],
+          signal,
+        );
+        expect(query).toHaveBeenCalledTimes(searchable ? 0 : 1);
+        expect([...(verified?.profiles.keys() ?? [])]).toEqual([fake.pubkey]);
+        expect(verified?.profiles.get(fake.pubkey)).toMatchObject({
+          displayName: "fname",
+          fullName: "Fake Name",
+        });
+        // The search answered once; asking again reads.
+        await owner.session.directMessages.verified([fake.pubkey], signal);
+        expect(query).toHaveBeenCalledTimes(searchable ? 1 : 2);
+      } finally {
+        owner.dispose();
+      }
+    },
+  );
+
   const changes: [string, () => VerifiedProfileAuthority | undefined][] = [
     ["withdrawn", () => undefined],
     ["rotated", () => ({ pubkey: keypair().pubkey, multipleIssuers: false })],
@@ -487,7 +581,7 @@ describe("verified names for a search page", () => {
         undefined,
         new AbortController().signal,
         directoryReader,
-        undefined as never,
+        { verifiedHeads: () => new Map() } as never,
         () => authority,
       );
       const pending = directMessages.verified(

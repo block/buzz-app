@@ -2,6 +2,7 @@ import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { PencilSimpleIcon, XIcon } from "../shared/design-system/icons";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import {
   Fragment,
@@ -31,7 +32,12 @@ import {
 } from "../features/shortcuts/KeyCaptureControl";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import type { ShortcutsService } from "../features/shortcuts/service";
+import {
+  sendKeyPreference,
+  useSendWithModEnterPreference,
+} from "../features/messages/send-key-preference";
 import type { PluginManager } from "../plugins/manager";
+import { editKeyPreference } from "../features/messages/edit-key-preference";
 
 type Row = Readonly<{
   key: string;
@@ -61,32 +67,44 @@ type Notice = Readonly<{
 }>;
 
 /** The message editor's own keys, shown read-only: it handles them before any shortcut. */
-const editorRows: readonly Row[] = [
-  ...composerFormats.map((format) => ({
-    title: format.label,
-    bindings: formatBindings(format),
-  })),
-  { title: "Add or edit link", bindings: linkBindings },
-  { title: "Undo", bindings: [{ key: "z", mod: true }] },
-  {
-    title: "Redo",
-    bindings: [
-      { key: "z", mod: true, shift: true },
-      { key: "y", mod: true },
-    ],
-  },
-  { title: "New line", bindings: [{ key: "Enter", shift: true }] },
-].map(({ title, bindings }, order) => ({
-  key: `editor:${title}`,
-  title,
-  owner: "Message formatting",
-  order,
-  readOnly: true,
-  defaults: bindings,
-  override: undefined,
-  effective: bindings,
-}));
-const EDITOR_FORMAT_CHORDS = editorRows.flatMap((row) => row.effective);
+const editorRows = (sendWithModEnter: boolean): readonly Row[] =>
+  [
+    ...composerFormats.map((format) => ({
+      title: format.label,
+      bindings: formatBindings(format),
+    })),
+    { title: "Add or edit link", bindings: linkBindings },
+    { title: "Undo", bindings: [{ key: "z", mod: true }] },
+    {
+      title: "Redo",
+      bindings: [
+        { key: "z", mod: true, shift: true },
+        { key: "y", mod: true },
+      ],
+    },
+    {
+      title: "Send message",
+      bindings: [
+        sendWithModEnter ? { key: "Enter", mod: true } : { key: "Enter" },
+      ],
+    },
+    {
+      title: "New line",
+      bindings: sendWithModEnter
+        ? [{ key: "Enter" }, { key: "Enter", shift: true }]
+        : [{ key: "Enter", shift: true }],
+    },
+  ].map(({ title, bindings }, order) => ({
+    key: `editor:${title}`,
+    title,
+    owner: "Message formatting",
+    order,
+    readOnly: true,
+    defaults: bindings,
+    override: undefined,
+    effective: bindings,
+  }));
+const EDITOR_FORMAT_CHORDS = editorRows(false).flatMap((row) => row.effective);
 
 /** Chords the message editor handles locally before the window dispatcher: undo/redo and line/document jumps. */
 const EDITOR_CHORDS: readonly KeyBinding[] = [
@@ -185,6 +203,7 @@ function useShortcutGroups({
     plugins.subscribe,
     plugins.snapshot,
   );
+  const sendWithModEnter = useSendWithModEnterPreference();
 
   const pluginName = (id: string) =>
     (configuration.status === "ready"
@@ -261,7 +280,7 @@ function useShortcutGroups({
       sortKey: "editor",
       description:
         "Built into the message editor. These work while you type and can't be changed.",
-      rows: editorRows,
+      rows: editorRows(sendWithModEnter),
     },
   ];
   return { overrides, error, rows, shownGroups };
@@ -315,6 +334,7 @@ export function ShortcutSettings({
   });
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const sendChord = apple ? "⌘ Enter" : "Ctrl+Enter";
   // A chord can become shared after capture (a plugin enabled later, a new
   // default in a release). The dispatcher then picks one silently, so each
   // affected row names the others.
@@ -405,6 +425,18 @@ export function ShortcutSettings({
     <section aria-labelledby="shortcut-settings-title">
       <Header id="shortcut-settings-title" title="Shortcuts" />
       <div className="grid gap-5">
+        <MessageKeyPreference
+          title="Sending messages"
+          label={`Send with ${sendChord}`}
+          description={`Enter adds a new line. ${sendChord} sends your message.`}
+          preference={sendKeyPreference}
+        />
+        <MessageKeyPreference
+          title="Editing messages"
+          label="Edit last message with Up Arrow"
+          description="When the composer is empty, Up Arrow edits your most recent editable message instead of selecting messages."
+          preference={editKeyPreference}
+        />
         {rows.length ? (
           <div className="grid gap-section-gap">
             {shownGroups.map((group) => (
@@ -466,6 +498,45 @@ export function ShortcutSettings({
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+function MessageKeyPreference({
+  title,
+  label,
+  description,
+  preference,
+}: {
+  title: string;
+  label: string;
+  description: string;
+  preference: typeof sendKeyPreference;
+}) {
+  const checked = preference.usePreference();
+  const [error, setError] = useState<string | null>(null);
+  const change = (enabled: boolean) => setError(preference.set(enabled));
+  return (
+    <section>
+      <InlineHeader title={title} />
+      <SettingsGroup>
+        <SwitchPreferenceRow
+          label={label}
+          description={description}
+          checked={checked}
+          onCheckedChange={change}
+        />
+      </SettingsGroup>
+      {error && (
+        <div role="alert" className="grid gap-3 text-body-sm text-standard">
+          <p className="m-0">{error}</p>
+          <div>
+            <Button type="button" onClick={() => change(checked)}>
+              Retry saving
+            </Button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

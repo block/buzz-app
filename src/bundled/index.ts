@@ -44,6 +44,10 @@ import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
+import draftsSentManifest from "./drafts-sent/manifest.json";
+import * as draftsSent from "./drafts-sent";
+import focusManifest from "./focus/manifest.json";
+import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
@@ -59,6 +63,8 @@ import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
 import typesafeManifest from "./typesafe/manifest.json";
 import * as typesafe from "./typesafe";
+import pluginDevelopmentManifest from "./plugin-development/manifest.json";
+import * as pluginDevelopment from "./plugin-development";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -160,9 +166,19 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...draftsSentManifest, apiVersion: 1 },
+    module: draftsSent,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...remindersManifest, apiVersion: 1 },
     module: reminders,
-    enabledByDefault: true,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...focusManifest, apiVersion: 1 },
+    module: focus,
+    enabledByDefault: false,
   },
   {
     manifest: { ...reposManifest, apiVersion: 1 },
@@ -202,7 +218,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },
     module: workflows,
-    enabledByDefault: true,
+    enabledByDefault: false,
   },
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
@@ -217,6 +233,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...typesafeManifest, apiVersion: 1 },
     module: typesafe,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...pluginDevelopmentManifest, apiVersion: 1 },
+    module: pluginDevelopment,
     enabledByDefault: true,
   },
 ];

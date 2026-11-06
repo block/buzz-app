@@ -1,6 +1,7 @@
 import type { EventData } from "./events";
+import { channelRowChannel, channelRowKind } from "./membership";
 import { reactionTarget } from "./reaction-target";
-import { CHANNEL_KINDS } from "./channel-kinds";
+import { channelSourceKind } from "./channel-kinds";
 
 const AUXILIARY = new Set([5, 7, 9005, 40003, 39005]);
 /** Visibility, not a second membership model. Reference-only auxiliaries need
@@ -15,7 +16,7 @@ export function eventVisibility(
   const homesById = new Map<string, string | undefined>();
   function home(event: EventData, depth = 0): string | undefined {
     if (homesById.has(event.id)) return homesById.get(event.id);
-    if (depth >= 32 || !CHANNEL_KINDS.includes(event.kind)) return undefined;
+    if (depth >= 32 || !channelSourceKind(event.kind)) return undefined;
     homesById.set(event.id, undefined);
     const homes = event.tags.filter(([name]) => name === "h");
     if (homes.length) {
@@ -39,6 +40,7 @@ export function eventVisibility(
     return channel;
   }
   function visible(event: EventData): boolean {
+    if (channelRowKind(event.kind) && !channelRowChannel(event)) return false;
     const cached = memo.get(event.id);
     if (cached !== undefined) return cached;
     if (visiting.has(event.id) || visiting.size >= 32) return false;

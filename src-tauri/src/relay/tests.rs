@@ -837,16 +837,22 @@ fn isolated_agent_ipc_probe() {
         }
     })).is_err());
     let id = "11111111-1111-4111-8111-111111111111";
-    assert!(invoke(
+    let agent_deletion = invoke(
         "relay_sign",
         serde_json::json!({
             "community": "https://relay.test", "event": {
                 "kind": 5, "created_at": 123,
                 "tags": [["h", id], ["a", format!("30620:{}:{id}", "a".repeat(64))]], "content": ""
             }
-        })
+        }),
     )
-    .is_err());
+    .unwrap();
+    verify(&agent_deletion);
+    assert_eq!(agent_deletion["pubkey"], public);
+    assert_eq!(
+        agent_deletion["tags"][1][1],
+        format!("30620:{}:{id}", "a".repeat(64))
+    );
     let deletion = invoke("relay_sign", serde_json::json!({
         "community": "https://relay.test", "event": {
             "kind": 5, "created_at": 123,
@@ -1803,6 +1809,73 @@ fn js_signs_emoji_sets_but_never_blossom_tokens() {
     assert!(validate_event("https://relay.test", &template(24242)).is_err());
 }
 
+/// Answers each request with `status` for `.thumb.webp` and the JPEG
+/// otherwise, and records every requested path.
+fn thumbnail_server(status: &'static str) -> (Url, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = paths.clone();
+    std::thread::spawn(move || {
+        for socket in listener.incoming() {
+            let mut socket = socket.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            let path = String::from_utf8_lossy(&bytes)
+                .split(' ')
+                .nth(1)
+                .unwrap()
+                .to_owned();
+            let response = if path.ends_with(".thumb.webp") {
+                format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\nConnection: close\r\n\r\njpeg".into()
+            };
+            seen.lock().unwrap().push(path);
+            socket.write_all(response.as_bytes()).unwrap();
+        }
+    });
+    (base, paths)
+}
+
+#[tokio::test]
+async fn webp_thumbnails_fall_back_to_jpeg_only_when_missing() {
+    let hash = "a".repeat(64);
+    let webp = format!("/media/{hash}.thumb.webp");
+    let jpeg = format!("/media/{hash}.thumb.jpg");
+    let (base, paths) = thumbnail_server("404 Not Found");
+    let response = serve_media(
+        &IdentityHost::fixture(),
+        None,
+        base.join(&webp).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.body(), b"jpeg");
+    assert_eq!(*paths.lock().unwrap(), [webp.clone(), jpeg]);
+
+    let (base, paths) = thumbnail_server("401 Unauthorized");
+    let status = serve_media(
+        &IdentityHost::fixture(),
+        None,
+        base.join(&webp).unwrap(),
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status, 401);
+    assert_eq!(*paths.lock().unwrap(), [webp]);
+
+    let png = Url::parse(&format!("https://relay.test/media/{hash}.png")).unwrap();
+    assert_eq!(jpeg_thumb(&png), None);
+}
+
 #[test]
 fn media_proxy_only_reaches_relay_blobs() {
     let hash = "a".repeat(64);
@@ -1810,6 +1883,7 @@ fn media_proxy_only_reaches_relay_blobs() {
         format!("https://relay.test/media/{hash}"),
         format!("https://relay.test/media/{hash}.png"),
         format!("https://relay.test:8443/media/{hash}.thumb.jpg"),
+        format!("https://relay.test/media/{hash}.thumb.webp"),
     ] {
         assert!(media_url(&target).is_some(), "{target}");
     }
@@ -1822,6 +1896,7 @@ fn media_proxy_only_reaches_relay_blobs() {
         format!("https://relay.test/media/{hash}#"),
         format!("https://relay.test/media/{hash}.png#buzz-anim=https%3A%2F%2Frelay.test%2Fmedia%2F{hash}.png"),
         format!("https://relay.test/media/{hash}.tar.gz"),
+        format!("https://relay.test/media/{hash}.thumb.png"),
         format!("https://relay.test/upload/{hash}"),
         format!("https://relay.test/media/{}", "A".repeat(64)),
         format!("https://relay.test/media/{hash}/../../query"),
@@ -2618,6 +2693,43 @@ async fn truncated_whole_videos_fail_and_are_fetched_again() {
 }
 
 #[tokio::test]
+async fn a_failed_spool_still_answers_the_bytes_it_wrote() {
+    let _serial = SPOOL_TESTS.lock().await;
+    let block = media_blocks::BLOCK;
+    let blob = media_blob(2 * block);
+    let length = 3 * block;
+    let (base, _, _) = whole_media_server(blob.clone(), Some(length), Duration::ZERO);
+    let url = base
+        .join(&format!("/media/{}.mp4", "b".repeat(64)))
+        .unwrap();
+    let upstream = reqwest::Client::new()
+        .get(url.clone())
+        .header("Range", "bytes=0-")
+        .send()
+        .await
+        .unwrap();
+    let spool = media_spool::open(&url, upstream, WHOLE_VIDEO_MAX)
+        .await
+        .unwrap();
+    // The tail never arrives, so this returns only once the copy has failed.
+    assert_eq!(
+        media_spool::read(spool.clone(), length - 4, length - 1)
+            .await
+            .unwrap_err(),
+        502
+    );
+    // A read that starts after the failure, and so never sees the copy's
+    // progress, still gets the bytes written before it.
+    let first = media_spool::read(spool, 0, block - 1).await.unwrap();
+    assert_eq!(first.body(), &blob[..block as usize]);
+    assert_eq!(
+        first.headers()["content-range"],
+        format!("bytes 0-{}/{length}", block - 1)
+    );
+    spool_files_deleted().await;
+}
+
+#[tokio::test]
 async fn abandoned_whole_video_downloads_stop_and_delete_their_file() {
     let _serial = SPOOL_TESTS.lock().await;
     let blob = media_blob(16 * media_blocks::BLOCK);
@@ -3401,7 +3513,7 @@ fn canvas_content_is_bounded_in_utf8_bytes() {
     let mut event = EventTemplate {
         kind: 40100,
         created_at: 100,
-        content: "é".repeat(12 * 1024),
+        content: "é".repeat(LIVE_CANVAS_BYTES / 2),
         tags: vec![vec![
             "h".into(),
             "11111111-1111-4111-8111-111111111111".into(),
@@ -3410,6 +3522,88 @@ fn canvas_content_is_bounded_in_utf8_bytes() {
     assert!(validate_event("https://relay.test", &event).is_ok());
     event.content.push('x');
     assert!(validate_event("https://relay.test", &event).is_err());
+}
+
+#[test]
+fn canvas_limits_mirror_the_shared_policy() {
+    let policy = include_str!("../../../src/features/channel-templates/canvas-limits.ts");
+    assert_eq!(LIVE_CANVAS_BYTES, 256 * 1024);
+    assert!(policy.contains("export const LIVE_CANVAS_BYTES = 256 * 1024;"));
+    assert_eq!(CANVAS_MAX_EVENT_BYTES, 512 * 1024 - 16);
+    assert!(policy.contains("export const CANVAS_FRAME_BYTES = 512 * 1024;"));
+    assert!(policy.contains("export const CANVAS_MAX_EVENT_BYTES = CANVAS_FRAME_BYTES - 16;"));
+    let model = include_str!("../../../src/features/channel-templates/model.ts");
+    assert!(model.contains("export const TEMPLATE_CANVAS_BYTES = 24 * 1024;"));
+    // The agent signer keeps its own copy.
+    assert_eq!(buzz_agent_controller::LIVE_CANVAS_BYTES, LIVE_CANVAS_BYTES);
+    assert_eq!(
+        buzz_agent_controller::CANVAS_MAX_EVENT_BYTES,
+        CANVAS_MAX_EVENT_BYTES
+    );
+}
+
+#[tokio::test]
+async fn canvas_signing_through_ipc_bounds_content_and_the_complete_event() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |content: String| {
+        let event = EventTemplate {
+            kind: 40100,
+            created_at: 1_700_000_000,
+            content,
+            tags: vec![vec![
+                "h".into(),
+                "11111111-1111-4111-8111-111111111111".into(),
+            ]],
+        };
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let size = |event: &serde_json::Value| serde_json::to_vec(event).unwrap().len();
+    let largest = sign("x".repeat(LIVE_CANVAS_BYTES)).unwrap();
+    assert_eq!(
+        largest["content"].as_str().unwrap().len(),
+        LIVE_CANVAS_BYTES
+    );
+    assert!(sign("x".repeat(LIVE_CANVAS_BYTES + 1)).is_err());
+
+    // Quotes escape to two bytes, so in-limit content can make a complete
+    // event exactly at, then one byte over, the relay's bound.
+    let overhead = size(&sign(String::new()).unwrap());
+    let quotes = CANVAS_MAX_EVENT_BYTES - overhead - LIVE_CANVAS_BYTES;
+    let escaped = |extra: usize| {
+        format!(
+            "{}{}",
+            "\"".repeat(quotes + extra),
+            "x".repeat(LIVE_CANVAS_BYTES - quotes - extra)
+        )
+    };
+    let boundary = sign(escaped(0)).unwrap();
+    assert_eq!(size(&boundary), CANVAS_MAX_EVENT_BYTES);
+    assert_eq!(
+        sign(escaped(1)).unwrap_err(),
+        serde_json::json!("Relay event is too large")
+    );
 }
 
 #[test]
@@ -4264,4 +4458,19 @@ async fn finished_native_reads_release_their_cancel_slot() {
             Err(error) => assert_eq!(error.to_string(), "relay down"),
         }
     }
+}
+
+#[test]
+fn reaction_author_address_is_accepted_by_packaged_signing() {
+    let event = EventTemplate {
+        kind: 7,
+        created_at: 123,
+        content: "❤️".into(),
+        tags: vec![
+            vec!["h".into(), "room".into()],
+            vec!["e".into(), "a".repeat(64)],
+            vec!["p".into(), "b".repeat(64)],
+        ],
+    };
+    assert!(validate_event("https://relay.test", &event).is_ok());
 }

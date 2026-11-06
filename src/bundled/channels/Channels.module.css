@@ -23,8 +23,16 @@
 .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
   grid-template-columns: minmax(20rem, 1fr) minmax(
       0,
-      max(19.75rem, var(--secondary-panel-width, calc(100% / 2.1)))
+      max(
+        var(--split-floor, 19.75rem),
+        var(--secondary-panel-width, var(--split-default, calc(100% / 2.1)))
+      )
     );
+}
+/* An open companion keeps PanelFrame's floor and default (Panels .frame/.dock). */
+.board[data-companion] {
+  --split-floor: 18.75rem;
+  --split-default: 26.25rem;
 }
 /* Only the board and its dock read the split width. Reset it below them so a
    resize frame restyles those readers, not the timeline and panels inside. */
@@ -441,6 +449,23 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   overflow: hidden;
   white-space: nowrap;
 }
+.scopeSectionTitle {
+  color: var(--text-standard);
+}
+/* Collapsed headings stand in for their hidden rows, using the same unread
+   evidence as the sidebar edge cues. Muted destinations stay quiet. */
+.channelSection:has(
+    > .sectionContent
+      :is([data-channel-unread], [data-channel-activity]):not(
+        [data-channel-muted]
+      )
+  )
+  > .sectionHeader
+  > details:not([open])
+  .sectionTitle {
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
 .contributionFeedback {
   margin: 0;
   padding: var(--space-1) var(--space-2);
@@ -461,6 +486,9 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   place-items: center;
   color: var(--text-subtle);
   transition: transform 160ms ease-out;
+}
+.channelSection[data-persistent-chevron] .sectionChevron {
+  opacity: 1;
 }
 .sectionHeader details:not([open]) .sectionChevron {
   transform: rotate(-90deg);
@@ -542,7 +570,10 @@ html[data-keyboard-navigation]
   flex: 1;
 }
 .panelStack {
-  width: max(19.75rem, var(--secondary-panel-width, calc(100cqw / 2.1)));
+  width: max(
+    var(--split-floor, 19.75rem),
+    var(--secondary-panel-width, var(--split-default, calc(100cqw / 2.1)))
+  );
   position: relative;
   border-inline-start: 1px solid var(--border-standard);
   grid-column: 2;
@@ -782,10 +813,12 @@ html[data-keyboard-navigation]
   border-end-start-radius: inherit;
   border-end-end-radius: inherit;
 }
-.settingsDetails > div:has(.settingsDetailAction:hover) {
+.settingsDetails
+  > div:has(.settingsDetailAction:not(.settingsLabelAction):hover) {
   background: var(--affordance-panel-hover);
 }
-.settingsDetails > div:has(.settingsDetailAction:active) {
+.settingsDetails
+  > div:has(.settingsDetailAction:not(.settingsLabelAction):active) {
   background: var(--affordance-subtle-pressed);
 }
 .settingsDetailAction {
@@ -818,7 +851,8 @@ html[data-keyboard-navigation]
 }
 .settingsDetailAction[aria-busy="true"] .settingsDetailIcon,
 .settingsDetailAction:hover .settingsDetailIcon,
-.settingsDetailAction:focus-visible .settingsDetailIcon {
+.settingsDetailAction:focus-visible .settingsDetailIcon,
+.settingsDetails > div:hover .settingsLabelAction .settingsDetailIcon {
   opacity: 1;
   transform: translateX(0);
 }
@@ -834,7 +868,8 @@ html[data-keyboard-navigation]
   .settingsTitleAction:focus-visible .settingsTitlePencil,
   .settingsDetailIcon,
   .settingsDetailAction:hover .settingsDetailIcon,
-  .settingsDetailAction:focus-visible .settingsDetailIcon {
+  .settingsDetailAction:focus-visible .settingsDetailIcon,
+  .settingsDetails > div:hover .settingsLabelAction .settingsDetailIcon {
     transform: none;
     transition: none;
   }
@@ -842,11 +877,18 @@ html[data-keyboard-navigation]
 .settingsDetailAction:focus-visible {
   outline: none;
 }
-.settingsDetailAction::after {
+.settingsDetailAction:not(.settingsLabelAction)::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
+}
+/* The value holds its own links, so only the label opens the editor. Its
+   24px target overhangs the label's line box without moving the row. */
+.settingsLabelAction {
+  width: fit-content;
+  min-height: var(--space-6);
+  margin-block: calc((1lh - var(--space-6)) / 2);
 }
 .settingsDetails > div + div {
   border-top: 1px solid var(--border-standard);
@@ -854,6 +896,19 @@ html[data-keyboard-navigation]
 .settingsDetails dd {
   margin: var(--space-1) 0 0;
   color: var(--text-subtle);
+}
+/* The switch trails its description; an error spans the row below both. */
+.settingsSwitch > dd {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+.settingsSwitch > dd > [role="alert"] {
+  grid-column: 1 / -1;
+}
+.settingsSwitch[data-disabled] > dt {
+  color: var(--text-unavailable);
 }
 .settingsId {
   overflow-wrap: anywhere;
@@ -1073,6 +1128,11 @@ html[data-keyboard-navigation]
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* The dd spaces the value from its label and sets the values' line height. */
+.settingsDescription > :first-child {
+  margin-top: 0;
+  line-height: inherit;
+}
 .detailsEditor {
   display: grid;
   gap: var(--space-4);
@@ -1143,4 +1203,28 @@ html[data-keyboard-navigation]
 }
 .sidebar [data-selected] :is(.priorityDot, .threadActivityDot) {
   background: var(--text-row-selected);
+}
+
+/* Feather only message history; the header and composer stay sharp. */
+.conversation [data-message-scroller] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--space-4),
+    black calc(100% - var(--space-4)),
+    transparent
+  );
+}
+@media (forced-colors: active), (prefers-reduced-transparency: reduce) {
+  .conversation [data-message-scroller] {
+    mask-image: none;
+  }
+}
+
+.conversationBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
 }

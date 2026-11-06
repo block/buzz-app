@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
@@ -566,7 +567,8 @@ function ThreadMessages({
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
         return channel.channelType === "stream" ||
-          channel.channelType === "forum"
+          channel.channelType === "forum" ||
+          (channel.channelType === "solo" && channel.joinRole === "guest")
           ? "joinable"
           : "preview";
       }
@@ -1049,6 +1051,18 @@ function ThreadMessages({
     [snapshot.root, snapshot.replies, activitySnapshot, agentPubkeys, rootId],
   );
   const rootActivity = rootId ? rootPresentation.byRow.get(rootId) : undefined;
+  // A stopped note may follow only a reply that is always shown: collapsed
+  // branches do not mount their rows.
+  const rootReplies = useMemo(
+    () =>
+      activityPresentation(
+        tree.children.get(undefined) ?? [],
+        activitySnapshot,
+        agentPubkeys,
+        rootId,
+      ),
+    [tree, activitySnapshot, agentPubkeys, rootId],
+  );
   const liveAgents = useLiveConversationAgents(session, channelId, rootId);
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
   const joinsLive =
@@ -1451,6 +1465,13 @@ function ThreadMessages({
     : undefined;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     const chronologicalSiblings = tree.children.get(parent) ?? [];
+    // Outcome captions stay within one displayed level, so a collapsed branch
+    // cannot hide the reply that owns a request's outcome.
+    const requestRows = new Map(
+      chronologicalSiblings.map((row) => [row.id, row]),
+    );
+    if (parent === undefined && snapshot.root)
+      requestRows.set(snapshot.root.id, snapshot.root);
     const presentation = activityPresentation(
       chronologicalSiblings,
       activitySnapshot,
@@ -1512,6 +1533,7 @@ function ThreadMessages({
         : undefined;
       const renderMessage = (row: ChannelMessage, inside = false) => {
         const recordedActivity = presentation.byRow.get(row.id);
+        const requestId = presentation.replyRequests.get(row.id);
         return (
           <MessageRow
             keepMounted={keepActivityMounted}
@@ -1519,6 +1541,11 @@ function ThreadMessages({
               row.id,
               presentation.representedAgents.get(row.id),
             )}
+            repliedAgents={stableActivity.agents(
+              `replied:${row.id}`,
+              presentation.repliedAgents.get(row.id),
+            )}
+            stoppedRequest={requestId ? requestRows.get(requestId) : undefined}
             recordedActivity={stableActivity.activity(
               row.id,
               recordedActivity,
@@ -1578,11 +1605,14 @@ function ThreadMessages({
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
-          {!parent && row.replyParentId && row.replyParentId !== rootId && (
-            <p className={styles.threadNote}>
-              Earlier reply unavailable in loaded history.
-            </p>
-          )}
+          {!parent &&
+            row.replyParentId &&
+            row.replyParentId !== rootId &&
+            !requestRows.has(row.replyParentId) && (
+              <p className={styles.threadNote}>
+                Earlier reply unavailable in loaded history.
+              </p>
+            )}
 
           {group && (
             <>
@@ -1850,6 +1880,10 @@ function ThreadMessages({
                 snapshot.root.id,
                 rootPresentation.representedAgents.get(snapshot.root.id),
               )}
+              repliedAgents={stableActivity.agents(
+                `replied:${snapshot.root.id}`,
+                rootReplies.repliedAgents.get(snapshot.root.id),
+              )}
               recordedActivity={stableActivity.activity(
                 snapshot.root.id,
                 rootActivity,
@@ -1901,6 +1935,14 @@ function ThreadMessages({
             )}
             {renderReplies(undefined)}
           </ol>
+          {!preview && !positioning && composerRoot && (
+            <AgentConnectionSetup
+              key={`${channelId}:${rootId}`}
+              session={session}
+              channel={session.channels?.get?.(channelId)}
+              rows={rows}
+            />
+          )}
           {!positioning && rootId && (
             <TypingIndicator
               audience="agents"

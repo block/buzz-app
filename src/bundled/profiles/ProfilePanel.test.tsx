@@ -3,7 +3,14 @@ import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import userEvent from "@testing-library/user-event";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -13,8 +20,10 @@ import {
   openProfileTranscript,
   profileTarget,
   profileActivityViewTarget,
+  profileHistoryTarget,
 } from "../../features/profiles/target";
 import { ProfilePanel } from "./ProfilePanel";
+import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import type { Navigation } from "../../features/navigation/controller";
 import type {
   Agent,
@@ -367,12 +376,24 @@ function renderAgentActivity(
   rootId?: string,
   transcript: "opened" | "shown again" | false = false,
   navigation?: Navigation,
+  channelType?: "solo" | "dm" | "stream",
 ) {
   const owner = createRelaySession(null);
+  // The originating channel, as the community lists it.
+  const listed = channelType && {
+    ...owner.session.channels.list(),
+    channels: [{ id: "originating-channel", name: "Originating", channelType }],
+  };
+  const session = listed
+    ? {
+        ...owner.session,
+        channels: { ...owner.session.channels, list: () => listed },
+      }
+    : owner.session;
   const snapshot = {
     status: "ready" as const,
     generation: 1,
-    session: owner.session,
+    session,
     ...(navigation && { scope: `https://relay.test:${viewer}`, viewer }),
   };
   const relay: RelayData = {
@@ -382,6 +403,7 @@ function renderAgentActivity(
     disconnect() {},
     clearCache: async () => {},
   };
+  const offered = vi.fn();
   const type = {
     key: "test/echo",
     title: "Echo",
@@ -400,14 +422,23 @@ function renderAgentActivity(
       }) {
         // Like a type's Activity tab: it acts on the request as it shows.
         const [first] = useState(!!initialTranscript);
+        // Like a settings section, it can hold an unsaved change.
+        const [dirty, setDirty] = useState(false);
+        useAgentSaveState(dirty, false, role === "settings");
         // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
-        useEffect(
-          () => initialTranscript?.done(),
-          [initialTranscript?.opening],
-        );
+        useEffect(() => {
+          if (!initialTranscript) return;
+          offered(initialTranscript.opening);
+          initialTranscript.done();
+        }, [initialTranscript?.opening]);
         return (
           <>
             <p>Echo {title.toLowerCase()}</p>
+            {role === "settings" && (
+              <button type="button" onClick={() => setDirty(true)}>
+                Make a change
+              </button>
+            )}
             {first && <p>Transcript first</p>}
             {conversation && (
               <p>
@@ -455,8 +486,7 @@ function renderAgentActivity(
     registerTab: () => {},
     controlAttention: () => {},
   } as unknown as Agents;
-  const target =
-    profileActivityViewTarget(key, { transcript: !!transcript }) ?? "";
+  let target = profileActivityViewTarget(key) ?? "";
   // Like Working now: the opener asks as it opens the target.
   if (transcript === "opened") openProfileTranscript(target, () => true);
   const panel = (mount: number) => (
@@ -484,11 +514,50 @@ function renderAgentActivity(
     },
     {
       target,
+      offered,
+      navigate: (next: string) => {
+        target = next;
+        view.rerender(panel(mounts));
+      },
       /** Remounts the retained profile, as on returning to its channel. */
       remount: () => view.rerender(panel(++mounts)),
     },
   );
 }
+
+it.each([false, "opened"] as const)(
+  "keeps an Activity profile mounted across version addresses (transcript %s)",
+  (transcript) => {
+    const dispose = renderAgentActivity(
+      [
+        { title: "Settings", role: "settings" },
+        { title: "Activity", role: "activity" },
+      ],
+      "thread-root",
+      transcript,
+    );
+    try {
+      const activity = screen.getByText("Echo activity");
+      const pane = activity.closest('[role="tabpanel"]') as HTMLElement;
+      pane.scrollTop = 636;
+      for (const target of [
+        profileHistoryTarget(dispose.target),
+        profileHistoryTarget(dispose.target, {
+          side: "instructions",
+          id: "b".repeat(64),
+        }),
+        dispose.target,
+      ]) {
+        dispose.navigate(target);
+        expect(screen.getByText("Echo activity")).toBe(activity);
+        expect(pane.scrollTop).toBe(636);
+        expect(!!screen.queryByText("Transcript first")).toBe(!!transcript);
+      }
+    } finally {
+      dispose();
+    }
+  },
+);
 
 it("opens an agent's activity on its type's Activity tab, the profile's only one", async () => {
   const dispose = renderAgentActivity(
@@ -517,6 +586,30 @@ it("opens an agent's activity on its type's Activity tab, the profile's only one
     dispose();
   }
 });
+
+it.each([
+  ["solo", "channel"],
+  ["dm", "channel"],
+  ["stream", "thread-root"],
+] as const)(
+  "gives the Activity tab a %s's message as its %s, as agents keep it",
+  (channelType, place) => {
+    const dispose = renderAgentActivity(
+      [{ title: "Activity", role: "activity" }],
+      "thread-root",
+      false,
+      undefined,
+      channelType,
+    );
+    try {
+      expect(
+        screen.getByText(`Opened from originating-channel/${place}`),
+      ).toBeVisible();
+    } finally {
+      dispose();
+    }
+  },
+);
 
 it("lets the Activity tab open a turn's channel or thread in this community, only with navigation", () => {
   const navigate = vi.fn(async () => ({ status: "opened" as const }));
@@ -623,12 +716,68 @@ it("keeps a new opening for a profile on another section to itself, so a remount
   try {
     await user.click(screen.getByRole("tab", { name: "Identity" }));
     act(() => void openProfileTranscript(dispose.target, () => true));
-    // Not remounted, the profile still has the opening for its Activity tab.
-    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    // Not remounted, the profile shows Activity for the opening itself.
+    expect(
+      screen.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
     expect(screen.getByText("Transcript first")).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Identity" }));
     await user.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("keeps an unsaved change until the reader chooses to leave it for a transcript", async () => {
+  const dispose = renderAgentActivity(
+    [
+      { title: "Settings", role: "settings" },
+      { title: "Activity", role: "activity" },
+    ],
+    "thread-root",
+  );
+  const user = userEvent.setup();
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("button", { name: "Make a change" }));
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    // The section guard asks first, as choosing the Activity tab does.
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    expect(screen.getByText("Echo settings")).toBeVisible();
+    expect(dispose.offered).not.toHaveBeenCalled();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Discard changes" }),
+    );
+    expect(
+      screen.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    expect(dispose.offered).toHaveBeenCalledOnce();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks an Activity tab already open for the transcript, rather than opening another", () => {
+  const dispose = renderAgentActivity(
+    [{ title: "Activity", role: "activity" }],
+    "thread-root",
+  );
+  try {
+    expect(dispose.offered).not.toHaveBeenCalled();
+    const opened: string[] = [];
+    act(
+      () =>
+        void openProfileTranscript(dispose.target, (next) => {
+          opened.push(next);
+          return true;
+        }),
+    );
+    // The opener reaches the same Activity destination this tab shows.
+    expect(opened).toEqual([profileActivityViewTarget(key)]);
+    expect(dispose.offered).toHaveBeenCalledOnce();
   } finally {
     dispose();
   }
@@ -682,6 +831,9 @@ it("links an owned agent whose type's plugin is off to Manage plugins", async ()
     addedTabs: () => [],
   } as unknown as Agents;
   const navigation = {
+    snapshot: () => ({
+      entry: { id: "profile", target: { version: 1, kind: "home" } },
+    }),
     open: vi.fn(async () => ({ status: "opened" as const })),
   } as unknown as Navigation;
   try {

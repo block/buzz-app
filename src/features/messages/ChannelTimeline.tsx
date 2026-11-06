@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -21,12 +22,14 @@ import {
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
+import type { MessageAttention } from "../relay/unread";
 import {
   useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   Fragment,
   type KeyboardEvent,
 } from "react";
@@ -36,6 +39,7 @@ import {
   continuesMessageGroup,
   publicMessageNeighbor,
 } from "./message-grouping";
+import { calendarDay } from "../../shared/datetime";
 import type {
   Attachment,
   ChannelMessage,
@@ -54,6 +58,7 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { moveMessageSelection } from "./message-selection";
 import { useMessageSelection } from "./use-message-selection";
+import { useMessageVisit } from "./MessageManagement";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -97,6 +102,31 @@ type ReadingPosition = {
   bottom: boolean;
   anchor?: { id: string; y: number };
 };
+type NewMessageBoundary = {
+  token: object;
+  session: RelaySession;
+  scope: string;
+  channelId: string;
+  captured: boolean;
+  messageId?: string;
+};
+type NewMessageBoundaryBaseline = {
+  token: object;
+  session: RelaySession;
+  scope: string;
+  channelId: string;
+  revision?: number;
+  messageIds: ReadonlySet<string>;
+  attention: Map<string, Pick<MessageAttention, "unread" | "forced"> | null>;
+};
+// Inline message seeks can unmount the timeline without ending its channel visit.
+// Weak keys retain entry evidence only for the existing MessageManagement token.
+const visitBoundaries = new WeakMap<
+  object,
+  { boundary: NewMessageBoundary; baseline: NewMessageBoundaryBaseline }
+>();
+const unknownUnreadSync = Object.freeze({ completeness: "unknown" as const });
+const TIMELINE_PLACE = "timeline";
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -221,14 +251,23 @@ function Timeline({
       : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
+  // The place a reveal left: for its visit, with the exact follow state; for
+  // the channel, with the 80 px rule every other place is saved with. The
+  // channel's applies until a newer place replaces the reveal's.
+  const revealedPlace = useRef<{
+    visit: ReadingPosition;
+    channel: ReadingPosition;
+  }>(undefined);
   // Reload and quit never unmount: also save where scrolling settles. Only a
   // changed place is written; a following reader's own end scrolls are not.
   const written = useRef<string | undefined>(undefined);
   const savePosition = useCallback(() => {
+    const position =
+      revealedPlace.current?.visit === savedPosition.current
+        ? revealedPlace.current.channel
+        : savedPosition.current;
     // A bottom place restores at the latest message; its row is noise.
-    const place = savedPosition.current?.bottom
-      ? { bottom: true }
-      : savedPosition.current;
+    const place = position?.bottom ? { bottom: true } : position;
     const revision = JSON.stringify(place);
     if (transient || revision === written.current) return;
     if (writeView(scope, `scroll:${channelId}`, place))
@@ -265,6 +304,238 @@ function Timeline({
     () => membershipRows(visibleRows),
     [visibleRows],
   );
+  const messageVisit = useMessageVisit(queries, channelId);
+  const ownsMessageVisit = messageVisit !== undefined && messageVisit !== null;
+  const [timelineVisit] = useState<object>(() => ({}));
+  const visitToken = messageVisit?.token ?? timelineVisit;
+  const retainedBoundary = visitBoundaries.get(visitToken);
+  const retainedVisit =
+    retainedBoundary?.baseline.session === queries &&
+    retainedBoundary.baseline.scope === scope &&
+    retainedBoundary.baseline.channelId === channelId
+      ? retainedBoundary
+      : undefined;
+  const [newMessageBoundary, setNewMessageBoundary] =
+    useState<NewMessageBoundary>(
+      () =>
+        retainedVisit?.boundary ?? {
+          token: visitToken,
+          session: queries,
+          scope,
+          channelId,
+          captured: false,
+        },
+    );
+  const boundaryMatchesVisit =
+    newMessageBoundary.token === visitToken &&
+    newMessageBoundary.session === queries &&
+    newMessageBoundary.scope === scope &&
+    newMessageBoundary.channelId === channelId;
+  const boundaryPending = !boundaryMatchesVisit || !newMessageBoundary.captured;
+  const unreadTarget = useMemo(
+    () => ({ kind: "channel" as const, channelId }),
+    [channelId],
+  );
+  const subscribeUnread = useCallback(
+    (listener: () => void) =>
+      messageVisit?.active === true &&
+      messageVisit?.failed === false &&
+      boundaryPending
+        ? queries.unread.subscribe(unreadTarget, listener)
+        : () => {},
+    [
+      boundaryPending,
+      messageVisit?.active,
+      messageVisit?.failed,
+      queries.unread,
+      unreadTarget,
+    ],
+  );
+  const getUnreadSnapshot = useCallback(
+    () =>
+      ownsMessageVisit ? queries.unread.snapshot(unreadTarget) : undefined,
+    [ownsMessageVisit, queries.unread, unreadTarget],
+  );
+  const unreadSnapshot = useSyncExternalStore(
+    subscribeUnread,
+    getUnreadSnapshot,
+    getUnreadSnapshot,
+  );
+  const [, setUnreadEvidenceRevision] = useState(0);
+  const subscribeUnreadSync = useCallback(
+    (listener: () => void) =>
+      messageVisit?.active === true &&
+      messageVisit?.failed === false &&
+      boundaryPending
+        ? queries.unread.subscribeSync(() => {
+            listener();
+            setUnreadEvidenceRevision((revision) => revision + 1);
+          })
+        : () => {},
+    [
+      boundaryPending,
+      messageVisit?.active,
+      messageVisit?.failed,
+      queries.unread,
+    ],
+  );
+  const getUnreadSync = useCallback(
+    () => (ownsMessageVisit ? queries.unread.sync() : unknownUnreadSync),
+    [ownsMessageVisit, queries.unread],
+  );
+  const unreadSync = useSyncExternalStore(
+    subscribeUnreadSync,
+    getUnreadSync,
+    getUnreadSync,
+  );
+  const boundaryBaseline = useRef<NewMessageBoundaryBaseline | undefined>(
+    retainedVisit?.baseline,
+  );
+  if (
+    !boundaryBaseline.current ||
+    boundaryBaseline.current.token !== visitToken ||
+    boundaryBaseline.current.session !== queries ||
+    boundaryBaseline.current.scope !== scope ||
+    boundaryBaseline.current.channelId !== channelId
+  )
+    boundaryBaseline.current = retainedVisit?.baseline ?? {
+      token: visitToken,
+      session: queries,
+      scope,
+      channelId,
+      ...(ownsMessageVisit && messageVisit?.active
+        ? { revision: messageVisit.entryReadRevision }
+        : {}),
+      messageIds: messageVisit?.entryMessageIds ?? new Set(),
+      attention: new Map(messageVisit?.entryAttention),
+    };
+  const baseline = boundaryBaseline.current;
+  const entryAttention =
+    boundaryPending &&
+    ownsMessageVisit &&
+    messageVisit?.active === true &&
+    unreadSync.completeness === "snapshot"
+      ? chronologicalRows
+          .filter(
+            (row) =>
+              !row.membership &&
+              !row.huddle &&
+              row.audience !== "agents" &&
+              row.authorId !== queries.viewer,
+          )
+          .map((row) => ({
+            row,
+            attention: queries.unread.attention(channelId, row.id),
+          }))
+      : [];
+  // An unread count without a loaded, classifiable row is not an exact boundary.
+  const noUnreadEvidence =
+    unreadSnapshot?.observedCount === 0 && unreadSnapshot?.attentionCount === 0;
+  const boundaryCandidate = (() => {
+    if (!boundaryPending || !ownsMessageVisit || messageVisit?.active !== true)
+      return { ready: false };
+    // Later paging cannot recover entry-time read evidence for unloaded rows.
+    if (!messageVisit.entryHistoryComplete) return { ready: true };
+    if (
+      baseline.revision !== undefined &&
+      queries.unread.revision() !== baseline.revision
+    )
+      return { ready: true };
+    if (
+      window.status !== "ready" ||
+      window.freshness !== "verified" ||
+      window.refreshing ||
+      window.loadingOlder ||
+      window.hasMore ||
+      window.historyLimited ||
+      unreadSync.completeness !== "snapshot"
+    )
+      return { ready: false };
+    if (
+      unreadSnapshot?.coverage !== "observed" ||
+      unreadSnapshot?.freshness !== "observed"
+    )
+      return { ready: false };
+    if (!chronologicalRows.length) return { ready: noUnreadEvidence };
+    for (const { row, attention } of entryAttention) {
+      // Backdated live arrivals must neither define nor erase the entry boundary.
+      if (!baseline.messageIds.has(row.id)) continue;
+      if (attention.status === "unknown" || attention.pending)
+        return { ready: false };
+      // Remote merges do not advance the local revision. Only this prefix can
+      // determine entry's boundary; later rows cannot invalidate it.
+      // Null preserves unresolved entry evidence instead of adopting its later state.
+      const previous = baseline.attention.get(row.id);
+      if (
+        previous !== undefined &&
+        (previous === null ||
+          previous.unread !== attention.unread ||
+          previous.forced !== attention.forced)
+      )
+        return { ready: true };
+      // Ineligible means no attention category, not that an incoming row is read.
+      if (attention.forced || attention.unread)
+        return { ready: true, messageId: row.id };
+    }
+    return { ready: true };
+  })();
+  if (!boundaryMatchesVisit)
+    setNewMessageBoundary(
+      retainedVisit?.boundary ?? {
+        token: visitToken,
+        session: queries,
+        scope,
+        channelId,
+        captured: false,
+      },
+    );
+  else if (
+    !newMessageBoundary.captured &&
+    boundaryCandidate.ready &&
+    messageVisit?.active === true &&
+    messageVisit?.ready === true &&
+    messageVisit?.failed === false
+  )
+    setNewMessageBoundary({
+      token: visitToken,
+      session: queries,
+      scope,
+      channelId,
+      captured: true,
+      ...(boundaryCandidate.messageId
+        ? { messageId: boundaryCandidate.messageId }
+        : {}),
+    });
+  useLayoutEffect(() => {
+    if (!ownsMessageVisit || !boundaryMatchesVisit || !messageVisit?.active)
+      return;
+    for (const { row, attention } of entryAttention) {
+      if (baseline.messageIds.has(row.id) && !baseline.attention.has(row.id))
+        baseline.attention.set(
+          row.id,
+          attention.status === "unknown" || attention.pending
+            ? null
+            : { unread: attention.unread, forced: attention.forced },
+        );
+    }
+    visitBoundaries.set(visitToken, { boundary: newMessageBoundary, baseline });
+  }, [
+    ownsMessageVisit,
+    boundaryMatchesVisit,
+    messageVisit?.active,
+    entryAttention,
+    baseline,
+    visitToken,
+    newMessageBoundary,
+  ]);
+  const newMessageBoundaryId =
+    boundaryMatchesVisit &&
+    newMessageBoundary.captured &&
+    messageVisit?.active === true &&
+    messageVisit?.ready === true &&
+    messageVisit?.failed === false
+      ? newMessageBoundary.messageId
+      : undefined;
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -293,15 +564,31 @@ function Timeline({
   );
   const activity = presentation.groups;
   const stableActivity = useStableRowActivity();
+  const rowsById = useMemo(
+    () => new Map(chronologicalRows.map((row) => [row.id, row])),
+    [chronologicalRows],
+  );
+  const stoppedRequest = (id: string) => {
+    const request = presentation.replyRequests.get(id);
+    return request ? rowsById.get(request) : undefined;
+  };
   const liveAgents = useLiveConversationAgents(
     queries,
     channelId,
     undefined,
     false,
   );
+  // Back/Forward to a link's visit returns to where the reader left it instead
+  // of replaying the link, unless that place can no longer be shown.
+  const [lostPlace, setLostPlace] = useState<AbortSignal>();
+  const returning =
+    !inlineTarget &&
+    !!navigation?.traversal &&
+    lostPlace !== navigation.signal &&
+    navigation.position(TIMELINE_PLACE) !== undefined;
   const targetId =
     inlineTarget?.messageId ??
-    (navigation?.target.kind === "conversation"
+    (navigation?.target.kind === "conversation" && !returning
       ? navigation.target.messageId
       : undefined);
   // Activity updates rebuild the hidden-row filter without changing its
@@ -402,11 +689,10 @@ function Timeline({
       ?.querySelector<HTMLButtonElement>("button")
       ?.focus({ preventScroll: true });
   }, [rows, focusedActivityId]);
-  const contentSignature = useMemo(
-    () => geometrySignature(visibleRows, profiles, resolveName),
-    [visibleRows, profiles, resolveName],
-  );
-  const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
+  // Only read at mount and unmount, so build it on demand.
+  const signature = () =>
+    `${geometrySignature(visibleRows, profiles, resolveName)}:${JSON.stringify([...foldedActivity].sort())}`;
+  // Mount the saved boundary before restoration measures its divider inset.
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
     row.id === focusedActivityId ||
@@ -415,7 +701,10 @@ function Timeline({
     pinnedIds.has(row.id) ||
     disclosures
       .get(row.id)
-      ?.ids.some((id) => pinnedIds.has(id) || id === focusedMessageId)
+      ?.ids.some((id) => pinnedIds.has(id) || id === focusedMessageId) ||
+    (row.id === newMessageBoundaryId &&
+      !savedPosition.current?.bottom &&
+      row.id === savedPosition.current?.anchor?.id)
       ? [index]
       : [],
   );
@@ -477,6 +766,7 @@ function Timeline({
   const heldReader = useRef<
     { id: string; y: number; intent: number } | undefined
   >(undefined);
+  const previousBoundaryId = useRef<string | undefined>(undefined);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
   const touchY = useRef<number | undefined>(undefined);
@@ -555,7 +845,7 @@ function Timeline({
         previous &&
         (upwardGesture.current ||
           (!layoutOwned &&
-            element.clientWidth === previous.width &&
+            edge.current?.clientWidth === previous.width &&
             element.clientHeight === previous.viewport &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
@@ -574,7 +864,7 @@ function Timeline({
       measuredPosition.current = {
         offset: element.scrollTop,
         height: element.scrollHeight,
-        width: element.clientWidth,
+        width: edge.current?.clientWidth ?? 0,
         viewport: element.clientHeight,
       };
     },
@@ -653,6 +943,19 @@ function Timeline({
   // Positioning waits for the exact reveal, then must run again: a reveal that
   // leaves the reader at the bottom keeps following late row measurement.
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
+  // The row the last reveal focused; a return may take focus back from it.
+  const revealedRow = useRef<string | undefined>(undefined);
+  // The visit last revealed or returned to. A relay rebind brings it back with
+  // a new signal, and a thread visit leaves it shown; neither moves the reader.
+  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
+    undefined,
+  );
+  // The attempt that presented it; leaving records that visit's place.
+  const [presented, setPresented] = useState<AbortSignal>();
+  const present = useCallback((visit: PageNavigation) => {
+    presentedVisit.current = { entryId: visit.entryId, signal: visit.signal };
+    setPresented(visit.signal);
+  }, []);
   const completeTarget = useCallback(() => {
     const element = scroller.current;
     // Only a reveal clamped at the scroll limit follows. A near-bottom reveal
@@ -662,15 +965,27 @@ function Timeline({
       element.scrollHeight - element.clientHeight - element.scrollTop > 1
     )
       follow.current = false;
+    // The reveal's placement is the reader's place even when it moved nothing
+    // and so no scroll event records it. Its visit keeps the follow state, so
+    // Back doesn't re-align the row; the channel's place keeps the 80 px rule.
+    if (element) {
+      const channel = positionAt(element);
+      savedPosition.current = { ...channel, bottom: follow.current };
+      revealedPlace.current = { visit: savedPosition.current, channel };
+    }
+    revealedRow.current = targetId;
+    if (navigation && targetSignal === navigation.signal) present(navigation);
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetSignal]);
+  }, [navigation, targetId, targetSignal, present]);
+  // A covering Members dialog owns focus.
+  const focusesTarget = !(
+    navigation?.target.kind === "conversation" &&
+    navigation.target.panel === "members"
+  );
   useMessageReveal({
     scroller,
-    focus: !(
-      navigation?.target.kind === "conversation" &&
-      navigation.target.panel === "members"
-    ),
+    focus: focusesTarget,
     settled,
     messageId: targetId,
     signal: targetSignal,
@@ -680,6 +995,88 @@ function Timeline({
     complete: completeTarget,
     hold: holdTarget,
   });
+  // A return restores its visit's place the way an opening restores the
+  // channel's, whether the timeline mounts for it or showed another visit. The
+  // visit still presented only completes. A place whose row isn't loaded opens
+  // as the link first did.
+  useLayoutEffect(() => {
+    if (!navigation || navigation.signal.aborted) return;
+    if (presentedVisit.current?.entryId !== navigation.entryId)
+      presentedVisit.current = undefined;
+    const prior = presentedVisit.current;
+    if (!returning || prior?.signal === navigation.signal) return;
+    if (prior) {
+      present(navigation);
+      navigation.complete({ status: "opened" });
+      return;
+    }
+    const place = navigation.position(TIMELINE_PLACE) as ReadingPosition;
+    const id = place.anchor?.id ?? "";
+    if (
+      place.anchor &&
+      !place.bottom &&
+      renderedRowIndex(rows, visibleRows, containedOwners.get(id) ?? id) < 0
+    ) {
+      setLostPlace(navigation.signal);
+      return;
+    }
+    present(navigation);
+    // A place inside agent activity opens its group, as an opening's place does.
+    const steps =
+      place.anchor && !place.bottom
+        ? activity.find((group) => group.ids.includes(id))?.ids
+        : undefined;
+    if (steps)
+      setExpandedActivity((expanded) => new Set([...expanded, ...steps]));
+    intent.current++;
+    savedPosition.current = place;
+    follow.current = place.bottom;
+    restoredAnchor.current = undefined;
+    measuredPosition.current = null;
+    userScrolled.current = false;
+    upwardGesture.current = false;
+    settled.current = false;
+    navigation.complete({ status: "opened" });
+    // Focus left on the page, or on the row the last reveal focused, moves to
+    // the restored reading. Focus placed anywhere else stays.
+    const element = scroller.current;
+    const focused = document.activeElement;
+    if (
+      element &&
+      focusesTarget &&
+      navigation.focus !== "preserve" &&
+      (!focused ||
+        focused === document.body ||
+        (focused instanceof HTMLElement &&
+          revealedRow.current !== undefined &&
+          element.contains(focused) &&
+          focused.dataset.messageId === revealedRow.current))
+    )
+      element.focus({ preventScroll: true });
+  }, [
+    navigation,
+    returning,
+    rows,
+    visibleRows,
+    containedOwners,
+    activity,
+    focusesTarget,
+    present,
+  ]);
+  // Leaving a link's visit once it was presented, revealed or returned to, by
+  // navigating on or unmounting, records where the reader was for Back/Forward.
+  useLayoutEffect(() => {
+    if (
+      navigation?.target.kind !== "conversation" ||
+      !navigation.target.messageId ||
+      presented !== navigation.signal
+    )
+      return;
+    return () => {
+      if (savedPosition.current)
+        navigation.savePosition(TIMELINE_PLACE, savedPosition.current);
+    };
+  }, [navigation, presented]);
   // A pending saved row is the reader's place: following the latest message
   // until it loads is not catching up past it.
   const restoring = useCallback(
@@ -732,6 +1129,8 @@ function Timeline({
   // reader's latest row through those measurements, until reader input that
   // follows them ends.
   useLayoutEffect(() => {
+    const boundaryChanged = previousBoundaryId.current !== newMessageBoundaryId;
+    previousBoundaryId.current = newMessageBoundaryId;
     const element = scroller.current;
     const list = element?.querySelector("ol");
     const index = rows.findIndex(
@@ -755,6 +1154,7 @@ function Timeline({
     if (
       !id ||
       (!moved &&
+        !boundaryChanged &&
         rows.length <= edges.current.order.length &&
         !(
           heldReader.current?.id === id &&
@@ -764,7 +1164,20 @@ function Timeline({
       return;
     // New rows can leave the initial offset unchanged. Hold through their
     // measurements, but leave ordinary prepend follow-up renders to Virtua.
-    correctScrollTop(element, moved);
+    const row = element.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(id)}"]`,
+    );
+    // A divider changes the anchor's inset inside its virtual item before
+    // Virtua commits the new item height. Hold the same message through both.
+    const delta =
+      boundaryChanged && row
+        ? row.getBoundingClientRect().top -
+          element.getBoundingClientRect().top -
+          reader.current.y
+        : moved;
+    // WebKit truncates fractional scrollTop writes; use the nearest pixel
+    // when a caption's fractional line height changes the message inset.
+    correctScrollTop(element, boundaryChanged ? Math.round(delta) : delta);
     // The row's offset from the viewport, as last placed by the reader.
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
@@ -863,7 +1276,7 @@ function Timeline({
         // Follow the same item's delta without mixing its inner DOM offset in.
         if (row === undefined && next !== undefined && logical !== undefined)
           delta = next - logical;
-        correctScrollTop(element, delta);
+        correctScrollTop(element, boundaryChanged ? Math.round(delta) : delta);
         lastScrollTop = element.scrollTop;
       }
       logical = logicalTop();
@@ -900,20 +1313,22 @@ function Timeline({
     element.ownerDocument.addEventListener("pointerup", done);
     element.ownerDocument.addEventListener("pointercancel", done);
     return () => release(true);
-  }, [rows, prepend, containedOwners]);
+  }, [rows, prepend, containedOwners, newMessageBoundaryId]);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
-    const measured = element.clientWidth;
+    // The observed spacer shares the message column's capped width. Using the
+    // outer scrollport misses rewraps caused by the Appearance preference.
+    const measured = edge.current?.clientWidth ?? 0;
     initialCache.current = geometry.get(
       channelId,
-      latest.current.signature,
+      latest.current.signature(),
       measured,
     );
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
       const next = {
-        width: element.clientWidth,
+        width: edge.current?.clientWidth ?? 0,
         height: element.clientHeight,
         edgeHeight: edge.current?.getBoundingClientRect().height ?? 0,
       };
@@ -955,7 +1370,7 @@ function Timeline({
       if (handle.current)
         geometry.set(
           channelId,
-          latest.current.signature,
+          latest.current.signature(),
           latest.current.width,
           handle.current.cache,
         );
@@ -1085,13 +1500,14 @@ function Timeline({
           y: anchor.y,
         };
         const element = scroller.current;
-        const target = containedOwners.has(anchor.id)
-          ? element?.querySelector<HTMLElement>(
-              `[data-message-id="${CSS.escape(anchor.id)}"]`,
-            )
-          : undefined;
-        // A contained step shares its virtual row with earlier history.
-        // Once mounted, include that inner offset in the saved placement.
+        const target =
+          containedOwners.has(anchor.id) || row.id === newMessageBoundaryId
+            ? element?.querySelector<HTMLElement>(
+                `[data-message-id="${CSS.escape(restoredAnchor.current.id)}"]`,
+              )
+            : undefined;
+        // Contained history and an unread divider precede the saved message
+        // inside its virtual row. Include that inner offset only once.
         const innerOffset =
           target && element
             ? target.getBoundingClientRect().top -
@@ -1206,6 +1622,7 @@ function Timeline({
     updateJumpToLatest,
     revealMessageId,
     containedOwners,
+    newMessageBoundaryId,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
@@ -1330,7 +1747,7 @@ function Timeline({
         const element = event.currentTarget;
         if (
           settled.current &&
-          element.clientWidth === size.width &&
+          edge.current?.clientWidth === size.width &&
           element.clientHeight === size.height
         )
           recordPosition(
@@ -1365,7 +1782,7 @@ function Timeline({
         if (
           v &&
           settled.current &&
-          element.clientWidth === size.width &&
+          edge.current?.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
           recordPosition(
@@ -1428,7 +1845,7 @@ function Timeline({
             if (
               element &&
               settled.current &&
-              element.clientWidth === size.width &&
+              edge.current?.clientWidth === size.width &&
               element.clientHeight === size.height &&
               !follow.current &&
               !restoredAnchor.current &&
@@ -1457,10 +1874,8 @@ function Timeline({
             const day =
               index === 0
                 ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+                : calendarDay(rows[index - 1]?.createdAt ?? 0) !==
+                  calendarDay(row.createdAt);
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
@@ -1468,6 +1883,11 @@ function Timeline({
                     row.id,
                     presentation.representedAgents.get(row.id),
                   )}
+                  repliedAgents={stableActivity.agents(
+                    `replied:${row.id}`,
+                    presentation.repliedAgents.get(row.id),
+                  )}
+                  stoppedRequest={stoppedRequest(row.id)}
                   recordedActivity={stableActivity.activity(
                     row.id,
                     presentation.byRow.get(row.id),
@@ -1525,10 +1945,8 @@ function Timeline({
                         const before = rows[first - 1];
                         return (
                           (!before ||
-                            new Date(before.createdAt * 1000).toDateString() !==
-                              new Date(
-                                row.createdAt * 1000,
-                              ).toDateString()) && (
+                            calendarDay(before.createdAt) !==
+                              calendarDay(row.createdAt)) && (
                             <DayDivider createdAt={row.createdAt} />
                           )
                         );
@@ -1555,6 +1973,20 @@ function Timeline({
                         setExpandedActivity(next);
                       }}
                     />
+                  </div>
+                )}
+                {row.id === newMessageBoundaryId && (
+                  <div
+                    className={styles.newMessages}
+                    data-new-messages-boundary
+                  >
+                    <hr
+                      className="sr-only select-none"
+                      aria-label="New messages"
+                    />
+                    <span className="select-none" aria-hidden="true">
+                      New messages
+                    </span>
                   </div>
                 )}
                 <ActivityExpansion
@@ -1584,6 +2016,12 @@ function Timeline({
         </Virtualizer>
       )}
       <div ref={activityTail}>
+        <AgentConnectionSetup
+          key={channelId}
+          session={queries}
+          rows={window.rows}
+          channel={queries.channels.get?.(channelId)}
+        />
         <TypingIndicator
           audience="agents"
           inFlow

@@ -56,6 +56,9 @@ function setup() {
     switchCommunity: () => {
       connection = { ...connection, scope: "https://other.test:viewer" };
     },
+    replaceSession: () => {
+      connection = { ...connection, session: {} };
+    },
   };
 }
 
@@ -84,6 +87,14 @@ it("continues into the activity panel only after the navigation opened in the sa
   settle({ status: "opened" });
   await Promise.resolve();
   expect(x.requestOpen).not.toHaveBeenCalled();
+
+  x = setup();
+  x.open.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  h.options?.openActivity(activity, target);
+  x.replaceSession();
+  settle({ status: "opened" });
+  await Promise.resolve();
+  expect(x.requestOpen).not.toHaveBeenCalled();
 });
 
 it("requests the handed-off action for the row only after main opened the message in the same connection", async () => {
@@ -93,6 +104,7 @@ it("requests the handed-off action for the row only after main opened the messag
   h.options?.handoff(target, messageId, action);
   await Promise.resolve();
   expect(messageActionRequests.snapshot()).toEqual({
+    session: expect.anything(),
     scope: "https://relay.test:viewer",
     channelId: target.channelId,
     messageId,
@@ -112,6 +124,14 @@ it("requests the handed-off action for the row only after main opened the messag
   x.open.mockReturnValue(new Promise((resolve) => (settle = resolve)));
   h.options?.handoff(target, messageId, action);
   x.switchCommunity();
+  settle({ status: "opened" });
+  await Promise.resolve();
+  expect(messageActionRequests.snapshot()).toBeUndefined();
+
+  x = setup();
+  x.open.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  h.options?.handoff(target, messageId, action);
+  x.replaceSession();
   settle({ status: "opened" });
   await Promise.resolve();
   expect(messageActionRequests.snapshot()).toBeUndefined();

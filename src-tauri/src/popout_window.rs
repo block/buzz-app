@@ -121,6 +121,9 @@ impl MainOperation {
 pub(crate) enum Action {
     OpenLink,
     OpenInMain,
+    /// Bring the main window forward after a handoff admitted through the
+    /// composer bridge; nothing is forwarded to main.
+    FocusMain,
     Older,
     Retry,
     RetryMessage,
@@ -470,12 +473,15 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
             }
             return Ok(());
         }
-        // Both continue in the main window, which may be hidden on macOS.
-        Action::OpenInMain | Action::OpenLink => {
+        // All continue in the main window, which may be hidden on macOS.
+        Action::OpenInMain | Action::OpenLink | Action::FocusMain => {
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.show();
                 let _ = main.unminimize();
                 let _ = main.set_focus();
+            }
+            if action == Action::FocusMain {
+                return Ok(());
             }
         }
         _ => {}
@@ -749,6 +755,12 @@ mod tests {
             actions: Channel::new(|_| Ok(())),
             updates: None,
         }
+    }
+    #[test]
+    fn focus_main_is_a_companion_action_with_no_payload() {
+        let action: Action = serde_json::from_str("\"focusMain\"").unwrap();
+        assert!(action == Action::FocusMain);
+        assert_eq!(serde_json::to_string(&action).unwrap(), "\"focusMain\"");
     }
     #[test]
     fn commands_are_gated_by_caller_label() {

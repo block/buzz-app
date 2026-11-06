@@ -77,12 +77,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // The companion never runs a plugin action itself.
     handoff: (target, messageId, action) => {
       const open = messageTarget(target, messageId);
-      const scope = ctx.relay.snapshot().scope;
+      const { scope, session } = ctx.relay.snapshot();
       if (!open || !scope) return;
       void ctx.navigation.open(open).then((result) => {
+        // The same session, not just the same scope: a replaced session is
+        // another conversation and the handoff is dropped.
         if (result.status !== "opened") return;
-        if (ctx.relay.snapshot().scope !== scope) return;
+        const now = ctx.relay.snapshot();
+        if (now.scope !== scope || now.session !== session) return;
         messageActionRequests.request({
+          session,
           scope,
           channelId: target.channelId,
           messageId,
@@ -95,13 +99,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     // shows it, through the existing panel opener with this channel context.
     openActivity: (activityTarget, target) => {
       const open = messageTarget(target, target.threadRootId);
-      const scope = ctx.relay.snapshot().scope;
+      const { scope, session } = ctx.relay.snapshot();
       if (!open || !scope) return;
       void ctx.navigation.open(open).then((result) => {
-        // Only a navigation that opened, in the same connection it started
-        // from, continues into the panel; a failure or a switch does not.
+        // Only a navigation that opened, from the same session it started
+        // in, continues into the panel; a failure or a replacement does not.
         if (result.status !== "opened") return;
-        if (ctx.relay.snapshot().scope !== scope) return;
+        const now = ctx.relay.snapshot();
+        if (now.scope !== scope || now.session !== session) return;
         ctx.panels.requestOpen({
           target: activityTarget,
           channelId: target.channelId,

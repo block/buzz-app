@@ -3030,7 +3030,12 @@ it("opens a handed-off plugin action on the row that shows that message: a dialo
         }}
       />,
     );
-    const base = { scope, channelId: row.channelId, messageId: row.id };
+    const base = {
+      session,
+      scope,
+      channelId: row.channelId,
+      messageId: row.id,
+    };
     // Another connection's or message's request is not this row's.
     act(() =>
       messageActionRequests.request({

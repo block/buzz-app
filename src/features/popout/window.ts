@@ -22,6 +22,7 @@ export type PopoutView = PopoutThreadView & {
 export type PopoutAction =
   | "openLink"
   | "openInMain"
+  | "focusMain"
   | "older"
   | "retry"
   | "retryMessage"
@@ -172,6 +173,8 @@ export function createPopoutWindows(
           options.openActivity?.(text, entry.target);
         else options.openLink?.(text);
         return;
+      case "focusMain":
+        return; // Native handles it and forwards nothing.
       case "openInMain":
         options.openLink?.(
           `buzz://message?channel=${encodeURIComponent(entry.target.channelId)}&id=${entry.target.threadRootId}&thread=${entry.target.threadRootId}`,

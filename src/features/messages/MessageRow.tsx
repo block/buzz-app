@@ -106,6 +106,7 @@ import { useForwardMessage } from "./ForwardMessage";
 import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
 import {
   MenuIcon,
+  MenuGroup,
   MenuItem,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
@@ -489,7 +490,10 @@ function MessageRowContent({
       : undefined;
   // A handed-off action (from a pop-out window) for this exact row: the exact
   // contribution instance opens as if chosen here; a menu item's menu opens.
-  const [menuOpenRequest, setMenuOpenRequest] = useState(0);
+  const [menuOpenRequest, setMenuOpenRequest] = useState<{
+    id: number;
+    activate: number;
+  }>();
   const handedOff = useSyncExternalStore(
     messageActionRequests.subscribe,
     messageActionRequests.snapshot,
@@ -499,6 +503,8 @@ function MessageRowContent({
     if (
       !handedOff ||
       !scope ||
+      !session ||
+      handedOff.session !== session ||
       handedOff.scope !== scope ||
       handedOff.channelId !== row.channelId ||
       handedOff.messageId !== row.id
@@ -508,12 +514,30 @@ function MessageRowContent({
       (entry) =>
         entry.key === handedOff.key && entry.revision === handedOff.revision,
     );
-    const taken = messageActionRequests.take(scope, row.channelId, row.id);
+    const taken = messageActionRequests.take(
+      session,
+      scope,
+      row.channelId,
+      row.id,
+    );
     if (!taken || !action) return;
-    if (action.placement === "menu") setMenuOpenRequest((n) => n + 1);
-    else if (session)
-      setOpenAction({ action, session, messageId: row.id });
-  }, [handedOff, scope, session, row.channelId, row.id, actions]);
+    // A menu contribution owns its activation (its item's click): the menu
+    // opens and that contribution's item is activated as a chosen item is.
+    if (action.placement === "menu")
+      setMenuOpenRequest((previous) => ({
+        id: (previous?.id ?? 0) + 1,
+        activate: contributionKey(action),
+      }));
+    else activateAction(action);
+  }, [
+    handedOff,
+    scope,
+    session,
+    row.channelId,
+    row.id,
+    actions,
+    activateAction,
+  ]);
   useEffect(() => {
     if (openAction && !opened) setOpenAction(undefined);
   }, [openAction, opened]);
@@ -591,18 +615,23 @@ function MessageRowContent({
       .filter((action) => action.placement !== "toolbar" || contextMenu)
       .map((action) =>
         action.placement === "menu" && session && extensions?.actions ? (
-          <ContributionBoundary key={contributionKey(action)} fallback={null}>
-            <WithTargetOpener
-              component={action.component}
-              props={{
-                message: row,
-                session,
-                close: () => setOpenAction(undefined),
-              }}
-              registry={extensions.actions}
-              entry={action}
-            />
-          </ContributionBoundary>
+          <MenuGroup
+            key={contributionKey(action)}
+            data-contribution={contributionKey(action)}
+          >
+            <ContributionBoundary fallback={null}>
+              <WithTargetOpener
+                component={action.component}
+                props={{
+                  message: row,
+                  session,
+                  close: () => setOpenAction(undefined),
+                }}
+                registry={extensions.actions}
+                entry={action}
+              />
+            </ContributionBoundary>
+          </MenuGroup>
         ) : (
           <MenuItem key={action.key} onClick={() => activateAction(action)}>
             {action.icon && (

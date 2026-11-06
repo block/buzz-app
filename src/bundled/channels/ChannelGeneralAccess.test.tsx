@@ -675,3 +675,29 @@ it("uses plugin resource wording in read-only access without editing reads", () 
   ).toHaveTextContent("Only record members can read.");
   expect(h.load).not.toHaveBeenCalled();
 });
+
+it("rechecks plugin participation policy after consent was staged", async () => {
+  const h = harness();
+  h.load.mockResolvedValue({ ...base, visibility: "private" });
+  const user = userEvent.setup();
+  const view = render(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      policy={{ ...recordPolicy, allowPublic: true }}
+    />,
+  );
+  await select(user, "General access", "Public");
+  const confirm = await screen.findByRole("button", { name: "Change access" });
+  expect(confirm).toBeEnabled();
+  view.rerender(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      policy={recordPolicy}
+    />,
+  );
+  expect(confirm).toBeDisabled();
+  await user.click(confirm);
+  expect(h.save).not.toHaveBeenCalled();
+});

@@ -2232,3 +2232,39 @@ it("cannot grant a plugin guest member-management authority", async () => {
   );
   expect(change).not.toHaveBeenCalled();
 });
+
+it("rechecks plugin add policy while its confirmation is open", async () => {
+  const t = await setup("owner", "absent");
+  const change = vi.fn(async () => {});
+  const props: ChannelMembersDialogProps = {
+    session: t.session,
+    channelId: id,
+    close() {},
+    trigger: { current: null },
+    memberActions: { canAdd: true, pending: false, change },
+  };
+  const view = pluginPicker(t, props);
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  await t.user.click(
+    await screen.findByRole("button", { name: /^Add Morgan .* as$/ }),
+  );
+  await t.user.click(
+    await screen.findByRole("menuitem", {
+      name: "Admin Manage this channel and its members.",
+    }),
+  );
+  const confirm = await screen.findByRole("button", { name: "Add as admin" });
+  expect(confirm).toBeEnabled();
+  view.rerender(
+    <ToastProvider>
+      <ChannelMembersDialog
+        {...props}
+        memberActions={{ canAdd: false, pending: false, change }}
+      />
+    </ToastProvider>,
+  );
+  expect(confirm).toBeDisabled();
+  fireEvent.click(confirm);
+  expect(change).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+});

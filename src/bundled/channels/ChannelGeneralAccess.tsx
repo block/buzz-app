@@ -191,6 +191,10 @@ function ChannelGeneralAccessEditor({
   const solo = soloLabels(base?.labels);
   const place = policy?.subject ?? (solo ? "chat" : "channel");
   const restrictPublic = solo || policy?.allowPublic === false;
+  const policyAllowsChoice =
+    !restrictPublic ||
+    choice?.visibility !== "public" ||
+    choice.joinRole === "guest";
   const access = base ? generalAccessValue(base) : "";
   const Icon =
     access === "public"
@@ -231,7 +235,9 @@ function ChannelGeneralAccessEditor({
     if (
       !controller ||
       busy.current ||
-      (check ? attempt?.status !== "unconfirmed" : !base || !choice || locked)
+      (check
+        ? attempt?.status !== "unconfirmed"
+        : !base || !choice || locked || !policyAllowsChoice)
     )
       return;
     if (check) section.current?.focus();
@@ -400,7 +406,7 @@ function ChannelGeneralAccessEditor({
                 </Button>
                 <Button
                   variant="prominent"
-                  disabled={locked}
+                  disabled={locked || !policyAllowsChoice}
                   onClick={() => void apply()}
                 >
                   Change access

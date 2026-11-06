@@ -2367,7 +2367,7 @@ it("keeps audio and video players between their original image runs", () => {
 });
 
 it.each([true, false])(
-  "uses smaller shared avatars without shrinking thread profile controls (clickable=%s)",
+  "keeps timeline-sized thread avatars and shrinks only nested ones (clickable=%s)",
   (clickable) => {
     const props = {
       row: { ...row, authorId: "a".repeat(64) },
@@ -2392,7 +2392,7 @@ it.each([true, false])(
     view.rerender(<MessageRow {...props} />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      "small",
+      "default",
     );
     view.unmount();
   },

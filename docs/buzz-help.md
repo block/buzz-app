@@ -117,10 +117,12 @@ Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, then select **Authorize**. The app
 gets full access as that agent: every Buzz tool the agent has, including tools
 plugins add later, the Nexus workers the agent may run, and changes to Buzz
-settings on this device. It can disable plugins at once; installing, updating,
-enabling or removing one needs your confirmation. The app cannot read files on
-this device directly, wake the agent's own sessions, or assume a current
-conversation. The app completes setup automatically. Keys stay
+settings on this device. It can wake the agent in its conversations, and post
+any file the agent can read on this device, from the agent's workspace. An
+agent that runs on an execution target reads files only in a conversation, so
+the app cannot send its files. It can disable plugins at once; installing,
+updating, enabling or removing one needs your confirmation. The app cannot
+assume a current conversation. The app completes setup automatically. Keys stay
 in Buzz. Only authorize an app when you started its setup. The displayed name
 comes from that app. Protected agents cannot use this connection. Keep Buzz
 open. An unavailable agent cannot authorize access. Enable its runtime plugin

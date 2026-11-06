@@ -184,6 +184,11 @@ export class GooseRuntime {
     return sessionPrompts(this.agentStore, "goose", agent);
   }
 
+  /** A file as the agent's sessions read one: in its saved workspace. */
+  workspaceFile(agent: Agent, path: string) {
+    return this.desktop.readFile(path, { cwd: config(agent.config).workspace });
+  }
+
   /** The desktop host's methods goose agents run with. */
   private get desktop() {
     const { host } = this;

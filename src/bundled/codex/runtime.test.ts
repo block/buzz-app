@@ -3811,6 +3811,41 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   });
 });
 
+it("reads a file outside its turns in its resolved saved workspace, but not on an execution target", async () => {
+  type Saved = Parameters<CodexRuntime["workspaceFile"]>[0];
+  const agent = {
+    key: pubkey,
+    pubkey,
+    config: { workspace: "~/.buzz", model: "test-model" },
+  } as unknown as Saved;
+  const f = fixture();
+  const bytes = await f.runtime.workspaceFile(
+    agent,
+    "notes.txt",
+    new AbortController().signal,
+  );
+  expect(new TextDecoder().decode(bytes)).toBe("FILE CONTENT");
+  expect(f.fileReads).toEqual([{ cwd: "/home/test/.buzz", path: "notes.txt" }]);
+  const remote = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => ({ provider: "test/guest" }),
+  );
+  await expect(
+    remote.runtime.workspaceFile(
+      agent,
+      "notes.txt",
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("only in a conversation on its execution target");
+  expect(remote.fileReads).toEqual([]);
+});
 it("returns a failed send to Codex for correction without ending its turn", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));

@@ -731,6 +731,19 @@ export class CodexRuntime {
     return ready;
   }
 
+  /** A file as the agent's turns read one here: in its saved workspace. On
+   * an execution target only a conversation's session can read it. */
+  async workspaceFile(agent: Agent, path: string, signal: AbortSignal) {
+    if (this.target || (await this.inspect?.(agent.key)))
+      throw new Error(
+        `This agent reads files only in a conversation on its execution target, not ${path}`,
+      );
+    const workspace = await this.workspace(
+      this.resolveConfig(agent.config).workspace,
+    );
+    signal.throwIfAborted();
+    return readFile(this.spawn, workspace, path, signal);
+  }
   private async workspace(path: string) {
     if (this.target) return this.target.resolveDirectory(this.target.workspace);
     if (absoluteWorkspace(path)) return path;

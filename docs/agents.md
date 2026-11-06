@@ -110,11 +110,16 @@ A plugin's tools appear and disappear as it is enabled, disabled or removed;
 new built-in tools appear without a contract change. The agent's own refusals,
 relay permissions, owner confirmations (plugin requests, agent creation and
 updates) and plugin isolation apply unchanged; `plugin_disable` acts at once,
-as it does for the agent. `self_handoff` is unavailable: its wake would read as
-the agent's own watch or timer. Memory reads use the agent's
+as it does for the agent. `self_handoff` wakes the agent as its own does, but
+the trigger's `from` is `{ external: true }` and the turn shows an `<app-wake>`
+section saying an external app the owner approved sent it, not a message, a
+watch or another of the agent's conversations. Memory reads use the agent's
 own memory. There is no current conversation, so tools that default to one
-need explicit channel, thread or message IDs. File reads (`path`, `files`) are
-unavailable, because an agent's runtime reads files where its process runs.
+need explicit channel, thread or message IDs. File reads (`path`, `files`) go
+to the agent type's `readFile`: Claude, Codex, Pi and goose read relative to
+the agent's saved workspace on this device, as their sessions do. A Claude or
+Codex agent on an execution target refuses, since only a conversation's session
+opens that target, and a type without `readFile` refuses as it does natively.
 Protected agents cannot connect. Connection credentials must stay out of logs
 and messages.
 

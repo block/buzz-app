@@ -427,8 +427,11 @@ export type AgentWake = Readonly<{
   text: string;
 }>;
 /** The conversation a self-handoff came from: no channel for a watch's or
- * timer's standalone turn. */
-export type HandoffSource = Readonly<{ channel?: string; root?: string }>;
+ * timer's standalone turn. `external` for an external app acting as the
+ * agent, which has no conversation of its own. */
+export type HandoffSource = Readonly<
+  { channel?: string; root?: string } | { external: true }
+>;
 /** A wake the agent sends itself, `from` another of its conversations. */
 export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
@@ -872,6 +875,15 @@ export type AgentType<Config = unknown> = {
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
   runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
+  /** Reads a file for an unprotected agent outside its turns, as its tools
+   * read one they send: relative to its saved workspace, where it runs.
+   * Rejects where only a conversation's session has a place to read it, as
+   * on an execution target. Without it, its agents read none there. */
+  readFile?(
+    agent: Agent<Config>,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<Uint8Array>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Its turns run in this page, so closing or reloading the app stops them.
@@ -2785,13 +2797,20 @@ export class AgentsService extends Service implements Agents {
     const host = this.ctx.host;
     if (!host?.serveMcp)
       throw new Error("External connections require Buzz desktop.");
-    // A run's handle: the app acts as the agent itself, with its settings and
-    // plugin requests, not as a plugin acting through it. Not its handoff: a
-    // wake would read as the agent's own watch or timer, which this app is not.
+    // A run's handle: the app acts as the agent itself, with its settings,
+    // plugin requests and handoff, not as a plugin acting through it. Its
+    // wakes say they came from the app, not from the agent's conversations.
     const run = this.runners.handle(key, undefined, true);
     if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
-    const { handoff: _, ...handle } = run;
+    const { handoff } = run;
+    const handle: AgentHandle = {
+      ...run,
+      ...(handoff && {
+        handoff: ({ from: _, ...wake }: AgentHandoff) =>
+          handoff({ ...wake, from: { external: true } }),
+      }),
+    };
     if (handle.protection)
       throw new Error("Protected agents cannot use external connections.");
     const relay = this.relay(key);
@@ -2859,10 +2878,16 @@ export class AgentsService extends Service implements Agents {
             check,
             relayAuthor: source.relayAuthor?.(),
             signingAuthority: source.workflowAuthority(),
-            // A runtime reads files where its process runs, which may be
-            // another machine; this connection has no such place.
-            read: async () => {
-              throw new Error("External connections cannot read files.");
+            // Where the agent's type reads them outside its turns, if it can.
+            read: async (path) => {
+              const current = this.agent(key);
+              const read =
+                current &&
+                !current.protection &&
+                this.types().find((type) => type.key === current.type)
+                  ?.readFile;
+              if (!read) throw new Error(`This agent cannot read ${path}`);
+              return read(current, path, signal);
             },
             memories: (slug) => source.memoryListing(signal, slug),
           });

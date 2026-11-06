@@ -22,7 +22,7 @@ function fixture(events: BuzzEvent[] = [], settings = false) {
     id: "d".repeat(64),
   }));
   const read = vi.fn(async () => {
-    throw new Error("External connections cannot read files.");
+    throw new Error("This agent cannot read /tmp/private");
   });
   const client = {
     pubkey: "a".repeat(64),

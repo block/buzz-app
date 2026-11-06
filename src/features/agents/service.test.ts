@@ -179,6 +179,7 @@ async function setup({
   syncedSettings = undefined as AgentType<Config>["syncedSettings"],
   protection = undefined as true | undefined,
   retire = undefined as AgentType<Config>["retire"],
+  readFile = undefined as AgentType<Config>["readFile"],
   /** How `run` answers, from the first delivery on. */
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
@@ -292,6 +293,7 @@ async function setup({
     run,
     ...(protection ? { protection } : {}),
     ...(retire ? { retire } : {}),
+    ...(readFile ? { readFile } : {}),
     ...(runOnce ? { runOnce } : {}),
     ...(sessionControls
       ? {
@@ -13445,6 +13447,7 @@ describe("full external agent access", () => {
     scopes: readonly import("./external-connection").ExternalScope[] = [
       "agent",
     ],
+    options: Pick<NonNullable<Parameters<typeof setup>[0]>, "readFile"> = {},
   ) {
     vi.stubEnv(
       "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
@@ -13455,6 +13458,7 @@ describe("full external agent access", () => {
       mood = next;
     });
     const f = await setup({
+      ...options,
       deviceSettings: createDeviceSettings([
         {
           key: "example.mood",
@@ -13566,17 +13570,12 @@ describe("full external agent access", () => {
     }
   });
 
-  it("reads the agent's memory and refuses files and self-handoff", async () => {
+  it("reads the agent's memory, and files only where its type reads them", async () => {
     const f = await fixture();
     try {
       const reply = await f.call("mem_get", {});
       expect(reply.result.content[0]?.text).not.toMatch(/cannot read memory/);
-      expect(
-        await f.call("self_handoff", { channel, text: "Read your files" }),
-      ).toHaveProperty(
-        "result.content.0.text",
-        "Self-handoff is unavailable here",
-      );
+      // The echo type reads no files outside its turns: its native refusal.
       expect(
         await f.call("send", {
           channel,
@@ -13586,12 +13585,80 @@ describe("full external agent access", () => {
         }),
       ).toHaveProperty(
         "result.content.0.text",
-        "External connections cannot read files.",
+        "This agent cannot read /etc/hosts",
       );
       expect(f.native.publish).not.toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ kind: 9 }),
       );
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it("reads a file the way the agent's type does, in its saved workspace", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const readFile = vi.fn(
+      async (_agent: Agent<Config>, _path: string, signal: AbortSignal) => {
+        await held;
+        signal.throwIfAborted();
+        return new TextEncoder().encode("notes");
+      },
+    );
+    const f = await fixture(["agent"], { readFile });
+    try {
+      const sent = f.call("send", {
+        channel,
+        text: "Notes attached",
+        audience: "everyone",
+        files: ["notes.txt"],
+      });
+      await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+      const [agent, path, signal] = readFile.mock.calls[0] ?? [];
+      expect(agent).toMatchObject({ key: bot, config: { reply: "ok" } });
+      expect(path).toBe("notes.txt");
+      expect(signal?.aborted).toBe(false);
+      release();
+      expect(await sent).not.toHaveProperty("result.isError");
+      expect(f.native.upload).toHaveBeenCalled();
+    } finally {
+      release();
+      await f.cleanup();
+    }
+    // Closing the connection cancels what it still reads.
+    expect(readFile.mock.calls[0]?.[2].aborted).toBe(true);
+  });
+
+  it("hands off as the app, never as the agent's own conversation or a watch", async () => {
+    const root = "e".repeat(64);
+    const f = await fixture();
+    f.native.query.mockImplementation(async (_member, filters) => {
+      const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
+      if (filter?.kinds?.includes(39000))
+        return [event("meta", { kind: 39000, tags: [["d", channel]] })];
+      return filter?.ids?.includes(root) ? [event(root)] : [];
+    });
+    try {
+      expect(
+        await f.call("self_handoff", { channel, thread: root, text: "Look" }),
+      ).toHaveProperty(
+        "result.content.0.text",
+        `Handed off to thread ${root}.`,
+      );
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const { trigger } = f.run.mock.calls[0]?.[0] ?? {};
+      expect(trigger).toMatchObject({
+        type: "plugin",
+        from: { external: true },
+        channel,
+        root,
+        text: "Look",
+      });
+      expect(trigger).not.toHaveProperty("plugin");
+      expect(trigger).not.toHaveProperty("from.channel");
     } finally {
       await f.cleanup();
     }

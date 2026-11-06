@@ -467,6 +467,20 @@ export class ClaudeRuntime {
     if (remote) this.confirmedRemote.add(agent);
     return remote;
   }
+  /** A file as the agent's processes read one here: in its saved workspace.
+   * On an execution target only a conversation's session can read it. */
+  async workspaceFile(agent: Agent, path: string, signal: AbortSignal) {
+    if (await this.isRemote(agent.key))
+      throw new Error(
+        `This agent reads files only in a conversation on its execution target, not ${path}`,
+      );
+    return readFile(
+      this.spawn,
+      this.resolveConfig(agent.config).workspace,
+      path,
+      signal,
+    );
+  }
 
   /** The models the agent's next turn can run on, with their effort levels.
    * Without a pick it uses its own: the configured one, or else the one its

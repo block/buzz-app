@@ -159,6 +159,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     models: (agent) => runtime.models(agent),
     run: (delivery) => runtime.run(delivery),
     runOnce: (turn) => runtime.runOnce(turn),
+    readFile: (agent, path) => runtime.workspaceFile(agent, path),
     timeoutMs: HANDOVER_MS,
   });
 };

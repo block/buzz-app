@@ -1323,11 +1323,12 @@ export function SearchResults({
     .sort()
     .join(":");
   useEffect(() => {
+    void profileGeneration;
     if (threadAuthors)
       void session.profiles
         .ensure(threadAuthors.split(":"), "background")
         .catch(() => {});
-  }, [session, threadAuthors]);
+  }, [session, threadAuthors, profileGeneration]);
   const suggestion = (channel: ChannelSummary): SearchDestination => {
     const destination = conversationDestination(channel);
     const thread = unreadThreads.get(channel.id);

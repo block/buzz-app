@@ -249,18 +249,24 @@ local agent with a voice hook must belong to the room itself, according to its
 current relay roster, and have the signed-in viewer as owner. Pending, cached,
 read-only and archived room projections cannot seat agents. Parent membership
 alone does not qualify. Multiple agents can sit independently; owner calls on
-other devices do not create seats here.
+other devices do not create seats here. Room resolution runs only when a local,
+owner-matched voice candidate exists. Until it succeeds, no seat opens; a failed
+read stays silent and can retry on the next roster or agent update.
 
 Agent voices use the microphones' serial PCM sender, with the same limits;
 leaving discards all waiting sends. Frames already submitted to native cannot be
 recalled. This bounds retained media duration, not wall-clock delivery latency.
 
-Native delivers only the owner's peer audio to each seat. This does not identify
-people speaking near the owner's microphone. Eligibility loss or plugin shutdown
+Native filters each seat's audio to the owner's current peer indices. The v2
+media protocol has no occupancy epoch: a delayed packet from a previous occupant
+can be attributed to the owner after an index is reassigned. Decoder resets do
+not fence such packets; a strict owner-only guarantee requires a media epoch or
+an equivalent relay ordering guarantee. The filter also cannot identify people
+speaking near the owner's microphone. Eligibility loss or plugin shutdown
 aborts both audio directions and closes the harness and socket, including late
 open completions. A five-second heartbeat renews the native lease. A failed seat
-shows the existing Huddle error notice; leave and rejoin to retry. The public
-plugin-author barrel export remains deferred; bundled harnesses use the service
+shows an error in both the compact player and companion window; leave and rejoin
+to retry. The public plugin-author barrel export remains deferred; bundled harnesses use the service
 type directly. Platform support depends on the harness and native audio host.
 
 Transcripts are posted once through `seat.transcript("owner" | "agent", text)`,

@@ -18,10 +18,12 @@ function required<T>(value: T | undefined): T {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 const origin = "https://relay.example.com";
 const agent = (pubkey: string): Agent => ({
@@ -422,16 +424,86 @@ it("reports a rejected harness close with the originating call id", async () => 
   );
 });
 
-it("reports a rejected room resolution with the originating call id", async () => {
+it.each(
+  [
+    [],
+    [{ ...agent("a"), owner: "someone-else" }],
+    [{ ...agent("a"), type: "text-only" }],
+    [{ ...agent("a"), place: "elsewhere" as const }],
+    [{ ...agent("a"), relay: "https://other.example.com" }],
+  ].map((agents) => ({ agents })) satisfies { agents: Agent[] }[],
+)(
+  "does not resolve a room without a local owner voice candidate: %j",
+  async ({ agents }) => {
+    const f = setup();
+    f.agents(agents);
+    const dispose = f.start();
+    await dispose();
+    expect(f.resolveRoom).not.toHaveBeenCalled();
+    expect(f.bridge.open).not.toHaveBeenCalled();
+    expect(f.report).not.toHaveBeenCalled();
+  },
+);
+
+it("fails closed and silently retries resolution on a later list change", async () => {
   const f = setup();
-  f.resolveRoom.mockRejectedValueOnce(new Error("resolve failed"));
-  f.start();
+  const pending = deferred<void>();
+  f.resolveRoom.mockImplementationOnce(() => pending.promise);
+  const dispose = f.start();
+  expect(f.resolveRoom).toHaveBeenCalledOnce();
+  f.room({});
+  expect(f.resolveRoom).toHaveBeenCalledOnce();
+  await Promise.resolve();
+  expect(f.bridge.open).not.toHaveBeenCalled();
+  // Settle the read before triggering the event that may retry it.
+  pending.reject(new Error("resolve failed"));
   await vi.waitFor(() =>
-    expect(f.report).toHaveBeenCalledExactlyOnceWith(
-      "human",
-      "Error: resolve failed",
-    ),
+    expect(f.resolveRoom.mock.settledResults[0]?.type).toBe("rejected"),
   );
+  expect(f.report).not.toHaveBeenCalled();
+  expect(f.bridge.open).not.toHaveBeenCalled();
+  expect(f.resolveRoom).toHaveBeenCalledOnce();
+  f.room({});
+  await vi.waitFor(() => expect(f.connections.size).toBe(2));
+  expect(f.resolveRoom).toHaveBeenCalledTimes(2);
+  expect(f.report).not.toHaveBeenCalled();
+  await dispose();
+});
+
+it("ignores a failed resolve from a previous call", async () => {
+  const f = setup();
+  const pending = deferred<void>();
+  f.resolveRoom.mockImplementationOnce(() => pending.promise);
+  f.start();
+  f.call({ id: "next" });
+  await vi.waitFor(() => expect(f.connections.size).toBe(2));
+  pending.reject(new Error("old failure"));
+  await vi.waitFor(() =>
+    expect(f.resolveRoom.mock.settledResults[0]?.type).toBe("rejected"),
+  );
+  f.room({});
+  expect(f.resolveRoom).toHaveBeenCalledTimes(2);
+  expect(f.report).not.toHaveBeenCalled();
+});
+
+it("does not let an old successful resolve open seats for a pending new call", async () => {
+  const f = setup();
+  const old = deferred<void>();
+  const next = deferred<void>();
+  f.resolveRoom
+    .mockImplementationOnce(() => old.promise)
+    .mockImplementationOnce(() => next.promise);
+  f.start();
+  f.call({ id: "next" });
+  old.resolve();
+  await vi.waitFor(() =>
+    expect(f.resolveRoom.mock.settledResults[0]?.type).toBe("fulfilled"),
+  );
+  f.room({});
+  expect(f.resolveRoom).toHaveBeenCalledTimes(2);
+  expect(f.bridge.open).not.toHaveBeenCalled();
+  next.resolve();
+  await vi.waitFor(() => expect(f.connections.size).toBe(2));
 });
 
 it("retains the newest four waiting frames and serializes bridge sends", async () => {

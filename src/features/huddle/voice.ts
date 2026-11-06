@@ -30,7 +30,7 @@ export function createHuddleVoices(
   let session = relay.snapshot().session;
   let offMembers = session.channels.subscribeList(sync);
   let disposed = false;
-  let resolvedCall: string | undefined;
+  let resolution: { call: string; ready: boolean } | undefined;
   function open(
     agent: Agent,
     voice: NonNullable<RegisteredAgentType["voice"]>,
@@ -131,21 +131,14 @@ export function createHuddleVoices(
     if (session !== current.session) {
       offMembers();
       session = current.session;
+      resolution = undefined;
       offMembers = session.channels.subscribeList(sync);
     }
     const call = huddles.snapshot();
     const destination = call.destination;
     const room = call.room;
-    if (call.phase === "connected" && room && call.id !== resolvedCall) {
-      resolvedCall = call.id;
-      void session.channels.resolve?.([room]).then(sync, (error: unknown) => {
-        if (call.id) report(call.id, String(error));
-      });
-    }
-    if (call.phase !== "connected") resolvedCall = undefined;
-    // relay/discovery.ts projects members from verified relay-authored 39002 p tags.
-    const channel = room ? session.channels.get?.(room) : undefined;
-    const available =
+    const types = agents.types();
+    const connected =
       bridge.available &&
       call.phase === "connected" &&
       call.id &&
@@ -155,14 +148,10 @@ export function createHuddleVoices(
       !current.cached &&
       current.scope === destination.scope &&
       current.viewer === destination.viewer &&
-      channel &&
-      !channel.pending &&
-      !channel.cached &&
-      !channel.archived &&
-      !channel.readOnly &&
       call.participants.includes(destination.viewer);
-    const running =
-      available && agents.snapshot().status === "ready"
+    if (!connected || resolution?.call !== call.id) resolution = undefined;
+    const candidates =
+      connected && agents.snapshot().status === "ready"
         ? agents
             .snapshot()
             .running.filter(
@@ -171,10 +160,38 @@ export function createHuddleVoices(
                 agent.owner === destination.viewer &&
                 relayOrigin(agent.relay) ===
                   relayOrigin(destination.relayUrl) &&
-                channel.members?.includes(agent.pubkey),
+                types.some((type) => type.key === agent.type && type.voice),
             )
         : [];
-    const types = agents.types();
+    if (connected && candidates.length && !resolution) {
+      const pending = { call: call.id, ready: false };
+      resolution = pending;
+      // Resolve only for voice candidates. A failure leaves seats closed and
+      // retries on the next notification, never from the rejection itself.
+      void session.channels.resolve?.([room]).then(
+        () => {
+          if (resolution !== pending) return;
+          pending.ready = true;
+          sync();
+        },
+        () => {
+          if (resolution === pending) resolution = undefined;
+        },
+      );
+    }
+    // relay/discovery.ts projects members from verified relay-authored 39002 p tags.
+    const channel = room ? session.channels.get?.(room) : undefined;
+    const available =
+      connected &&
+      (!session.channels.resolve || resolution?.ready) &&
+      channel &&
+      !channel.pending &&
+      !channel.cached &&
+      !channel.archived &&
+      !channel.readOnly;
+    const running = available
+      ? candidates.filter((agent) => channel.members?.includes(agent.pubkey))
+      : [];
     for (const [key, seat] of seats) {
       const agent = running.find((agent) => agent.pubkey === key);
       if (

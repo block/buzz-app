@@ -1683,8 +1683,9 @@ it("opens a profile from the header's Share access", async () => {
   Object.assign(f.session.profiles, { ensure: async () => {} });
   f.mount();
   const user = userEvent.setup();
-  const trigger = await screen.findByRole("button", { name: "Share access" });
-  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("button", { name: "Share access to Planning" }),
+  );
   const dialog = await screen.findByRole("dialog", { name: /Share access/ });
   await user.click(
     await within(dialog).findByRole("button", {

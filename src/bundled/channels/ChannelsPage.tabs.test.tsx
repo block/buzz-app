@@ -1059,9 +1059,10 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
 it.each(["Share access", "Chat actions"])(
   "opens a profile from a Solo side tab's %s",
   async (opener) => {
+    const snapshot = { entry: { id: "visit" }, attempt: {} };
     const h = await page("stream", {
       open: vi.fn(async () => ({ status: "opened" as const })),
-      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+      snapshot: () => snapshot,
     } as unknown as Navigation);
     const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
     act(() =>

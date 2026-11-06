@@ -234,3 +234,7 @@ export function steerPrompt(turn: string) {
       : section(STEER, turn);
   return `${steered}\n\nNote: A new message arrived while you were working. Continue your in-progress work and incorporate the new message if it's relevant; if it's unrelated, you may briefly acknowledge it and carry on.`;
 }
+/** Follows a steer from another thread than the running turn's `root`, whose
+ * results still belong in that turn's thread. */
+export const runningReply = (root: string) =>
+  `The reply target above is for the new message only. Results of the work you were already doing still go to \`reply: "${root}"\`.`;

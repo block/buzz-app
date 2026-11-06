@@ -5,7 +5,7 @@
 // next new conversation, so that starts without a spawn. A one-off turn (a
 // watch or timer wake) gets a new session of its own, which is never saved,
 // resumed or shared.
-import { steerPrompt } from "./prompt";
+import { runningReply, steerPrompt } from "./prompt";
 import {
   ClaudeProcess,
   type ClaudeLaunch,
@@ -87,6 +87,8 @@ type Live = {
   fingerprint: string;
   used: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** The activity scope of the turn it is working on. */
+  root?: string | undefined;
 };
 
 export class AgentSessions {
@@ -341,7 +343,11 @@ export class AgentSessions {
       const answering = this.answer(
         key,
         live,
-        live.process.busy ? steer : text,
+        !live.process.busy
+          ? text
+          : live.root && activityScope && live.root !== activityScope
+            ? `${steer}\n\n${runningReply(live.root)}`
+            : steer,
         activity,
       );
       // Later messages may steer this turn once its prompt has been submitted.
@@ -628,6 +634,7 @@ export class AgentSessions {
     text: string,
     activity: TurnPick & ActivityReceipt,
   ) {
+    if (!live.process.busy) live.root = activity.activityScope;
     const sent = live.process.send(text, activity);
     // Sending made it busy; a snapshot read when it started is not.
     this.options.onChange?.();

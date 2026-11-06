@@ -31,7 +31,7 @@ export function ReplySummary({
   media(url: string, size?: "small"): string | undefined;
   unreadLabel?: string | undefined;
   unreadCount?: number;
-  /** When the newest counted reply arrived, such as "5 minutes ago". */
+  /** When the newest direct reply arrived, such as "5 minutes ago". */
   lastReply?: string | undefined;
 }) {
   return (

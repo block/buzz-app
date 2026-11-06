@@ -4878,8 +4878,17 @@ export class AgentsService extends Service implements Agents {
       if (!("home" in where) || where.home !== origin || "stay" in where)
         continue;
       this.moving.add(localId);
-      // Whether the relay team is this device's own create.
+      // Whether the relay team is this device's own create, and whether a
+      // try reached the save that may have made it.
       let own = !!move?.created;
+      let attempted = !!move?.attempted;
+      const journal = (failed?: true) =>
+        this.teamMoves.set(localId, {
+          community: origin,
+          ...(failed && { failed }),
+          ...(attempted && { attempted: true }),
+          ...(own && { created: true }),
+        });
       try {
         // Saved first, so a rerun moves it to the same team.
         if (!move) await this.teamMoves.set(localId, { community: origin });
@@ -4888,7 +4897,18 @@ export class AgentsService extends Service implements Agents {
           const done = await this.changeSyncedTeam(
             origin,
             { ...local, id },
-            { adopt: true, ...(!own && { fresh: true }) },
+            {
+              adopt: true,
+              ...(!own && {
+                fresh: true,
+                resume: attempted,
+                saving: async () => {
+                  if (attempted) return;
+                  await journal(move?.failed);
+                  attempted = true;
+                },
+              }),
+            },
           );
           own ||= !!done.created;
         } catch (error) {
@@ -4910,10 +4930,7 @@ export class AgentsService extends Service implements Agents {
         }
         // A draft begun meanwhile keeps the team here; its release moves it.
         if (this.held.has(localId)) {
-          await this.teamMoves.set(localId, {
-            community: origin,
-            ...(own && { created: true }),
-          });
+          await journal();
           continue;
         }
         channelTemplates.replaceTeam(localId, id);
@@ -4927,13 +4944,7 @@ export class AgentsService extends Service implements Agents {
           await this.teamMoves.set(localId, undefined).catch(() => {});
         } else {
           console.warn(`Team ${local.name} was not moved`, error);
-          await this.teamMoves
-            .set(localId, {
-              community: origin,
-              failed: true,
-              ...(own && { created: true }),
-            })
-            .catch(() => {});
+          await journal(true).catch(() => {});
         }
         this.notify();
       } finally {
@@ -5063,6 +5074,8 @@ export class AgentsService extends Service implements Agents {
       base?: Readonly<{ head: string; members: readonly string[] }>;
       adopt?: boolean;
       fresh?: boolean;
+      resume?: boolean;
+      saving?: () => Promise<void>;
     }>,
   ) {
     const host = hostOf({ relay: home });

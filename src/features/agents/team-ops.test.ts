@@ -182,6 +182,52 @@ describe("teamOps.change", () => {
     ).toMatchObject({ ok: false, created: true });
   });
 
+  it("a move's retry resumes its own earlier try's partial copy, but no other", async () => {
+    // The first try's save landed unanswered, before any member joined.
+    const first = setup({ saved: { status: "unknown", message: "timeout" } });
+    const order: string[] = [];
+    first.save.mockImplementationOnce(async () => {
+      order.push("save");
+      return { status: "unknown", message: "timeout" } as never;
+    });
+    expect(
+      await first.ops.change({
+        ...edit,
+        members: ["a"],
+        adopt: true,
+        fresh: true,
+        saving: async () => void order.push("saving"),
+      }),
+    ).toMatchObject({ ok: false, uncertain: true });
+    expect(order).toEqual(["saving", "save"]);
+    const retry = setup({
+      members: [],
+      saved: { status: "conflict", head: head() } as never,
+    });
+    const move = { ...edit, members: ["a"], adopt: true, fresh: true };
+    expect(await retry.ops.change({ ...move, resume: true })).toMatchObject({
+      ok: true,
+      added: ["a"],
+      created: true,
+    });
+    // Without proof of that try it stays a conflict, and so does a copy
+    // that differs in text or has a member this one doesn't.
+    for (const [stored, members, resume] of [
+      [head(), [], false],
+      [head("Crew", "Other"), [], true],
+      [head(), ["z"], true],
+    ] as const) {
+      const other = setup({
+        members: [...members],
+        saved: { status: "conflict", head: stored } as never,
+      });
+      const result = await other.ops.change({ ...move, resume });
+      expect(result).toMatchObject({ ok: false, conflict: true });
+      expect(result.created).toBeUndefined();
+      expect(other.channels.addMember).not.toHaveBeenCalled();
+    }
+  });
+
   it("an unanswered content save is reported as uncertain, not success", async () => {
     const { ops, channels } = setup({
       saved: { status: "unknown", message: "timeout" },

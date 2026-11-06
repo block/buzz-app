@@ -15236,8 +15236,14 @@ it("reports unsupported hooks when their harness registers later", async () => {
 describe("synced teams", () => {
   const home = "https://relay.example.test";
   /** Each community's config channels; `saveTeam` answers as `answer`. */
-  function teamChannels(answer: () => Promise<unknown> = async () => {}) {
-    const saveTeam = vi.fn((_edit: unknown) => answer());
+  function teamChannels(
+    answer: (edit: {
+      saving?: () => Promise<void>;
+    }) => Promise<unknown> = async () => {},
+  ) {
+    const saveTeam = vi.fn((edit: { saving?: () => Promise<void> }) =>
+      answer(edit),
+    );
     const removeTeam = vi.fn(async (_id: string) => {});
     const made = new Set<string>();
     const stores = new Map<string, AgentConfigStore>();
@@ -15251,7 +15257,7 @@ describe("synced teams", () => {
         history: () => [],
         dispose: vi.fn(),
         removeTeam,
-        saveTeam: (edit: unknown) =>
+        saveTeam: (edit: { saving?: () => Promise<void> }) =>
           saveTeam(edit).then(
             (result) =>
               result ?? { ok: true, added: [], removed: [], skipped: [] },
@@ -15831,6 +15837,72 @@ describe("synced teams", () => {
       });
     });
 
+    it("after its first save goes unanswered, retries by resuming its own partial relay copy", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      const answers = [
+        async (edit: { saving?: () => Promise<void> }) => {
+          await edit.saving?.();
+          return { ...fail, uncertain: true };
+        },
+        // The retry finds that copy, with no members yet, and finishes it.
+        async () => ({
+          ok: true,
+          added: [alder],
+          removed: [],
+          skipped: [],
+          created: true,
+        }),
+      ];
+      const channels = teamChannels(async (edit) => answers.shift()?.(edit));
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(moves(f)).toEqual({
+        "local-1": { community: home, failed: true, attempted: true },
+      });
+      t.confirm(channels.stores.get(home));
+      f.recover();
+      await vi.waitFor(() =>
+        expect(f.storage.get(teamsKey)).not.toContain("Mine"),
+      );
+      expect(channels.saveTeam.mock.calls[1]?.[0]).toMatchObject({
+        id: await movedId(),
+        fresh: true,
+        resume: true,
+      });
+      expect(moves(f)).toEqual({});
+    });
+
+    it("after a crash between its first save and recording the create, resumes the move, and Delete then archives the copy", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      await new TeamMoves(t.storage).set("local-1", {
+        community: home,
+        attempted: true,
+      });
+      // The resumed copy is this device's, though a member add fails.
+      const channels = teamChannels(async () => ({ ...fail, created: true }));
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(channels.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+        fresh: true,
+        resume: true,
+      });
+      expect(moves(f)).toEqual({
+        "local-1": {
+          community: home,
+          failed: true,
+          attempted: true,
+          created: true,
+        },
+      });
+      await f.service.removeTeam("local-1");
+      expect(channels.removeTeam).toHaveBeenCalledWith(await movedId());
+      expect(moves(f)).toEqual({});
+    });
+
     it("leaves a different relay copy another app made untouched, keeping the local team as a conflict", async () => {
       const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
       // The first try fails offline before any create landed; the next finds
@@ -15856,9 +15928,11 @@ describe("synced teams", () => {
         expect(f.service.teamSync("local-1")).toEqual({ conflict: home }),
       );
       expect(channels.saveTeam).toHaveBeenCalledTimes(2);
+      // No try reached a save, so nothing proves the copy is this device's.
       expect(channels.saveTeam.mock.calls[1]?.[0]).toMatchObject({
         adopt: true,
         fresh: true,
+        resume: false,
       });
       expect(channels.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("base");
       expect(templates).not.toHaveBeenCalled();

@@ -9,11 +9,13 @@ import type { AgentStore } from "./store";
 
 export const TEAM_MOVES_KEY = "buzz.agents.teams.migration.v1";
 
-/** A move under way: its community, fixed before the first write. `created`
- * once this device's create of the relay team is confirmed saved. */
+/** A move under way: its community, fixed before the first write.
+ * `attempted` once a try reached its first save, which may have created the
+ * relay team; `created` once this device's create is confirmed. */
 export type TeamMove = Readonly<{
   community: string;
   failed?: true;
+  attempted?: true;
   created?: true;
 }>;
 

@@ -23,6 +23,13 @@ export type TeamEdit = Readonly<{
   /** With `adopt`, a move's first try: an existing team that differs in
    * name, instructions or members is a conflict, and nothing is written. */
   fresh?: boolean;
+  /** With `fresh`, an earlier try of this move reached its first save, so
+   * the team there may be that try's partial copy: identical name and
+   * instructions, with only members missing. It is resumed, not a conflict. */
+  resume?: boolean;
+  /** Awaited just before a Create or Import's first save, so the caller
+   * can durably record that this device may be creating the team. */
+  saving?: () => Promise<void>;
 }>;
 
 /** What the change did. `ok` only when the readback shows all of it. */
@@ -178,6 +185,7 @@ export function teamOps(deps: TeamDeps) {
     const same =
       shown?.name === edit.name && shown.instructions === edit.instructions;
     if (!(base && head?.id === base.head && same)) {
+      if (!base) await edit.saving?.();
       const saved = await deps.writer.save(
         write,
         { version: 1, name: edit.name, instructions: edit.instructions },
@@ -202,14 +210,17 @@ export function teamOps(deps: TeamDeps) {
       if (saved.status !== "saved" && !adopted)
         return fail("The team changed since it was opened; reopen it");
       created = !base && saved.status === "saved";
+      const partial =
+        body?.name === edit.name &&
+        body.instructions === edit.instructions &&
+        present.every((pubkey) => edit.members.includes(pubkey));
+      // An earlier try's own partial copy is this device's create.
+      created ||= !!(edit.fresh && edit.resume && partial);
       // Another copy's team, unless it already is just this one.
       if (
         edit.fresh &&
         !created &&
-        (body?.name !== edit.name ||
-          body.instructions !== edit.instructions ||
-          present.length !== edit.members.length ||
-          present.some((pubkey) => !edit.members.includes(pubkey)))
+        !(partial && present.length === edit.members.length)
       )
         return fail("A different copy of this team is already there", {
           conflict: true,

@@ -2303,7 +2303,18 @@ mod tests {
         let bin = home.path().join("bin");
         fs::create_dir(&bin).unwrap();
         let executable = bin.join("git");
-        fs::write(&executable, "#!/bin/sh\n/usr/bin/printenv SSH_AUTH_SOCK\n").unwrap();
+        // Parallel tests fork children; a fork that copies this process's write
+        // descriptor makes Linux refuse to exec the script (ETXTBSY) until that
+        // child execs. A single-threaded `cp` process creates the executable so
+        // this process never holds it open for writing.
+        let source = home.path().join("git.source");
+        fs::write(&source, "#!/bin/sh\n/usr/bin/printenv SSH_AUTH_SOCK\n").unwrap();
+        let copied = std::process::Command::new("/bin/cp")
+            .arg(&source)
+            .arg(&executable)
+            .status()
+            .unwrap();
+        assert!(copied.success(), "could not copy {}", executable.display());
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         let mut command = git.command();
         command.env("PATH", &bin);

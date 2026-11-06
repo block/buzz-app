@@ -1,10 +1,15 @@
 import type { ChannelKit } from "../channel-templates/capability";
 import {
   kitRecordFits,
+  leadsCoordinate,
+  parseLeadsRecord,
   soloCapacityMessage,
   type Groups,
   type KitEntry,
+  type LeadsRecord,
+  type WorkspaceLead,
 } from "../channel-templates/model";
+import { isTransientFailure } from "./errors";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import type {
   SidebarAssignmentIntent,
@@ -19,7 +24,11 @@ export function soloGroups(entries: readonly KitEntry[]) {
 }
 function project(groups: Groups): SidebarGroups {
   return {
-    sections: groups.groups.map(({ id, name }, order) => ({ id, name, order })),
+    sections: groups.groups.map(({ id, name }, order) => ({
+      id,
+      name,
+      order,
+    })),
     assignments: groups.assignments,
   };
 }
@@ -51,6 +60,21 @@ function admit(value: Groups, entry: KitEntry | undefined) {
     throw new Error(soloCapacityMessage);
 }
 
+export const leadUnavailableMessage =
+  "Lead unavailable. Check your connection and try again.";
+export type LeadsSnapshot = Readonly<{
+  status: "idle" | "loading" | "ready" | "error";
+  /** Saved entries, orphans included; readers join them to workspaces. */
+  leads: Readonly<Record<string, WorkspaceLead>>;
+  error?: string;
+  /** Session recovery retries only failures a retry can fix. */
+  transient?: true;
+}>;
+type LeadsHead = {
+  record: LeadsRecord | undefined;
+  eventId: string | undefined;
+};
+
 /** Reuse recipe revision checks/outbox and preference lifecycle; never read Messages groups. */
 export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
   let mutations = Promise.resolve();
@@ -68,6 +92,107 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     );
     return next;
   };
+  // Leads are a separate record: a failed or malformed read never touches Groups.
+  let leads: LeadsSnapshot = { status: "idle", leads: {} };
+  let leadsRead: Promise<void> | undefined;
+  // Each shown head bumps this; a refresh begun before it is stale.
+  let leadsRevision = 0;
+  const leadListeners = new Set<() => void>();
+  const publishLeads = (next: LeadsSnapshot) => {
+    leads = next;
+    leadListeners.forEach((listener) => {
+      listener();
+    });
+  };
+  const showLeads = (head: LeadsHead) => {
+    leadsRevision++;
+    publishLeads({
+      status: "ready",
+      leads: Object.fromEntries(
+        Object.entries(
+          head.record && !head.record.deleted ? head.record.value.leads : {},
+        ).map(([id, { region, channelId }]) => [id, { region, channelId }]),
+      ),
+    });
+  };
+  async function readLeads(active: AbortSignal): Promise<LeadsHead> {
+    const found = await kit.readRecord(leadsCoordinate(kit.community), active);
+    active.throwIfAborted();
+    return {
+      record: found && parseLeadsRecord(found.record, kit.community),
+      eventId: found?.eventId,
+    };
+  }
+  function refreshLeads() {
+    if (leadsRead) return leadsRead;
+    const active = AbortSignal.any([lifetime, generation.signal]);
+    const revision = leadsRevision;
+    if (leads.status !== "ready")
+      publishLeads({ status: "loading", leads: leads.leads });
+    const read: Promise<void> = readLeads(active)
+      .then(
+        (head) => {
+          if (leadsRevision === revision) showLeads(head);
+        },
+        (error: unknown) => {
+          if (!active.aborted && leadsRevision === revision)
+            publishLeads({
+              status: "error",
+              leads: leads.leads,
+              error: String(error),
+              ...(isTransientFailure(error)
+                ? { transient: true as const }
+                : {}),
+            });
+        },
+      )
+      .finally(() => {
+        if (leadsRead === read) leadsRead = undefined;
+      });
+    leadsRead = read;
+    return read;
+  }
+  // Leads load beside Groups once the catalog is ready, and again after clear().
+  const stopLeads = kit.subscribe(() => {
+    if (leads.status === "idle" && kit.snapshot().status === "ready")
+      void refreshLeads();
+  });
+  /** Write `changes` over the fresh head, pruning Leads of removed workspaces.
+   * Unknown record and entry fields are kept. */
+  async function writeLeads(
+    head: LeadsHead,
+    groups: Groups,
+    changes: Readonly<Record<string, WorkspaceLead | undefined>>,
+    active: AbortSignal,
+  ) {
+    const workspaces = new Set(groups.groups.map(({ id }) => id));
+    const saved =
+      head.record && !head.record.deleted ? head.record.value.leads : {};
+    const next = Object.fromEntries(
+      Object.entries(saved).filter(
+        ([id]) => workspaces.has(id) && !Object.hasOwn(changes, id),
+      ),
+    );
+    for (const [id, lead] of Object.entries(changes))
+      if (lead && workspaces.has(id))
+        next[id] = { ...(Object.hasOwn(saved, id) ? saved[id] : {}), ...lead };
+    const record = parseLeadsRecord(
+      {
+        version: 1,
+        community: kit.community,
+        deleted: false,
+        value: {
+          ...(head.record?.value ?? { type: "workspace-leads", id: "me" }),
+          leads: next,
+        },
+      },
+      kit.community,
+    );
+    // The writer confirms this exact event is the selected head.
+    const eventId = await kit.saveRecord(record, head.eventId, active);
+    active.throwIfAborted();
+    showLeads({ record, eventId });
+  }
   async function current(signal = lifetime, fresh = true) {
     const active = AbortSignal.any([lifetime, generation.signal, signal]);
     active.throwIfAborted();
@@ -149,19 +274,31 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
         const { value, entry, active } = await current(signal);
         if (!value.groups.some((group) => group.id === id))
           return project(value);
-        return save(
-          {
-            ...value,
-            groups: value.groups.filter((group) => group.id !== id),
-            assignments: Object.fromEntries(
-              Object.entries(value.assignments).filter(
-                ([, group]) => group !== id,
-              ),
+        const groups = {
+          ...value,
+          groups: value.groups.filter((group) => group.id !== id),
+          assignments: Object.fromEntries(
+            Object.entries(value.assignments).filter(
+              ([, group]) => group !== id,
             ),
-          },
-          entry,
-          active,
-        );
+          ),
+        };
+        const saved = await save(groups, entry, active);
+        // Best effort: a Lead left behind is hidden and pruned on the next write.
+        // Another writer may keep this orphan beside a newer workspace's Lead:
+        // prune against Groups read after the Leads, not the ones captured here.
+        void serialize(async () => {
+          const cleanup = AbortSignal.any([lifetime, generation.signal]);
+          const head = await readLeads(cleanup);
+          const leads = head.record?.deleted ? {} : head.record?.value.leads;
+          if (!leads || !Object.hasOwn(leads, id)) return;
+          const { value } = await current(cleanup);
+          if (!value.groups.some((group) => group.id === id))
+            await writeLeads(head, value, {}, cleanup);
+        }).catch((error: unknown) => {
+          console.warn("The deleted workspace's Lead was kept", error);
+        });
+        return saved;
       }),
     groupsOnly: true,
     createSection: (section, signal) =>
@@ -191,13 +328,76 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
   });
   return {
     ...store,
+    // Preserve the preference owner’s live writable getters.
+    queries: Object.freeze(
+      Object.assign(
+        Object.defineProperties(
+          {},
+          Object.getOwnPropertyDescriptors(store.queries),
+        ) as typeof store.queries,
+        {
+          leads: Object.freeze({
+            snapshot: () => leads,
+            subscribe(listener: () => void) {
+              leadListeners.add(listener);
+              return () => {
+                leadListeners.delete(listener);
+              };
+            },
+            refresh: refreshLeads,
+          }),
+          setWorkspaceLead: (
+            input: {
+              workspaceId: string;
+              lead: WorkspaceLead;
+              expected?: string;
+            },
+            signal: AbortSignal,
+          ) =>
+            serialize(async () => {
+              // Leads first: a Lead is saved only after its workspace, so
+              // Groups read after it hold every workspace the Leads name.
+              const head = await readLeads(
+                AbortSignal.any([lifetime, generation.signal, signal]),
+              );
+              const { value, active } = await current(signal);
+              showLeads(head);
+              if (!value.groups.some(({ id }) => id === input.workspaceId))
+                return false;
+              const saved =
+                head.record && !head.record.deleted
+                  ? head.record.value.leads[input.workspaceId]
+                  : undefined;
+              if (
+                saved?.region === input.lead.region &&
+                saved.channelId === input.lead.channelId
+              )
+                return true;
+              if (saved && saved.channelId !== input.expected)
+                throw new Error(
+                  "This workspace already has a lead. Open it from the workspace title; your draft is kept.",
+                );
+              await writeLeads(
+                head,
+                value,
+                { [input.workspaceId]: input.lead },
+                active,
+              );
+              return true;
+            }),
+        },
+      ),
+    ),
     clear() {
       generation.abort();
       generation = new AbortController();
+      leadsRead = undefined;
+      publishLeads({ status: "idle", leads: {} });
       store.clear();
     },
     dispose() {
       generation.abort();
+      stopLeads();
       store.dispose();
     },
   };

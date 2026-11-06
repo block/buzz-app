@@ -46,14 +46,14 @@ it("persists one copied workspace on separate new draft identities before naviga
   const selected = { ...workspace };
   h.source.handle.openDraft(h.source.binding(), {
     mode: "task",
-    seed: { workspace: selected },
+    seed: { workspace: selected, lead: true },
   });
   const target = h.open.mock.calls[0]?.[0];
   expect(target?.kind).toBe("page");
   if (target?.kind !== "page") throw new Error("Missing draft target");
   const route = soloDraft(target.route?.params);
   expect(route).toMatchObject({
-    task: { region: h.source.handle.label },
+    task: { region: h.source.handle.label, workspaceLead: workspace.id },
   });
   expect(route?.agent).toBeUndefined();
   const key = `solo:task:${route?.task?.draftId}:new-draft`;
@@ -68,6 +68,11 @@ it("persists one copied workspace on separate new draft identities before naviga
   });
   const next = h.open.mock.calls[1]?.[0];
   expect(next).not.toEqual(target);
+  h.source.handle.openDraft(h.source.binding(), {
+    mode: "task",
+    seed: { workspace, lead: true },
+  });
+  expect(h.navigator.snapshot().entry.target).toEqual(target);
   expect(mentionDraft(readView(h.scope, key, null))).toEqual(stored);
 });
 

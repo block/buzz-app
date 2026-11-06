@@ -1,6 +1,10 @@
+import { readView, subscribeView, viewRevision } from "../../shared/view-state";
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import type { ComposeWorkspaces } from "./WorkspaceComposition";
 import { useSoloNavigation } from "./solo-navigation-react";
+import { soloNavigationFor } from "./solo-navigation";
 import {
+  useCallback,
   useRef,
   useState,
   useSyncExternalStore,
@@ -41,7 +45,11 @@ import {
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import creationStyles from "./SoloInventory.module.css";
-import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
+import {
+  DotsThreeIcon,
+  ChatCircleIcon,
+  PlusIcon,
+} from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ContributionReader } from "../conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../conversation/service";
@@ -79,6 +87,7 @@ export function SoloInventory({
     trigger: RefObject<HTMLButtonElement | null>,
     pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>,
     headerActions: ReactNode,
+    compose: (composition: ComposeWorkspaces) => ReactNode,
   ) => ReactNode;
 }) {
   const list = useChannelList(session.channels);
@@ -89,6 +98,10 @@ export function SoloInventory({
   const preferences = useSyncExternalStore(
     session.soloPreferences.subscribe,
     session.soloPreferences.snapshot,
+  );
+  const leads = useSyncExternalStore(
+    session.soloPreferences.leads.subscribe,
+    session.soloPreferences.leads.snapshot,
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -103,6 +116,23 @@ export function SoloInventory({
     target.pluginId === "buzz.channels" &&
     target.pageId === "channels"
       ? soloDraft(target.route?.params)
+      : undefined;
+  const draftIdentity = draft?.task
+    ? `solo:task:${draft.task.draftId}:identity`
+    : undefined;
+  const subscribeDraft = useCallback(
+    (listener: () => void) => subscribeView(scope, listener),
+    [scope],
+  );
+  useSyncExternalStore(subscribeDraft, () =>
+    draftIdentity ? viewRevision(scope, draftIdentity) : null,
+  );
+  const leadDraft =
+    draft?.task?.workspaceLead &&
+    draftIdentity &&
+    readView<{ workspaceLead?: string | null }>(scope, draftIdentity, {})
+      .workspaceLead !== null
+      ? draft.task.workspaceLead
       : undefined;
   const handoff = useChannelNavigation();
   const workingIds = useSyncExternalStore(
@@ -169,6 +199,8 @@ export function SoloInventory({
     session.unread,
     JSON.stringify(conversations.map((item) => item.id)),
   );
+  const composing = !!regions.regions.find((region) => region.source)?.source
+    ?.composeWorkspaces;
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
@@ -182,7 +214,7 @@ export function SoloInventory({
   };
   const creationItems = (
     <>
-      <MenuItem onClick={() => newChat()}>New chat</MenuItem>
+      {!composing && <MenuItem onClick={() => newChat()}>New chat</MenuItem>}
       <MenuItem
         disabled={!session.soloPreferences.sectionCreationWritable}
         onClick={() => {
@@ -201,9 +233,17 @@ export function SoloInventory({
             <IconButton
               ref={trigger}
               size="compact"
-              aria-label="New chat or workspace"
-              title="New chat or workspace"
-              icon={<PlusIcon size={15} strokeWidth={2.5} />}
+              aria-label={
+                composing ? "Workspace actions" : "New chat or workspace"
+              }
+              title={composing ? "Workspace actions" : "New chat or workspace"}
+              icon={
+                composing ? (
+                  <DotsThreeIcon size={15} strokeWidth={2.5} />
+                ) : (
+                  <PlusIcon size={15} strokeWidth={2.5} />
+                )
+              }
             />
           }
         />
@@ -226,9 +266,9 @@ export function SoloInventory({
       />
     </div>
   );
-  const content = (
+  const content = (compose?: ComposeWorkspaces) => (
     <>
-      {empty && (
+      {!compose && empty && (
         <NavigationItem
           variant="row"
           label="New chat"
@@ -242,12 +282,32 @@ export function SoloInventory({
           create={(section) => session.soloPreferences.createSection(section)}
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
-          onCreated={(id) => {
+          onCreated={async (id) => {
+            if (!current() || !trigger.current?.isConnected) return;
+            if (await soloNavigationFor(session)?.openCreatedWorkspace(id))
+              return;
             if (trigger.current?.isConnected) newChat(id);
           }}
         />
       )}
       <SoloWorkspaces
+        compose={
+          compose &&
+          ((parts) =>
+            compose({
+              ...parts,
+              ...(leadDraft ? { leadDraft } : {}),
+              leads: {
+                status: leads.status,
+                refresh: async () => {
+                  await session.soloPreferences.leads.refresh();
+                  return (
+                    session.soloPreferences.leads.snapshot().status === "ready"
+                  );
+                },
+              },
+            }))
+        }
         renderChatMenu={(channelId) =>
           menus?.map(({ key, component: Menu }) => (
             <Menu key={key} session={session} channelId={channelId} />
@@ -255,7 +315,7 @@ export function SoloInventory({
         }
         navigator={navigator}
         draft={
-          draft
+          draft && !draft.task
             ? {
                 projectId: draft.project,
                 content: (
@@ -339,17 +399,18 @@ export function SoloInventory({
     >
       {renderContents ? (
         renderContents(
-          content,
+          content(),
           creationItems,
           header,
           trigger,
           pendingClick,
           actions,
+          content,
         )
       ) : (
         <>
           {header}
-          {content}
+          {content()}
         </>
       )}
     </nav>

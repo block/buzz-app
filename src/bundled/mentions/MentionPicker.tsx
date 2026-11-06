@@ -85,11 +85,16 @@ export function MentionPicker({
     list,
     channel,
     roster: draftRoster,
-    choices: candidates,
+    choices,
   } = model;
   const taskRecipient = useContext(TaskRecipientContext);
   const recipient = taskRecipient?.pubkey;
   const choosePrimary = taskRecipient?.selectPrimary;
+  const eligible = taskRecipient?.eligible;
+  const candidates =
+    choosePrimary && eligible
+      ? choices.filter(({ recipient }) => eligible(recipient.pubkey))
+      : choices;
   const action = choosePrimary ? "Choose primary agent" : "Mention a member";
   const name = useIdentityNames(session.names);
   const choice = agents.selectable.find((item) => item.pubkey === recipient);
@@ -308,8 +313,8 @@ export function MentionPicker({
                 size="toolbar"
                 ref={trigger}
                 type="button"
-                aria-label="Mention a member"
-                title="Mention a member"
+                aria-label={action}
+                title={action}
                 icon={<AtIcon size={20} aria-hidden="true" />}
               />
             )
@@ -570,9 +575,15 @@ export function MentionPicker({
                   onClick={() => chooseTeam(team)}
                 />
               ))}
-              {members && !candidates.length && !teams.choices.length && (
-                <p>No matching channel members.</p>
-              )}
+              {(choosePrimary || members) &&
+                !candidates.length &&
+                !teams.choices.length && (
+                  <p>
+                    {choosePrimary
+                      ? "No eligible task agents are available."
+                      : "No matching channel members."}
+                  </p>
+                )}
               {audience?.named && (
                 <p className="text-caption text-subtle">
                   Your message tags{" "}

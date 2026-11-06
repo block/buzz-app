@@ -1,5 +1,11 @@
 import { SoloDisclosure } from "./SoloDisclosure";
 import {
+  WorkspaceCompositionContext,
+  RegionWorkspace,
+  RegionChats,
+  type ComposeWorkspaces,
+} from "./WorkspaceComposition";
+import {
   RegionDestinationContext,
   RegionCard,
   RegionConversation,
@@ -23,6 +29,8 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   SlidersHorizontalIcon,
+  DotsThreeIcon,
+  PencilSimpleIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import {
@@ -58,6 +66,7 @@ export function SoloRegions({
   sidebar,
   scope,
   ordinary,
+  composeOrdinary,
   ordinaryActions,
   creationTrigger,
   fallback,
@@ -72,6 +81,7 @@ export function SoloRegions({
   scope: string;
   sidebar: ReturnType<typeof useSidebarView>;
   ordinary?: ReactNode;
+  composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
   ordinaryActions?: ReactNode;
   creationTrigger?: RefObject<HTMLButtonElement | null> | undefined;
   fallback?: ReactNode;
@@ -193,6 +203,7 @@ export function SoloRegions({
             first={index === 0}
             last={index === regions.length - 1}
             ordinary={index === primary ? ordinary : undefined}
+            composeOrdinary={index === primary ? composeOrdinary : undefined}
             ordinaryActions={index === primary ? ordinaryActions : undefined}
             creationTrigger={index === primary ? creationTrigger : undefined}
             groupDisclosure={index === primary ? groupDisclosure : undefined}
@@ -218,6 +229,7 @@ function RegionFrame({
   first,
   last,
   ordinary,
+  composeOrdinary,
   ordinaryActions,
   creationTrigger,
   groupDisclosure,
@@ -237,6 +249,7 @@ function RegionFrame({
   first: boolean;
   last: boolean;
   ordinary?: ReactNode;
+  composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
   ordinaryActions?: ReactNode;
   creationTrigger?: RefObject<HTMLButtonElement | null> | undefined;
   groupDisclosure?:
@@ -405,6 +418,50 @@ function RegionFrame({
       ))}
     </>
   );
+  const composing = !!source?.composeWorkspaces && !!composeOrdinary;
+  const creation = actions.find((action) => action.icon === "plus");
+  const directCreation = composing && creation && !creation.menu;
+  const body =
+    source &&
+    binding &&
+    presentation &&
+    region.snapshot?.status === "ready" &&
+    !region.reason ? (
+      <OwnedContribution
+        entry={source}
+        registry={{ snapshot: service.sources }}
+        fallback={
+          <>
+            {recovery}
+            {composing && <RegionChats all />}
+          </>
+        }
+      >
+        {(entry) => (
+          <entry.component
+            binding={binding}
+            snapshot={region.snapshot as SoloRegionProps["snapshot"]}
+            live={region.live}
+            {...(current ? { current } : {})}
+            {...presentation}
+            ui={
+              composing
+                ? {
+                    ...destinationUi,
+                    Workspace: RegionWorkspace,
+                    Chats: RegionChats,
+                  }
+                : destinationUi
+            }
+          />
+        )}
+      </OwnedContribution>
+    ) : (
+      <>
+        {recovery}
+        {composing && <RegionChats all />}
+      </>
+    );
   return (
     <RegionDestinationContext.Provider
       value={{
@@ -444,18 +501,26 @@ function RegionFrame({
                 .map((action) => (
                   <RegionAction key={action.id} action={action} run={run} />
                 ))}
-              {(actions.some((action) => action.icon === "plus") ||
-                ordinaryActions) && (
+              {directCreation && (
                 <RegionAction
-                  action={
-                    actions.find((action) => action.icon === "plus") ?? {
+                  action={{ ...creation, icon: <PencilSimpleIcon size={15} /> }}
+                  run={run}
+                />
+              )}
+              {((creation && !directCreation) || ordinaryActions) && (
+                <RegionAction
+                  action={{
+                    ...((directCreation ? undefined : creation) ?? {
                       id: "create",
-                      label: "Create",
+                      label: composing ? "Solo actions" : "Create",
                       icon: "plus",
                       onSelect() {},
                       menu: () => [],
-                    }
-                  }
+                    }),
+                    ...(composing
+                      ? { icon: <DotsThreeIcon size={15} strokeWidth={2.5} /> }
+                      : {}),
+                  }}
                   run={run}
                   extraItems={ordinaryActions}
                   triggerRef={creationTrigger}
@@ -471,33 +536,16 @@ function RegionFrame({
             )
           }
         >
-          {source &&
-          binding &&
-          presentation &&
-          region.snapshot?.status === "ready" &&
-          !region.reason ? (
-            <OwnedContribution
-              entry={source}
-              registry={{ snapshot: service.sources }}
-              fallback={recovery}
-            >
-              {(entry) => (
-                <entry.component
-                  binding={binding}
-                  snapshot={region.snapshot as SoloRegionProps["snapshot"]}
-                  live={region.live}
-                  {...(current ? { current } : {})}
-                  {...presentation}
-                  ui={destinationUi}
-                />
-              )}
-            </OwnedContribution>
-          ) : (
-            recovery
-          )}
-          {groupDisclosure ? ordinary : null}
+          {composing
+            ? composeOrdinary?.((parts) => (
+                <WorkspaceCompositionContext value={parts}>
+                  {body}
+                </WorkspaceCompositionContext>
+              ))
+            : body}
+          {!composing && groupDisclosure ? ordinary : null}
         </SidebarSection>
-        {groupDisclosure ? null : ordinary}
+        {composing || groupDisclosure ? null : ordinary}
       </div>
     </RegionDestinationContext.Provider>
   );

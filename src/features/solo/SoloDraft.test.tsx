@@ -3293,7 +3293,7 @@ it("restores workspace-only openDraft and never reseeds a removal, which undo re
   try {
     source.handle.openDraft(source.binding(), {
       mode: "task",
-      seed: { workspace },
+      seed: { workspace, lead: true },
     });
     const target = region.navigator.snapshot().entry.target;
     if (target.kind !== "page") throw new Error("Missing task route");
@@ -3328,6 +3328,7 @@ it("restores workspace-only openDraft and never reseeds a removal, which undo re
     await user.keyboard("{Enter}");
     await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
     expect(prepare.mock.calls[0]?.[0]).toMatchObject({
+      workspaceLead: workspace.id,
       primary: agent,
       recipients: [agent],
       workspace,
@@ -3345,6 +3346,14 @@ it("restores workspace-only openDraft and never reseeds a removal, which undo re
     expect(
       await screen.findByText("Workspace Selected workspace"),
     ).toBeVisible();
+    // Removing the workspace retired its lead; undo restores only the filing.
+    expect(
+      readView<{ workspaceLead?: string | null }>(
+        region.scope,
+        `solo:task:${route.task.draftId}:identity`,
+        {},
+      ).workspaceLead,
+    ).toBeNull();
     await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
     await waitFor(() =>
       expect(screen.queryByText(/^Workspace /)).not.toBeInTheDocument(),
@@ -3358,6 +3367,11 @@ it("restores workspace-only openDraft and never reseeds a removal, which undo re
     expect(saved.workspace).toBeUndefined();
     expect(saved.recipients.map((item) => item.pubkey)).toEqual([agent]);
     expect(screen.getByRole("textbox")).toHaveTextContent("Do the task");
+    await user.click(screen.getByRole("textbox"));
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+    expect(prepare.mock.calls[1]?.[0].workspace).toBeUndefined();
+    expect(prepare.mock.calls[1]?.[0].workspaceLead).toBeUndefined();
   } finally {
     cleanup();
     lookup.mockRestore();
@@ -4893,14 +4907,19 @@ it.each([
                 })
             : undefined;
         try {
-          await userEvent.click(
-            screen.getByRole("button", {
-              name:
-                mode === "toolbar same explicit"
-                  ? /^Member agent\s*Agent$/
-                  : /^Outside agent\s*Agent$/,
-            }),
-          );
+          if (mode === "toolbar ineligible explicit")
+            expect(
+              screen.queryByRole("button", { name: /^Outside agent\s*Agent$/ }),
+            ).toBeNull();
+          else
+            await userEvent.click(
+              screen.getByRole("button", {
+                name:
+                  mode === "toolbar same explicit"
+                    ? /^Member agent\s*Agent$/
+                    : /^Outside agent\s*Agent$/,
+              }),
+            );
         } finally {
           failure?.mockRestore();
         }

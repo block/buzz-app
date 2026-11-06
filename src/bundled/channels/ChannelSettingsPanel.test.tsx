@@ -555,10 +555,15 @@ it.each([
     ),
     "Only community owners and admins can change this.",
   ],
+  // `auth-required:` stays prefixed for writers to match on; it refuses the
+  // sign-in, so an owner is not told they lack the role.
   [
-    "the default reason for a machine prefix",
-    new PublishRejected("auth-required: sign in", "auth-required: sign in"),
-    "Only community owners and admins can change this.",
+    "the relay's sign-in refusal",
+    new PublishRejected(
+      "auth-required: authentication required",
+      "auth-required: authentication required",
+    ),
+    "Authentication required",
   ],
   [
     "a retry for an unconfirmed outcome",

@@ -9,7 +9,12 @@ import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
-import { isRelayRefusal, PublishRejected, relayRefusal } from "./outbox";
+import {
+  authRefusal,
+  isRelayRefusal,
+  PublishRejected,
+  relayRefusal,
+} from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
@@ -292,6 +297,18 @@ it("keeps a long refusal's whole reason but clips its display words", async () =
   const result = await refusal(400, { error });
   expect(result).toMatchObject({ reason: error });
   expect(relayRefusal(result)).toBe(`X${"x".repeat(255)}`);
+});
+it("reads a 401 sign-in refusal as the relay's words, clipped, never as a refusal of the write", async () => {
+  // NIP-FI's missing-evidence denial on an HTTP publish.
+  const error = "auth-required: authentication required";
+  const result = await refusal(401, { error });
+  expect(result).toMatchObject({ message: error, reason: error });
+  expect(relayRefusal(result)).toBeUndefined();
+  expect(authRefusal(result)).toBe("Authentication required");
+  const long = await refusal(401, {
+    error: `auth-required: ${"x".repeat(1000)}`,
+  });
+  expect(authRefusal(long)).toBe(`X${"x".repeat(255)}`);
 });
 it("keeps the conflict refusal and the raw reason for classifying writers", async () => {
   const conflict = await refusal(409, { error: "invalid: whatever" });

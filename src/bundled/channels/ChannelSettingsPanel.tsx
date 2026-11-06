@@ -15,6 +15,7 @@ import {
   type ChannelLifecycleCapability,
 } from "../../features/relay/channel-lifecycle";
 import {
+  authRefusal,
   PublishNotSent,
   PublishRejected,
   relayRefusal,
@@ -328,6 +329,8 @@ function AutoJoinSetting({
                 error instanceof PublishNotSent
                 ? "Not sent. Try again."
                 : (relayRefusal(error) ??
+                  // A refused sign-in, which says nothing about the role.
+                  authRefusal(error) ??
                   (error instanceof PublishRejected
                     ? "Only community owners and admins can change this."
                     : error instanceof Error

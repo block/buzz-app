@@ -3,6 +3,7 @@ import { createRelaySession } from "./session";
 import {
   PublishNotSent,
   PublishRejected,
+  authRefusal,
   createOutbox,
   isRelayRefusal,
   relayRefusal,
@@ -1441,3 +1442,30 @@ it.each([
   expect(isRelayRefusal(error)).toBe(refused);
   expect(relayRefusal(error)).toBe(refused ? error.message : undefined);
 });
+it.each([
+  [
+    "a refused sign-in",
+    new PublishRejected("auth-required: sign in", "auth-required: sign in"),
+    "Sign in",
+  ],
+  [
+    "a sign-in refusal without words",
+    new PublishRejected("auth-required: ", "auth-required: "),
+    undefined,
+  ],
+  [
+    "another relay refusal",
+    new PublishRejected("Bad tag", "invalid: bad tag"),
+    undefined,
+  ],
+  [
+    "a write that was not sent",
+    new PublishNotSent("auth-required: sign in", "auth-required: sign in"),
+    undefined,
+  ],
+])(
+  "shows the relay's sign-in words only for its sign-in refusal: %s",
+  (_, error, words) => {
+    expect(authRefusal(error)).toBe(words);
+  },
+);

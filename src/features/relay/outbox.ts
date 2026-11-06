@@ -156,6 +156,23 @@ export function relayRefusal(error: unknown): string | undefined {
   return isRelayRefusal(error) ? clip(error.message) : undefined;
 }
 
+/** The relay's words, without their prefix and clipped like relayRefusal,
+ * when it refuses the sign-in rather than the write: a sent `auth-required:`
+ * refusal. That prefix is kept for writers to match on, so it is never a
+ * relayRefusal. */
+export function authRefusal(error: unknown): string | undefined {
+  if (!(error instanceof PublishRejected) || error instanceof PublishNotSent)
+    return undefined;
+  const prefix = NIP01_PREFIX.exec(error.reason ?? "");
+  const words =
+    prefix?.[1] === "auth-required"
+      ? error.reason?.slice(prefix[0].length).trim()
+      : undefined;
+  return words
+    ? clip(words.charAt(0).toUpperCase() + words.slice(1))
+    : undefined;
+}
+
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;

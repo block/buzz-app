@@ -1641,6 +1641,49 @@ upload limit does not increase the inline-media limit. Consumers must handle
 missing data and validate their own media/type/size policy without assuming a
 file-read capability.
 
+### Verified native added-tool queries
+
+On Buzz Desktop's production bundled-Goose added-tool path, the host-supplied
+`BuzzClient.query` reads as the agent in that client's community. Before returning
+results to an external added tool, the native agent adapter copies each event's
+signed wire fields, recomputes its content hash and verifies its signature against
+its raw `pubkey`. Returned signed records and their nested tag arrays are immutable.
+A malformed response or any invalid event rejects the whole query: valid members
+of a mixed-validity array are not returned separately.
+
+This guarantee applies to the production `nativeAgents` custody path, not arbitrary
+objects implementing the structural `BuzzClient` interface, injected test clients,
+browser-only clients or remote adapters. An unsupported adapter must not be used
+for provenance-dependent attachment acquisition: fail closed, without a local-file,
+display-row, network or substitute-adapter fallback. This is an eligibility rule,
+not a claim that the dispatcher can recognize or verify any injected client.
+No verifier is exported and trusted plugin code is not sandboxed.
+
+Callers must still check exact event ID, raw signer, kind, channel and thread
+ancestry against their captured context, and bind media URLs and hashes to that
+verified event. Server filters do not replace checking returned fields. Query
+results do not prove freshness, completeness, current display-fold state,
+triggering-user identity, consent or rights. `media(url)` alone does not attest an
+event. Native original-media retrieval authenticates in the agent's community and
+checks the URL's content hash; thumbnail retrieval is exempt from that hash check.
+Consumers requiring original-byte provenance must exclude thumbnails and verify
+the source bytes against the signed original descriptor themselves.
+
+The bundled Goose client supplies an agent-retirement/disposal signal, not a
+complete connection, turn or plugin-binding fence. An asynchronous added tool must
+capture its own binding once and recheck it after every await and immediately
+before creating authority or performing a side effect. Include session identity,
+generation, owner/viewer and plugin revision/lifetime in that binding. If it
+changes, discard late results; do not recapture and adopt the replacement context.
+For example: capture binding, await query, check binding, await media, check binding,
+then check again immediately before minting a reference or acting on the bytes.
+
+Native media acquisition can fetch/save up to 500 MiB with a 600-second timeout
+before returning without inline data. The inline limit above is not a pre-download
+network/disk bound. Saved source media uses OS temporary storage without a promised
+deletion deadline. Consumers must disclose retention separately from any in-memory
+cleanup; dropping a reference does not delete a host temporary file.
+
 ### Bounded binary retrieval and temporary managed files
 
 Compatible desktop frontend/native pairs expose optional `host.requestBytes` and

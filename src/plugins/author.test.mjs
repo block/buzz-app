@@ -241,6 +241,33 @@ export function apply(ctx: Context) {
 import type { createServices } from "@buzz/author";
 `,
     );
+    // Separate additive consumer; reuse the existing generated package/build.
+    await writeFile(
+      join(dir, "query-consumer.ts"),
+      `
+import type { AddedTool, AddedToolContext, BuzzClient, Media } from "@buzz/author";
+// @ts-expect-error Verification is a host boundary, not a plugin-author export.
+import type { eventsDto } from "@buzz/author";
+export const queryTool: AddedTool = {
+  name: "read_original", description: "Read a signed original", inputSchema: { type: "object" },
+  async call(client: BuzzClient, context: AddedToolContext) {
+    const owner: string | undefined = client.owner;
+    const channel: string | undefined = context.channel;
+    const root: string | undefined = context.root;
+    void owner; // A thread root need not be owner-authored.
+    const events = await client.query([{ kinds: [9], ids: root ? [root] : [], "#h": channel ? [channel] : [] }]);
+    for (const event of events) {
+      const signedFields: readonly unknown[] = [event.id, event.pubkey, event.sig, event.kind, event.content, event.tags];
+      void signedFields;
+      // @ts-expect-error Signed tags are immutable to consumers.
+      event.tags[0][1] = "changed";
+    }
+    const media: Media = await client.media("https://community.example.test/media/original.png");
+    return media.data ?? "No inline data";
+  },
+};
+`,
+    );
     await writeFile(
       join(dir, "tsconfig.json"),
       JSON.stringify({
@@ -256,7 +283,7 @@ import type { createServices } from "@buzz/author";
             "@buzz/author": ["./author package/types/plugins/author.d.ts"],
           },
         },
-        files: ["consumer.ts"],
+        files: ["consumer.ts", "query-consumer.ts"],
       }),
     );
     // Only generated declarations and the external consumer, never host source.

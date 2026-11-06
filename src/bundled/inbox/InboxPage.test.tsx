@@ -4167,6 +4167,15 @@ function threadLayout() {
       : getClientRects.call(this);
   });
   return async (reader: HTMLElement, read: () => void) => {
+    // A reveal can still be between its two real frames here; the fake clock
+    // below never runs a frame requested before it, so let those land first.
+    for (let frame = 0; frame < 2; frame++)
+      await act(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          ),
+      );
     windowFocus.mockReturnValue(true);
     vi.useFakeTimers({
       toFake: [

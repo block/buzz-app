@@ -2,7 +2,9 @@
 //!
 //! macOS keeps Wry's default grant and the TCC prompt. Elsewhere an unhandled
 //! request is denied (WebKitGTK) or prompts for `tauri.localhost` (WebView2).
-//! Capture belongs to the main app page; the Huddle companion never captures.
+//! Capture belongs to the main app page and to pop-out windows showing it
+//! (voice notes record where the composer is); the Huddle companion never
+//! captures.
 
 use tauri::webview::{PermissionKind, PermissionResponse};
 use url::Url;
@@ -24,7 +26,7 @@ pub(crate) fn decide(
             ("tauri", Some("localhost")) | ("http" | "https", Some("tauri.localhost"))
         ) || development.is_some_and(|development| development.origin() == page.origin())
     });
-    if label == "main" && app_page {
+    if (label == "main" || crate::popout_window::is_popout(label)) && app_page {
         PermissionResponse::Allow
     } else {
         // Deny rather than defer so WebView2 cannot offer its own prompt.
@@ -37,7 +39,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_main_app_page_gets_the_microphone() {
+    fn only_the_app_page_in_main_or_a_pop_out_gets_the_microphone() {
         use PermissionResponse::{Allow, Default, Deny};
         let development = Url::parse("http://localhost:1430").unwrap();
         let cases = [
@@ -49,6 +51,11 @@ mod tests {
             ("main", "https://example.org/", Deny),
             ("main", "http://tauri.localhost.example.org/", Deny),
             ("huddle", "tauri://localhost/huddle.html", Deny),
+            ("popout-1234", "tauri://localhost/popout.html", Allow),
+            ("popout-1234", "http://tauri.localhost/popout.html", Allow),
+            ("popout-1234", "http://localhost:1430/popout.html", Allow),
+            ("popout-1234", "https://example.org/", Deny),
+            ("popout", "tauri://localhost/popout.html", Deny),
         ];
         for (label, page, expected) in cases {
             let page = Url::parse(page).unwrap();

@@ -125,6 +125,7 @@ export function PopoutWindowView({
       tools: JSON.parse(toolKeys) as string[],
       completions: [],
       gifRequests: client.gifs,
+      capture: true,
     });
     return { session, tools: extensions.tools, inline: extensions.inline };
   }, [client, bridgeSession, toolKeys]);

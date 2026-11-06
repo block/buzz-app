@@ -15,9 +15,13 @@ import { mentionQuery } from "../mentions/mention-query";
 import { ChannelCompletion } from "../channels/ChannelCompletion";
 import { channelQuery } from "../channels/channel-query";
 import { ResourcePicker } from "../repos/ResourcePicker";
+import { voiceRecorderTool } from "../voice-notes/recorder-tool";
 
 /** Native companions reuse bundled tools only while their main-app contribution is enabled. */
-const tools = (gifRequests?: GifRequests): Record<string, ComposerTool> => ({
+const tools = (
+  gifRequests?: GifRequests,
+  capture = false,
+): Record<string, ComposerTool> => ({
   "buzz.emoji/picker": {
     id: "picker",
     title: "Emoji",
@@ -60,6 +64,9 @@ const tools = (gifRequests?: GifRequests): Record<string, ComposerTool> => ({
     title: "Issues and pull requests",
     component: ResourcePicker,
   },
+  // A window that may capture records in its own webview; main converts and
+  // uploads the note like any companion attachment. Huddles never capture.
+  ...(capture ? { "buzz.voice-notes/recorder": voiceRecorderTool } : {}),
 });
 const completions: Record<string, ComposerCompletion> = {
   "buzz.emoji/typeahead": {
@@ -87,6 +94,8 @@ export function huddleComposerExtensions(enabled: {
   tools: readonly string[];
   completions: readonly string[];
   gifRequests?: GifRequests;
+  /** This window may record voice notes (pop-outs; never the Huddle). */
+  capture?: boolean;
 }): ConversationExtensions {
   function reader<T>(catalog: Record<string, T>, keys: readonly string[]) {
     const entries: Contribution<T>[] = keys.flatMap((key) =>
@@ -104,7 +113,7 @@ export function huddleComposerExtensions(enabled: {
     return { snapshot: () => entries, subscribe: () => () => {} };
   }
   return {
-    tools: reader(tools(enabled.gifRequests), enabled.tools),
+    tools: reader(tools(enabled.gifRequests, enabled.capture), enabled.tools),
     completions: reader(completions, enabled.completions),
     inline: reader({}, []),
   };

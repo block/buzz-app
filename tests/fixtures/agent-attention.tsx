@@ -233,6 +233,7 @@ createRoot(root).render(
         document.body.dataset.opened = target;
         return true;
       }}
+      canOpen={() => true}
     />
   </Panel>,
 );

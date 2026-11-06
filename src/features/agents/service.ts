@@ -362,6 +362,8 @@ export type AgentAddedTab = Readonly<{
     /** Opens a link, such as a profile, where the tab is shown; false when it
      * can't there. Absent where the tab can open nothing. */
     open?: ((target: string) => boolean) | undefined;
+    /** Whether `open` can open this link, so the tab shows it as text if not. */
+    canOpen?: ((target: string) => boolean) | undefined;
   }>;
   /** Whether the tab shows for this agent; absent, it shows for each. */
   when?: (agent: Agent) => boolean;

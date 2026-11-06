@@ -28,7 +28,9 @@ it("shows a linked person by name and opens their profile where the tab can", ()
   const text = `Ask [John](${target}) first.`;
   const opened: string[] = [];
   render(
-    <OpenLink.Provider value={(link) => opened.push(link) > 0}>
+    <OpenLink.Provider
+      value={{ open: (link) => opened.push(link) > 0, canOpen: () => true }}
+    >
       <InstructionsMarkdown text={text} />
     </OpenLink.Provider>,
   );
@@ -39,4 +41,15 @@ it("shows a linked person by name and opens their profile where the tab can", ()
   expect(container.textContent).toBe("Ask John first.");
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();
+});
+it("shows a person as text where the host can't open them", () => {
+  const target =
+    "nostr:npub1vujjkzwrr2v4m2nr4tdzv45lh34r6yh4wvgn7qquuapjlpcd4qsqkjn5uw";
+  const { container } = render(
+    <OpenLink.Provider value={{ open: () => true, canOpen: () => false }}>
+      <InstructionsMarkdown text={`Ask [John](${target}) first.`} />
+    </OpenLink.Provider>,
+  );
+  expect(container.textContent).toBe("Ask John first.");
+  expect(screen.queryByRole("button")).toBeNull();
 });

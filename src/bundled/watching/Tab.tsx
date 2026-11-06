@@ -437,9 +437,11 @@ export function createAttentionComponents({
   function WatchingTab({
     agent: { key },
     open,
+    canOpen,
   }: {
     agent: { key: string };
     open?: ((target: string) => boolean) | undefined;
+    canOpen?: ((target: string) => boolean) | undefined;
   }) {
     const page = React.useRef<HTMLElement>(null);
     const snapshot = React.useSyncExternalStore(
@@ -496,7 +498,7 @@ export function createAttentionComponents({
               </p>
             )}
           {agent && here ? (
-            <OpenLink.Provider value={open}>
+            <OpenLink.Provider value={open && canOpen && { open, canOpen }}>
               <AgentPanel
                 agent={agent}
                 returnFocus={page}

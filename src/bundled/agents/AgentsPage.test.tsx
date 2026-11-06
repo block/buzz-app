@@ -183,6 +183,7 @@ function setup(
       communities?: CommunityReader;
     },
     teams = [] as AgentsSnapshot["teams"],
+    linkTab = false,
   } = {},
 ) {
   let snapshot: AgentsSnapshot = {
@@ -418,7 +419,34 @@ function setup(
     registerHook: vi.fn(),
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
-    addedTabs: () => [],
+    addedTabs: () =>
+      linkTab
+        ? [
+            {
+              id: "link",
+              key: "link",
+              pluginId: "test",
+              revision: "1",
+              title: "Link",
+              component: ({
+                canOpen,
+              }: {
+                canOpen?: ((target: string) => boolean) | undefined;
+              }) => (
+                <>
+                  <p>
+                    Agent{" "}
+                    {String(canOpen?.(profileTarget("2".repeat(64)) ?? ""))}
+                  </p>
+                  <p>
+                    Person{" "}
+                    {String(canOpen?.(profileTarget("9".repeat(64)) ?? ""))}
+                  </p>
+                </>
+              ),
+            },
+          ]
+        : [],
     registerTab: () => {},
     controlAttention: () => {},
     registerExecution: () => {},
@@ -444,6 +472,15 @@ function setup(
   };
   return { agents, echoProvider, types, show, change, relay, ...view };
 }
+
+it("offers a plugin tab's links only to the agents it can open", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1), agent("Bo", 2)], { linkTab: true });
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  await user.click(await screen.findByRole("tab", { name: "Link" }));
+  expect(screen.getByText("Agent true")).toBeVisible();
+  expect(screen.getByText("Person false")).toBeVisible();
+});
 
 it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
   const user = userEvent.setup();

@@ -4,7 +4,11 @@ import { profileKey } from "../../features/profiles/target";
 
 /** Opens a link where the tab is shown; see AgentAddedTab. */
 export const OpenLink = createContext<
-  ((target: string) => boolean) | undefined
+  | {
+      open(target: string): boolean;
+      canOpen(target: string): boolean;
+    }
+  | undefined
 >(undefined);
 
 /** A person written as `[Name](nostr:npub…)` shows as their name and, where
@@ -16,14 +20,14 @@ function Link({
   href?: string | undefined;
   children?: ReactNode;
 }) {
-  const open = useContext(OpenLink);
+  const links = useContext(OpenLink);
   if (!href) return <span>{children}</span>;
   if (profileKey(href))
-    return open ? (
+    return links?.canOpen(href) ? (
       <button
         type="button"
         className="attention-link"
-        onClick={() => open(href)}
+        onClick={() => links.open(href)}
       >
         {children}
       </button>

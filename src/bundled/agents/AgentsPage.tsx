@@ -632,6 +632,7 @@ export function AgentsPage({
           const pubkey = profileKey(target);
           return !!find(pubkey) && browse(pubkey);
         }}
+        canOpenLink={(target) => !!find(profileKey(target))}
         openSettings={openSettings}
         openConversation={conversationOpener(
           navigator,

@@ -293,6 +293,7 @@ function OwnedAgentProfile({
             return false;
           })
         }
+        canOpenLink={context && ((link) => context.canOpen(link))}
         conversation={openedFrom(session, context)}
         messageAction={(variant) => (
           <AgentMessageButton

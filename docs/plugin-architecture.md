@@ -1496,7 +1496,10 @@ missing file rejects with an error whose message contains "No such file".
 `ctx.host.resolveDirectory(path)` returns an absolute or `~/…` directory as an
 absolute path without symbolic links, in the platform's ordinary form, and
 creates it if missing, as a process's `cwd` is. Both act with the user's full
-access; the import preview says so.
+access; the import preview says so. `ctx.host.inspectPath(path)` reports
+whether an absolute or `~/…` path exists, its own kind (`file`, `dir`,
+`symlink` or `other`) and its canonical path, without creating or reading
+anything. It is an observation, not a grant.
 
 `ctx.host.repositoryFolders(binding, signal)` lists the repositories folder that
 the binding's community and account configured in **Local settings**, or the

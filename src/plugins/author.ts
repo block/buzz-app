@@ -208,6 +208,8 @@ export type {
   TaskDraftControls,
   TaskWorkspace,
   TaskReference,
+  TaskSkillCandidate,
+  TaskSkills,
   TaskHeaderTitleProps,
   TaskHeaderUI,
 } from "../features/channel-navigation/solo-navigation-contract";

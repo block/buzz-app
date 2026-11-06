@@ -285,6 +285,34 @@ it("reads files and resolves directories as the calling plugin", async () => {
   );
 });
 
+it("inspects paths with the calling plugin grant and preserves missing/dangling/error results", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke)
+    .mockResolvedValueOnce({ exists: false })
+    .mockResolvedValueOnce({ exists: true, kind: "symlink" })
+    .mockRejectedValueOnce("Could not inspect path: Permission denied");
+  await expect(plugin.host.inspectPath?.("/missing")).resolves.toEqual({
+    exists: false,
+  });
+  expect(invoke).toHaveBeenLastCalledWith("plugin_host_inspect_path", {
+    id: "example.plugin",
+    revision: "abc",
+    path: "/missing",
+  });
+  await expect(plugin.host.inspectPath?.("/dangling")).resolves.toEqual({
+    exists: true,
+    kind: "symlink",
+  });
+  await expect(plugin.host.inspectPath?.("/restricted")).rejects.toThrow(
+    /Permission denied/,
+  );
+  vi.mocked(isTauri).mockReturnValue(false);
+  await expect(plugin.host.inspectPath?.("/file")).rejects.toThrow(
+    /desktop plugin/,
+  );
+  expect(invoke).toHaveBeenCalledTimes(3);
+});
+
 it("lists the binding's configured repositories folder as the calling plugin, never a path it names", async () => {
   const viewer = "a".repeat(64);
   const stored = new Map<string, string>();

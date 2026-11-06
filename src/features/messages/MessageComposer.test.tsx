@@ -14133,7 +14133,10 @@ it("guards automatic recipient changes using the current draft prose", () => {
   act(() => expect(replace?.([second])).toBe(true));
 });
 
-async function taskComposerFixture(allowHistorical = false) {
+async function taskComposerFixture(
+  allowHistorical = false,
+  skills?: import("../channel-navigation/solo-navigation-contract").TaskSkills,
+) {
   const { createSoloRegionFixture } = await import(
     "../channel-navigation/solo-navigation-testing"
   );
@@ -14166,6 +14169,7 @@ async function taskComposerFixture(allowHistorical = false) {
         makePrimary,
         maxRecipients: 1,
       },
+      ...(skills ? { skills } : {}),
     },
   });
   const lookup = vi
@@ -14577,6 +14581,85 @@ it.each([false, true])(
     ]);
   },
 );
+
+it("shows a task chat's skill details through its source, without a failing or malformed report", async () => {
+  let report: () => unknown = () => {
+    throw new Error("The session report is unavailable.");
+  };
+  const describe = vi.fn(() => report());
+  const { h, source } = await taskComposerFixture(false, {
+    load: async () => ({ items: [] }),
+    selectable: () => true,
+    describe: describe as never,
+  });
+  const publishes: ComposerCompletionProps["publish"][] = [];
+  function Completion({ publish }: ComposerCompletionProps) {
+    useLayoutEffect(() => {
+      publishes.push(publish);
+    }, [publish]);
+    return null;
+  }
+  const provider: Contribution<ComposerCompletion> = {
+    id: "skills",
+    key: "buzz.mentions/skills",
+    pluginId: "buzz.mentions",
+    revision: "bundled",
+    title: "Skill",
+    match: ({ text, start }) =>
+      text.slice(0, start).endsWith("/re")
+        ? { start: start - 3, end: start, query: "re" }
+        : null,
+    component: Completion,
+  };
+  bundledContribution(provider);
+  const providers = [provider];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  h.retarget({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => providers, subscribe: () => () => {} },
+    },
+  });
+  h.fill("Use /re");
+  const skill = {
+    kind: "nexus.skill",
+    id: '{"name":"review"}',
+    label: "review",
+    target: first.pubkey,
+  };
+  act(() => {
+    publishes.at(-1)?.({
+      items: [{ id: "review", label: "review", edit: { token: skill } }],
+    } as unknown as CompletionResult);
+  });
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  const chip = within(h.input()).getByRole("button", { name: "Skill review" });
+  const open = async () => {
+    await h.user.click(chip);
+    const dialog = await screen.findByRole("dialog", { name: "review" });
+    const text = dialog.textContent;
+    await h.user.keyboard("{Escape}");
+    await waitFor(() => expect(chip).toHaveAttribute("aria-expanded", "false"));
+    return text;
+  };
+
+  // A throwing source leaves the name alone and keeps the composer.
+  expect(await open()).toBe("review");
+  expect(describe).toHaveBeenLastCalledWith({
+    binding: source.binding(),
+    channelId: "channel",
+    target: first.pubkey,
+    id: skill.id,
+  });
+  // Non-string fields are not shown.
+  report = () => ({ description: 42, location: { path: "/Users/me" } });
+  expect(await open()).toBe("review");
+  report = () => ({ description: "Reviews a diff.", location: "~/review" });
+  expect(await open()).toBe("reviewReviews a diff.~/review");
+  expect(h.input()).toHaveValue("Use review ");
+});
 
 it.each([true, false])(
   "a bundled `#` workspace choice files a task draft in one undo step, and nothing else (task draft: %s)",

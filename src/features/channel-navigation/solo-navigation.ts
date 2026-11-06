@@ -433,7 +433,10 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         typeof source.task.recordFirstEvent !== "function" ||
         typeof source.task.participants?.eligible !== "function" ||
         typeof source.task.participants.defaultRecipient !== "function" ||
-        typeof source.task.participants.makePrimary !== "function")
+        typeof source.task.participants.makePrimary !== "function" ||
+        (source.task.skills !== undefined &&
+          (typeof source.task.skills.load !== "function" ||
+            typeof source.task.skills.selectable !== "function")))
     )
       throw new Error("Task drafts require preparation and participant policy");
     const identity = {};

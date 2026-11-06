@@ -19,3 +19,13 @@ export const TaskRecipientContext = createContext<
 export const TaskCompletionContext = createContext<
   Readonly<{ binding: SoloRegionBinding; draft: boolean }> | undefined
 >(undefined);
+/** A task chat's details for a skill chip, from its source's current report. */
+export const TaskSkillDetailsContext = createContext<
+  | ((token: Readonly<{ id: string; target: string }>) =>
+      | Readonly<{
+          description?: string | undefined;
+          location?: string | undefined;
+        }>
+      | undefined)
+  | undefined
+>(undefined);

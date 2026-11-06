@@ -127,6 +127,56 @@ fn directory(path: &str) -> Result<String, String> {
         .map_err(|_| format!("{path} is not a UTF-8 path"))
 }
 
+/// An observation, not permission to read or treat a path as a repository.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct PathInspection {
+    exists: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical: Option<String>,
+}
+
+fn inspect(path: &str) -> Result<PathInspection, String> {
+    let full = locate(path, None)?;
+    let failed = |error| format!("Could not inspect {path}: {error}");
+    let metadata = match std::fs::symlink_metadata(&full) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PathInspection {
+                exists: false,
+                kind: None,
+                canonical: None,
+            });
+        }
+        Err(error) => return Err(failed(error)),
+    };
+    let kind = if metadata.file_type().is_symlink() {
+        "symlink"
+    } else if metadata.is_file() {
+        "file"
+    } else if metadata.is_dir() {
+        "dir"
+    } else {
+        "other"
+    };
+    let canonical = match dunce::canonicalize(&full) {
+        Ok(resolved) => Some(
+            resolved
+                .into_os_string()
+                .into_string()
+                .map_err(|_| format!("{path} is not a UTF-8 path"))?,
+        ),
+        Err(error) if kind == "symlink" && error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(failed(error)),
+    };
+    Ok(PathInspection {
+        exists: true,
+        kind: Some(kind),
+        canonical,
+    })
+}
+
 /// Reads a file for a plugin that declares `host.files`. `path` is absolute,
 /// `~/…`, or relative to `cwd`, which is absolute or `~/…`.
 #[tauri::command]
@@ -164,6 +214,21 @@ pub(crate) async fn plugin_host_resolve_directory(
 ) -> Result<String, String> {
     granted(manager, id, revision).await?;
     bounded(&DIRECTORIES, move || directory(&path)).await
+}
+
+/// Inspection retains the blocking permit through OS work, including timeout.
+#[tauri::command]
+pub(crate) async fn plugin_host_inspect_path(
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+    revision: String,
+    path: String,
+) -> Result<PathInspection, String> {
+    granted(manager, id, revision).await?;
+    let late = format!("Inspecting {path} took too long");
+    tokio::time::timeout(READ_TIMEOUT, bounded(&DIRECTORIES, move || inspect(&path)))
+        .await
+        .map_err(|_| late)?
 }
 
 /// Lists the repositories folder for a plugin that declares `host.files`,
@@ -728,6 +793,84 @@ mod tests {
     }
 
     #[test]
+    fn inspects_files_directories_and_missing_paths_without_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, "data").unwrap();
+        let observed = inspect(file.to_str().unwrap()).unwrap();
+        assert_eq!(observed.kind, Some("file"));
+        assert_eq!(
+            observed.canonical.as_deref(),
+            dunce::canonicalize(&file).unwrap().to_str()
+        );
+        assert_eq!(
+            inspect(root.path().to_str().unwrap()).unwrap().kind,
+            Some("dir")
+        );
+        let missing = root.path().join("missing").join("child");
+        assert_eq!(
+            serde_json::to_value(inspect(missing.to_str().unwrap()).unwrap()).unwrap(),
+            serde_json::json!({ "exists": false })
+        );
+        assert!(!missing.parent().unwrap().exists());
+        assert!(inspect("relative").is_err());
+        assert!(inspect(file.join("child").to_str().unwrap()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspects_symlink_leaf_parent_dangling_and_loop_separately() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("folder");
+        std::fs::create_dir_all(folder.join("nested")).unwrap();
+        let file = folder.join("SKILL.md");
+        std::fs::write(&file, "skill").unwrap();
+        let leaf = root.path().join("leaf");
+        symlink(&file, &leaf).unwrap();
+        let observed = inspect(leaf.to_str().unwrap()).unwrap();
+        assert_eq!(observed.kind, Some("symlink"));
+        assert_eq!(
+            observed.canonical.as_deref(),
+            dunce::canonicalize(&file).unwrap().to_str()
+        );
+        let parent = root.path().join("parent");
+        symlink(&folder, &parent).unwrap();
+        let observed = inspect(parent.join("nested/../SKILL.md").to_str().unwrap()).unwrap();
+        assert_eq!(observed.kind, Some("file"));
+        assert_eq!(
+            observed.canonical.as_deref(),
+            dunce::canonicalize(&file).unwrap().to_str()
+        );
+        let dangling = root.path().join("dangling");
+        symlink(root.path().join("absent"), &dangling).unwrap();
+        assert_eq!(
+            serde_json::to_value(inspect(dangling.to_str().unwrap()).unwrap()).unwrap(),
+            serde_json::json!({ "exists": true, "kind": "symlink" })
+        );
+        let looped = root.path().join("loop");
+        symlink(&looped, &looped).unwrap();
+        assert!(inspect(looped.to_str().unwrap()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_does_not_mask_permission_failures_as_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let restricted = root.path().join("restricted");
+        std::fs::create_dir(&restricted).unwrap();
+        std::fs::write(restricted.join("file"), "data").unwrap();
+        std::fs::set_permissions(&restricted, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = inspect(restricted.join("file").to_str().unwrap());
+        std::fs::set_permissions(&restricted, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn resolves_and_creates_directories() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("new").join("workspace");
@@ -795,6 +938,42 @@ mod tests {
                 .unwrap_err()
                 .contains("unavailable")
         );
+    }
+
+    #[test]
+    fn path_inspection_checks_the_file_grant_first() {
+        let inspect = |fixture: &managed_tests::Fixture, revision: &str, path: &str| {
+            fixture
+                .ipc(
+                    "plugin_host_inspect_path",
+                    tauri::ipc::InvokeBody::Json(serde_json::json!({
+                        "id": "example.bytes",
+                        "revision": revision,
+                        "path": path,
+                    })),
+                    Default::default(),
+                )
+                .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+        };
+        let granted = managed_tests::Fixture::new(false, true);
+        let file = dunce::canonicalize(granted.temp.path())
+            .unwrap()
+            .join("SKILL.md");
+        std::fs::write(&file, "skill").unwrap();
+        let path = file.to_str().unwrap();
+        assert_eq!(
+            inspect(&granted, &granted.revision, path).unwrap(),
+            serde_json::json!({ "exists": true, "kind": "file", "canonical": path })
+        );
+        assert!(inspect(&granted, "stale", path).is_err());
+        // An ungranted call learns nothing, not even whether the path exists.
+        let ungranted = managed_tests::Fixture::new(false, false);
+        for path in [path, "relative"] {
+            assert_eq!(
+                inspect(&ungranted, &ungranted.revision, path).unwrap_err(),
+                "\"Files are not declared\""
+            );
+        }
     }
 }
 

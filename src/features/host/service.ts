@@ -171,6 +171,14 @@ type McpEvent =
  * This permits token reuse after initialization. The handler must bind identity
  * itself and grant every client the same authority. Defaults to false. */
 export type HostMcpOptions = Readonly<{ sharedSession?: boolean }>;
+/** Observation only. Canonical metadata grants no read or repository authority. */
+export type HostPathInspection =
+  | Readonly<{ exists: false }>
+  | Readonly<{
+      exists: true;
+      kind: "file" | "dir" | "symlink" | "other";
+      canonical?: string;
+    }>;
 export type HostRepositoryFolder = Readonly<{
   name: string;
   path: string;
@@ -204,6 +212,8 @@ export interface Host {
    * links, created if missing, for a plugin whose manifest declares
    * `host.files`. Desktop only. */
   resolveDirectory?: (path: string) => Promise<string>;
+  /** lstat + realpath without creating anything. Desktop only, requires host.files. */
+  inspectPath?: (path: string) => Promise<HostPathInspection>;
   /** The immediate folders, sorted by name, of the repositories folder that
    * `binding`'s community and account configured, for a plugin whose manifest
    * declares `host.files`. Never creates it or follows a linked child. Rejects
@@ -594,6 +604,17 @@ export class HostService extends Service implements Host {
     if (!owner || !isTauri())
       throw new Error("Files require an installed desktop plugin");
     return invoke<string>("plugin_host_resolve_directory", {
+      id: owner.id,
+      revision: owner.revision,
+      path,
+    }).catch(rethrow);
+  }
+
+  async inspectPath(path: string): Promise<HostPathInspection> {
+    const owner = this.ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Files require an installed desktop plugin");
+    return invoke<HostPathInspection>("plugin_host_inspect_path", {
       id: owner.id,
       revision: owner.revision,
       path,

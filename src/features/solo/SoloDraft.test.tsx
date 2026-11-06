@@ -3618,7 +3618,9 @@ it.each([
         );
       const first = mount();
       expect(
-        screen.getByRole("img", { name: composerTokenName(saved as never) }),
+        screen.getByRole(saved === otherSkill ? "button" : "img", {
+          name: composerTokenName(saved as never),
+        }),
       ).toBeVisible();
       expect(screen.queryByText(/cannot send/)).toBeNull();
       first.unmount();

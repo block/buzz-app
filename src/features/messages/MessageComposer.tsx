@@ -32,6 +32,7 @@ import {
   SelectedMentionContext,
   TaskCompletionContext,
   TaskRecipientContext,
+  TaskSkillDetailsContext,
 } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
@@ -625,6 +626,31 @@ function Composer({
           }
         : undefined,
     [boundScope, boundViewer, boundIncarnation],
+  );
+  const skills = taskContext?.mode.skills;
+  const skillDetails = useMemo(
+    () =>
+      skills?.describe && channelCompletion
+        ? (token: { id: string; target: string }) => {
+            try {
+              const found = skills.describe?.({
+                binding: channelCompletion.binding,
+                channelId,
+                target: token.target,
+                id: token.id,
+              });
+              const text = (value: unknown) =>
+                typeof value === "string" && value ? value : undefined;
+              return {
+                description: text(found?.description),
+                location: text(found?.location),
+              };
+            } catch {
+              return undefined;
+            }
+          }
+        : undefined,
+    [skills, channelCompletion, channelId],
   );
   const taskCompletion = taskChannel
     ? channelCompletion
@@ -3487,7 +3513,7 @@ function Composer({
   const submissionHeader = submission?.header?.(value, {
     removeWorkspace,
   });
-  return (
+  const composer = (
     <SelectedMentionContext.Provider value={value.recipients}>
       {taskContext?.mode.header && !threadRootId && !editing.target && (
         <section
@@ -4123,6 +4149,12 @@ function Composer({
         />
       )}
     </SelectedMentionContext.Provider>
+  );
+  // Skill chips render inside the editor, which knows no task.
+  return (
+    <TaskSkillDetailsContext.Provider value={skillDetails}>
+      {composer}
+    </TaskSkillDetailsContext.Provider>
   );
 }
 

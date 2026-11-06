@@ -2,6 +2,10 @@ import { MentionCompletion } from "./MentionCompletion";
 import { mentionQuery } from "./mention-query";
 import type { PluginModule } from "../../plugins/api";
 import { MentionPicker } from "./MentionPicker";
+import {
+  TaskSkillCompletion,
+  skillQuery,
+} from "../../features/solo/task-skill-completion";
 
 export const inject = ["conversation"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -11,6 +15,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     order: -10,
     match: ({ text, start }) => mentionQuery(text, start),
     component: MentionCompletion,
+  });
+  ctx.conversation.registerCompletion({
+    id: "task-skills",
+    title: "Skills",
+    match: ({ text, start }) => skillQuery(text, start),
+    component: TaskSkillCompletion,
   });
   ctx.conversation.registerTool({
     id: "picker",

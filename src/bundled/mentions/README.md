@@ -7,6 +7,7 @@ Find and mention people, agents, and teams while you write.
 1. Type @ in the composer and pick someone from the suggestions.
 2. Or choose **Mention a member** to search everyone in your community.
 3. Pick a team to mention all of its members at once.
+4. In a task chat, type / to add a skill its agent reported.
 
 ---
 

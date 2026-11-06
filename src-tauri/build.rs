@@ -185,6 +185,7 @@ fn main() {
             "plugin_host_mcp_close",
             "plugin_host_read_file",
             "plugin_host_resolve_directory",
+            "plugin_host_inspect_path",
             "plugin_host_repository_folders",
             "app_agent_list",
             "app_agent_set_protection",

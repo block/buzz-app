@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
-import { createRef, useState } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createRef, useState, type ComponentType, type ReactNode } from "react";
 import { afterEach, expect, it } from "vitest";
 import { EditableInput } from "./EditableInput";
 import type { ComposerInputElement } from "./composer-dom";
@@ -18,6 +19,7 @@ import {
   type ComposerToken,
 } from "./composer-token";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
+import { TaskSkillDetailsContext } from "./selected-mention-context";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -71,7 +73,11 @@ it("copies a bounded, frozen token of a known kind and nothing else", () => {
 const chips = (draft: MentionDraft) =>
   composerChips(readComposerSnapshot(draft.document));
 
-function mount(initial: MentionDraft | string, maxLength = 16000) {
+function mount(
+  initial: MentionDraft | string,
+  maxLength = 16000,
+  wrapper?: ComponentType<{ children: ReactNode }>,
+) {
   const ref = createRef<ComposerInputElement>();
   let draft = mentionDraft(initial);
   function Editor() {
@@ -93,7 +99,10 @@ function mount(initial: MentionDraft | string, maxLength = 16000) {
       />
     );
   }
-  const view = render(<Editor />, { reactStrictMode: true });
+  const view = render(<Editor />, {
+    reactStrictMode: true,
+    ...(wrapper ? { wrapper } : {}),
+  });
   const input = ref.current;
   if (!input) throw new Error("Editor did not mount");
   act(() => {
@@ -250,4 +259,132 @@ it("restores a chip, and marks chip data any snapshot rejection would drop as an
   expect(mentionDraft(token({ source: "@notes" }, [{ type: "text" }]))).toEqual(
     { text: "@notes", recipients: [] },
   );
+});
+
+it("opens a skill chip's details in place by pointer or key, and dismisses only them", async () => {
+  const target = "a".repeat(64);
+  const skill: ComposerToken = {
+    kind: "nexus.skill",
+    id: JSON.stringify({
+      path: "/Users/me/.claude/skills/review/SKILL.md",
+      name: "review",
+      source: "~/.claude/skills/review/SKILL.md",
+    }),
+    label: "review",
+    target,
+  };
+  let details:
+    | { description?: string | undefined; location?: string | undefined }
+    | undefined = {
+    description: "Reviews a diff.",
+    location: "~/.claude/skills/review/SKILL.md",
+  };
+  const lookups: unknown[] = [];
+  const f = mount("Use /re", 16000, ({ children }) => (
+    <TaskSkillDetailsContext.Provider
+      value={(token) => {
+        lookups.push(token);
+        return details;
+      }}
+    >
+      {children}
+    </TaskSkillDetailsContext.Provider>
+  ));
+  act(() => {
+    f.input.insertToken(skill, { start: 4, end: 7 });
+  });
+  const saved = f.draft();
+  const user = userEvent.setup();
+  const chip = screen.getByRole("button", { name: "Skill review" });
+  expect(lookups).toEqual([]);
+
+  await user.click(chip);
+  const dialog = await screen.findByRole("dialog", { name: "review" });
+  expect(dialog).toHaveTextContent(
+    "reviewReviews a diff.~/.claude/skills/review/SKILL.md",
+  );
+  expect(lookups.at(-1)).toMatchObject({ id: skill.id, target });
+  // No reference, recipient or verification internals.
+  for (const hidden of [skill.id, target, "/Users/me", "reported", "reference"])
+    expect(document.body.textContent).not.toContain(hidden);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).toBeNull();
+
+  for (const key of ["{Enter}", " "]) {
+    act(() => chip.focus());
+    await user.keyboard(key);
+    expect(await screen.findByRole("dialog", { name: "review" })).toBeVisible();
+    // Outside the popup dismisses it; the editor keeps the draft as it was.
+    await user.click(document.body);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  }
+  expect(f.draft()).toEqual(saved);
+  expect(f.input).toHaveValue("Use review ");
+
+  // A stale or missing report leaves the name alone.
+  details = undefined;
+  await user.click(chip);
+  expect(
+    await screen.findByRole("dialog", { name: "review" }),
+  ).toHaveTextContent(/^review$/);
+});
+
+it("returns the caret right after a skill chip when its details close toward it", async () => {
+  const skill: ComposerToken = {
+    kind: "nexus.skill",
+    id: '{"name":"review"}',
+    label: "review",
+    target: "a".repeat(64),
+  };
+  const f = mount("Use /rethen", 16000, ({ children }) => (
+    <>
+      <button type="button">Elsewhere</button>
+      {children}
+    </>
+  ));
+  act(() => {
+    f.input.insertToken(skill, { start: 4, end: 7 });
+  });
+  expect(f.input).toHaveValue("Use review then");
+  const after = "Use review".length;
+  const user = userEvent.setup();
+  const chip = screen.getByRole("button", { name: "Skill review" });
+
+  // Base UI moves focus into an opened popup a frame later; close after it.
+  const opened = async () => {
+    const dialog = await screen.findByRole("dialog", { name: "review" });
+    await waitFor(() =>
+      expect(dialog).toContainElement(document.activeElement as HTMLElement),
+    );
+  };
+
+  // Pointer: the caret was elsewhere; Escape puts typing after the chip.
+  act(() => f.input.setSelectionRange(0, 0));
+  await user.click(chip);
+  await opened();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(f.input).toHaveFocus());
+  expect(f.input.selectionStart).toBe(after);
+  await user.keyboard("!");
+  expect(f.input).toHaveValue("Use review! then");
+
+  // Keyboard: Tab reaches the chip, Enter opens it, Escape returns the same.
+  act(() => f.input.setSelectionRange(0, 0));
+  await user.tab();
+  expect(chip).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await opened();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(f.input).toHaveFocus());
+  expect(f.input.selectionStart).toBe(after);
+
+  // Moving focus elsewhere leaves both focus and the caret where they were.
+  act(() => f.input.setSelectionRange(0, 0));
+  await user.click(chip);
+  await opened();
+  const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+  await user.click(elsewhere);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(elsewhere).toHaveFocus();
+  expect(f.input.selectionStart).toBe(0);
 });

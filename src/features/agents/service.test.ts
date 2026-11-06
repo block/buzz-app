@@ -11991,6 +11991,83 @@ it("changes instructions in place and discards a dismissed change draft", async 
   expect(native.setType).not.toHaveBeenCalled();
 });
 
+it("reads the owner's agents and teams, and saves only a reviewed team draft", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  const team = await service.saveTeam({
+    draft: crypto.randomUUID(),
+    name: "Crew",
+    instructions: "Ship.",
+    members: [bot, sibling],
+  });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.readAgents || !handle.readTeams || !handle.updateTeam)
+    throw new Error("Missing config handles");
+  expect(handle.readAgents()).toEqual([
+    expect.objectContaining({ pubkey: bot, name: "Parent" }),
+    expect.objectContaining({ pubkey: sibling, name: "Child" }),
+  ]);
+  expect(handle.readAgents("Child")).toMatchObject({
+    pubkey: sibling,
+    type: "example/echo",
+    synced: false,
+  });
+  expect(() => handle.readAgents?.("Nobody")).toThrow("no agent");
+  expect(handle.readTeams(team.id)).toEqual({
+    id: team.id,
+    name: "Crew",
+    instructions: "Ship.",
+    members: [
+      { pubkey: bot, name: "Parent" },
+      { pubkey: sibling, name: "Child" },
+    ],
+    synced: false,
+  });
+  await expect(handle.updateTeam({ team: "Crew" })).rejects.toThrow(
+    "at least one change",
+  );
+  const { requestId } = await handle.updateTeam({
+    team: "Crew",
+    instructions: "Ship carefully.",
+  });
+  expect(service.teamUpdateRequests()).toEqual([
+    expect.objectContaining({
+      id: requestId,
+      team: team.id,
+      base: { name: "Crew", instructions: "Ship." },
+      instructions: "Ship carefully.",
+    }),
+  ]);
+  expect(handle.readTeams("Crew")).toMatchObject({ instructions: "Ship." });
+  await service.approveTeamUpdate(requestId, {
+    name: "Crew",
+    instructions: "Ship with care.",
+  });
+  expect(handle.readTeams("Crew")).toMatchObject({
+    instructions: "Ship with care.",
+    members: [{ pubkey: bot }, { pubkey: sibling }],
+  });
+  expect(service.teamUpdateRequests()).toEqual([]);
+  // A draft over a team that changed since is refused, and kept to dismiss.
+  const stale = await handle.updateTeam({ team: team.id, name: "Squad" });
+  await service.saveTeam({
+    id: team.id,
+    name: "Crew",
+    instructions: "Elsewhere.",
+    members: [bot, sibling],
+  });
+  await expect(
+    service.approveTeamUpdate(stale.requestId, {
+      name: "Squad",
+      instructions: "Elsewhere.",
+    }),
+  ).rejects.toThrow("changed since");
+  service.dismissTeamUpdate(stale.requestId);
+  expect(service.teamUpdateRequests()).toEqual([]);
+});
+
 it("drafts a proposed picture for the owner to save, and refuses one that is not an HTTPS image", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

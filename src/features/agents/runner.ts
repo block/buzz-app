@@ -10,7 +10,10 @@ import type {
   AgentAttention,
   AgentHandle,
   AgentCreationInput,
+  AgentReadout,
   AgentUpdateInput,
+  TeamReadout,
+  TeamUpdateInput,
   AgentHandoff,
   RegisteredAgentType,
   Trigger,
@@ -479,6 +482,18 @@ export type RunnerHost = {
   updateAgent(
     agent: Agent,
     input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  readAgents(
+    agent: Agent,
+    target?: string,
+  ): AgentReadout | readonly AgentReadout[];
+  readTeams(
+    agent: Agent,
+    target?: string,
+  ): TeamReadout | readonly TeamReadout[];
+  updateTeam(
+    agent: Agent,
+    input: TeamUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins as the agent's handle offers them. */
   plugins?(agent: Agent): AgentHandle["plugins"];
@@ -2760,6 +2775,18 @@ export class AgentRunners {
         updateAgent: async (input: AgentUpdateInput) => {
           lifetime.throwIfAborted();
           return this.host.updateAgent(agent, input);
+        },
+        readAgents: (target?: string) => {
+          lifetime.throwIfAborted();
+          return this.host.readAgents(agent, target);
+        },
+        readTeams: (target?: string) => {
+          lifetime.throwIfAborted();
+          return this.host.readTeams(agent, target);
+        },
+        updateTeam: async (input: TeamUpdateInput) => {
+          lifetime.throwIfAborted();
+          return this.host.updateTeam(agent, input);
         },
         // Only a run hands off or manages plugins: through `Agents.handle` a
         // plugin's call would read as the agent's own.

@@ -400,9 +400,12 @@ it("settles a stopped turn that Claude ends as aborted tools as stopped, not fai
 });
 
 /** A Claude whose Buzz tools run through the real app client: `owner_channel_list`
- * holds its first read until `release`, and any other tool reads a memory. */
+ * holds its first read until `release`, and any other tool reads a memory.
+ * With `holdStops`, Claude answers a Stop only when the test does. */
 async function ownerTurns(env?: Record<string, string>) {
   const { spawn, processes } = fakeSpawn();
+  const stops: string[] = [];
+  let holdStops = false;
   const listing = {
     execution: { agent: "agent", owner: "owner", community: "relay" },
     channels: [
@@ -472,7 +475,17 @@ async function ownerTurns(env?: Record<string, string>) {
     },
   );
   const claude = await ClaudeProcess.start(
-    env ? (id, options) => spawn(id, { ...options, env }) : spawn,
+    async (id, options) => {
+      const process = await spawn(id, env ? { ...options, env } : options);
+      return {
+        ...process,
+        write: async (data: string) => {
+          const stop = holdStops && data.includes('"subtype":"interrupt"');
+          if (!stop) return process.write(data);
+          stops.push(JSON.parse(data).request_id);
+        },
+      };
+    },
     { ...launch, sessionId: "s1", tools },
   );
   claude.conversation = "chan/root";
@@ -500,9 +513,19 @@ async function ownerTurns(env?: Record<string, string>) {
         },
       },
     });
+  const answerStop = (requestId: string | undefined) =>
+    fake.emit({
+      type: "control_response",
+      response: { subtype: "success", request_id: requestId },
+    });
   return {
     claude,
     fake,
+    stops,
+    holdStops: () => {
+      holdStops = true;
+    },
+    answerStop,
     ownerAccess,
     signals,
     reading,
@@ -581,9 +604,11 @@ it.each([
   "keeps a message sent while a Stop lands in the stopped turn, when Claude %s",
   async (_, env) => {
     const t = await ownerTurns(env);
+    const idle = !env;
     t.fake.hold = true;
     const stopped = t.claude.send("list my channels");
     await flush();
+    if (idle) sessionState(t.fake, "running");
     await t.claude.interrupt();
     const folded = t.claude.send("and my DMs");
     await flush();
@@ -593,14 +618,54 @@ it.each([
     expect(await t.answer("r1")).toContain('"isError":true');
     expect(await t.answer("r2")).toContain('"isError":true');
     expect(t.ownerAccess.channels).not.toHaveBeenCalled();
-    abortTools(t.fake, !env);
+    let settled = false;
+    void stopped.then(() => {
+      settled = true;
+    });
+    abortTools(t.fake, false);
+    await flush();
+    // Claude that reports idle settles there, not at the result.
+    expect(settled).toBe(!idle);
+    if (idle) sessionState(t.fake, "idle");
     await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
     await expect(folded).resolves.toEqual({ ok: true, stopped: true });
 
-    t.fake.hold = false;
-    await expect(t.claude.send("next")).resolves.toEqual({ ok: true });
+    // The next message is new work, with ordinary and owner calls.
+    const next = t.claude.send("next");
+    await flush();
+    t.ask("r3", "mem_get");
+    t.ask("r4");
+    expect(await t.answer("r3")).toContain("core notes");
+    await t.reading;
+    t.release();
+    expect(await t.answer("r4")).toContain("Owner secrets");
+    t.fake.finish();
+    await expect(next).resolves.toEqual({ ok: true });
   },
 );
+
+it("stops a turn that starts while an earlier Stop awaits Claude's answer", async () => {
+  const t = await ownerTurns();
+  t.holdStops();
+  t.fake.hold = true;
+  const sent = t.claude.send("list my channels");
+  await flush();
+  const first = t.claude.interrupt();
+  abortTools(t.fake);
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
+
+  // Claude starts a turn of its own before answering the first Stop.
+  sessionState(t.fake, "running");
+  const second = t.claude.interrupt();
+  expect(t.stops).toHaveLength(2);
+  t.ask("r1", "mem_get");
+  expect(await t.answer("r1")).toContain('"isError":true');
+  t.answerStop(t.stops[0]);
+  t.answerStop(t.stops[1]);
+  await expect(first).resolves.toBeUndefined();
+  await expect(second).resolves.toBeUndefined();
+  sessionState(t.fake, "idle");
+});
 
 it("asks Claude once for Stops made together, which share its refusal", async () => {
   const t = await ownerTurns();

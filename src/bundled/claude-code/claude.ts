@@ -174,8 +174,11 @@ export class ClaudeProcess {
   /** Aborts when the owner stops the work. The next turn, sent or its own,
    * starts anew, so a stopped turn's tool calls stay stopped. */
   private workLifetime = new AbortController();
-  /** The owner's Stop awaiting Claude's answer; another Stop shares it. */
-  private stopRequest: Promise<void> | undefined;
+  /** The owner's Stop awaiting Claude's answer, for the work it stopped;
+   * another Stop of that work shares it. */
+  private stopRequest:
+    | Readonly<{ work: AbortController; done: Promise<void> }>
+    | undefined;
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   /** It runs a turn of its own, such as one a finished background task starts. */
@@ -584,12 +587,15 @@ export class ClaudeProcess {
   /** Stops the running turn, as the SDK's `interrupt` does; messages folded
    * into it end with it. The turn then settles as Claude ends it. */
   interrupt() {
-    // One answer for every Stop asked for meanwhile, so one's failure cannot
-    // revive work another stopped.
-    this.stopRequest ??= this.stop().finally(() => {
-      this.stopRequest = undefined;
+    // One answer for every Stop of the same work, so one's failure cannot
+    // revive work another stopped; newer work is stopped anew.
+    const work = this.workLifetime;
+    if (this.stopRequest?.work === work) return this.stopRequest.done;
+    const done: Promise<void> = this.stop().finally(() => {
+      if (this.stopRequest?.done === done) this.stopRequest = undefined;
     });
-    return this.stopRequest;
+    this.stopRequest = { work, done };
+    return done;
   }
   private async stop() {
     if (!this.alive || !this.active) return;

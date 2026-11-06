@@ -903,11 +903,12 @@ pub(crate) fn credential_pair_answer(
 }
 
 #[tauri::command]
-pub(crate) fn credential_pairing_communities(
+pub(crate) async fn credential_pairing_communities(
     service: tauri::State<'_, CredentialService>,
     communities: Vec<String>,
-) {
-    service.0.pairings.set_communities(communities);
+) -> Result<(), ()> {
+    service.0.pairings.set_communities(communities).await;
+    Ok(())
 }
 
 #[tauri::command]

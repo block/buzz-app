@@ -559,6 +559,47 @@ async fn an_approval_saved_during_a_revoke_all_returns_no_token() {
     assert!(fixture.keychain.value.lock().unwrap().is_none());
 }
 
+/// Approved, then its community is removed while its record is being saved:
+/// the removal waits for the save, which removes the record, and the token is
+/// never returned.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approval_saved_during_a_community_removal_returns_no_token() {
+    let fixture = fixture();
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    *fixture.keychain.gate.lock().unwrap() = Some(super::super::keychain::Gate {
+        entered,
+        release: release_rx,
+    });
+    let service = fixture.service.clone();
+    let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.answer(&id, true);
+    tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())
+        .await
+        .unwrap();
+    let service = fixture.service.clone();
+    let mut removing =
+        tokio::spawn(async move { service.0.pairings.set_communities(Vec::new()).await });
+    // The removal cannot complete while the save is paused.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut removing)
+            .await
+            .is_err()
+    );
+    release.send(()).unwrap();
+    removing.await.unwrap();
+    // Once the removal completed, no token is saved.
+    assert!(fixture.keychain.value.lock().unwrap().is_none());
+    let (status, reply) = pairing.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+    assert_eq!(
+        reply["message"],
+        format!("{RELAY} isn't a community in Buzz; add it first")
+    );
+    assert!(reply["result"].is_null() || reply["result"].as_str().unwrap().is_empty());
+}
+
 /// Approved after a revoke-all has been saved: nothing is saved.
 #[tokio::test]
 async fn an_approval_after_a_revoke_all_saves_nothing() {
@@ -882,7 +923,8 @@ async fn a_saved_community_matches_as_a_whole_normalized_url() {
         .service
         .0
         .pairings
-        .set_communities(vec!["https://relay.example".into()]);
+        .set_communities(vec!["https://relay.example".into()])
+        .await;
     let service = fixture.service.clone();
     let pairing =
         tokio::spawn(
@@ -911,7 +953,7 @@ async fn removing_the_community_declines_the_waiting_request() {
     let service = fixture.service.clone();
     let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
     let id = asked(&fixture.notices).await;
-    fixture.service.0.pairings.set_communities(Vec::new());
+    fixture.service.0.pairings.set_communities(Vec::new()).await;
     let (status, reply) = pairing.await.unwrap();
     assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
     assert_eq!(

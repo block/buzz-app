@@ -152,19 +152,25 @@ impl Pairings {
 
     /// Records the communities saved in Buzz, as WebSocket or HTTP URLs.
     /// A request waiting for the human whose community is gone is declined.
-    pub(crate) fn set_communities(&self, communities: Vec<String>) {
-        let mut saved = self
-            .communities
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut state = self.state();
-        if let Some((.., relay, _)) = &state.pending {
-            if !is_saved(&communities, relay) {
-                // Dropping the sender declines it.
-                state.pending = None;
+    /// Returns once no approval saved under the old list remains: an approval
+    /// mid-save holds the write lock and, on seeing its community gone,
+    /// removes its record before releasing it.
+    pub(crate) async fn set_communities(&self, communities: Vec<String>) {
+        {
+            let mut saved = self
+                .communities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut state = self.state();
+            if let Some((.., relay, _)) = &state.pending {
+                if !is_saved(&communities, relay) {
+                    // Dropping the sender declines it.
+                    state.pending = None;
+                }
             }
+            *saved = Some(communities);
         }
-        *saved = Some(communities);
+        drop(self.write.lock().await);
     }
 
     /// Whether `relay` is a saved community, compared as a whole URL.
@@ -248,6 +254,13 @@ impl Pairings {
         change: impl FnOnce(&mut Vec<Record>) -> Option<T>,
     ) -> Result<Option<T>, String> {
         let _write = self.write.lock().await;
+        self.mutate_locked(change).await
+    }
+    /// [`Self::mutate`], for a caller already holding the write lock.
+    async fn mutate_locked<T>(
+        &self,
+        change: impl FnOnce(&mut Vec<Record>) -> Option<T>,
+    ) -> Result<Option<T>, String> {
         let mut records = self.loaded_locked().await?;
         let Some(out) = change(&mut records) else {
             return Ok(None);
@@ -450,17 +463,16 @@ impl Pairings {
         let account_changed = || Failure::new("denied", "Your Buzz account changed");
         // Saved only under the generation it was approved in, and returned
         // only if no revoke-all began while it was saved: that one removes it.
-        // Its community is checked under the lock that removes one.
+        // A community removed while it was saved is seen before the write
+        // lock is released, which the removal waits for, and removes it.
+        let _write = self.write.lock().await;
         let mut unsaved_community = false;
-        self.mutate(|records| {
+        let id = record.id.clone();
+        self.mutate_locked(|records| {
             if self.generation() != Some(generation) {
                 return None;
             }
-            let communities = self
-                .communities
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            unsaved_community = !communities.as_deref().is_some_and(|c| is_saved(c, relay));
+            unsaved_community = !self.saved(relay).unwrap_or(false);
             (!unsaved_community).then(|| records.push(record))
         })
         .await
@@ -472,6 +484,16 @@ impl Pairings {
                 account_changed()
             }
         })?;
+        if !self.saved(relay).unwrap_or(false) {
+            self.mutate_locked(|records| {
+                records.retain(|record| record.id != id);
+                Some(())
+            })
+            .await
+            .map_err(Failure::unavailable)?;
+            return Err(unsaved());
+        }
+        drop(_write);
         if self.generation() != Some(generation) {
             return Err(account_changed());
         }

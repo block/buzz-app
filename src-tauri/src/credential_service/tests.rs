@@ -152,7 +152,7 @@ pub(crate) fn service_over(
         Arc::new(keychain.clone()),
         Arc::new(move |notice| notices.lock().unwrap().push(notice)),
     );
-    service.0.pairings.set_communities(vec![RELAY.into()]);
+    *service.0.pairings.communities.lock().unwrap() = Some(vec![RELAY.into()]);
     service
 }
 

@@ -195,7 +195,7 @@ export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
 }
 
 const OWN_CLICKS =
-  "a, button, input, textarea, select, summary, label, [role='button'], [role='menuitem'], [role='group'], [contenteditable='true'], img, video, audio, pre, [data-copy-code]";
+  "a, button, input, textarea, select, summary, label, [role='button'], [role='menuitem'], [role='group'], [contenteditable='true'], img:not([data-copy-emoji]), video, audio, pre, [data-copy-code]";
 
 /** Slack's Option-click marks a message unread, as U does, from its box only:
  * not its day divider, controls, media, code or reactions, nor the end of a

@@ -90,7 +90,8 @@ it("marks a message unread with Option-click, but not from its controls, media, 
     ?.querySelector("[data-layout]")
     ?.insertAdjacentHTML(
       "beforeend",
-      '<p>Text <a href="#one">link</a></p><img alt=""><pre>code</pre>' +
+      '<p>Text <a href="#one">link</a> <img data-copy-emoji=":wave:" alt=":wave:"></p>' +
+        '<img alt=""><pre>code</pre>' +
         '<div role="group" aria-label="Reactions"><button>👍</button></div>',
     );
   const text = row?.querySelector("p");
@@ -105,7 +106,7 @@ it("marks a message unread with Option-click, but not from its controls, media, 
     click("p", { altKey: true, [modifier]: true });
   for (const selector of [
     "a",
-    "img",
+    "img:not([data-copy-emoji])",
     "pre",
     "[aria-label='Reactions']",
     "[aria-label='Reply']",
@@ -126,7 +127,8 @@ it("marks a message unread with Option-click, but not from its controls, media, 
   vi.spyOn(controller, "canMarkUnread").mockReturnValueOnce(false);
   click("p");
   expect(controller.markUnread).not.toHaveBeenCalled();
-  click("p");
+  // A custom emoji is part of the text, not media.
+  click("[data-copy-emoji]");
   expect(controller.markUnread).toHaveBeenCalledExactlyOnceWith({ id: "one" });
   expect(document.activeElement).toBe(document.body);
 });

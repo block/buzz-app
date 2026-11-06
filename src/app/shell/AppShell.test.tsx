@@ -30,6 +30,7 @@ import { createAppearance } from "../../shared/theme/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BackdropsService } from "../../features/backdrops/service";
 import { ShellBackdrops } from "../../features/backdrops/ShellBackdrops";
+import { ChannelsPage } from "../../bundled/channels/ChannelsPage";
 
 const testAppearance = createAppearance(window);
 
@@ -248,6 +249,65 @@ it("renders the default shell unchanged until a plugin registers a backdrop, and
   await act(() => fiber.dispose());
   expect(view.container.innerHTML).toBe(baseline);
   await root.fiber.dispose();
+});
+
+it("opens the dock's community switcher from Messages in Personal space", async () => {
+  // No saved community: the shell shows Messages without a session, as after
+  // leaving the last community or choosing Personal space.
+  const current = createServices();
+  services = current;
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={[]}
+        selected="buzz.channels/channels"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        <ChannelsPage
+          relay={current.relay}
+          panels={current.panels}
+          navigator={current.navigation}
+        />
+      </AppShell>
+    </ToastProvider>,
+  );
+  const channels = screen.getByRole("region", { name: "Channels" });
+  expect(
+    within(channels).getByRole("heading", {
+      name: "Your channels, one conversation.",
+    }),
+  ).toBeVisible();
+  expect(channels).not.toHaveTextContent(/top bar/i);
+
+  await user.click(
+    within(channels).getByRole("button", { name: "Choose a community" }),
+  );
+  const switcher = await screen.findByRole("dialog", {
+    name: "Switch community",
+  });
+  expect(
+    within(switcher).getByRole("button", { name: "Join a community" }),
+  ).toBeVisible();
+
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Switch community" }),
+    ).toBeNull(),
+  );
+  // Focus lands on the dock's own trigger, which shows where the switcher lives.
+  expect(
+    within(screen.getByRole("navigation", { name: "Apps dock" })).getByRole(
+      "button",
+      { name: /^Community switcher: / },
+    ),
+  ).toHaveFocus();
 });
 
 it("keeps built-in sidebar controls available before page contributions load", () => {

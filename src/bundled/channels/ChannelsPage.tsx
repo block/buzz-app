@@ -69,6 +69,7 @@ import { placeExactOpening } from "../../features/conversation/exact-opening";
 import { flushSync } from "react-dom";
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -111,6 +112,7 @@ import {
   ConversationComposer,
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
+import { OpenCommunitySwitcher } from "../../features/communities/CommunityPicker";
 import type {
   Attachment,
   ChannelSummary,
@@ -167,6 +169,7 @@ export function ChannelsPage({
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  const openSwitcher = useContext(OpenCommunitySwitcher);
   const sessionNavigation = navigation?.forSession(relay, session);
   // An opening visit's deadline bounds Connecting; once it has settled, a
   // retrying connection is a failure that keeps trying, not a connection.
@@ -231,9 +234,14 @@ export function ChannelsPage({
               </div>
               <h1>Your channels, one conversation.</h1>
               <p>
-                Use the community picker in the top bar to choose or add a
-                community. Your profile and settings work without a community.
+                Choose a community to see its channels, or join one. Your
+                profile and settings work without a community.
               </p>
+              {openSwitcher && (
+                <Button type="button" variant="primary" onClick={openSwitcher}>
+                  Choose a community
+                </Button>
+              )}
             </div>
           ) : session.status === "error" && session.denied ? (
             // The community refused this account. Its notice, on every page,

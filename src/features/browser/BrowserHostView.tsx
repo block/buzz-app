@@ -529,6 +529,7 @@ export function BrowserHostView({
                   <Button
                     type="button"
                     variant="primary"
+                    loading={retrying}
                     onClick={() => retryAttach.current?.()}
                   >
                     Try again

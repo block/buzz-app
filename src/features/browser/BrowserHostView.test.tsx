@@ -852,6 +852,56 @@ it("keeps Try again focused while a refused app retries", async () => {
   );
 });
 
+it("keeps Try again focused while an unreachable Builderlab retries", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  const unreachable = () =>
+    new BrowserAttachError("Builderlab sign-in request failed", "unavailable");
+  let settle: { resolve(id: string): void; reject(error: unknown): void } = {
+    resolve: () => {},
+    reject: () => {},
+  };
+  const deferred = () =>
+    new Promise<string>((resolve, reject) => {
+      settle = { resolve, reject };
+    });
+  vi.mocked(platform.attach)
+    .mockRejectedValueOnce(unreachable())
+    .mockImplementationOnce(deferred)
+    .mockImplementationOnce(deferred);
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  retry.focus();
+
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  expect(retry).toHaveFocus();
+  expect(retry).toHaveAttribute("aria-busy", "true");
+  expect(
+    screen.getByRole("button", { name: "Open in browser" }),
+  ).toBeInTheDocument();
+  await user.keyboard("{Enter}");
+  expect(platform.attach).toHaveBeenCalledTimes(2);
+
+  await act(async () => settle.reject(unreachable()));
+  expect(retry).toHaveFocus();
+  expect(retry).not.toHaveAttribute("aria-busy");
+
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(3));
+  await act(async () => settle.resolve("session-1"));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+});
+
 it("keeps other attach failures in the error bar", async () => {
   const platform = fakePlatform();
   vi.mocked(platform.attach).mockRejectedValue(

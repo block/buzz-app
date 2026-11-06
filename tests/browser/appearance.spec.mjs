@@ -730,13 +730,13 @@ test.describe("message width and density", () => {
       await page.getByRole("option", { name: "Narrow", exact: true }).click();
       await closeSettings(page);
       await expect(threadRows).toHaveCSS("width", `${narrow}px`);
-      const mainTab = page.locator(
-        '[data-main-workspace] [role="tab"][data-tab-value^="thread:"]',
-      );
-      await mainTab.focus();
-      await page.keyboard.press("Alt+Shift+ArrowRight");
-
+      await page
+        .locator("[data-main-workspace]")
+        .getByRole("button", { name: "Close Thread root 0 tab", exact: true })
+        .click();
+      await expect(row).toBeVisible();
       await page.setViewportSize({ width: 480, height: 900 });
+      await expect(row).toBeVisible();
       await expect.poll(rowWidth).toBeLessThanOrEqual(480);
       await page.screenshot({
         path: testInfo.outputPath("density-narrow-dark.png"),

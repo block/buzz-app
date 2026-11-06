@@ -30,6 +30,7 @@ import {
   type Priority,
 } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
+import type { ReadTransport } from "./transport";
 import {
   NOTICE_PAGE_SIZE,
   noticeFilter,
@@ -215,6 +216,7 @@ export function createChannelStore(
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
+        verifyStored?: ReadTransport["verifyStored"];
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
         rosterChanged?(strong?: boolean): void;
@@ -1305,7 +1307,11 @@ export function createChannelStore(
     profileSave = undefined;
     if (!persistence?.writeProfiles || !profilesRestored || disposed) return;
     const events = directory.recent(PROFILE_CACHE_BASE);
-    const signature = events.map((event) => event.id).join(":");
+    // Sorted, so reads that only reorder the LRU never rewrite the mirror.
+    const signature = events
+      .map((event) => event.id)
+      .sort()
+      .join(":");
     if (signature === mirrored) return;
     mirrored = signature;
     void persistence.writeProfiles(events).catch(() => {
@@ -1326,18 +1332,24 @@ export function createChannelStore(
     try {
       if (!Array.isArray(saved) || saved.length > PROFILE_CACHE_BASE) return;
       const profiles: RelayEvent[] = [];
-      for (let index = 0; index < saved.length; index += 12) {
-        for (const value of saved.slice(index, index + 12)) {
-          try {
-            const event = eventDto(JSON.parse(JSON.stringify(value)));
-            if (event.kind === 0) profiles.push(event);
-          } catch {
-            /* One bad record cannot discard the other names. */
+      // Any host failure or bad record falls back to checking one by one.
+      const verified = await transport?.verifyStored?.(saved).catch(() => {});
+      if (disposed || generation !== cleared) return;
+      if (verified)
+        profiles.push(...verified.filter((event) => event.kind === 0));
+      else
+        for (let index = 0; index < saved.length; index += 12) {
+          for (const value of saved.slice(index, index + 12)) {
+            try {
+              const event = eventDto(JSON.parse(JSON.stringify(value)));
+              if (event.kind === 0) profiles.push(event);
+            } catch {
+              /* One bad record cannot discard the other names. */
+            }
           }
+          await yieldToHost();
+          if (disposed || generation !== cleared) return;
         }
-        await yieldToHost();
-        if (disposed || generation !== cleared) return;
-      }
       directory.accept(profiles);
       if (!options.cachedOnly && profiles.length)
         void directory

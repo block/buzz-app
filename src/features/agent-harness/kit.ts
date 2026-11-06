@@ -445,7 +445,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         });
         const added = sources.added();
         return respond(client, context, message, added, {
-          instructions: sessionHint(added),
+          instructions: sessionHint(added, !!client.ownerAccess),
         });
       };
     },

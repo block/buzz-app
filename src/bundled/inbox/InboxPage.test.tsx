@@ -12,7 +12,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { PageTabs } from "../channels/PageTabs";
 import { InboxPage } from "./InboxPage";
@@ -4166,7 +4166,28 @@ function threadLayout() {
       ? ([box] as unknown as DOMRectList)
       : getClientRects.call(this);
   });
+  // A reveal's completion notice does not bubble, so capture it.
+  const positioned = new Set<Element>();
+  const notice = (event: Event) => {
+    if (event.target instanceof Element) positioned.add(event.target);
+  };
+  document.addEventListener("reading-positioned", notice, true);
+  onTestFinished(() =>
+    document.removeEventListener("reading-positioned", notice, true),
+  );
   return async (reader: HTMLElement, read: () => void) => {
+    // The fake clock below never runs a frame requested before it, so first
+    // let this reader's reveal finish on the real one: it notifies reading
+    // once its row is placed and verified.
+    await waitFor(() =>
+      expect(
+        [...positioned].some(
+          (target) =>
+            target.isConnected &&
+            (target.contains(reader) || reader.contains(target)),
+        ),
+      ).toBe(true),
+    );
     windowFocus.mockReturnValue(true);
     vi.useFakeTimers({
       toFake: [

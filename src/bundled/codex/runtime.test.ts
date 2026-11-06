@@ -3811,6 +3811,41 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   });
 });
 
+it("reads a file outside its turns in its resolved saved workspace, but not on an execution target", async () => {
+  type Saved = Parameters<CodexRuntime["workspaceFile"]>[0];
+  const agent = {
+    key: pubkey,
+    pubkey,
+    config: { workspace: "~/.buzz", model: "test-model" },
+  } as unknown as Saved;
+  const f = fixture();
+  const bytes = await f.runtime.workspaceFile(
+    agent,
+    "notes.txt",
+    new AbortController().signal,
+  );
+  expect(new TextDecoder().decode(bytes)).toBe("FILE CONTENT");
+  expect(f.fileReads).toEqual([{ cwd: "/home/test/.buzz", path: "notes.txt" }]);
+  const remote = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => ({ provider: "test/guest" }),
+  );
+  await expect(
+    remote.runtime.workspaceFile(
+      agent,
+      "notes.txt",
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("only in a conversation on its execution target");
+  expect(remote.fileReads).toEqual([]);
+});
 it("returns a failed send to Codex for correction without ending its turn", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -6496,5 +6531,61 @@ it.each(["conversation", "standalone", "preview"])(
     await rejected;
     expect(f.spawn).not.toHaveBeenCalled();
     expect(execution).not.toHaveBeenCalled();
+  },
+);
+
+it.each([true, false])(
+  "lists and runs the owner tools only for a run with owner access: %s",
+  async (owned) => {
+    const f = fixture();
+    const executedAs = { agent: "agent", owner: "owner", community: "c" };
+    const ownerAccess = {
+      channels: vi.fn(async () => ({
+        execution: executedAs,
+        channels: [],
+        partial: false,
+      })),
+      channel: vi.fn(),
+      members: vi.fn(),
+      held: vi.fn(),
+    };
+    const delivery = f.delivery("@Codex list my channels");
+    await f.runtime.run({
+      ...delivery,
+      agent: {
+        ...delivery.agent,
+        ...(owned ? { ownerAccess } : {}),
+      } as typeof delivery.agent,
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as {
+      dynamicTools: {
+        description: string;
+        tools: { name: string; deferLoading?: boolean }[];
+      }[];
+    };
+    const listed = thread.dynamicTools[0]?.tools.filter((tool) =>
+      tool.name.startsWith("owner_"),
+    );
+    expect(listed).toEqual(
+      owned
+        ? ["owner_channel_list", "owner_channel_get", "owner_member_list"].map(
+            (name) => expect.objectContaining({ name, deferLoading: true }),
+          )
+        : [],
+    );
+    // A name the model remembers or guesses is checked against the run's
+    // own access on every call.
+    const reply = (await f.tool("owner_channel_list", {}))?.result as {
+      success: boolean;
+      contentItems: { text: string }[];
+    };
+    expect(reply.success).toBe(owned);
+    expect(reply.contentItems[0]?.text).toContain(
+      owned ? '"executedAs"' : "nothing was read",
+    );
+    expect(ownerAccess.channels).toHaveBeenCalledTimes(owned ? 1 : 0);
+    await f.complete();
   },
 );

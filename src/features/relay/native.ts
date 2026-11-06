@@ -26,14 +26,19 @@ import {
   validateUploadResult,
   type UploadProgress,
 } from "./attachments";
-import { eventDto, type RelayEvent } from "./events";
+import {
+  createEventVerifier,
+  eventDto,
+  type RelayEvent,
+  type SignatureVerifier,
+} from "./events";
 import {
   privateTag,
   privateCoordinate,
   parsePrivateRecord,
   type PrivateRecord,
 } from "../channel-templates/model";
-import type { RelayWriter } from "./transport";
+import { parseEvents, type RelayWriter } from "./transport";
 import { communityGitRepository } from "../repos/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
@@ -340,9 +345,19 @@ export function nativeRelaySigner(community: string): Signer {
     },
     upload: (file, signal) => nativeUpload(origin, file, signal),
     media: nativeMediaUrl,
-    verifySignatures: (claims) =>
-      nativeReadInvoke<boolean[]>("relay_verify_signatures", { claims }),
+    verifySignatures: verifyNativeSignatures,
   };
+}
+
+const verifyNativeSignatures: SignatureVerifier = (claims) =>
+  nativeReadInvoke<boolean[]>("relay_verify_signatures", { claims });
+
+/** Device evidence can be verified before any relay connection exists. */
+export function verifyNativeStored(values: readonly unknown[]) {
+  return parseEvents(
+    values,
+    createEventVerifier(undefined, verifyNativeSignatures),
+  );
 }
 
 export const NOT_A_COMMUNITY_ERROR =

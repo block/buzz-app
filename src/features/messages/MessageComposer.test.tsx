@@ -6806,6 +6806,45 @@ it("retains rejected intent and clears the draft only after the outbox accepts i
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it("leads the placeholder's channel name with its sidebar icon", () => {
+  const h = mount();
+  const lead = () =>
+    h.input().parentElement?.querySelector(':scope > [aria-hidden="true"]');
+  expect(screen.getByRole("textbox", { name: "Message #General" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toHaveTextContent(/^$/);
+  expect(lead()).toHaveAttribute("data-lead", "Message");
+  expect(lead()).toHaveAttribute("data-name", "General");
+  expect(lead()?.querySelector("svg.tabler-icon-hash")).not.toBeNull();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+    private: true,
+  };
+  const session = {
+    ...h.session,
+    channels: {
+      ...h.session.channels,
+      get: () => channel,
+      list: () => ({ status: "ready" as const, channels: [channel] }),
+    },
+  };
+  h.retarget({ session });
+  expect(screen.getByRole("textbox", { name: "Message General" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toHaveAttribute("data-name", "General");
+  expect(lead()?.querySelector("svg.tabler-icon-lock")).not.toBeNull();
+  expect(lead()?.querySelector("svg.tabler-icon-hash")).toBeNull();
+  h.retarget({ session, threadRootId: "root" });
+  expect(screen.getByRole("textbox", { name: "Reply to thread" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toBeNull();
+});
+
 it("labels simultaneous composers independently and prevents disabled or unsupported writes", async () => {
   const channel = mount();
   const thread = mount({ threadRootId: "root" });
@@ -11096,7 +11135,6 @@ describe("repository resource picker", () => {
             p.homes.mock.calls.filter(([id]) => id === "channel").length,
           ).toBeGreaterThan(1),
         );
-        expect(trigger()).toBeDisabled();
         // Closing formatting fades the toolbar back in; wait for that entrance.
         await waitFor(() => expect(trigger()).toBeVisible());
         expect(trigger()).toBeDisabled();

@@ -59,6 +59,7 @@ export function provideRelay(
   agentChoices?: LocalAgents,
   resume?: { viewer: string; scope: string },
   localAgents?: LocalAgentSource,
+  verifyStored?: ReadTransport["verifyStored"],
 ) {
   let disposed = false;
   let generation = 0;
@@ -136,6 +137,7 @@ export function provideRelay(
               ),
             ),
           media: () => undefined,
+          ...(verifyStored ? { verifyStored } : {}),
         },
         {
           identityNames,

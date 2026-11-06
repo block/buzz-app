@@ -179,6 +179,7 @@ async function setup({
   syncedSettings = undefined as AgentType<Config>["syncedSettings"],
   protection = undefined as true | undefined,
   retire = undefined as AgentType<Config>["retire"],
+  readFile = undefined as AgentType<Config>["readFile"],
   /** How `run` answers, from the first delivery on. */
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
@@ -190,6 +191,8 @@ async function setup({
   starting = false,
   /** The Buzz settings agents' runs can change. */
   deviceSettings = undefined as DeviceSettings | undefined,
+  /** The echo type's plugin revision: "bundled" for a bundled harness. */
+  revision = "one",
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -233,7 +236,7 @@ async function setup({
     deviceSettings,
   );
   const plugin = ctx.extend({
-    pluginOwner: Object.freeze({ id: "example", revision: "one" }),
+    pluginOwner: Object.freeze({ id: "example", revision }),
   });
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
@@ -292,6 +295,7 @@ async function setup({
     run,
     ...(protection ? { protection } : {}),
     ...(retire ? { retire } : {}),
+    ...(readFile ? { readFile } : {}),
     ...(runOnce ? { runOnce } : {}),
     ...(sessionControls
       ? {
@@ -9809,6 +9813,8 @@ it("adds plugins' tools to every session, each name once", async () => {
     { ...tool, description: "" },
     { ...tool, inputSchema: { type: "string" } },
     { ...tool, inputSchema: { type: "object", default: 1n } },
+    { ...tool, name: "owner_channel_list" },
+    { ...tool, name: "owner_message_list" },
   ])
     expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
   expect(service.tools()).toHaveLength(1);
@@ -13287,6 +13293,7 @@ it.each([
           bot,
           new AbortController().signal,
           () => {},
+          ["agent"],
         ),
       ).rejects.toThrow("External apps are not enabled for this community.");
       expect(serveMcp).not.toHaveBeenCalled();
@@ -13380,6 +13387,7 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
       bot,
       controller.signal,
       admitted,
+      ["agent"],
     );
     const call = handler;
     if (!call) throw new Error("Missing server handler");
@@ -13438,52 +13446,39 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
   },
 );
 
-describe("external private Solo creation", () => {
+describe("full external agent access", () => {
   async function fixture(
     scopes: readonly import("./external-connection").ExternalScope[] = [
-      "create",
+      "agent",
     ],
+    options: Pick<NonNullable<Parameters<typeof setup>[0]>, "readFile"> = {},
   ) {
     vi.stubEnv(
       "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
       "https://relay.example.test",
     );
-    const f = await setup();
-    const saved = vi.fn<NonNullable<RelaySession["mainAgent"]>["read"]>(
-      async () => sibling,
-    );
-    const libraryRead = vi.fn(async () => ({
-      definitions: [],
-      identities: [{ pubkey: sibling, name: "Saved remote Bestie" }],
-    }));
-    const lifetime = new AbortController();
-    const choices = createAgentChoices({
-      scope: `https://relay.example.test:${viewer}`,
-      library: createAgentLibrary(libraryRead).queries,
-      native: {
-        snapshot: f.service.local,
-        subscribe: f.service.subscribe,
-        refresh: () => f.service.refresh(),
-      },
-      archives: {
-        snapshot: () => ({
-          status: "ready",
-          archived: [...f.archives.archived],
-        }),
-        subscribe: () => () => {},
-        state: (key) => f.archives.state(key),
-        ensure: f.archives.ensure,
-        refresh: f.archives.refresh,
-      },
-      signal: lifetime.signal,
+    let mood: SettingValue = "calm";
+    const write = vi.fn((next: SettingValue) => {
+      mood = next;
     });
-    Object.assign(f.session, {
-      mainAgent: { read: saved, write: vi.fn(async () => {}) },
-      agentChoices: choices,
+    const f = await setup({
+      ...options,
+      deviceSettings: createDeviceSettings([
+        {
+          key: "example.mood",
+          description: "A mood.",
+          schema: { type: "string", enum: ["calm", "busy"] },
+          read: () => ({ value: mood }),
+          write,
+        },
+      ]),
+    });
+    Object.assign(f.session.agentChoices, {
+      snapshot: () => ({ selectable: [{ pubkey: bot }] }),
+      subscribe: () => () => {},
     });
     let handler: import("../host/service").McpHandler | undefined;
     const closed = runnerGate();
-    const close = vi.fn(async () => closed.resolve());
     f.ctx.provide("host", {
       serveMcp: async (receive: import("../host/service").McpHandler) => {
         handler = receive;
@@ -13491,7 +13486,7 @@ describe("external private Solo creation", () => {
           url: "http://127.0.0.1:1234/mcp",
           headers: [],
           closed: closed.promise,
-          close,
+          close: async () => closed.resolve(),
         };
       },
     } as unknown as import("../host/service").Host);
@@ -13500,269 +13495,202 @@ describe("external private Solo creation", () => {
     const owner = f.ctx.extend({
       pluginOwner: { id: "buzz.agents", revision: "one" },
     });
-    const controller = new AbortController();
     const server = await owner.agents.connectExternal(
       bot,
-      controller.signal,
+      new AbortController().signal,
       () => {},
       scopes,
     );
-    const call = handler;
-    if (!call) throw new Error("Missing external server handler");
-    f.native.publish.mockClear();
-    f.native.query.mockImplementation(async (_member, filters) => {
-      const created = f.native.publish.mock.calls.find(
-        ([, value]) => value.kind === 9007,
-      )?.[1];
-      if (!created) return [];
-      const id = created.tags?.find(([key]) => key === "h")?.[1] as string;
-      const kind = (filters[0] as { kinds?: number[] } | undefined)?.kinds?.[0];
-      if (kind === 39000)
-        return [
-          event("metadata", {
-            kind,
-            tags: [
-              ["d", id],
-              ["name", "Triage"],
-              ["private"],
-              ["t", "stream"],
-              ["t", "buzz.solo"],
-              ["t", "buzz.session.named"],
-            ],
-          }),
-        ];
-      if (kind === 39002)
-        return [
-          event("roster", {
-            kind,
-            tags: [
-              ["d", id],
-              ["p", bot, "", "owner"],
-              ...(created.tags ?? [])
-                .filter(([key]) => key === "p")
-                .map((tag) => [...tag]),
-            ],
-          }),
-        ];
-      return [];
-    });
+    const send = handler;
+    if (!send) throw new Error("Missing external server handler");
+    let id = 0;
+    const message = (method: string, params: object = {}) =>
+      send({ id: ++id, method, params }) as Promise<{
+        result: {
+          tools: { name: string }[];
+          _meta: object;
+          content: { text: string }[];
+          isError?: true;
+        };
+      }>;
+    const names = async () =>
+      (await message("tools/list")).result.tools.map((tool) => tool.name);
     return {
       ...f,
-      saved,
-      libraryRead,
-      controller,
-      close,
-      create: (args: Record<string, unknown> = { name: "Triage" }) =>
-        call({
-          id: 1,
-          method: "tools/call",
-          params: { name: "channel_create", arguments: args },
-        }),
+      write,
+      message,
+      names,
+      call: (name: string, args: object) =>
+        message("tools/call", { name, arguments: args }),
       cleanup: async () => {
         await server.close();
-        lifetime.abort();
         await f.ctx.fiber.dispose();
       },
     };
   }
 
-  it.each([sibling, bot])(
-    "uses native owner/caller and the account-saved worker %s",
-    async (worker) => {
-      const f = await fixture();
-      try {
-        f.saved.mockResolvedValueOnce(worker);
-        const reply = await f.create();
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.stringMatching(/^created /),
-        );
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.not.stringContaining("did not keep the Solo label"),
-        );
-        expect(f.saved).toHaveBeenCalledOnce();
-        expect(f.libraryRead).toHaveBeenCalledOnce();
-        expect(f.native.publish).toHaveBeenCalledOnce();
-        expect(f.native.publish).toHaveBeenCalledWith(
-          { pubkey: bot, relay: "wss://relay.example.test" },
-          {
-            kind: 9007,
-            content: "",
-            tags: [
-              ["h", expect.any(String)],
-              ["name", "Triage"],
-              ["visibility", "private"],
-              ["channel_type", "stream"],
-              ["t", "buzz.solo"],
-              ["t", "buzz.session.named"],
-              ["p", viewer],
-              ...(worker === bot ? [] : [["p", worker]]),
-            ],
-          },
-        );
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.stringContaining(`added ${viewer}`),
-        );
-        if (worker !== bot)
-          expect(reply).toHaveProperty(
-            "result.content.0.text",
-            expect.stringContaining(`added ${worker}`),
-          );
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
-
-  it.each([
-    "unset",
-    "missing",
-    "invalid",
-    "unavailable",
-    "archived",
-    "unreadable",
-    "unsupported",
-  ])(
-    "fails before publication when the configured worker is %s",
-    async (reason) => {
-      const f = await fixture();
-      try {
-        if (reason === "unset") f.saved.mockResolvedValueOnce(undefined);
-        else if (reason === "missing") f.saved.mockResolvedValueOnce(null);
-        else if (reason === "invalid")
-          f.saved.mockResolvedValueOnce("not-a-key");
-        else if (reason === "unavailable")
-          f.saved.mockResolvedValueOnce("e".repeat(64));
-        else if (reason === "archived") f.archives.archived.add(sibling);
-        else if (reason === "unreadable")
-          f.saved.mockRejectedValueOnce(new Error("offline"));
-        else Object.assign(f.session, { mainAgent: undefined });
-        const reply = await f.create();
-        expect(reply).toHaveProperty("result.isError", true);
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.stringMatching(
-            /Bestie.*Buzz|Bestie could not be read|Bestie is not available/,
-          ),
-        );
-        expect(f.native.publish).not.toHaveBeenCalled();
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
-
-  it("requires new consent without even looking up the configured worker", async () => {
-    const f = await fixture(["read", "post"]);
+  it("acts with the agent's run authority and follows plugins' tools", async () => {
+    const f = await fixture();
     try {
-      expect(await f.create()).toHaveProperty("result._meta.buzz/error", {
-        code: "authorization_required",
-        required_scopes: ["create"],
+      const tasks = f.ctx.extend({
+        pluginOwner: Object.freeze({ id: "buzz.tasks", revision: "one" }),
       });
-      expect(f.saved).not.toHaveBeenCalled();
-      expect(f.libraryRead).not.toHaveBeenCalled();
-      expect(f.native.publish).not.toHaveBeenCalled();
+      const added = tasks.plugin({
+        inject: ["agents"],
+        apply: (plugin: Context) =>
+          plugin.agents.addTool({
+            name: "tasks_create",
+            description: "Create a task.",
+            inputSchema: { type: "object", properties: { title: {} } },
+            call: async (_client, context, args) =>
+              `created ${String(args.title)} ${JSON.stringify(context)}`,
+          }),
+      });
+      await added;
+      expect(await f.names()).toEqual(
+        expect.arrayContaining([
+          "send",
+          "settings_set",
+          "plugin_list",
+          "tasks_create",
+        ]),
+      );
+      expect(
+        await f.call("settings_set", { key: "example.mood", value: "busy" }),
+      ).not.toHaveProperty("result.isError");
+      expect(f.write).toHaveBeenCalledExactlyOnceWith("busy");
+      expect(await f.call("tasks_create", { title: "Ship" })).toHaveProperty(
+        "result.content.0.text",
+        "created Ship {}",
+      );
+      await added.dispose();
+      expect(await f.names()).not.toContain("tasks_create");
+      expect(await f.call("tasks_create", { title: "Ship" })).toHaveProperty(
+        "result.isError",
+        true,
+      );
     } finally {
       await f.cleanup();
     }
   });
 
-  it.each(["library", "refresh"])(
-    "offers retry guidance when the worker's %s lookup fails",
-    async (source) => {
-      const f = await fixture();
-      try {
-        if (source === "library")
-          f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
-        else
-          vi.spyOn(f.service, "refresh").mockRejectedValueOnce(
-            new Error("inventory offline"),
-          );
-        const reply = await f.create();
-        expect(reply).toHaveProperty("result.isError", true);
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          "Your saved Bestie could not be checked. Check the community connection and try again.",
-        );
-        expect(f.native.publish).not.toHaveBeenCalled();
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
-
-  it("uses a verified local Bestie despite a partial library failure", async () => {
+  it("reads the agent's memory, and files only where its type reads them", async () => {
     const f = await fixture();
     try {
-      f.saved.mockResolvedValueOnce(bot);
-      f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
-      expect(await f.create()).toHaveProperty(
+      f.memories.set(bot, "Ship on Fridays.");
+      f.memories.set(sibling, "Another agent's memory.");
+      const reply = await f.call("mem_get", { slug: "core" });
+      expect(reply.result.content[0]?.text).toContain("Ship on Fridays.");
+      expect(reply.result.content[0]?.text).not.toContain("Another agent");
+      // The echo type reads no files outside its turns: its native refusal.
+      expect(
+        await f.call("send", {
+          channel,
+          text: "x",
+          audience: "everyone",
+          files: ["/etc/hosts"],
+        }),
+      ).toHaveProperty(
         "result.content.0.text",
-        expect.stringMatching(/^created /),
+        "This agent cannot read /etc/hosts",
       );
-      expect(f.native.publish).toHaveBeenCalledOnce();
+      expect(f.native.publish).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: 9 }),
+      );
     } finally {
       await f.cleanup();
     }
   });
 
-  it("reports native publication refusal without claiming that a Solo exists", async () => {
-    const f = await fixture();
+  it("reads a file the way the agent's type does, in its saved workspace", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const readFile = vi.fn(
+      async (_agent: Agent<Config>, _path: string, signal: AbortSignal) => {
+        await held;
+        signal.throwIfAborted();
+        return new TextEncoder().encode("notes");
+      },
+    );
+    const f = await fixture(["agent"], { readFile });
     try {
-      f.native.publish.mockRejectedValueOnce(
-        new Error("This member cannot join the Solo."),
-      );
-      const reply = await f.create();
-      expect(reply).toHaveProperty("result.isError", true);
-      expect(reply).toHaveProperty(
+      const sent = f.call("send", {
+        channel,
+        text: "Notes attached",
+        audience: "everyone",
+        files: ["notes.txt"],
+      });
+      await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+      const [agent, path, signal] = readFile.mock.calls[0] ?? [];
+      expect(agent).toMatchObject({ key: bot, config: { reply: "ok" } });
+      expect(path).toBe("notes.txt");
+      expect(signal?.aborted).toBe(false);
+      release();
+      expect(await sent).not.toHaveProperty("result.isError");
+      expect(f.native.upload).toHaveBeenCalled();
+    } finally {
+      release();
+      await f.cleanup();
+    }
+    // Closing the connection cancels what it still reads.
+    expect(readFile.mock.calls[0]?.[2].aborted).toBe(true);
+  });
+
+  it("hands off as the app, never as the agent's own conversation or a watch", async () => {
+    const root = "e".repeat(64);
+    const f = await fixture();
+    f.native.query.mockImplementation(async (_member, filters) => {
+      const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
+      if (filter?.kinds?.includes(39000))
+        return [event("meta", { kind: 39000, tags: [["d", channel]] })];
+      return filter?.ids?.includes(root) ? [event(root)] : [];
+    });
+    try {
+      expect(
+        await f.call("self_handoff", { channel, thread: root, text: "Look" }),
+      ).toHaveProperty(
         "result.content.0.text",
-        "This member cannot join the Solo.",
+        `Handed off to thread ${root}.`,
       );
-      expect(f.native.publish).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const { trigger } = f.run.mock.calls[0]?.[0] ?? {};
+      expect(trigger).toMatchObject({
+        type: "plugin",
+        from: { external: true },
+        channel,
+        root,
+        text: "Look",
+      });
+      expect(trigger).not.toHaveProperty("plugin");
+      expect(trigger).not.toHaveProperty("from.channel");
     } finally {
       await f.cleanup();
     }
   });
 
-  it.each(["account", "inventory"])(
-    "revokes creation during the pending %s lookup",
-    async (stage) => {
-      const f = await fixture();
-      const started = runnerGate(),
-        release = runnerGate();
-      if (stage === "account")
-        f.saved.mockImplementationOnce(async () => {
-          started.resolve();
-          await release.promise;
-          return sibling;
-        });
-      else
-        f.libraryRead.mockImplementationOnce(async () => {
-          started.resolve();
-          await release.promise;
-          return {
-            definitions: [],
-            identities: [{ pubkey: sibling, name: "Bestie" }],
-          };
-        });
-      const outcome = f.create().catch((error) => error);
-      try {
-        await started.promise;
-        f.controller.abort();
-      } finally {
-        release.resolve();
-      }
-      try {
-        expect(await outcome).toBeInstanceOf(Error);
-        await vi.waitFor(() => expect(f.close).toHaveBeenCalled());
-        expect(f.native.publish).not.toHaveBeenCalled();
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
+  it("grants an older narrow approval nothing until the owner approves full access", async () => {
+    const f = await fixture(["read", "post", "create"]);
+    try {
+      expect((await f.message("tools/list")).result._meta).toEqual({
+        "buzz/grantedScopes": [],
+        "buzz/supportedScopes": ["agent"],
+      });
+      const published = f.native.publish.mock.calls.length;
+      expect(
+        await f.call("send", { channel, text: "x", audience: "everyone" }),
+      ).toHaveProperty("result._meta.buzz/error", {
+        code: "authorization_required",
+        required_scopes: ["agent"],
+      });
+      expect(f.write).not.toHaveBeenCalled();
+      expect(f.native.publish).toHaveBeenCalledTimes(published);
+    } finally {
+      await f.cleanup();
+    }
+  });
 });
 
 it.each(["return", "throw"])(
@@ -15419,6 +15347,95 @@ describe("Buzz settings", () => {
       review.resolve();
       await expect(call).rejects.toThrow();
       expect(write).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("Owner tools", () => {
+  const root = "e".repeat(64);
+  /** The agent's handle from a run. */
+  async function running(f: Awaited<ReturnType<typeof setup>>) {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const handle = runnerGate<AgentHandle>();
+    f.run.mockImplementationOnce(async ({ agent }) => {
+      handle.resolve(agent);
+    });
+    f.plugin.agents.wake(bot, { channel, root, text: "hi" });
+    return handle.promise;
+  }
+  const list = (agent: AgentHandle) =>
+    callSessionTool(
+      appClient(agent, {
+        read: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+      }),
+      {},
+      "owner_channel_list",
+      {},
+    );
+
+  it("read the owner's channels as the owner, only on the run's handle", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await setup({ revision: "bundled" });
+    try {
+      const agent = await running(f);
+      expect(f.plugin.agents.handle(bot)).not.toHaveProperty("ownerAccess");
+      const answer = JSON.parse(String(await list(agent)));
+      expect(answer.executedAs).toEqual({
+        agent: bot,
+        owner: viewer,
+        community: "https://relay.example.test",
+      });
+      // The agent is not in `private`; its owner is, in a role the list
+      // does not say.
+      expect(answer.channels).toContainEqual(
+        expect.objectContaining({ id: "private", role: "unknown", members: 1 }),
+      );
+      expect(answer.partial).toBe(false);
+
+      f.signIn(other);
+      await expect(list(agent)).rejects.toThrow("not connected");
+      f.connect(false);
+      await expect(list(agent)).rejects.toThrow("not connected");
+    } finally {
+      await f.ctx.fiber.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("are not given to an installed harness plugin's runs", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await setup();
+    try {
+      const agent = await running(f);
+      expect(agent).not.toHaveProperty("ownerAccess");
+      await expect(list(agent)).rejects.toThrow("nothing was read");
+    } finally {
+      await f.ctx.fiber.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    "",
+    "https://other.example.test",
+    "https://relay.example.test.evil.test",
+    "https://relay.example.test:8443",
+  ])(
+    "are not offered outside the enabled communities (%s)",
+    async (enabled) => {
+      vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", enabled);
+      const f = await setup({ revision: "bundled" });
+      try {
+        const agent = await running(f);
+        expect(agent).not.toHaveProperty("ownerAccess");
+        await expect(list(agent)).rejects.toThrow("nothing was read");
+      } finally {
+        await f.ctx.fiber.dispose();
+        vi.unstubAllEnvs();
+      }
     },
   );
 });

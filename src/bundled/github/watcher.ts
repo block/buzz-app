@@ -64,8 +64,15 @@ function load(): Map<string, Cursor> {
 }
 
 const PROVIDER = "attention/github-pr";
-const save = (watches: Map<string, Watch>) =>
-  localStorage.setItem(CURSORS, JSON.stringify([...watches.values()]));
+/** Progress kept for a restart. A watch keeps its own in memory, so one that
+ * cannot be saved, as when storage is full, still watches. */
+const save = (watches: Map<string, Watch>) => {
+  try {
+    localStorage.setItem(CURSORS, JSON.stringify([...watches.values()]));
+  } catch (error) {
+    console.warn("GitHub watches' progress was not saved", error);
+  }
+};
 
 async function slug(url: string) {
   const hash = await crypto.subtle.digest(

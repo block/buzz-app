@@ -52,6 +52,11 @@ import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
 import type { ClaudeTranscript } from "./transcript";
+import {
+  settingLabels,
+  useSettingsDraft,
+  type SettingGroup,
+} from "./settings-draft";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -1085,6 +1090,7 @@ export function createTabs({
   }: AgentViewProps<Config>) {
     const form = useId();
     const saved = readConfig(agent.config);
+    const unavailable = !!agent.configProblem && !settingsHost?.pendingSave;
     const execution = useRemote(agent);
     const remote = execution?.remote === true;
     const setupState = useSetupCatalog(execution?.remote === false);
@@ -1093,23 +1099,35 @@ export function createTabs({
       defaults.snapshot,
       defaults.snapshot,
     );
-    const [draft, setDraft] = useState(saved);
+    const {
+      draft,
+      latest,
+      setDraft,
+      conflicts,
+      resolve,
+      submitted,
+      changed: configChanged,
+    } = useSettingsDraft(`${agent.key}:${agent.type}`, saved, !unavailable);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const saveErrorRef = useRef<HTMLParagraphElement>(null);
     useEffect(() => {
       if (error) saveErrorRef.current?.focus();
     }, [error]);
-    const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
+      if (saving || conflicts.length || !changed || unavailable) return;
       setSaving(true);
       setError("");
+      const config = {
+        ...draft,
+        workspace: draft.workspace.trim() || "~/.buzz",
+      };
+      submitted(config);
       try {
-        await save({
-          ...draft,
-          workspace: draft.workspace.trim() || "~/.buzz",
-        });
+        // This draft incorporates the current props; revise that exact snapshot.
+        // The host routes staged provider changes through pendingSave instead.
+        await save(config, { base: agent.configBase ?? {} });
       } catch (reason) {
         setError(message(reason));
       } finally {
@@ -1124,6 +1142,67 @@ export function createTabs({
       setupState.models,
       draft.effort,
     );
+    const describe = (config: Config, group: SettingGroup) => {
+      if (group === "model") {
+        const model = config.model
+          ? modelName(config.model, setupState.models)
+          : remote
+            ? "Target default"
+            : `${providerDefaultLabel(providerDefaults.model, setupState.models)} · Default`;
+        return `${model} · ${config.effort ? effortLabel(config.effort) : "Automatic"} thinking`;
+      }
+      if (group === "scope")
+        return config.scope === "channel"
+          ? "One session per channel"
+          : "One session per thread";
+      return config[group];
+    };
+    const conflict = (group: SettingGroup) =>
+      conflicts.includes(group) ? (
+        <fieldset
+          aria-label={`${settingLabels[group]} conflict`}
+          className="m-0 grid min-w-0 gap-2 border-0 px-0 py-3"
+        >
+          <p role="alert" className="m-0 text-body-sm text-warning">
+            {settingLabels[group]} changed elsewhere. Choose which changes to
+            keep.
+          </p>
+          {group === "instructions" ? (
+            <Accordion
+              items={[
+                {
+                  value: "latest-instructions",
+                  title: "View latest instructions",
+                  content: (
+                    <p className="m-0 whitespace-pre-wrap break-words text-body-sm">
+                      {latest.instructions || "No instructions"}
+                    </p>
+                  ),
+                },
+              ]}
+            />
+          ) : (
+            <div className="text-body-sm break-words">
+              <p className="m-0">Latest: {describe(latest, group)}</p>
+              <p className="m-0">Yours: {describe(draft, group)}</p>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={saving || unavailable}
+              onClick={() => resolve(group, true)}
+            >
+              Use latest
+            </Button>
+            <Button
+              disabled={saving || unavailable}
+              onClick={() => resolve(group, false)}
+            >
+              Keep mine
+            </Button>
+          </div>
+        </fieldset>
+      ) : null;
     const modelControl = (
       <>
         <ModelPicker
@@ -1189,6 +1268,12 @@ export function createTabs({
             {execution.error}
           </p>
         )}
+        {unavailable && (
+          <p className="m-0 text-body-sm text-muted">
+            Your edits stay in this form. You can save them, including Workspace
+            changes, when configuration is available again.
+          </p>
+        )}
         {error && (
           <p
             ref={saveErrorRef}
@@ -1203,49 +1288,69 @@ export function createTabs({
           <>
             <SettingsGroup>
               {settingsHost?.typeControl?.(configChanged)}
+              {conflict("model")}
               {modelControl}
             </SettingsGroup>
-            <AgentInstructions
-              value={draft.instructions}
-              disabled={false}
-              onChange={(instructions) => setDraft({ ...draft, instructions })}
-            />
+            <div className="grid gap-2">
+              {conflict("instructions")}
+              <AgentInstructions
+                value={draft.instructions}
+                disabled={false}
+                onChange={(instructions) =>
+                  setDraft({ ...draft, instructions })
+                }
+              />
+            </div>
           </>
         )}
         {settingsSection !== "identity" && (
           <>
-            <Field
-              label="Workspace"
-              description={
-                remote
-                  ? "The execution provider sets the remote workspace."
-                  : "The folder Claude works in. Use ~/ for your home folder."
-              }
-            >
-              <Input
-                value={draft.workspace}
-                disabled={execution?.remote !== false}
-                onValueChange={(workspace) => setDraft({ ...draft, workspace })}
+            <div className="grid gap-2">
+              {conflict("workspace")}
+              <Field
+                label="Workspace"
+                description={
+                  remote
+                    ? "The execution provider sets the remote workspace."
+                    : "The folder Claude works in. Use ~/ for your home folder."
+                }
+              >
+                <Input
+                  value={draft.workspace}
+                  disabled={execution?.remote !== false}
+                  onValueChange={(workspace) =>
+                    setDraft({ ...draft, workspace })
+                  }
+                />
+              </Field>
+            </div>
+            <div className="grid gap-2">
+              {conflict("scope")}
+              <Select
+                label="Sessions"
+                variant="preference"
+                value={draft.scope}
+                groups={SCOPES}
+                onValueChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    scope: value === "channel" ? "channel" : "thread",
+                  })
+                }
               />
-            </Field>
-            <Select
-              label="Sessions"
-              variant="preference"
-              value={draft.scope}
-              groups={SCOPES}
-              onValueChange={(value) =>
-                setDraft({
-                  ...draft,
-                  scope: value === "channel" ? "channel" : "thread",
-                })
-              }
-            />
+            </div>
           </>
         )}
         <AgentSaveButton
           form={form}
           saving={saving}
-          disabled={!changed || execution?.remote === undefined}
+          dirty={changed}
+          disabled={
+            !changed ||
+            conflicts.length > 0 ||
+            unavailable ||
+            execution?.remote === undefined
+          }
         />
         {settingsSection !== "identity" && settingsContent}
       </form>

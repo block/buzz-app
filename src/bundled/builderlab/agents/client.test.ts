@@ -65,9 +65,11 @@ async function fixture(subject = "user", canUseRemoteAgents = true) {
 }
 it("refuses remote reads and creation before sending requests or retaining replay state", async () => {
   const h = await fixture("user", false);
-  await expect(h.client.list(h.signal)).rejects.toThrow("coming soon");
+  await expect(h.client.list(h.signal)).rejects.toThrow(
+    "unavailable for this account",
+  );
   await expect(h.client.register("Helper", h.signal, h.retain)).rejects.toThrow(
-    "coming soon",
+    "unavailable for this account",
   );
   expect(h.host.request).not.toHaveBeenCalled();
   expect(h.retain).not.toHaveBeenCalled();

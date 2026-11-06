@@ -364,7 +364,7 @@ The existing `MessageComposer` owns the draft and ordinary input behavior. Its p
 afterward. Disabled mention and emoji icons stay unfilled. When the recipients
 plus the viewer are exactly an existing DM's participants, in any order, that
 DM's history loads inline above the draft. This includes a DM removed with
-Remove from Team or Hide conversation. A subset or superset of a group's
+Close conversation or Hide conversation. A subset or superset of a group's
 participants shows the recipients' avatars instead. Each recipient change
 replaces the preview with the newly matched DM's timeline, or with the avatars.
 Previewing does not open, restore or mark the DM read, and it remains when

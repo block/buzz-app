@@ -732,6 +732,22 @@ export class CodexRuntime {
     return ready;
   }
 
+  /** A file as the agent's turns read one here: in its saved workspace. On
+   * an execution target only a conversation's session can read it. */
+  async workspaceFile(agent: Agent, path: string, signal: AbortSignal) {
+    if (this.target || (await this.inspect?.(agent.key)))
+      throw new Error(
+        `This agent reads files only in a conversation on its execution target, not ${path}`,
+      );
+    const saved = this.resolveConfig(agent.config).workspace;
+    if (!validWorkspace(saved))
+      throw new Error(
+        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+      );
+    const workspace = await this.workspace(saved);
+    signal.throwIfAborted();
+    return readFile(this.spawn, workspace, path, signal);
+  }
   private async workspace(path: string) {
     if (this.target) return this.target.resolveDirectory(this.target.workspace);
     if (absoluteWorkspace(path)) return path;
@@ -1695,7 +1711,7 @@ export class CodexRuntime {
         {
           ...params,
           ephemeral: true,
-          dynamicTools: dynamicTools(this.added()),
+          dynamicTools: dynamicTools(this.added(), !!agent.ownerAccess),
         },
       );
       once.threadId = started.thread.id;
@@ -1943,7 +1959,7 @@ export class CodexRuntime {
     if (
       !turn ||
       call.namespace !== "buzz" ||
-      !sessionTools(this.added()).some((tool) => tool.name === call.tool)
+      !sessionTools(this.added(), true).some((tool) => tool.name === call.tool)
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
@@ -2369,14 +2385,15 @@ export class CodexRuntime {
       // Resume restores the thread's tools, so one started with other added
       // tools starts fresh.
       const added = this.added();
-      const tools = addedKey(added);
+      const owner = !!agent.ownerAccess;
+      const tools = addedKey(added) + (owner ? ":owner" : "");
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       type Started = { thread: { id: string; cwd: string } };
       const start = () =>
         rpc.request<Started>("thread/start", {
           ...params,
-          dynamicTools: dynamicTools(added),
+          dynamicTools: dynamicTools(added, owner),
         });
       const resume = (threadId: string) =>
         rpc.request<Started>("thread/resume", {
@@ -2671,12 +2688,12 @@ function follow(
  * keeps a deferred tool from the model until its tool search finds it. Every
  * model in Codex's catalog has tool search (supports_search_tool); one
  * without it would not see deferred tools. */
-const dynamicTools = (added: readonly AddedTool[]) => [
+const dynamicTools = (added: readonly AddedTool[], owner: boolean) => [
   {
     type: "namespace",
     name: "buzz",
-    description: sessionHint(added),
-    tools: sessionTools(added).map(({ load, ...tool }) => ({
+    description: sessionHint(added, owner),
+    tools: sessionTools(added, owner).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
       ...(load === "search" ? { deferLoading: true } : {}),

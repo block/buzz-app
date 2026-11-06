@@ -1,4 +1,7 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { networkRecorder } from "../developer/network-diagnostics";
+import { networkMetrics } from "../developer/network-metrics";
+import { abortNetwork } from "../developer/network-context";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { createRelayReader } from "./reader";
 import { flush, scriptedTransport } from "./testing";
 
@@ -9,14 +12,56 @@ function setup(options: Parameters<typeof createRelayReader>[1] = {}) {
   owners.push(owner);
   return { ...scripted, ...owner, read: owner.reader.read };
 }
+beforeEach(() => networkRecorder.setEnabled(true));
+
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  networkRecorder.clear();
+  networkRecorder.configure("info");
+  networkMetrics.setEnabled(false);
+  networkMetrics.reset();
 });
 const filter = (id: string) => [{ kinds: [9], "#h": [id], limit: 80 }];
 
+it("starts capture on existing readers with distinct operation IDs and stage evidence", async () => {
+  networkRecorder.setEnabled(false);
+  networkRecorder.clear();
+  const identities = vi.spyOn(crypto, "randomUUID");
+  try {
+    const readers = [setup(), setup()];
+    const dormant = readers.map((reader) => reader.read(filter("a")));
+    for (const reader of readers) reader.next().respond([]);
+    await Promise.all(dormant);
+    expect(identities).not.toHaveBeenCalled();
+    expect(networkRecorder.snapshot().events).toEqual([]);
+
+    networkRecorder.setEnabled(true);
+    networkRecorder.configure("debug");
+    const captured = readers.map((reader) => reader.read(filter("a")));
+    for (const reader of readers) reader.next().respond([]);
+    await Promise.all(captured);
+    const events = networkRecorder.snapshot().events;
+    const finished = events.filter((event) => event.event === "read.finished");
+    expect(finished).toHaveLength(2);
+    expect(new Set(finished.map((event) => event.operationId)).size).toBe(2);
+    for (const event of finished)
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: "read.stage",
+          phase: "read.fetch",
+          operationId: event.operationId,
+        }),
+      );
+  } finally {
+    identities.mockRestore();
+  }
+});
+
 it("shares equivalent concurrent filters but keeps each consumer's cancellation independent", async () => {
+  networkMetrics.setEnabled(true);
+  networkRecorder.configure("debug");
   const { read, next, pending } = setup();
   const a = new AbortController(),
     b = new AbortController();
@@ -29,11 +74,39 @@ it("shares equivalent concurrent filters but keeps each consumer's cancellation 
   expect(pending).toHaveLength(1);
   const wire = next();
   const rejected = expect(first).rejects.toMatchObject({ name: "AbortError" });
-  a.abort();
+  abortNetwork(a, "navigation", "channel-view");
   await rejected;
   expect(wire.signal?.aborted).toBe(false);
+  expect(networkMetrics.snapshot().relays[0]?.session.counts).toMatchObject({
+    readOk: 0,
+    readCancelled: 0,
+  });
+  const cancelled = networkRecorder
+    .snapshot()
+    .events.find((event) => event.event === "read.consumer-cancelled");
+  expect(cancelled).toMatchObject({
+    cancellation: { initiator: "navigation", owner: "channel-view" },
+    count: 1,
+  });
+  expect(
+    networkRecorder
+      .snapshot()
+      .events.some((event) => event.event === "read.finished"),
+  ).toBe(false);
   wire.respond([]);
   expect(await second).toEqual([]);
+  expect(networkMetrics.snapshot().relays[0]?.session.counts).toMatchObject({
+    readOk: 1,
+    readCancelled: 0,
+  });
+  expect(
+    networkRecorder
+      .snapshot()
+      .events.find((event) => event.event === "read.finished"),
+  ).toMatchObject({
+    operationId: cancelled?.operationId,
+    outcome: "completed",
+  });
   const again = read([{ kinds: [5, 7], "#e": ["a", "b"], limit: 50 }]);
   expect(pending).toHaveLength(1); // Settled results are owned by domain models, not cached here.
   next().respond([]);
@@ -76,6 +149,7 @@ it("removes cancelled queued work and rejects late results after invalidation", 
 });
 it("bounds stalled and queued reads and permits explicit retry", async () => {
   vi.useFakeTimers();
+  networkMetrics.setEnabled(true);
   const { read, next, pending } = setup({ timeoutMs: 100, maxPending: 2 });
   const a = read(filter("a"), { priority: "background" });
   const b = read(filter("b"), { priority: "background" });
@@ -87,6 +161,10 @@ it("bounds stalled and queued reads and permits explicit retry", async () => {
   const wire = next();
   await vi.advanceTimersByTimeAsync(101);
   await failures;
+  expect(networkMetrics.snapshot().relays[0]?.session.counts).toMatchObject({
+    readDeadline: 2,
+    readFailed: 0,
+  });
   expect(wire.signal?.aborted).toBe(true);
   // A queued job can start at the deadline of an earlier job; it still expires at its own deadline.
   pending.splice(0);
@@ -113,6 +191,39 @@ it("propagates failures, isolates sessions, and settles all work on disposal", a
     name: "AbortError",
   });
 });
+it("records a reader deadline before cleanup aborts the transport, with queue state and timer lateness", async () => {
+  vi.useFakeTimers();
+  networkRecorder.configure("debug");
+  const h = setup({ timeoutMs: 100 });
+  const reading = h.read(filter("deadline"));
+  const wire = h.next();
+  const rejected = expect(reading).rejects.toThrow("Relay read timed out");
+  await vi.advanceTimersByTimeAsync(100);
+  await rejected;
+  expect(wire.signal?.aborted).toBe(true);
+  const event = networkRecorder
+    .snapshot()
+    .events.find((event) => event.event === "read.finished");
+  expect(event).toMatchObject({
+    outcome: "deadline-exceeded",
+    phase: "dispatched",
+    cancellation: { initiator: "deadline", owner: "reader" },
+    deadlineMs: 100,
+    latenessMs: 0,
+    error: {
+      name: "ReadError",
+      code: "deadline-exceeded",
+      message: "Relay read timed out",
+      kind: "unavailable",
+    },
+  });
+  expect(event?.operationId).toBe(
+    networkRecorder
+      .snapshot()
+      .events.find((event) => event.event === "read.started")?.operationId,
+  );
+});
+
 it("supports the desktop's ID, reference, address, and application-data reads without channel state", async () => {
   const { read, next } = setup();
   const filters = [
@@ -447,6 +558,8 @@ it("retains local inventory failure and the existing deadline after dispatch", a
 
 it("gives large reads their own deadline; a joining read keeps it", async () => {
   vi.useFakeTimers();
+  networkRecorder.configure("debug");
+  const began = Date.now();
   const { read, next } = setup({ timeoutMs: 100 });
   const large = read(filter("a"), { deadlineMs: 1_000 });
   const joined = read(filter("a"));
@@ -463,4 +576,21 @@ it("gives large reads their own deadline; a joining read keeps it", async () => 
   await vi.advanceTimersByTimeAsync(899);
   await failures;
   expect(wire.signal?.aborted).toBe(true);
+  const events = networkRecorder.snapshot().events;
+  const started = events.find((event) => event.event === "read.started");
+  expect(started).toMatchObject({
+    deadlineMs: 1_000,
+    dueAt: began + 1_000,
+  });
+  expect(
+    events.find(
+      (event) =>
+        event.event === "read.finished" &&
+        event.operationId === started?.operationId,
+    ),
+  ).toMatchObject({
+    deadlineMs: 1_000,
+    dueAt: began + 1_000,
+    latenessMs: 0,
+  });
 });

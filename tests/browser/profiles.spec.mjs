@@ -460,16 +460,16 @@ test("a Profile opened after closing a thread and its Profile stays open with a 
     .getByRole("button", { name: "View thread: 1 reply", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "View Pinky profile", exact: true })
+    .getByRole("button", { name: "View Pippa profile", exact: true })
     .click();
-  await expect(panel.locator("code")).toHaveText(npubs.pinky);
+  await expect(panel.locator("code")).toHaveText(npubs.pippa);
   const closed = (await read()).id;
   const tabs = page.getByRole("tablist", { name: "Panel tabs" });
   const release = await holdCloseReturn(page);
   let held;
   try {
     await tabs
-      .getByRole("button", { name: "Close Pinky tab", exact: true })
+      .getByRole("button", { name: "Close Pippa tab", exact: true })
       .click();
     // The second close retires the thread under the pending return, which
     // then lands on the channel instead.

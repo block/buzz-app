@@ -725,7 +725,7 @@ const UNSIGNED_PLUGIN_ERROR: &str =
 const SIGNED_ROLLBACK_ERROR: &str = "Cannot roll back to an unsigned revision";
 
 fn signatures_required() -> bool {
-    std::env::var("BUZZ_REQUIRE_PLUGIN_SIGNATURES").as_deref() != Ok("0")
+    std::env::var("BUZZ_REQUIRE_PLUGIN_SIGNATURES").as_deref() == Ok("1")
 }
 
 fn verified_publisher(digest: &str, signature: Option<&Event>) -> Result<Option<String>> {
@@ -1718,6 +1718,25 @@ mod tests {
         super::sign_release(directory, &"01".repeat(32)).unwrap();
     }
 
+    pub(super) fn rerun_with_signatures_required(test: &str) -> bool {
+        if std::env::var("BUZZ_REQUIRE_PLUGIN_SIGNATURES").as_deref() == Ok("1") {
+            return false;
+        }
+        // Keep the launch policy isolated from parallel tests in this process.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env("BUZZ_REQUIRE_PLUGIN_SIGNATURES", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
+
     #[test]
     fn compressed_png_profile_is_bounded_before_header_decode() {
         use image::{ImageDecoder as _, ImageEncoder as _};
@@ -1966,6 +1985,11 @@ mod tests {
 
     #[test]
     fn persisted_missing_or_invalid_signatures_block_execution_and_host_access() {
+        if rerun_with_signatures_required(
+            "tests::persisted_missing_or_invalid_signatures_block_execution_and_host_access",
+        ) {
+            return;
+        }
         let home = tempfile::tempdir().unwrap();
         let source = tempfile::tempdir().unwrap();
         fs::write(
@@ -2042,6 +2066,11 @@ mod tests {
 
     #[test]
     fn unsigned_legacy_installation_can_be_replaced_with_a_signed_release() {
+        if rerun_with_signatures_required(
+            "tests::unsigned_legacy_installation_can_be_replaced_with_a_signed_release",
+        ) {
+            return;
+        }
         let home = tempfile::tempdir().unwrap();
         let source = tempfile::tempdir().unwrap();
         fs::write(

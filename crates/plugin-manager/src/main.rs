@@ -16,7 +16,7 @@ Commands:
   build DIRECTORY          Run the project's pnpm build script
   sign DIST_DIRECTORY       Sign with your saved Buzz human identity
   pack DIST_DIRECTORY FILE  Write the single-file artifact a URL source serves; prints its SHA-256
-  install DIRECTORY        Install a signed release (new plugins start disabled)
+  install DIRECTORY        Install a plugin (new plugins start disabled)
   reload ID                Reload a folder plugin, preserving its enabled state
   list                     List installed pages and their enabled state
   managed                  Show the managed plugin sources policy and its status
@@ -32,8 +32,8 @@ Options:
 The desktop and CLI also read BUZZODZ_HOME and BUZZODZ_PROFILE.
 BUZZ_MANAGED_PLUGINS overrides the managed plugin policy file location.
 BUZZ_REPOSITORY_ACCESS overrides the repository access rules file location.
-Set BUZZ_REQUIRE_PLUGIN_SIGNATURES=0 when launching the desktop or CLI to allow
-unsigned plugins. Signatures are required by default; supplied signatures are always verified.
+Set BUZZ_REQUIRE_PLUGIN_SIGNATURES=1 when launching the desktop or CLI to require
+signed plugins. Enforcement is off by default; supplied signatures are always verified.
 Launch the desktop with BUZZODZ_SAFE_MODE=1 to skip external pages.";
 
 fn main() {

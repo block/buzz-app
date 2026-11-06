@@ -2140,30 +2140,29 @@ isolate a malicious plugin. Load only trusted plugin code.
 
 ### Loading from folders and repositories
 
-Authors sign a built API v1 plugin with `buzzodz plugin sign DIST_DIRECTORY`
+Authors can sign a built API v1 plugin with `buzzodz plugin sign DIST_DIRECTORY`
 after `buzzodz plugin build`. The command reads the saved Buzz human identity
 from the same OS credential slot as the desktop app; it never exports or creates
 a key. Use the same OS account and matching debug or release build. Missing or
 locked storage fails. It writes `plugin.artifact.json` and
 `plugin.signature.json` as the local [NIP-PS](nips/NIP-PS.md) file pair. No relay
 or URL is needed. Include both files in the imported folder or Git repository.
-By default, Buzz requires a valid signature for every external plugin, including local
-development builds, folder uploads, Git imports and managed recommendations.
-It checks the event ID, signature and exact artifact bytes before install and
-each load. Plugins built into Buzz are exempt.
+By default, unsigned `manifest.json` and `plugin.js` packages can be installed and
+loaded, including local development builds, folder uploads, Git imports and
+managed recommendations. Supplied signatures are always verified: Buzz checks
+the event ID, signature and exact artifact bytes before install and each load.
+Incomplete signed release pairs still fail, and a signed installation cannot
+change publishers or downgrade to unsigned through an update or rollback.
 
-To allow unsigned plugins, launch Buzz or the CLI with
-`BUZZ_REQUIRE_PLUGIN_SIGNATURES=0`, for example
-`BUZZ_REQUIRE_PLUGIN_SIGNATURES=0 just desktop` or
-`BUZZ_REQUIRE_PLUGIN_SIGNATURES=0 buzzodz plugin install /tmp/my-page/dist`.
+To require signatures for all external plugins, launch Buzz or the CLI with
+`BUZZ_REQUIRE_PLUGIN_SIGNATURES=1`, for example
+`BUZZ_REQUIRE_PLUGIN_SIGNATURES=1 just desktop` or
+`BUZZ_REQUIRE_PLUGIN_SIGNATURES=1 buzzodz plugin install /tmp/my-page/dist`.
 This is a runtime environment setting; restart Buzz after changing its launch
-environment, and set it for each CLI invocation that should allow unsigned
-plugins. Only the exact value `0` disables the requirement. Unsetting it or using
-any other value restores enforcement, including for already installed plugins.
-With the override, unsigned `manifest.json` and `plugin.js` packages can be
-installed and loaded. Supplied signatures are still verified, incomplete signed
-release pairs still fail, and a signed installation cannot change publishers or
-downgrade to unsigned through an update or rollback.
+environment, and set it for each CLI invocation that should require signatures.
+Only the exact value `1` enables enforcement, including for already installed
+plugins. Unsetting it or using any other value turns enforcement off. Plugins
+built into Buzz are exempt.
 
 With enforcement enabled, existing unsigned installations remain visible with an error and can be removed
 or replaced with a signed release. They cannot activate, load code, obtain native

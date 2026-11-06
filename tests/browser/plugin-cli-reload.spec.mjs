@@ -17,13 +17,16 @@ import { createServer } from "./vite-server.mjs";
 import { signPackage } from "../fixtures/plugin-release.mjs";
 
 // Proves the real CLI -> native catalog -> browser module replacement boundary.
-test("CLI reload applies signed updates and withdraws an unsigned installed plugin", async ({
+test("signature enforcement applies signed CLI updates and withdraws an unsigned installed plugin", async ({
   page,
 }) => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const temp = await mkdtemp(join(tmpdir(), "buzz-cli-reload-"));
+  const previousPolicy = process.env.BUZZ_REQUIRE_PLUGIN_SIGNATURES;
   let server;
   try {
+    // The CLI and catalog bridge must use the same opt-in launch policy.
+    process.env.BUZZ_REQUIRE_PLUGIN_SIGNATURES = "1";
     const bridge = nativeFixture();
     const cli = nativeFixture("buzzodz");
     const home = join(temp, "home");
@@ -151,6 +154,9 @@ test("CLI reload applies signed updates and withdraws an unsigned installed plug
     ).toHaveCount(0);
   } finally {
     await server?.close();
+    if (previousPolicy === undefined)
+      delete process.env.BUZZ_REQUIRE_PLUGIN_SIGNATURES;
+    else process.env.BUZZ_REQUIRE_PLUGIN_SIGNATURES = previousPolicy;
     await rm(temp, { recursive: true, force: true });
   }
 });

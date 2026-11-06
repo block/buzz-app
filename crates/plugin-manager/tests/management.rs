@@ -186,6 +186,24 @@ fn fixture() -> (tempfile::TempDir, Manager, PathBuf) {
 
 #[test]
 fn unsigned_external_packages_are_rejected_without_affecting_bundled_plugins() {
+    if std::env::var("BUZZ_REQUIRE_PLUGIN_SIGNATURES").as_deref() != Ok("1") {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "unsigned_external_packages_are_rejected_without_affecting_bundled_plugins",
+                "--nocapture",
+            ])
+            .env("BUZZ_REQUIRE_PLUGIN_SIGNATURES", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let (_temp, manager, source) = fixture();
     for name in ["plugin.artifact.json", "plugin.signature.json"] {
         fs::remove_file(source.join(name)).unwrap();
@@ -203,18 +221,18 @@ fn unsigned_external_packages_are_rejected_without_affecting_bundled_plugins() {
 }
 
 #[test]
-fn signature_requirement_can_be_disabled_without_disabling_verification() {
+fn unsigned_plugins_work_by_default_without_disabling_verification() {
     use std::process::Command;
     const FLAG: &str = "BUZZ_REQUIRE_PLUGIN_SIGNATURES";
     // Isolate the launch environment from the other tests in this process.
-    if std::env::var(FLAG).as_deref() != Ok("0") {
+    if std::env::var_os(FLAG).is_some() {
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "signature_requirement_can_be_disabled_without_disabling_verification",
+                "unsigned_plugins_work_by_default_without_disabling_verification",
                 "--nocapture",
             ])
-            .env(FLAG, "0")
+            .env_remove(FLAG)
             .output()
             .unwrap();
         assert!(
@@ -256,8 +274,15 @@ fn signature_requirement_can_be_disabled_without_disabling_verification() {
             .files
     );
 
-    // A new process without exactly 0 must reject this same unsigned installation.
-    for value in [None, Some("1"), Some(""), Some("false")] {
+    // Only an explicit opt-in rejects this same unsigned installation.
+    for value in [
+        None,
+        Some("0"),
+        Some("1"),
+        Some(""),
+        Some("false"),
+        Some("true"),
+    ] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_buzzodz"));
         command.args([
             "--home",
@@ -273,9 +298,11 @@ fn signature_requirement_can_be_disabled_without_disabling_verification() {
             command.env(FLAG, value);
         }
         let output = command.output().unwrap();
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr)
-            .contains("External plugins require a signed release"));
+        assert_eq!(output.status.success(), value != Some("1"), "{value:?}");
+        if value == Some("1") {
+            assert!(String::from_utf8_lossy(&output.stderr)
+                .contains("External plugins require a signed release"));
+        }
     }
 
     fs::write(

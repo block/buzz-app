@@ -34,7 +34,11 @@ function cli(...args) {
   return spawnSync(binary, args, {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, BUZZODZ_HOME: home },
+    env: {
+      ...process.env,
+      BUZZODZ_HOME: home,
+      BUZZ_REQUIRE_PLUGIN_SIGNATURES: "1",
+    },
   });
 }
 async function project(run) {

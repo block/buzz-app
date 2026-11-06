@@ -2372,9 +2372,9 @@ mod tests {
             .install(&source)
             .err()
             .unwrap()
-            .contains("signature"));
+            .contains("signed plugin became unsigned"));
         manager.change("remove", "example.signed").unwrap();
-        assert!(manager.install(&source).is_err());
+        assert!(manager.install(&source).is_ok());
         crate::sign_release(&source, &"02".repeat(32)).unwrap();
         assert!(manager.install(&source).is_ok());
     }
@@ -2395,7 +2395,11 @@ mod tests {
     }
 
     #[test]
-    fn every_import_source_requires_a_valid_signed_release() {
+    fn every_import_source_respects_signature_policy() {
+        crate::tests::rerun_with_signatures_required(
+            "imports::tests::every_import_source_respects_signature_policy",
+        );
+        let required = std::env::var("BUZZ_REQUIRE_PLUGIN_SIGNATURES").as_deref() == Ok("1");
         let git = Git::new().unwrap();
         git.run(&["init", "--template=", "repository"], LIMIT)
             .unwrap();
@@ -2466,10 +2470,27 @@ mod tests {
             prepare_upload(upload).unwrap(),
             git.read_plugins("fixture".into(), None).unwrap(),
         ] {
-            assert_eq!(prepared.preview.candidates.len(), 1);
-            assert_eq!(prepared.preview.candidates[0].path, "valid");
-            assert!(prepared.preview.candidates[0].publisher.is_some());
-            assert_eq!(prepared.preview.warnings.len(), 5);
+            let paths: Vec<_> = prepared
+                .preview
+                .candidates
+                .iter()
+                .map(|p| p.path.as_str())
+                .collect();
+            assert_eq!(
+                paths,
+                if required {
+                    vec!["valid"]
+                } else {
+                    vec!["unsigned", "valid"]
+                }
+            );
+            for candidate in &prepared.preview.candidates {
+                assert_eq!(candidate.publisher.is_some(), candidate.path == "valid");
+            }
+            assert_eq!(
+                prepared.preview.warnings.len(),
+                if required { 5 } else { 4 }
+            );
             for (folder, reason) in [
                 ("unsigned", crate::UNSIGNED_PLUGIN_ERROR),
                 ("missing-artifact", "Incomplete signed plugin release pair"),
@@ -2483,6 +2504,9 @@ mod tests {
                     "Invalid or ambiguous plugin release x tag",
                 ),
             ] {
+                if folder == "unsigned" && !required {
+                    continue;
+                }
                 assert!(
                     prepared.preview.warnings.iter().any(|warning| {
                         warning.starts_with(&format!("{folder}:")) && warning.contains(reason)

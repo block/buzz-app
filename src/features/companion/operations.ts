@@ -89,6 +89,8 @@ export function createCompanionOperations(
   const locals = new Map<string, Local>();
   // Latest status main reported for each of its operations, by main id.
   const latest = new Map<string, MainOperation>();
+  // Terminal reports already acknowledged to main (it may repeat one once).
+  const acknowledged = new Set<string>();
   let latestVersion = -1;
   let foreign: readonly OutgoingEvent[] = [];
   let operations: readonly OutgoingEvent[] = [];
@@ -141,10 +143,18 @@ export function createCompanionOperations(
     patch(local, { delivery: mirrored.delivery, error: mirrored.error });
     if (mirrored.delivery === "accepted" || mirrored.delivery === "seen") {
       locals.delete(local.item.event.id);
-      // Main repeats a terminal report until told it was reconciled here;
-      // a native update's success says nothing about this adapter's state.
-      void bridge.acknowledgeOperations({ ids: [admitted.id] }).catch(() => {});
+      acknowledge([admitted.id]);
     }
+  }
+  // Main repeats a terminal report until told it was processed here; a
+  // native update's success says nothing about this adapter's state. The
+  // report stays cached in `latest`, so an admission reply arriving after
+  // the acknowledgement still finds it.
+  function acknowledge(ids: readonly string[]) {
+    const fresh = ids.filter((id) => !acknowledged.has(id));
+    if (!fresh.length) return;
+    for (const id of fresh) acknowledged.add(id);
+    void bridge.acknowledgeOperations({ ids: fresh }).catch(() => {});
   }
   function enqueue(
     kind: MainOperation["kind"],
@@ -267,6 +277,18 @@ export function createCompanionOperations(
           local.admitted ? [local.admitted.id] : [],
         ),
       );
+      // Terminal reports with no local to finish (ours from before a reload,
+      // or whose local already ended) are processed too: nothing to show,
+      // and main must not keep spending presentation slots on them.
+      acknowledge(
+        main
+          .filter(
+            (op) =>
+              !mine.has(op.id) &&
+              (op.delivery === "accepted" || op.delivery === "seen"),
+          )
+          .map((op) => op.id),
+      );
       foreign = main
         .filter(
           (op) =>
@@ -294,6 +316,7 @@ export function createCompanionOperations(
       disposed = true;
       locals.clear();
       latest.clear();
+      acknowledged.clear();
       foreign = [];
       operations = [];
       listeners.clear();

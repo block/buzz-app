@@ -239,3 +239,37 @@ it("shows main's admitted-but-undelivered reactions and retries that exact event
   h.session.setMainOperations([], 2);
   expect(h.session.outbox?.snapshot()).toEqual([]);
 });
+
+it("acknowledges terminal reports it has no local for, so a reloaded window frees main's slots", async () => {
+  const h = setup();
+  const stale = Array.from({ length: 3 }, (_, i) => ({
+    id: (i + 1).toString(16).padStart(64, "0"),
+    messageId: MESSAGE,
+    kind: 40003 as const,
+    delivery: "accepted" as const,
+  }));
+  h.session.setMainOperations(stale, 1);
+  expect(h.acknowledgeOperations).toHaveBeenCalledWith({
+    ids: stale.map((op) => op.id),
+  });
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  // Repeated once by main before it processed the acknowledgement: no echo.
+  h.session.setMainOperations(stale, 2);
+  expect(h.acknowledgeOperations).toHaveBeenCalledTimes(1);
+  // Terminal-before-admission still resolves after that acknowledgement.
+  let settle: (a: { id: string; version: number }) => void = () => {};
+  h.edit.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  const EDIT = "e".repeat(64);
+  const id = h.session.messages.edit(MESSAGE, "x", "src");
+  h.session.setMainOperations(
+    [{ id: EDIT, messageId: MESSAGE, kind: 40003, delivery: "accepted" }],
+    3,
+  );
+  expect(h.session.outbox?.snapshot().some((i) => i.event.id === id)).toBe(
+    true,
+  );
+  settle({ id: EDIT, version: 2 });
+  await flush();
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  expect(h.acknowledgeOperations).toHaveBeenCalledTimes(2);
+});

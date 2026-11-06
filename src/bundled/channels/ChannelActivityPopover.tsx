@@ -35,6 +35,7 @@ import activityStyles from "../../features/agents/ActivityRows.module.css";
 import { AgentActivityRow } from "../../features/agents/AgentActivityRow";
 import { workingAgentDetails } from "./working-agents";
 import { avatarMedia } from "../../shared/avatar-source";
+import { incompletePreview } from "../inbox/InboxRow";
 
 const elapsed = (createdAt: number, now = Date.now()) => {
   const seconds = Math.max(0, Math.floor(now / 1000) - createdAt);
@@ -55,6 +56,7 @@ const noSubscribe = () => () => {};
 function ActivityRow({
   item,
   noun,
+  previewId,
   session,
   agents,
   onOpen,
@@ -62,6 +64,9 @@ function ActivityRow({
 }: {
   item: ThreadActivityItem | MentionActivityItem;
   noun: "thread" | "mention";
+  /** A message whose body Activity must not show until its edits and
+   * deletions are checked. */
+  previewId?: string;
   session: RelaySession;
   agents: readonly string[];
   onOpen(): void;
@@ -85,6 +90,12 @@ function ActivityRow({
     profile?.name ?? displayId.slice(0, 10),
   );
   const name = item.workflowOwnerId ? workflowLabel(resolved) : resolved;
+  const feed = useSyncExternalStore(
+    session.inboxFeed.subscribe,
+    session.inboxFeed.snapshot,
+    session.inboxFeed.snapshot,
+  );
+  const preview = incompletePreview(feed, [previewId]) ?? item.preview;
   const isAgent =
     agents.includes(item.authorId) ||
     !!profile?.isAgent ||
@@ -111,7 +122,7 @@ function ActivityRow({
     >
       <NavigationItem
         type="button"
-        aria-label={`Open unread ${noun} from ${name}: ${item.preview}`}
+        aria-label={`Open unread ${noun} from ${name}: ${preview}`}
         onClick={onOpen}
         icon={
           item.workflowOwnerId ? (
@@ -138,7 +149,7 @@ function ActivityRow({
                 {elapsed(item.createdAt)}
               </span>
             </span>
-            <span className={styles.activityItemPreview}>{item.preview}</span>
+            <span className={styles.activityItemPreview}>{preview}</span>
           </span>
         }
       />
@@ -386,6 +397,7 @@ export function ChannelActivityPopover({
                     key={mention.messageId}
                     item={mention}
                     noun="mention"
+                    previewId={mention.messageId}
                     session={session}
                     agents={activeAgents}
                     onOpen={() => {

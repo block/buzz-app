@@ -19,8 +19,16 @@ import type {
   ThreadActivityItem,
   ThreadActivitySnapshot,
 } from "../../features/relay/unread";
+import { createInboxFeed } from "../../features/relay/inbox-feed";
+import type { InboxFeedSnapshot } from "../../features/relay/inbox-feed";
+import type { ChannelQueries } from "../../features/relay/contracts";
+import type { RelayEvent } from "../../features/relay/events";
 
 afterEach(cleanup);
+
+const settled: InboxFeedSnapshot = { status: "ready", incomplete: [] };
+// No message's edits or deletions are still being checked.
+const settledFeed = { snapshot: () => settled, subscribe: () => () => {} };
 
 test("closes activity while its row exits and does not reopen on re-entry", async () => {
   const user = userEvent.setup();
@@ -99,6 +107,7 @@ test("mouse presses do not pin the hover preview open, and only hover marks it a
       ensure: async () => {},
     },
     agentChoices: { snapshot: () => ({ identities: [] }) },
+    inboxFeed: settledFeed,
   } as unknown as RelaySession;
   render(
     <ChannelActivityPopover
@@ -163,6 +172,7 @@ test("activity keeps profile loading lazy, explains stale results and opens the 
       markThrough,
     },
     profiles: { snapshot: () => profiles, subscribe: () => () => {}, ensure },
+    inboxFeed: settledFeed,
   } as unknown as RelaySession;
   render(
     <ChannelActivityPopover
@@ -271,6 +281,7 @@ test("unread mentions open activity alone, list above threads, open by message a
       markThrough,
     },
     profiles: { snapshot: () => profiles, subscribe: () => () => {}, ensure },
+    inboxFeed: settledFeed,
   } as unknown as RelaySession;
   render(
     <ChannelActivityPopover
@@ -329,6 +340,127 @@ test("unread mentions open activity alone, list above threads, open by message a
   await user.keyboard("{Enter}");
   await screen.findByRole("dialog", { name: "Activity in Studio" });
   expect(ensure).toHaveBeenLastCalledWith(["sam", "alex"], "background");
+});
+
+test("a mention whose edits or deletions are unchecked shows the Inbox placeholder until they settle", async () => {
+  const user = userEvent.setup();
+  const body = "@you can you sign off?";
+  const mention: MentionActivityItem = {
+    channelId: "studio",
+    messageId: "mention",
+    authorId: "sam",
+    createdAt: 2,
+    preview: body,
+  };
+  const snapshot: ThreadActivitySnapshot = {
+    channelId: "studio",
+    items: [],
+    mentions: [mention],
+    coverage: "observed",
+    freshness: "observed",
+  };
+  const event = {
+    id: mention.messageId,
+    kind: 9,
+    pubkey: mention.authorId,
+    created_at: mention.createdAt,
+    content: body,
+    tags: [["p", "you"]],
+  } as unknown as RelayEvent;
+  // Each attempt's edit/deletion read of the mention is held until released.
+  const reads: {
+    resolve(events: RelayEvent[]): void;
+    reject(error: Error): void;
+  }[] = [];
+  const feed = createInboxFeed({
+    viewer: "you",
+    channels: {
+      list: () => ({ channels: [] }),
+      subscribeList: () => () => {},
+    } as unknown as ChannelQueries,
+    reader: {
+      read: ([filter]) =>
+        filter?.["#e"]?.includes(event.id)
+          ? new Promise((resolve, reject) => reads.push({ resolve, reject }))
+          : Promise.resolve([]),
+    },
+    async addressedRead(_filter, _signal, prepare) {
+      prepare([event]);
+      return [event];
+    },
+    retainedEvent: (id) => (id === event.id ? event : undefined),
+    retainedEditIds: () => [],
+  });
+  const profiles = new Map([["sam", { name: "Sam" }]]);
+  const session = {
+    agentChoices: { snapshot: () => ({ identities: [] }) },
+    unread: { activity: () => snapshot, subscribeActivity: () => () => {} },
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: async () => {},
+    },
+    inboxFeed: feed,
+  } as unknown as RelaySession;
+  render(
+    <ChannelActivityPopover
+      session={session}
+      channelId="studio"
+      channelName="Studio"
+      trigger={<Button>Activity</Button>}
+      onOpenThread={vi.fn()}
+      onOpenMention={vi.fn()}
+    />,
+  );
+  const row = (preview: string) =>
+    screen.getByRole("button", {
+      name: `Open unread mention from Sam: ${preview}`,
+    });
+  try {
+    screen.getByRole("button", { name: "Activity" }).focus();
+    await user.keyboard("{Enter}");
+    const popup = await screen.findByRole("dialog", {
+      name: "Activity in Studio",
+    });
+    expect(row(body)).toHaveTextContent(body);
+    let work = Promise.resolve();
+    await act(async () => {
+      work = feed.ensure();
+    });
+    await waitFor(() => expect(reads).toHaveLength(1));
+    expect(feed.snapshot()).toMatchObject({
+      status: "loading",
+      incomplete: [event.id],
+    });
+    expect(row("Preview updating…")).toHaveTextContent("Preview updating…");
+    expect(popup).not.toHaveTextContent(body);
+    await act(async () => {
+      reads[0]?.reject(new Error("Edits unavailable"));
+      await work;
+    });
+    expect(feed.snapshot()).toMatchObject({
+      status: "error",
+      incomplete: [event.id],
+    });
+    expect(row("Preview unavailable. Retry activity.")).toHaveTextContent(
+      "Preview unavailable. Retry activity.",
+    );
+    expect(popup).not.toHaveTextContent(body);
+    await act(async () => {
+      work = feed.refresh();
+    });
+    await waitFor(() => expect(reads).toHaveLength(2));
+    expect(row("Preview updating…")).toHaveTextContent("Preview updating…");
+    await act(async () => {
+      reads[1]?.resolve([]);
+      await work;
+    });
+    expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
+    expect(row(body)).toHaveTextContent(body);
+  } finally {
+    for (const read of reads) read.resolve([]);
+    feed.dispose();
+  }
 });
 
 test("working agents open their thread when linked, otherwise the conversation", async () => {
@@ -542,6 +674,7 @@ test("a press while there is no activity does not block the hover preview once a
       ensure: async () => {},
     },
     agentChoices: { snapshot: () => ({ identities: [] }) },
+    inboxFeed: settledFeed,
   } as unknown as RelaySession;
   render(
     <ChannelActivityPopover

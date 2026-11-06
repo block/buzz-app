@@ -242,6 +242,9 @@ assistive technology ("1 unread mention") and still opens the popover; with
 threads, the dot's label counts both ("1 unread mention, 1 unread thread").
 Overlapping priority, mention and thread activity never produce duplicate dots.
 Merely revealing the popover does not acknowledge a mention or reply.
+While Activity is still checking a mention's stored edits and deletions, its row
+shows "Preview updating…" instead of the text, or "Preview unavailable. Retry
+activity." if the check failed, as on the Activity page.
 A local manual-unread mark strengthens the label without fabricating priority; the
 underlying observed count remains available.
 Channel Settings → Diagnostics exposes explicit actions and Unread status/retry. Unknown and

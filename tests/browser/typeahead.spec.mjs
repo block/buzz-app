@@ -1,60 +1,24 @@
 import { test, expect } from "./playwright-test.mjs";
-import { build, preview } from "./vite-server.mjs";
-import react from "@vitejs/plugin-react";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { previewFixtures } from "./vite-server.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
-let server, directory, origin;
-// A dev server serves these fixtures as about 1,600 modules, transformed on
-// first request. On a busy runner a worker's first navigation took longer than
-// the navigation timeout to load them, so build the pages once and serve the
-// bundle.
+let fixtures;
+// A dev server serves these fixtures as about 1,600 modules, and a worker's
+// first navigation outlasted the navigation timeout on a busy runner.
 test.beforeAll(async () => {
-  const root = fileURLToPath(new URL("../../", import.meta.url));
-  directory = await mkdtemp(join(tmpdir(), "buzz-typeahead-"));
-  const config = {
-    root,
-    configFile: false,
-    envDir: false,
-    logLevel: "error",
-    plugins: [react()],
-    // Development React, as the dev server served, keeps StrictMode's checks.
-    define: {
-      "import.meta.env.DEV": "true",
-      "process.env.NODE_ENV": '"development"',
-    },
-    build: {
-      rollupOptions: {
-        input: [
-          "tests/fixtures/emoji.html",
-          "tests/fixtures/mentions.html",
-          "tests/fixtures/messages.html",
-          "tests/fixtures/typeahead.html",
-        ].map((page) => join(root, page)),
-      },
-      outDir: join(directory, "dist"),
-      emptyOutDir: true,
-      target: "esnext",
-    },
-  };
-  await build(config);
-  server = await preview({
-    ...config,
-    preview: { host: "127.0.0.1", port: 0, strictPort: true },
-  });
-  origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+  fixtures = await previewFixtures([
+    "tests/fixtures/emoji.html",
+    "tests/fixtures/mentions.html",
+    "tests/fixtures/messages.html",
+    "tests/fixtures/typeahead.html",
+  ]);
 });
-test.afterAll(async () => {
-  if (server) await new Promise((resolve) => server.httpServer.close(resolve));
-  if (directory) await rm(directory, { recursive: true, force: true });
-});
+test.afterAll(() => fixtures?.close());
 // Journeys open the pages by path. The bundle's port is known only after
-// beforeAll, which runs before each test's fixtures.
+// beforeAll, which runs before each test's fixtures. Playwright also resolves
+// baseURL for beforeAll itself, before the bundle exists.
 // biome-ignore lint/correctness/noEmptyPattern: Playwright requires a destructured fixture argument.
-test.use({ baseURL: async ({}, use) => use(origin) });
+test.use({ baseURL: async ({}, use) => use(fixtures?.origin) });
 
 const open = async (page) => {
   await page.goto("/tests/fixtures/mentions.html?test-controls");

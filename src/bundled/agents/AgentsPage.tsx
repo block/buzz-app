@@ -1,4 +1,5 @@
 import { visibleTeams } from "../../features/agents/visible-teams";
+import { profileKey } from "../../features/profiles/target";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
   agentHistoryActive,
@@ -627,6 +628,10 @@ export function AgentsPage({
             : undefined
         }
         onRemoved={() => removed(selected.pubkey)}
+        openLink={(target) => {
+          const pubkey = profileKey(target);
+          return !!find(pubkey) && browse(pubkey);
+        }}
         openSettings={openSettings}
         openConversation={conversationOpener(
           navigator,

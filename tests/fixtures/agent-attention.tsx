@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import type { Context } from "../../src/plugins/author";
 import { presentPull } from "../../src/bundled/github/attention";
 import { createTab } from "../../src/bundled/watching/Tab";
+import { profileTarget } from "../../src/features/profiles/target";
 import "../../src/shared/styles/globals.css";
 
 const channel = "11111111-1111-4111-8111-111111111111";
@@ -81,8 +82,7 @@ let snapshot = {
           modifiedAt: 1,
           value: {
             type: "interest",
-            instructions:
-              "# Release planning\nReport blockers and keep the release moving.",
+            instructions: `# Release planning\nReport blockers to [Sam](${profileTarget(sam)}) and keep the release moving.`,
           },
         },
         "watch/discussion": {
@@ -227,6 +227,12 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <Panel joined>
-    <Tab agent={{ key: "membership-a" }} />
+    <Tab
+      agent={{ key: "membership-a" }}
+      open={(target) => {
+        document.body.dataset.opened = target;
+        return true;
+      }}
+    />
   </Panel>,
 );

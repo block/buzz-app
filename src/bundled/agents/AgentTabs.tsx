@@ -42,6 +42,7 @@ export function AgentTabs(props: {
   initialTranscript?: TranscriptRequest | undefined;
   close?: (() => void) | undefined;
   openConversation?: AgentViewProps["openConversation"];
+  openLink?: ((target: string) => boolean) | undefined;
   onDiscard?: () => void;
 }) {
   const split = props.type?.tabs?.some(

@@ -273,6 +273,11 @@ function OwnedAgentProfile({
       initialTranscript={initialTranscript}
       close={close}
       openConversation={openConversation}
+      openLink={
+        context &&
+        ((link) =>
+          context.canOpen(link) && (context.push ?? context.open)(link))
+      }
       conversation={openedFrom(session, context)}
       messageAction={(variant) => (
         <AgentMessageButton

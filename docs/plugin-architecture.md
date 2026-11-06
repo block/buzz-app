@@ -580,7 +580,11 @@ which uploads of local files use. The kit grants nothing `ctx.agents` and
 A plugin, bundled or installed, can add a tab to the settings of agents
 running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
-`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
+`{ agent, open }`; it reads and saves through the plugin's own `ctx.agents`.
+`open(target)` opens a link, such as a `nostr:npub…` profile, where the tab is
+shown: the profile panel opens it beside the conversation and the Agents page
+selects that agent. It returns false when it can't, and is absent where the tab
+can open nothing. An
 optional `when(agent)` limits the tab to the agents it returns true for, and an
 optional `subscribe(listener)` tells the host when `when` may answer
 differently, so the tab appears or goes without a reload. A `when` that throws

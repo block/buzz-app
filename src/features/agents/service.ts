@@ -357,7 +357,12 @@ export type AgentTab<Config = unknown> = Readonly<{
 export type AgentAddedTab = Readonly<{
   id: string;
   title: string;
-  component: ComponentType<{ agent: Agent }>;
+  component: ComponentType<{
+    agent: Agent;
+    /** Opens a link, such as a profile, where the tab is shown; false when it
+     * can't there. Absent where the tab can open nothing. */
+    open?: ((target: string) => boolean) | undefined;
+  }>;
   /** Whether the tab shows for this agent; absent, it shows for each. */
   when?: (agent: Agent) => boolean;
   /** Calls `listener` when `when` may answer differently. */

@@ -15,7 +15,7 @@ import { Switch as SharedSwitch } from "../../shared/design-system/ui/Switch";
 import type { Context } from "../../plugins/author";
 import type { Agent } from "./model";
 import type { RelaySession } from "../../features/relay/session";
-import { InstructionsMarkdown } from "./InstructionsMarkdown";
+import { InstructionsMarkdown, OpenLink } from "./InstructionsMarkdown";
 import { title, heading, type Channel } from "./presentation";
 import { problem, useAction } from "./actions";
 import { AttentionSonar } from "./AttentionSonar";
@@ -434,7 +434,13 @@ export function createAttentionComponents({
       </div>
     );
   }
-  function WatchingTab({ agent: { key } }: { agent: { key: string } }) {
+  function WatchingTab({
+    agent: { key },
+    open,
+  }: {
+    agent: { key: string };
+    open?: ((target: string) => boolean) | undefined;
+  }) {
     const page = React.useRef<HTMLElement>(null);
     const snapshot = React.useSyncExternalStore(
       agents.subscribe,
@@ -490,13 +496,15 @@ export function createAttentionComponents({
               </p>
             )}
           {agent && here ? (
-            <AgentPanel
-              agent={agent}
-              returnFocus={page}
-              channels={channels}
-              scope={connection.scope}
-              session={connection.session}
-            />
+            <OpenLink.Provider value={open}>
+              <AgentPanel
+                agent={agent}
+                returnFocus={page}
+                channels={channels}
+                scope={connection.scope}
+                session={connection.session}
+              />
+            </OpenLink.Provider>
           ) : (
             <p
               className="text-body-sm text-secondary"

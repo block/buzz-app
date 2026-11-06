@@ -30,6 +30,17 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
     /^Wakes on new reviews/,
   );
   await expect(interest.locator(".attention-interest-summary")).toHaveCount(0);
+  // A person in the instructions shows by name and opens their profile.
+  await interest.locator(".attention-instructions summary").click();
+  await interest.screenshot({
+    path: testInfo.outputPath("interest-profile-link.png"),
+  });
+  await interest.getByRole("button", { name: "Sam", exact: true }).click();
+  await expect(page.locator("body")).toHaveAttribute(
+    "data-opened",
+    /^nostr:npub1/,
+  );
+  await expect(interest).not.toContainText("npub1");
   await titled.screenshot({
     path: testInfo.outputPath("interest-summary.png"),
   });

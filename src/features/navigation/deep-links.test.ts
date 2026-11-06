@@ -456,7 +456,13 @@ it("explains each repeated malformed warm link without adding visits, then opens
   });
   t.stop();
 });
-it.each(["buzz://", "buzz:///"])(
+it.each([
+  "buzz://",
+  "buzz:///",
+  "buzz://?from=console",
+  "buzz:///?x=1",
+  "buzz://#top",
+])(
   "a bare warm link (%s) only brings Buzz forward: no notice, visit or failure",
   async (url) => {
     const t = harness(ready);
@@ -499,6 +505,56 @@ it("a bare link queued after a real one does not displace it", async () => {
   expect(t.log).toEqual([channelOpen]);
   t.stop();
 });
+it("a bare link arriving in a later batch does not displace a held launch link", async () => {
+  const t = harness(loading, ["buzz://channel/general"]);
+  try {
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+    t.arrive("buzz://");
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(t.log).toEqual([]);
+    t.become(ready);
+    await settle();
+    expect(t.log).toEqual([channelOpen]);
+    expect(t.host.accepted).toHaveBeenCalledTimes(1);
+    expect(t.host.rejected).not.toHaveBeenCalled();
+  } finally {
+    t.stop();
+  }
+});
+// Unlike bare `buzz://`, `buzz://sign-in` wins selection like any other latest
+// link. These pin that difference for batches that mix them.
+it.each([
+  { batch: ["buzz://sign-in", "buzz://"], signIn: true, log: [] },
+  {
+    batch: ["buzz://channel/general", "buzz://sign-in"],
+    signIn: true,
+    log: [],
+  },
+  {
+    batch: ["buzz://sign-in", "buzz://channel/general"],
+    signIn: false,
+    log: [channelOpen],
+  },
+])(
+  "a launch batch $batch requests sign-in: $signIn",
+  async ({ batch, signIn, log }) => {
+    takeSignInRequest();
+    const t = harness(loading, batch);
+    try {
+      await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(1));
+      await settle();
+      expect(takeSignInRequest()).toBe(signIn);
+      t.become(ready);
+      await settle();
+      expect(t.log).toEqual(log);
+      expect(t.host.rejected).not.toHaveBeenCalled();
+      expect(t.host.fail).not.toHaveBeenCalled();
+    } finally {
+      t.stop();
+    }
+  },
+);
 it("explains a malformed launch link over the start page, adding no visit, when Inbox is turned off", async () => {
   const t = harness(loading, ["buzz://unknown"]);
   t.inbox("off");
@@ -757,6 +813,47 @@ it("a malformed warm link retires an earlier link's recovery and restores the pa
       `open:${JSON.stringify({ version: 1, kind: "settings" })}`,
       `open:${JSON.stringify(before.entry.target)}`,
     ]);
+  } finally {
+    t.stop();
+  }
+});
+it("a bare warm link leaves an earlier link's Try again in place, and it still opens that link", async () => {
+  const t = harness(ready);
+  try {
+    await settle();
+    await t.host.navigation.open({ version: 1, kind: "settings" });
+    const before = t.host.navigation.snapshot();
+    t.become({ selected: null });
+    t.arrive(messageLink);
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().retryable).toBe(true),
+    );
+    t.arrive("buzz://");
+    await vi.waitFor(() => expect(t.take).toHaveBeenCalledTimes(3));
+    await settle();
+    expect(t.host.rejected).not.toHaveBeenCalled();
+    expect(t.log).toEqual([
+      `open:${JSON.stringify({ version: 1, kind: "settings" })}`,
+      "fail:unavailable",
+    ]);
+    expect(t.host.navigation.snapshot()).toMatchObject({
+      entry: { id: before.entry.id },
+      status: "failed",
+      reason: "unavailable",
+      ingress: true,
+      retryable: true,
+    });
+    t.become({ selected: origin });
+    await expect(t.host.navigation.retry()).resolves.toEqual({
+      status: "opened",
+    });
+    expect(t.host.navigation.snapshot().entry.target).toMatchObject({
+      kind: "conversation",
+      scope: { viewer, communityOrigin: origin },
+      channelId: "general",
+      messageId: message,
+      threadRootId: root,
+    });
   } finally {
     t.stop();
   }

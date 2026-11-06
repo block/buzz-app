@@ -2127,6 +2127,43 @@ describe("a joined batch over the replay batch size", () => {
     }
   });
 
+  it("reports no channel continuous when a grant during its retry re-sends the batch during its replay", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      const { next, replay } = await reconnected(h);
+      const batch = next
+        .requests()
+        .find((r) => !isReplay(r) && scopeOf(r).length === ids.length);
+      assert.exists(batch);
+      await next.receive(["CLOSED", batch[1], "error: unavailable"]);
+      const sent = next.requests().length;
+      h.owner.retry();
+      await vi.advanceTimersByTimeAsync(0);
+      const retry = next
+        .requests()
+        .slice(sent)
+        .find((r) => scopeOf(r).length === ids.length);
+      assert.exists(retry);
+      // The grant reaches the broker while the retry is in flight: its EOSE
+      // re-sends the batch.
+      await grant(h, "channel-3", next);
+      await next.receive(["EOSE", retry[1]]);
+      const resend = next
+        .requests()
+        .filter((r) => !isReplay(r) && scopeOf(r).length === ids.length)
+        .at(-1);
+      assert.exists(resend);
+      expect(resend[1]).not.toBe(retry[1]);
+      await next.receive(["EOSE", resend[1]]);
+      await next.receive(["EOSE", replay[1]]);
+      expect(channels(h).flatMap((call) => call[0])).toEqual(ids);
+      expect(channels(h).some((call) => call[2]?.length)).toBe(false);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
   it("establishes a channel whose live batch failed during its replay only when the batch is live again", async () => {
     vi.useFakeTimers({ now: 1_700_000_000_000 });
     const h = setup([], undefined, 2048, () => 0.5);

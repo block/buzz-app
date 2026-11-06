@@ -715,6 +715,19 @@ export function subscribeRelayTraffic(
   // granted channel. A batch whose REQ is in flight may have been checked
   // before the grant, so it is re-sent once at its EOSE. A forged notice
   // costs one extra REQ, nothing more.
+  /** A grant's re-send of `route` proves no channel of it continuous,
+   * including one whose replay a history route still runs. */
+  function regrant(route: Route) {
+    const channels = scope(route);
+    for (const other of routes.values())
+      if (other.history && other.resumedChannels)
+        other.resumedChannels = new Set(
+          [...other.resumedChannels].filter(
+            (channel) => !channels.includes(channel),
+          ),
+        );
+    replace(route);
+  }
   function grant(id: string) {
     cursors.delete(`channel:${id}`);
     grantsOwed.add(id);
@@ -722,16 +735,7 @@ export function subscribeRelayTraffic(
     for (const route of [...routes.values()]) {
       if (!route.channelIds?.includes(id)) continue;
       if (route.status === "live" && !route.previous) {
-        // A grant's re-send proves no channel continuous, including one whose
-        // replay a history route still runs.
-        for (const other of routes.values())
-          if (other.history && other.resumedChannels)
-            other.resumedChannels = new Set(
-              [...other.resumedChannels].filter(
-                (channel) => !scope(route).includes(channel),
-              ),
-            );
-        replace(route);
+        regrant(route);
         sent = true;
         continue;
       }
@@ -2012,7 +2016,7 @@ export function subscribeRelayTraffic(
           routes.get(route.id) === route &&
           route.status === "live"
         ) {
-          replace(route);
+          regrant(route);
           notify();
         }
         if (valid()) pump();

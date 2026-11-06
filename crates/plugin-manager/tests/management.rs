@@ -1674,3 +1674,214 @@ fn managed_policy_lives_beside_profiles_and_never_installs() {
         .iter()
         .any(|plugin| plugin.manifest.id == "example.managed"));
 }
+
+#[test]
+fn trusted_publishers_restrict_install_load_and_unsigned_overrides() {
+    use std::process::Command;
+    let (temp, manager, source) = fixture();
+    let publisher = sign_release(&source, TEST_KEY).unwrap();
+    manager.install(&source).unwrap();
+    manager.change("enable", "example.page").unwrap();
+    let revision = manager
+        .catalog()
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap()
+        .revision;
+    let cli = |args: &[&str], unsigned: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_buzzodz"));
+        command
+            .args([
+                "--home",
+                temp.path().to_str().unwrap(),
+                "--profile",
+                "test",
+                "plugin",
+            ])
+            .args(args)
+            .env_remove("BUZZ_PLUGIN_TRUST")
+            .env_remove("BUZZ_REQUIRE_PLUGIN_SIGNATURES");
+        if unsigned {
+            command.env("BUZZ_REQUIRE_PLUGIN_SIGNATURES", "0");
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned()
+                + &String::from_utf8_lossy(&output.stderr),
+        )
+    };
+    let blocked = |manager: &Manager| {
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+            .error
+    };
+
+    // Without a trust file, any valid signature runs.
+    let (ok, output) = cli(&["trust"], false);
+    assert!(ok && output.contains("not present"), "{output}");
+
+    // Registering another publisher turns the restriction on and blocks this one everywhere.
+    let other_publisher = nostr::key::Keys::new(SecretKey::generate())
+        .public_key()
+        .to_hex();
+    let (ok, output) = cli(&["trust", "add", &other_publisher, "Other"], false);
+    assert!(ok, "{output}");
+    assert!(
+        output.contains(&format!("{other_publisher} Other")),
+        "{output}"
+    );
+    assert!(
+        output.contains("Installed plugins that cannot run"),
+        "{output}"
+    );
+    assert!(blocked(&manager).unwrap().contains("is not trusted"));
+    let (_, output) = cli(&["list"], false);
+    assert!(
+        output.contains(&format!("Publisher: {publisher}")),
+        "{output}"
+    );
+    assert!(manager.module("example.page", &revision).is_err());
+    assert!(manager.host_grants("example.page", &revision).is_err());
+    assert!(manager.change("enable", "example.page").is_err());
+    assert!(install_error(&manager, &source).contains("is not trusted"));
+    assert!(manager
+        .reload_live("example.page")
+        .err()
+        .unwrap()
+        .contains("is not trusted"));
+    // Re-adding without a name keeps the existing label.
+    let (ok, output) = cli(&["trust", "add", &other_publisher], false);
+    assert!(
+        ok && output.contains(&format!("{other_publisher} Other")),
+        "{output}"
+    );
+
+    // Registering by npub admits it again; removing it blocks it again.
+    let npub = {
+        use nostr::nips::nip19::ToBech32;
+        nostr::key::PublicKey::parse(&publisher)
+            .unwrap()
+            .to_bech32()
+            .unwrap()
+    };
+    let (ok, output) = cli(&["trust", "add", &npub], false);
+    assert!(ok && !output.contains("cannot run"), "{output}");
+    assert!(blocked(&manager).is_none());
+    assert!(manager.module("example.page", &revision).is_ok());
+    manager.install(&source).unwrap();
+    // Toggle self-developed only while every installed publisher is listed, so these tests
+    // never read the saved Buzz identity; the trust unit tests cover that check.
+    let (ok, output) = cli(&["trust", "self-developed", "on"], false);
+    assert!(ok && output.contains("Self-developed: allowed"), "{output}");
+    let (ok, output) = cli(&["trust", "self-developed", "off"], false);
+    assert!(
+        ok && output.contains("Self-developed: not allowed"),
+        "{output}"
+    );
+    let (ok, output) = cli(&["trust", "remove", &publisher], false);
+    assert!(ok, "{output}");
+    let (ok, output) = cli(&["trust", "remove", &publisher], false);
+    assert!(
+        !ok && output.contains("is not a trusted publisher"),
+        "{output}"
+    );
+    assert!(blocked(&manager).unwrap().contains("is not trusted"));
+
+    // A trust policy forbids unsigned plugins even when the signature requirement is off.
+    let unsigned = temp.path().join("unsigned");
+    fs::create_dir(&unsigned).unwrap();
+    fs::write(
+        unsigned.join("manifest.json"),
+        r#"{"id":"example.unsigned","name":"Unsigned","apiVersion":1}"#,
+    )
+    .unwrap();
+    fs::write(unsigned.join("plugin.js"), "export function apply() {}").unwrap();
+    let (ok, output) = cli(&["install", unsigned.to_str().unwrap()], true);
+    assert!(
+        !ok && output.contains("signed by a trusted publisher"),
+        "{output}"
+    );
+
+    // An unusable file blocks every external plugin and refuses edits until fixed.
+    fs::write(
+        temp.path().join(buzzodz_plugins::trust::FILE_NAME),
+        r#"{"version":1,"trustedPublisher":[]}"#,
+    )
+    .unwrap();
+    assert!(blocked(&manager).unwrap().contains("unusable"));
+    let (ok, output) = cli(&["trust", "add", &publisher], false);
+    assert!(!ok && output.contains("fix or remove it first"), "{output}");
+    let (_, output) = cli(&["trust"], false);
+    assert!(
+        output.contains("Unknown field \"trustedPublisher\""),
+        "{output}"
+    );
+
+    // Removing the file restores the default: any valid signature runs.
+    fs::remove_file(temp.path().join(buzzodz_plugins::trust::FILE_NAME)).unwrap();
+    assert!(blocked(&manager).is_none());
+}
+
+#[test]
+fn explicit_trust_path_fails_closed_when_its_file_is_missing() {
+    use std::process::Command;
+    let (temp, _manager, source) = fixture();
+    let policy = temp.path().join("deployed").join("policy.json");
+    let cli = |args: &[&str], unsigned: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_buzzodz"));
+        command
+            .args([
+                "--home",
+                temp.path().to_str().unwrap(),
+                "--profile",
+                "test",
+                "plugin",
+            ])
+            .args(args)
+            .env("BUZZ_PLUGIN_TRUST", &policy)
+            .env_remove("BUZZ_REQUIRE_PLUGIN_SIGNATURES");
+        if unsigned {
+            command.env("BUZZ_REQUIRE_PLUGIN_SIGNATURES", "0");
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned()
+                + &String::from_utf8_lossy(&output.stderr),
+        )
+    };
+    // The policy the variable names was never deployed: signed and unsigned installs fail.
+    let (ok, output) = cli(&["install", source.to_str().unwrap()], false);
+    assert!(!ok && output.contains("does not exist"), "{output}");
+    for name in ["plugin.artifact.json", "plugin.signature.json"] {
+        fs::remove_file(source.join(name)).unwrap();
+    }
+    let (ok, output) = cli(&["install", source.to_str().unwrap()], true);
+    assert!(!ok && output.contains("does not exist"), "{output}");
+    let (ok, output) = cli(&["trust"], false);
+    assert!(ok && output.contains("but not present"), "{output}");
+
+    // Registering creates the named file, and the signed release then runs.
+    let publisher = sign_release(&source, TEST_KEY).unwrap();
+    let (ok, output) = cli(&["trust", "add", &publisher], false);
+    assert!(ok && policy.is_file(), "{output}");
+    let (ok, output) = cli(&["install", source.to_str().unwrap()], false);
+    assert!(ok, "{output}");
+    let (ok, output) = cli(&["enable", "example.page"], false);
+    assert!(ok, "{output}");
+
+    // Deleting the deployed file blocks the installed plugin again instead of lifting the policy.
+    fs::remove_file(&policy).unwrap();
+    let (ok, output) = cli(&["enable", "example.page"], false);
+    assert!(!ok && output.contains("does not exist"), "{output}");
+    let (_, output) = cli(&["list"], false);
+    assert!(output.contains("does not exist"), "{output}");
+}

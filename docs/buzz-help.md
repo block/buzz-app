@@ -513,6 +513,10 @@ confirmation.
   a signed release, even when its code has not changed. Launching Buzz with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=0`
   allows unsigned plugins; restart with the variable unset to restore enforcement.
   Supplied signatures are always verified. Plugins built into Buzz are exempt.
+  An optional plugin trust file limits external plugins to registered publisher
+  keys, optionally plus plugins you sign with your own Buzz identity
+  ("self-developed"); manage it with `buzzodz plugin trust`. While it exists,
+  unsigned plugins never run. Blocked plugins stay listed with the reason.
   Do not assume a particular optional plugin is on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.

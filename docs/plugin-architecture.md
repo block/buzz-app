@@ -166,7 +166,9 @@ existing enabled state. `recover` backs up management settings and resets to
 bundled defaults, preserving artifacts for reinstallation. `managed` prints the
 [managed plugin policy](managed-plugins.md) and how each recommendation stands.
 `access [URL]` prints the [repository access rules](repository-access.md) and, for a
-URL, the rule, clone URL and agent socket a Git import would use.
+URL, the rule, clone URL and agent socket a Git import would use. `trust` prints and
+edits the [plugin trust](plugin-trust.md) policy: `trust add PUBLISHER [NAME]`,
+`trust remove PUBLISHER` and `trust self-developed on|off`.
 
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
@@ -1821,6 +1823,10 @@ With the override, unsigned `manifest.json` and `plugin.js` packages can be
 installed and loaded. Supplied signatures are still verified, incomplete signed
 release pairs still fail, and a signed installation cannot change publishers or
 downgrade to unsigned through an update or rollback.
+
+A [plugin trust](plugin-trust.md) file further limits external plugins to registered
+publisher keys and, optionally, your own signing identity. While one exists, unsigned
+plugins never run, whatever `BUZZ_REQUIRE_PLUGIN_SIGNATURES` says.
 
 With enforcement enabled, existing unsigned installations remain visible with an error and can be removed
 or replaced with a signed release. They cannot activate, load code, obtain native

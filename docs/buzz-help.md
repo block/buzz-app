@@ -1231,8 +1231,9 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   reactions; you can react, reply to a specific message, copy a message's
   text or link, mark it read or unread, follow or unfollow the thread, report
   it, and edit, delete or send-to-channel your own messages there, with the
-  same confirmations as the main window. Deleting an agent's message you own,
-  plugin-added actions (Start Solo chat, Remind me) and voice notes are not
+  same confirmations as the main window; a message from an agent you own can
+  be deleted once Buzz has verified that ownership. Plugin-added actions
+  (Start Solo chat, Remind me), View activity and voice notes are not
   available in a pop-out yet; use the main window for those. A thread pop-out
   cannot open another pop-out. Not available
   in the browser build.

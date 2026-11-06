@@ -50,6 +50,10 @@ export function createHuddleComposerOwner(
     ): void;
     /** The companion reconciled these terminal reports. */
     acknowledge(ids: readonly string[]): void;
+    /** Verified agent-owner authority for a shown message, or none. */
+    authorization(
+      id: string,
+    ): import("../relay/messages").AgentOwnerAuthorization | undefined;
   },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
@@ -408,11 +412,12 @@ export function createHuddleComposerOwner(
             return admitted(session.messages.remove(ids), 5);
           }
           case "deleteMessage": {
-            // Own, delivered messages only here; agent-owner deletion needs
-            // main's verified evidence and stays in the main window.
-            if (!own || !delivered || !session.outbox?.supports(5))
+            // Own messages, or an owned agent's with main's verified evidence
+            // read again now, after any wait; never from a projected flag.
+            const proof = own ? undefined : shown.authorization(messageId);
+            if ((!own && !proof) || !delivered || !session.outbox?.supports(5))
               throw new Error("Only your own messages can be deleted here.");
-            return admitted(session.messages.remove([messageId]), 5);
+            return admitted(session.messages.remove([messageId], proof), 5);
           }
           case "edit": {
             const { content, attachmentSourceId, baseline } = request.args;

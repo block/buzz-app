@@ -236,6 +236,7 @@ fn main() {
             "update_restart",
             "browser_attach",
             "browser_set_bounds",
+            "browser_set_media_suspended",
             "browser_detach",
             "browser_navigate",
             "browser_action",

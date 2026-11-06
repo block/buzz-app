@@ -14,7 +14,7 @@ mod browser_permissions_tests;
 mod pairing;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
-    browser_status,
+    browser_set_media_suspended, browser_status,
 };
 mod agent_state;
 mod app_agents;
@@ -1139,6 +1139,7 @@ pub fn run() {
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 browser_attach,
                 browser_set_bounds,
+                browser_set_media_suspended,
                 browser_detach,
                 browser_navigate,
                 browser_action,

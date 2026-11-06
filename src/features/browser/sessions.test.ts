@@ -16,6 +16,7 @@ function platform(): BrowserPlatform {
     available: true,
     attach: vi.fn(),
     setBounds: vi.fn(),
+    setMediaSuspended: vi.fn(async () => {}),
     navigate: vi.fn(),
     action: vi.fn(),
     status: vi.fn(),
@@ -224,6 +225,7 @@ it.each([undefined, "a"])(
         expect.anything(),
         false,
       );
+      expect(browserPlatform.setMediaSuspended).toHaveBeenCalledWith("a", true);
       expect(browserPlatform.attach).toHaveBeenCalledTimes(2);
     } finally {
       held.resolve("b");
@@ -253,6 +255,59 @@ it.each([undefined, "a"])(
     expect(browserPlatform.attach).toHaveBeenCalledTimes(2);
   },
 );
+
+it("keeps a parked guest's media suspended until a view adopts it", async () => {
+  const browserPlatform = platform();
+  vi.mocked(browserPlatform.attach).mockResolvedValue("a");
+  const sessions = new BrowserSessions(browserPlatform);
+  await sessions.attach("https://a.example", bounds, () => true, "s", "a");
+  await sessions.detach("a", "a");
+  expect(sessions.owns("a")).toBe(true);
+  expect(vi.mocked(browserPlatform.setMediaSuspended).mock.calls).toEqual([
+    ["a", true],
+  ]);
+  await expect(
+    sessions.attach("https://a.example", bounds, () => true, "s", "a"),
+  ).resolves.toBe("a");
+  expect(vi.mocked(browserPlatform.setMediaSuspended).mock.calls).toEqual([
+    ["a", true],
+    ["a", false],
+  ]);
+});
+
+it.each([undefined, "a"])(
+  "closes a guest that could not be silenced (park %j)",
+  async (park) => {
+    const browserPlatform = platform();
+    const failure = new Error("suspend failed");
+    vi.mocked(browserPlatform.attach).mockResolvedValue("a");
+    vi.mocked(browserPlatform.setMediaSuspended).mockRejectedValueOnce(failure);
+    const sessions = new BrowserSessions(browserPlatform);
+    await sessions.attach("https://a.example", bounds, () => true, "s", "a");
+    await expect(sessions.detach("a", park)).rejects.toBe(failure);
+    expect(browserPlatform.detach).toHaveBeenCalledWith("a");
+    expect(sessions.owns("a")).toBe(false);
+  },
+);
+
+it("opens a fresh guest when a parked one cannot play again", async () => {
+  const browserPlatform = platform();
+  let next = 0;
+  vi.mocked(browserPlatform.attach).mockImplementation(
+    async () => `session-${++next}`,
+  );
+  const sessions = new BrowserSessions(browserPlatform);
+  await sessions.attach("https://a.example", bounds, () => true, "s", "a");
+  await sessions.detach("session-1", "a");
+  vi.mocked(browserPlatform.setMediaSuspended).mockRejectedValueOnce(
+    new Error("resume failed"),
+  );
+  await expect(
+    sessions.attach("https://a.example", bounds, () => true, "s", "a"),
+  ).resolves.toBe("session-2");
+  expect(browserPlatform.detach).toHaveBeenCalledWith("session-1");
+  expect(sessions.owns("session-1")).toBe(false);
+});
 
 it("does not re-adopt a parked guest before its previous hide completes", async () => {
   const browserPlatform = platform();

@@ -72,6 +72,9 @@ the interface unless an available tool actually supports that action.
   unavailable until you sign in. Sign-in, sign-out and when the current
   sign-in ends also live under
   **Settings → Buzz → Identity → Organization sign-in**.
+- When a community requires organization sign-in, the sidebar or join dialog
+  explains why and offers **Sign in with** the organization’s name or server
+  address. Complete sign-in to reconnect; in the join dialog, choose **Continue**.
 - Signed in to more than one organization server? **Organization sign-in**
   lists each one you're signed in to, with the communities it's used by, and
   each **Sign out** ends only that server's sign-in. Your organization's own
@@ -104,6 +107,8 @@ the interface unless an available tool actually supports that action.
   name beside it. Search finds people by their profile names; once found, a
   verified full name also matches as you refine. Search and new direct messages
   also find people already verified by a matching verified name or username.
+  Adding channel members also finds a verified person by their verified name,
+  or by their public key, even if they never set up a profile.
 - Profile names omit surrounding whitespace. Names with layout or directional
   controls fall back to a safe handle or public-key fragment. Names that match
   a loaded verified name after ignoring hidden characters gain a public-key suffix.
@@ -134,6 +139,16 @@ automatically. Choose and save an available Bestie in this community first; the
 external app cannot choose other members or make the chat public.
 External posts use the selected agent's identity. Replies and mentions reach
 that agent in Buzz; they do not notify the external app through this connection.
+
+## Pair a command-line tool
+
+Run `buzz auth desktop pair` in a terminal while Buzz is open. Buzz asks
+whether to let that tool use Buzz as you; select **Allow** only when you ran the
+command. The tool can then post, read and use your sign-in through Buzz, and
+your key stays in Buzz. It can't edit your profile, delete, or manage members,
+agents or moderation: do those in Buzz.
+**Settings → Security** lists paired tools. **Revoke** stops one. Signing out
+revokes all of them, and a pairing unused for 30 days expires.
 
 ## Conversations and communities
 
@@ -305,6 +320,11 @@ that agent in Buzz; they do not notify the external app through this connection.
 - A plugin can require a recipient for a new conversation. Its default recipient
   also applies to a saved draft with no recipients. Your text and formatting stay.
   A recipient you select takes priority.
+- **Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
+  makes plain Up Arrow edit your most recent editable message when the channel
+  or thread composer is empty, instead of selecting messages. This device-local
+  choice starts off. On macOS, Command+Up Arrow keeps editing directly from an
+  empty composer with either choice.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. If an upload fails, its attachment shows the reason, **Retry**, and
@@ -327,8 +347,9 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Keyboard shortcuts** follow Slack where they can. Press ⌘/ (Ctrl+/ on
   Windows and Linux) to open **Settings → Shortcuts**, which lists them, lets
   you change most of them and also shows the fixed message-formatting keys. In
-  an empty composer, Up selects a message. Then E edits it, R reacts, T or →
-  replies in thread, U marks it unread, and Delete deletes your own message.
+  an empty composer, Up selects a message unless **Edit last message with Up Arrow**
+  is on. With a message selected, E edits it, R reacts, T or → replies in thread,
+  U marks it unread, and Delete deletes your own message.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
@@ -404,16 +425,33 @@ that agent in Buzz; they do not notify the external app through this connection.
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
   **Open in browser**.
+- **Conversation members**: click the combined member avatars and conversation
+  name in the header to open membership management. Other header actions remain
+  on the right. Compact avatars sit before the name on the left; Solo chats show
+  the included agents.
+- **App navigation**: use the left dock to switch apps. Bestie is first,
+  Activity second, followed by the other apps. Community and profile controls
+  sit at the bottom of the dock. Search stays wide in the top bar.
+  Messages has All / Solo / Team sidebar filters; other apps use their main
+  view unless they provide their own sidebar. The sidebar and message pane
+  share one surface with a persistent divider; panel headers also have bottom
+  hairlines. Dock icons stay still, highlight on hover, and show instant labels
+  to their right. Bestie uses your configured avatar.
+  The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
+  the current app has a creation sidebar.
+- **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
+  fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
+  host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
 - **Drafts & sent** lists the messages you started but did not send, newest
-  change first, with the number of drafts shown beside it in the sidebar, and
-  your latest 100 sent messages in this community, grouped by day. A sent
-  message shows who replied after you ("2 after you") or that you were last
-  ("You're last"); a channel post shows its reply count. Select a draft to
-  continue it in its conversation, or a sent message to jump to it. Search
-  matches the conversation name and what you wrote. It reads only this
+  change first, with the number of drafts shown beside it in the Messages
+  sidebar, and your latest 100 sent messages in this community, grouped by
+  day. A sent message shows who replied after you ("2 after you") or that you
+  were last ("You're last"); a channel post shows its reply count. Select a
+  draft to continue it in its conversation, or a sent message to jump to it.
+  Search matches the conversation name and what you wrote. It reads only this
   device's saved drafts and never changes them.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
-  **Activity** in the sidebar to see recent mentions, DMs, thread replies, and reactions
+  **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
   **Open Activity** opens the page. The card's **Unread only** switch is
   separate from the Activity page's filters and hides reactions when on. The preview is not shown on touch
@@ -478,10 +516,12 @@ available rather than silently discarding it.
   conversation in that target's workspace. Stop ends its active turn.
   Remote Claude usage totals and transcripts are unavailable.
 - When creating a Builderlab agent, sign in, choose a model from its family menu,
-  then choose a supported **Thinking** level. Both choices are required; changing
-  the model clears the thinking choice. Instructions are optional. **Create agent**
-  stays disabled until its name and required choices are complete; Builderlab
-  also waits for sign-in and its model catalog.
+  then choose a supported **Thinking** level. If Builderlab recommends a model
+  and thinking level, both start selected; change either to choose your own. Both
+  choices are required; changing the model clears the thinking choice.
+  Instructions are optional. **Create agent** stays disabled until its name and
+  required choices are complete; Builderlab also waits for sign-in and its model
+  catalog.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab
@@ -491,8 +531,22 @@ available rather than silently discarding it.
   to edit the retained draft.
   When signed out of Builderlab, use **Sign in** beside Harness first.
   Model, Thinking and Create agent stay disabled until sign-in completes.
-  Sign in shows a loading spinner, then browser guidance and **Cancel sign-in**
-  after three seconds. Account verification keeps the spinner until it finishes.
+  During browser sign-in, click the loading spinner to cancel. Account verification
+  cannot be cancelled.
+  Opening an existing Builderlab agent’s **Identity** automatically attempts
+  sign-in if needed. The compact action beside Harness shows a clickable loading
+  spinner that cancels browser sign-in. Cancelled, timed-out or failed attempts
+  wait for you to retry there. A signed-out hint explains that messaging still works
+  and sign-in enables editing. Model and Thinking stay disabled, and
+  Instructions appear after sign-in. Sheets appear for settings or account-access
+  errors. If the agent cannot be found, **Retry** reloads it without signing you out.
+  Native account-access errors open **Identity → Organization sign-in** without
+  ending the shared session. In live development, **Use another account** ends
+  the broker sign-in and opens its browser logout page. After signing in with
+  another account in the browser, return to Buzz and click **Retry** beside
+  Harness. A spinner appears for three seconds before Retry becomes available;
+  click it to end the wait early.
+  Chat, Memory and Activity use your Buzz community connection and do not require this Builderlab sign-in.
   Builderlab agents work from your phone even when your desktop is off, and
   cannot open files on your computer. Their Settings hint appears only while
   signed in, beside a cloud. Local agents have no execution hint.
@@ -523,8 +577,8 @@ available rather than silently discarding it.
   in new Solo chats for that community. It does not replace recipients in an
   existing chat or an edited draft. People can choose a different agent for a
   particular conversation. When the optional **Bestie** plugin is on, that saved
-  choice also opens the agent's DM from the left navigation; Messages omits the
-  duplicate row while it is pinned. Bestie uses the same conversation tabs as
+  choice also opens the agent's DM from the left Apps dock. The Messages
+  sidebar omits the duplicate Bestie row. Bestie uses the same conversation tabs as
   Messages: threads open beside the chat (or in the main pane, following your
   thread placement setting), and can be moved, renamed, or closed. Collapsing
   the side pane keeps its open threads and reply drafts.

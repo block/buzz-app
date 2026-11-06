@@ -1,7 +1,7 @@
 import { BuilderlabLogoIcon } from "../../../shared/design-system/icons";
 import { createActivityTab } from "./Activity";
 import { createSettingsTab } from "./Instructions";
-import { createProfileActions, createSignInFooter } from "./SignInFooter";
+import { createProfileActions } from "./SignInFooter";
 import {
   creationConfig,
   createCreationAction,
@@ -105,7 +105,7 @@ export function builderlabType(
         "Sign in to the Builderlab account that selected these model settings.",
       );
     if (
-      !catalog
+      !catalog.models
         .find((model) => model.id === draft.modelId)
         ?.supportedReasoningEfforts.includes(draft.reasoningEffort)
     )
@@ -128,7 +128,6 @@ export function builderlabType(
     }),
     ...createCreationFields(client, session),
     CreateAction: createCreationAction(session),
-    PanelFooter: createSignInFooter(session),
     ProfileActions: createProfileActions(session),
     tabs: [
       {

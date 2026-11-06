@@ -42,5 +42,5 @@ export function devicePreference(preferenceKey: string, changedEvent: string) {
     return error;
   }
 
-  return { read, usePreference, set };
+  return { read, subscribe, usePreference, set };
 }

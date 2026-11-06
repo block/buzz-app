@@ -288,3 +288,52 @@ it("keeps failed saves active, hides recovery while inactive, and retries the ac
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
 });
+
+function setupOptionMeta(optionMetaAvailable = true) {
+  const font = createTerminalFontPreference();
+  stores.push(font);
+  render(
+    <ToastProvider>
+      <TerminalSettings
+        font={font}
+        drafts={createTerminalSettingsDraft()}
+        active={() => true}
+        optionMetaAvailable={optionMetaAvailable}
+      />
+    </ToastProvider>,
+  );
+}
+
+it("switches Option as Meta immediately on a Mac", async () => {
+  setupOptionMeta();
+  const toggle = screen.getByRole("switch", { name: "Use Option as Meta key" });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(toggle).toBeChecked();
+  expect(localStorage.getItem("buzz-terminal-option-meta.v1")).toBe("on");
+});
+
+it("offers Option as Meta only on a Mac", () => {
+  setupOptionMeta(false);
+  expect(
+    screen.queryByRole("switch", { name: "Use Option as Meta key" }),
+  ).not.toBeInTheDocument();
+});
+
+it("keeps an unsaved Option as Meta choice active beside the switch and retries it", async () => {
+  setupOptionMeta();
+  const user = userEvent.setup();
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("Unavailable");
+    });
+  const toggle = screen.getByRole("switch", { name: "Use Option as Meta key" });
+  await user.click(toggle);
+  expect(toggle).toBeChecked();
+  expect(screen.getByRole("alert")).toHaveTextContent("could not be saved");
+  write.mockRestore();
+  await user.click(screen.getByRole("button", { name: "Retry saving" }));
+  expect(localStorage.getItem("buzz-terminal-option-meta.v1")).toBe("on");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

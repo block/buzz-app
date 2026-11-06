@@ -113,7 +113,7 @@ it("restores saved approval and closes only the session on unload", async () => 
   expect(pairing.mock.calls.map((call) => call[0])).not.toContain("revoke");
 });
 
-it.each(["revoked", "proof", "viewer", "scope"])(
+it.each(["revoked", "proof", "viewer", "scope", "widened scope"])(
   "refuses %s resume before connection",
   async (reason) => {
     const connect = vi.fn(async () => transport());
@@ -128,7 +128,10 @@ it.each(["revoked", "proof", "viewer", "scope"])(
     connection.open(
       reason === "scope"
         ? { ...resumeRequest, scope: ["read", "post"] }
-        : resumeRequest,
+        : // A saved narrow approval never resumes as full access.
+          reason === "widened scope"
+          ? { ...resumeRequest, scope: ["agent"] }
+          : resumeRequest,
       reason === "viewer" ? "other-viewer" : "viewer",
     );
     await vi.waitFor(() =>

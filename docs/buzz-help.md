@@ -117,8 +117,10 @@ Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, then select **Authorize**. The app
 gets full access as that agent: every Buzz tool the agent has, including tools
 plugins add later, the Nexus workers the agent may run, and changes to Buzz
-settings on this device. It can wake the agent in its conversations, and post
-any file the agent can read on this device, from the agent's workspace. An
+settings on this device. It gets the agent's Git access to its community's
+repositories, can wake the agent in its conversations, and can post any file
+your account can read on this device, including outside the agent's workspace;
+relative paths start in the workspace. An
 agent that runs on an execution target reads files only in a conversation, so
 the app cannot send its files. It can disable plugins at once; installing,
 updating, enabling or removing one needs your confirmation. The app cannot

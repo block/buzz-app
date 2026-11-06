@@ -144,12 +144,13 @@ function ConsentDialog({
             <p className="m-0 text-body-sm text-secondary">
               Full access as the selected agent: the app can use every Buzz tool
               the agent has, including tools plugins add later. It reads, posts
-              and manages channels where the agent can, uses its memory and
-              attention, wakes the agent in its conversations, runs the Nexus
-              workers the agent may run, and can change Buzz settings on this
-              device. It can post any file the agent can read on this device. It
-              can disable plugins; installing, updating, enabling or removing
-              one needs your confirmation. Keys stay in Buzz.
+              and manages channels where the agent can, uses its memory,
+              attention and Git access to its community's repositories, wakes
+              the agent in its conversations, runs the Nexus workers the agent
+              may run, and can change Buzz settings on this device. It can post
+              any file the agent can read on this device, including outside its
+              workspace. It can disable plugins; installing, updating, enabling
+              or removing one needs your confirmation. Keys stay in Buzz.
               {request.version === 2 &&
                 " The app can renew valid approval for another 30 days. Approval expires after 30 days without renewal. The app can restore this access after either app restarts. You can revoke it in External apps."}
             </p>

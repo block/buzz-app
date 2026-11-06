@@ -2887,7 +2887,12 @@ export class AgentsService extends Service implements Agents {
                 this.types().find((type) => type.key === current.type)
                   ?.readFile;
               if (!read) throw new Error(`This agent cannot read ${path}`);
-              return read(current, path, signal);
+              const bytes = await read(current, path, signal);
+              if (this.agent(key)?.protection)
+                throw new Error(
+                  "Protected agents cannot use external connections.",
+                );
+              return bytes;
             },
             memories: (slug) => source.memoryListing(signal, slug),
           });

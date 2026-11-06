@@ -738,9 +738,12 @@ export class CodexRuntime {
       throw new Error(
         `This agent reads files only in a conversation on its execution target, not ${path}`,
       );
-    const workspace = await this.workspace(
-      this.resolveConfig(agent.config).workspace,
-    );
+    const saved = this.resolveConfig(agent.config).workspace;
+    if (!validWorkspace(saved))
+      throw new Error(
+        "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+      );
+    const workspace = await this.workspace(saved);
     signal.throwIfAborted();
     return readFile(this.spawn, workspace, path, signal);
   }

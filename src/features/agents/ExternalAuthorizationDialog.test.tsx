@@ -144,7 +144,7 @@ it.each([
     expect(
       screen.getByText(/Full access as the selected agent/),
     ).toHaveTextContent(
-      /tools plugins add later.*wakes the agent.*any file the agent can read on this device/,
+      /tools plugins add later.*Git access.*wakes the agent.*any file the agent can read on this device, including outside its workspace/,
     );
     if (action === "disabled community") {
       expect(screen.queryByRole("button", { name: "Authorize" })).toBeNull();

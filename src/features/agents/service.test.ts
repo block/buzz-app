@@ -13573,8 +13573,11 @@ describe("full external agent access", () => {
   it("reads the agent's memory, and files only where its type reads them", async () => {
     const f = await fixture();
     try {
-      const reply = await f.call("mem_get", {});
-      expect(reply.result.content[0]?.text).not.toMatch(/cannot read memory/);
+      f.memories.set(bot, "Ship on Fridays.");
+      f.memories.set(sibling, "Another agent's memory.");
+      const reply = await f.call("mem_get", { slug: "core" });
+      expect(reply.result.content[0]?.text).toContain("Ship on Fridays.");
+      expect(reply.result.content[0]?.text).not.toContain("Another agent");
       // The echo type reads no files outside its turns: its native refusal.
       expect(
         await f.call("send", {

@@ -27,7 +27,11 @@ export const gooseRun = (
   },
   run: (delivery) => runtime.run(delivery),
   runOnce: (turn) => runtime.runOnce(turn),
-  readFile: (agent, path) => runtime.workspaceFile(agent, path),
+  // Its host reader cannot be stopped once started.
+  readFile: (agent, path, signal) => {
+    signal.throwIfAborted();
+    return runtime.workspaceFile(agent, path);
+  },
   timeoutMs: HANDOVER_MS,
   syncedSettings: {
     schema: syncedSettingsSchema,

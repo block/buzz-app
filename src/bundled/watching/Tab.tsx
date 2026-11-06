@@ -177,17 +177,18 @@ export function createAttentionComponents({
               returnFocus={returnFocus}
             />
           </div>
-          <h5 className="attention-section-label text-caption text-subtle">
-            {`${agent.name} wakes up when…`}
-          </h5>
-          <Instructions instructions={instructions} />
           {subscriptions.length > 0 && (
             <div className="attention-column-headings text-caption text-subtle">
-              <h5 className="text-caption">{`${agent.name} watches…`}</h5>
+              <h5 className="text-caption">Triggers</h5>
               <span>Sources</span>
               <span>Responds in</span>
               <span>{"Status"}</span>
             </div>
+          )}
+          {!subscriptions.length && (
+            <h5 className="attention-section-label text-caption text-subtle">
+              Triggers
+            </h5>
           )}
           {!subscriptions.length && (
             <p className="text-body-sm text-subtle">
@@ -209,6 +210,10 @@ export function createAttentionComponents({
               />
             ))}
           </ul>
+          <h5 className="attention-section-label text-caption text-subtle">
+            Instructions
+          </h5>
+          <Instructions instructions={instructions} />
         </section>
       </SettingsGroup>
     );

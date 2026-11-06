@@ -729,7 +729,8 @@ confirmation.
   types give no reason.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
-  what that agent is watching and whether Attention is active on this device. Use its Active/Paused menu to change that.
+  when each interest wakes the agent (**Triggers**), its instructions after waking
+  (**Instructions**), and whether Attention is active on this device. Use its Active/Paused menu to change that.
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
   Each watch shows its source and Active or Paused state. Expand a
   watch, then expand “Activity” for a compact event timeline. Expand an event to read its full

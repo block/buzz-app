@@ -5989,6 +5989,14 @@ describe("team editor visits", () => {
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
       "Night crew",
     );
+    const agentVisit = {
+      ...page,
+      route: { version: 1, params: { agent: agent("Ada", 1).pubkey } },
+    } as const;
+    show(at(agentVisit, "agent"));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Night crew",
+    );
     show(at(visit, "team"));
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
       "Night crew",
@@ -6014,6 +6022,20 @@ describe("team editor visits", () => {
         agents={view.agents}
         relay={view.relay}
         {...at(page, "page")}
+      />,
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+    view.rerender(
+      <AgentsPage
+        agents={view.agents}
+        relay={view.relay}
+        {...at(
+          {
+            ...page,
+            route: { version: 1, params: { agent: agent("Ada", 1).pubkey } },
+          },
+          "agent",
+        )}
       />,
     );
     expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();

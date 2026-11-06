@@ -1044,8 +1044,9 @@ export type AgentUpdateRequest = AgentUpdate &
     agentType: string;
   }>;
 /** What `agent_read` shows of one of the owner's agents. Instructions are
- * null for a type that has none; an agent hosted or on another device has
- * `unavailable` instead, saying why. */
+ * null for a type that has none. An agent hosted or on another device shows
+ * its synced instructions when the owner can read them here, and otherwise
+ * has `unavailable` instead, saying why. */
 export type AgentReadout = Readonly<
   { pubkey: string; name: string; type: string } & (
     | { instructions: string | null; synced: boolean; revision?: string }

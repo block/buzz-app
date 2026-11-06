@@ -385,7 +385,25 @@ impl Pairings {
             .generation()
             .ok_or_else(|| Failure::new("unavailable", "Paired tools are being revoked"))?;
         let id = uuid::Uuid::new_v4().to_string();
+        let unsaved = || {
+            Failure::new(
+                "denied",
+                &format!("{relay} isn't a community in Buzz; add it first"),
+            )
+        };
         let answer = {
+            // Under the lock a removal cancels under: it either finds this
+            // request pending or is seen here, so no removed community waits.
+            let communities = self
+                .communities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if !communities
+                .as_ref()
+                .is_some_and(|communities| is_saved(communities, relay))
+            {
+                return Err(unsaved());
+            }
             let mut state = self.state();
             let now = Instant::now();
             while state
@@ -418,8 +436,18 @@ impl Pairings {
             answer
         };
         // Whatever ends the wait, even the caller hanging up, closes the prompt.
-        let _closing = Closing(self, id.clone());
+        let mut closing = Closing(self, id.clone(), false);
         let process = process().await;
+        // A removal during the lookup cancelled it: nothing was asked.
+        if !self
+            .state()
+            .pending
+            .as_ref()
+            .is_some_and(|(pending, ..)| *pending == id)
+        {
+            return Err(unsaved());
+        }
+        closing.2 = true;
         (self.notify)(Notice::Ask(Request {
             id: id.clone(),
             client: client.into(),
@@ -427,12 +455,6 @@ impl Pairings {
             process,
             expires_in: APPROVAL.as_secs(),
         }));
-        let unsaved = || {
-            Failure::new(
-                "denied",
-                &format!("{relay} isn't a community in Buzz; add it first"),
-            )
-        };
         match tokio::time::timeout(APPROVAL, answer).await {
             Ok(Ok(true)) => {}
             Ok(_) if !self.saved(relay)? => return Err(unsaved()),
@@ -649,7 +671,8 @@ pub(crate) struct Unrevoked {
     pub(crate) message: String,
 }
 
-struct Closing<'a>(&'a Pairings, String);
+/// Ends the request with id `.1`; closes its prompt once `.2` says it was asked.
+struct Closing<'a>(&'a Pairings, String, bool);
 impl Drop for Closing<'_> {
     fn drop(&mut self) {
         let mut state = self.0.state();
@@ -657,6 +680,8 @@ impl Drop for Closing<'_> {
             state.pending = None;
         }
         drop(state);
-        (self.0.notify)(Notice::Closed(self.1.clone()));
+        if self.2 {
+            (self.0.notify)(Notice::Closed(self.1.clone()));
+        }
     }
 }

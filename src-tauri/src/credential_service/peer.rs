@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 const LOOKUP: Duration = Duration::from_millis(500);
 /// Processes and descriptors examined at most, past which the caller is
 /// unknown.
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 const PROCESSES: usize = 16_384;
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 const DESCRIPTORS: usize = 4_096;
 
 /// One established IPv4 TCP connection, as the process holding it sees it.
@@ -53,11 +55,13 @@ async fn bounded<T: Send + 'static>(
 
 /// A scan cut short, by the deadline or a cap: what it missed may hold the
 /// socket too.
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Debug, PartialEq, Eq)]
 struct Cut;
 
 /// Whether process `pid` holds the socket, among its descriptors `fds`,
 /// stopping at `deadline` or past [`DESCRIPTORS`].
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn scan<F>(
     pid: u32,
     fds: impl IntoIterator<Item = F>,
@@ -78,6 +82,7 @@ fn scan<F>(
 /// The one process among `holders` (pids holding the matching socket),
 /// stopping at `deadline` or past [`PROCESSES`]: none, several, or an
 /// unfinished scan of any process name nobody.
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn unique(
     holders: impl Iterator<Item = Result<Option<u32>, Cut>>,
     deadline: Instant,
@@ -373,6 +378,7 @@ mod tests {
 
     /// Run by [`names_a_separate_process`]: connects, then holds the
     /// connection until the other end closes it.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     #[ignore = "a helper process, run by names_a_separate_process"]
     fn connect_and_wait() {
@@ -385,7 +391,9 @@ mod tests {
     }
 
     /// Kills and reaps the helper on every way out of the test.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     struct Reaped(std::process::Child);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     impl Drop for Reaped {
         fn drop(&mut self) {
             let _ = self.0.kill();

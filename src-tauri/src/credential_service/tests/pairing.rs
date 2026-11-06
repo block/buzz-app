@@ -1000,3 +1000,55 @@ async fn the_caller_is_looked_up_only_for_a_request_that_is_asked() {
     pairings.answer(&id, false);
     waiting.await.unwrap();
 }
+
+const REMOVED: &str = "wss://removed.example";
+
+/// A request for a removed community ended `code`, with nothing asked and
+/// nothing left pending: the remaining community pairs unthrottled.
+async fn a_removal_left_nothing_waiting(fixture: &Fixture, code: &str) {
+    assert_eq!(code, "denied");
+    assert!(fixture.notices.lock().unwrap().is_empty());
+    let service = fixture.service.clone();
+    let next = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.answer(&id, false);
+    let (status, reply) = next.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+    assert_eq!(reply["message"], "Pairing was declined in Buzz");
+}
+
+#[tokio::test]
+async fn a_removal_during_identity_loading_asks_nothing() {
+    let fixture = fixture();
+    let pairings = &fixture.service.0.pairings;
+    pairings
+        .set_communities(vec![RELAY.into(), REMOVED.into()])
+        .await;
+    let removing = std::sync::atomic::AtomicBool::new(true);
+    let human = || async {
+        if removing.swap(false, Ordering::SeqCst) {
+            pairings.set_communities(vec![RELAY.into()]).await;
+        }
+        fixture.service.human().await
+    };
+    let unlooked = || async { panic!("a removed request looked up its caller") };
+    let removed = pairings.pair(CLIENT, REMOVED, unlooked, human).await;
+    a_removal_left_nothing_waiting(&fixture, removed.err().unwrap().code).await;
+}
+
+#[tokio::test]
+async fn a_removal_during_the_process_lookup_asks_nothing() {
+    let fixture = fixture();
+    let pairings = &fixture.service.0.pairings;
+    pairings
+        .set_communities(vec![RELAY.into(), REMOVED.into()])
+        .await;
+    let lookup = || async {
+        pairings.set_communities(vec![RELAY.into()]).await;
+        Some("buzz".to_owned())
+    };
+    let removed = pairings
+        .pair(CLIENT, REMOVED, lookup, || fixture.service.human())
+        .await;
+    a_removal_left_nothing_waiting(&fixture, removed.err().unwrap().code).await;
+}

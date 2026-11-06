@@ -22,7 +22,13 @@ import {
   pluginAccessIncreases,
 } from "./PluginAccessReview";
 import type { PluginManager } from "../plugins/manager";
-import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+import { samePluginRelease } from "../plugins/same-release";
+import type {
+  Catalog,
+  ImportPreview,
+  PluginInfo,
+  PluginRelease,
+} from "../plugins/types";
 import {
   pluginUpdateSource,
   updateSourceKey,
@@ -165,7 +171,7 @@ export function PluginImport({
   const [bound, setBound] = useState<PluginInstallRequest>();
   const requested = !!bound && !updateId;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
-  const [checkedRevision, setCheckedRevision] = useState<string>();
+  const [checkedRelease, setCheckedRelease] = useState<PluginRelease>();
   const [checking, setChecking] = useState(false);
   const checkPending = useRef(false);
 
@@ -282,15 +288,15 @@ export function PluginImport({
     setRepository("");
     setReference("");
   }
-  async function checkSource(operation: () => Promise<string>) {
+  async function checkSource(operation: () => Promise<PluginRelease>) {
     if (checkPending.current) return;
     checkPending.current = true;
     const current = lifetime.current;
     setChecking(true);
     try {
-      const revision = await operation();
+      const release = await operation();
       if (current.active) {
-        setCheckedRevision(revision);
+        setCheckedRelease(release);
         setError(null);
       }
     } catch (reason) {
@@ -382,25 +388,21 @@ export function PluginImport({
     // its enabled state and existing rollback target for the same revision.
     !(updateId && !savedSource) &&
     !!existing &&
-    candidate?.revision ===
-      (updateId
-        ? catalog.plugins.find((item) => item.manifest.id === updateId)
-            ?.revision
-        : existing.revision);
+    samePluginRelease(candidate, updateId ? currentPlugin : existing);
   const updateAvailable =
     !error &&
     (preview
       ? !upToDate
-      : checkedRevision !== undefined
-        ? checkedRevision !== currentPlugin?.revision
+      : checkedRelease !== undefined
+        ? !samePluginRelease(checkedRelease, currentPlugin)
         : initialUpdateAvailable);
   const notifyUpdateAvailable = useEffectEvent((available: boolean) =>
     onUpdateAvailableChange?.(available),
   );
   useEffect(() => {
-    if (error || preview || checkedRevision !== undefined)
+    if (error || preview || checkedRelease !== undefined)
       notifyUpdateAvailable(updateAvailable);
-  }, [updateAvailable, checkedRevision, preview, error]);
+  }, [updateAvailable, checkedRelease, preview, error]);
   useEffect(() => {
     if (!reviewRequested || loading) return;
     if (error) {
@@ -542,7 +544,7 @@ export function PluginImport({
       }
       setError(null);
       if (updateId && next?.candidates.length === 1)
-        setCheckedRevision(next.candidates[0]?.revision);
+        setCheckedRelease(next.candidates[0]);
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
       setExisting(
@@ -698,7 +700,7 @@ export function PluginImport({
           ) ??
             "The saved repository no longer contains this plugin at its installed path.",
         );
-      return candidate.revision;
+      return candidate;
     });
   }
   async function installCandidate() {
@@ -933,7 +935,7 @@ export function PluginImport({
               unavailable. {error}
             </p>
           ) : null}
-          {(preview || checkedRevision !== undefined) &&
+          {(preview || checkedRelease !== undefined) &&
           !open &&
           !error &&
           !updateAvailable ? (

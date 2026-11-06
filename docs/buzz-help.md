@@ -723,7 +723,14 @@ confirmation.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Do not assume a particular optional plugin is on.
+  them. Unsigned external plugins can install and run by default. Launch Buzz
+  with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with
+  the variable unset or set to `0` to turn enforcement off. When enforcement is
+  enabled, unsigned installations remain blocked until replaced with signed
+  releases. Use **Update** in the plugin’s Settings details to apply a signed
+  release, even when its code has not changed. Supplied signatures are always
+  verified. Plugins built into Buzz are exempt.
+  Do not assume a particular optional plugin is on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the

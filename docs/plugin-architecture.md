@@ -153,6 +153,7 @@ pnpm author:build
 (cd dist-author && pnpm pack --pack-destination ..)
 pnpm --dir /tmp/my-page add -D "$PWD/buzz-author-0.0.0-preview.1.tgz"
 buzzodz plugin build /tmp/my-page
+buzzodz plugin sign /tmp/my-page/dist
 buzzodz plugin install /tmp/my-page/dist
 buzzodz plugin enable example.page
 buzzodz plugin list
@@ -1808,9 +1809,29 @@ a key. Use the same OS account and matching debug or release build. Missing or
 locked storage fails. It writes `plugin.artifact.json` and
 `plugin.signature.json` as the local [NIP-PS](nips/NIP-PS.md) file pair. No relay
 or URL is needed. Include both files in the imported folder or Git repository.
-Buzz checks the event ID, signature and exact artifact bytes before install and
-each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
-local development.
+By default, unsigned `manifest.json` and `plugin.js` packages can be installed and
+loaded, including local development builds, folder uploads, Git imports and
+managed recommendations. Supplied signatures are always verified: Buzz checks
+the event ID, signature and exact artifact bytes before install and each load.
+Incomplete signed release pairs still fail, and a signed installation cannot
+change publishers or downgrade to unsigned through an update or rollback.
+
+To require signatures for all external plugins, launch Buzz or the CLI with
+`BUZZ_REQUIRE_PLUGIN_SIGNATURES=1`, for example
+`BUZZ_REQUIRE_PLUGIN_SIGNATURES=1 just desktop` or
+`BUZZ_REQUIRE_PLUGIN_SIGNATURES=1 buzzodz plugin install /tmp/my-page/dist`.
+This is a runtime environment setting; restart Buzz after changing its launch
+environment, and set it for each CLI invocation that should require signatures.
+Only the exact value `1` enables enforcement, including for already installed
+plugins. Unsetting it or using any other value turns enforcement off. Plugins
+built into Buzz are exempt.
+
+With enforcement enabled, existing unsigned installations remain visible with an error and can be removed
+or replaced with a signed release. They cannot activate, load code, obtain native
+host access, or serve as rollback targets. Their saved enabled setting is retained,
+so replacing one with a valid signed release can activate it immediately. A
+verification error reported by the catalog also disposes the plugin's active
+contributions.
 
 A build may also include conventional `README.md`, `icon.png`, and `icon.jpg` files beside
 those required files. README content must be UTF-8 and is limited to 256 KiB.
@@ -1829,12 +1850,13 @@ decoder may discard optional metadata that exceeds that budget. Validation does
 not certify later animation frames or reject trailing bytes after the image.
 Content reads return the stored base64 icon strings. Conventional
 asset filenames are case-sensitive in both folder and Git imports; a symbolic
-link at one of those filenames rejects an unsigned candidate.
+link at one of those filenames rejects the source package during signing.
 
-`README.md`, `icon.png`, and `icon.jpg` are reserved names in an unsigned build
+`README.md`, `icon.png`, and `icon.jpg` are reserved names in a source build
 folder, with the same all-or-nothing rule as `manifest.json`: a file at one of
-those names that misses the limits above rejects the whole folder or Git import,
-reload, and signing, and an installed plugin keeps its current revision.
+those names that misses the limits above rejects signing. An invalid signed
+artifact also rejects import and reload, and an installed plugin keeps its
+current revision.
 Older hosts ignored these names, so a source tree that already ships a
 nonconforming file there (for example, a 2048×2048 `icon.png`) stops reloading
 after upgrade. To migrate, resize the file to meet the limits, or rename or move it
@@ -1876,7 +1898,8 @@ path for automatic checks in Settings → Plugins → Manage plugins. Changed pa
 offer Update, which opens access review before explicit confirmation, preserving
 the saved enabled state. Settings does not expose the immediate Reload shortcut.
 For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
-folder plugin while preserving its enabled state. The running desktop observes the
+folder plugin while preserving its enabled state. Sign the built output again
+after each change and before reloading. The running desktop observes the
 shared profile catalog every second and disposes the previous revision before
 activating the new one. Use the same `--home` and `--profile` as the app. Reloading
 identical build bytes does not restart the plugin. CLI reload applies the same
@@ -1901,8 +1924,10 @@ Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
 while the pane is open and the app is visible, and again when the app becomes active.
 Checks pause during review or pending management operations. Folder checks resolve
-the saved source by installed plugin ID and return only a revision or build diagnostic,
-without reserving the native import slot. Add can prepare its own preview while a
+the saved source by installed plugin ID and return the revision and verified publisher,
+or a build diagnostic, without reserving the native import slot. Freshness compares
+both revision and publisher, so a newly signed copy of unchanged code can repair an
+unsigned installation after confirmation. Add can prepare its own preview while a
 folder check is pending. Choosing Update acquires a fresh immutable preview; checks
 never supply installation bytes. A changed package offers
 Update, which opens access review before explicit confirmation. A known update takes

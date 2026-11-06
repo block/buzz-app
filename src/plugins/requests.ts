@@ -2,6 +2,7 @@
 // change that starts or deletes plugin code is a request the person using
 // Buzz confirms on a card in the agent's conversation, or in Settings, since
 // plugins are not sandboxed.
+import { samePluginRelease } from "./same-release";
 import type {
   Catalog,
   ManagedPlugins,
@@ -240,7 +241,7 @@ export function createPluginRequests({
     );
     if (!candidate)
       throw new Error(`${where} has no ${id} at ${recorded.path}`);
-    if (candidate.revision === plugin.revision)
+    if (samePluginRelease(candidate, plugin))
       throw new Error(`${id} is already at ${where}'s version`);
     return {
       pluginId: id,

@@ -7,6 +7,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { samePluginRelease } from "../plugins/same-release";
 import type { PluginManager } from "../plugins/manager";
 import { pendingManaged } from "../plugins/managed";
 import { canRetryPlugin } from "../plugins/manager";
@@ -113,7 +114,10 @@ export function PluginUpdates({
     action &&
     installed &&
     source &&
-    installed.revision === action.installedRevision &&
+    samePluginRelease(installed, {
+      revision: action.installedRevision,
+      publisher: action.installedPublisher ?? null,
+    }) &&
     updateSourceKey(source) === updateSourceKey(action.source);
   useEffect(() => {
     if (action && !validAction && !state.busy) setAction(undefined);

@@ -1,3 +1,4 @@
+import { samePluginRelease } from "./same-release";
 import { managedBy } from "./managed";
 import type { PluginManager } from "./manager";
 import type { ImportPreview, PluginInfo } from "./types";
@@ -12,6 +13,7 @@ export type PluginUpdate = {
   id: string;
   source: GitUpdateSource;
   installedRevision: string;
+  installedPublisher?: string | null;
   candidate?: ImportPreview["candidates"][number];
   error?: string;
 };
@@ -69,7 +71,7 @@ export function createPluginUpdates(
   const dismissed = new Set<string>();
   const listeners = new Set<() => void>();
   const key = (update: PluginUpdate) =>
-    `${update.id}:${updateSourceKey(update.source)}:${update.candidate?.revision ?? update.error}`;
+    `${update.id}:${updateSourceKey(update.source)}:${update.candidate?.revision ?? update.error}:${update.candidate?.publisher ?? ""}`;
   const publish = (next: readonly PluginUpdate[]) => {
     if (closed) return;
     updates = next;
@@ -86,7 +88,10 @@ export function createPluginUpdates(
   function current(update: PluginUpdate) {
     const source = pluginUpdateSource(plugins, update.id);
     return (
-      installed(update.id)?.revision === update.installedRevision &&
+      samePluginRelease(installed(update.id), {
+        revision: update.installedRevision,
+        publisher: update.installedPublisher ?? null,
+      }) &&
       source &&
       updateSourceKey(source) === updateSourceKey(update.source)
     );
@@ -157,6 +162,7 @@ export function createPluginUpdates(
         id,
         source,
         installedRevision: plugin.revision,
+        installedPublisher: plugin.publisher ?? null,
       };
       try {
         const preview = await discover(source);
@@ -175,8 +181,7 @@ export function createPluginUpdates(
           throw new Error(
             "The saved repository has no plugin at its installed path.",
           );
-        if (candidate.revision !== plugin.revision)
-          update.candidate = candidate;
+        if (!samePluginRelease(candidate, plugin)) update.candidate = candidate;
       } catch (reason) {
         update.error =
           reason instanceof Error ? reason.message : String(reason);

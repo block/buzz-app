@@ -222,34 +222,57 @@ it.each([true, false])(
   },
 );
 
-it("removes a pending update action when the user turns off checks", async () => {
-  const f = fixture();
-  let finish!: (preview: ImportPreview) => void;
-  f.imports.git.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        finish = resolve;
+it.each(["checks disabled", "signature repaired"] as const)(
+  "retires a pending preview when the installed plugin changes: %s",
+  async (change) => {
+    const f = fixture();
+    const repair = change === "signature repaired";
+    if (repair) {
+      f.plugin.hasSignature = false;
+      f.candidate.revision = f.plugin.revision;
+      f.candidate.publisher = "a".repeat(64);
+      f.freshCandidate.publisher = f.candidate.publisher;
+      f.freshCandidate.revision = "newer";
+    }
+    let finish!: (preview: ImportPreview) => void;
+    f.imports.git.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    f.mount();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: repair ? "Review permissions" : "Update and reload",
       }),
-  );
-  f.mount();
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Update and reload" }),
-  );
-  await waitFor(() => expect(f.imports.git).toHaveBeenCalled());
-  act(() => {
-    f.plugin.updateChecks = false;
-    f.emit({});
-  });
-  await act(async () => {
-    finish(f.fresh);
-  });
-  await waitFor(() =>
+    );
+    await waitFor(() => expect(f.imports.git).toHaveBeenCalled());
+    try {
+      act(() => {
+        if (repair) {
+          f.plugin.publisher = f.candidate.publisher;
+          f.plugin.hasSignature = true;
+        } else f.plugin.updateChecks = false;
+        f.emit({});
+      });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    } finally {
+      await act(async () => {
+        finish(f.fresh);
+      });
+    }
+    await waitFor(() =>
+      expect(f.imports.discard).toHaveBeenCalledWith("immutable-preview"),
+    );
     expect(
-      screen.queryByRole("button", { name: "Update and reload" }),
-    ).not.toBeInTheDocument(),
-  );
-  expect(f.installImport).not.toHaveBeenCalled();
-});
+      screen.queryByRole("button", {
+        name: /^(Review permissions|Update and reload)$/,
+      }),
+    ).toBeNull();
+    expect(f.installImport).not.toHaveBeenCalled();
+  },
+);
 
 it("opens the plugin's update settings from the notice body", async () => {
   const f = fixture();

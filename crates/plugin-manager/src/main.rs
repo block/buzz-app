@@ -14,7 +14,7 @@ Commands:
   init DIRECTORY ID NAME   Create a page-plugin source project
   build DIRECTORY          Run the project's pnpm build script
   sign DIST_DIRECTORY       Sign with your saved Buzz human identity
-  install DIRECTORY        Install a built artifact (new plugins start disabled)
+  install DIRECTORY        Install a plugin (new plugins start disabled)
   reload ID                Reload a folder plugin, preserving its enabled state
   list                     List installed pages and their enabled state
   managed                  Show the managed plugin sources policy and its status
@@ -30,6 +30,8 @@ Options:
 The desktop and CLI also read BUZZODZ_HOME and BUZZODZ_PROFILE.
 BUZZ_MANAGED_PLUGINS overrides the managed plugin policy file location.
 BUZZ_REPOSITORY_ACCESS overrides the repository access rules file location.
+Set BUZZ_REQUIRE_PLUGIN_SIGNATURES=1 when launching the desktop or CLI to require
+signed plugins. Enforcement is off by default; supplied signatures are always verified.
 Launch the desktop with BUZZODZ_SAFE_MODE=1 to skip external pages.";
 
 fn main() {
@@ -72,7 +74,12 @@ fn run() -> Result<()> {
         }
         ("build", [directory]) => {
             build(Path::new(directory))?;
-            println!("Built {}", Path::new(directory).join("dist").display());
+            let dist = Path::new(directory).join("dist");
+            println!(
+                "Built {}\nNext: buzzodz plugin sign {}",
+                dist.display(),
+                dist.display()
+            );
             return Ok(());
         }
         ("sign", [directory]) => {

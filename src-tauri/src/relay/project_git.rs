@@ -29,7 +29,10 @@ const READ_BYTES: usize = 4 * 1024 * 1024;
 const TEXT_BYTES: u64 = 1024 * 1024;
 /// Fetched objects are bounded separately: rendering limits apply only after ingestion.
 const STORE_BYTES: u64 = 128 * 1024 * 1024;
-const DEADLINE: Duration = Duration::from_secs(12);
+// Cold shallow fetches of valid ledgers can take tens of seconds. Keep the
+// operation bounded while allowing them to complete; cancellation and byte
+// limits remain independent of this wall-clock budget.
+const DEADLINE: Duration = Duration::from_secs(60);
 /// Status of a read the renderer abandoned; the renderer has stopped listening.
 const CANCELLED: u16 = 499;
 static READS: Semaphore = Semaphore::const_new(2);

@@ -650,3 +650,21 @@ async fn git_read_attaches_for_required_discovery() {
 async fn git_read_omits_for_ordinary_discovery() {
     federated_read(false).await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn cold_read_budget_allows_long_fetches_but_remains_bounded() {
+    let (stop, receiver) = watch::channel(false);
+    let deadline = Instant::now() + DEADLINE;
+    let task = tokio::spawn(stopped(deadline, receiver));
+    tokio::time::advance(Duration::from_secs(39)).await;
+    tokio::task::yield_now().await;
+    assert!(
+        !task.is_finished(),
+        "a valid cold fetch lost its read budget"
+    );
+    tokio::time::advance(Duration::from_secs(21)).await;
+    tokio::task::yield_now().await;
+    assert!(task.is_finished(), "the read exceeded its 60-second budget");
+    assert_eq!(task.await.unwrap(), 503);
+    drop(stop);
+}

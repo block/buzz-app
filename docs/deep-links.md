@@ -267,8 +267,9 @@ xdg-open "buzz://channel/general"
   No repository editing, issue changes, PR review
   decisions, or merge operations are included.
 - Git reads fetch a fresh shallow repository per demand: latest 100 commits,
-  20,000 file entries, 1 MiB text files and a 4 MiB response ceiling. The 12-second
-  deadline and two-read concurrency bound work, not downloaded pack bytes/disk.
+  20,000 file entries, 1 MiB text files and a 4 MiB response ceiling. Desktop reads
+  have a 60-second deadline, a two-read concurrency bound, and a 128 MiB fetched
+  object limit. The development broker retains its 12-second deadline.
   Very large repositories may fail. Empty repositories show no files/commits;
   requesting a specific absent revision still fails. Discovery and issue/PR lists show at most 100 events;
   activity exceeding the 500-event safety bound reports unavailable. These are

@@ -676,7 +676,9 @@ available rather than silently discarding it.
   `team_read`) and propose a team's new name or instructions
   (`team_update`). A proposal opens a review: nothing changes until you save
   it, members never change this way, and Save is refused if the team changed
-  since the proposal.
+  since the proposal. They can also propose a new team of your agents here
+  (`team_create`); the review shows its members, and nothing is created until
+  you save.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,

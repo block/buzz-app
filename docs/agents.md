@@ -70,8 +70,14 @@ exact name, or all of them: name, instructions, members, whether the team syncs
 and its revision. `team_update` submits an unsaved draft of a team's new name
 or instructions, never its members. The owner reviews it in a dialog; saving
 writes the team as Save in its editor does and is refused once the team's
-name, instructions or revision changed since the draft. Team requests share the
-same local bound and lifetime.
+name, instructions or revision changed since the draft. `team_create` submits
+an unsaved draft of a new team: a name, optional instructions and optional
+members, each one of the owner's agents in the caller's community by pubkey or
+exact name. The owner reviews the name and instructions and sees the members;
+saving creates the team as Save in a new team's editor does, homed in the
+requester's community (synced where it syncs teams, otherwise on this device),
+and is refused once a member is no longer the owner's agent there. Team
+requests share the same local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 

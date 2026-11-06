@@ -12160,6 +12160,67 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
   expect(service.teamUpdateRequests()).toEqual([]);
 });
 
+it("creates only a reviewed new team of the owner's agents here", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createTeam) throw new Error("Missing team handle");
+  await expect(handle.createTeam({ name: " " })).rejects.toThrow(
+    "Name the team",
+  );
+  await expect(
+    handle.createTeam({ name: "Crew", members: ["Nobody"] }),
+  ).rejects.toThrow("no agent");
+  expect(service.teamCreationRequests()).toEqual([]);
+  const { requestId, saved } = await handle.createTeam({
+    name: " Crew ",
+    instructions: "Ship.",
+    members: ["Child", bot, sibling],
+  });
+  expect(saved).toBe(false);
+  expect(service.teamCreationRequests()).toEqual([
+    expect.objectContaining({
+      id: requestId,
+      requester: bot,
+      name: "Crew",
+      instructions: "Ship.",
+      members: [
+        { pubkey: sibling, name: "Child" },
+        { pubkey: bot, name: "Parent" },
+      ],
+    }),
+  ]);
+  // Nothing exists until the owner saves the review.
+  expect(service.snapshot().teams).toEqual([]);
+  const team = await service.approveTeamCreation(requestId, {
+    name: "Crew",
+    instructions: "Ship with care.",
+  });
+  expect(team).toMatchObject({
+    name: "Crew",
+    instructions: "Ship with care.",
+    members: [sibling, bot],
+  });
+  expect(service.snapshot().teams).toEqual([team]);
+  expect(service.teamCreationRequests()).toEqual([]);
+  await expect(
+    service.approveTeamCreation(requestId, { name: "Crew", instructions: "" }),
+  ).rejects.toThrow("No such pending");
+  // A member that stopped being the owner's agent there refuses the save.
+  const stale = await handle.createTeam({ name: "Pair", members: [sibling] });
+  await service.remove(sibling);
+  await expect(
+    service.approveTeamCreation(stale.requestId, {
+      name: "Pair",
+      instructions: "",
+    }),
+  ).rejects.toThrow("no longer your agent");
+  service.dismissTeamCreation(stale.requestId);
+  expect(service.teamCreationRequests()).toEqual([]);
+});
+
 it("drafts a proposed picture for the owner to save, and refuses one that is not an HTTPS image", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

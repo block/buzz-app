@@ -126,6 +126,8 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "- foo\n\n    [x]: https://example.com/a，:party:",
     "\uFEFF[x]: https://example.com/a，:party:\n\n[a][x]",
     "\u3000[x]: https://example.com/a，:party:",
+    "\uFEFF[x]: [a](<https://x.com/a b?u=https://y.com/a，:party:>)",
+    "[a](x](<https://x.com/a b?u=https://y.com/a，:party:>)",
     "https://github。COM/:party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([]);

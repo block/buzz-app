@@ -84,7 +84,7 @@ export function emojiTags(event: {
  * `](url)` or `[label]: url` destination, a URL ends only at whitespace or `<>"\``.
  * A definition may follow leading whitespace, which sending trims. */
 const destinations =
-  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|(?:\]\\?\([ \t\r\n]*|(?:^\s*(?=\S)|(?<![^\r\n]))[ \t>*+\d.)-]*\[(?:\\[\s\S]|[^\\[\]])+\]:[ \t]*(?:(?:\r\n?|\n)[ \t>]*)?)(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|[^ \t\r\n]*)/
+  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|(?:\]\\?\([ \t\r\n]*|(?:^\s*(?=\S)|(?<![^\r\n]))[ \t>*+\d.)-]*\[(?:\\[\s\S]|[^\\[\]])+\]:[ \t]*(?:(?:\r\n?|\n)[ \t>]*)?)(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|(?:(?!\]\\?\([ \t\r\n]*<)[^ \t\r\n])*)/
     .source;
 const scheme = /https?:\/\/(?=[^\s<>"`])/.source;
 const links = new RegExp(`(${destinations}|${scheme}${BARE_URL_REST})`, "g");

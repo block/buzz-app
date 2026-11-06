@@ -947,13 +947,20 @@ function Timeline({
   const revealedRow = useRef<string | undefined>(undefined);
   // The visit last revealed or returned to. A relay rebind brings it back with
   // a new signal, and a thread visit leaves it shown; neither moves the reader.
-  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
-    undefined,
-  );
+  // A return stays pending across rebinds until its positioning frame runs.
+  const presentedVisit = useRef<{
+    entryId: string;
+    signal: AbortSignal;
+    placed: boolean;
+  }>(undefined);
   // The attempt that presented it; leaving records that visit's place.
   const [presented, setPresented] = useState<AbortSignal>();
-  const present = useCallback((visit: PageNavigation) => {
-    presentedVisit.current = { entryId: visit.entryId, signal: visit.signal };
+  const present = useCallback((visit: PageNavigation, placed = true) => {
+    presentedVisit.current = {
+      entryId: visit.entryId,
+      signal: visit.signal,
+      placed,
+    };
     setPresented(visit.signal);
   }, []);
   const completeTarget = useCallback(() => {
@@ -1006,8 +1013,8 @@ function Timeline({
     const prior = presentedVisit.current;
     if (!returning || prior?.signal === navigation.signal) return;
     if (prior) {
-      present(navigation);
-      navigation.complete({ status: "opened" });
+      present(navigation, prior.placed);
+      if (prior.placed) navigation.complete({ status: "opened" });
       return;
     }
     const place = navigation.position(TIMELINE_PLACE) as ReadingPosition;
@@ -1020,7 +1027,7 @@ function Timeline({
       setLostPlace(navigation.signal);
       return;
     }
-    present(navigation);
+    present(navigation, false);
     // A place inside agent activity opens its group, as an opening's place does.
     const steps =
       place.anchor && !place.bottom
@@ -1036,7 +1043,6 @@ function Timeline({
     userScrolled.current = false;
     upwardGesture.current = false;
     settled.current = false;
-    navigation.complete({ status: "opened" });
     // Focus left on the page, or on the row the last reveal focused, moves to
     // the restored reading. Focus placed anywhere else stays.
     const element = scroller.current;
@@ -1490,6 +1496,18 @@ function Timeline({
       else savedPosition.current = { bottom: true };
     }
     let observer: MutationObserver | undefined;
+    const completeReturn = () => {
+      const visit = presentedVisit.current;
+      if (
+        !returning ||
+        !navigation ||
+        visit?.signal !== navigation.signal ||
+        visit.placed
+      )
+        return;
+      present(navigation);
+      navigation.complete({ status: "opened" });
+    };
     const restorePosition = () => {
       if (intent.current !== scheduledIntent || !handle.current) return;
       const row = rows[restoreIndex];
@@ -1546,6 +1564,7 @@ function Timeline({
         if (!restore && !follow.current) {
           settled.current = true;
           readingPositioned(scroller.current);
+          completeReturn();
           return;
         }
         restorePosition();
@@ -1591,6 +1610,7 @@ function Timeline({
       }
       settled.current = true;
       readingPositioned(scroller.current);
+      completeReturn();
       if (scroller.current) updateJumpToLatest(scroller.current);
     });
     return () => {
@@ -1623,6 +1643,9 @@ function Timeline({
     revealMessageId,
     containedOwners,
     newMessageBoundaryId,
+    returning,
+    navigation,
+    present,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {

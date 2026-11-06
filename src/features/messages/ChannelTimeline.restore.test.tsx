@@ -2697,6 +2697,45 @@ it("Back to a link's visit returns to where the reader left it, without revealin
   expect(document.activeElement).toBe(h.history);
 });
 
+it.each([false, true])(
+  "a return completes after positioning, including a rebind before its frame: %s",
+  async (rebind) => {
+    const h = linkVisits();
+    h.places.set("link:timeline", { bottom: true });
+    let back = h.visit("link", h.linked.id, true);
+    h.show(back);
+    // The fixture holds rAF until settle. An opened visit must already be placed.
+    expect(back.complete).not.toHaveBeenCalled();
+    if (rebind) {
+      h.show();
+      back = h.visit("link", h.linked.id, true);
+      h.show(back);
+      expect(back.complete).not.toHaveBeenCalled();
+    }
+    await h.settle();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(
+      2,
+      expect.objectContaining({ align: "end" }),
+    );
+    expect(back.complete).toHaveBeenCalledTimes(1);
+    expect(back.complete).toHaveBeenCalledWith({ status: "opened" });
+  },
+);
+
+it("reader input supersedes a pending return without leaving its visit opening", async () => {
+  const h = linkVisits();
+  h.places.set("link:timeline", { bottom: true });
+  const back = h.visit("link", h.linked.id, true);
+  h.show(back);
+  h.layout({ [h.linked.id]: -200, [h.place.id]: 42 });
+  h.history.scrollTop = 500;
+  fireEvent.wheel(h.history, { deltaY: -100 });
+  await h.settle();
+  expect(scroll.toIndex).not.toHaveBeenCalled();
+  expect(back.complete).toHaveBeenCalledTimes(1);
+  expect(back.complete).toHaveBeenCalledWith({ status: "opened" });
+});
+
 it("leaving a visit Back returned to records where the reader read on to", async () => {
   const h = linkVisits();
   h.places.set("link:timeline", h.saved);

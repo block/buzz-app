@@ -912,8 +912,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "border-reaction-self",
         variable: "--border-reaction-self",
-        pointsAt: "accent step 9",
-        use: "Ring around a reaction you made, on received bubbles and the panel.",
+        pointsAt: "accent-link",
+        use: "Ring around a reaction you made, on received bubbles and the panel. It clears 3:1 on the tint and its host.",
         status: "core",
       },
       {

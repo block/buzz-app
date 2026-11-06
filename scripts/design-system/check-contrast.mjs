@@ -623,6 +623,31 @@ for (const family of accentFamilies) {
             `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
           );
       }
+      // The ring is what marks a reaction as yours, so it clears 3:1 against
+      // both the tint inside it and the ground around it.
+      for (const [ringRole, grounds] of [
+        [
+          "--border-reaction-self",
+          [
+            ...BOUNDARY_SURFACES,
+            "--surface-message",
+            "--affordance-reaction-self",
+          ],
+        ],
+        [
+          "--border-reaction-self-own",
+          ["--surface-message-own", "--affordance-reaction-self-own"],
+        ],
+      ])
+        for (const surfaceRole of grounds) {
+          const ring = resolve(map, ringRole);
+          const surface = resolve(map, surfaceRole);
+          const ratio = ring && surface ? wcagRatio(ring, surface) : null;
+          if (ratio === null || ratio < 3)
+            boundaryFailures.push(
+              `${family}/${level}/${mode}: ${ringRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+            );
+        }
       for (const baseRole of MESSAGE_ICON_ROLES) {
         for (const [role, surfaceRole] of [
           [baseRole, "--surface-message"],

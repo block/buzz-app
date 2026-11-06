@@ -1854,9 +1854,10 @@ the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
 they keep the standard ink and overlay of the panel they sit on. A reaction you
 made stays marked as yours: `affordance-reaction-self` (accent step 3) with a
-1px inset `border-reaction-self` ring (accent step 9). Inside your bubble it takes
-the `-own` pair, which at Buzzin’ is the accent's strong overlay ringed in the
-bubble's ink, since an accent ring would vanish on the accent fill.
+1px inset `border-reaction-self` ring in the accent link ink, which clears 3:1 on
+the tint and its host where step 9 would not (Citrus, Bee). Inside your bubble
+it takes the `-own` pair, which at Buzzin’ is the accent's strong overlay ringed
+in the bubble's ink, since an accent ring would vanish on the accent fill.
 
 When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in

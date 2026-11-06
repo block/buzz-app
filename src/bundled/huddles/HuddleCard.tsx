@@ -98,21 +98,13 @@ export function HuddleCard({
   const pending = !ended && start > now && start <= now + 30;
   const finished = ended || (loaded && !active && !pending);
   useEffect(() => {
-    if (!pending) return;
-    const timer = setTimeout(
-      () => setNow(Math.floor(Date.now() / 1000)),
-      start * 1000 - Date.now(),
-    );
-    return () => clearTimeout(timer);
-  }, [pending, start]);
-  useEffect(() => {
-    if (!active) return;
+    if (!active && !pending) return;
     const timer = setInterval(
       () => setNow(Math.floor(Date.now() / 1000)),
       1000,
     );
     return () => clearInterval(timer);
-  }, [active]);
+  }, [active, pending]);
   const people = current ? call.participants : history.participants;
   const parent = connection.session.channels
     .list()

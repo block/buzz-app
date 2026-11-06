@@ -826,7 +826,8 @@ export function createTabs({
             }
           );
         }}
-        readKey={`${row.key}\u0000${ids}\u0000${workspace}\u0000${search}`}
+        readKey={`${row.key}\u0000${workspace}`}
+        readAgain={`${ids}\u0000${search}`}
         working={Boolean(working)}
         reading="Reading the goose session…"
         failed="Could not read the goose session"

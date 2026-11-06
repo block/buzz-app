@@ -9,6 +9,7 @@ import {
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import activityStyles from "./ActivityLayout.module.css";
 import { ActivityTranscript } from "./ActivityTranscript";
 import type { Transcript } from "./activity-transcript";
@@ -25,36 +26,48 @@ type Shown<T> = Readonly<{
   error?: string;
 }>;
 
-/** `read` for `key`: on open, on `refresh`, when `working` changes, every
- * {@link LIVE_READ_MS} while working and the window shows, and on each step
- * the agent reports. One read runs at a time; asking during one reads once
- * more after it. The last result stays while the next is read, never another
- * key's. */
+/** `read` for `key`: on open, on `refresh`, when `again` or `working`
+ * changes, every {@link LIVE_READ_MS} while working, and on each step the
+ * agent reports. Automatic reads wait while the window is hidden and run once
+ * it shows. One read runs at a time; asking during one reads once more after
+ * it, and a change of `again` replaces it. The last result for `key` stays
+ * while the next is read, never another key's. */
 export function useLiveTranscript<T>(
   read: (signal: AbortSignal) => Promise<T | undefined>,
   key: string,
+  again: string,
   working: boolean,
   agentKey: string,
 ) {
   const agents = useContext(AgentsContext);
   const [shown, setShown] = useState<Shown<T>>({ key });
   const [loading, setLoading] = useState(true);
-  const latest = useRef({ read, key });
-  latest.current = { read, key };
-  const running = useRef<{ key: string; abort: AbortController } | undefined>(
-    undefined,
-  );
-  const again = useRef(false);
-  const request = useCallback(() => {
-    const { read, key } = latest.current;
-    if (running.current?.key === key) {
-      again.current = true;
-      return;
+  const latest = useRef({ read, key, again });
+  latest.current = { read, key, again };
+  const running = useRef<
+    { key: string; again: string; abort: AbortController } | undefined
+  >(undefined);
+  /** Asked for during the running read. */
+  const queued = useRef(false);
+  /** Asked for while the window was hidden. */
+  const owed = useRef(false);
+  /** Starts a read, or queues one; `auto` waits for the window to show.
+   * Returns whether a read started. */
+  const request = useCallback((auto: boolean): boolean => {
+    if (auto && document.hidden) {
+      owed.current = true;
+      return false;
     }
-    running.current?.abort.abort();
+    const { read, key, again } = latest.current;
+    const current = running.current;
+    if (current?.key === key && current.again === again) {
+      queued.current = true;
+      return false;
+    }
+    current?.abort.abort();
     const abort = new AbortController();
-    running.current = { key, abort };
-    again.current = false;
+    running.current = { key, again, abort };
+    queued.current = false;
     setLoading(true);
     const settle = (next: Omit<Shown<T>, "key">) => {
       if (abort.signal.aborted) return;
@@ -65,8 +78,7 @@ export function useLiveTranscript<T>(
             ? { ...prior, error: next.error }
             : { key, ...next },
       );
-      if (again.current) request();
-      else setLoading(false);
+      if (!(queued.current && request(true))) setLoading(false);
     };
     read(abort.signal).then(
       (transcript) => settle({ transcript: transcript ?? null }),
@@ -75,42 +87,36 @@ export function useLiveTranscript<T>(
           error: error instanceof Error ? error.message : String(error),
         }),
     );
+    return true;
   }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new key or a turn starting or ending reads again.
-  useEffect(request, [key, working]);
-  useEffect(
-    () => () => {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new key, new read inputs, or a turn starting or ending reads again.
+  useEffect(() => void request(true), [key, again, working]);
+  useEffect(() => {
+    const shows = () => {
+      if (document.hidden || !owed.current) return;
+      owed.current = false;
+      request(true);
+    };
+    document.addEventListener("visibilitychange", shows);
+    return () => {
+      document.removeEventListener("visibilitychange", shows);
       running.current?.abort.abort();
       running.current = undefined;
-    },
-    [],
-  );
+    };
+  }, [request]);
   useEffect(() => {
     if (!working) return;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const schedule = () => {
-      clearInterval(timer);
-      timer = document.hidden ? undefined : setInterval(request, LIVE_READ_MS);
-    };
-    const shows = () => {
-      if (!document.hidden) request();
-      schedule();
-    };
-    schedule();
-    document.addEventListener("visibilitychange", shows);
-    const stopSteps = agents?.subscribeSteps(agentKey, () => {
-      if (!document.hidden) request();
-    });
+    const timer = setInterval(() => request(true), LIVE_READ_MS);
+    const stopSteps = agents?.subscribeSteps(agentKey, () => request(true));
     return () => {
       clearInterval(timer);
-      document.removeEventListener("visibilitychange", shows);
       stopSteps?.();
     };
   }, [working, agents, agentKey, request]);
   return {
     shown: shown.key === key ? shown : ({ key } as Shown<T>),
     loading,
-    refresh: request,
+    refresh: () => void request(false),
   };
 }
 
@@ -120,6 +126,7 @@ export function TranscriptPanel<T extends Transcript>({
   agent,
   read,
   readKey,
+  readAgain = "",
   working,
   reading,
   missing,
@@ -131,6 +138,8 @@ export function TranscriptPanel<T extends Transcript>({
   read: (signal: AbortSignal) => Promise<T | undefined>;
   /** What `read` reads; another key never shows this one's result. */
   readKey: string;
+  /** Inputs that only make `read` read again, keeping what it shows. */
+  readAgain?: string;
   working: boolean;
   /** Shown before the first read settles. */
   reading: string;
@@ -144,6 +153,7 @@ export function TranscriptPanel<T extends Transcript>({
   const { shown, loading, refresh } = useLiveTranscript(
     read,
     readKey,
+    readAgain,
     working,
     agent.key,
   );
@@ -158,42 +168,40 @@ export function TranscriptPanel<T extends Transcript>({
               hint="familiar"
               aria-label="Refresh transcript"
               title="Refresh transcript"
-              loading={loading}
               onClick={refresh}
               icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
             />
           }
         />
       </div>
-      {transcript !== undefined && loading && (
-        <span role="status" className="sr-only">
-          Refreshing transcript…
-        </span>
-      )}
-      {error !== undefined && (
-        <p role="alert" className="m-0">
-          {failed}: {error}
-        </p>
-      )}
-      {transcript ? (
-        <ActivityTranscript
-          transcript={transcript}
-          agentName={agent.name}
-          agentKey={agent.key}
-          agentPicture={agent.picture}
-          community={agent.relay}
-          state={() => (working ? "working" : undefined)}
-          before={notes?.(transcript)}
-        />
-      ) : transcript === null ? (
-        missing
-      ) : (
-        error === undefined && (
-          <p role="status" className="m-0">
-            {reading}
-          </p>
-        )
-      )}
+      <LoadingRegion
+        pending={loading}
+        label={transcript === undefined ? reading : "Refreshing transcript…"}
+        statusVisibility={
+          transcript === undefined ? "visible" : "screen-reader"
+        }
+        feedback={
+          error !== undefined && (
+            <p role="alert" className="m-0">
+              {failed}: {error}
+            </p>
+          )
+        }
+      >
+        {transcript ? (
+          <ActivityTranscript
+            transcript={transcript}
+            agentName={agent.name}
+            agentKey={agent.key}
+            agentPicture={agent.picture}
+            community={agent.relay}
+            state={() => (working ? "working" : undefined)}
+            before={notes?.(transcript)}
+          />
+        ) : (
+          transcript === null && missing
+        )}
+      </LoadingRegion>
     </div>
   );
 }

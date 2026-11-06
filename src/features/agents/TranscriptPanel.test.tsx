@@ -1,14 +1,27 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import {
+  act,
+  cleanup,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentsContext } from "./react";
 import type { Agents } from "./service";
-import { LIVE_READ_MS, useLiveTranscript } from "./TranscriptPanel";
+import {
+  LIVE_READ_MS,
+  TranscriptPanel,
+  useLiveTranscript,
+} from "./TranscriptPanel";
+import type { Transcript } from "./activity-transcript";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -27,6 +40,8 @@ function reads() {
   return { calls, read };
 }
 
+type Props = { key: string; again?: string; working: boolean };
+
 function setup() {
   const steps = new Set<() => void>();
   const agents = {
@@ -40,9 +55,16 @@ function setup() {
   );
   const { calls, read } = reads();
   const view = renderHook(
-    ({ key, working }: { key: string; working: boolean }) =>
-      useLiveTranscript(read(key), key, working, "agent"),
-    { wrapper, initialProps: { key: "a", working: false } },
+    ({
+      key,
+      again = "",
+      working,
+    }: {
+      key: string;
+      again?: string;
+      working: boolean;
+    }) => useLiveTranscript(read(key), key, again, working, "agent"),
+    { wrapper, initialProps: { key: "a", working: false } as Props },
   );
   const step = () =>
     act(() => {
@@ -129,12 +151,11 @@ it("does not poll while the window is hidden", async () => {
   await settle(nth(calls, 0), "a");
   const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
   view.rerender({ key: "a", working: true });
-  await settle(nth(calls, 1), "b");
   act(() => vi.advanceTimersByTime(LIVE_READ_MS * 3));
-  expect(calls).toHaveLength(2);
+  expect(calls).toHaveLength(1);
   hidden.mockReturnValue(false);
   act(() => document.dispatchEvent(new Event("visibilitychange")));
-  expect(calls).toHaveLength(3);
+  expect(calls).toHaveLength(2);
   hidden.mockRestore();
 });
 
@@ -151,8 +172,98 @@ it("ignores a slow read that finishes after switching conversations", async () =
   expect(view.result.current.shown.transcript).toBe("b");
 });
 
+it("waits while hidden to run a read queued during another", async () => {
+  const { calls, view, step } = setup();
+  view.rerender({ key: "a", working: true });
+  step();
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  await settle(nth(calls, 0), "a");
+  expect(calls).toHaveLength(1);
+  expect(view.result.current.loading).toBe(false);
+  hidden.mockReturnValue(false);
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(calls).toHaveLength(2);
+  hidden.mockRestore();
+});
+
+it("reads once when shown after a turn ended while hidden", async () => {
+  const { calls, view } = setup();
+  await settle(nth(calls, 0), "a");
+  view.rerender({ key: "a", working: true });
+  await settle(nth(calls, 1), "b");
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  view.rerender({ key: "a", working: false });
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS * 3));
+  expect(calls).toHaveLength(2);
+  hidden.mockReturnValue(false);
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(calls).toHaveLength(3);
+  hidden.mockRestore();
+});
+
+it("keeps the transcript while new read inputs are read, and ignores the read they replace", async () => {
+  const { calls, view } = setup();
+  await settle(nth(calls, 0), "first");
+  act(() => view.result.current.refresh());
+  view.rerender({ key: "a", again: "s2", working: false });
+  expect(nth(calls, 1).signal.aborted).toBe(true);
+  expect(view.result.current.shown.transcript).toBe("first");
+  await settle(nth(calls, 1), "stale");
+  expect(view.result.current.shown.transcript).toBe("first");
+  await act(async () => nth(calls, 2).reject(new Error("gone")));
+  expect(view.result.current.shown).toMatchObject({
+    transcript: "first",
+    error: "gone",
+  });
+  view.rerender({ key: "a", again: "s3", working: false });
+  await settle(nth(calls, 3), "second");
+  expect(view.result.current.shown).toEqual({ key: "a", transcript: "second" });
+});
+
 it("shows a missing transcript as null", async () => {
   const { calls, view } = setup();
   await act(async () => nth(calls, 0).resolve(undefined));
   expect(view.result.current.shown.transcript).toBeNull();
+});
+
+it("keeps the shown transcript mounted while its sessions change", async () => {
+  const pending: {
+    resolve(value: Transcript): void;
+    reject(error: Error): void;
+  }[] = [];
+  const read = () =>
+    new Promise<Transcript | undefined>((resolve, reject) =>
+      pending.push({ resolve, reject }),
+    );
+  const agent = { key: "agent", name: "Agent" } as Parameters<
+    typeof TranscriptPanel
+  >[0]["agent"];
+  const panel = (readAgain: string) => (
+    <div style={{ overflowY: "auto" }}>
+      <TranscriptPanel
+        agent={agent}
+        read={read}
+        readKey="conversation"
+        readAgain={readAgain}
+        working={false}
+        reading="Reading…"
+        missing="Missing"
+        failed="Could not read"
+      />
+    </div>
+  );
+  const view = render(panel("s1"));
+  await act(async () => pending[0]?.resolve({ turns: [] }));
+  const shown = screen.getByText("No turns captured for this scope yet.");
+  view.rerender(panel("s1 s2"));
+  expect(shown).toBeInTheDocument();
+  await act(async () => pending[1]?.reject(new Error("gone")));
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not read: gone");
+  expect(shown).toBeInTheDocument();
+  view.rerender(panel("s1 s2 s3"));
+  await act(async () => pending[2]?.resolve({ turns: [] }));
+  expect(screen.queryByRole("alert")).toBeNull();
+  // The same element, so it keeps the reader's place and open details.
+  expect(screen.getByText("No turns captured for this scope yet.")).toBe(shown);
 });

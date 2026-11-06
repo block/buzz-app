@@ -2797,21 +2797,28 @@ export class AgentsService extends Service implements Agents {
   subscribeSteps = (agent: AgentKey, listener: () => void) => {
     const pubkey = pubkeyOf(agent);
     const { reader } = this.localActivity;
+    /** Each of the agent's work rows' latest step, by its message. */
     const steps = () =>
-      reader
-        .work()
-        .flatMap((work) =>
-          work.agent === pubkey && work.step
-            ? [`${work.messageId} ${work.step.tool} ${work.step.target ?? ""}`]
-            : [],
-        )
-        .join("\n");
+      new Map(
+        reader
+          .work()
+          .flatMap((work) =>
+            work.agent === pubkey && work.step
+              ? [
+                  [
+                    `${work.scope} ${work.messageId}`,
+                    `${work.step.tool} ${work.step.target ?? ""}`,
+                  ] as const,
+                ]
+              : [],
+          ),
+      );
     let last = steps();
     return reader.subscribeWork(() => {
       const next = steps();
-      if (next === last) return;
+      const stepped = [...next].some(([work, step]) => last.get(work) !== step);
       last = next;
-      if (next) listener();
+      if (stepped) listener();
     });
   };
   subscribe = (listener: () => void) => {

@@ -145,26 +145,59 @@ export function ReactionDelivery({
     outbox?.snapshot ?? emptyOperations,
     outbox?.snapshot ?? emptyOperations,
   );
+  const [error, setError] = useState<{ id: string; message: string }>();
   const operation = operations.find(
     (item) =>
       ["failed", "unknown"].includes(item.delivery) &&
       session.messages.reactionTarget(item.event) === messageId,
   );
   if (!operation) return null;
+  const id = operation.event.id;
   return (
-    <span role="status">
-      {operation.delivery === "failed"
-        ? "Couldn’t update reaction."
-        : "Reaction delivery not confirmed."}{" "}
-      <Button
-        size="sm"
-        variant="ghost"
-        type="button"
-        onClick={() => outbox?.retry(operation.event.id)}
-      >
-        Retry reaction
-      </Button>
-    </span>
+    <>
+      <span role="status">
+        {operation.delivery === "failed"
+          ? "Couldn’t update reaction."
+          : "Reaction delivery not confirmed."}{" "}
+        {operation.error && <span>{operation.error} </span>}
+        <Button
+          size="sm"
+          variant="ghost"
+          type="button"
+          onClick={() => {
+            setError(undefined);
+            outbox?.retry(id);
+          }}
+        >
+          Retry reaction
+        </Button>{" "}
+        {/* A refused or too-old event may never succeed on retry, and any
+            unsettled reaction blocks this message's toggles until it is gone.
+            Dismissing only forgets local intent; it never unsends a reaction. */}
+        <Button
+          size="sm"
+          variant="ghost"
+          type="button"
+          onClick={async () => {
+            try {
+              await outbox?.dismiss(id);
+              setError(undefined);
+            } catch (cause) {
+              setError({
+                id,
+                message:
+                  cause instanceof Error
+                    ? cause.message
+                    : "Could not dismiss the reaction.",
+              });
+            }
+          }}
+        >
+          Dismiss reaction
+        </Button>
+      </span>
+      {error?.id === id && <span role="alert">{error.message}</span>}
+    </>
   );
 }
 

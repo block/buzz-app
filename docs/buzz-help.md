@@ -178,6 +178,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
   or removes your reaction. Capsules you reacted with are tinted and outlined.
+  If a reaction can't be delivered, the message shows why with **Retry
+  reaction** and **Dismiss reaction**. That message's reactions stay locked
+  until the reaction is delivered or dismissed. Dismissing only clears the
+  pending attempt on this device and never undoes a reaction that already
+  arrived; the emoji then shows what the relay holds, and clicking it adds or
+  removes your reaction as usual.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it

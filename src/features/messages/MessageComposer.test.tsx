@@ -102,6 +102,7 @@ import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
 import type { Entity, RepositoryHome } from "../repos/destinations";
 import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
+import { composerWorkspaceDraft } from "./composer-document";
 
 // Pass-through spies: the real renderers run; tests count chip redraws.
 vi.mock("./MessageMarkdown", async (importOriginal) => {
@@ -657,6 +658,85 @@ it("keeps a slash command draft when its handler refuses", async () => {
   expect(h.input()).toHaveValue("/leave");
   expect(h.messages.send).not.toHaveBeenCalled();
 });
+
+it.each(["locked", "inactive", "unmounted"])(
+  "refuses captured task-draft workspace controls while %s",
+  (state) => {
+    const workspace = { id: "workspace", label: "Workspace" };
+    let controls!: import("../channel-navigation/solo-navigation-contract").TaskDraftControls;
+    const submission: NonNullable<MessageComposerProps["submission"]> = {
+      draftKey: "task-edit-guard",
+      initialDraft: composerWorkspaceDraft(workspace),
+      locked: false,
+      disabled: false,
+      submit: () => {},
+      header: (_draft, next) => {
+        controls = next;
+        return null;
+      },
+    };
+    const h = mount({
+      ownSoloConversation: true,
+      taskDraft: { region: "tasks" },
+      submission,
+    });
+    const captured = controls;
+    const before = h.input().value;
+    if (state === "locked")
+      h.retarget({ submission: { ...submission, locked: true } });
+    else if (state === "inactive") h.present(false);
+    else h.unmount();
+    act(() => {
+      expect(captured.removeWorkspace()).toBe(false);
+    });
+    expect(readView("scope", submission.draftKey, null)).toBeNull();
+    if (state === "locked") expect(h.input()).toHaveValue(before);
+  },
+);
+
+it.each(["missing", "stream"] as const)(
+  "taskDraft without submission cannot bypass %s own-Solo send admission",
+  async (channelType) => {
+    const h = mount({
+      ownSoloConversation: true,
+      taskDraft: { region: "tasks" },
+    });
+    const list = {
+      status: "ready",
+      channels:
+        channelType === "missing" ? [] : [{ id: "channel", channelType }],
+    };
+    const refreshMembership = vi.fn(async () => ({
+      id: "channel",
+      members: [first.pubkey],
+    }));
+    const addAgents = vi.fn();
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: { ...h.session.channels, list: () => list },
+        channelWrites: { refreshMembership, addAgents },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.input().insertText("@Honey ", first, { start: 0, end: 0 });
+      h.input().insertText("Keep existing-channel guards");
+    });
+    // Own-Solo Send waits for the chat's saved model choices.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    h.submit();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "session changed",
+    );
+    expect(refreshMembership).toHaveBeenCalledOnce();
+    expect(addAgents).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
 
 it("publishes typing for text edits but not caret-driven token expansion", () => {
   const text = `[Honey](${profileTarget(first.pubkey)})`;
@@ -13978,6 +14058,298 @@ it("guards automatic recipient changes using the current draft prose", () => {
   h.fill(" \n ");
   act(() => expect(replace?.([second])).toBe(true));
 });
+
+async function taskComposerFixture(allowHistorical = false) {
+  const { createSoloRegionFixture } = await import(
+    "../channel-navigation/solo-navigation-testing"
+  );
+  const navigation = await import("../channel-navigation/solo-navigation");
+  const viewer = "f".repeat(64),
+    region = createSoloRegionFixture(viewer);
+  const eligible = new Set([first.pubkey, second.pubkey]);
+  const historical = new Set([first.pubkey, second.pubkey]);
+  let primary = first.pubkey;
+  const source = await region.register({
+    task: {
+      prepare: async () => ({ ok: false, reason: "unused" }),
+      markChannelStarted: async () => "resume",
+      recordFirstEvent: async () => {},
+      ...(allowHistorical
+        ? { header: ({ ui: { Title } }) => <Title title="Task repair" /> }
+        : {}),
+      participants: {
+        eligible: (key) => eligible.has(key),
+        ...(allowHistorical
+          ? {
+              isParticipant: (channelId: string, key: string) =>
+                channelId === "channel" && historical.has(key),
+            }
+          : {}),
+        defaultRecipient: () => primary,
+        makePrimary: async (_channel, key) => {
+          primary = key;
+        },
+        maxRecipients: 1,
+      },
+    },
+  });
+  const lookup = vi
+    .spyOn(navigation, "soloNavigationFor")
+    .mockReturnValue(region.service);
+  onTestFinished(async () => {
+    lookup.mockRestore();
+    await region.dispose();
+  });
+  const h = mount({}, undefined, viewer);
+  h.setLibrary([
+    { ...first, name: "Ada" },
+    { ...second, name: "Bea" },
+  ]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  let channel: ChannelSummary = {
+    id: "channel",
+    name: "Task",
+    channelType: "solo",
+    creator: viewer,
+    members: [viewer, first.pubkey],
+    labels: ["buzz.solo", source.handle.label, "solo-task-mode:v1"],
+  };
+  let list = { status: "ready" as const, channels: [channel] };
+  const refreshMembership = vi.fn(async () => channel);
+  const addAgents = vi.fn(
+    async (_id: string, keys: readonly string[], active?: () => boolean) => {
+      expect(active?.()).toBe(true);
+      channel = { ...channel, members: [...(channel.members ?? []), ...keys] };
+      list = { ...list, channels: [channel] };
+    },
+  );
+  const session = {
+    ...h.session,
+    channels: { ...h.session.channels, list: () => list },
+    channelWrites: {
+      ...h.session.channelWrites,
+      refreshMembership,
+      addAgents,
+    },
+  };
+  h.retarget({ ownSoloConversation: true, requireMention: true, session });
+  return { h, session, region, source, eligible, addAgents, refreshMembership };
+}
+
+it("task primary A survives explicit B; later Make primary B changes untagged routing without prefill", async () => {
+  const { h, addAgents } = await taskComposerFixture();
+  expect(h.input()).toHaveValue("");
+  expect(screen.getByRole("button", { name: "To Ada" })).toBeVisible();
+  h.fill("Untagged A");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(h.input()).toHaveValue("");
+  act(() => {
+    h.commands().insertMention({ ...second, name: "Bea" });
+  });
+  await h.user.type(h.input(), "Explicit B");
+  expect(
+    screen.getByRole("button", { name: "This message → Bea" }),
+  ).toBeVisible();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(addAgents).toHaveBeenCalledWith(
+    "channel",
+    [second.pubkey],
+    expect.any(Function),
+  );
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+  h.fill("Still A");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(3));
+  expect(h.messages.send.mock.calls[2]?.[2]).toEqual([first.pubkey]);
+  await h.user.click(screen.getByRole("button", { name: "To Ada" }));
+  await h.user.click(
+    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
+  );
+  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  h.fill("Now B");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(4));
+  expect(h.messages.send.mock.calls[3]?.[2]).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+  h.setRows([
+    editableMessage({ authorId: "f".repeat(64), mentions: [second.pubkey] }),
+  ]);
+  h.present(false);
+  h.present(true);
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps task repair visible with revoked historical A, then sends only to eligible primary B", async () => {
+  const { h, session, eligible, addAgents } = await taskComposerFixture(true);
+  act(() => h.commands().insertMention({ ...second, name: "Bea" }));
+  await h.user.type(h.input(), "Admit B");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+  eligible.delete(first.pubkey);
+  h.retarget({ session });
+  expect(screen.getByText("Task repair")).toBeVisible();
+  await h.user.click(screen.getByRole("button", { name: "Choose primary" }));
+  expect(screen.queryByRole("menuitem", { name: /Ada/ })).toBeNull();
+  await h.user.click(
+    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
+  );
+  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  h.fill("Continue with B");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(h.messages.send.mock.calls[1]?.[2]).toEqual([second.pubkey]);
+  pasteText(h.input(), `[@Ada](${profileTarget(first.pubkey)}) Refuse A `);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("eligible task agent"),
+  );
+  expect(h.messages.send).toHaveBeenCalledTimes(2);
+  expect(addAgents).toHaveBeenCalledOnce();
+  expect(session.channels.list().channels[0]?.members).toContain(first.pubkey);
+});
+
+it("task sends reject multiple or revoked explicit targets before admission and never fall back", async () => {
+  const { h, eligible, refreshMembership, addAgents } =
+    await taskComposerFixture();
+  act(() => {
+    h.commands().insertMention({ ...first, name: "Ada" });
+    h.commands().insertMention({ ...second, name: "Bea" });
+  });
+  await h.user.type(h.input(), "Do not split this request");
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Tag one agent per message",
+    ),
+  );
+  expect(refreshMembership).not.toHaveBeenCalled();
+  expect(addAgents).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  act(() => h.input().removeRecipient(first.pubkey));
+  eligible.delete(second.pubkey);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("no longer eligible"),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input().value).toContain("Do not split");
+});
+
+it("an ineligible pasted task identity blocks the send instead of falling back to primary", async () => {
+  const { h, eligible, refreshMembership } = await taskComposerFixture();
+  eligible.delete(second.pubkey);
+  pasteText(h.input(), `[@Bea](${profileTarget(second.pubkey)}) Help `);
+  h.submit();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("eligible task agent"),
+  );
+  expect(refreshMembership).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("a task with a missing provider stays read-only and retains its draft", async () => {
+  const { h, source } = await taskComposerFixture();
+  h.fill("Keep this task draft");
+  await act(async () => source.fiber.dispose());
+  expect(screen.getByText(/Nexus is unavailable/)).toBeVisible();
+  h.submit();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("Keep this task draft");
+});
+
+it.each([false, true])(
+  "queued task follow-ups preserve captured primary identity (explicit=%s)",
+  async (explicit) => {
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const { h, session, addAgents } = await taskComposerFixture();
+    await addAgents("channel", [second.pubkey], () => true);
+    const listeners = new Set<() => void>();
+    let activity = {
+      status: "listening",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state: "working",
+          scope: "scope",
+          threadRootId: "",
+          startedAt: 1,
+        },
+      ],
+    };
+    h.retarget({
+      session: {
+        ...session,
+        agentActivity: {
+          activate: () => () => {},
+          snapshot: () => activity,
+          subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+        },
+      } as unknown as RelaySession,
+    });
+    if (explicit)
+      act(() => h.commands().insertMention({ ...first, name: "Ada" }));
+    await h.user.type(h.input(), "Queued task request");
+    h.submit();
+    await screen.findByRole("region", { name: "Queued follow-ups" });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    // A primary update after queueing cannot retarget this captured request.
+    await h.user.click(screen.getByRole("button", { name: "To Ada" }));
+    await h.user.click(
+      await screen.findByRole("menuitem", { name: "Make Bea primary" }),
+    );
+    expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+    act(() => {
+      activity = {
+        ...activity,
+        local: activity.local.map((row) => ({ ...row, state: "done" })),
+      };
+      for (const listener of listeners) listener();
+    });
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  },
+);
+
+it.each(["revoked", "unavailable"])(
+  "rechecks task policy at queued publication after the provider is %s",
+  async (state) => {
+    const { followUpMessage } = await import("./follow-up-message");
+    const { h, session, eligible, source } = await taskComposerFixture();
+    const captured = followUpMessage(session, {
+      channelId: "channel",
+      text: "Keep this captured request",
+      recipients: [first.pubkey],
+      attachments: [],
+      references: [],
+      picks: {},
+    });
+    if (state === "revoked") eligible.delete(first.pubkey);
+    else await act(async () => source.fiber.dispose());
+    expect(() => captured.publish()).toThrow(
+      state === "revoked" ? /no longer eligible/ : /Nexus is unavailable/,
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
 
 /** A mention provider the test publishes for, over the real `@` syntax. */
 function mountPendingMention(

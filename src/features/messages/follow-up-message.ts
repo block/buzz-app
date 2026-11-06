@@ -3,6 +3,7 @@ import type { OutboxRecovery } from "../relay/outbox";
 import { ownSolo } from "../solo/labels";
 import { archivedMention } from "./mention-admission";
 import type { FollowUpMessage } from "./follow-up-storage";
+import { isTaskChannel, validateTaskRecipients } from "../solo/task-mode";
 
 /** Recreated after restart; no composer closures or old membership authority. */
 export function followUpMessage(
@@ -47,6 +48,8 @@ export function followUpMessage(
         throw new Error(
           "This Solo chat or its recipients are no longer available.",
         );
+      if (isTaskChannel(session, message.channelId))
+        validateTaskRecipients(session, message.channelId, message.recipients);
       if (
         !recovery &&
         !message.references.length &&

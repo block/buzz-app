@@ -1,5 +1,7 @@
 import { canonicalChatCard } from "./chat-cards";
+import type { TaskWorkspace } from "../channel-navigation/solo-navigation-contract";
 import {
+  foreignComposerAttributes,
   projectComposerDocument,
   readComposerSnapshot,
 } from "./composer-document";
@@ -24,6 +26,12 @@ export type MentionDraft = {
   /** GIF image Markdown staged in the attachment row; sent after the caption. */
   gifs?: readonly string[];
   recipients: readonly DraftRecipient[];
+  /** A task draft's explicit filing, kept in the document for editor undo. */
+  workspace?: TaskWorkspace;
+  /** Saved with document data this build cannot keep. Task composers keep it
+   * unchanged and refuse to send it. The mark outlives normalization, which
+   * drops that data from `document`. */
+  unsupported?: true;
   /** Projection of the live document only; `mentionDraft()` never restores one. */
   pending?: readonly PendingMention[];
   document?: ComposerSnapshot;
@@ -49,7 +57,7 @@ export function mentionDraft(value: unknown): MentionDraft {
   if (!value || typeof value !== "object") return { text: "", recipients: [] };
   const record = value as Record<string, unknown>;
   const doc = readComposerSnapshot(record.document);
-  const { text, recipients, document } = doc
+  const { text, recipients, document, workspace } = doc
     ? projectComposerDocument(doc).draft
     : record;
   if (typeof text !== "string") return { text: "", recipients: [] };
@@ -93,6 +101,11 @@ export function mentionDraft(value: unknown): MentionDraft {
         }
       : {}),
     ...(doc ? { document: document as ComposerSnapshot } : {}),
+    ...(doc && workspace ? { workspace: workspace as TaskWorkspace } : {}),
+    ...(record.unsupported === true ||
+    foreignComposerAttributes(record.document)
+      ? { unsupported: true as const }
+      : {}),
     recipients: safe
       .slice(0, 32)
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),

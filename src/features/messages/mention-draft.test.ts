@@ -155,3 +155,73 @@ it("addressingOnly holds for selected tags with no prose or chat card", () => {
   ).toBe(false);
   expect(addressingOnly({ ...tags, chatCards: ["card"] })).toBe(false);
 });
+
+it("keeps a task draft's workspace and marks document data another build saved as unsupported", () => {
+  const workspace = { id: "opaque", label: "Workspace" };
+  const paragraph = {
+    type: "paragraph",
+    content: [{ type: "text", text: "Do it" }],
+  };
+  const own = mentionDraft({
+    text: "Do it",
+    recipients: [],
+    document: {
+      version: 1,
+      content: { type: "doc", attrs: { workspace }, content: [paragraph] },
+    },
+  });
+  expect(own.workspace).toEqual(workspace);
+  expect(own.unsupported).toBeUndefined();
+  expect(mentionDraft({ ...own }).workspace).toEqual(workspace);
+  for (const content of [
+    {
+      type: "doc",
+      attrs: { projects: [{ kind: "nexus.project", ...workspace }] },
+      content: [paragraph],
+    },
+    {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "token",
+              attrs: {
+                source: "@repo",
+                semantic: { kind: "nexus.repository" },
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ]) {
+    const draft = mentionDraft({
+      text: "",
+      recipients: [],
+      document: { version: 1, content },
+    });
+    expect(draft.unsupported).toBe(true);
+    expect(draft.workspace).toBeUndefined();
+    // The normalized document no longer holds the foreign data; the mark stays.
+    expect(mentionDraft(draft).unsupported).toBe(true);
+    expect(mentionDraft(JSON.parse(JSON.stringify(draft))).unsupported).toBe(
+      true,
+    );
+  }
+  expect(
+    mentionDraft({
+      text: "Do it",
+      recipients: [],
+      document: {
+        version: 1,
+        content: {
+          type: "doc",
+          attrs: { workspace: null, projects: null },
+          content: [paragraph],
+        },
+      },
+    }).unsupported,
+  ).toBeUndefined();
+});

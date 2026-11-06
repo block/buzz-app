@@ -47,9 +47,11 @@ import {
   composerResource,
   brokenResources,
   resourceBlockingMarks,
+  composerWorkspace,
 } from "./composer-document";
 import { scanMarkdown } from "../relay/message-content";
 import type { ComposerResource } from "../conversation/contracts";
+import type { TaskWorkspace } from "../channel-navigation/solo-navigation-contract";
 import {
   activeBlockFormats,
   apply,
@@ -1130,6 +1132,20 @@ export function EditableInput({
           .setMeta("addToHistory", false),
       );
       return true;
+    };
+    /** One undo step. The caret stays where it is and the editor keeps focus. */
+    const setWorkspace = (value: TaskWorkspace | null) => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const workspace = value && composerWorkspace(value);
+      if (value && !workspace) return false;
+      const before = editor.state;
+      editor.dispatch(
+        closeHistory(editor.state.tr)
+          .setDocAttribute("workspace", workspace ?? null)
+          .scrollIntoView(),
+      );
+      editor.focus();
+      return editor.state !== before;
     };
     /** True, or the reason shown by the host. The link must survive its context. */
     const insertResource = (value: ComposerResource): true | string => {
@@ -2324,6 +2340,7 @@ export function EditableInput({
         value: extendPendingMention,
       },
       insertResource: { configurable: true, value: insertResource },
+      setWorkspace: { configurable: true, value: setWorkspace },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
         configurable: true,
@@ -2419,11 +2436,9 @@ export function EditableInput({
         } else
           editor.dispatch(
             closeHistory(
-              editor.state.tr.replaceWith(
-                0,
-                editor.state.doc.content.size,
-                doc.content,
-              ),
+              editor.state.tr
+                .setDocAttribute("workspace", doc.attrs.workspace)
+                .replaceWith(0, editor.state.doc.content.size, doc.content),
             ),
           );
         emitted.current = next;

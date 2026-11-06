@@ -39,6 +39,8 @@ import {
 import { rememberMention } from "./mention-history";
 import {
   readComposerSnapshot,
+  readComposerDocument,
+  projectComposerDocument,
   composerMarkdownContext,
   markdownRanges,
 } from "./composer-document";
@@ -166,6 +168,22 @@ import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { followUpMessage } from "./follow-up-message";
 import { QueuedFollowUps } from "./QueuedFollowUps";
+import type { ParticipantPolicy } from "../channel-navigation/solo-navigation-contract";
+import type { TaskDraftControls } from "../channel-navigation/solo-navigation-contract";
+
+import {
+  isTaskChannel,
+  taskChannelContext,
+  resolveTaskRecipients,
+  validateTaskRecipients,
+  validateTaskMembers,
+  TASK_UNAVAILABLE,
+  type TaskContext,
+} from "../solo/task-mode";
+import { soloNavigationFor } from "../channel-navigation/solo-navigation";
+import { TaskRecipientControl } from "../solo/TaskRecipientControl";
+import { taskHeaderUI } from "../solo/TaskHeaderTitle";
+import { identityLink } from "./composer-clipboard";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -279,6 +297,10 @@ function recoveryFor(session: ComposerSession) {
 }
 
 export type MessageComposerProps = {
+  /** Before a task channel exists, its region supplies the same admission policy. */
+  taskDraft?:
+    | { region: string; policy?: ParticipantPolicy | undefined }
+    | undefined;
   extensions?: ConversationExtensions | undefined;
   scope: string;
   session: ComposerSession | RelaySession;
@@ -356,12 +378,16 @@ export type MessageComposerProps = {
       draftPicks?: DraftPicks,
       draftPicksRevision?: string | null,
     ) => void;
+    changed?: ((draft: MentionDraft) => void) | undefined;
+    header?:
+      | ((draft: MentionDraft, controls: TaskDraftControls) => ReactNode)
+      | undefined;
   };
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function MessageComposer(props: MessageComposerProps) {
-  const key = `${props.submission?.draftKey ?? ""}:${messageViewKey(
+  const key = `${props.taskDraft?.region ?? ""}:${props.submission?.draftKey ?? ""}:${messageViewKey(
     props.session,
     props.scope,
     props.channelId,
@@ -490,6 +516,7 @@ function sameAttachmentSelection(
 
 function Composer({
   session,
+  taskDraft,
   extensions,
   scope,
   channelId,
@@ -539,7 +566,27 @@ function Composer({
     channelId,
     (channel) => !!channel?.cached,
   );
-  const disabled = requestedDisabled || readOnly;
+  const taskChannel = !submission && isTaskChannel(session, channelId);
+  const taskNavigation = taskChannel ? soloNavigationFor(session) : undefined;
+  useSyncExternalStore(
+    taskNavigation?.subscribe ?? noSubscription,
+    taskNavigation?.snapshot ?? (() => undefined),
+  );
+  const [, refreshTaskState] = useState(0);
+  let taskContext: TaskContext | undefined;
+  let taskError: string | undefined;
+  let taskPrimary: string | undefined;
+  try {
+    taskContext = taskChannel
+      ? validateTaskMembers(session, channelId)
+      : undefined;
+    taskPrimary = taskContext?.mode.participants.defaultRecipient(channelId);
+    if (taskPrimary && !taskContext?.mode.participants.eligible(taskPrimary))
+      taskPrimary = undefined;
+  } catch (reason) {
+    taskError = reason instanceof Error ? reason.message : TASK_UNAVAILABLE;
+  }
+  const disabled = requestedDisabled || readOnly || !!taskError;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
@@ -624,7 +671,8 @@ function Composer({
   // thread's message; the other composers read their channel window. The
   // seed is this mount's initial draft, not an editor reset: a StrictMode
   // remount between effects would undo one.
-  const seedsFromWindow = !submission && !threadRootId && !defaultMention;
+  const seedsFromWindow =
+    !taskChannel && !submission && !threadRootId && !defaultMention;
   const windowSeed = () => {
     const window = session.channels.window?.(channelId);
     return window?.status === "ready" && session.viewer
@@ -646,11 +694,12 @@ function Composer({
       channels(),
     );
     // An own Solo chat alone with agents seeds its toolbar, not the text.
-    const source =
-      threadSeed ??
-      (seedsFromWindow && !(ownSoloConversation && agentsOnly && !withPeople)
-        ? windowSeed()
-        : undefined);
+    const source = taskChannel
+      ? undefined
+      : (threadSeed ??
+        (seedsFromWindow && !(ownSoloConversation && agentsOnly && !withPeople)
+          ? windowSeed()
+          : undefined));
     if (!source || submission || !untouchedDraft(saved))
       return { value: saved, applied: undefined, automatic: false };
     // A seed from settled evidence is final; one taken while agent evidence
@@ -711,7 +760,7 @@ function Composer({
   const windowSource = useSyncExternalStore(subscribeRows, () =>
     seeking ? windowSeed() : undefined,
   );
-  const seedSource = threadSeed ?? windowSource;
+  const seedSource = taskChannel ? undefined : (threadSeed ?? windowSource);
   // Agent evidence (profiles, the inventory) re-runs the seed effect below
   // while a seed is pending, so no composer re-renders per profile batch or
   // library transition once it has seeded or holds the user's content.
@@ -884,13 +933,21 @@ function Composer({
   /** Who a draft may address here now, the owner's agents from their other
    * communities included. */
   const admits = () =>
-    mentionAdmission(
-      session,
-      channelId,
-      agentChoices,
-      currentRoster.current,
-      new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
-    );
+    taskDraft
+      ? (key: string) => {
+          try {
+            return taskDraft.policy?.eligible(key) === true;
+          } catch {
+            return false;
+          }
+        }
+      : mentionAdmission(
+          session,
+          channelId,
+          agentChoices,
+          currentRoster.current,
+          new Set((agents?.joinable() ?? []).map((agent) => agent.pubkey)),
+        );
   const sessionPlace = useMemo(
     () => ({
       channelId,
@@ -920,7 +977,11 @@ function Composer({
       ? routed
       : valueRef.current.recipients;
   const compactingNow = (
-    recipients = sendRecipients().map((item) => item.pubkey),
+    recipients = taskChannel &&
+    !valueRef.current.recipients.length &&
+    taskPrimary
+      ? [taskPrimary]
+      : sendRecipients().map((item) => item.pubkey),
   ) =>
     sessionTargets(recipients).some((pubkey) => {
       const key = agents?.find(pubkey)?.key;
@@ -1100,6 +1161,13 @@ function Composer({
   }
   const [error, setError] = useState<string>();
   const [pasteTooLong, setPasteTooLong] = useState(false);
+  useEffect(() => {
+    try {
+      submission?.changed?.(value);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [submission?.changed, value]);
   const [attachmentError, setAttachmentError] =
     useState<Readonly<{ title: string; description: string }>>();
   /** Nothing was attached, for this one reason. */
@@ -1136,13 +1204,25 @@ function Composer({
     ).filter((row) => !row.threadRootId);
   // A member not yet known to be an agent (say, an unloaded profile) is a
   // person: routing stays off and mentions in the text decide.
-  const routing = solo && !withPeople && agentsOnly && !editing.target;
+  const routing =
+    !taskChannel &&
+    !taskDraft &&
+    solo &&
+    !withPeople &&
+    agentsOnly &&
+    !editing.target;
   /** Who hears this message: inline mentions win; without any, the toolbar's
    * agents stand in. */
   const addressed = routing && !recipients.length ? routed : recipients;
   // The agents a send addresses: model, effort and session controls are
   // offered for each, so a one-to-one DM with an agent always has them.
-  const addressedKeys = sessionTargets(addressed.map((item) => item.pubkey));
+  const addressedKeys = sessionTargets(
+    addressed.length
+      ? addressed.map((item) => item.pubkey)
+      : taskPrimary
+        ? [taskPrimary]
+        : [],
+  );
   const sessionState = useSessionState(agents, addressedKeys, sessionPlace);
   const compacting = sessionState === "compacting";
   // In a saved chat, the viewer's own pick outlives a remount until the next
@@ -1225,8 +1305,12 @@ function Composer({
     (channel) => !!channel?.archived || !!channel?.readOnly,
   );
   const editDisabled = disabled || editLocked;
+  // Task data from another build stays saved as it is until a build that
+  // understands it sends it.
+  const unsupportedDraft = (!!taskDraft || taskChannel) && !!value.unsupported;
   const editingDisabled =
     disabled ||
+    unsupportedDraft ||
     admitting ||
     sending ||
     !!accepted ||
@@ -2109,19 +2193,48 @@ function Composer({
     );
   }
   const currentAdmission = () =>
+    (!taskChannel ||
+      (() => {
+        try {
+          return (
+            taskChannelContext(session, channelId)?.binding.incarnation ===
+              taskContext?.binding.incarnation &&
+            !!resolveTaskRecipients(
+              session,
+              channelId,
+              valueRef.current.recipients.map((item) => item.pubkey),
+            ).length
+          );
+        } catch {
+          return false;
+        }
+      })()) &&
     live.current &&
     permitted.current &&
     !sendAttempt.current?.signal.aborted &&
     (!ownSoloConversation ||
+      !!(taskDraft && submission) ||
       session.channels.list().channels.find((item) => item.id === channelId)
         ?.channelType === "solo");
+  const removeWorkspace = () => {
+    if (
+      !taskDraft ||
+      !currentAdmission() ||
+      submission?.locked ||
+      !input.current ||
+      !valueRef.current.workspace
+    )
+      return false;
+    completion.invalidate();
+    return input.current.setWorkspace(null);
+  };
   // A new Solo chat is seeded with its default agent each time it is shown,
   // while its draft is empty and untagged; a saved chat seeds from its window
   // like every other composer. Once it has content, respect edits and
   // removals until the composer is shown again. Like the window's seed, the
   // tag is this composer's own prefill and isn't saved until the viewer edits
   // the draft, so showing the chat again tags the current default agent.
-  const seedMention = defaultMention;
+  const seedMention = taskChannel ? undefined : defaultMention;
   // Alone with agents, the toolbar holds every agent of the viewer's latest
   // message instead, keys joined so the snapshot keeps its identity.
   const seekingAgents =
@@ -2197,6 +2310,7 @@ function Composer({
   };
   const seededRoute = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (taskChannel) return;
     if (!presented) {
       autoTagged.current = undefined;
       // Hidden untouched, the pill refills for the current default when shown.
@@ -2356,7 +2470,9 @@ function Composer({
       input.current.setSelectionRange(seed.text.length, seed.text.length);
   });
   // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
-  const needsRecipient = (requireMention || solo) && !withPeople;
+  const needsRecipient = taskChannel
+    ? !taskPrimary
+    : (requireMention || solo) && !withPeople;
   const recipientHint = routing
     ? "Choose an agent to send"
     : submission
@@ -2372,6 +2488,9 @@ function Composer({
     explicit: readonly string[],
     fromPill = false,
   ) {
+    const selected = taskChannel
+      ? resolveTaskRecipients(session, channelId, explicit)
+      : [...explicit];
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
@@ -2389,7 +2508,7 @@ function Composer({
       )
     )
       throw new Error("Someone joined this chat. Tag an agent to send.");
-    const recipients = [...explicit];
+    const recipients = selected;
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
       // the fresh roster and agent inventory, not the rendered snapshot.
@@ -2470,6 +2589,7 @@ function Composer({
     }
     if (
       disabled ||
+      unsupportedDraft ||
       compactingNow() ||
       accepted ||
       conflict ||
@@ -2633,18 +2753,6 @@ function Composer({
       profileSnapshot,
       session.agentChoices.snapshot(),
     );
-    const queueFollowUp =
-      !!host &&
-      ownSoloConversation &&
-      !threadRootId &&
-      followUpBehaviorPreference() === "queue" &&
-      capturedRecipients.length > 0 &&
-      !soloHasPeople(
-        capturedRecipients.map(({ pubkey }) => pubkey),
-        session.viewer,
-        profileSnapshot,
-        agentKeys,
-      );
     try {
       if (command && onCommand) {
         const handled = onCommand(command, attempt.signal);
@@ -2710,6 +2818,28 @@ function Composer({
       }
       let references: readonly string[] = [];
       let recipients = capturedRecipients.map((item) => item.pubkey);
+      if (taskChannel) {
+        if (
+          projectComposerDocument(
+            readComposerDocument(captured, []),
+          ).tokens.some(
+            (item) =>
+              !item.node.attrs.recipient &&
+              identityLink(item.node.attrs.source),
+          )
+        )
+          throw new Error(
+            "Select an eligible task agent from the chooser before sending this identity link.",
+          );
+        recipients = resolveTaskRecipients(session, channelId, recipients);
+      }
+      const queueFollowUp =
+        !!host &&
+        ownSoloConversation &&
+        !threadRootId &&
+        followUpBehaviorPreference() === "queue" &&
+        recipients.length > 0 &&
+        !soloHasPeople(recipients, session.viewer, profileSnapshot, agentKeys);
       let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
@@ -2815,10 +2945,10 @@ function Composer({
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
-      // Alone with agents, the toolbar keeps the agents; the next draft starts empty.
-      const next = routing
-        ? mentionDraft("")
-        : rememberedMentions(session, captured, recipients);
+      const next =
+        taskChannel || routing
+          ? mentionDraft("")
+          : rememberedMentions(session, captured, recipients);
       // Only agents this message still addresses are asked for a model or effort.
       const addressedNow = sessionTargets(recipients);
       const sentPicks: MentionPicks = Object.fromEntries(
@@ -2870,6 +3000,7 @@ function Composer({
       ) {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
+        if (taskChannel) validateTaskRecipients(session, channelId, recipients);
         return threadRootId
           ? sender.messages.reply(
               channelId,
@@ -3110,6 +3241,23 @@ function Composer({
   if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
   const context = (
     <div className={styles.composerContext}>
+      {taskError && <p role="status">{taskError}</p>}
+      {unsupportedDraft && (
+        <p role="status">
+          This draft has task details this version of Buzz cannot send. It is
+          kept unchanged.
+        </p>
+      )}
+      {taskContext && !taskError && !editing.target && (
+        <TaskRecipientControl
+          session={session}
+          channelId={channelId}
+          context={taskContext}
+          explicit={value.recipients.map((item) => item.pubkey)}
+          disabled={disabled || !active}
+          onUpdated={() => refreshTaskState((revision) => revision + 1)}
+        />
+      )}
       {!cached && !submission && (
         <TypingIndicator
           audience="humans"
@@ -3208,8 +3356,28 @@ function Composer({
         </footer>
       </>
     );
+  const submissionHeader = submission?.header?.(value, {
+    removeWorkspace,
+  });
   return (
     <SelectedMentionContext.Provider value={value.recipients}>
+      {taskContext?.mode.header && !threadRootId && !editing.target && (
+        <section
+          className={`${styles.composerColumn} ${styles.taskHeader}`}
+          aria-label="Task details and status"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded task region must support keyboard scrolling.
+          tabIndex={0}
+        >
+          <taskContext.mode.header
+            channelId={channelId}
+            binding={taskContext.binding}
+            ui={taskHeaderUI}
+          />
+        </section>
+      )}
+      {submissionHeader && (
+        <div className={styles.composerColumn}>{submissionHeader}</div>
+      )}
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
@@ -3427,7 +3595,7 @@ function Composer({
               // current names; edits never add recipients. Send still asks
               // before adding someone outside the channel.
               acceptRecipient={(pubkey) =>
-                editing.target
+                editing.target || !admits()(pubkey)
                   ? null
                   : pastedMentionRecipient(
                       session,

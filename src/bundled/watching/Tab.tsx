@@ -25,6 +25,13 @@ export { heading, describe } from "./presentation";
 import "./AttentionPage.css";
 
 const button = { variant: "ghost" as const, size: "sm" as const };
+/** The watches of an Interest that this app skipped, such as ones over the
+ * limit. They still belong to it. */
+const skippedWatches = (agent: Agent, id: string) =>
+  Object.values(agent.skipped ?? {}).filter(
+    (object) =>
+      (object.value as { interest_id?: unknown } | null)?.interest_id === id,
+  );
 /** Uses the host’s controls and surface roles. */
 export function createAttentionComponents({
   agents,
@@ -91,11 +98,7 @@ export function createAttentionComponents({
         );
         // A watch skipped here, such as one over the limit, still belongs to
         // this Interest and could run once there is room for it.
-        const skipped = Object.values(agent.skipped ?? {}).filter(
-          (object) =>
-            (object.value as { interest_id?: unknown } | null)?.interest_id ===
-            id,
-        );
+        const skipped = skippedWatches(agent, id);
         await agents.save(agent.key, {
           attentionExpected: Object.fromEntries([
             ...watches.map((watch) => [watch.slug, watch]),
@@ -260,7 +263,9 @@ export function createAttentionComponents({
               agent={agent}
               slug={object.slug}
               label={label}
-              hasWatches={subscriptions.length > 0}
+              hasWatches={
+                subscriptions.length > 0 || skippedWatches(agent, id).length > 0
+              }
               returnFocus={returnFocus}
             />
           </div>

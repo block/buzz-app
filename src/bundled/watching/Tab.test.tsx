@@ -410,6 +410,8 @@ it.each(["source", "event", "timer"] as const)(
     });
     fireEvent.click(removeInterest);
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    // Its skipped watch is deleted with it, so this still confirms.
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toBe(
         "Interest save failed",
@@ -417,7 +419,7 @@ it.each(["source", "event", "timer"] as const)(
     );
     expect(agent.attention["interest/release"]).toBeTruthy();
     rejectInterest = false;
-    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "Attention" })).toBeTruthy(),
     );
@@ -1574,4 +1576,56 @@ it("does not repeat consecutive sonar messages across sweeps", () => {
   } finally {
     random.mockRestore();
   }
+});
+
+it("confirms deleting an Interest whose only watch was skipped", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a",
+    owner: viewer,
+    relay: "wss://example.com",
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        modifiedAt: 1,
+        value: { type: "interest", instructions: "Keep releases moving." },
+      },
+    },
+    skipped: {
+      "watch/over": {
+        slug: "watch/over",
+        modifiedAt: 1,
+        value: { type: "event", interest_id: "release", enabled: true },
+        problem: "Over the limit of 100 watches and timers",
+      },
+    },
+  };
+  const save = vi.fn(async () => {});
+  const snapshot = { status: "ready", running: [agent] };
+  const disconnected = { status: "disconnected", ...community };
+  const ctx = {
+    react: React,
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save,
+    },
+    relay: {
+      snapshot: () => disconnected,
+      subscribe: () => () => {},
+    },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Interest status for release" }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  expect(save).not.toHaveBeenCalled();
 });

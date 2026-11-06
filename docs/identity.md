@@ -1,8 +1,31 @@
 # Packaged human identity and relay access
 
+## Authorize an external agent identity
+
+Settings → Buzz → Identity → Authorize external identity accepts an application's
+existing public key as 64 hexadecimal characters. An explicit **Authorize
+identity** action opens a confirmation showing the exact npub and explaining
+that the key can direct the owner's coding agents to run commands as them.
+Only **Authorize this key** calls the existing `prepareRemoteAgentAuthorization` host
+wrapper and `identity_prepare_remote_agent_authorization` native signer. It
+returns a NIP-OA `auth` tag with empty conditions, bound to exactly that agent key
+and the current human owner. No key is exported, agent created, membership
+changed, or organization session obtained. This proof has no time or event-kind
+limits; the form says so before signing. The human copies it to the requesting
+application's owner-attestation field.
+
+The form never signs on mount or input changes. It rejects self and malformed
+keys, holds the input during signing, checks the returned owner against the
+displayed owner, and aborts preparation when settings unmount. Switching owners
+remounts an empty form. Proofs stay only in component state until explicitly
+copied; input changes clear the prior proof. This section requires a native
+desktop identity. A debug build signs as its separate debug identity, not
+the installed application's owner. This screen does not expand external-app MCP
+scopes or grant remote callers access to signing.
+
 Native macOS, Windows and Linux without the live development broker open on a
-welcome screen when no human key exists on this device: **Buzz** — "Your people,
-your agents, your projects — all in one place." — with **Sign in with Builderlab**
+welcome screen when no human key exists on this device: **Buzz**, "Your people,
+your agents, one place.", with **Sign in with Builderlab**
 (the label the Buzz mobile client uses; first-run copy never names the sign-in
 provider) and a live **Community URL** field with **Continue** beside it (the
 same field and normalisation as Join a community below). Sign in is the one
@@ -115,9 +138,10 @@ existing key** opens **Enter your private key**. **Use a different account**
 signs out the shared native session first run signed in as, so the Builderlab
 plugin stops using it, and returns to the welcome screen. It leaves a newer
 session (from Settings or another copy) signed in, and a failed sign-out shows
-on the welcome screen. Cancel and Back do not sign out.
-The browser may retain its portal session. This choice page shows the signed-in
-email so the account can be checked before linking a key.
+on the welcome screen. Cancel and Back do not sign out. Until a sign-in
+completes, every sign-in from there asks the browser for credentials rather
+than continuing as the account it remembers. This choice page shows the
+signed-in email so the account can be checked before linking a key.
 
 Builderlab setup automatically backs up the created key after linking it to the
 signed-in account and waits for the uploader. The import screen discloses
@@ -135,6 +159,18 @@ discards the draft. A successful account-backed import links the key and automat
 unless that key already has a backup. An import without Builderlab
 sign-in skips linking and backup. Importing without a Builderlab account never uploads the key.
 
+**Another account's key on this device** (a relaunch sign-in as someone else)
+is signed out before the account's lane runs, as **Sign out of Buzz** does
+without erase. Buzz restarts and signs in again by itself (a one-time note
+honoured for two minutes), now on the lane for a device with no key. The key is
+signed out without asking only when this device has confirmed a stored backup
+of it (`nsec_backup_confirmed`: a backup record here, under any account, that
+the service receipted or a restore wrote). Otherwise **A different account is
+saved on this computer** asks first: **Replace** signs it out, and **Cancel**
+signs out of the new account and returns to the welcome screen with the
+device's key in place. Creating or importing a key still refuses while one is on
+the device.
+
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
@@ -147,8 +183,9 @@ is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
 device** is *Coming soon* (device pairing is its future entry). Last in the
 stack, **Use a different account** is the same exit as on Get started with Buzz: it
-signs the session out and returns to the welcome screen without importing,
-restoring or replacing the linked key. The imported
+signs the session out and returns to the welcome screen, where the next
+sign-in asks for credentials, without importing, restoring or replacing the
+linked key. The imported
 key is already the account's, so nothing is linked. Unless the lookup already
 lists it, a successful import automatically backs up the key as on a new
 account; a listed key continues without another upload.
@@ -990,12 +1027,13 @@ Each local agent enrolls using the signed-in owner's session and its own NIP-98
 proof. The native agent-token owner stores the resulting grant beside session
 records in the same OS secure-store service, keyed by profile, deployment, owner
 public key and agent public key: in the session's item on macOS, under a
-separate key elsewhere. Grants never cross IPC, and assertion headers cross it
-only as the `repo` tool's Git headers. There the NIP-98 proof is bound to one
-repository URL for 60 seconds, while the assertion is scoped to the relay for
-the lifetime its issuer set and bound to the agent's key, so it is unusable
-without that key (NIP-FI, Assertion–key binding). Git asks for an assertion
-valid for at least 70 seconds and fails rather than accept a shorter one.
+separate key elsewhere. Grants never cross IPC. An assertion header leaves
+native code in two places only, each bound to the agent's key (NIP-FI,
+Assertion–key binding), so it is useless without that key's signatures. The
+`repo` tool's Git headers pair it with a NIP-98 proof bound to one repository
+URL for 60 seconds; Git asks for an assertion valid for at least 70 seconds and
+fails rather than accept a shorter one. The local credential service below
+answers `federated_identity` with an assertion valid for at least 60 seconds.
 Enrollment validates the returned owner and issuer;
 assertions are checked for the agent key, issuer, relay audience and lifetime.
 The relay remains responsible for signature and authorization verification.
@@ -1021,6 +1059,46 @@ The `/v1/nip-fi/agent-grant` and `/v1/nip-fi/agent-assertion` routes and
 standard endpoints defined by NIP-FI/NIP-FA. NIP-FI defines the
 `nip-fi-agent+jwt` assertion class and owner checks; that does not establish
 interoperability with another adapter's enrollment endpoints.
+
+### Local credential service
+
+A process the app launches for an agent can run the `buzz` CLI as that agent
+without its key. Native code serves block/buzz's local credential provider
+contract (`docs/local-credential-provider.md`) on `127.0.0.1` and puts the
+caller's endpoint and a fresh 256-bit token in the process's
+`BUZZ_CREDENTIAL_PROVIDER`. The service looks tokens up by their SHA-256, and
+no token is written to disk or logged. A host shared by several agents (Codex,
+Pi) also keeps each agent's raw token in memory, and the page passes it over
+Tauri IPC and the host's stdin to that agent's tools. The CLI builds each event and asks
+the service to sign it; keys, NIP-44 conversation keys and grants never leave
+native code.
+
+- **One identity.** A token acts for nobody until the runtime binds it, once, to
+  the agent its process serves. A plugin may bind only to an agent of its own
+  type. Claude Code's shared spare is bound when an agent takes it.
+- **What it signs.** Every event passes the contract's operation policy before
+  signing. NIP-42, NIP-98 and Blossom proofs are signed only for the token's own
+  community and only when created within a minute of now. Ordinary content kinds
+  are signed as built. Profile, contacts, deletions, membership, moderation and
+  agent-management kinds are refused with `denied`: a local tool can't sign
+  them, and there is no approval prompt. Every other kind is denied too.
+- **Evidence.** `federated_identity` goes through the same agent grant and
+  assertion checks as the app's own requests and answers no header on relays
+  without NIP-FI. `auth_tag` answers the agent's NIP-OA tag.
+- **Limits and revocation.** Each token has a request budget per method and
+  answers `rate_limited` with a retry delay. It is revoked as soon as its
+  process exits, even while a descendant still holds its output or
+  environment, and for good once its agent is deleted, the owner signs out or
+  changes account, or the identity closes: each request rechecks the owner's
+  retirement count recorded when the token was issued and the agent's
+  incarnation recorded at binding, and a
+  closed identity issues no token.
+- **Callers.** Requests must name the bound address in `Host` and carry no
+  `Origin`, so a web page cannot use it. A process serving one agent
+  carries its token (Claude Code, and goose, which runs one process per
+  agent). A process serving several (Codex, Pi) carries none; each agent's
+  token goes only into that agent's tool commands and is revoked when the
+  process exits. Windows has no transport in version 1 and gets none.
 
 Builderlab's remote-agent, hosted-community, known-community, Decisions, Apps,
 Apps viewer and backup calls all use the native FI session of the build's first

@@ -55,7 +55,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
     name: "Actions for Alpha",
     exact: true,
   });
-  // Lifecycle items mount after each opening's permission read.
+  // Lifecycle items come from the live roster when the menu opens.
   const lifecycleReady = menu.getByRole("menuitem", {
     name: "Delete chat",
     exact: true,
@@ -386,6 +386,15 @@ test("Share opens View only and posts a link without promoting or moving the Sol
     exact: true,
   });
   await expect(share).toBeEnabled();
+  // Channel results can render before the people search and the access check
+  // settle. Their results then change the height above Share, which can move
+  // Share after focus has revealed it.
+  await expect(
+    dialog.getByRole("status").filter({ hasText: "Searching…" }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByText("Existing members keep their access.", { exact: true }),
+  ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 850 });
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
@@ -470,7 +479,7 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   await page.setViewportSize({ width: 1280, height: 850 });
   await expect(row).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Alpha", exact: true }),
+    page.getByRole("button", { name: "Share access to Alpha", exact: true }),
   ).toBeVisible();
   await expect(history).toBeVisible();
   expect(grants).toHaveLength(0);

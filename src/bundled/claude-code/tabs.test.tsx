@@ -147,9 +147,11 @@ function applied({
   catalog = { listed: true },
   storage,
   channels,
+  remote = false,
 }: {
   /** Agent storage; this page's localStorage without it. */
   storage?: AgentStore;
+  remote?: boolean;
   /** The community's channels; no community connection without them. */
   channels?: readonly ChannelSummary[];
   loggedIn?: boolean;
@@ -272,6 +274,13 @@ function applied({
     },
     agents: {
       storage,
+      executionBinding: () => (remote ? { provider: "nexus/blox" } : undefined),
+      inspectExecution: vi.fn(async () =>
+        remote ? { provider: "nexus/blox" } : undefined,
+      ),
+      execution: vi.fn(async () => {
+        throw new Error("Settings must not open a target");
+      }),
       register: (registered: AgentType<Config>) => {
         type = registered;
       },
@@ -289,12 +298,20 @@ function applied({
     effect: vi.fn(),
   };
   apply(ctx as never);
-  return { type, spawn, home };
+  return {
+    type,
+    spawn,
+    home,
+    execution: ctx.agents.execution,
+    setRemote: (value: boolean) => {
+      remote = value;
+    },
+  };
 }
 function installed(options?: Parameters<typeof applied>[0]) {
-  const { type, spawn, home } = applied(options);
-  if (!type) throw new Error("no type registered");
-  return { type, spawn, home };
+  const result = applied(options);
+  if (!result.type) throw new Error("no type registered");
+  return { ...result, type: result.type };
 }
 function tab(type: AgentType<Config>, index: number) {
   const component = type.tabs?.[index]?.component;
@@ -404,15 +421,21 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
       index
     ] as HTMLElement;
   await user.click(viewButton(0));
-  expect(await screen.findByText("what changed?")).toBeVisible();
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Refresh transcript" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Refresh transcript" }),
     ).not.toHaveAttribute("data-loading"),
   );
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
   await user.click(viewButton(1));
   expect(
@@ -450,14 +473,18 @@ it("opens the conversation's transcript when opened from its activity, once", as
     />,
   );
   const user = userEvent.setup();
-  expect(await screen.findByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
   expect(
     screen.getByRole("button", {
       name: "View transcript: channel",
     }),
   ).toBeVisible();
-  expect(screen.queryByText("Two files.")).toBeNull();
+  expect(
+    screen.queryByText("Two files.", { selector: "summary span" }),
+  ).toBeNull();
   unmount();
   // Opened from the profile itself, it lists conversations instead.
   render(
@@ -468,7 +495,9 @@ it("opens the conversation's transcript when opened from its activity, once", as
       name: "View transcript: channel",
     }),
   ).toBeVisible();
-  expect(screen.queryByText("Two files.")).toBeNull();
+  expect(
+    screen.queryByText("Two files.", { selector: "summary span" }),
+  ).toBeNull();
 });
 
 it("opens a channel's session transcript when opened from one of its threads' activity", async () => {
@@ -499,7 +528,9 @@ it("opens a channel's session transcript when opened from one of its threads' ac
       initialTranscript={{ opening: 1, done }}
     />,
   );
-  expect(await screen.findByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   expect(done).toHaveBeenCalledTimes(1);
 });
 
@@ -538,7 +569,9 @@ it("shows the transcript and that sessions may be missing when some history cann
       name: /^View transcript/,
     })[0] as HTMLElement,
   );
-  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
   expect(
     screen.getByText(/sessions may be missing\. Refresh to try again\./),
   ).toHaveTextContent(/unreadable\.jsonl/);
@@ -632,7 +665,9 @@ it("finds the thread's Claude session another build started", async () => {
     fireEvent.click(
       await within(opened).findByRole("button", { name: /^View transcript/ }),
     );
-    expect(await screen.findByText("what changed?")).toBeVisible();
+    expect(
+      await screen.findByText("what changed?", { selector: "summary span" }),
+    ).toBeVisible();
     view.unmount();
   };
   const searches = () =>
@@ -1515,7 +1550,9 @@ it("keeps settings editable while a provider change waits for Save", async () =>
     />,
   );
   const user = userEvent.setup();
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
+  );
   expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled();
   expect(screen.getByRole("textbox", { name: "Workspace" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -2138,4 +2175,70 @@ it("cancels a pending save when the dialog closes", async () => {
   expect(steps[0]?.killed).toBe(false);
   view.unmount();
   expect(steps[0]?.killed).toBe(true);
+});
+
+it("uses target model settings for remote Claude without a local catalog or a target allocation", async () => {
+  const { type, spawn, execution } = installed({ remote: true });
+  const Settings = tab(type, 0);
+  const save = vi.fn(async () => {});
+  render(<Settings agent={agent()} save={save} />);
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Target default",
+    ),
+  );
+  expect(screen.getByLabelText("Workspace")).toBeDisabled();
+  expect(
+    screen.getByText("The execution provider sets the remote workspace."),
+  ).toBeVisible();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("combobox", { name: "Model" }));
+  expect(
+    screen.queryByRole("option", { name: "Opus 5.5" }),
+  ).not.toBeInTheDocument();
+  expect(
+    spawn.mock.calls.some(([, options]) =>
+      options?.args?.includes("--input-format"),
+    ),
+  ).toBe(false);
+  expect(execution).not.toHaveBeenCalled();
+});
+
+it("refreshes mounted Claude Settings after an execution binding changes", async () => {
+  const f = installed();
+  const Settings = tab(f.type, 0);
+  const save = vi.fn(async () => {});
+  const view = render(<Settings agent={agent()} save={save} />);
+  await waitFor(() => expect(screen.getByLabelText("Workspace")).toBeEnabled());
+  f.setRemote(true);
+  view.rerender(
+    <Settings
+      agent={{ ...agent(), executionBinding: { provider: "nexus/blox" } }}
+      save={save}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Target default",
+    ),
+  );
+  expect(screen.getByLabelText("Workspace")).toBeDisabled();
+  expect(f.execution).not.toHaveBeenCalled();
+});
+
+it("reports Claude connection readiness after resolving the provider default", async () => {
+  const Model = installed().type.CreateModel;
+  if (!Model) throw new Error("Missing model control");
+  const onReadyChange = vi.fn();
+  render(
+    <Model
+      config={DEFAULT_CONFIG}
+      onChange={vi.fn()}
+      onReadyChange={onReadyChange}
+      disabled={false}
+    />,
+  );
+  expect(onReadyChange).toHaveBeenCalledWith(false);
+  await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
 });

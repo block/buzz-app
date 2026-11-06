@@ -90,7 +90,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         name: "Mention a member or agent",
       });
       const search = picker.getByRole("searchbox");
-      // Both fixture keys are Honey namesakes; public keys are not search terms.
+      // Both fixture keys are Honey namesakes.
       await search.fill("Honey");
       // Rows no longer spell out their key; each carries it instead.
       const row = picker

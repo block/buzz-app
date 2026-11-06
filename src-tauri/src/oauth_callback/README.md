@@ -28,8 +28,9 @@ ephemeral port, inserts the callback URL as `redirect_uri` and optional state,
 and launches the external browser through the caller's opener. Launch failure
 cleans up before returning an error. `wait` consumes the matching attempt's
 result once, retaining decoded parameter order and duplicates. Valid provider
-errors resolve with their parameters; transport failure, timeout, or cancellation
-fail with a generic message. `cancel` closes and removes the matching attempt; it
+errors resolve with their parameters; transport failure or cancellation fail with a
+generic message; a timeout fails with `TIMED_OUT`, which the app shows as a
+sign-in to finish rather than a failure. `cancel` closes and removes the matching attempt; it
 is safe to repeat, and a stale ID does not cancel another attempt.
 
 The authorization URL must use HTTPS, with no embedded credentials or fragment.

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import { requestWork } from "../agents/request-work";
+import { requestWork, isSettledWork } from "../agents/request-work";
 import { continuesMessageGroup } from "./message-grouping";
 import { activityRuns } from "./activity-groups";
 
@@ -16,6 +16,8 @@ type ActivityRun = {
   followingMessage: ChannelMessage | undefined;
 };
 export type ActivityPresentation = ActivityRun & {
+  /** Only the latest update run for an agent/request owns live work and Stop. */
+  liveParticipants: string[];
   /** Display policy only; a public reply is not lifecycle completion. */
   hidden: boolean;
   retained?: boolean;
@@ -112,23 +114,23 @@ function activityStatus(
         );
       })
     : [];
-  const settled = (entry: (typeof work)[number]) =>
-    ["done", "ended", "superseded", "stopped"].includes(entry.state);
   // A layout-associated request may prove ongoing work, but cannot prove
   // completion for an unlinked update. Keep those two evidence paths separate.
   const pending =
     snapshot && requestId
       ? requestWork(snapshot, latest.channelId, requestId).filter(
-          (entry) => participants.includes(entry.agent) && !settled(entry),
+          (entry) =>
+            participants.includes(entry.agent) && !isSettledWork(entry),
         )
       : [];
   const complete = participants.every((agent) =>
-    work.some((entry) => entry.agent === agent && settled(entry)),
+    work.some((entry) => entry.agent === agent && isSettledWork(entry)),
   );
   // Known pending, failed or uncertain work wins over the historical fallback.
   // Without lifecycle evidence, a related public reply only retires the display.
   const hidden =
-    !pending.length && (complete || (!!followedByReply && work.every(settled)));
+    !pending.length &&
+    (complete || (!!followedByReply && work.every(isSettledWork)));
   const working = new Set(
     [...work, ...pending]
       .filter((entry) => entry.working)
@@ -202,6 +204,18 @@ export function activityPresentation(
     for (const id of replies.values()) replyRequests.set(id, requestId);
   }
   const groups: ActivityPresentation[] = [];
+  const activityKey = (row: ChannelMessage) =>
+    JSON.stringify([
+      row.channelId,
+      row.threadRootId,
+      requests.get(row.id) ?? row.threadRootId,
+      row.authorId,
+    ]);
+  const latestUpdates = new Map(
+    rows
+      .filter((row) => row.audience === "agents" && !row.membership)
+      .map((row) => [activityKey(row), row.id]),
+  );
   const bubbleAnchors = new Set<string>();
   const byRow = new Map<string, ActivityRowPresentation>();
   for (const history of activityRuns(rows, requests)) {
@@ -209,6 +223,13 @@ export function activityPresentation(
     const latest = history.at(-1);
     if (!first || !latest) continue;
     const participants = [...new Set(history.map((row) => row.authorId))];
+    const liveParticipants = participants.filter((agent) =>
+      history.some(
+        (row) =>
+          row.authorId === agent &&
+          latestUpdates.get(activityKey(row)) === row.id,
+      ),
+    );
     const group: ActivityRun = {
       ids: history.map((row) => row.id),
       history,
@@ -242,9 +263,13 @@ export function activityPresentation(
       const last = lastByAgent.get(row.authorId) === row.id;
       byRow.set(row.id, {
         requestId: group.requestId,
-        active: last && working.has(row.authorId),
+        active:
+          last &&
+          liveParticipants.includes(row.authorId) &&
+          working.has(row.authorId),
         ownsLive:
           last &&
+          liveParticipants.includes(row.authorId) &&
           !hidden &&
           (working.has(row.authorId) || !group.followingMessage),
         container:
@@ -257,9 +282,10 @@ export function activityPresentation(
     }
     groups.push({
       ...group,
+      liveParticipants,
       hidden,
       retained,
-      working: working.size > 0,
+      working: liveParticipants.some((agent) => working.has(agent)),
       standalone,
     });
   }
@@ -301,6 +327,7 @@ export function useActivityPresentation(
         ? {
             ...previous,
             hidden: true,
+            liveParticipants: group.liveParticipants,
             working: group.working,
             retained: true,
             followingMessage: group.followingMessage,

@@ -6,9 +6,22 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 
 1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
 2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
-3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
-4. Choose a model and thinking level, optionally add instructions, then create the agent.
-5. Edit model settings and instructions later in **Identity**.
+3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab** under **Remote** in the **Harness** menu. It can answer while your desktop is off, but cannot open files on your computer.
+4. If signed out, choose the small **Sign in** button beside Harness. Model, Thinking and Create agent stay disabled until sign-in completes. Choose a model and thinking level, optionally add instructions, then choose **Create agent**. Review the introduction and choose **Let’s go** to create it.
+5. Edit model settings and instructions later in **Identity**. Opening it attempts sign-in automatically if needed. The compact action beside Harness shows a spinner that cancels browser sign-in on click. The resting signed-out hint explains that sign-in enables editing while messaging still works. Cancellation, timeout and login failures wait for an explicit inline retry. Sheets are reserved for settings or account-access errors. Instructions appear after sign-in. Native account-access errors open **Identity → Organization sign-in** without ending the shared session. In live development, **Use another account** ends the broker session and opens `/logout` in your browser. A cancellable spinner then waits three seconds before showing **Retry** beside Harness. Sign in with the other account in the browser, return to Buzz, then click Retry to check broker access.
+
+While signed in, Identity shows a cloud beside “Remote agent”, with “Runs on a
+Builderlab machine” underneath. Workspace in Settings explains that the remote
+runtime is shared with your other agents in the workspace by default, alongside
+availability and file access. These hints stay hidden while signed out or signing in.
+Current remote activity steps show a cloud that pulses while working and stays
+still with reduced motion.
+Cards and pane headings omit location captions. Both @ menus show
+Remote for known remote agents, alongside membership details.
+Local agents get no location caption. The Harness menu groups types under
+Remote and Local; local agents have no execution hint.
+Activity shows its transcript and feed guidance without a separate workspace
+note. Only the creation introduction speaks in the agent’s voice.
 
 ---
 
@@ -68,15 +81,17 @@ With a configured Builderlab, it also registers
 agent, activation submits the owner proof and community supplied by Agents, and
 removal deletes the provider runtime. Agents owns unfinished setup recovery and
 the runtime-tagged community registration; the provider keeps the key and runs
-the agent even while Buzz is closed. On desktop, Create agent and confirmed
-deletion start the native sign-in when needed, then continue the action. Both
-share an existing sign-in attempt; a failed or canceled sign-in leaves the
-action available for retry. Sign-out lives in Identity → Organization sign-in,
-because community sign-in shares the session.
-While Create agent waits for the browser, its dialog offers Cancel sign-in, which
-cancels the shared login (as Settings' does) and leaves Create available for
-retry. Deletion's wait has no such control; disabling the plugin or closing Buzz
-also cancels it.
+the agent even while Buzz is closed. On desktop, creation has a small Sign in
+action beside Harness. Create agent stays disabled until sign-in completes;
+Model and Thinking remain visible but disabled while signed out. The action
+starts the shared native sign-in and shows a clickable loading spinner that
+cancels browser sign-in, matching the agent pane. Account verification keeps
+the spinner without cancellation. Login errors stay in the form; failed or
+cancelled sign-in preserves the draft for retry. Confirmed deletion still
+starts sign-in when needed and continues after it succeeds. Both flows share
+an existing sign-in attempt. Deletion's wait has no cancellation control;
+disabling the plugin or closing Buzz also cancels it. Sign-out lives in
+Identity → Organization sign-in, because community sign-in shares the session.
 Beekeeper accepts an owner proof only from the Buzz key bound to the signed-in
 Builderlab account. After sign-in, and again before each activation, the plugin
 checks `/v1/buzz/nostr-identities/current` and binds an unbound account to this
@@ -90,11 +105,21 @@ account before saving. A different signed-in account locks the fields and shows
 that requirement instead of the previous account's errors and retries. Signed-out
 panes hide stale settings errors and retries while retaining the draft.
 Empty instructions can be saved to clear them.
-Signed-out agent panes show a pinned sign-in card across every tab, including
-relay-backed Memory and Activity. Opening the pane does not start sign-in;
-Sign in starts it, and Cancel sign-in cancels the shared account attempt.
-The card reserves its measured height for scrolling and clears once sign-in is
-verified. Slow settings/catalog reads offer a scoped retry after three seconds.
+Signed-out agent panes offer the same compact Sign in action as creation, beside
+Harness in Identity. Model and Thinking remain visible and disabled. Instructions
+are absent while signed out and animate in after sign-in, respecting reduced
+motion. The draft survives sign-out and returning to its original account.
+Message, Memory and Activity use the Buzz community connection independently of
+Builderlab sign-in. Opening Identity attempts sign-in once if needed. Click the
+compact spinner beside Harness to cancel browser sign-in; its tooltip and
+accessible name are “Cancel sign-in”. Cancellation and failures leave an explicit
+Sign in action instead of starting another attempt. Account recovery and
+settings failures retain the host-owned notice surface. Native account recovery
+opens Identity → Organization sign-in without ending the shared session. In live
+development, Use another account signs out the broker before opening browser
+logout. If an agent is missing
+from the current list, Retry reloads it without signing out. Slow settings/catalog
+reads offer a scoped retry after three seconds.
 The Identity tab also loads a separate model catalog from Builderlab. Choose a
 model and one of that model's thinking levels, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices

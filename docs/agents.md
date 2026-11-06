@@ -294,6 +294,17 @@ a new session** requests another allocation. **Interrupt** stops pending setup
 and keeps the key for retry. Activity reads the saved session inventory. Remote
 usage is unavailable. Settings and model discovery do not create targets.
 
+Claude uses the same contract with its stream-json process. Its tools and hooks
+use that process connection. Files come from the target. Each conversation
+keeps its execution key, workspace, and Claude session across app restarts.
+**Start a new session** selects a new execution key. An established session
+requires this reset when Claude cannot restore it. A session with no recorded
+submission can retry on the same target. The target must supply Claude
+Code 2.1.169 or later and its own authentication. No local credentials go to the
+target. Local Claude retains its device defaults. Remote Claude uses explicit
+agent settings or the target defaults. Model discovery does not allocate a
+target. Remote usage totals and transcript views are unavailable.
+
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. Plugins can add a tab to every local agent with
@@ -532,6 +543,15 @@ Buzz keeps no separate Goose defaults store. Readiness requires a working
 `goose-acp` and a configured default provider. The per-agent provider/model
 fields remain overrides. Types without a provider contribution have no Harness
 defaults row; a failed contribution retains the unavailable fallback.
+
+For creation-specific access, `CreateAction` presents a compact action beside
+Harness and receives the host's `disabled` state. `CreateConfiguration` reports
+readiness through `onReadyChange`; that gate also applies in the remote introduction.
+Builderlab uses it for Sign in with a pending loading spinner, while its creation
+fields keep Model and Thinking visible but disabled when signed out. After three
+seconds, browser sign-in shows guidance and Cancel sign-in, matching the agent
+pane. Account verification remains non-cancellable. Sign-in errors remain
+with the fields and drafts survive cancellation.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
@@ -1237,6 +1257,26 @@ beyond 30 seconds or disconnect makes work unknown, not stopped. Terminal state
 retains a monotonic evidence timestamp through clock rollback and bounded eviction.
 There is no agent-global sequence gate: producer sequences reset, skip and interleave.
 
+Remote terminal outcomes map `completed` to success, `failed`/`terminated` to
+failure, and `cancelled` to stopped without identifying who cancelled. Exact
+trigger IDs and outcomes survive raw-record trimming. Losing a lifecycle turn
+makes aggregate request completion uncertain.
+
+With Builderlab sign-in, stale activity or reconnect triggers an owner-only
+`/v3/beekeeper/get-agent-turn-status` read for retained exact tasks. Reads batch
+up to 64 tasks per agent/session/channel using existing bounded retries. Missing
+or nonterminal tasks stay unknown and are checked again with jittered backoff:
+the first delay is 15–30 seconds, doubling to a five-minute ceiling. One timeout
+serves retained unknown tasks; completed tasks do not keep polling. A missing
+session or an agent outside the owner's inventory is skipped until reconnect.
+An exhausted transient read failure uses the same delayed retry for its batch;
+other sessions can continue recovering. Permanent read failures skip that batch
+until reconnect rather than stopping all recovery.
+Account/community changes, disable/reset and disposal cancel recovery; readback
+cannot replace a received terminal result. Recovery neither archives raw activity
+nor restores history after reload. Older servers without the endpoint leave
+tasks unknown.
+
 ### Activity updates in the conversation
 
 Conversation visibility is separate from execution status. Activity updates use
@@ -1247,6 +1287,15 @@ Known waiting, working, failed, or uncertain work stays visible even after a pub
 reply. Once every represented agent has settled successfully, stopped, or been
 superseded, the updates leave the conversation flow. History and exact message
 links remain available.
+
+A public reply alone does not replace the request's live indicator. Mounted
+update history can take over that indicator and its controls. When public replies
+split one request's updates into several runs, only the latest run for each agent
+owns its live shimmer and Stop control; earlier runs remain readable history.
+Other agents and requests retain their own live presentation.
+Codex transfers live activity to an accepted follow-up in the same conversation.
+Top-level DM messages share that presentation scope; actual DM threads remain
+independent, even when they share a harness session.
 
 When lifecycle evidence is missing (including historical conversations after a
 reload), the next public reply can retire older updates from the same request
@@ -1401,10 +1450,13 @@ continues to use a searchable Combobox.
 
 Builderlab Identity and creation reuse the shared family → model menu, with a
 separate compact Thinking selector. Builderlab requires an explicit supported
-model/thinking pair rather than an inherited default. Its plugin owns catalog
-family aliases; changing the model clears the thinking choice. Creation places
-these controls beside the host-owned Harness row in one SettingsGroup, while
-keeping sign-in/recovery and Instructions outside the group.
+model/thinking pair rather than an inherited default. When the catalog's
+optional `recommended_selection` names an offered pair, creation fills it into
+untouched choices as a suggested change, which does not start the draft; a
+person's choice is never replaced. Its plugin owns catalog family aliases;
+changing the model clears the thinking choice. Creation places these controls
+beside the host-owned Harness row in one SettingsGroup, while keeping
+sign-in/recovery and Instructions outside the group.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,
@@ -1439,11 +1491,11 @@ uses goose's name.
 
 ## Usage
 
-Usage is a default-off page summarising what the selected community's agents
-on this computer spent: estimated cost against the previous period, tokens, cache
-hit rate (cache reads over all prompt tokens: uncached input, cache reads and
-cache writes), daily cost by agent
-type, and the costliest sessions, each opening its thread.
+Usage is a default-off Settings destination, under Plugins, summarising what
+the selected community's agents on this computer spent: estimated cost against
+the previous period, tokens, cache hit rate (cache reads over all prompt tokens:
+uncached input, cache reads and cache writes), daily cost by agent type, and the
+costliest sessions, each opening its thread.
 
 It reads nothing itself. An agent type that can report usage implements the
 optional, read-only `AgentType.usage(agent, { since, signal })`, returning a
@@ -1549,5 +1601,9 @@ Source return or failure, cancellation, Attention off, agent stop, plugin unload
 A plugin can offer MCP tools to agents Buzz did not start, such as Claude Code, Codex, Pi or Nexus sessions. It serves a dedicated `host.serveMcp` server and declares the bundled helper as a process, for example `{ "id": "agent-access", "program": "buzz-agent-command", "bundled": true, "args": ["--advertise"] }`. `spawn("agent-access", { mcp: server })` lets the helper claim that server's one session and save it to `~/.buzz-foundation/agent-connections`, then exit. The plugin keeps the server open after the helper exits and spawns it once per server: a second spawn on the same server stops it. Every local agent of this user can then call that server's tools. On macOS and Linux the directory and files are private to the user and the helper ignores files others could have written; on Windows they rely on the profile's inherited permissions. The plugin handler must not assume a particular caller, and protected workers that must not reach these tools need that directory in `hiddenPaths`.
 
 An agent runs the installed helper by absolute path, with no inherited connection, configuration or token: `/Applications/Buzz.app/Contents/Resources/bin/buzz-agent-command tools` on macOS (inside the app's installed name, such as `Buzz Foundation.app`), `…\bin\buzz-agent-command.exe` on Windows and `/usr/lib/Buzz Foundation/bin/buzz-agent-command` on Linux. `tools`, `<tool> --field value` and `call <tool> '<JSON object>'` behave as `buzz` does inside an agent command, and `--help` prints that usage with the path it was run as. The agent's own sandbox must allow loopback connections: Codex's read-only and workspace-write modes, for example, block them unless network access is enabled, and the helper then reports `Could not reach Buzz` and leaves the advertisement in place. The helper uses the newest advertised session that still answers and offers the tool, so a second Buzz window's tools are still reached; when two plugins offer the same tool name, the newer advertisement wins. A tool call stops asking older advertisements once it finds that session, so a stalled older server does not delay it; `tools` asks every advertisement. Before sending a saved session, the helper connects and confirms, by numeric user ID, that a process of this user has accepted that same connection (`lsof` on macOS, `/proc/net/tcp` on Linux), then sends the request on it. If that is not confirmed within about a second, as when another user's process holds a closed server's port, the server receives nothing and the advertisement stays. Windows does not support advertised sessions; the helper reports that instead. An advertisement lasts as long as its server. Closing the server, reloading the page, unloading the plugin or quitting Buzz ends it, and the next caller that asks it removes the file once its server refuses the connection or the session. An inherited `BUZZ_AGENT_CONNECTION` always takes precedence.
+
+## The `buzz` CLI inside a harness
+
+ACP harnesses never receive a Buzz key: `PROTECTED_ENV` strips `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG` and `BUZZ_RELAY_URL` whatever their hooks or launch say, because a key in a harness's environment reaches every command and subprocess it runs. Instead, a Claude Code or goose process carries `BUZZ_CREDENTIAL_PROVIDER`, a token for the app's [local credential service](identity.md#local-credential-service) that acts only as the agent that process serves, so `buzz` run there signs and reaches its community as that agent. Native code sets it, and the app drops any value it was itself launched with at startup, so no other process it spawns inherits one. The token is bound when an agent takes the process, including the shared spare, and ends with the process, the agent's deletion or the owner's sign-out. Sensitive kinds are not signed through it yet. goose runs one `goose acp` per agent for this, started when the agent's first session needs it and stopped when the agent is removed. Codex and Pi run one process for all their agents, so that process never carries a token: each agent gets its own, bound to it and revoked when the shared process exits, and only that agent's tool commands receive it (Codex through the thread's `shell_environment_policy.set`, Pi through the agent's shell environment). Windows has no transport yet.
 
 Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).

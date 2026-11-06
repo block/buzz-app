@@ -51,7 +51,7 @@ import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
 import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
 import styles from "./Messages.module.css";
-import { profileMentionParts } from "./profile-mentions";
+import { profileMentionNames, profileMentionParts } from "./profile-mentions";
 import {
   isLiteralMarkdownContext,
   prepareMarkdown,
@@ -236,7 +236,10 @@ function inlineProtectionKey(
   agents: typeof emptyReferenceDirectory.agents,
 ) {
   const identities = [...row.mentions, ...(row.mentionReferences ?? [])];
-  const mentions = identities.map((id) => [id, profiles?.get(id)?.name]);
+  const mentions = identities.map((id) => [
+    id,
+    ...profileMentionNames(profiles?.get(id)),
+  ]);
   const mentioned = new Set(identities);
   const agentNames = agents
     .filter((agent) => mentioned.has(agent.pubkey))
@@ -334,6 +337,33 @@ function rehypeEditedSlot() {
         children: [],
       },
     ];
+  };
+}
+
+/** GFM ends a bare URL only at whitespace. End it where bare message links end;
+ * `<url>` and `[url](url)` keep their destination. */
+function remarkBareLinkEnd(content: string) {
+  return function visit(parent: MarkdownNode) {
+    if (!parent.children) return;
+    parent.children = parent.children.flatMap((child) => {
+      const text = child.url;
+      const { start, end } = child.position ?? {};
+      if (
+        child.type !== "link" ||
+        !text ||
+        child.children?.[0]?.value !== text ||
+        (start && content.slice(start.offset, end?.offset) !== text)
+      ) {
+        visit(child);
+        return [child];
+      }
+      const parts = messageLinkParts(text).filter((part) => part.text);
+      if (parts.length < 2) return [child];
+      return parts.map(({ text: value, url }) => {
+        const node = { type: "text", value };
+        return url ? { type: "link", url, children: [node] } : node;
+      });
+    });
   };
 }
 
@@ -858,6 +888,7 @@ const MarkdownBody = memo(function MarkdownBody({
       Markdown({
         remarkPlugins: [
           remarkGfm,
+          [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
           [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
           [remarkInlineContent, protectedContent],

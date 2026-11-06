@@ -43,21 +43,45 @@ import {
   setClockPreference,
   useClockPreference,
 } from "../shared/clock-preference";
+import {
+  setNamePreference,
+  useNamePreference,
+} from "../features/profiles/name-preference";
+import type { Communities } from "../features/communities/service";
+
+const noRelay = () => () => {};
+/** Whether the connected community verifies people's names, so there is a
+ * username and a full name to choose between. */
+function useVerifiedCommunity(relay: Communities["relay"] | undefined) {
+  const connection = useSyncExternalStore(relay?.subscribe ?? noRelay, () =>
+    relay?.snapshot(),
+  );
+  const profiles =
+    connection?.status === "ready" ? connection.session.profiles : undefined;
+  return useSyncExternalStore(
+    profiles?.subscribe ?? noRelay,
+    () => !!profiles?.verifiedAuthority?.(),
+  );
+}
 
 export function AppearanceSettings({
   appearance,
   active = true,
   autocorrectAvailable = macWebKit(),
+  communities,
 }: {
   appearance: Appearance;
   active?: boolean;
   /** Only Mac WebKit applies the composer's autocorrect attribute. */
   autocorrectAvailable?: boolean;
+  communities?: Pick<Communities, "relay"> | undefined;
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
+  const names = useNamePreference();
+  const verifiedCommunity = useVerifiedCommunity(communities?.relay);
   const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
@@ -78,17 +102,21 @@ export function AppearanceSettings({
     preference,
     mode,
     error,
+    messageWidth,
+    messageWidthError,
     fontScale,
     fontError,
     accent,
     accentError,
     contrast,
     contrastError,
+    density,
+    densityError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
-      <AppearancePreview />
+      <AppearancePreview messageWidth={messageWidth} />
       <div>
         <InlineHeader title="Interface" />
         <SettingsGroup>
@@ -165,6 +193,29 @@ export function AppearanceSettings({
                   />
                 )}
               </fieldset>
+            }
+          />
+          <PreferenceRow
+            title="Message width"
+            trailing={
+              <Select
+                variant="compact"
+                label="Message width"
+                value={messageWidth}
+                groups={[
+                  {
+                    label: "Width",
+                    options: [
+                      { value: "narrow", label: "Narrow" },
+                      { value: "wide", label: "Wide" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "narrow" || value === "wide")
+                    appearance.setMessageWidth(value);
+                }}
+              />
             }
           />
           <PreferenceRow
@@ -278,6 +329,56 @@ export function AppearanceSettings({
       <div className="mt-section-gap">
         <InlineHeader title="Conversations" />
         <SettingsGroup>
+          {verifiedCommunity && (
+            <PreferenceRow
+              title="Show people by"
+              subtitle="How people with verified names appear to you. Search, profiles, and previews show both."
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Show people by"
+                  value={names}
+                  groups={[
+                    {
+                      label: "Name",
+                      options: [
+                        { value: "username", label: "Username" },
+                        { value: "full-name", label: "Full name" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    if (value === "username" || value === "full-name")
+                      setNamePreference(value);
+                  }}
+                />
+              }
+            />
+          )}
+          <PreferenceRow
+            title="Message density"
+            subtitle="Compact shows conversations as a flat list that fits more messages on screen."
+            trailing={
+              <Select
+                variant="compact"
+                label="Message density"
+                value={density}
+                groups={[
+                  {
+                    label: "Density",
+                    options: [
+                      { value: "default", label: "Default" },
+                      { value: "compact", label: "Compact" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "default" || value === "compact")
+                    appearance.setDensity(value);
+                }}
+              />
+            }
+          />
           <PreferenceRow
             title="Follow-up behavior"
             subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
@@ -371,6 +472,19 @@ export function AppearanceSettings({
             onCheckedChange={setUnreadFirstPreference}
           />
         </SettingsGroup>
+        {active && messageWidthError && (
+          <ToastNotice
+            title="Message width wasn’t saved"
+            description={messageWidthError}
+          >
+            <Button
+              size="sm"
+              onClick={() => appearance.setMessageWidth(messageWidth)}
+            >
+              Retry saving message width
+            </Button>
+          </ToastNotice>
+        )}
         {active && followUp.unsaved && (
           <ToastNotice
             title="Follow-up preference wasn’t saved"
@@ -449,6 +563,16 @@ export function AppearanceSettings({
           >
             <Button size="sm" onClick={() => appearance.setContrast(contrast)}>
               Retry saving vibe level
+            </Button>
+          </ToastNotice>
+        )}
+        {active && densityError && (
+          <ToastNotice
+            title="Message density wasn’t saved"
+            description={densityError}
+          >
+            <Button size="sm" onClick={() => appearance.setDensity(density)}>
+              Retry saving message density
             </Button>
           </ToastNotice>
         )}

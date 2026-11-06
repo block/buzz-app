@@ -39,7 +39,7 @@ import {
   safeLinkUrl,
   safeMessageUrl,
 } from "../relay/message-content";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 
 const markdownRenders = vi.hoisted(() => vi.fn());
 vi.mock("react-markdown", async (importOriginal) => {
@@ -553,6 +553,33 @@ describe("mounted Markdown preparation", () => {
 });
 
 describe("Markdown profile mentions", () => {
+  it("rebinds mounted prose when a verified alias changes under the same name", () => {
+    const person = (fullName: string) =>
+      new Map([
+        [
+          mic,
+          {
+            name: "reader",
+            verified: { displayName: "reader", fullName },
+          } as Profile,
+        ],
+      ]);
+    const initial = props("@Reader Example and @Reader Updated", {
+      participantProfiles: person("Reader Example"),
+    });
+    const view = renderDom(<MessageMarkdown {...initial} />);
+    const bound = () =>
+      screen.queryAllByRole("button").map((button) => button.textContent);
+    expect(bound()).toEqual(["Reader Example"]);
+    view.rerender(
+      <MessageMarkdown
+        {...initial}
+        participantProfiles={person("Reader Updated")}
+      />,
+    );
+    expect(bound()).toEqual(["Reader Updated"]);
+  });
+
   it("binds exact signed names longest-first through surrounding emphasis", () => {
     const html = render("**@Mic Smith**, _@Mic_! @Other @Missing @Microscopic");
     expect(html).toContain("<strong><button");
@@ -861,6 +888,39 @@ describe("Markdown inline extensions", () => {
       expect(html).toContain(`>${url.replaceAll("&", "&amp;")}</a>`);
     },
   );
+
+  it.each([
+    [
+      "https://github.com/block/buzz-app。",
+      "https://github.com/block/buzz-app",
+    ],
+    ["看这个 https://example.com/spec，大家看一下", "https://example.com/spec"],
+    ["（https://example.com）", "https://example.com/"],
+    ["他说“https://example.com/a”。", "https://example.com/a"],
+    [
+      "https://github。com/block/buzz-app。",
+      "https://github.com/block/buzz-app",
+    ],
+    ["http://localhost:3000。OK", "http://localhost:3000/"],
+    [
+      "https://zh.wikipedia.org/wiki/中文 ok",
+      "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",
+    ],
+    ["<https://example.com/a。>", "https://example.com/a%E3%80%82"],
+    [
+      "https://a.com，https://zh.wikipedia.org/wiki/中文",
+      "https://a.com/",
+      "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",
+    ],
+  ])("ends a bare link at fullwidth punctuation: %s", (content, ...hrefs) => {
+    const html = render(content);
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual(
+      hrefs,
+    );
+    expect(html.replace(/<[^>]*>/g, "")).toBe(
+      content.replace(/^<(.*)>$/, "$1"),
+    );
+  });
 
   it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {
     const options = { emoji: [party], extensions, largeEmoji: true };

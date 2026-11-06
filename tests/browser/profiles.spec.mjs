@@ -14,9 +14,7 @@ test("qualifies a whitespace namesake in Members and opens its exact profile", a
     npub: window.profilesFixture.npubs.mic,
   }));
   const name = `Viewer (${key.slice(0, 10)})`;
-  await page
-    .getByRole("button", { name: "Manage members", exact: true })
-    .click();
+  await page.getByRole("button", { name: /^Manage members of / }).click();
   const dialog = page.getByRole("dialog", {
     name: "Manage members",
     exact: true,
@@ -297,7 +295,7 @@ test("profile visits survive passive traversal and X retires active and inactive
   // Members composes above a content visit without replacing that content.
   const reopened = (await read()).entry.id;
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage members of One", exact: true })
     .click();
   const members = page.getByRole("dialog", {
     name: "Manage members",
@@ -356,6 +354,145 @@ test("closing a profile beside a main thread preserves the thread destination", 
       ),
     )
     .toBe(true);
+});
+
+// Close returns through native history, which lands a task or more later, and
+// the dock keeps its exit motion. Hold both so a reopen arrives before them.
+async function holdCloseReturn(page) {
+  await page.evaluate(() => {
+    const go = history.go.bind(history);
+    const held = [];
+    history.go = (delta) => held.push(delta);
+    // Pause the exit while it is still pending, so it cannot finish first.
+    const exit = new MutationObserver(() => {
+      const dock = document.querySelector("[data-panel-dock][data-closing]");
+      for (const animation of [
+        ...(dock?.getAnimations() ?? []),
+        ...(dock?.parentElement?.getAnimations() ?? []),
+      ])
+        animation.pause();
+    });
+    exit.observe(document.body, {
+      subtree: true,
+      attributeFilter: ["data-closing"],
+    });
+    window.releaseReturn = () => {
+      exit.disconnect();
+      history.go = go;
+      for (const delta of held) go(delta);
+      return held.length;
+    };
+  });
+  return () => page.evaluate(() => window.releaseReturn());
+}
+
+async function openReturnFixture(page) {
+  await page.goto("/tests/fixtures/profiles.html");
+  await page.waitForFunction(() => !!window.profilesFixture);
+  const read = async () =>
+    (await page.evaluate(() => window.profilesFixture.navigation.snapshot()))
+      .entry;
+  return {
+    read,
+    ...(await page.evaluate(() => ({
+      npubs: window.profilesFixture.npubs,
+      targets: window.profilesFixture.targets,
+    }))),
+    channel: (await read()).id,
+    panel: page.getByRole("complementary", { name: "Profile", exact: true }),
+    mention: page.getByRole("button", {
+      name: "View Mic profile",
+      exact: true,
+    }),
+    closing: page.locator("[data-panel-dock][data-closing]:not([hidden])"),
+  };
+}
+
+test("a Profile reopened before its close returns stays open with a fresh visit", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const { read, npubs, targets, channel, panel, mention, closing } =
+    await openReturnFixture(page);
+  for (const activation of ["click", "Space"]) {
+    await mention.click();
+    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    const closed = (await read()).id;
+    const release = await holdCloseReturn(page);
+    let held;
+    try {
+      await page
+        .getByRole("tablist", { name: "Panel tabs" })
+        .getByRole("button", { name: "Close Mic tab", exact: true })
+        .click();
+      await expect(panel).toHaveCount(0);
+      await expect(closing).toHaveCount(1);
+      if (activation === "click") await mention.click();
+      else await mention.press(activation);
+      await expect(panel.locator("code")).toHaveText(npubs.mic);
+      expect((await read()).id).toBe(closed);
+    } finally {
+      held = await release();
+    }
+    expect(held).toBe(1);
+    // The return lands; the reopened Profile then needs its own visit.
+    await expect
+      .poll(async () => {
+        const entry = await read();
+        return entry.id !== closed && entry.target.detail?.target;
+      })
+      .toBe(targets.mic);
+    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    await page.goBack();
+    await expect.poll(async () => (await read()).id).toBe(channel);
+    await expect(panel).toHaveCount(0);
+  }
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("a Profile opened after closing a thread and its Profile stays open with a fresh visit", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  const { read, npubs, targets, channel, panel, mention, closing } =
+    await openReturnFixture(page);
+  await page
+    .getByRole("button", { name: "View thread: 1 reply", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "View Pinky profile", exact: true })
+    .click();
+  await expect(panel.locator("code")).toHaveText(npubs.pinky);
+  const closed = (await read()).id;
+  const tabs = page.getByRole("tablist", { name: "Panel tabs" });
+  const release = await holdCloseReturn(page);
+  let held;
+  try {
+    await tabs
+      .getByRole("button", { name: "Close Pinky tab", exact: true })
+      .click();
+    // The second close retires the thread under the pending return, which
+    // then lands on the channel instead.
+    await tabs.getByRole("button", { name: /^Close .* tab$/ }).click();
+    await expect(closing).toHaveCount(1);
+    await mention.click();
+    await expect(panel.locator("code")).toHaveText(npubs.mic);
+    expect((await read()).id).toBe(closed);
+  } finally {
+    held = await release();
+  }
+  expect(held).toBe(1);
+  await expect
+    .poll(async () => {
+      const entry = await read();
+      return entry.id !== closed && entry.target.detail?.target;
+    })
+    .toBe(targets.mic);
+  await expect(panel.locator("code")).toHaveText(npubs.mic);
+  await page.goBack();
+  await expect.poll(async () => (await read()).id).toBe(channel);
+  await expect(panel).toHaveCount(0);
+  expect(errors.unexplained()).toEqual([]);
 });
 
 test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecycle and recovery", async ({
@@ -511,7 +648,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   );
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   await expect(mention).toBeFocused();
@@ -589,7 +726,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   );
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   await expect(
@@ -599,7 +736,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   ).toBeFocused();
   await page
     .locator(
-      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"])',
+      '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "]',
     )
     .click();
   const missingKey = await page.evaluate(
@@ -723,7 +860,7 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   expect(await invoke()).toBe(false);
   await page
     .locator(
-      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
+      '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button[aria-label^="Close "]',
     )
     .click();
   await capture();
@@ -806,7 +943,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html");
   const members = page.getByRole("button", {
-    name: "Manage members",
+    name: "Manage members of One",
     exact: true,
   });
   await members.click();
@@ -1139,7 +1276,7 @@ test.describe("touch member actions", () => {
   test("keeps the ellipsis available without hover", async ({ page }) => {
     await page.goto("/tests/fixtures/profiles.html");
     const members = page.getByRole("button", {
-      name: "Manage members",
+      name: "Manage members of One",
       exact: true,
     });
     await members.tap();
@@ -1169,7 +1306,7 @@ test("member Send message navigates a human DM without sending or returning focu
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html?member-message");
   await page
-    .getByRole("button", { name: "Manage members", exact: true })
+    .getByRole("button", { name: "Manage members of One", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
     name: "Manage members",
@@ -1194,13 +1331,13 @@ test("member Send message navigates a human DM without sending or returning focu
     .poll(() => page.evaluate(() => window.profilesFixture.dmOpens))
     .toEqual([[await page.evaluate(() => window.profilesFixture.keys.mic)]]);
   await expect(
-    page.getByRole("tab", { name: "Mic", exact: true }),
+    page.getByRole("button", { name: "Manage members of Mic", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message #Mic", exact: true }),
   ).toBeFocused();
   await expect(
-    page.getByRole("button", { name: "Manage members", exact: true }),
+    page.getByRole("button", { name: "Manage members of Mic", exact: true }),
   ).not.toBeFocused();
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),
@@ -1209,7 +1346,7 @@ test("member Send message navigates a human DM without sending or returning focu
   // the DM open or send.
   await page.evaluate(() => window.profilesFixture.navigation.back());
   await expect(
-    page.getByRole("button", { name: "Manage members", exact: true }),
+    page.getByRole("button", { name: "Manage members of One", exact: true }),
   ).toBeVisible();
   await expect(dialog).toHaveCount(0);
   expect(
@@ -1239,7 +1376,7 @@ test("profile preview stays inside a Solo conversation beside another pane", asy
   await page.goto("/tests/fixtures/profiles.html?solo");
   await page.getByRole("button", { name: "One", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "One", exact: true }),
+    page.getByRole("button", { name: "Share access to One", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "View Viewer profile", exact: true })

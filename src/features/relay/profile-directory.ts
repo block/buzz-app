@@ -1,4 +1,10 @@
 import { createVerifiedProfileDirectory } from "./verified-profile-directory";
+import {
+  namePreference,
+  subscribeNamePreference,
+  verifiedLabel,
+  type NamePreference,
+} from "../profiles/name-preference";
 import type {
   VerifiedProfileAuthority,
   VerifiedProfileFilter,
@@ -91,7 +97,14 @@ export function createProfileDirectory(
   },
 ) {
   let limit = PROFILE_CACHE_BASE;
-  const events = new ByteLru<RelayEvent>(limit, limit * PROFILE_ENTRY_BYTES);
+  // DM partners: eviction takes them last, so a large roster cannot turn a
+  // DM label back into a key. Bounded to half the base entry count.
+  let kept: ReadonlySet<string> = new Set();
+  const events = new ByteLru<RelayEvent>(
+    limit,
+    limit * PROFILE_ENTRY_BYTES,
+    (id) => kept.has(id),
+  );
   // One entry per open view; the largest sets the limit.
   const reservations = new Set<{ members: number }>();
   let shrinking: ReturnType<typeof setTimeout> | undefined;
@@ -211,6 +224,9 @@ export function createProfileDirectory(
         if (!closed && settled.some(Boolean)) publish(true);
       });
   }
+  // Read when first needed and on change, so publishing an empty or closing
+  // directory never reads storage.
+  let preference: NamePreference | undefined;
   let publishedAuthority: VerifiedProfileAuthority | undefined;
   let publishedRevision = 0;
   /** Notifies on display changes, on winning-event changes for `event()`
@@ -229,13 +245,15 @@ export function createProfileDirectory(
         .map((item) => item.event) ?? []),
     ]);
     loaded = new Set(next.keys());
-    for (const [id, value] of verified?.snapshot() ?? []) {
+    const verifiedProfiles = verified?.snapshot() ?? new Map();
+    if (verifiedProfiles.size) preference ??= namePreference();
+    for (const [id, value] of verifiedProfiles) {
       const { nameIsFallback: _fallback, ...base } = next.get(id) ?? {};
       next.set(
         id,
         Object.freeze({
           ...base,
-          name: value.displayName,
+          name: verifiedLabel(value, preference),
           username: value.username,
           verified: value,
         }),
@@ -248,7 +266,7 @@ export function createProfileDirectory(
     const verifiedUsernames = new Map<string | undefined, number>();
     for (const [, { verified, username }] of next)
       if (verified) {
-        const name = collisionName(verified.displayName);
+        const name = collisionName(verifiedLabel(verified, preference));
         verifiedNames.set(name, (verifiedNames.get(name) ?? 0) + 1);
         verifiedUsernames.set(
           username,
@@ -259,7 +277,11 @@ export function createProfileDirectory(
       const own = profile.verified ? 1 : 0;
       const duplicate =
         (verifiedNames.get(
-          collisionName(profile.verified?.displayName ?? profile.name),
+          collisionName(
+            profile.verified
+              ? verifiedLabel(profile.verified, preference)
+              : profile.name,
+          ),
         ) ?? 0) > own ||
         (!!profile.verified &&
           (verifiedUsernames.get(profile.username) ?? 0) > own);
@@ -544,6 +566,12 @@ export function createProfileDirectory(
     localProfiles = signature;
     publish();
   });
+  // Each reader's own choice of name for verified people refolds every label.
+  const unsubscribePreference = subscribeNamePreference(() => {
+    if (closed) return;
+    preference = undefined;
+    publish(true);
+  });
   publish();
   return {
     queries,
@@ -565,11 +593,30 @@ export function createProfileDirectory(
       return ensure(ids, "background", true);
     },
     event: (id: string) => events.peek(id),
+    /** Keep these identities' profiles through eviction. */
+    protect(ids: Iterable<string>) {
+      kept = new Set([...ids].slice(0, PROFILE_CACHE_BASE / 2));
+    },
+    /** Up to `count` held kind 0 events, least valued first: protected
+     * identities last, the rest by least recent use. */
+    recent: (count: number) => {
+      const ids = events.keys();
+      return [
+        ...ids.filter((id) => !kept.has(id)),
+        ...ids.filter((id) => kept.has(id)),
+      ]
+        .slice(-count)
+        .flatMap((id) => {
+          const event = events.peek(id);
+          return event ? [event] : [];
+        });
+    },
     stats: () => events.stats(),
     dispose() {
       closed = true;
       verified?.dispose();
       unsubscribeLocal?.();
+      unsubscribePreference();
       clear();
       // After clear(): disposing the verified directory schedules a flush.
       clearTimeout(verifiedFlush);

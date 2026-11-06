@@ -15,6 +15,9 @@ use tokio::{
     task::JoinHandle,
 };
 
+/// Rejection when no callback arrives in time; the app tells it apart from a failure.
+pub(crate) const TIMED_OUT: &str = "Sign-in timed out. Try again.";
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct OAuthCallback {
     // Preserve ordering and duplicates so the caller can validate known parameters.
@@ -174,7 +177,7 @@ impl OAuthCallbackHost {
                 ),
             )
             .await
-            .unwrap_or_else(|_| Err("Sign-in timed out. Try again.".into()));
+            .unwrap_or_else(|_| Err(TIMED_OUT.into()));
             let _ = send.send(result);
         });
         let id = uuid::Uuid::new_v4().to_string();

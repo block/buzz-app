@@ -1,4 +1,5 @@
 import { transientStatus } from "../../../features/relay/errors";
+import { terminalOutcome } from "../../../features/agents/observer";
 import { retryRead } from "../../../features/relay/read-retry";
 import { invoke } from "@tauri-apps/api/core";
 import { nativeIdentityEnabled } from "../../../features/identity/service";
@@ -34,6 +35,12 @@ export type RemoteAgentModel = Readonly<{
   id: string;
   displayName: string;
   supportedReasoningEfforts: readonly string[];
+}>;
+
+export type RemoteAgentModelCatalog = Readonly<{
+  models: readonly RemoteAgentModel[];
+  /** Builderlab's creation default; present only when the catalog offers it. */
+  recommended?: Readonly<{ modelId: string; reasoningEffort: string }>;
 }>;
 
 function modelSelectionStatus(
@@ -100,6 +107,16 @@ const nativeOwner: OwnerIdentity = {
 };
 
 class BuilderlabUnavailable extends Error {}
+
+export function isRetryableAgentRead(error: unknown): boolean {
+  return (
+    error instanceof BuilderlabUnavailable ||
+    (error instanceof Error &&
+      "status" in error &&
+      typeof error.status === "number" &&
+      transientStatus(error.status))
+  );
+}
 
 const LINK_ERRORS: Record<string, string> = {
   identity_already_bound:
@@ -181,7 +198,7 @@ export function createAgentClient(
     }
   }
   function readRequest(
-    path: "get-model-catalog" | "list-agents",
+    path: "get-model-catalog" | "list-agents" | "get-agent-turn-status",
     body: unknown,
     signal: AbortSignal,
   ) {
@@ -192,12 +209,7 @@ export function createAgentClient(
         return request(path, body, signal);
       },
       signal,
-      (error) =>
-        error instanceof BuilderlabUnavailable ||
-        (error instanceof Error &&
-          "status" in error &&
-          typeof error.status === "number" &&
-          transientStatus(error.status)),
+      isRetryableAgentRead,
     );
   }
   /** Builderlab's identity routes answer failures with `{ error: { code } }`. */
@@ -347,11 +359,40 @@ export function createAgentClient(
       );
   }
   return {
+    /** Reads only terminal outcomes for exact tasks in the owner's agent session. */
+    async turnStatus(
+      sessionId: string,
+      taskIds: readonly string[],
+      signal: AbortSignal,
+    ) {
+      const result = await readRequest(
+        "get-agent-turn-status",
+        {
+          session_id: sessionId,
+          task_ids: taskIds,
+        },
+        signal,
+      );
+      const outcomes = result.outcomes;
+      if (!outcomes || typeof outcomes !== "object" || Array.isArray(outcomes))
+        throw new Error("Builderlab returned invalid turn status.");
+      const statuses = new Map<string, "ended" | "error" | "stopped">();
+      for (const [taskId, value] of Object.entries(outcomes)) {
+        const outcome = terminalOutcome("turn_completed", value);
+        if (
+          !taskIds.includes(taskId) ||
+          !outcome ||
+          outcome === "unknown" ||
+          value === undefined
+        )
+          throw new Error("Builderlab returned invalid turn status.");
+        statuses.set(taskId, outcome);
+      }
+      return statuses;
+    },
     link,
     activate,
-    async modelCatalog(
-      signal: AbortSignal,
-    ): Promise<readonly RemoteAgentModel[]> {
+    async modelCatalog(signal: AbortSignal): Promise<RemoteAgentModelCatalog> {
       const result = await readRequest("get-model-catalog", {}, signal);
       const models = result.models ?? [];
       if (
@@ -371,11 +412,21 @@ export function createAgentClient(
         )
       )
         throw new Error("Builderlab returned an invalid model catalog.");
-      return models.map((model) => ({
-        id: model.id,
-        displayName: model.display_name,
-        supportedReasoningEfforts: model.supported_reasoning_efforts,
-      }));
+      const { model_id: modelId, reasoning_effort: reasoningEffort } =
+        (result.recommended_selection ?? {}) as Record<string, unknown>;
+      const recommended = models.find((model) => model.id === modelId);
+      return {
+        models: models.map((model) => ({
+          id: model.id,
+          displayName: model.display_name,
+          supportedReasoningEfforts: model.supported_reasoning_efforts,
+        })),
+        // Advisory: an unknown or unsupported pair is dropped, never an error.
+        ...(typeof reasoningEffort === "string" &&
+        recommended?.supported_reasoning_efforts.includes(reasoningEffort)
+          ? { recommended: { modelId: recommended.id, reasoningEffort } }
+          : {}),
+      };
     },
     async updateModel(
       agent: RemoteAgent,

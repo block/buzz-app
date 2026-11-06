@@ -563,6 +563,7 @@ export function createTabs(
     openSettings,
     config,
     onChange,
+    onReadyChange,
     ...props
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
@@ -590,6 +591,12 @@ export function createTabs(
         : status?.state === "signed-out" || error === SIGN_IN_ERROR
           ? "login"
           : undefined;
+    const ready =
+      !step &&
+      !checking &&
+      !error &&
+      !!catalogModel(current.model || providerDefaults.model, data);
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const field = useRef<HTMLDivElement>(null);
     const hadStep = useRef(false);
     const handoff = useRef(false);
@@ -645,6 +652,16 @@ export function createTabs(
             onChange(readConfig({ ...current, ...modelChange(model, data) }))
           }
         />
+        {onReadyChange &&
+          !checking &&
+          !error &&
+          data &&
+          current.model &&
+          !catalogModel(current.model, data) && (
+            <p role="status" className="m-0 text-body-sm text-subtle">
+              This model isn’t available. Choose another model to continue.
+            </p>
+          )}
       </div>
     );
   }
@@ -960,11 +977,9 @@ export function createTabs(
   function TranscriptView({
     agent,
     conversation,
-    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation: SavedConversation;
-    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
     const [read, setRead] = useState<Read>();
     const [loading, setLoading] = useState(true);
@@ -1043,7 +1058,9 @@ export function createTabs(
           <ActivityTranscript
             transcript={read.transcript}
             agentName={agent.name}
-            openConversation={openConversation}
+            agentKey={agent.key}
+            agentPicture={agent.picture}
+            community={agent.relay}
             state={() => (read.transcript.working ? "working" : undefined)}
             before={
               read.transcript.more && (
@@ -1102,14 +1119,12 @@ export function createTabs(
     conversation,
     initialTranscript,
     close,
-    openConversation,
     listed,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
     close?: AgentViewProps<Config>["close"];
-    openConversation?: AgentViewProps<Config>["openConversation"];
     listed?: SavedConversation[];
   }) {
     useClockFormat();
@@ -1238,12 +1253,7 @@ export function createTabs(
             backLabel="Back to profile"
             onBack={back}
           >
-            <TranscriptView
-              key={open.key}
-              agent={agent}
-              conversation={open}
-              openConversation={openConversation}
-            />
+            <TranscriptView key={open.key} agent={agent} conversation={open} />
           </PanelSubview>
         )}
       </div>

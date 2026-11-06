@@ -5,7 +5,11 @@ import { communityDestination } from "../communities/destination";
 import { coveredCommunities, serverName } from "./community-servers";
 import { Button } from "../../shared/design-system/ui/Button";
 
+/** Native's rejection when the browser step outlasts its wait (`oauth_callback::TIMED_OUT`). */
+export const SIGN_IN_TIMED_OUT = "Sign-in timed out. Try again.";
+
 export function recoveryMessage(code: string) {
+  if (code === "sign-in-timed-out") return SIGN_IN_TIMED_OUT;
   if (code === "storage-busy")
     return "Secure storage is busy. Close another Buzz instance and try again.";
   if (code.startsWith("storage-"))
@@ -129,8 +133,10 @@ function Action({
   )
     return null;
   if (state.status === "signed-in") return null;
+  const server = serverName(state.authority);
   return (
     <>
+      <p className="text-body-sm">This community requires {server} sign-in.</p>
       <Button
         onClick={() => {
           setFailure("");
@@ -147,7 +153,9 @@ function Action({
           );
         }}
       >
-        {state.status === "signing-in" ? "Cancel sign-in" : "Sign in"}
+        {state.status === "signing-in"
+          ? "Cancel sign-in"
+          : `Sign in with ${server}`}
       </Button>
       {(failure || state.failure) && (
         <p role="alert" className="text-body-sm text-danger">

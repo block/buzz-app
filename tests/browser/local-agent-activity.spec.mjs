@@ -97,7 +97,10 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
     (id) => window.localAgentFixture.finish(id, false),
     second.id,
   );
-  await expect(waiting).toContainText("1 failed");
+  await expect(
+    secondRow.getByText("Couldn’t finish", { exact: true }),
+  ).toBeVisible();
+  await expect(waiting).toHaveText("Details");
   await expect(waiting).toHaveAccessibleName(
     /Local tester, Fixture provider unavailable/,
   );
@@ -160,7 +163,9 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
     (id) => window.localAgentFixture.finish(id, false),
     second.id,
   );
-  await expect(waiting).toContainText("1 failed");
+  await expect(
+    secondRow.getByText("Couldn’t finish", { exact: true }),
+  ).toBeVisible();
   // Dismiss hides only this device's view of the error; focus stays in the row.
   await waiting.focus();
   await page.keyboard.press("Enter");
@@ -755,8 +760,65 @@ test("the published-activity tab shows turns its agent published", async ({
     page.getByRole("tab", { name: "Activity", selected: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Published reply", { exact: true }),
+    page.locator("summary").getByText("Published reply", { exact: true }),
   ).toBeVisible();
+  // Real browser layout is required: jsdom cannot catch flex min-content collapse.
+  const path = "src/features/agents/ActivityTranscript.tsx";
+  app.observer(
+    frame("acp_read", {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "S",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "layout-tool",
+          kind: "read",
+          title: path,
+          status: "completed",
+          rawInput: { path },
+        },
+      },
+    }),
+    key,
+  );
+  const toolSummary = page.locator("summary").filter({ hasText: path });
+  await toolSummary.click();
+  for (const width of [390, 360]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const size of ["150%", "200%"]) {
+      await page.evaluate((value) => {
+        document.documentElement.style.fontSize = value;
+      }, size);
+      await expect
+        .poll(async () => {
+          const label = await toolSummary
+            .getByText(path, { exact: true })
+            .boundingBox();
+          return label?.width ?? 0;
+        })
+        .toBeGreaterThan(100);
+      await expect
+        .poll(async () => (await toolSummary.boundingBox())?.height ?? Infinity)
+        .toBeLessThan(300);
+      // The host inset, hero, and footer must agree after the dock narrows it.
+      await expect
+        .poll(() =>
+          toolSummary.evaluate((summary) => {
+            let host = summary.parentElement;
+            while (host && getComputedStyle(host).overflowY !== "auto")
+              host = host.parentElement;
+            if (!host) throw new Error("Missing activity scrollport");
+            return host.scrollWidth - host.clientWidth;
+          }),
+        )
+        .toBe(0);
+    }
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.removeProperty("font-size");
+  });
+  await page.setViewportSize({ width: 1280, height: 950 });
   // A turn's thread label opens that thread.
   const root = app.histories
     .get("primary/alpha")

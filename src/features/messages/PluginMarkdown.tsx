@@ -1,11 +1,14 @@
 import { useMemo } from "react";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import type { Navigation } from "../navigation/controller";
+import type { RelaySession } from "../relay/session";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
-import { SafeMarkdown, type SafeMarkdownProps } from "./SafeMarkdown";
+import { SafeMarkdown } from "./SafeMarkdown";
 
 /** Host document rendering with optional local link handling before host navigation. */
-export type MarkdownProps = Omit<SafeMarkdownProps, "openLink"> & {
+export type MarkdownProps = {
+  content: string;
+  session?: RelaySession | undefined;
   /** True handles the link locally; false falls through to the host. */
   openLink?: ((url: string) => boolean) | undefined;
 };

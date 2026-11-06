@@ -323,6 +323,8 @@ export type MessageComposerProps = {
   replyContext?: ReactNode;
   /** A choice for the next send, on its own line under the text; hidden while editing. */
   sendOption?: ReactNode;
+  /** Runs as Send takes the draft; with files, that send's `onSend` runs after they upload. */
+  clearSendOption?(): void;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
@@ -510,6 +512,7 @@ function Composer({
   replyParentId,
   replyContext,
   sendOption,
+  clearSendOption,
   mediaTimeSeconds,
   clearMediaTime,
   autoFocus = false,
@@ -3050,6 +3053,7 @@ function Composer({
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
+      clearSendOption?.();
       const changed =
         JSON.stringify(followUp) !== JSON.stringify(valueRef.current);
       valueRef.current = followUp;

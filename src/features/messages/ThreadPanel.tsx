@@ -2135,11 +2135,11 @@ function ThreadMessages({
               </span>
             )
           }
+          clearSendOption={() => setAlsoSend(undefined)}
           onSend={(id) => {
-            if (sendsToChannel && alsoSend === composerRoot.id) {
+            // The choice at Send, also when this runs after an upload.
+            if (sendsToChannel && alsoSend === composerRoot.id)
               copies.current.add(id);
-              setAlsoSend(undefined);
-            }
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

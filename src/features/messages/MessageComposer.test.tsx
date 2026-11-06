@@ -3102,6 +3102,38 @@ it("keeps a background send on its original thread when the composer moves", asy
   expect(tags.flat()).not.toContain("c".repeat(64));
 });
 
+it("clears the send option as Send takes a draft whose files still upload", async () => {
+  const root = "b".repeat(64);
+  const clearSendOption = vi.fn();
+  const onSend = vi.fn();
+  const h = await mountUploadComposer({ threadRootId: root });
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      threadRootId={root}
+      clearSendOption={clearSendOption}
+      onSend={onSend}
+    />,
+  );
+  attachByPaste(h.input(), attachmentFile());
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(clearSendOption).toHaveBeenCalledOnce());
+  expect(h.uploadCalls).toHaveLength(1);
+  expect(onSend).not.toHaveBeenCalled();
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(onSend).toHaveBeenCalledExactlyOnceWith(
+    h.publish.mock.calls[0]?.[0].id,
+  );
+  expect(clearSendOption).toHaveBeenCalledOnce();
+});
+
 it("names a failed background reply's thread and opens that thread", async () => {
   const root = "b".repeat(64);
   const h = await mountUploadComposer({ threadRootId: root });

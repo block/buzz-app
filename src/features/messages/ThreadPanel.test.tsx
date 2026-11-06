@@ -85,6 +85,8 @@ vi.mock("./MessageRow", () => ({
     </article>
   ),
 }));
+// A send with files hands off its draft at once and reports onSend after upload.
+let heldSend: ((id: string) => void) | undefined;
 vi.mock("./MessageComposer", () => ({
   MessageComposer: ({
     threadRootId,
@@ -97,6 +99,7 @@ vi.mock("./MessageComposer", () => ({
     focusRequest,
     threadSeed,
     sendOption,
+    clearSendOption,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -110,8 +113,23 @@ vi.mock("./MessageComposer", () => ({
       data-focus-request={focusRequest}
     >
       {sendOption}
-      <button type="button" onClick={() => onSend?.("own-reply")}>
+      <button
+        type="button"
+        onClick={() => {
+          clearSendOption?.();
+          onSend?.("own-reply");
+        }}
+      >
         Send fixture reply
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          clearSendOption?.();
+          heldSend = onSend;
+        }}
+      >
+        Send fixture upload
       </button>
     </section>
   ),
@@ -965,7 +983,7 @@ it("uses the resolved root with the shared composer and reveals an own send even
   h.render();
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
 });
-it("offers Also send where Send to channel is and copies each accepted reply once", async () => {
+it("offers Also send where Send to channel is, takes the choice at Send and copies each accepted reply once", async () => {
   const h = messagesHarness();
   const general = { id: "channel", name: "General" } as ChannelSummary;
   let list: ChannelList = { status: "ready", channels: [general] };
@@ -1027,18 +1045,31 @@ it("offers Also send where Send to channel is and copies each accepted reply onc
   h.snapshot.replies = [{ ...reply, delivery: "seen" }];
   h.render();
   expect(sendToChannel).toHaveBeenCalledOnce();
+  // Send takes the choice. A reply whose files upload first is still copied,
+  // and a choice made for the next reply meanwhile stays.
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Also send to #General" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture upload" }));
+  expect(option()).not.toBeChecked();
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Also send to #General" }),
+  );
+  act(() => heldSend?.("upload-reply"));
+  expect(option()).toBeChecked();
+  const upload = { ...reply, id: "upload-reply" };
+  h.snapshot.replies = [upload];
+  h.render();
+  expect(sendToChannel).toHaveBeenLastCalledWith(upload, row);
   // Write access can end before the relay accepts the reply. The refused copy
   // is reported as the reply's Send to channel action reports it.
   sendToChannel.mockImplementationOnce(() => {
     throw new Error("You don’t have write access to this conversation.");
   });
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: "Also send to #General" }),
-  );
   fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
   h.snapshot.replies = [{ ...reply }];
   h.render();
-  expect(sendToChannel).toHaveBeenCalledTimes(2);
+  expect(sendToChannel).toHaveBeenCalledTimes(3);
   expect(
     await screen.findByText(
       "You don’t have write access to this conversation.",

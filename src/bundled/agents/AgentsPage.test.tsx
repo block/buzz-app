@@ -6381,6 +6381,44 @@ describe("team editor visits", () => {
     expect(screen.getByRole("form", { name: "Edit Crew" })).toBeVisible();
   });
 
+  it("opens the routed team's card after Keep editing, with no new visit", async () => {
+    const user = userEvent.setup();
+    const ada = agent("Ada", 1);
+    const agentVisit = {
+      ...page,
+      route: { version: 1, params: { agent: ada.pubkey } },
+    } as const;
+    const view = setup([ada], {
+      dirtySettings: true,
+      teams: [crew("r1", "Hi.")],
+      page: at(agentVisit, "agent"),
+    });
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+    const where = at(visit, "team");
+    view.rerender(
+      <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+    );
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Keep editing" }),
+    );
+    await user.click(screen.getByRole("tab", { name: "Your teams" }));
+    await user.click(
+      within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+        name: "Crew",
+      }),
+    );
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Discard changes" }),
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeVisible();
+    expect(where.navigator.open).not.toHaveBeenCalled();
+  });
+
   it("leaves an editor open on Back while its Save runs, then closes it", async () => {
     const user = userEvent.setup();
     const view = setup([agent("Ada", 1)], {
@@ -6568,9 +6606,22 @@ describe("a team Save that finishes after its editor is gone", () => {
     ...base,
     route: { version: 1, params: { team: B.id } },
   } as const;
-  async function fixture() {
+  async function fixture({
+    save = true,
+    refresh = true,
+    nativeHistory = false,
+  } = {}) {
     const host = createNavigationController(createMemoryHistory(base));
-    const navigator = host.navigation;
+    // Browser history applies a dismissal on a later task, after Save's
+    // completion has run.
+    const navigator: typeof host.navigation = nativeHistory
+      ? {
+          ...host.navigation,
+          dismiss: (...args) => {
+            setTimeout(() => host.navigation.dismiss(...args));
+          },
+        }
+      : host.navigation;
     const view = setup([agent("Ada", 1)], { teams: [B] });
     function Host() {
       const { entry, attempt } = useSyncExternalStore(
@@ -6610,11 +6661,12 @@ describe("a team Save that finishes after its editor is gone", () => {
     let resolve!: () => void, reject!: () => void;
     const pending = new Promise<typeof B>((r, j) => {
       resolve = () => {
-        view.change({
-          teams: [
-            { ...B, instructions: "Submitted draft", revision: "rSaved" },
-          ],
-        });
+        if (refresh)
+          view.change({
+            teams: [
+              { ...B, instructions: "Submitted draft", revision: "rSaved" },
+            ],
+          });
         r(B);
       };
       reject = () => j(new Error("Late refusal"));
@@ -6629,10 +6681,12 @@ describe("a team Save that finishes after its editor is gone", () => {
       within(form).getByRole("textbox", { name: "Instructions" }),
       { target: { value: "Submitted draft" } },
     );
-    await userEvent
-      .setup()
-      .click(within(form).getByRole("button", { name: "Save" }));
-    expect(view.agents.saveTeam).toHaveBeenCalledOnce();
+    if (save) {
+      await userEvent
+        .setup()
+        .click(within(form).getByRole("button", { name: "Save" }));
+      expect(view.agents.saveTeam).toHaveBeenCalledOnce();
+    }
     const visitId = navigator.snapshot().entry.id;
     return {
       view,
@@ -6647,6 +6701,38 @@ describe("a team Save that finishes after its editor is gone", () => {
       },
     };
   }
+  it("closes the dirty editor and ends its visit on Close", async () => {
+    const f = await fixture({ save: false });
+    try {
+      await userEvent
+        .setup()
+        .click(
+          within(screen.getByRole("form", { name: "Edit Crew B" })).getByRole(
+            "button",
+            { name: "Close" },
+          ),
+        );
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+      expect(f.navigator.snapshot().entry.target).toEqual(base);
+    } finally {
+      f.dispose();
+    }
+  });
+
+  it("closes the editor once its Save succeeds, before the saved team arrives", async () => {
+    const f = await fixture({ refresh: false, nativeHistory: true });
+    try {
+      await act(async () => {
+        f.resolve();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+      expect(f.navigator.snapshot().entry.target).toEqual(base);
+    } finally {
+      f.dispose();
+    }
+  });
+
   it("ends B's visits after leaving the Agents page entirely", async () => {
     const f = await fixture();
     try {

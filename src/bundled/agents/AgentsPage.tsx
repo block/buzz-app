@@ -441,6 +441,16 @@ export function AgentsPage({
       setEditingTeam(id);
       return;
     }
+    // The team already routed here, as after Keep editing, has no new visit
+    // to open, so it opens as Back would have opened it.
+    if (id && id === routedTeam) {
+      browse(undefined, () => {
+        setSharedSelection(undefined);
+        setTab("teams");
+        setEditingTeam(id);
+      });
+      return;
+    }
     const page = agentProviderTarget(navigation.target);
     if (id) {
       void navigator.open({
@@ -449,10 +459,10 @@ export function AgentsPage({
       });
       return;
     }
-    // An editor Back left open closes here, and its visits end too; the
-    // team Back reached, if another, opens in its place.
+    // The editor closes here, as the route won't close a busy one, and its
+    // visits end too; the team Back reached, if another, opens in its place.
     const closing = editingTeam ?? routedTeam;
-    if (routedTeam !== closing) setEditingTeam(routedTeam);
+    setEditingTeam(routedTeam === closing ? undefined : routedTeam);
     if (closing) endTeamVisits(closing);
   };
   // Ends a team's visits in this page's account and community, and nothing

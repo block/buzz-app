@@ -305,6 +305,11 @@ that agent in Buzz; they do not notify the external app through this connection.
 - A plugin can require a recipient for a new conversation. Its default recipient
   also applies to a saved draft with no recipients. Your text and formatting stay.
   A recipient you select takes priority.
+- **Settings → Shortcuts → Editing messages → Edit last message with Up Arrow**
+  makes plain Up Arrow edit your most recent editable message when the channel
+  or thread composer is empty, instead of selecting messages. This device-local
+  choice starts off. On macOS, Command+Up Arrow keeps editing directly from an
+  empty composer with either choice.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. If an upload fails, its attachment shows the reason, **Retry**, and
@@ -327,12 +332,16 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Keyboard shortcuts** follow Slack where they can. Press ⌘/ (Ctrl+/ on
   Windows and Linux) to open **Settings → Shortcuts**, which lists them, lets
   you change most of them and also shows the fixed message-formatting keys. In
-  an empty composer, Up selects a message. Then E edits it, R reacts, T or →
-  replies in thread, U marks it unread, and Delete deletes your own message.
+  an empty composer, Up selects a message unless **Edit last message with Up Arrow**
+  is on. With a message selected, E edits it, R reacts, T or → replies in thread,
+  U marks it unread, and Delete deletes your own message.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
   Settings…** in the menu bar also opens Settings.
+- **Message width**: choose **Narrow** or **Wide** in **Settings → Appearance →
+  Interface**. Narrow is the default; Wide gives messages and the composer
+  50% more room when the pane is wide enough. The choice is saved on this device.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling
@@ -354,6 +363,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe
   between pages set to three fingers (or two or three fingers). Two-finger
   scrolling does not navigate.
+- **Closing the window** in the macOS app hides it; Buzz and its agents keep
+  running. Switching back to Buzz, for example with ⌘Tab or its Dock icon,
+  shows it again. A minimized window stays in the Dock. ⌘Q quits.
 - **Sharing a Solo chat** grants access to its conversation history, not only
   the next message. Search for a channel in its access dialog and click **Share**
   beside the result. This makes a Private chat **View only** and posts a link
@@ -412,6 +424,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   to their right. Bestie uses your configured avatar.
   The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
   the current app has a creation sidebar.
+- **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
+  fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
+  host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
 - **Drafts & sent** lists the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by
@@ -432,7 +447,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   and identity; narrow windows use a navigation drawer instead.
 - **Sidebar sections**: in **All**, use the arrow beside **Solo** or **Team** to
   collapse either section independently. Buzz remembers the collapsed sections
-  for that community and identity.
+  for that community and identity. Collapsed section headings highlight when
+  their channels have unread messages or thread replies. Muted channels do not
+  highlight the heading.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.
@@ -465,6 +482,9 @@ available rather than silently discarding it.
   uses. Available types and models depend on the platform, active plugins, and
   provider setup. Tools and connections depend on that agent's configuration;
   naming a service or adding instructions does not connect it.
+- On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
+  version, and agents usually pass it on to the shell commands they run. A
+  script or shell config can check for it to tell it is running under Buzz.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -472,16 +492,63 @@ available rather than silently discarding it.
   its type. Where offered, **Create agent** also lets people choose Thinking
   before the first config is saved; **Default** follows the provider's setting.
   Do not assume someone can edit another person's agent.
-- A desktop plugin can run native Codex on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
+- A desktop plugin can run native Codex or Claude on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
   remote choice stays remote after an app restart. If the target cannot be
   restored, Buzz shows an error and requires a new session.
-  The model control on a remote Codex card opens that agent's Settings. In update
+  The model control on a remote agent card opens that agent's Settings. In update
   reviews, its Thinking choice is read-only rather than using this computer's options.
+  Remote Claude uses the Claude sign-in on the target. It keeps each saved
+  conversation in that target's workspace. Stop ends its active turn.
+  Remote Claude usage totals and transcripts are unavailable.
 - When creating a Builderlab agent, sign in, choose a model from its family menu,
-  then choose a supported **Thinking** level. Both choices are required; changing
-  the model clears the thinking choice. Instructions are optional. **Create agent**
-  stays disabled until its name and required choices are complete; Builderlab
-  also waits for sign-in and its model catalog.
+  then choose a supported **Thinking** level. If Builderlab recommends a model
+  and thinking level, both start selected; change either to choose your own. Both
+  choices are required; changing the model clears the thinking choice.
+  Instructions are optional. **Create agent** stays disabled until its name and
+  required choices are complete; Builderlab also waits for sign-in and its model
+  catalog.
+- Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
+  Creating a remote agent on desktop opens an introduction with its chosen name
+  and avatar, explaining its online workspace and file access (Builderlab
+  includes its name and logo). The text streams in, or appears immediately with reduced motion;
+  choose **Let’s go** to create it, or **Back** to keep editing. The introduction
+  stays visible while creation runs; if creation fails, retry there or go Back
+  to edit the retained draft.
+  When signed out of Builderlab, use **Sign in** beside Harness first.
+  Model, Thinking and Create agent stay disabled until sign-in completes.
+  During browser sign-in, click the loading spinner to cancel. Account verification
+  cannot be cancelled.
+  Opening an existing Builderlab agent’s **Identity** automatically attempts
+  sign-in if needed. The compact action beside Harness shows a clickable loading
+  spinner that cancels browser sign-in. Cancelled, timed-out or failed attempts
+  wait for you to retry there. A signed-out hint explains that messaging still works
+  and sign-in enables editing. Model and Thinking stay disabled, and
+  Instructions appear after sign-in. Sheets appear for settings or account-access
+  errors. If the agent cannot be found, **Retry** reloads it without signing you out.
+  Native account-access errors open **Identity → Organization sign-in** without
+  ending the shared session. In live development, **Use another account** ends
+  the broker sign-in and opens its browser logout page. After signing in with
+  another account in the browser, return to Buzz and click **Retry** beside
+  Harness. A spinner appears for three seconds before Retry becomes available;
+  click it to end the wait early.
+  Chat, Memory and Activity use your Buzz community connection and do not require this Builderlab sign-in.
+  Builderlab agents work from your phone even when your desktop is off, and
+  cannot open files on your computer. Their Settings hint appears only while
+  signed in, beside a cloud. Local agents have no execution hint.
+  Workspace in Settings also explains that the runtime is shared with your
+  other agents in the workspace by default.
+  Cards and pane headings omit location captions. Both @ menus identify known
+  remote agents with **Remote**, alongside membership details. Local rows have
+  no location caption. The Harness menu keeps the Remote and Local group headings.
+  Owners also see **Remote** beside their agents’ names in messages and typing or
+  working previews when the local inventory confirms remote execution. Hover or
+  focus it for where the agent runs. A cloud precedes a remote agent’s current
+  step and pulses while working, staying still with reduced motion.
+  When a remote agent has no current step details, the activity popover shows
+  where it runs; received tool details take precedence.
+  Available model, effort and session controls keep their gauge beside Send.
+  Activity keeps its transcript and feed guidance without a separate workspace
+  note.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
@@ -689,3 +756,14 @@ even when no session is connected. Added access requires new approval.
 ### Reconnecting an old agent in a DM
 
 On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose a harness if the old type is unavailable; settings that were not saved use the selected type’s defaults. Review the inline controls, complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you mention an eligible agent you own. Only you see it, once per agent in the loaded conversation. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
+
+## Deleting an agent’s workflow
+
+In **Workflows → Owner → All channel workflows**, open the workflow’s actions
+menu and choose **Delete workflow**. You can delete workflows you authored or
+workflows authored by an agent whose ownership Buzz has verified belongs to you.
+This also works when your channel role is Guest.
+Confirm the deletion; pending or uncertain results remain in the workflow notices.
+If permission changes during confirmation, Buzz explains why deletion could not
+start and keeps any editor draft.
+Owning the agent does not grant permission to edit or run its workflow.

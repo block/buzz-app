@@ -1396,16 +1396,14 @@ export function createRelaySession(
       const lookUp = () => {
         // A channel no attendance wants now, or known since, is not read:
         // its batch would delay the reads that current watches wait for.
+        // A skipped channel keeps its agents-only mark: another agents' read
+        // may share it, and a viewer's lookup or join clears it.
         const wanted = new Set([...attended].flat());
         const batch = queued.filter(
           (id) => wanted.has(id) && !channels.queries.get?.(id),
         );
         for (const id of queued)
-          if (!batch.includes(id)) {
-            attendReading.delete(id);
-            if (!wanted.has(id) && !channels.queries.get?.(id))
-              learnedForAgents.delete(id);
-          }
+          if (!batch.includes(id)) attendReading.delete(id);
         if (!batch.length) return Promise.resolve();
         // In the background lane, so an interactive read never waits behind it.
         return resolve(batch, {
@@ -3405,6 +3403,9 @@ export function createRelaySession(
       // Recovery retries a failed or deferred roster read on its own.
       owed: () => channels.rosterOwed(),
       read: () => refreshRoster(),
+      // The skipped roster read would also have read again the metadata the
+      // drop left unconfirmed; that read stays owed.
+      resumed: () => void channels.confirmMetadata(),
     },
   };
   /** `continuous` is undefined when the route failed or went unreported. */
@@ -3416,6 +3417,7 @@ export function createRelaySession(
     if (continuous !== false && global.generation === liveGeneration) return;
     global.generation = liveGeneration;
     if (!continuous || global.owed()) global.read();
+    else if ("resumed" in global) global.resumed();
   };
   /** Per global route, the connection whose covered reads are settled. */
   const coveredGeneration = { profiles: -1, membership: -1 };

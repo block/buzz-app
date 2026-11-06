@@ -7,6 +7,7 @@
 // are installed in.
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
@@ -16,12 +17,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   awaitWithContext,
   BACKGROUND_CONTEXT,
+  withTelemetry,
 } from "@earendil-works/chord/context";
 import {
   clampThinkingLevel,
+  createModels,
+  createProvider,
+  formatUserAgent,
   getSupportedThinkingLevels,
   getSystemMessageText,
 } from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   AssistantEntry,
@@ -33,6 +42,7 @@ import {
   hook,
   ToolTask,
   ProviderDoc,
+  ResetEntry,
   SessionFailed,
   section,
   UsageDoc,
@@ -125,6 +135,334 @@ export function protectModels(models, inspect, conversationFor) {
             }
             signal?.throwIfAborted();
             return assembled;
+          },
+        });
+      };
+    },
+  });
+}
+
+/** the model gateway: the provider an agent eligible for gateway mode
+ * uses, in place of every other. Each model keeps the one protocol it was
+ * verified with (README: "gateway mode"); nothing retries on another. */
+export const GATEWAY = "buzz-gateway";
+const PROTOCOLS = {
+  "anthropic/v1/messages": {
+    api: "anthropic-messages",
+    path: "anthropic",
+    compat: { sendSessionAffinityHeaders: true },
+  },
+  "openai/v1/responses": { api: "openai-responses", path: "openai/v1" },
+  // Databricks rejects `store` and `max_completion_tokens` on this protocol.
+  "mlflow/v1/chat/completions": {
+    api: "openai-completions",
+    path: "mlflow/v1",
+    compat: {
+      sendSessionAffinityHeaders: true,
+      supportsStore: false,
+      maxTokensField: "max_tokens",
+    },
+  },
+};
+/** The protocol each model family is verified on; others use mlflow's. */
+const NATIVE = {
+  claude: "anthropic/v1/messages",
+  gpt: "openai/v1/responses",
+};
+/** A header name as the gateway compares it: ASCII lowercase, `_` as `-`. */
+const fold = (name) => name.toLowerCase().replaceAll("_", "-");
+/** Whether only Buzz may set `name` under the build's header profile: one
+ * of its context headers, or a name under one of its reserved prefixes. */
+const reserved = (profile, name) => {
+  const folded = fold(name);
+  return (
+    Object.values(profile.headers).includes(folded) ||
+    profile.reserved_prefixes.some((prefix) => folded.startsWith(prefix))
+  );
+};
+/** Headers the gateway takes a session from ahead of, or as, the affinity
+ * one: any other value would attribute the request to another session. */
+const CORRELATION =
+  /^(?:x-session-affinity|x-litellm-(?:session|trace)-id|agent-session-id|session-id|x-.+-session-id)$/i;
+/** The gateway's own credential stands in for this placeholder. */
+const GATEWAY_KEY = "buzz-gateway";
+
+/** What every gateway model has: what a run sizes its context by. */
+const GATEWAY_LIMITS = {
+  reasoning: false,
+  contextWindow: 128_000,
+  maxTokens: 16_384,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+};
+/** The api of a held gateway model, which no provider serves. */
+const HELD = "buzz-held";
+
+/** The gateway's models as `current()` has them now. Gateway runs left by
+ * an earlier host continue as soon as Pi is asked anything, and Pi fails a
+ * run whose model it can't find for good. So while `current().held` waits
+ * for the route they need, their models are held: found by id, with
+ * requests that wait for that route's models, and fail only if it has none
+ * by that id. */
+function heldModels(current) {
+  const request =
+    (name) =>
+    (model, context, options = {}) => {
+      if (model.api !== HELD)
+        return current().catalog[name](model, context, options);
+      return lazyStream(model, async () => {
+        const hold = current().held?.promise;
+        // Ended by the run's cancellation, which nothing is sent after.
+        if (hold) await awaitWithContext(hold, { abortSignal: options.signal });
+        const { catalog } = current();
+        const found = catalog.getModel(model.provider, model.id);
+        if (!found)
+          throw new Error(
+            `Model ${model.provider}/${model.id} is not available`,
+          );
+        return catalog[name](found, context, options);
+      });
+    };
+  const held = {
+    getModel: (provider, id) =>
+      current().catalog.getModel(provider, id) ??
+      (current().held && provider === GATEWAY
+        ? {
+            ...GATEWAY_LIMITS,
+            id,
+            name: id,
+            api: HELD,
+            provider,
+            baseUrl: "",
+            input: ["text"],
+          }
+        : undefined),
+    stream: request("stream"),
+    streamSimple: request("streamSimple"),
+    complete: (...args) => held.stream(...args).result(),
+    completeSimple: (...args) => held.streamSimple(...args).result(),
+  };
+  return new Proxy(held, {
+    get: (target, name) => {
+      if (Object.hasOwn(target, name)) return target[name];
+      const { catalog } = current();
+      const value = Reflect.get(catalog, name);
+      return typeof value === "function" ? value.bind(catalog) : value;
+    },
+  });
+}
+
+/** The gateway's root for Pi: its origin and the build's Pi upstream base,
+ * ahead of the vendor's public API paths. */
+const rootOf = (route) => `${route.gatewayOrigin}${route.base}`;
+
+/** The gateway's models for its serving endpoints under `root`: each served
+ * by the protocol its family is verified on, when the endpoint offers it. */
+export function gatewayModels(root, endpoints) {
+  const models = [];
+  for (const endpoint of endpoints) {
+    const served = endpoint.config?.served_entities?.[0]?.foundation_model;
+    const types = served?.api_types ?? [];
+    const protocol = [
+      NATIVE[served?.model_class],
+      "mlflow/v1/chat/completions",
+    ].find((type) => type && types.includes(type));
+    if (
+      !protocol ||
+      endpoint.state?.ready !== "READY" ||
+      endpoint.capabilities?.function_calling !== true
+    )
+      continue;
+    const { api, path, compat } = PROTOCOLS[protocol];
+    models.push({
+      id: endpoint.name,
+      name: served.display_name || endpoint.name,
+      api,
+      provider: GATEWAY,
+      baseUrl: `${root}/ai-gateway/${path}`,
+      input: endpoint.capabilities.image_input ? ["text", "image"] : ["text"],
+      ...GATEWAY_LIMITS,
+      ...(compat ? { compat } : {}),
+    });
+  }
+  const provider = createProvider({
+    id: GATEWAY,
+    name: "Model gateway",
+    auth: {
+      apiKey: {
+        name: "Model gateway",
+        resolve: async () => ({
+          auth: { apiKey: GATEWAY_KEY },
+          source: "gateway",
+        }),
+      },
+    },
+    models,
+    api: {
+      "anthropic-messages": anthropicMessagesApi(),
+      "openai-responses": openAIResponsesApi(),
+      "openai-completions": openAICompletionsApi(),
+    },
+  });
+  const catalog = createModels();
+  catalog.setProvider(provider);
+  return catalog;
+}
+
+/** A gateway response that drops the access a request was admitted with. */
+const refused = (response) =>
+  response.status === 401 || response.status === 403;
+
+/** The gateway's serving endpoints under `root`, as the agent's route may
+ * see them. A refusal is told to `denied` before it fails. */
+export async function discoverGateway(root, headers, signal, denied) {
+  const response = await fetch(`${root}/api/2.0/serving-endpoints`, {
+    headers: {
+      ...headers,
+      authorization: `Bearer ${GATEWAY_KEY}`,
+      "user-agent": formatUserAgent(),
+    },
+    signal,
+  });
+  if (refused(response)) await denied?.();
+  if (!response.ok)
+    throw new Error(
+      `The model gateway did not list models (HTTP ${response.status})`,
+    );
+  return (await response.json()).endpoints ?? [];
+}
+
+/** The final request headers: native ones, less any name the build's
+ * header `profile` reserves to Buzz, with the run's own context and the
+ * native session for affinity. A conflicting session would win over
+ * affinity at the gateway: refused. */
+export function composeGateway(profile, assembled, bundle, session) {
+  if (typeof session !== "string" || !session)
+    throw new Error("Gateway model request has no session");
+  if (!profile) throw new Error("Gateway model request has no header profile");
+  const names = Object.values(profile.headers);
+  for (const name of Object.keys(bundle ?? {}))
+    if (!names.includes(name))
+      throw new Error(
+        "A gateway bundle may only set the profile's context headers",
+      );
+  const headers = {};
+  for (const [name, value] of Object.entries(assembled ?? {})) {
+    if (reserved(profile, name)) continue;
+    if (CORRELATION.test(name)) {
+      if (value != null && value !== session)
+        throw new Error(
+          `Gateway model request has a conflicting ${name.toLowerCase()} header`,
+        );
+      continue;
+    }
+    headers[name] = value;
+  }
+  return { ...headers, ...bundle, "x-session-affinity": session };
+}
+
+const REQUEST = Symbol("buzz.request");
+/** The Buzz request a context's durable work serves, if it carries one. */
+export const requestOf = (telemetry) => telemetry?.[REQUEST];
+/** Telemetry that records nothing and carries only a Buzz request. Pi keeps
+ * the carrier in each submission's and task's trace and gives every model
+ * call its task's context, so a request's work, its compactions and retries,
+ * queued or continued after a restart, carries that request. An input's
+ * admission, whose parent is the root, takes its caller's request from its
+ * first link only: a later one, as a steer's to its run, never replaces it. */
+export function requestTelemetry(request) {
+  const propagation = {
+    inject: (telemetry) => {
+      const carried = requestOf(telemetry);
+      return carried === undefined ? undefined : { buzz: carried };
+    },
+    extract: (carrier) =>
+      context(typeof carrier?.buzz === "string" ? carrier.buzz : undefined),
+  };
+  const context = (request, admission = false) => {
+    let linked = false;
+    return {
+      get [REQUEST]() {
+        return request;
+      },
+      propagation,
+      startSpan: async (options, callback) =>
+        callback(
+          context(
+            request,
+            request === undefined && options.name === "pi.durable.submit",
+          ),
+        ),
+      addLink(link) {
+        if (admission && !linked) request = requestOf(link?.context);
+        linked = true;
+      },
+      addEvent() {},
+      setAttributes() {},
+      setStatus() {},
+    };
+  };
+  return context(request);
+}
+
+/** Models that send every request with its run's Buzz context, after any
+ * caller's header transform (protection's review). Requests the gateway's
+ * protocols do not cover fail closed. `contextFor` admits each request, at
+ * an eligibility revision: a 401 or 403 for it is told to `denied` with
+ * that revision before its client sees the response. */
+export function routeModels(models, contextFor, denied) {
+  const requests = new Set([
+    "stream",
+    "complete",
+    "streamSimple",
+    "completeSimple",
+  ]);
+  const unsupported = new Set([
+    "streamDeferred",
+    "fetchDeferred",
+    "cancelDeferred",
+    "generateImages",
+    "classify",
+  ]);
+  return new Proxy(models, {
+    get(target, name) {
+      if (unsupported.has(name))
+        return () => {
+          throw new Error(`Gateway mode does not support ${String(name)}`);
+        };
+      const method = Reflect.get(target, name);
+      if (!requests.has(name))
+        return typeof method === "function" ? method.bind(target) : method;
+      return (model, input, options = {}) => {
+        const caller = options.transformHeaders;
+        /** The revision this call was admitted at. */
+        let revision;
+        return method.call(target, model, input, {
+          ...options,
+          transformHeaders: async (assembled) => {
+            const headers = caller ? await caller(assembled) : assembled;
+            const admitted = await contextFor(
+              options.sessionId,
+              options.telemetry,
+              options.signal,
+            );
+            revision = admitted.revision;
+            return composeGateway(
+              admitted.profile,
+              headers,
+              admitted.bundle,
+              options.sessionId,
+            );
+          },
+          // This call's own: the caller's fetch, else the global one as the
+          // client would use it, with the response untouched.
+          fetch: async (input, init) => {
+            const response = await (options.fetch ?? globalThis.fetch)(
+              input,
+              init,
+            );
+            if (refused(response) && revision !== undefined)
+              await denied(revision);
+            return response;
           },
         });
       };
@@ -251,6 +589,31 @@ const Replies = defineDoc({
   initial: () => ({}),
   checkpointWhen,
 });
+/** How a request ran, by its request id, for its conversation's transcript:
+ * a wake the runner sent without the gateway, which no request row notes.
+ * Display only, never model context; recorded before submission. */
+const Notices = defineDoc({
+  kind: "buzz.notices",
+  version: 1,
+  scope: "session",
+  initial: () => ({}),
+  checkpointWhen,
+});
+/** The entry a noted turn that failed before Pi placed its prompt leaves in
+ * its conversation: the notice and that failure. Pi shows a model nothing of
+ * an entry of only a kind and data. */
+const NOTICE_ENTRY = "buzz.notice";
+/** gateway mode: each conversation key's session binding; each key's reset
+ * intent, until its next binding replaces it; and each request's Buzz
+ * context, recorded before it is submitted, so its work dispatches with it,
+ * also continued after a restart. */
+const GatewayRuns = defineDoc({
+  kind: "buzz.gateway",
+  version: 1,
+  scope: "session",
+  initial: () => ({ places: {}, resets: {}, requests: {} }),
+  checkpointWhen,
+});
 /** Why a request in a conversation Pi parked a task of is unanswered. */
 const PARKED = {
   status: "unanswered",
@@ -265,6 +628,8 @@ const THINKING = "medium";
 /** A lock left by a host that was killed is taken over after this long. */
 const STALE_MS = 30_000;
 const TEST_TIMEOUT_MS = 30_000;
+/** How long a gateway refusal waits for the plugin to take it. */
+const DENY_MS = 5_000;
 /** Entries a transcript reads at a time. */
 const PAGE = 200;
 /** Buzz tools are `buzz_<name>`, apart from Pi's own `read` and `edit`. */
@@ -598,6 +963,37 @@ export function serve({
   let called = 0;
   const write = (message) => output.write(`${JSON.stringify(message)}\n`);
   const notify = (method, params) => write({ method, params });
+  /** Tells the plugin the gateway refused one of the agent's requests at
+   * `revision`, waiting for it only so long: the request fails either way. */
+  const deny = (agent, revision) =>
+    call(
+      "gateway",
+      { op: "deny", agent, revision },
+      AbortSignal.timeout(DENY_MS),
+    ).catch((error) =>
+      console.error("Pi could not report a gateway refusal", error),
+    );
+  /** Agents whose refused listing dropped their route's access, until one
+   * is listed. A route probed ready again while the gateway still refuses
+   * its listing then fails to list, rather than being dropped and probed
+   * without end. A late refusal from an older revision drops nothing. */
+  const refusals = new Set();
+  /** The gateway's models for an agent's eligible route; a refusal is told
+   * with the route's revision. */
+  const discover = async (agent, route) => {
+    const endpoints = await discoverGateway(
+      rootOf(route),
+      route.discovery,
+      AbortSignal.timeout(TEST_TIMEOUT_MS),
+      async () => {
+        if (refusals.has(agent)) return;
+        if ((await deny(agent, route.revision))?.applied === true)
+          refusals.add(agent);
+      },
+    );
+    refusals.delete(agent);
+    return endpoints;
+  };
   const call = (method, params, signal) =>
     new Promise((resolve, reject) => {
       signal?.throwIfAborted();
@@ -623,21 +1019,34 @@ export function serve({
     });
 
   /** The model a turn runs on: the owner's pick, the agent's, or else Pi's
-   * default. */
-  async function choose({ provider, model, thinking, pick = {} }) {
+   * default; from the gateway's `catalog` for a turn bound to it, else from
+   * Pi's own providers. */
+  async function choose({ provider, model, thinking, pick = {} }, catalog) {
     const defaults = await piDefaults(dir);
     const id = provider || defaults.provider;
     const modelId =
       pick.model ||
       model ||
       (id === defaults.provider ? defaults.model : undefined);
-    if (id && !models.getProvider(id))
+    // Never another provider in gateway mode, nor another model.
+    if (catalog && id !== GATEWAY)
+      throw new Error(
+        `${models.getProvider(id)?.name ?? id ?? "Pi's default provider"} is unavailable in gateway mode. Choose a gateway model in the agent's Identity tab.`,
+      );
+    // A turn the runner sent without the gateway, on a gateway-only model.
+    // Pending a product decision: fails visibly, never another model.
+    if (!catalog && id === GATEWAY)
+      throw new Error(
+        "This agent's model is available only through the model gateway, which this turn ran without. Choose another model in its Identity tab, or try again later.",
+      );
+    catalog ??= models;
+    if (id && !catalog.getProvider(id))
       throw new Error(unknownProvider(id, packages.errors));
     if (!id || !modelId)
       throw new Error(
         "This agent has no model. Choose a provider and model in its Identity tab.",
       );
-    const found = models.getModel(id, modelId);
+    const found = catalog.getModel(id, modelId);
     if (!found) throw new Error(`Pi has no model ${modelId} from ${id}`);
     return {
       found,
@@ -647,6 +1056,45 @@ export function serve({
         pick.thinking || thinking || defaults.thinking || THINKING,
       ),
     };
+  }
+
+  /** Takes the route the plugin resolved for the agent, in place: its
+   * conversations, and the runs in them on Pi's own providers, carry on.
+   * Its gateway models change only with the route's kind and gateway. With
+   * no route, an open agent keeps its own; ordinary work needs none. */
+  async function routeTo(opened, route) {
+    if (!route) {
+      // Nor while another open takes one, or its left gateway runs wait for
+      // one.
+      if (opened.route || opened.taking || opened.held) return;
+      route = { kind: "external" };
+    }
+    const key =
+      route.kind === "external"
+        ? "external"
+        : `${route.kind} ${route.gatewayOrigin} ${route.identity?.community_id ?? ""}`;
+    if (opened.route && opened.routeKey === key) {
+      opened.route = route;
+      return;
+    }
+    const taking = Symbol(key);
+    opened.taking = taking;
+    try {
+      const catalog =
+        route.kind === "eligible"
+          ? gatewayModels(rootOf(route), await discover(opened.agent, route))
+          : createModels();
+      // Another open took a route while this one discovered.
+      if (opened.taking !== taking)
+        throw new Error("This agent's model route changed. Try again.");
+      opened.catalog = catalog;
+      opened.route = route;
+      opened.routeKey = key;
+      opened.held?.resolve();
+      opened.held = undefined;
+    } finally {
+      if (opened.taking === taking) opened.taking = undefined;
+    }
   }
 
   async function open(agent, lost) {
@@ -741,7 +1189,7 @@ export function serve({
       let harness;
       const conversationFor = async (sessionId) => {
         if (typeof sessionId !== "string" || !sessionId)
-          throw new Error("Protected model request has no session");
+          throw new Error("Pi model request has no session");
         if (!sessions.has(sessionId)) {
           for (const conversation of conversations) {
             const document = await harness.snapshot(
@@ -754,9 +1202,65 @@ export function serve({
           }
         }
         if (!sessions.has(sessionId))
-          throw new Error("Protected model request has an unknown session");
+          throw new Error("Pi model request has an unknown session");
         return sessions.get(sessionId);
       };
+      /** A gateway mode request's Buzz context: that of the Buzz request its
+       * durable task serves, as the task's trace carries it, recorded before
+       * that request was submitted. Only while the plugin still admits the
+       * binding it was made with. */
+      const contextFor = async (sessionId, telemetry, signal) => {
+        const conversation = await conversationFor(sessionId);
+        const request = requestOf(telemetry);
+        const record =
+          request !== undefined &&
+          (await harness.snapshot(GatewayRuns, context))?.requests?.[request];
+        if (!record)
+          throw new Error("Gateway model request has no Buzz context");
+        if (record.conversation !== conversation)
+          throw new Error(
+            "Gateway model request has another conversation's Buzz context",
+          );
+        const admitted = await call(
+          "gateway",
+          { op: "admit", agent, binding: record.binding },
+          signal,
+        );
+        if (admitted?.ok !== true)
+          throw new Error(
+            admitted?.message || "This agent can't use the model gateway now",
+          );
+        // The build's profile, which the route this host took carries.
+        const profile =
+          opened.route?.kind === "eligible" ? opened.route.profile : undefined;
+        return { bundle: record.bundle, revision: admitted.revision, profile };
+      };
+      let opened = { catalog: createModels() };
+      const viaGateway = routeModels(
+        heldModels(() => opened),
+        contextFor,
+        (revision) => deny(agent, revision),
+      );
+      // Only the gateway's provider carries a run's Buzz context; every
+      // other is Pi's own, as a turn sent without the gateway runs it.
+      const routed = new Proxy(
+        {},
+        {
+          get: (_, name) => {
+            const value = Reflect.get(models, name);
+            if (typeof value !== "function") return value;
+            return (...args) => {
+              const [first] = args;
+              const target =
+                (typeof first === "string" ? first : first?.provider) ===
+                GATEWAY
+                  ? viaGateway
+                  : models;
+              return Reflect.get(target, name).apply(target, args);
+            };
+          },
+        },
+      );
       install(CodingTools);
       // Loads the Buzz tools that are deferred when the model asks for them.
       install(createToolSearchExtension());
@@ -768,10 +1272,11 @@ export function serve({
         storage,
         {
           models: protectedAgent
-            ? protectModels(models, inspect, conversationFor)
-            : models,
+            ? protectModels(routed, inspect, conversationFor)
+            : routed,
           registry,
           settings: SETTINGS,
+          telemetry: requestTelemetry(),
           env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
           onReport: (error, info) => {
             console.error(`Pi reported ${info.type}`, error);
@@ -783,9 +1288,13 @@ export function serve({
         },
         context,
       );
-      const opened = {
+      opened = {
         agent,
         harness,
+        /** The route the plugin resolved, and the gateway's models for it. */
+        route: undefined,
+        routeKey: undefined,
+        catalog: opened.catalog,
         storage,
         registry,
         install,
@@ -812,8 +1321,13 @@ export function serve({
         conversations.add(place.conversation);
         opened.contexts.set(place.conversation, place.context);
       }
-      for (const submission of (await harness.inspect(context)).submissions)
+      const live = await harness.inspect(context);
+      for (const submission of live.submissions)
         conversations.add(submission.conversationId);
+      await prune(harness, live);
+      // Read before Pi has scheduled any of them.
+      if ((await gatewayWorkOf(harness, live.submissions)).conversations.length)
+        opened.held = Promise.withResolvers();
       return opened;
     } catch (error) {
       await release().catch(() => undefined);
@@ -861,6 +1375,20 @@ export function serve({
       );
     }
     return started;
+  }
+
+  /** An open agent's gateway models, listed again, when its route is
+   * eligible; none when it runs Pi's own providers. */
+  async function listed(agent) {
+    const opened = await agentOf(agent);
+    if (!opened.route)
+      throw new Error("This agent's model route is not known yet");
+    if (opened.route.kind !== "eligible") return;
+    opened.catalog = gatewayModels(
+      rootOf(opened.route),
+      await discover(agent, opened.route),
+    );
+    return opened.catalog;
   }
 
   async function agentOf(agent) {
@@ -968,15 +1496,17 @@ export function serve({
     const watched = opened.watched.get(conversation);
     if (watched) return watched;
     const stream = await watchEvents(opened.harness, conversation, context);
-    const state = { busy: Boolean(stream.snapshot.run), stream };
+    const state = { busy: Boolean(stream.snapshot.run), stream, idle: [] };
     opened.watched.set(conversation, state);
     const send = (event) =>
       notify("event", { agent: opened.agent, conversation, ...event });
     stream.start(async (events) => {
       for (const event of events)
         if (event.type === "run_start") state.busy = true;
-        else if (event.type === "run_end") state.busy = false;
-        else if (
+        else if (event.type === "run_end") {
+          state.busy = false;
+          for (const resolve of state.idle.splice(0)) resolve();
+        } else if (
           event.type === "submission" &&
           event.record.status === "placed" &&
           event.record.requestId
@@ -1120,14 +1650,193 @@ export function serve({
     return !submissions.some((s) => s.conversationId === conversation);
   }
 
+  /** Records a gateway mode request's binding and Buzz context before it is
+   * submitted, with its reply destination, in one commit. One already
+   * recorded, by a host that stopped before submitting it, is kept. A
+   * `manual` request, an owner's compaction, binds its key's session as it
+   * is and changes nothing of the key's. */
+  async function bind(
+    opened,
+    turn,
+    { key, fresh, gatewayTurn, reply, notice, conversation, manual },
+  ) {
+    const { request } = turn;
+    const { harness } = opened;
+    const doc = (await harness.snapshot(GatewayRuns, context)) ?? {};
+    let reset = key && !manual && doc.resets?.[key];
+    let persist;
+    // A request asked again keeps the mode it was bound in: one bound to the
+    // gateway never runs without it.
+    let record = doc.requests?.[request];
+    if (record && reset) {
+      // A reset since it was recorded makes it the reset's first request,
+      // unless Pi has it already: its run keeps its binding, and the reset
+      // waits for the next.
+      if (
+        await opened.storage.submissionByRequest(conversation, request, context)
+      )
+        reset = undefined;
+      else record = undefined;
+    }
+    // Only a turn the runner sent through the gateway binds.
+    if (gatewayTurn && !record) {
+      if (opened.route?.kind !== "eligible")
+        throw new Error("This agent's model route changed. Try again.");
+      // A model gateway mode refuses binds nothing; an owner's compaction
+      // keeps the model its conversation has.
+      if (!manual) await choose(turn, opened.catalog);
+      const bound = await call("gateway", {
+        op: "bind",
+        agent: opened.agent,
+        event:
+          !key && !manual
+            ? "standalone"
+            : fresh
+              ? "new_generation"
+              : reset
+                ? "reset"
+                : "resume",
+        saved: key ? doc.places?.[key] : undefined,
+        turn: gatewayTurn,
+      });
+      if (bound?.ok !== true)
+        throw new Error(
+          bound?.message || "This agent can't use the model gateway now",
+        );
+      record = {
+        conversation,
+        binding: bound.binding,
+        bundle: bound.bundle,
+        ...(manual ? { manual } : {}),
+      };
+      // The key's session from now on; a record kept from before has its
+      // own, which its first commit published with it.
+      if (key && !manual && bound.persist) persist = bound.binding;
+    }
+    // A reset is done once its key has the binding that replaces it: a turn
+    // without the gateway binds nothing, and leaves it for the next.
+    if (!record) reset = undefined;
+    if (!record && !reply && !notice) return false;
+    await harness.commit(async (tx) => {
+      const doc = await tx.doc(GatewayRuns);
+      if (record) {
+        if (persist) doc.places[key] = persist;
+        doc.requests[request] = record;
+      }
+      if (reset) delete doc.resets[key];
+      if (reply) (await tx.doc(Replies))[request] = reply;
+      if (notice) (await tx.doc(Notices))[request] = { conversation, notice };
+    }, context);
+    return Boolean(record);
+  }
+
+  /** The conversations of these unfinished submissions that run through the
+   * gateway, and the requests in them. */
+  async function gatewayWorkOf(harness, submissions) {
+    const conversations = new Map();
+    const requests = [];
+    for (const { conversationId, requestId } of submissions) {
+      if (!conversations.has(conversationId)) {
+        const found = await harness.conversation(conversationId, context);
+        conversations.set(
+          conversationId,
+          Boolean(found && (await gatewayRun(found))),
+        );
+      }
+      if (conversations.get(conversationId) && requestId)
+        requests.push(requestId);
+    }
+    return {
+      conversations: [...conversations]
+        .filter(([, gateway]) => gateway)
+        .map(([id]) => id),
+      requests,
+    };
+  }
+
+  /** Forgets the Buzz context of requests no durable work carries any
+   * longer, read from a complete picture of that work taken before Pi has
+   * scheduled any: a submitted request's once its submission settled and no
+   * task's trace has it, a manual one's once none has it. One not yet
+   * submitted, by a host that stopped before submitting it, is kept. */
+  async function prune(harness, { scheduling, tasks, submissions }) {
+    if (scheduling !== "paused") return;
+    const carried = new Set();
+    for (const { record } of tasks)
+      for (const trace of [record.trace, ...(record.links ?? [])])
+        if (typeof trace?.buzz === "string") carried.add(trace.buzz);
+    for (const submission of submissions) {
+      if (submission.requestId) carried.add(submission.requestId);
+      if (typeof submission.trace?.buzz === "string")
+        carried.add(submission.trace.buzz);
+    }
+    const { requests } = (await harness.snapshot(GatewayRuns, context)) ?? {};
+    if (!requests) return;
+    const stale = Object.keys(requests).filter((r) => !carried.has(r));
+    if (!stale.length) return;
+    await harness.commit(async (tx) => {
+      const doc = await tx.doc(GatewayRuns);
+      for (const request of stale) {
+        const record = doc.requests[request];
+        if (
+          record &&
+          (!record.conversation ||
+            record.manual ||
+            (await tx.submissionByRequest(record.conversation, request)))
+        )
+          delete doc.requests[request];
+      }
+    }, context);
+  }
+
+  /** Completes a key's `new` session: its reset intent's write, submitted
+   * once by its request id, so asking again submits nothing more. The
+   * intent stays until the key's next binding replaces it. */
+  async function resetPending(harness, conversation, key) {
+    const reset = (await harness.snapshot(GatewayRuns, context))?.resets?.[key];
+    if (!reset) return;
+    await conversation.submit(
+      {
+        type: "write",
+        entry: { kind: ResetEntry.kind, head: "self" },
+        requestId: reset.request,
+      },
+      context,
+    );
+  }
+
+  /** Whether the conversation's runs go through the gateway: its model is
+   * the gateway's, as each turn not steering configures it. */
+  async function gatewayRun(conversation) {
+    return (await conversation.agent(context)).model?.provider === GATEWAY;
+  }
+
+  /** Waits until the conversation holds no unfinished input in the other
+   * mode than `bound`, read from Pi's storage; whether it holds any, in the
+   * same mode, decides that the turn steers. A waiter is listed before each
+   * read, so a run that ends during it still wakes it; a closing agent ends
+   * the wait. */
+  async function settledMode(opened, conversation, state, bound) {
+    for (;;) {
+      const ended = new Promise((resolve) => state.idle.push(resolve));
+      if (opened.closing) throw new Error("This agent was closed.");
+      const { submissions } = await opened.harness.inspect(context);
+      const busy = submissions.some(
+        (s) => s.type === "input" && s.conversationId === conversation.id,
+      );
+      if (!busy || (await gatewayRun(conversation)) === bound) return busy;
+      await ended;
+    }
+  }
+
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
    * as in Claude. The agent's `core` memory read for it is the
    * conversation's latest; a failed read shows it none if not yet shown. */
-  async function submit(opened, conversation, turn, busy, refresh) {
+  async function submit(opened, conversation, turn, busy, bound, refresh) {
     opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
-    const chosen = await choose(turn);
+    const chosen = await choose(turn, bound ? opened.catalog : undefined);
     const change = steers
       ? {
           ...(turn.pick?.model ? { model: chosen.model } : {}),
@@ -1148,6 +1857,7 @@ export function serve({
       if (!prompt) return;
       turn = { ...turn, ...prompt };
     }
+    // Its work carries its request: see `requestTelemetry`.
     const submission = await conversation.submit(
       {
         type: "input",
@@ -1155,7 +1865,7 @@ export function serve({
         whenBusy: "steer",
         requestId: turn.request,
       },
-      context,
+      withTelemetry(requestTelemetry(turn.request), context),
     );
     return { submission: submission.id, conversation: conversation.id };
   }
@@ -1234,8 +1944,19 @@ export function serve({
         auth: dir,
       };
     },
-    async providers() {
+    /** Pi's providers; for an agent in gateway mode, the gateway's, with every
+     * other one listed as unavailable. */
+    async providers({ agent } = {}) {
+      const gated = agent && (await listed(agent));
       const providers = [];
+      if (gated)
+        providers.push({
+          id: GATEWAY,
+          name: "Model gateway",
+          key: false,
+          signsIn: false,
+          configured: "gateway",
+        });
       for (const provider of models.getProviders()) {
         if (!models.getModels(provider.id).length) continue;
         const auth = await models.checkAuth(provider.id).catch(() => undefined);
@@ -1245,17 +1966,25 @@ export function serve({
           key: Boolean(provider.auth.apiKey),
           signsIn: Boolean(provider.auth.oauth),
           ...(auth ? { configured: auth.source ?? auth.type } : {}),
+          ...(gated ? { unavailable: "Unavailable in gateway mode" } : {}),
         });
       }
-      providers.sort((a, b) => a.name.localeCompare(b.name));
+      // The gateway, the only one a gated agent may use, first; then by name.
+      providers.sort(
+        (a, b) =>
+          Number(a.id !== GATEWAY) - Number(b.id !== GATEWAY) ||
+          a.name.localeCompare(b.name),
+      );
       return { providers, defaults: await piDefaults(dir) };
     },
     /** What Pi's settings pick now, which the `pi` command changes. */
     defaults() {
       return piDefaults(dir);
     },
-    models({ provider }) {
-      return models.getModels(provider).map((model) => ({
+    async models({ provider, agent }) {
+      const gated = agent && (await listed(agent));
+      if (gated && provider !== GATEWAY) return [];
+      return (gated || models).getModels(provider).map((model) => ({
         id: model.id,
         name: model.name,
         thinking: getSupportedThinkingLevels(model),
@@ -1308,13 +2037,31 @@ export function serve({
         : { ok: true, message: `Connected to ${model.modelId}` };
     },
     /** Opens the agent's storage, once, with its Buzz tools as they are now. */
-    async open({ agent, tools, hint }) {
+    async open({ agent, tools, hint, route }) {
       const opened = await opening(agent);
+      await routeTo(opened, route);
+      // Held for runs that have since ended.
+      if (opened.held) {
+        const { submissions } = await opened.harness.inspect(context);
+        if (
+          !(await gatewayWorkOf(opened.harness, submissions)).conversations
+            .length
+        ) {
+          opened.held.resolve();
+          opened.held = undefined;
+        }
+      }
       const listed = JSON.stringify([tools, hint]);
       if (opened.tools !== listed) {
         opened.install(buzz(opened, tools, hint));
         opened.tools = listed;
       }
+      // Whether it has the gateway's models, which its gateway runs need,
+      // and whether runs it left wait for them.
+      return {
+        gateway: opened.route?.kind === "eligible",
+        held: Boolean(opened.held),
+      };
     },
     /** The agent's Buzz conversations: each key's Pi conversation, and the
      * newest message it has been shown. Storage opened only to be read runs
@@ -1330,6 +2077,14 @@ export function serve({
         })),
       };
     },
+    /** The unfinished work running through the gateway: its conversations,
+     * and the requests in them, which a route change ends. */
+    async gatewayWork({ agent }) {
+      const opened = await agents.get(agent)?.catch(() => undefined);
+      if (!opened || opened.closing) return { conversations: [], requests: [] };
+      const { submissions } = await opened.harness.inspect(context);
+      return gatewayWorkOf(opened.harness, submissions);
+    },
     /** A page of a conversation's entries, newest first, as a transcript
      * shows them. */
     async entries({ agent, conversation, cursor }) {
@@ -1338,6 +2093,21 @@ export function serve({
       if (!found) return { entries: [] };
       const page = await found.entries({}, PAGE, cursor, context);
       const oldest = page.items.at(-1);
+      // Each noted request's own prompt entry, once Pi placed it.
+      const noted = new Map();
+      const notices = (await harness.snapshot(Notices, context)) ?? {};
+      for (const [request, { conversation: id, notice }] of Object.entries(
+        notices,
+      )) {
+        if (id !== found.id) continue;
+        const submission = await storage.submissionByRequest(
+          found.id,
+          request,
+          context,
+        );
+        if (submission?.entry !== undefined)
+          noted.set(submission.entry, notice);
+      }
       return {
         // The session the page's oldest entry is in, however old its reset.
         ...(oldest
@@ -1346,6 +2116,12 @@ export function serve({
         entries: page.items.map(({ id, kind, model, data }) => ({
           id,
           kind,
+          ...(noted.has(id) && { notice: noted.get(id) }),
+          ...(kind === NOTICE_ENTRY && {
+            notice: data.notice,
+            error: data.error,
+            at: data.at,
+          }),
           // Pi writes this result itself for a call an abort cut off.
           ...(data?.diagnostics?.some?.((d) => d.code === "aborted") && {
             aborted: true,
@@ -1385,7 +2161,17 @@ export function serve({
     },
     /** A turn for a conversation key: its Pi conversation, made the first
      * time, takes the request, or steers its run if one is working. */
-    async deliver({ agent, key, at, context: tools, reply, refresh, ...turn }) {
+    async deliver({
+      agent,
+      key,
+      at,
+      context: tools,
+      reply,
+      notice,
+      refresh,
+      gatewayTurn,
+      ...turn
+    }) {
       const opened = await agentOf(agent);
       const prior = opened.queues.get(key);
       const delivered = (async () => {
@@ -1394,6 +2180,7 @@ export function serve({
         const place = (await harness.snapshot(Places, context))?.[key];
         let conversation =
           place && (await harness.conversation(place.conversation, context));
+        const fresh = !conversation;
         if (!conversation) {
           conversation = await harness.createConversation(
             { ownership: { kind: "ownerless" } },
@@ -1413,38 +2200,99 @@ export function serve({
         }
         opened.conversations.add(conversation.id);
         opened.contexts.set(conversation.id, tools);
-        const { busy } = await watch(opened, conversation.id);
-        // Read before the turn is submitted: what Pi then holds decides it.
-        const session =
-          !busy && (await firstTurn(opened, conversation.id))
-            ? await sessionOf(opened.storage, conversation.id)
-            : undefined;
-        if (reply)
-          await harness.commit(async (tx) => {
-            (await tx.doc(Replies))[turn.request] = reply;
-          }, context);
-        const submitted = await submit(
-          opened,
-          conversation,
-          turn,
-          busy,
-          refresh
-            ? () => call("prompt", { agent, request: turn.request })
-            : undefined,
-        );
-        if (!submitted) return false;
-        if (session !== undefined) Object.assign(submitted, { session });
+        const state = await watch(opened, conversation.id);
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
-        await harness.commit(async (tx) => {
-          const places = await tx.doc(Places);
-          places[key] = {
+        const placed = async (submitted) => {
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            places[key] = {
+              conversation: conversation.id,
+              context: tools,
+              seen: Math.max(at, places[key]?.seen ?? 0),
+            };
+          }, context);
+          return submitted;
+        };
+        // A request Pi has already is answered by its own submission, in the
+        // mode it ran in: asked again, it binds and configures nothing. Its
+        // run, continuing, reads the memory and messages it was given.
+        const held = await opened.storage.submissionByRequest(
+          conversation.id,
+          turn.request,
+          context,
+        );
+        if (held) {
+          opened.cores.set(conversation.id, turn.core);
+          return placed({ submission: held.id, conversation: conversation.id });
+        }
+        try {
+          await resetPending(harness, conversation, key);
+          const taken = opened.routeKey;
+          const bound = await bind(opened, turn, {
+            key,
+            fresh,
+            gatewayTurn,
+            reply,
+            notice,
             conversation: conversation.id,
-            context: tools,
-            seen: Math.max(at, places[key]?.seen ?? 0),
-          };
-        }, context);
-        return submitted;
+          });
+          // A run steers only with a turn of its own mode: one through the
+          // gateway, or not, starts once Pi holds no work in the other mode.
+          // What Pi holds is read from its storage, not from the runs it has
+          // been seen to start, which a turn just dispatched may not be yet.
+          const busy = await settledMode(opened, conversation, state, bound);
+          // Bound on a route the agent left while it waited: never sent. Its
+          // record keeps it in the gateway's mode if it is asked again.
+          if (bound && opened.routeKey !== taken)
+            throw new Error("This agent's model route changed. Try again.");
+          // Read before the turn is submitted: what Pi then holds decides it.
+          const session =
+            !busy && (await firstTurn(opened, conversation.id))
+              ? await sessionOf(opened.storage, conversation.id)
+              : undefined;
+          const submitted = await submit(
+            opened,
+            conversation,
+            turn,
+            busy,
+            bound,
+            refresh
+              ? () => call("prompt", { agent, request: turn.request })
+              : undefined,
+          );
+          if (!submitted) {
+            // Withdrawn before Pi had it: nothing will dispatch for it.
+            await harness.commit(async (tx) => {
+              delete (await tx.doc(GatewayRuns)).requests[turn.request];
+              delete (await tx.doc(Notices))[turn.request];
+            }, context);
+            return false;
+          }
+          if (session !== undefined) Object.assign(submitted, { session });
+          return placed(submitted);
+        } catch (error) {
+          // A noted turn that failed before Pi placed its prompt shows its
+          // notice beside that failure, in an entry no model sees.
+          if (notice)
+            await conversation
+              .submit(
+                {
+                  type: "write",
+                  entry: {
+                    kind: NOTICE_ENTRY,
+                    data: {
+                      notice,
+                      error: error?.message ?? String(error),
+                      at: Date.now(),
+                    },
+                  },
+                },
+                context,
+              )
+              .catch(() => undefined);
+          throw error;
+        }
       })();
       opened.queues.set(key, delivered);
       const done = () => {
@@ -1456,14 +2304,18 @@ export function serve({
     /** A one-off turn in a conversation of its own, with no default
      * destination for its tools. Nothing watches it: it has no other
      * requests, and no Activity. */
-    async once({ agent, ...turn }) {
+    async once({ agent, gatewayTurn, ...turn }) {
       const opened = await agentOf(agent);
       const conversation = await opened.harness.createConversation(
         { ownership: { kind: "ownerless" } },
         context,
       );
+      const bound = await bind(opened, turn, {
+        gatewayTurn,
+        conversation: conversation.id,
+      });
       opened.conversations.add(conversation.id);
-      return submit(opened, conversation, turn, false);
+      return submit(opened, conversation, turn, false, bound);
     },
     /** The requests of runs Pi has not finished, with where each one's tools
      * default to when the agent has a place for its conversation; a one-off
@@ -1475,9 +2327,10 @@ export function serve({
       const replies = (await opened.harness.snapshot(Replies, context)) ?? {};
       return {
         submissions: submissions.flatMap(
-          ({ id, conversationId, requestId }) => {
+          ({ id, type, conversationId, requestId }) => {
             const place = opened.contexts.get(conversationId);
-            return requestId
+            // A reset intent's write has a request id too.
+            return requestId && type === "input"
               ? [
                   {
                     submission: id,
@@ -1528,6 +2381,8 @@ export function serve({
         (result.status === "done" || result.status === "unanswered")
       ) {
         try {
+          // Its Buzz context stays while its work may still dispatch, as a
+          // compaction it left: `prune` forgets it.
           await opened.harness.commit(async (tx) => {
             delete (await tx.doc(Replies))[request];
           }, context);
@@ -1545,27 +2400,56 @@ export function serve({
      * one: `interrupt` aborts its run and any compaction, `compact` summarizes
      * it and settles once the summary is placed, and `new` starts a new
      * context, shown the whole Buzz conversation at its next turn. */
-    async session({ agent, key, action }) {
-      const { harness } = await agentOf(agent);
-      const place = (await harness.snapshot(Places, context))?.[key];
-      const conversation =
-        place && (await harness.conversation(place.conversation, context));
-      if (!conversation) return;
-      if (action === "interrupt") return conversation.abort(context);
-      if (action === "new") {
-        await conversation.reset(undefined, context);
-        await harness.commit(async (tx) => {
-          const places = await tx.doc(Places);
-          if (places[key]) places[key] = { ...places[key], seen: 0 };
-        }, context);
-        return;
-      }
-      const { outcome } = (
-        await harness.waitForTask(
-          await conversation.compact(undefined, context),
-          context,
-        )
-      ).state;
+    async session({ agent, key, action, gatewayTurn }) {
+      const opened = await agentOf(agent);
+      const { harness } = opened;
+      const find = async () => {
+        const place = (await harness.snapshot(Places, context))?.[key];
+        return (
+          place && (await harness.conversation(place.conversation, context))
+        );
+      };
+      if (action === "interrupt") return (await find())?.abort(context);
+      // After the key's deliveries, so none binds across the reset, and
+      // one making its conversation has.
+      const prior = opened.queues.get(key);
+      const acted = (async () => {
+        await prior?.catch(() => undefined);
+        const conversation = await find();
+        if (!conversation) return;
+        if (action === "new") {
+          // Intended in one commit with what the next turn is shown, then
+          // done: a host that stops between them does it at the next.
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            if (places[key]) places[key] = { ...places[key], seen: 0 };
+            (await tx.doc(GatewayRuns)).resets[key] = {
+              request: `reset/${randomUUID()}`,
+            };
+          }, context);
+          return resetPending(harness, conversation, key);
+        }
+        await resetPending(harness, conversation, key);
+        // The compaction's own request, which its task's trace carries.
+        const request = `manual/${randomUUID()}`;
+        await bind(
+          opened,
+          { request },
+          { key, gatewayTurn, conversation: conversation.id, manual: true },
+        );
+        return conversation.compact(
+          undefined,
+          withTelemetry(requestTelemetry(request), context),
+        );
+      })();
+      opened.queues.set(key, acted);
+      const done = () => {
+        if (opened.queues.get(key) === acted) opened.queues.delete(key);
+      };
+      void acted.then(done, done);
+      const task = await acted;
+      if (action === "new" || task === undefined) return;
+      const { outcome } = (await harness.waitForTask(task, context)).state;
       if (outcome.status === "failed") throw new Error(outcome.error.message);
       if (outcome.status !== "completed") return;
       const { submissionId } = outcome.result;
@@ -1586,7 +2470,10 @@ export function serve({
     if (!opened) return;
     if (!opened.closing)
       opened.closing = (async () => {
-        for (const { stream } of opened.watched.values()) await stream.stop();
+        for (const { stream, idle } of opened.watched.values()) {
+          for (const resolve of idle.splice(0)) resolve();
+          await stream.stop();
+        }
         await opened.harness.close(context);
         // A compromised lock may already be released. Native execution has
         // ended above; releasing ownership is cleanup, not its acknowledgement.

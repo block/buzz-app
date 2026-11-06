@@ -55,7 +55,9 @@ import {
   type AgentType,
   type ConfigBinding,
   type Delivery,
+  type StandaloneTurn,
   type Trigger,
+  type TurnResult,
   fromOwner,
   HOSTED_INSTRUCTIONS_CHANGED,
   teamPrompt,
@@ -15881,6 +15883,123 @@ describe("agent gateway gate", () => {
       message_id: event("b3").id,
       thread_id: null,
     });
+  });
+
+  /** A gateway-capable type that answers `run` and, given one, `runOnce`;
+   * the agent has attention on with `attention`. */
+  async function automated(
+    attention: Record<string, unknown>,
+    runOnce?: (
+      turn: StandaloneTurn<Record<string, never>>,
+    ) => Promise<TurnResult>,
+  ) {
+    ready.mockReturnValue(eligible);
+    const f = await setup();
+    const run = vi.fn<(delivery: Delivery<Record<string, never>>) => void>();
+    f.plugin.agents.register({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: {} }),
+      run,
+      ...(runOnce ? { runOnce } : {}),
+      gateway: { harness: "relay" },
+    });
+    await f.service.create({ type: "example/relay", name: "Relay" });
+    await f.service.save(bot, { attentionEnabled: true, attention } as never);
+    return { ...f, run };
+  }
+  const timer = (extra: Record<string, unknown> = {}) => ({
+    type: "timer",
+    interest_id: "default",
+    prompt: "check in",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 1,
+    expires_at: null,
+    ...extra,
+  });
+
+  it("gives a timer that wakes a conversation its channel and no message", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const f = await automated({ "watch/tick": timer({ channel }) });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const delivery = f.run.mock.calls[0]?.[0];
+      // Delivered as its conversation's wake; the context is the timer's.
+      expect(delivery?.trigger).toMatchObject({
+        type: "attention",
+        channel,
+        topLevel: true,
+      });
+      expect(delivery?.gateway?.route).toBe(eligible);
+      expect(delivery?.gateway?.turn).toEqual({
+        channel_id: channel,
+        message_id: null,
+        thread_id: null,
+      });
+      expect(Object.isFrozen(delivery?.gateway?.turn)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a standalone timer turn no channel, message or thread", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const turns: StandaloneTurn<Record<string, never>>[] = [];
+      const f = await automated({ "watch/tick": timer() }, async (turn) => {
+        turns.push(turn);
+        return { ok: true };
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(turns).toHaveLength(1));
+      expect(turns[0]?.key).toMatch(/^timer\//);
+      expect(turns[0]?.delivery.trigger.type).toBe("timer");
+      expect(turns[0]?.delivery.gateway?.route).toBe(eligible);
+      expect(turns[0]?.delivery.gateway?.turn).toEqual({
+        channel_id: null,
+        message_id: null,
+        thread_id: null,
+      });
+      expect(f.run).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives a standalone watch turn the watched event as its message, in that event's channel", async () => {
+    const turns: StandaloneTurn<Record<string, never>>[] = [];
+    const f = await automated(
+      {
+        "watch/deploys": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [9],
+        },
+      },
+      async (turn) => {
+        turns.push(turn);
+        return { ok: true };
+      },
+    );
+    const watched = event("c1", { pubkey: viewer, tags: [["h", channel]] });
+    f.emit({ events: [watched] });
+    await vi.waitFor(() => expect(turns).toHaveLength(1));
+    expect(turns[0]?.delivery.trigger).toMatchObject({
+      type: "watch",
+      event: { id: watched.id },
+    });
+    expect(turns[0]?.delivery.gateway?.turn).toEqual({
+      channel_id: channel,
+      message_id: watched.id,
+      thread_id: null,
+    });
+    expect(f.run).not.toHaveBeenCalled();
   });
 
   it("adds no gateway field and asks for no route when the build has no configuration", async () => {

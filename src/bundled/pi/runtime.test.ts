@@ -13,10 +13,23 @@ import type {
   Delivery,
   StandaloneTurn,
 } from "../../features/agents/service";
+import type { HostResponse } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
-import { deferred, fakeHost, type Handler } from "./pi-testing";
+import { GatewayRoutes } from "../../features/agents/gateway/route";
+import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
+import { turnContext } from "../../features/agents/gateway/turn";
+import { Pi } from "./pi";
+import {
+  deferred,
+  fakeHost,
+  type Handler,
+  PI_UPSTREAM,
+  piGatewayDescriptor,
+} from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
+import { PiSetup } from "./setup";
+import type { GatewayRoute, GatewaySeam } from "./gateway";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -59,6 +72,7 @@ function setup(
   /** The channel's Canvas, as it reads now. */
   canvas?: { content: string; pubkey?: string },
   repositories?: (scope: string | undefined) => string,
+  seam?: GatewaySeam,
 ) {
   let submissions = 0;
   const host = fakeHost({
@@ -69,6 +83,7 @@ function setup(
     once: () => ({ submission: ++submissions, conversation: 99 }),
     place: () => ({ seen: 0 }),
     unfinished: () => ({ submissions: [] }),
+    gatewayWork: () => ({ conversations: [], requests: [] }),
     wait: () => new Promise(() => {}),
     ...handlers,
   });
@@ -135,6 +150,10 @@ function setup(
       connection.live && key === self
         ? (agent as unknown as AgentHandle)
         : undefined,
+    undefined,
+    undefined,
+    undefined,
+    seam,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -2510,3 +2529,1093 @@ it.each(["stop", "retire"])(
     expect(check).not.toHaveBeenCalled();
   },
 );
+
+/** A gateway seam whose route the test moves, telling subscribers as the
+ * real one does; `routeReady` waits for `ready` while the route is pending. */
+function routes(
+  initial: GatewayRoute,
+  /** Runs as the route is found ready, before `routeReady` returns. */
+  onReady = () => {},
+  /** Runs as the route is read, after `routeFor` has read it. */
+  onRead = () => {},
+) {
+  let route = initial;
+  const listeners = new Set<() => void>();
+  const ready = deferred<void>();
+  /** Opens that have asked for the route to be ready. */
+  const asked = { count: 0 };
+  const move = (next: GatewayRoute) => {
+    route = next;
+    for (const listener of [...listeners]) listener();
+  };
+  const seam: GatewaySeam = {
+    routeReady: async () => {
+      asked.count++;
+      await ready.promise;
+      const found = route;
+      onReady();
+      return found;
+    },
+    routeFor: () => {
+      const found = route;
+      onRead();
+      return found;
+    },
+    subscribeRoute: (_key, listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    invalidateRoute: () => {},
+    bindSession: () => ({
+      ok: true,
+      binding: { v: 1, client_session_id: SESSION, identity },
+      persist: true,
+    }),
+    inferenceBundle: () => ({ ok: true, value: {} }),
+    discoveryBundle: () => ({ ok: true, value: {} }),
+    bindingAdmits: () => ({ ok: true, revision: 0 }),
+    turnContext: () => ({
+      channel_id: null,
+      message_id: null,
+      thread_id: null,
+    }),
+    upstreamFor: () => PI_UPSTREAM,
+  };
+  return { seam, move, ready, asked };
+}
+const SESSION = "11111111-1111-4111-8111-111111111111";
+const identity = {
+  community_id: "c1",
+  human_pubkey: alice,
+  agent_pubkey: self,
+};
+const eligible: GatewayRoute = {
+  kind: "eligible",
+  revision: 1,
+  gatewayOrigin: "https://gateway.test",
+  identity,
+  profile: VECTOR_PROFILE,
+  harnesses: ["pi"],
+};
+const pending: GatewayRoute = {
+  kind: "blocked",
+  revision: 0,
+  gatewayOrigin: "https://gateway.test",
+  reason: "readiness_pending",
+  message: "The gateway is starting",
+};
+
+/** A gateway turn's delivery: admitted on `route`, as the runner froze it. */
+const gatewayTurn = (route: GatewayRoute = eligible) =>
+  ({
+    gateway: {
+      route,
+      turn: { channel_id: null, message_id: null, thread_id: null },
+      upstream: PI_UPSTREAM,
+    },
+  }) as never;
+/** A host that places each delivery in its own conversation, from 7, whose
+ * runs end only when aborted or `end`ed; `gateway` says which run through
+ * the gateway, as the host lists them. */
+function placing(gateway: (conversation: number) => boolean) {
+  const runs = new Map<number, ReturnType<typeof deferred<unknown>>>();
+  const requests = new Map<number, string>();
+  let next = 7;
+  const run = (conversation: number) => {
+    const found = runs.get(conversation) ?? deferred<unknown>();
+    runs.set(conversation, found);
+    return found;
+  };
+  const handlers: Record<string, Handler> = {
+    deliver: (params, process) => {
+      const conversation = next++;
+      requests.set(conversation, String(params.request));
+      process.send({
+        method: "event",
+        params: {
+          agent: self,
+          conversation,
+          type: "placed",
+          request: params.request,
+          entry: 1,
+        },
+      });
+      return { submission: conversation, conversation };
+    },
+    wait: ({ submission }) => run(submission as number).promise,
+    abort: ({ conversation }) => {
+      run(conversation as number).resolve({
+        status: "unanswered",
+        reason: "aborted",
+      });
+      return {};
+    },
+    gatewayWork: () => {
+      const open = [...requests].filter(([conversation]) =>
+        gateway(conversation),
+      );
+      return {
+        conversations: open.map(([conversation]) => conversation),
+        requests: open.map(([, request]) => request),
+      };
+    },
+  };
+  const end = (conversation: number) =>
+    run(conversation).resolve({ status: "done", answer: 1, text: "" });
+  const release = () => {
+    for (const found of runs.values())
+      found.resolve({ status: "unanswered", reason: "aborted" });
+  };
+  return { handlers, end, release };
+}
+const methods = (f: ReturnType<typeof setup>) =>
+  f.host.processes.flatMap((item) =>
+    item.requests.map((request) => request.method),
+  );
+const CHANGED = "This agent's model route changed. Try again.";
+
+it("opens an ordinary turn's agent with no route, and a gateway turn's with the route it was admitted on", async () => {
+  const r = routes(pending);
+  const f = setup(
+    { wait: () => ({ status: "done", answer: 5, text: "" }) },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const retire = vi.spyOn(f.runtime, "retire");
+  const turn = async (id: string, text: string, extra = {}) => {
+    const delivered = f.deliver(
+      { type: "mention", event: reply(id, text) },
+      extra,
+    );
+    await delivered.run;
+    return f.settled(delivered);
+  };
+  await expect(turn("2", "@Pi look")).resolves.toMatchObject({ ok: true });
+  expect(r.asked.count).toBe(0);
+  // Eligible, whether the gateway enables Pi or not: an ordinary turn takes
+  // no route, and needs no discovery.
+  r.move({ ...eligible, harnesses: ["goose"] });
+  await expect(turn("3", "@Pi again")).resolves.toMatchObject({ ok: true });
+  r.move(eligible);
+  await expect(turn("4", "@Pi plain")).resolves.toMatchObject({ ok: true });
+  await expect(turn("5", "@Pi now", gatewayTurn())).resolves.toMatchObject({
+    ok: true,
+  });
+  expect(
+    f.host.requests("open").map((request) => request.params.route),
+  ).toEqual([
+    undefined,
+    undefined,
+    undefined,
+    {
+      kind: "eligible",
+      revision: 1,
+      gatewayOrigin: "https://gateway.test",
+      identity,
+      base: PI_UPSTREAM.base,
+      profile: VECTOR_PROFILE,
+      discovery: {},
+    },
+  ]);
+  expect(f.host.requests("deliver")).toHaveLength(4);
+  expect(retire).not.toHaveBeenCalled();
+});
+
+it("hands over an ordinary turn whatever its agent's gateway route does as it opens", async () => {
+  let community = 1;
+  const r = routes(eligible, undefined, () =>
+    r.move({
+      ...eligible,
+      identity: { ...identity, community_id: `c${++community}` },
+    }),
+  );
+  r.ready.resolve();
+  const f = setup(
+    {
+      // Discovery that fails fails only the gateway's opens.
+      open: ({ route }) => {
+        if (route) throw new Error("Gateway discovery unavailable");
+        return {};
+      },
+      wait: () => ({ status: "done", answer: 1, text: "" }),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const turn = f.deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(f.settled(turn)).resolves.toEqual({ ok: true });
+  expect(f.host.requests("open").map((item) => item.params.route)).toEqual([
+    undefined,
+  ]);
+  expect(f.host.requests("deliver")).toHaveLength(1);
+});
+
+it("takes the gateway's route for gateway runs the agent left, ending them when it can't, never failing an ordinary turn on it", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  let discovery = false;
+  const f = setup(
+    {
+      open: ({ route }) => {
+        if (route && !discovery)
+          throw new Error("Gateway discovery unavailable");
+        return { gateway: !!route, held: true };
+      },
+      gatewayWork: () => ({ conversations: [6], requests: ["left"] }),
+      abort: () => ({}),
+      wait: () => ({ status: "done", answer: 1, text: "" }),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const turn = async (id: string) => {
+    const delivered = f.deliver({
+      type: "mention",
+      event: reply(id, "@Pi look"),
+    });
+    await delivered.run;
+    return f.settled(delivered);
+  };
+  await expect(turn("2")).resolves.toEqual({ ok: true });
+  // The route it couldn't take ends them.
+  await vi.waitFor(() =>
+    expect(f.host.requests("abort").map((item) => item.params)).toEqual([
+      { agent: self, conversation: 6 },
+    ]),
+  );
+  discovery = true;
+  await expect(turn("3")).resolves.toEqual({ ok: true });
+  await vi.waitFor(() =>
+    expect(f.host.requests("open").map((item) => item.params.route)).toEqual([
+      undefined,
+      expect.objectContaining({ kind: "eligible" }),
+      undefined,
+      expect.objectContaining({ kind: "eligible" }),
+    ]),
+  );
+  expect(f.host.requests("abort")).toHaveLength(1);
+  expect(f.host.requests("deliver")).toHaveLength(2);
+});
+
+it("ends the gateway runs an agent left when its route has no gateway, and takes no route for runs it didn't leave", async () => {
+  const r = routes({ kind: "external", revision: 1 } as GatewayRoute);
+  r.ready.resolve();
+  let held = true;
+  const f = setup(
+    {
+      open: () => ({ gateway: false, held }),
+      gatewayWork: () => ({ conversations: [6], requests: ["left"] }),
+      abort: () => ({}),
+      wait: () => ({ status: "done", answer: 1, text: "" }),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const turn = async (id: string) => {
+    const delivered = f.deliver({
+      type: "mention",
+      event: reply(id, "@Pi look"),
+    });
+    await delivered.run;
+    return f.settled(delivered);
+  };
+  await expect(turn("2")).resolves.toEqual({ ok: true });
+  await vi.waitFor(() =>
+    expect(f.host.requests("abort").map((item) => item.params)).toEqual([
+      { agent: self, conversation: 6 },
+    ]),
+  );
+  held = false;
+  await expect(turn("3")).resolves.toEqual({ ok: true });
+  expect(f.host.requests("gatewayWork")).toHaveLength(1);
+  expect(f.host.requests("abort")).toHaveLength(1);
+  expect(f.host.requests("open").map((item) => item.params.route)).toEqual([
+    undefined,
+    undefined,
+  ]);
+});
+
+it("hands an ordinary turn over while the gateway's route is still taken for left runs", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const discovery = deferred<object>();
+  const asked = deferred<void>();
+  const f = setup(
+    {
+      open: ({ route }) => {
+        if (!route) return { gateway: false, held: true };
+        asked.resolve();
+        return discovery.promise;
+      },
+      wait: () => ({ status: "done", answer: 1, text: "" }),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  try {
+    const ordinary = f.deliver({
+      type: "mention",
+      event: reply("2", "@Pi look"),
+    });
+    await asked.promise;
+    await ordinary.run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(1));
+    await expect(f.settled(ordinary)).resolves.toEqual({ ok: true });
+  } finally {
+    discovery.resolve({ gateway: true });
+  }
+});
+
+it("refuses a gateway turn whose route moved before the host took it", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  r.move({ ...eligible, identity: { ...identity, community_id: "c2" } });
+  const turn = f.deliver(
+    { type: "mention", event: reply("2", "@Pi look") },
+    gatewayTurn(),
+  );
+  await turn.run;
+  await expect(f.settled(turn)).resolves.toEqual({ ok: false, error: CHANGED });
+  expect(f.host.requests("open")).toEqual([]);
+  expect(f.host.requests("deliver")).toEqual([]);
+});
+
+it("refuses a gateway turn whose route moves while the host opens it, and ends only the gateway's work", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const opening = deferred<object>();
+  const p = placing((conversation) => conversation !== 7);
+  const f = setup(
+    {
+      ...p.handlers,
+      open: ({ route }) => (route ? opening.promise : {}),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  try {
+    const ordinary = f.deliver({
+      type: "mention",
+      event: reply("2", "@Pi look"),
+    });
+    await ordinary.run;
+    const gateway = f.deliver(
+      {
+        type: "mention",
+        event: message("9", "@Pi other", {
+          tags: [
+            ["h", channel],
+            ["p", self],
+          ],
+        }),
+      },
+      gatewayTurn(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        f.host.requests("open").filter((item) => item.params.route),
+      ).toHaveLength(1),
+    );
+    r.move({ ...eligible, identity: { ...identity, community_id: "c2" } });
+    opening.resolve({});
+    await gateway.run;
+    await expect(f.settled(gateway)).resolves.toEqual({
+      ok: false,
+      error: CHANGED,
+    });
+    // Its gateway models go: the host keeps the agent open on Pi's own.
+    expect(f.host.requests("open").at(-1)?.params.route).toEqual({
+      kind: "external",
+    });
+    expect(methods(f)).not.toContain("close");
+    expect(f.host.requests("abort")).toEqual([]);
+    expect(f.host.requests("deliver")).toHaveLength(1);
+    p.end(7);
+    await expect(f.settled(ordinary)).resolves.toEqual({ ok: true });
+  } finally {
+    opening.resolve({});
+    p.release();
+  }
+});
+
+it("ends only the gateway's runs when the agent's route changes, says so in their threads, and sends nothing again", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const p = placing((conversation) => conversation === 8);
+  const f = setup(p.handlers, [], undefined, undefined, r.seam);
+  const retire = vi.spyOn(f.runtime, "retire");
+  try {
+    const ordinary = f.deliver({
+      type: "mention",
+      event: reply("2", "@Pi look"),
+    });
+    await ordinary.run;
+    const gateway = f.deliver(
+      {
+        type: "mention",
+        event: message("9", "@Pi other", {
+          tags: [
+            ["h", channel],
+            ["p", self],
+          ],
+        }),
+      },
+      gatewayTurn(),
+    );
+    await gateway.run;
+    await vi.waitFor(() => expect(gateway.acknowledged).toHaveBeenCalled());
+    // A denial at its revision: pending until the gateway is asked again.
+    r.move(pending);
+    await expect(f.settled(gateway)).resolves.toEqual({
+      ok: false,
+      error: expect.stringContaining("access to its models changed"),
+    });
+    expect(f.host.requests("abort").map((item) => item.params)).toEqual([
+      { agent: self, conversation: 8 },
+    ]);
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
+    expect(f.published[0]?.content).toContain("access to its models changed");
+    expect(f.published[0]?.tags).not.toContainEqual([
+      "e",
+      root.id,
+      "",
+      "reply",
+    ]);
+    // The ordinary run carries on, in the agent's storage as it was.
+    expect(retire).not.toHaveBeenCalled();
+    expect(methods(f)).not.toContain("close");
+    p.end(7);
+    await expect(f.settled(ordinary)).resolves.toEqual({ ok: true });
+    expect(f.host.requests("deliver")).toHaveLength(2);
+  } finally {
+    p.release();
+  }
+});
+
+it("fails an ordinary run that ends while a reroute ends gateway work with its own error", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const p = placing((conversation) => conversation === 7);
+  const aborting = deferred<void>();
+  const abort = p.handlers.abort;
+  const f = setup(
+    {
+      ...p.handlers,
+      abort: async (params, process) => {
+        await aborting.promise;
+        return abort?.(params, process);
+      },
+      wait: ({ submission }) =>
+        submission === 8
+          ? { status: "unanswered", reason: "error", error: "Pi broke" }
+          : p.handlers.wait?.({ submission }, undefined as never),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  try {
+    const gateway = f.deliver(
+      { type: "mention", event: reply("2", "@Pi look") },
+      gatewayTurn(),
+    );
+    await gateway.run;
+    r.move(pending);
+    await vi.waitFor(() => expect(f.host.requests("abort")).toHaveLength(1));
+    const ordinary = f.deliver({
+      type: "mention",
+      event: message("9", "@Pi other", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    });
+    await ordinary.run;
+    const own = await f.settled(ordinary);
+    expect(own.ok).toBe(false);
+    expect(own.error).not.toContain("access to its models changed");
+    aborting.resolve();
+    await expect(f.settled(gateway)).resolves.toEqual({
+      ok: false,
+      error: expect.stringContaining("access to its models changed"),
+    });
+  } finally {
+    aborting.resolve();
+    p.release();
+  }
+});
+
+it("hands over no gateway mention whose route moved while its prompt was made", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  f.core.mockImplementation(async () => {
+    r.move({ ...eligible, identity: { ...identity, community_id: "c2" } });
+    return null;
+  });
+  const turn = f.deliver(
+    { type: "mention", event: reply("2", "@Pi look") },
+    gatewayTurn(),
+  );
+  await turn.run;
+  await expect(f.settled(turn)).resolves.toEqual({
+    ok: false,
+    error: expect.stringContaining("access to its models changed"),
+  });
+  expect(f.host.requests("deliver")).toEqual([]);
+});
+
+it("ends the gateway's work on the route's next change when listing it failed", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const p = placing(() => true);
+  let fail = true;
+  const work = p.handlers.gatewayWork;
+  const f = setup(
+    {
+      ...p.handlers,
+      gatewayWork: (params, process) => {
+        if (fail) {
+          fail = false;
+          throw new Error("Pi is busy");
+        }
+        return work?.(params, process);
+      },
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  try {
+    const gateway = f.deliver(
+      { type: "mention", event: reply("2", "@Pi look") },
+      gatewayTurn(),
+    );
+    await gateway.run;
+    r.move(pending);
+    await vi.waitFor(() =>
+      expect(f.host.requests("gatewayWork")).toHaveLength(1),
+    );
+    expect(f.host.requests("abort")).toEqual([]);
+    r.move({ ...pending, revision: 1 });
+    await expect(f.settled(gateway)).resolves.toEqual({
+      ok: false,
+      error: expect.stringContaining("access to its models changed"),
+    });
+  } finally {
+    p.release();
+  }
+});
+
+it("ends the gateway's work a revocation was seen to end, even once the same route recovers", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const p = placing(() => true);
+  const opening = deferred<object>();
+  const f = setup(
+    {
+      ...p.handlers,
+      open: ({ route }) =>
+        route && f.host.requests("open").length === 2
+          ? opening.promise
+          : { gateway: !!route },
+      providers: () => ({ providers: [], defaults: {} }),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  let listing: Promise<unknown> | undefined;
+  try {
+    const first = f.deliver(
+      { type: "mention", event: reply("2", "@Pi look") },
+      gatewayTurn(),
+    );
+    await first.run;
+    listing = f.runtime.providers(self);
+    await vi.waitFor(() => expect(f.host.requests("open")).toHaveLength(2));
+    r.move({ ...pending, revision: 2 });
+    r.move({ ...eligible, revision: 3 });
+    opening.resolve({ gateway: true });
+    await listing;
+    await expect(f.settled(first)).resolves.toEqual({
+      ok: false,
+      error: expect.stringContaining("access to its models changed"),
+    });
+    expect(f.host.requests("abort").map((item) => item.params)).toEqual([
+      { agent: self, conversation: 7 },
+    ]);
+  } finally {
+    opening.resolve({ gateway: true });
+    await listing?.catch(() => undefined);
+    p.release();
+  }
+});
+
+it("lets a later gateway open wait for an earlier reroute, and takes the route it then has", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const listing = deferred<void>();
+  const p = placing(() => true);
+  const f = setup(
+    {
+      ...p.handlers,
+      gatewayWork: async (params, process) => {
+        await listing.promise;
+        return p.handlers.gatewayWork?.(params, process);
+      },
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  try {
+    const first = f.deliver(
+      { type: "mention", event: reply("2", "@Pi old") },
+      gatewayTurn(),
+    );
+    await first.run;
+    const moved = {
+      ...eligible,
+      revision: 2,
+      identity: { ...identity, community_id: "c2" },
+    };
+    r.move(moved);
+    await vi.waitFor(() =>
+      expect(f.host.requests("gatewayWork")).toHaveLength(1),
+    );
+    const second = f.deliver(
+      {
+        type: "mention",
+        event: message("9", "@Pi new", {
+          tags: [
+            ["h", channel],
+            ["p", self],
+          ],
+        }),
+      },
+      gatewayTurn(moved),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.host.requests("open")).toHaveLength(1);
+    listing.resolve();
+    await second.run;
+    const order = methods(f);
+    // Opened on the new route only after the old one's work had ended.
+    expect(order.lastIndexOf("abort")).toBeLessThan(order.lastIndexOf("open"));
+    expect(f.host.requests("open").map((item) => item.params.route)).toEqual([
+      expect.objectContaining({ revision: 1 }),
+      { kind: "external" },
+      expect.objectContaining({ revision: 2 }),
+    ]);
+    await expect(f.settled(first)).resolves.toMatchObject({ ok: false });
+    p.end(8);
+    await expect(f.settled(second)).resolves.toEqual({ ok: true });
+  } finally {
+    listing.resolve();
+    p.release();
+  }
+});
+
+it("reports a recovered mention's gateway run that a route change ended, in its thread", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const left = deferred<unknown>();
+  const prior = reply("8", "@Pi prior");
+  const f = setup(
+    {
+      unfinished: () => ({
+        submissions: [
+          {
+            submission: 42,
+            conversation: 6,
+            request: prior.id,
+            context: { channel, root: root.id },
+          },
+        ],
+      }),
+      gatewayWork: () => ({ conversations: [6], requests: [prior.id] }),
+      wait: ({ submission }) =>
+        submission === 42
+          ? left.promise
+          : { status: "done", answer: 1, text: "" },
+      abort: () => {
+        left.resolve({ status: "unanswered", reason: "aborted" });
+        return {};
+      },
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const current = f.deliver(
+    { type: "mention", event: reply("2", "@Pi next") },
+    gatewayTurn(),
+  );
+  await current.run;
+  await f.settled(current);
+  r.move(pending);
+  await vi.waitFor(() =>
+    expect(f.host.requests("abort")[0]?.params).toEqual({
+      agent: self,
+      conversation: 6,
+    }),
+  );
+  await vi.waitFor(() => expect(f.published).toHaveLength(1));
+  expect(f.published[0]?.content).toContain("access to its models changed");
+  expect(f.published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
+});
+
+it("hands over no standalone gateway turn whose route changed while its prompt was made", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const prompt = deferred<string>();
+  const making = deferred<void>();
+  const f = setup(
+    { wait: () => ({ status: "done", answer: 1, text: "" }) },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  const once = f.runtime.runOnce({
+    delivery: {
+      agent: f.agent,
+      config: DEFAULT_CONFIG,
+      gateway: {
+        route: eligible,
+        turn: { channel_id: null, message_id: null, thread_id: null },
+        upstream: PI_UPSTREAM,
+      },
+    },
+    key: "watch/review",
+    signal: new AbortController().signal,
+    prompt: async () => {
+      making.resolve();
+      return prompt.promise;
+    },
+  } as unknown as StandaloneTurn);
+  await making.promise;
+  r.move(pending);
+  prompt.resolve("Old standalone prompt");
+  await expect(once).resolves.toEqual({
+    ok: false,
+    error: expect.stringContaining("access to its models changed"),
+  });
+  expect(f.host.requests("once")).toEqual([]);
+});
+
+it("keeps an ordinary run going when listing the agent's models takes its recovered gateway route", async () => {
+  const r = routes(pending);
+  const p = placing(() => false);
+  const f = setup(
+    { ...p.handlers, providers: () => ({ providers: [], defaults: {} }) },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  try {
+    const ordinary = f.deliver({
+      type: "mention",
+      event: reply("2", "@Pi look"),
+    });
+    await ordinary.run;
+    r.move(eligible);
+    await f.runtime.providers(self);
+    expect(f.host.requests("open").at(-1)?.params.route).toMatchObject({
+      kind: "eligible",
+    });
+    expect(methods(f)).not.toContain("close");
+    expect(f.host.requests("abort")).toEqual([]);
+    p.end(7);
+    await expect(f.settled(ordinary)).resolves.toEqual({ ok: true });
+  } finally {
+    p.release();
+  }
+});
+
+it("lists an agent's models from its route: the open agent's through the gateway, else Pi's own, blocked included", async () => {
+  const r = routes({ kind: "external", revision: 1 } as GatewayRoute);
+  r.ready.resolve();
+  const listing = { providers: [], defaults: {} };
+  const f = setup(
+    {
+      providers: () => listing,
+      models: () => [],
+      test: () => ({ ok: true, message: "OK" }),
+    },
+    [],
+    undefined,
+    undefined,
+    r.seam,
+  );
+  await expect(f.runtime.providers(self)).resolves.toEqual(listing);
+  await f.runtime.providerModels(self, "anthropic");
+  expect(f.host.requests("open")).toEqual([]);
+  expect(f.host.requests("providers")[0]?.params).toEqual({});
+
+  r.move(eligible);
+  await f.runtime.providers(self);
+  await f.runtime.providerModels(self, "buzz-gateway");
+  // Each read opens it first, which changes nothing once it is open. (Pi's
+  // own protection check may close it before its first open.)
+  const methods = f.host.processes
+    .flatMap((item) => item.requests.map((request) => request.method))
+    .filter((method) => method !== "close");
+  expect(methods).toEqual([
+    "providers",
+    "models",
+    "open",
+    "providers",
+    "open",
+    "models",
+  ]);
+  expect(f.host.requests("providers").at(-1)?.params).toEqual({
+    agent: self,
+  });
+  expect(f.host.requests("models").at(-1)?.params).toEqual({
+    provider: "buzz-gateway",
+    agent: self,
+  });
+
+  const choice = { provider: "anthropic", model: "claude-x" };
+  await expect(f.runtime.test(self, choice)).resolves.toEqual({
+    ok: false,
+    message: "The gateway's models can't be tested here.",
+  });
+
+  // Pi's own test, which runs without the agent, never on the gateway.
+  expect(f.host.requests("test")).toEqual([]);
+  // Blocked, or not enabled for Pi, its turns run Pi's own providers, which
+  // it lists and tests as on an external route.
+  for (const route of [
+    { ...pending, reason: "auth", message: "Sign in again." },
+    { ...eligible, harnesses: [] },
+  ] as GatewayRoute[]) {
+    r.move(route);
+    await expect(f.runtime.providers(self)).resolves.toEqual(listing);
+    expect(f.host.requests("providers").at(-1)?.params).toEqual({});
+  }
+  await f.runtime.test(self, choice);
+  expect(f.host.requests("test").map((item) => item.params)).toEqual([choice]);
+});
+
+it("sends no Pi test once its agent's route reaches the gateway while the host starts", async () => {
+  const community = "22222222-2222-4222-8222-222222222222";
+  const real = new GatewayRoutes(() =>
+    piGatewayDescriptor(community, "https://relay.example"),
+  );
+  // The gateway's model-access answer enables Pi, once it is let through.
+  const probes: ((response: HostResponse) => void)[] = [];
+  real.bindRequest(
+    () => new Promise<HostResponse>((resolve) => probes.push(resolve)),
+  );
+  const member = (origin: string) =>
+    real.setMembership({
+      key: self,
+      origin,
+      owner: alice,
+      pubkey: self,
+      community: { id: community, session: {} },
+    });
+  member("https://other.test");
+  const host = fakeHost(
+    { test: () => ({ ok: true, message: "OK" }) },
+    { ready: false },
+  );
+  const pi = new Pi(() => host.spawn, { tool: vi.fn(), event: vi.fn() });
+  // PiRuntime's own test, over the real transport, without its other parts.
+  const runtime = Object.assign(Object.create(PiRuntime.prototype), {
+    setup: new PiSetup(pi),
+    seam: {
+      routeReady: real.routeReady.bind(real),
+      routeFor: real.routeFor.bind(real),
+    },
+  }) as PiRuntime;
+  const choice = { provider: "anthropic", model: "claude-x" };
+  try {
+    const held = runtime.test(self, choice);
+    await vi.waitFor(() => expect(host.processes[0]?.launched).toBeDefined());
+    expect(host.requests("test")).toEqual([]);
+    member("https://relay.example");
+    // Still checking, it runs Pi's own providers: nothing changes yet.
+    expect(real.routeFor(self)).toMatchObject({
+      kind: "blocked",
+      reason: "readiness_pending",
+    });
+    await vi.waitFor(() => expect(probes).toHaveLength(1));
+    probes.shift()?.({
+      status: 200,
+      headers: {},
+      body: '{"harnesses":["pi"]}',
+    });
+    await vi.waitFor(() => expect(real.routeFor(self).kind).toBe("eligible"));
+    host.processes[0]?.send({ method: "ready", params: {} });
+    await expect(held).resolves.toEqual({
+      ok: false,
+      message: "The gateway's models can't be tested here.",
+    });
+    expect(host.requests("test")).toEqual([]);
+    // External again, the test is sent as before.
+    member("https://other.test");
+    await expect(runtime.test(self, choice)).resolves.toEqual({
+      ok: true,
+      message: "OK",
+    });
+    expect(host.requests("test").map((item) => item.params)).toEqual([choice]);
+  } finally {
+    host.processes[0]?.send({ method: "ready", params: {} });
+    await pi.dispose();
+  }
+});
+
+it("sends a watch's or timer's frozen context with its standalone turn, and an Attention wake's with its delivery", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  // The production reader of the context the runner froze on the delivery.
+  const f = setup(
+    { wait: () => ({ status: "done", answer: 5, text: "Nothing to report." }) },
+    [],
+    undefined,
+    undefined,
+    { ...r.seam, turnContext },
+  );
+  const watched = Object.freeze({
+    channel_id: "33333333-3333-4333-8333-333333333333",
+    message_id: "c".repeat(64),
+    thread_id: null,
+  });
+  const timer = Object.freeze({
+    channel_id: null,
+    message_id: null,
+    thread_id: null,
+  });
+  const once = (key: string, turn: object) =>
+    f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: DEFAULT_CONFIG,
+        gateway: { route: eligible, turn, upstream: PI_UPSTREAM },
+      },
+      key,
+      signal: new AbortController().signal,
+      prompt: async () => "Check",
+    } as unknown as StandaloneTurn);
+  await expect(once("watch/w1", watched)).resolves.toEqual({ ok: true });
+  await expect(once("timer/t1", timer)).resolves.toEqual({ ok: true });
+  expect(
+    f.host
+      .requests("once")
+      .map(({ params }) => [
+        String(params.request).split("/")[0],
+        params.gatewayTurn,
+      ]),
+  ).toEqual([
+    ["watch", watched],
+    ["timer", timer],
+  ]);
+  // A timer that wakes a conversation is delivered as its Attention wake.
+  const woke = Object.freeze({
+    channel_id: "33333333-3333-4333-8333-333333333333",
+    message_id: null,
+    thread_id: null,
+  });
+  const receipt = f.deliver(
+    {
+      type: "attention",
+      channel,
+      topLevel: true,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "Timer: check in",
+    },
+    {
+      gateway: { route: eligible, turn: woke, upstream: PI_UPSTREAM },
+    } as never,
+  );
+  await receipt.run;
+  expect(receipt.ignored).not.toHaveBeenCalled();
+  expect(
+    f.host.requests("deliver").map(({ params }) => params.gatewayTurn),
+  ).toEqual([woke]);
+});
+
+it("gives an owner's Compact its conversation's place and no message", async () => {
+  const r = routes(eligible);
+  r.ready.resolve();
+  const f = setup({}, [], undefined, undefined, r.seam);
+  const agent = (scope: string) =>
+    ({
+      key: self,
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, scope },
+    }) as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  await f.runtime.session(agent("thread"), thread, "compact");
+  await f.runtime.session(agent("thread"), { channelId: channel }, "compact");
+  await f.runtime.session(agent("channel"), thread, "compact");
+  expect(
+    f.host.requests("session").map((item) => item.params.gatewayTurn),
+  ).toEqual([
+    { channel_id: channel, message_id: null, thread_id: root.id },
+    { channel_id: channel, message_id: null, thread_id: null },
+    { channel_id: channel, message_id: null, thread_id: null },
+  ]);
+  // New carries no context: it sends nothing to a model.
+  await f.runtime.session(agent("thread"), thread, "new");
+  expect(f.host.requests("session").at(-1)?.params.gatewayTurn).toBeUndefined();
+});
+
+it("notes a wake's fallback on its own turn, and leaves a mention's to its request row", async () => {
+  const NOTICE =
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
+  const fallback = {
+    gatewayFallback: { reason: "network" as const, notice: NOTICE },
+  };
+  const f = setup({ wait: () => ({ status: "done", answer: 5, text: "" }) });
+  const wake = (id: string) => ({
+    type: "attention" as const,
+    channel,
+    root: root.id,
+    id,
+    at: 200_000,
+    text: "tick",
+  });
+  try {
+    const turns = [
+      f.deliver(wake("f".repeat(64)), fallback),
+      f.deliver(wake("e".repeat(64))),
+      f.deliver({ type: "mention", event: reply("2", "@Pi look") }, fallback),
+    ];
+    for (const turn of turns) {
+      await turn.run;
+      await expect(f.settled(turn)).resolves.toEqual({ ok: true });
+    }
+    expect(
+      f.host.requests("deliver").map((request) => request.params.notice),
+    ).toEqual([NOTICE, undefined, undefined]);
+  } finally {
+    f.runtime.dispose();
+  }
+});

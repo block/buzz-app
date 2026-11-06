@@ -66,9 +66,23 @@ import {
   type ToolCall,
   type ToolResult,
 } from "./pi";
-import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
+import {
+  DEFAULT_THINKING,
+  PiSetup,
+  type Providers,
+  runsAt,
+  type Tested,
+} from "./setup";
 import { readTranscript } from "./transcript";
 import { readUsage } from "./usage";
+import {
+  answerGateway,
+  gatewayRoute,
+  hostRoute,
+  routeKey,
+  type GatewayRoute,
+  type GatewaySeam,
+} from "./gateway";
 
 export type Config = Readonly<{
   /** A Pi provider; empty uses the one Pi's settings name. */
@@ -99,6 +113,11 @@ export const config = (value: unknown): Config => ({
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 /** How long an adopted run's mention is looked for. */
 const READ_MS = 10_000;
+/** The route key of Pi's own providers: no gateway work to end. */
+const EXTERNAL = "external";
+/** A turn whose run ended because the agent's model route changed. */
+const REROUTED =
+  "This agent's access to its models changed, so this turn stopped. Ask again to retry.";
 const CHAT = [9, 40002];
 /** Starts a plugin wake's request, which no relay event's id does, so a run
  * an earlier app left is known as a wake's. */
@@ -175,6 +194,17 @@ type Entry = {
   abandoned?: boolean;
   /** The agent was removed: its turns wait in its storage. */
   closed: boolean;
+  /** Requests whose gateway runs a route change ended: their turns fail
+   * with REROUTED. Runs on Pi's own providers carry on. */
+  rerouted: Set<string>;
+};
+
+/** An agent's route watch: the route key the host has it open with, and
+ * the gateway key a change was seen to leave, until that work has ended. */
+type RouteWatch = {
+  key: string | undefined;
+  revoked?: string | undefined;
+  unsubscribe: () => void;
 };
 
 /** A turn Pi took, in which conversation, and the session it starts there
@@ -203,6 +233,13 @@ export class PiRuntime {
     AgentKey,
     Map<string, { conversation: number; at: number }>
   >();
+
+  /** Each agent's route watch, which closes it when its route changes
+   * from the one the host has it open with: that route's key, if any. */
+  private readonly routes = new Map<AgentKey, RouteWatch>();
+  /** Each agent's latest open, in progress: its opens run one at a time, so
+   * an older one never closes the host a newer one returned with. */
+  private readonly opening = new Map<AgentKey, Promise<void>>();
 
   /** The Pi host every agent of this type runs in, started when needed. */
   private readonly pi: Pi;
@@ -236,6 +273,8 @@ export class PiRuntime {
     ) => () => void = () => () => {},
     /** Agent storage, where what each session started with is kept. */
     private readonly storage: AgentStore = localStore(),
+    /** The model gateway's routes and context; none: all external. */
+    private readonly seam?: GatewaySeam,
   ) {
     this.pi = new Pi(
       () => this.spawn,
@@ -254,6 +293,7 @@ export class PiRuntime {
           );
         },
         event: (event) => this.event(event),
+        gateway: async (call) => answerGateway(this.seam, call),
         prompt: ({ agent, request }) =>
           this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
           Promise.resolve(undefined),
@@ -270,13 +310,62 @@ export class PiRuntime {
     this.setup = new PiSetup(this.pi);
   }
 
+  /** Closes the agent's storage. Removed, its runs wait there to continue. */
   async retire(pubkey: string) {
+    this.routes.get(pubkey)?.unsubscribe();
+    this.routes.delete(pubkey);
     const entry = this.agents.get(pubkey);
-    if (entry) {
-      entry.closed = true;
-    }
+    if (entry) entry.closed = true;
     this.agents.delete(pubkey);
-    await this.pi.retire(pubkey);
+    return this.pi.retire(pubkey);
+  }
+
+  /** Ends the agent's gateway work once its route has left the one the
+   * host took: its runs stop, and their turns fail with REROUTED. Its
+   * storage stays open, and its runs on Pi's own providers carry on. */
+  private reroute(agent: AgentKey) {
+    return this.serial(agent, () => this.rerouteNow(agent));
+  }
+
+  private async rerouteNow(agent: AgentKey) {
+    const watch = this.routes.get(agent);
+    const seam = this.seam;
+    if (!seam || !watch?.key || watch.key === EXTERNAL) return;
+    // A revocation seen stays: the route recovering admits new turns, and
+    // never the work it ended.
+    if (
+      routeKey(seam.routeFor(agent)) === watch.key &&
+      watch.revoked !== watch.key
+    )
+      return;
+    await this.endGatewayWork(agent);
+    // Its gateway models go with the route; the next gateway turn opens it
+    // with the new one.
+    await this.pi.request("open", {
+      agent,
+      tools: sessionTools(this.added()),
+      hint: sessionHint(this.added()),
+      route: { kind: "external" },
+    });
+    // Only once its gateway work has ended: one that failed is tried again
+    // with the route's next change, or before the next gateway open.
+    watch.key = EXTERNAL;
+    watch.revoked = undefined;
+  }
+
+  /** Ends the agent's unfinished gateway work, each request as rerouted. */
+  private async endGatewayWork(agent: AgentKey) {
+    const work = await this.pi.request<{
+      conversations: number[];
+      requests: string[];
+    }>("gatewayWork", { agent });
+    const entry = this.agents.get(agent);
+    for (const request of work.requests) entry?.rerouted.add(request);
+    await Promise.allSettled(
+      work.conversations.map((conversation) =>
+        this.pi.request("abort", { agent, conversation }),
+      ),
+    );
   }
 
   /** Brings the runtime in line with this type's agents. A removed one's
@@ -305,6 +394,68 @@ export class PiRuntime {
     }
   }
 
+  /** Pi's providers as the agent may use them: on its gateway route, the gateway's
+   * alone, the others unavailable; on any other, Pi's own. `retry`, as Try
+   * again asks, probes a failed route again first; otherwise it is read as
+   * it is, so one that follows the route's own changes can't loop. */
+  async providers(agent: AgentKey, retry = false): Promise<Providers> {
+    return this.setup.providers(await this.routed(agent, retry));
+  }
+
+  /** A provider's models as the agent may use them. */
+  async providerModels(agent: AgentKey, id: string, retry = false) {
+    return this.setup.models(id, await this.routed(agent, retry));
+  }
+
+  /** Tells `listener` when the agent's route changes what it may use. */
+  subscribeRoute(agent: AgentKey, listener: () => void): () => void {
+    return this.seam?.subscribeRoute(agent, listener) ?? (() => {});
+  }
+
+  /** Asks the agent's provider and model for one short reply: only while it
+   * runs Pi's own providers, as it is when asked. The gateway's models aren't
+   * tested. */
+  async test(
+    agent: AgentKey,
+    choice: Readonly<{ provider: string; model: string }>,
+  ): Promise<Tested> {
+    const seam = this.seam;
+    if (!seam) return this.setup.test(choice);
+    const refused = (route: GatewayRoute) =>
+      gatewayRoute(route)
+        ? "The gateway's models can't be tested here."
+        : undefined;
+    const first = refused(seam.routeFor(agent));
+    if (first) return { ok: false, message: first };
+    // Its route may change while the host starts: checked again just
+    // before the test is sent.
+    let late: string | undefined;
+    try {
+      return await this.setup.test(choice, () => {
+        late = refused(seam.routeFor(agent));
+        if (late) throw new Error(late);
+      });
+    } catch (error) {
+      if (late) return { ok: false, message: late };
+      throw error;
+    }
+  }
+
+  /** The agent, opened, when the host lists its models from the gateway:
+   * none when it runs Pi's own providers. Opening only to read runs nothing.
+   * A failed route is tried again only on `retry`. */
+  private async routed(agent: AgentKey, retry: boolean) {
+    const seam = this.seam;
+    if (!seam) return undefined;
+    const route = retry
+      ? await seam.routeReady(agent, AbortSignal.timeout(READ_MS))
+      : seam.routeFor(agent);
+    const gateway = gatewayRoute(route);
+    if (!gateway) return undefined;
+    await this.open(agent, gateway);
+    return agent;
+  }
+
   /** The models of the agent's provider, with the thinking levels each has.
    * Without a pick, a turn runs the configured model and level. */
   async models(agent: Agent<Config>): Promise<Models> {
@@ -312,7 +463,7 @@ export class PiRuntime {
     const defaults = await this.setup.defaults();
     const id = provider || defaults.provider;
     if (!id) return { current: "", models: [] };
-    const listed = await this.setup.models(id);
+    const listed = await this.providerModels(agent.key, id);
     const level = effort || defaults.thinking || DEFAULT_THINKING;
     return {
       current:
@@ -479,7 +630,13 @@ export class PiRuntime {
         throw new Error("The agent isn't connected yet. Try again shortly.");
       const entry = this.entry(handle, config(agent.config));
       entry.handle ??= handle;
-      await this.open(agent.key);
+      // An owner's compaction runs in its conversation's mode, through the
+      // gateway while the agent's route is there.
+      const gateway =
+        action === "compact" && this.seam
+          ? gatewayRoute(this.seam.routeFor(agent.key))
+          : undefined;
+      await this.open(agent.key, gateway || undefined);
       await this.adopted(entry, agent.key);
       // An Interrupt while this prepared, or a left run just taken on here,
       // stops a Compact or New: both act only on an idle conversation.
@@ -488,7 +645,14 @@ export class PiRuntime {
         if ([...entry.receipts.values()].some((taken) => taken.key === key))
           throw new Error("Wait for the active turn to finish first.");
       }
-      await this.pi.request("session", { agent: agent.key, key, action });
+      await this.pi.request("session", {
+        agent: agent.key,
+        key,
+        action,
+        // An owner's compaction is its own request. No signed event caused
+        // it, so its context is the conversation's place with no message.
+        ...(gateway ? { gatewayTurn: placeContext(agent, place) } : {}),
+      });
     };
     if (action === "interrupt") {
       this.controls.interrupt(control);
@@ -512,24 +676,25 @@ export class PiRuntime {
     void this.pi.dispose();
   }
 
-  async run({
-    trigger,
-    agent,
-    config: raw,
-    channelId,
-    model,
-    effort,
-    team,
-    workingUntil,
-    current,
-    wakeText,
-    ignored,
-    signal,
-    step,
-    acknowledged,
-    superseded,
-    interruptible,
-  }: Delivery) {
+  async run(delivery: Delivery) {
+    const {
+      trigger,
+      agent,
+      config: raw,
+      channelId,
+      model,
+      effort,
+      team,
+      workingUntil,
+      current,
+      wakeText,
+      ignored,
+      signal,
+      step,
+      acknowledged,
+      superseded,
+      interruptible,
+    } = delivery as Delivery;
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
       trigger.type !== "mention" &&
@@ -587,7 +752,9 @@ export class PiRuntime {
       await wait;
       if (interrupted || (wake && current && !current())) return;
       this.live(entry, agent.key);
-      await this.open(agent.key);
+      // A gateway turn opens with the route it was admitted on; one on Pi's
+      // own providers needs none.
+      await this.open(agent.key, delivery.gateway?.route);
       await this.adopted(entry, agent.key, { current: request });
       await Promise.all(
         [...entry.receipts.values()]
@@ -653,6 +820,7 @@ export class PiRuntime {
       const text = await prompt();
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
+      this.admitted(agent.key, delivery.gateway?.route);
       submitted = await this.deliver(
         entry,
         agent.key,
@@ -665,6 +833,14 @@ export class PiRuntime {
           steer: steerPrompt(text),
           request,
           ...(attention ? { reply: where, refresh: true } : {}),
+          // A mention's request row notes how it ran; a wake has none, so
+          // its turn in this conversation's Activity does.
+          ...(wake && delivery.gatewayFallback
+            ? { notice: delivery.gatewayFallback.notice }
+            : {}),
+          ...(this.seam
+            ? { gatewayTurn: this.seam.turnContext(delivery) }
+            : {}),
           ...picked,
         },
         () => !interrupted && (!wake || !current || current()),
@@ -696,6 +872,7 @@ export class PiRuntime {
         );
         // An answer Pi wrote without `send` stays in local activity.
         if (waited.status === "done") return { ok: true };
+        if (entry.rerouted.has(request)) return { ok: false, error: REROUTED };
         // A turn the owner stopped, or a removed agent's, says nothing more.
         // A run that finished before the stop took effect is done, above.
         if (waited.status === "closed") return { ok: true };
@@ -706,13 +883,14 @@ export class PiRuntime {
       .catch(
         (error: unknown): TurnResult => ({
           ok: false,
-          error: errorText(error),
+          error: entry.rerouted.has(request) ? REROUTED : errorText(error),
         }),
       )
       .then((result) => {
+        const rerouted = entry.rerouted.has(request);
         this.forget(entry, request);
         // A removed agent's turn continues when it is back.
-        return entry.closed ? { ok: true } : result;
+        return entry.closed && !rerouted ? { ok: true } : result;
       });
     const policy = {
       topLevel,
@@ -745,7 +923,8 @@ export class PiRuntime {
       });
     });
     void settled.then(async (result) => {
-      if (!result.ok && !interrupted && !entry.closed)
+      // A removed agent's, continuing later, is ok above.
+      if (!result.ok && !interrupted)
         await this.report(agent, where, result.error ?? "");
     });
   }
@@ -765,7 +944,7 @@ export class PiRuntime {
     let stop: (() => void) | undefined;
     let request: string | undefined;
     try {
-      await this.open(agent.key);
+      await this.open(agent.key, delivery.gateway?.route);
       await this.adopted(entry, agent.key);
       signal.throwIfAborted();
       const text = await prompt();
@@ -778,12 +957,23 @@ export class PiRuntime {
       );
       signal.throwIfAborted();
       if (delivery.current && !delivery.current()) return { ok: true };
+      // Closed while its prompt was made: never handed to another host.
+      if (entry.closed) return { ok: true };
+      // Its gateway route left while its prompt was made: never handed over.
+      if (!this.stillRouted(agent.key, delivery.gateway?.route))
+        return { ok: false, error: REROUTED };
       request = `${key}/${crypto.randomUUID()}`;
       entry.standalone.add(request);
       const { submission, conversation } = await this.pi.request<{
         submission: number;
         conversation: number;
-      }>("once", { agent: agent.key, text, request, ...turn });
+      }>("once", {
+        agent: agent.key,
+        text,
+        request,
+        ...(this.seam ? { gatewayTurn: this.seam.turnContext(delivery) } : {}),
+        ...turn,
+      });
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)
@@ -794,6 +984,8 @@ export class PiRuntime {
       signal.addEventListener("abort", stop, { once: true });
       if (signal.aborted) stop();
       const waited = await this.settle(entry, agent.key, submission);
+      if (waited.status !== "done" && entry.rerouted.has(request))
+        return { ok: false, error: REROUTED };
       return waited.status === "unanswered"
         ? { ok: false, error: unanswered(waited) }
         : { ok: true };
@@ -803,7 +995,10 @@ export class PiRuntime {
       return { ok: false, error: errorText(error) };
     } finally {
       if (stop) signal.removeEventListener("abort", stop);
-      if (request) entry.standalone.delete(request);
+      if (request) {
+        entry.standalone.delete(request);
+        entry.rerouted.delete(request);
+      }
     }
   }
 
@@ -898,6 +1093,7 @@ export class PiRuntime {
   private forget(entry: Entry, request: string) {
     const receipt = entry.receipts.get(request);
     entry.receipts.delete(request);
+    entry.rerouted.delete(request);
     for (const [conversation, active] of entry.active)
       for (const [scope, shown] of active)
         if (shown === receipt) {
@@ -1073,14 +1269,24 @@ export class PiRuntime {
           reply ? request : undefined,
         )
           .then(async (waited) => {
-            if (!ours()) return;
             // An answer Pi wrote without `send` stays in local activity.
-            if (waited.status === "unanswered" && waited.reason !== "aborted")
+            if (!ours() || waited.status === "done") return;
+            if (entry.rerouted.has(request))
+              await this.report(handle, where, REROUTED);
+            else if (
+              waited.status === "unanswered" &&
+              waited.reason !== "aborted"
+            )
               await this.report(handle, where, unanswered(waited));
           })
           .catch(async (error: unknown) => {
-            if (ours() && !entry.closed)
-              await this.report(handle, where, errorText(error));
+            const rerouted = entry.rerouted.has(request);
+            if (ours() && (!entry.closed || rerouted))
+              await this.report(
+                handle,
+                where,
+                rerouted ? REROUTED : errorText(error),
+              );
           })
           .finally(() => {
             if (ours()) this.forget(entry, request);
@@ -1136,12 +1342,110 @@ export class PiRuntime {
     await this.adopted(entry, agent, { again: true });
   }
 
-  private async open(agent: AgentKey) {
-    await this.pi.request("open", {
+  /** Whether a gateway turn's route, as it was admitted on, is still the
+   * agent's; a turn on Pi's own providers has none to leave. */
+  private stillRouted(agent: AgentKey, route?: GatewayRoute) {
+    const seam = this.seam;
+    return (
+      !route || !seam || routeKey(seam.routeFor(agent)) === routeKey(route)
+    );
+  }
+
+  /** Throws for a gateway turn whose route left while its prompt was made:
+   * never handed over. */
+  private admitted(agent: AgentKey, route?: GatewayRoute) {
+    if (!this.stillRouted(agent, route)) throw new Error(REROUTED);
+  }
+
+  /** Runs `task` after the agent's earlier opens and reroutes, so none
+   * changes the route the host has it open with under another. */
+  private async serial<T>(agent: AgentKey, task: () => Promise<T>) {
+    const prior = this.opening.get(agent);
+    const running = (async () => {
+      await prior?.catch(() => undefined);
+      return task();
+    })();
+    const done = running.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.opening.set(agent, done);
+    try {
+      return await running;
+    } finally {
+      if (this.opening.get(agent) === done) this.opening.delete(agent);
+    }
+  }
+
+  /** Opens the agent in the host. Without a gateway route it keeps the route
+   * it has: work on Pi's own providers needs none. With one, as a gateway
+   * turn was admitted on, the host takes it only while it is still the
+   * agent's; one that changes after ends that turn's gateway work. */
+  private async open(agent: AgentKey, route?: GatewayRoute) {
+    const seam = this.seam;
+    const gateway = seam && route ? gatewayRoute(route) : undefined;
+    const base = {
       agent,
       tools: sessionTools(this.added()),
       hint: sessionHint(this.added()),
+    };
+    // Changing no route, it waits for no reroute.
+    if (!seam || !gateway) {
+      const opened = await this.pi.request<{ held?: boolean }>("open", base);
+      // Gateway runs it left wait, held by the host, for the gateway's
+      // models: taken for them while the agent's route has them, else they
+      // end. Apart from this work, which never waits for the gateway.
+      if (opened.held) {
+        const current = seam && gatewayRoute(seam.routeFor(agent));
+        void (
+          current
+            ? this.open(agent, current)
+            : Promise.reject(new Error("No gateway route"))
+        )
+          .catch(() => this.serial(agent, () => this.endGatewayWork(agent)))
+          .catch(() => undefined);
+      }
+      return;
+    }
+    await this.serial(agent, async () => {
+      const key = routeKey(gateway);
+      const changed = () => routeKey(seam.routeFor(agent)) !== key;
+      const watch = this.watch(seam, agent);
+      if (watch.revoked) await this.rerouteNow(agent);
+      if (changed())
+        throw new Error("This agent's model route changed. Try again.");
+      await this.pi.request("open", {
+        ...base,
+        route: hostRoute(seam, gateway),
+      });
+      watch.key = key;
+      if (!changed()) return;
+      await this.rerouteNow(agent);
+      throw new Error("This agent's model route changed. Try again.");
     });
+  }
+
+  /** The agent's route watch: a change from the gateway route the host has
+   * it open with ends its gateway work. Runs on Pi's own providers carry
+   * on; the next gateway turn opens it with the new route. */
+  private watch(seam: GatewaySeam, agent: AgentKey) {
+    const existing = this.routes.get(agent);
+    if (existing) return existing;
+    const watch: RouteWatch = {
+      key: undefined,
+      unsubscribe: seam.subscribeRoute(agent, () => {
+        if (
+          watch.key &&
+          watch.key !== EXTERNAL &&
+          routeKey(seam.routeFor(agent)) !== watch.key
+        ) {
+          watch.revoked = watch.key;
+          void this.reroute(agent).catch(() => undefined);
+        }
+      }),
+    };
+    this.routes.set(agent, watch);
+    return watch;
   }
 
   /** How a request settles. A host that stopped, or an agent whose storage
@@ -1351,6 +1655,7 @@ export class PiRuntime {
       standalone: new Set(),
       active: new Map(),
       closed: false,
+      rerouted: new Set(),
     };
     this.agents.set(agent.key, entry);
     return entry;
@@ -1385,6 +1690,16 @@ export class PiRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkeyOf(agent));
   }
 }
+
+/** The gateway turn context of a conversation itself, for work no signed
+ * event caused: its channel, its thread unless it spans the channel, and no
+ * message. */
+const placeContext = (agent: Agent, place: SessionPlace) => ({
+  channel_id: place.channelId,
+  message_id: null,
+  thread_id:
+    config(agent.config).scope === "channel" || !place.root ? null : place.root,
+});
 
 /** The conversation key session controls in `place` act on, as `key` makes
  * it: a DM or Solo chat has no root here. */

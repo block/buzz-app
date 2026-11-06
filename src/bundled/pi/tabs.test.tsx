@@ -19,9 +19,12 @@ import type {
 } from "../../features/agents/service";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { AgentTabs } from "../agents/AgentTabs";
-import { type Config, DEFAULT_CONFIG, type Place } from "./runtime";
+import { type Config, DEFAULT_CONFIG, PiRuntime, type Place } from "./runtime";
 import { type Provider, type Providers, PiSetup } from "./setup";
 import { createTabs } from "./tabs";
+import { GatewayRoutes } from "../../features/agents/gateway/route";
+import { piGatewayDescriptor } from "./pi-testing";
+import type { HostResponse } from "../../features/host/service";
 import { piTurns } from "./transcript";
 
 beforeEach(() => {
@@ -49,6 +52,14 @@ const MODELS: Record<
     { id: "claude-o", name: "Claude O", thinking: ["off"] },
   ],
   openai: [{ id: "gpt-x", name: "GPT X", thinking: ["off", "low"] }],
+  "buzz-gateway": [{ id: "model-a", name: "Model A", thinking: ["off"] }],
+};
+const GATEWAY_ROW: Provider = {
+  id: "buzz-gateway",
+  name: "Model gateway",
+  key: false,
+  signsIn: false,
+  configured: "gateway",
 };
 
 /** The Pi host's answers to setup's requests; `fail` makes one throw. */
@@ -74,12 +85,24 @@ function fakePi(
     async (method: string, params: Record<string, string> = {}) => {
       const failure = fail[method];
       if (failure) throw new Error(failure);
+      // An agent asked about is open on the gateway's route.
       if (method === "providers")
         return {
-          providers: providers.map((item) => ({ ...item })),
+          providers: [
+            ...(params.agent ? [GATEWAY_ROW] : []),
+            ...providers.map((item) => ({
+              ...item,
+              ...(params.agent
+                ? { unavailable: "Unavailable in gateway mode" }
+                : {}),
+            })),
+          ],
           defaults,
         };
-      if (method === "models") return MODELS[params.provider ?? ""] ?? [];
+      if (method === "models")
+        return params.agent && params.provider !== GATEWAY_ROW.id
+          ? []
+          : (MODELS[params.provider ?? ""] ?? []);
       if (method === "login") {
         const index = providers.findIndex(
           (item) => item.id === params.provider,
@@ -98,8 +121,17 @@ function fakePi(
 }
 
 /** The runtime's conversations: a thread Pi works in, in a channel the
- * community lists, and a channel it does not. */
-function fakeRuntime() {
+ * community lists, and a channel it does not. Its agent's route is
+ * external until `reroute` moves it, telling its watchers. */
+function fakeRuntime(setup = new PiSetup(fakePi())) {
+  let route:
+    | { kind: "external" | "eligible" }
+    | { kind: "blocked"; message: string } = { kind: "external" };
+  const routed = new Set<() => void>();
+  const agentOf = (agent: string) => {
+    if (route.kind === "blocked") throw new Error(route.message);
+    return route.kind === "eligible" ? agent : undefined;
+  };
   const places: Place[] = [
     {
       key: "chan/root",
@@ -123,6 +155,25 @@ function fakeRuntime() {
     subscribeChannels: (_agent: string, listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    providers: vi.fn(async (agent: string) => setup.providers(agentOf(agent))),
+    providerModels: vi.fn(async (agent: string, id: string) =>
+      setup.models(id, agentOf(agent)),
+    ),
+    // As PiRuntime's: only an external route reaches Pi's own test.
+    test: vi.fn(
+      async (agent: string, choice: { provider: string; model: string }) =>
+        agentOf(agent)
+          ? { ok: false, message: "Not here" }
+          : setup.test(choice),
+    ),
+    subscribeRoute: (_agent: string, listener: () => void) => {
+      routed.add(listener);
+      return () => routed.delete(listener);
+    },
+    reroute(next: typeof route) {
+      route = next;
+      for (const listener of routed) listener();
     },
     /** The community's channel list changed: these channels read so now. */
     relabel(changes: Readonly<Record<string, ChannelLabel>>) {
@@ -161,6 +212,13 @@ function fakeRuntime() {
       more: false,
     })),
   };
+}
+
+/** The tabs with one Pi behind setup and the runtime's listing. */
+function tabsFor(pi = fakePi()) {
+  const setup = new PiSetup(pi);
+  const runtime = fakeRuntime(setup);
+  return { ...createTabs({ setup, runtime }), runtime };
 }
 
 function created(pi = fakePi(), modelAppearance?: "glass-ghost") {
@@ -273,10 +331,11 @@ it("saves a provider's key with Pi's login, needs a model for it, and tests it",
   expect(await within(dialog).findByRole("status")).toHaveTextContent(
     "Connected to gpt-x",
   );
-  expect(pi.calls).toHaveBeenCalledWith("test", {
-    provider: "openai",
-    model: "gpt-x",
-  });
+  expect(pi.calls).toHaveBeenCalledWith(
+    "test",
+    { provider: "openai", model: "gpt-x" },
+    undefined,
+  );
   // Nothing reaches the agent until the choice is used.
   expect(changes).toEqual([]);
   await user.click(use);
@@ -401,10 +460,7 @@ it("keeps Try again's providers for what the dialog's Use allows", async () => {
 
 it("guards an invalid Pi provider draft through an agent tab switch", async () => {
   const user = userEvent.setup();
-  const { SettingsTab } = createTabs({
-    setup: new PiSetup(fakePi()),
-    runtime: fakeRuntime(),
-  });
+  const { SettingsTab } = tabsFor();
   const save = vi.fn(async () => {});
   const agent: Agent<Config> = {
     ...AGENT,
@@ -478,10 +534,7 @@ it("guards an invalid Pi provider draft through an agent tab switch", async () =
 });
 
 it("shows the provider, model and thinking level in Identity, and the provider's setup in Settings", async () => {
-  const { SettingsTab } = createTabs({
-    setup: new PiSetup(fakePi()),
-    runtime: fakeRuntime(),
-  });
+  const { SettingsTab } = tabsFor();
   const save = vi.fn(async () => {});
   // As the agent's profile shows it: one form, a section at a time.
   const { rerender } = render(
@@ -517,12 +570,193 @@ it("shows the provider, model and thinking level in Identity, and the provider's
   });
 });
 
+it("lists only the gateway for an agent on its gateway route, the rest unavailable, and follows its route", async () => {
+  const user = userEvent.setup();
+  const { SettingsTab, runtime } = tabsFor();
+  runtime.reroute({ kind: "eligible" });
+  const save = vi.fn(async () => {});
+  const { rerender } = render(
+    <SettingsTab agent={AGENT} save={save} settingsSection="identity" />,
+  );
+  const provider = screen.getByRole("combobox", { name: "Provider" });
+  // Pi's default provider is one the agent can't use here.
+  expect(
+    await screen.findByText(
+      "Anthropic: Unavailable in gateway mode. Choose another provider.",
+    ),
+  ).toBeVisible();
+  await user.click(provider);
+  for (const name of ["Anthropic", "OpenAI", "GitHub Copilot"])
+    expect(
+      await screen.findByRole("option", { name: new RegExp(`^${name}`) }),
+    ).toHaveAttribute("aria-disabled", "true");
+  expect(
+    screen.getByRole("option", { name: /^From Pi settings/ }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(screen.getByRole("option", { name: /^Model gateway/ }));
+  await choose("Model", "Model A");
+  expect(runtime.providerModels).toHaveBeenLastCalledWith(
+    AGENT.key,
+    "buzz-gateway",
+  );
+  rerender(<SettingsTab agent={AGENT} save={save} settingsSection="runtime" />);
+  expect(
+    screen.getByText(
+      "These models run through the model gateway, as this agent.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith({
+    ...DEFAULT_CONFIG,
+    provider: "buzz-gateway",
+    model: "model-a",
+  });
+
+  // Blocked: its reason, and nothing to choose until the route returns.
+  act(() =>
+    runtime.reroute({
+      kind: "blocked",
+      message: "Sign in again to use the gateway's models.",
+    }),
+  );
+  expect(
+    await screen.findByText("Sign in again to use the gateway's models."),
+  ).toBeVisible();
+  act(() => runtime.reroute({ kind: "external" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Sign in again to use the gateway's models."),
+    ).toBeNull(),
+  );
+  // External again: the gateway is no provider of Pi's, so its choice can't run.
+  expect(screen.queryByText(/model gateway/)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Test connection" }),
+  ).toBeDisabled();
+});
+
+it("keeps an agent's saved gateway choice across an ordinary fallback and a reopen", async () => {
+  const { SettingsTab, runtime } = tabsFor();
+  const save = vi.fn(async () => {});
+  const agent = {
+    ...AGENT,
+    config: { ...DEFAULT_CONFIG, provider: "buzz-gateway", model: "model-a" },
+  };
+  // Without the gateway, its choice is shown as it was saved, not replaced.
+  runtime.reroute({ kind: "external" });
+  const first = render(
+    <SettingsTab agent={agent} save={save} settingsSection="identity" />,
+  );
+  const provider = screen.getByRole("combobox", { name: "Provider" });
+  await waitFor(() => expect(provider).toHaveTextContent(/buzz-gateway/));
+  first.unmount();
+  // Reopened on the gateway's route, the saved choice is the gateway's again.
+  runtime.reroute({ kind: "eligible" });
+  render(<SettingsTab agent={agent} save={save} settingsSection="identity" />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Provider" }),
+    ).toHaveTextContent(/^Model gateway/),
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+    /Model A/,
+  );
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("allows no Test, nor a changed model's Save, without a current read of the agent's route", async () => {
+  const user = userEvent.setup();
+  const pi = fakePi();
+  const { SettingsTab, runtime } = tabsFor(pi);
+  const save = vi.fn(async () => {});
+  const agent = {
+    ...AGENT,
+    config: { ...DEFAULT_CONFIG, provider: "anthropic", model: "claude-x" },
+  };
+  // External first, so a choice is read and kept.
+  render(<SettingsTab agent={agent} save={save} />);
+  const test = screen.getByRole("button", { name: "Test connection" });
+  await waitFor(() => expect(test).toBeEnabled());
+  act(() =>
+    runtime.reroute({ kind: "blocked", message: "Route blocked for review" }),
+  );
+  expect(await screen.findAllByText("Route blocked for review")).not.toEqual(
+    [],
+  );
+  // The kept listing still names Anthropic, but authorizes nothing.
+  expect(test).toBeDisabled();
+  await choose("Model", "Claude O");
+  // A disabled Save is not shown.
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  // An unchanged model saves the rest.
+  await choose("Model", "Claude X");
+  await user.type(screen.getByRole("textbox", { name: "Workspace" }), "x");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  expect(pi.calls.mock.calls.map(([method]) => method)).not.toContain("test");
+});
+
+it("shows Pi's own providers on a route the gateway refused, probing it no more by following its changes", async () => {
+  const community = "22222222-2222-4222-8222-222222222222";
+  const routes = new GatewayRoutes(() =>
+    piGatewayDescriptor(community, "https://relay.example"),
+  );
+  const replies: ((response: HostResponse) => void)[] = [];
+  const request = vi.fn(
+    () => new Promise<HostResponse>((resolve) => replies.push(resolve)),
+  );
+  routes.bindRequest(request);
+  routes.setMembership({
+    key: AGENT.key,
+    origin: "https://relay.example",
+    owner: "a".repeat(64),
+    pubkey: "b".repeat(64),
+    community: { id: community, session: {} },
+  });
+  const setup = new PiSetup(fakePi());
+  // The runtime's own listing and route methods on the shared route owner,
+  // without starting a host.
+  const runtime = Object.assign(Object.create(PiRuntime.prototype), {
+    setup,
+    seam: {
+      routeFor: routes.routeFor.bind(routes),
+      routeReady: routes.routeReady.bind(routes),
+      subscribeRoute: routes.subscribeRoute.bind(routes),
+    },
+  }) as PiRuntime;
+  const { SettingsTab } = createTabs({ setup, runtime });
+  const view = render(
+    <SettingsTab
+      agent={AGENT}
+      save={async () => {}}
+      settingsSection="runtime"
+    />,
+  );
+  const denied = async () => {
+    await waitFor(() => expect(replies).toHaveLength(1));
+    await act(async () =>
+      replies.shift()?.({ status: 401, headers: {}, body: "" }),
+    );
+  };
+  try {
+    // Mounted while the first probe is out, it lists Pi's own providers;
+    // refused, the route runs them still, and nothing is probed again.
+    await denied();
+    expect(routes.routeFor(AGENT.key)).toMatchObject({ kind: "blocked" });
+    expect(await screen.findByText("Anthropic is set up in Pi.")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(request).toHaveBeenCalledTimes(1);
+  } finally {
+    view.unmount();
+    for (const resolve of replies)
+      resolve({ status: 401, headers: {}, body: "" });
+  }
+});
+
 it("saves a key on Enter without saving the agent's settings", async () => {
   const pi = fakePi();
-  const { SettingsTab } = createTabs({
-    setup: new PiSetup(pi),
-    runtime: fakeRuntime(),
-  });
+  const { SettingsTab } = tabsFor(pi);
   const save = vi.fn();
   render(<SettingsTab agent={AGENT} save={save} />);
   await waitFor(() =>

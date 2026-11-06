@@ -58,6 +58,7 @@ import {
   type Providers,
   runsAt,
   type Tested,
+  GATEWAY_PROVIDER,
 } from "./setup";
 import { TURN_LIMIT } from "./transcript";
 
@@ -164,9 +165,24 @@ const unknownProvider = (choice: Choice, providers: Providers | undefined) => {
     ? id
     : undefined;
 };
+/** The provider a choice runs on, when its agent can't use it. */
+const unavailableProvider = (
+  choice: Choice,
+  providers: Providers | undefined,
+) => {
+  const id = choice.provider || providers?.defaults.provider;
+  const provider = providers?.providers.find((item) => item.id === id);
+  return provider?.unavailable ? provider : undefined;
+};
+/** A provider option the agent can't choose, with why. */
+const unavailableOption = (provider: Provider | undefined) =>
+  provider?.unavailable
+    ? { disabled: true, description: provider.unavailable }
+    : {};
 /** Whether a choice can't run, as far as Pi's providers say. */
 const unusable = (choice: Choice, providers: Providers | undefined) =>
   Boolean(unknownProvider(choice, providers)) ||
+  Boolean(unavailableProvider(choice, providers)) ||
   modelless(choice, providers?.defaults);
 /** The thinking levels of a choice's model, once its provider's are read. */
 const levelsOf = (
@@ -204,8 +220,20 @@ export function createTabs({
     | "subscribe"
     | "channelLabel"
     | "subscribeChannels"
+    | "providers"
+    | "providerModels"
+    | "subscribeRoute"
+    | "test"
   >;
 }>) {
+  /** A provider's models: as the agent may use them, when there is one. */
+  const modelsOf = (id: string, agent?: string) =>
+    !id
+      ? Promise.resolve([] as readonly PiModel[])
+      : agent
+        ? runtime.providerModels(agent, id)
+        : setup.models(id);
+
   /** The provider, its key and its model, and a test that they answer. As
    * `rows` of the agent's settings, only the provider and model: the rest is
    * `ProviderSetup`'s. `listing` is the surface's own read, so what it gates
@@ -216,26 +244,31 @@ export function createTabs({
     listing,
     reload,
     rows = false,
+    models: agentModels,
   }: Readonly<{
     value: Choice;
     onChange(value: Choice): void;
     listing: Read<Providers>;
     reload(): void;
     rows?: boolean;
+    /** The agent's read of its provider's models, when it has one. */
+    models?: Read<readonly PiModel[]>;
   }>) {
     const providers = listing.value;
     const fallback = providers?.defaults.provider;
     const id = value.provider || fallback || "";
     const provider = providers?.providers.find((item) => item.id === id);
-    const [models] = useRead(
-      () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
-      id,
+    const [ownModels] = useRead(
+      () => (agentModels ? Promise.resolve([]) : modelsOf(id)),
+      agentModels ? "" : id,
     );
+    const models = agentModels ?? ownModels;
     const named = (key: string | undefined) =>
       providers?.providers.find((item) => item.id === key)?.name ?? key;
     const modelDefault = defaultModel(value, providers?.defaults);
     const missing = modelless(value, providers?.defaults);
     const unknown = unknownProvider(value, providers);
+    const unavailable = unavailableProvider(value, providers);
     return (
       <>
         <Select
@@ -253,16 +286,20 @@ export function createTabs({
               ? {
                   error: `${unknown} isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it. Choose another.`,
                 }
-              : listing.status === "loading" && !providers
-                ? { description: "Loading Pi's providers…" }
-                : !id
-                  ? {
-                      description:
-                        "Pi's settings name no provider. Choose one.",
-                    }
-                  : rows && provider && !provider.configured
-                    ? { description: `Set up ${provider.name} in Settings.` }
-                    : {})}
+              : unavailable
+                ? {
+                    error: `${unavailable.name}: ${unavailable.unavailable}. Choose another provider.`,
+                  }
+                : listing.status === "loading" && !providers
+                  ? { description: "Loading Pi's providers…" }
+                  : !id
+                    ? {
+                        description:
+                          "Pi's settings name no provider. Choose one.",
+                      }
+                    : rows && provider && !provider.configured
+                      ? { description: `Set up ${provider.name} in Settings.` }
+                      : {})}
           groups={[
             {
               label: "",
@@ -272,12 +309,16 @@ export function createTabs({
                   label: fallback
                     ? `From Pi settings (${named(fallback)})`
                     : "From Pi settings",
+                  ...unavailableOption(
+                    providers?.providers.find((item) => item.id === fallback),
+                  ),
                 },
                 ...(providers?.providers ?? []).map((item) => ({
                   value: item.id,
                   label: item.name,
                   leading: providerIcon(item.id),
                   ...(item.configured ? { description: "Set up" } : {}),
+                  ...unavailableOption(item),
                 })),
               ],
             },
@@ -307,7 +348,7 @@ export function createTabs({
                   description: `Pi's settings name no model for ${named(id)}. Choose one.`,
                 }
               : {})}
-          disabled={Boolean(unknown)}
+          disabled={Boolean(unknown || unavailable)}
           onChange={(model) => onChange({ ...value, model })}
         />
         {!rows && (
@@ -325,10 +366,12 @@ export function createTabs({
     choice,
     listing,
     reload,
+    test,
   }: Readonly<{
     choice: Choice;
     listing: Read<Providers>;
     reload(): void;
+    test(choice: Choice): Promise<Tested>;
   }>) {
     const id = choice.provider || listing.value?.defaults.provider;
     const provider = listing.value?.providers.find((item) => item.id === id);
@@ -342,13 +385,31 @@ export function createTabs({
             </p>
           </div>
         )}
-        {provider && (
-          <ProviderKey key={provider.id} provider={provider} onSaved={reload} />
+        {/* The model gateway takes no key, and a test would run without the agent. */}
+        {id === GATEWAY_PROVIDER && provider ? (
+          <p className="m-0 text-body-sm text-subtle">
+            These models run through the model gateway, as this agent.
+          </p>
+        ) : (
+          <>
+            {provider && (
+              <ProviderKey
+                key={provider.id}
+                provider={provider}
+                onSaved={reload}
+              />
+            )}
+            {/* Only a current read of the agent's route allows a test:
+                a kept one may be another route's. */}
+            <TestConnection
+              choice={choice}
+              disabled={
+                listing.status !== "ready" || unusable(choice, listing.value)
+              }
+              test={test}
+            />
+          </>
         )}
-        <TestConnection
-          choice={choice}
-          disabled={unusable(choice, listing.value)}
-        />
       </>
     );
   }
@@ -357,7 +418,13 @@ export function createTabs({
   function TestConnection({
     choice,
     disabled,
-  }: Readonly<{ choice: Choice; disabled: boolean }>) {
+    test = (choice) => setup.test(choice),
+  }: Readonly<{
+    choice: Choice;
+    disabled: boolean;
+    /** The test, checked against the agent's route when it has one. */
+    test?(choice: Choice): Promise<Tested>;
+  }>) {
     // A result belongs to the choice it tested.
     const key = `${choice.provider}\u0000${choice.model}`;
     const [result, setResult] = useState<{
@@ -374,7 +441,7 @@ export function createTabs({
             setResult({ key, tested: "testing" });
             setResult({
               key,
-              tested: await setup.test(choice).catch((error: unknown) => ({
+              tested: await test(choice).catch((error: unknown) => ({
                 ok: false,
                 message: errorText(error),
               })),
@@ -890,20 +957,39 @@ export function createTabs({
     useEffect(() => {
       if (error) saveErrorRef.current?.focus();
     }, [error]);
+    // A route change changes what the agent may use.
+    const [route, rerouted] = useReducer((value: number) => value + 1, 0);
+    useEffect(() => runtime.subscribeRoute(agent.key, rerouted), [agent.key]);
+    // Only Try again probes a failed route again; following the route's
+    // changes, and focus, read what it is.
+    const retrying = useRef(false);
     const [listing, reload] = useRead(
-      () => setup.providers(),
-      "providers",
+      () => {
+        const retry = retrying.current;
+        retrying.current = false;
+        return runtime.providers(agent.key, retry);
+      },
+      `providers\u0000${agent.key}\u0000${route}`,
       // Signing in or choosing defaults with the `pi` command changes them.
-      "providers",
+      `providers\u0000${agent.key}`,
       true,
     );
+    const retry = () => {
+      retrying.current = true;
+      reload();
+    };
     const defaults = listing.value?.defaults;
     const id = draft.provider || defaults?.provider || "";
     const [models] = useRead(
-      () => (id ? setup.models(id) : Promise.resolve([] as PiModel[])),
-      id,
+      () => modelsOf(id, agent.key),
+      `${agent.key}\u0000${id}\u0000${route}`,
+      `${agent.key}\u0000${id}`,
     );
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
+    const choiceChanged =
+      draft.provider !== saved.provider ||
+      draft.model !== saved.model ||
+      draft.effort !== saved.effort;
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
       setSaving(true);
@@ -972,7 +1058,8 @@ export function createTabs({
                   })
                 }
                 listing={listing}
-                reload={reload}
+                reload={retry}
+                models={models}
               />
               <Select
                 label="Thinking"
@@ -992,7 +1079,12 @@ export function createTabs({
         )}
         {settingsSection !== "identity" && (
           <>
-            <ProviderSetup choice={draft} listing={listing} reload={reload} />
+            <ProviderSetup
+              choice={draft}
+              listing={listing}
+              reload={retry}
+              test={(choice) => runtime.test(agent.key, choice)}
+            />
             <Field
               label="Workspace"
               description="The folder Pi works in. Use ~/ for your home folder."
@@ -1019,7 +1111,12 @@ export function createTabs({
         <AgentSaveButton
           form={form}
           saving={saving}
-          disabled={!changed || unusable(draft, listing.value)}
+          disabled={
+            !changed ||
+            // A changed model needs a current read of the agent's route.
+            (choiceChanged && listing.status !== "ready") ||
+            (listing.status === "ready" && unusable(draft, listing.value))
+          }
           dirty={changed}
         />
         {settingsSection !== "identity" && settingsContent}

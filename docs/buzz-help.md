@@ -498,6 +498,18 @@ available rather than silently discarding it.
   the feed; the dialog identifies it in words and offers no restore action.
   **Load older** fetches more history. Reverting one track saves
   a new revision without changing the other track.
+- Some builds run a Pi agent in certain communities on a model gateway's models.
+  Such an agent's Settings lists **Model gateway** as its provider, and its
+  other providers are marked "Unavailable in gateway mode". The gateway's models
+  run through the model gateway as the agent. They take no key and can't be
+  tested from Settings. When Buzz can't use the gateway for a turn (for example
+  sign-in or network), the turn runs on the agent's ordinary configured
+  provider and model, and its prompt notes "Ran without the agent gateway"
+  with the reason. Its saved choice is kept. An agent whose saved model is the
+  gateway's has no ordinary choice, so that turn fails with a note instead of
+  switching model; ask again later or choose another model in its Identity tab. Buzz never
+  resends work already sent through the gateway without it. Don't say an agent
+  uses the gateway's models unless its Settings shows Model gateway.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,

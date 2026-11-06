@@ -52,6 +52,11 @@ export type PiEntry = Readonly<{
   kind: string;
   /** A tool result Pi wrote for a call an abort cut off. */
   aborted?: boolean;
+  /** How the prompt's request ran, as the runner noted it. */
+  notice?: string;
+  /** A noted turn that failed before Pi placed its prompt: why, and when. */
+  error?: string;
+  at?: number;
   model?: readonly Message[];
 }>;
 /** The Pi conversation of a Buzz thread or channel. */
@@ -132,9 +137,10 @@ export function piTurns(
   let last = 0;
   /** The aborted answer the turn ends with so far, by its message's id. */
   let aborted: string | undefined;
-  const turn = (id: string, at: number, partial: boolean) => {
-    const current = turns.at(-1);
-    if (current) current.endedAt = Math.max(last, current.startedAt);
+  /** The model's turn, which its answers, tools and steers continue. A
+   * passive notice turn sits beside it, never in its place. */
+  let active: TranscriptTurn | undefined;
+  const make = (id: string, at: number, partial: boolean): TranscriptTurn => {
     const next: TranscriptTurn = {
       turnId: id,
       channelId: conversation.channelId,
@@ -144,17 +150,38 @@ export function piTurns(
         session === undefined
           ? String(conversation.conversation)
           : `${conversation.conversation}:${session}`,
-      newSession: starts && !partial,
+      newSession: false,
       config: [],
       startedAt: at,
       partial,
       items: [],
     };
     turns.push(next);
-    starts = false;
     return next;
   };
+  const turn = (id: string, at: number, partial: boolean) => {
+    if (active) active.endedAt = Math.max(last, active.startedAt);
+    active = make(id, at, partial);
+    active.newSession = starts && !partial;
+    starts = false;
+    return active;
+  };
   for (const entry of entries) {
+    // A noted turn that failed before Pi had its prompt: its own turn, with
+    // the notice beside that failure.
+    if (entry.kind === "buzz.notice") {
+      const at = entry.at ?? last;
+      const failed = make(`${entry.id}`, at, false);
+      failed.endedAt = at;
+      failed.items.push({
+        id: `${entry.id}:notice`,
+        at,
+        type: "status",
+        text: entry.notice ?? "",
+      });
+      if (entry.error) failed.error = entry.error;
+      continue;
+    }
     if (entry.kind === "pi.reset") {
       // Each reset starts a session of its own.
       if (session !== undefined) session = entry.id;
@@ -168,13 +195,22 @@ export function piTurns(
         aborted = undefined;
         const item = prompt(id, at, text(message.content), name);
         const current =
-          item.type === "prompt" && item.steer ? turns.at(-1) : undefined;
-        (current ?? turn(id, at, false)).items.push(item);
+          item.type === "prompt" && item.steer ? active : undefined;
+        const into = current ?? turn(id, at, false);
+        into.items.push(item);
+        // Beside the turn's outcome, which stays its own.
+        if (entry.notice && position === 0)
+          into.items.push({
+            id: `${id}:notice`,
+            at,
+            type: "status",
+            text: entry.notice,
+          });
         last = at;
         return;
       }
       if (message.role !== "assistant" && message.role !== "toolResult") return;
-      const current = turns.at(-1) ?? turn(id, at, true);
+      const current = active ?? turn(id, at, true);
       last = at;
       if (message.role === "toolResult") {
         const sent = sends.get(message.toolCallId ?? "");
@@ -285,8 +321,7 @@ export function piTurns(
       });
     });
   }
-  const current = turns.at(-1);
-  if (current && !working) current.endedAt = Math.max(last, current.startedAt);
+  if (active && !working) active.endedAt = Math.max(last, active.startedAt);
   return turns;
 }
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { InboxReaction } from "../../features/relay/inbox-reactions";
 import { groupReactions } from "../../features/relay/fold";
-import { reactionName } from "../../features/messages/reaction-name";
+import { useReactionName } from "../../features/messages/use-reaction-name";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
 import { channelText } from "../../features/channels/channel-icon";
@@ -176,6 +176,7 @@ export function ReactionRowButton({
   name: ResolveName;
   channel: ChannelSummary | undefined;
 } & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
+  const reactionName = useReactionName();
   const authors = [...new Set(item.events.map((event) => event.pubkey))];
   const names = authors
     .slice(0, authors.length === 3 ? 3 : 2)
@@ -205,7 +206,7 @@ export function ReactionRowButton({
     .map((reaction) =>
       reaction.emoji
         ? `:${reaction.emoji.shortcode}:`
-        : reactionName(reaction.content)
+        : (reactionName?.(reaction.content) ?? reaction.content)
             .replaceAll(":", "")
             .replaceAll("_", " "),
     )

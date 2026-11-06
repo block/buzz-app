@@ -881,6 +881,8 @@ type InventoryProps = {
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
   onMakeBestie?: ((pubkey: string) => void) | undefined;
+  /** Asks before saving no Bestie; absent where none can be saved. */
+  onRemoveBestie?: ((pubkey: string, name: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
   /** The community connection Share publishes through, while it is ready. */
   session?: RelaySession;
@@ -915,6 +917,7 @@ function DefaultAgentInventory({
           new Set(bestie.choices.selectable.map((agent) => agent.pubkey))
         }
         onMakeBestie={bestie.make}
+        onRemoveBestie={bestie.remove}
       />
       {bestie.view}
     </>
@@ -1033,6 +1036,7 @@ function InventoryGrid({
   bestie,
   defaultChoices,
   onMakeBestie,
+  onRemoveBestie,
   session,
   onViewListing,
   dragging,
@@ -1113,6 +1117,10 @@ function InventoryGrid({
                           selected: isBestie,
                           available: !!defaultChoices?.has(agent.pubkey),
                           onMake: () => onMakeBestie(agent.pubkey),
+                          ...(onRemoveBestie && {
+                            onRemove: () =>
+                              onRemoveBestie(agent.pubkey, agent.name),
+                          }),
                         }
                       : undefined
                   }
@@ -1187,7 +1195,14 @@ function InventoryCard({
   onViewListing?: ((agent: SharedAgent) => void) | undefined;
   /** Whether it is the community's Bestie or can be made it. */
   bestie?:
-    | { selected: boolean; available: boolean; onMake(): void }
+    | {
+        selected: boolean;
+        available: boolean;
+        onMake(): void;
+        /** Removing it as Bestie, which edits only the account, so it is
+         * offered wherever the agent runs. */
+        onRemove?: (() => void) | undefined;
+      }
     | undefined;
 }) {
   const agent = props.agent;
@@ -1218,6 +1233,12 @@ function InventoryCard({
           <MenuItem disabled={!bestie.available} onClick={bestie.onMake}>
             Make my bestie
           </MenuItem>
+          <MenuSeparator />
+        </>
+      )}
+      {bestie?.selected && bestie.onRemove && (
+        <>
+          <MenuItem onClick={bestie.onRemove}>Remove as bestie</MenuItem>
           <MenuSeparator />
         </>
       )}

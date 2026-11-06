@@ -613,7 +613,10 @@ available rather than silently discarding it.
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
   review it and choose **Create agent**. Choose the harness and model yourself;
-  instructions go to harnesses that keep them.
+  instructions go to harnesses that keep them. On desktop, a Builderlab card's
+  share link in a message shows the agent's picture and name; hovering it
+  offers **Add to Buzz**, which opens that same Create agent. Clicking the link
+  still opens its page.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
@@ -630,7 +633,9 @@ available rather than silently discarding it.
   A verified existing DM stays available if
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
-  does not prove an agent is ready or running.
+  does not prove an agent is ready or running. **Remove as bestie** in the
+  Bestie's card menu asks, then saves no Bestie to the account. On desktop it
+  works on every device, including one where the agent doesn't run.
 - With the **Bestie** plugin on and no saved choice, **Choose your bestie agent**
   offers a searchable agent picker and **Create agent**. Choosing a known remote
   agent, including one created through Builderlab, asks for confirmation:
@@ -786,7 +791,15 @@ confirmation.
   types give no reason.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
-  what that agent is watching and whether Attention is on for this device. A
+  when each interest wakes the agent (**Triggers**), its instructions after waking
+  (**Instructions**), and whether Attention is active on this device. Use its Active/Paused menu to change that.
+  With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
+  Each watch shows its source and Active or Paused state. Expand a
+  watch, then expand “Activity” for a compact event timeline. Expand an event to read its full
+  content, or expand “Watch details” for conditions and the execution destination. Select its status pill to
+  activate, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
+  “Runs in” names its execution conversation; its instructions can specify a
+  different place to report. A
   mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
   On macOS and Linux, watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous

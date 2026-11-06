@@ -48,7 +48,9 @@ on another device, can be your Bestie too. Change, **Make my bestie** and **Make
 my Bestie again** offer it, and say before saving that some bestie features
 aren't available with remote agents, as **Choosing a Bestie** does: one
 question, the replacement's, when it replaces your Bestie. A Bestie on another
-device shows no tab, as its instructions and timers aren't on this device. A
+device shows no tab, as its instructions and timers aren't on this device; its
+card's **Remove as bestie** still removes it, as that saves only to your
+account. A
 hosted Bestie shows the tab, and its provider can hold its instructions: where
 it does (Builderlab does), **Remembers you** reads and saves them through the
 provider, as a local agent's synced instructions are, and the row says why
@@ -64,10 +66,11 @@ this device saw it as Bestie, and it shows **Former Bestie** while its memory
 section is on or it is in one of your private channels. If its latest read
 fails, even after an earlier one found memory off, the tab stays until a read
 succeeds, so its Retry can read again; a read that
-started before the newest one recorded never replaces it. **Remove as Bestie** asks,
-then saves no Bestie to your account: the agent stays, its check-ins stop, and
-its memory section and private channels stay, which its Former Bestie tab can
-turn off.
+started before the newest one recorded never replaces it. **Remove as Bestie**,
+in the tab or as **Remove as bestie** in the agent card's menu, asks, then saves
+no Bestie to your account: the agent stays, its check-ins stop, and its memory
+section and private channels stay, which its Former Bestie tab can turn off.
+Both need an account to save none to.
 
 **Remembers you** adds memory rules to the agent's instructions, in a section
 marked `<!-- buzz:bestie/memory v1 -->` … `<!-- /buzz:bestie/memory -->`, and

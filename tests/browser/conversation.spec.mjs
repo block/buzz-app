@@ -8,11 +8,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { watchPageErrors } from "./page-errors.mjs";
 import { createServer } from "./vite-server.mjs";
-import {
-  hoverMessage,
-  expectMessageActionsHidden,
-} from "./message-actions.mjs";
-import { settle } from "./timeline.mjs";
+import { expectMessageActionsHidden } from "./message-actions.mjs";
+import { hoverRow, settle } from "./timeline.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
@@ -171,7 +168,12 @@ test("independent packed author consumer and native-installed contribution survi
       await row.evaluate((node) => node.scrollIntoView({ block: "center" }));
       await settle(page, scroll);
       await draft.focus();
-      await hoverMessage(row);
+      // Hover must not scroll the reading position on a hit-test retry.
+      await hoverRow(
+        page,
+        row.locator("[data-message-action-anchor] p").first(),
+        scroll,
+      );
       const inspect = row.getByRole("button", { name: "Inspect message" });
       await expect(inspect).toBeVisible();
       await page.mouse.move(0, 0);

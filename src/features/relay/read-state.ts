@@ -50,6 +50,8 @@ export type ReadSyncSnapshot = Readonly<{
     | "error";
   /** Atomic marker enumeration only; says nothing about completeness of message history. */
   completeness: "unknown" | "snapshot" | "bounded";
+  /** Remote markers may be missing, regardless of local publication progress. */
+  observationOwed: boolean;
   error?: string | undefined;
 }>;
 export type ReadMutationResult = Readonly<{
@@ -184,6 +186,7 @@ export function createReadState({
     capability,
     status: "loading",
     completeness: "unknown",
+    observationOwed: false,
   });
   const broadcast =
     broadcastName && typeof BroadcastChannel !== "undefined"
@@ -198,7 +201,11 @@ export function createReadState({
   const health = (patch: Partial<ReadSyncSnapshot>) => {
     if (patch.status) failedRevision = undefined;
     if (patch.status === "error") resumable = undefined;
-    const next = { ...snapshot, ...patch };
+    const next = {
+      ...snapshot,
+      ...patch,
+      observationOwed: !!host && observationOwed,
+    };
     if (!same(next, snapshot)) {
       snapshot = Object.freeze(next);
       emit();
@@ -1057,6 +1064,7 @@ export function createReadState({
     },
     stale() {
       resumable =
+        !observationOwed &&
         snapshot.completeness !== "unknown" &&
         snapshot.status !== "error" &&
         snapshot.status !== "stale"

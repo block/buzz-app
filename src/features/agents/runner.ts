@@ -1,3 +1,4 @@
+import type { Context as ToolContext } from "../../buzz-mcp/client";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -35,6 +36,7 @@ import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { CHANNEL_KINDS, LIVE_REPLAY_LIMIT } from "../relay/live";
 import type { RelaySession } from "../relay/session";
+import type { InboxItem } from "../relay/inbox";
 import type { ChannelSummary } from "../relay/contracts";
 import {
   addressedTo,
@@ -486,6 +488,11 @@ export type RunnerHost = {
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
+  /** The owner's Inbox when this exact agent remains its authorized Bestie. */
+  inbox?(
+    agent: Agent,
+    context: ToolContext,
+  ): Promise<Readonly<{ items: readonly InboxItem[] }>>;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
@@ -2771,6 +2778,18 @@ export class AgentRunners {
           },
         }),
         templates: () => this.host.templates(agent),
+        ...(run && this.host.inbox
+          ? {
+              inbox: async (context: ToolContext) => {
+                lifetime.throwIfAborted();
+                const result = await this.host.inbox?.(agent, context);
+                lifetime.throwIfAborted();
+                if (!result || runner.transitioning)
+                  throw new Error("Inbox access is unavailable");
+                return result;
+              },
+            }
+          : {}),
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),

@@ -192,6 +192,24 @@ it("withholds a query result when the owning turn ends during the read", async (
   await expect(result).rejects.toThrow("Owning turn ended");
 });
 
+it("withholds an Inbox result when the owning turn ends during the read", async () => {
+  const pending = gate<{ items: [] }>();
+  const inbox = vi.fn(() => pending.promise);
+  const controller = new AbortController();
+  const client = appClient({ inbox } as unknown as AgentHandle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+    signal: controller.signal,
+  });
+  const context = { channel: "owner-dm" };
+  const result = client.inbox?.(context);
+  expect(inbox).toHaveBeenCalledWith(context);
+  expect(inbox).toHaveBeenCalledOnce();
+  controller.abort(new Error("Owning turn ended"));
+  pending.resolve({ items: [] });
+  await expect(result).rejects.toThrow("Owning turn ended");
+});
+
 it("refuses creation after the calling turn ends and surfaces native failures", async () => {
   const createAgent = vi.fn(async () => {
     throw new Error("Native creation failed");

@@ -4,6 +4,7 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
 import type { AgentAttention } from "../features/agents/service";
+import type { InboxItem } from "../features/relay/inbox";
 import type { AgentPlugins } from "../plugins/requests";
 import type { SettingState } from "../shared/device-settings";
 
@@ -77,6 +78,10 @@ export type Memory = Readonly<{
   slug: string;
   body: string;
   createdAt: number;
+}>;
+/** A Bestie's delegated view of its owner's bounded Inbox surface. */
+export type Inbox = Readonly<{
+  items: readonly InboxItem[];
 }>;
 
 export interface BuzzClient {
@@ -154,6 +159,8 @@ export interface BuzzClient {
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
    * a `null` body deletes it. */
   remember(slug: string, body: string | null, after: number): Promise<void>;
+  /** The owner's Inbox, only when the current Bestie has delegated access. */
+  inbox?(context: Context): Promise<Inbox>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the

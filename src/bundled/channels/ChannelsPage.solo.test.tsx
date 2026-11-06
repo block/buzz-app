@@ -237,6 +237,7 @@ function fixture({
     capability,
     status: "reconciled" as const,
     completeness: "snapshot" as const,
+    observationOwed: false,
   };
   const session = {
     ...owner.session,

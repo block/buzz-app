@@ -32,12 +32,14 @@ const channel = (
 /** Clicks Remove on `name` and confirms it, as the Members dialog asks. */
 async function remove(user: ReturnType<typeof userEvent.setup>, name: string) {
   await user.click(
-    screen.getByRole("button", { name: `Remove Bestie from #${name}` }),
+    screen.getByRole("button", { name: `Remove your Bestie from #${name}` }),
   );
   const ask = await screen.findByRole("alertdialog", {
-    name: `Remove Bestie from #${name}?`,
+    name: `Remove your Bestie from #${name}?`,
   });
-  await user.click(within(ask).getByRole("button", { name: "Remove Bestie" }));
+  await user.click(
+    within(ask).getByRole("button", { name: "Remove your Bestie" }),
+  );
 }
 
 it("keeps only your private channels, split by Bestie's membership, most recent first", () => {
@@ -122,11 +124,11 @@ it("removes Bestie from a channel it is in, as the Members dialog does", async (
   const { value, run } = session([channel("shared", [YOU, BESTIE])]);
   render(<PrivateChannels session={value} bestie={BESTIE} />);
   await user.click(
-    screen.getByRole("button", { name: "Remove Bestie from #shared" }),
+    screen.getByRole("button", { name: "Remove your Bestie from #shared" }),
   );
   // It asks first, with focus on Cancel, and Cancel removes nothing.
   const ask = await screen.findByRole("alertdialog", {
-    name: "Remove Bestie from #shared?",
+    name: "Remove your Bestie from #shared?",
   });
   await vi.waitFor(() =>
     expect(within(ask).getByRole("button", { name: "Cancel" })).toHaveFocus(),
@@ -160,13 +162,18 @@ it("adds Bestie to one channel, or to all after asking, and reports what didn't 
   expect(add).toHaveBeenCalledWith("id-alpha", BESTIE, GUEST);
 
   add.mockClear();
-  expect(screen.getByText(/2 channels without Bestie/)).toBeVisible();
+  expect(
+    screen.getByText(/2 channels you can add your Bestie to now/),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/This doesn't include future channels/),
+  ).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Add to all" }),
-  ).toHaveAccessibleDescription("Add to all my private channels");
+  ).toHaveAccessibleDescription("Add to all your private channels");
   await user.click(screen.getByRole("button", { name: "Add to all" }));
   const ask = await screen.findByRole("alertdialog", {
-    name: "Add Bestie to 2 private channels?",
+    name: "Add your Bestie to 2 private channels?",
   });
   expect(add).not.toHaveBeenCalled();
   await user.click(within(ask).getByRole("button", { name: "Add to all" }));
@@ -217,7 +224,7 @@ it("says when a removal isn't confirmed, and offers none from a cached roster", 
   );
   render(<PrivateChannels session={value} bestie={BESTIE} />);
   expect(
-    screen.getByRole("button", { name: "Remove Bestie from #offline" }),
+    screen.getByRole("button", { name: "Remove your Bestie from #offline" }),
   ).toBeDisabled();
   await remove(user, "shared");
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -236,10 +243,12 @@ it("offers no add to a channel known only from a cached roster", async () => {
   const items = await screen.findAllByRole("menuitem");
   expect(items.map((item) => item.textContent)).toEqual(["#alpha"]);
   await user.keyboard("{Escape}");
-  expect(screen.getByText(/1 channel without Bestie/)).toBeVisible();
+  expect(
+    screen.getByText(/1 channel you can add your Bestie to now/),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Add to all" }));
   const ask = await screen.findByRole("alertdialog", {
-    name: "Add Bestie to 1 private channel?",
+    name: "Add your Bestie to 1 private channel?",
   });
   await user.click(within(ask).getByRole("button", { name: "Add to all" }));
   expect(add.mock.calls).toEqual([["id-alpha", BESTIE, GUEST]]);
@@ -285,7 +294,7 @@ it("keeps the channels it knows from a partial roster, and holds Add to all", as
   );
   render(<PrivateChannels session={value} bestie={BESTIE} />);
   expect(
-    screen.getByRole("button", { name: "Remove Bestie from #shared" }),
+    screen.getByRole("button", { name: "Remove your Bestie from #shared" }),
   ).toBeEnabled();
   expect(
     screen.getByText("Only some of your private channels are loaded"),
@@ -313,7 +322,7 @@ it("hands focus to the next row when a confirmed Remove drops its own", async ()
   const left = session([channel("alpha", [YOU]), beta]).value;
   rerender(<PrivateChannels session={left} bestie={BESTIE} />);
   expect(
-    screen.getByRole("button", { name: "Remove Bestie from #beta" }),
+    screen.getByRole("button", { name: "Remove your Bestie from #beta" }),
   ).toHaveFocus();
 });
 
@@ -330,7 +339,7 @@ it("hands focus to the new row when the last channel to add is added", async () 
   rerender(<PrivateChannels session={added} bestie={BESTIE} />);
   expect(screen.queryByRole("button", { name: "Choose…" })).toBeNull();
   expect(
-    screen.getByRole("button", { name: "Remove Bestie from #alpha" }),
+    screen.getByRole("button", { name: "Remove your Bestie from #alpha" }),
   ).toHaveFocus();
 });
 
@@ -340,11 +349,13 @@ it("hands focus to the section heading when no control is left", () => {
     <PrivateChannels session={value} bestie={BESTIE} />,
   );
   act(() =>
-    screen.getByRole("button", { name: "Remove Bestie from #alpha" }).focus(),
+    screen
+      .getByRole("button", { name: "Remove your Bestie from #alpha" })
+      .focus(),
   );
   rerender(<PrivateChannels session={session([]).value} bestie={BESTIE} />);
   expect(
-    screen.getByRole("heading", { name: "Private channels Bestie can read" }),
+    screen.getByRole("heading", { name: "Private channels" }),
   ).toHaveFocus();
 });
 
@@ -359,7 +370,9 @@ it("leaves focus where the person moved it when a row goes", () => {
   );
   const { rerender } = render(page(session([alpha, beta]).value));
   act(() =>
-    screen.getByRole("button", { name: "Remove Bestie from #alpha" }).focus(),
+    screen
+      .getByRole("button", { name: "Remove your Bestie from #alpha" })
+      .focus(),
   );
   act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
   rerender(page(session([channel("alpha", [YOU]), beta]).value));
@@ -374,7 +387,9 @@ it("lists a former Bestie's channels by name, to remove from one or all after as
     channel("gamma", [YOU]),
   ]);
   render(<PrivateChannels session={value} bestie={BESTIE} former="Ada" />);
-  expect(screen.getByText("Private channels Ada can read")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Private channels" }),
+  ).toBeVisible();
   // Winding down offers no adds.
   expect(screen.queryByRole("button", { name: "Choose…" })).toBeNull();
   expect(screen.queryByRole("switch")).toBeNull();

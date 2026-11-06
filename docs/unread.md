@@ -178,6 +178,11 @@ timeline and the thread being read, without reading unopened threads' replies.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
   target's local mark. `syncedManualUnread` is `false`.
+- `sync().observationOwed` reports missing remote marker observation independently
+  of publication status and the last enumeration's completeness. Local intent and
+  publication progress do not clear it. A successful marker refresh does;
+  continuous replay can clear only the gap it interrupted, not an earlier failure.
+  Local-only hosts have no remote observation debt.
 - `refresh()` retries evidence/marker observation; `retrySync()` refreshes markers
   and retries pending publication. `ReadMutationResult.durability === "saved"`
   means the local transaction committed, not that the relay accepted it.

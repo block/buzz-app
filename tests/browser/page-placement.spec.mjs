@@ -8,7 +8,8 @@ import {
 } from "./navigation.mjs";
 
 // Browser-only boundaries: painted focus, native insets, resize geometry, and
-// real App wiring between Messages and Solo chats. Contract matrices stay in RTL.
+// real App wiring between Messages, Solo chats and the pages listed in its
+// sidebar. Contract matrices stay in RTL.
 test.use({ pluginFixtures: true });
 
 test("shared navigation preserves drafts and history across Solo and header pages", async ({
@@ -205,6 +206,50 @@ test("shared navigation preserves drafts and history across Solo and header page
   await expect(topbar.locator('[aria-selected="true"]')).toHaveCount(0);
 });
 
+test("a page listed in the Messages sidebar keeps Messages and the conversation sidebar", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "buzzodz.plugins.v1",
+      JSON.stringify({
+        version: 2,
+        enabled: { "fixture.page-placement": true },
+      }),
+    );
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await expect(composer).toBeVisible();
+  const sidebar = page.getByRole("complementary", {
+    name: "Sidebar",
+    exact: true,
+  });
+  const destination = sidebar
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Listed destination", exact: true });
+  await destination.click();
+  await expect(
+    page.getByRole("heading", { name: "Listed destination", exact: true }),
+  ).toBeVisible();
+
+  const messages = page
+    .getByRole("navigation", { name: "Apps dock" })
+    .getByRole("tab", { name: "Messages", exact: true });
+  await expect(messages).toHaveAttribute("aria-selected", "true");
+  await expect(sidebar).toBeVisible();
+  await expect(destination).toHaveAttribute("aria-current", "page");
+
+  await messages.click();
+  await expect(composer).toBeVisible();
+  await expect(destination).not.toHaveAttribute("aria-current");
+});
+
 test("a page sidebar uses the shell slot, generic toggle, theme, and narrow drawer", async ({
   page,
   app,
@@ -240,9 +285,16 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
     .getByRole("navigation", { name: "Pages" })
     .getByRole("button", { name: "Drafts & sent", exact: true });
   await expect(drafts).toHaveCount(1);
+  // The page's own sidebar replaces the Messages sidebar it is listed in, and
+  // Messages stays selected.
   await expect(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Apps dock" })
+      .getByRole("tab", { name: "Messages", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const wideSize = await sidebar.evaluate(
     (element) => element.getBoundingClientRect().width,
   );

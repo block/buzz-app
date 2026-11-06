@@ -6,7 +6,12 @@ import {
   ChatsCircleIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
-import { pagePlacement, orderPages, pagePresentation } from "./presentation";
+import {
+  navigationOwner,
+  pagePlacement,
+  orderPages,
+  pagePresentation,
+} from "./presentation";
 
 function page(key: string, title: string, icon?: string): RegisteredPage {
   const separator = key.indexOf("/");
@@ -135,3 +140,34 @@ test.each([undefined, "toolbar"] as const)(
     ).toBe("topbar");
   },
 );
+
+describe("navigation owner", () => {
+  const primary = (
+    key: string,
+    fields: Partial<RegisteredPage> = {},
+  ): RegisteredPage => ({ ...page(key, key), primary: true, ...fields });
+  const entries = [
+    primary("example.sidebar/main"),
+    primary("example.listed/main", { placement: "sidebar" }),
+    primary("example.own-sidebar/main", { sidebar: () => null }),
+    primary("example.header/main", { placement: "topbar" }),
+    primary("example.tools/main", { placement: "toolbar" }),
+    primary("example.linked/main", { primary: false, placement: "sidebar" }),
+  ];
+  test.each([
+    // Every external page listed in the Messages sidebar keeps Messages
+    // selected, including one that supplies its own sidebar.
+    ["example.sidebar/main", messages.key],
+    ["example.listed/main", messages.key],
+    ["example.own-sidebar/main", messages.key],
+    // External dock apps own themselves.
+    ["example.header/main", "example.header/main"],
+    ["example.tools/main", "example.tools/main"],
+    // Destinations without a navigation entry select nothing in the dock.
+    ["example.linked/main", "example.linked/main"],
+    ["settings", "settings"],
+    ["missing/page", "missing/page"],
+  ])("%s belongs to %s", (selected, owner) => {
+    expect(navigationOwner(entries, selected)).toBe(owner);
+  });
+});

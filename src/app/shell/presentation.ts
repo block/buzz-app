@@ -74,6 +74,21 @@ export function pagePlacement(page: RegisteredPage) {
   }
 }
 
+/** The app whose navigation lists a destination: the dock selects it and the
+ * shell shows its sidebar unless the page supplies its own. Pages listed in
+ * the Messages sidebar belong to Messages; conversations already select the
+ * Messages page. Every other destination, including Settings and unlisted
+ * pages, owns itself. */
+export function navigationOwner(
+  pages: readonly RegisteredPage[],
+  selected: string,
+) {
+  const page = pages.find((page) => page.key === selected);
+  return page && pagePlacement(page) === "sidebar"
+    ? "buzz.channels/channels"
+    : selected;
+}
+
 type PagePresentation = Readonly<{
   label: string;
   icon: typeof BrowserIcon;

@@ -1,7 +1,7 @@
 import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { DraftsSentNavigation } from "../../features/drafts-sent/DraftsSentNavigation";
 import { PageNavigation } from "./PageNavigation";
-import { orderPages, pagePlacement } from "./presentation";
+import { navigationOwner, orderPages, pagePlacement } from "./presentation";
 import {
   useEffect,
   useLayoutEffect,
@@ -180,7 +180,8 @@ function AppShellContent({
   const [creationOpen, setCreationOpen] = useState(false);
   const connection = useRelayConnection(communities.relay);
   const sidebarScope = connection.scope ?? "disconnected";
-  const channelsNavigation = selected === "buzz.channels/channels";
+  const owner = navigationOwner(pages, selected);
+  const channelsNavigation = owner === "buzz.channels/channels";
   const hasNavigation =
     channelsNavigation ||
     pages.some((page) => page.key === selected && !!page.sidebar);
@@ -294,7 +295,7 @@ function AppShellContent({
     pages.filter((page) => page.primary && pagePlacement(page) !== "sidebar"),
     "dock",
   );
-  const selectedDockPage = dockPages.some((page) => page.key === selected);
+  const selectedDockPage = dockPages.some((page) => page.key === owner);
   return (
     <div
       data-shell-tone={tone}
@@ -377,7 +378,8 @@ function AppShellContent({
           <div className="shell-dock-pages">
             <PageNavigation
               pages={dockPages}
-              selected={selected}
+              selected={owner}
+              currentPage={selected}
               onSelect={onSelect}
               placement="dock"
               previews
@@ -453,12 +455,12 @@ function AppShellContent({
                   <Panel as="div" joined>
                     <PanelFrame scope={connection.scope} companion={companion}>
                       <div
-                        id={`shell-page-${selected}`}
+                        id={`shell-page-${owner}`}
                         {...(selectedDockPage
                           ? {
                               role: "tabpanel",
                               "data-focus-inset": "",
-                              "aria-labelledby": `shell-page-${selected}-tab`,
+                              "aria-labelledby": `shell-page-${owner}-tab`,
                               tabIndex: 0,
                             }
                           : {})}

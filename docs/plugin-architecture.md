@@ -263,7 +263,10 @@ point exporting
 `inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
 `ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register
 several pages or none. Page IDs are unique within their plugin. Add `primary: true` for a
-row in the sidebar's page navigation; every active page is listed in search. Buzz supplies React
+row in the Messages sidebar's page navigation; every active page is listed in search.
+While that page is open, Messages stays selected in the app dock and the conversation
+sidebar stays visible, unless the page registers its own `sidebar`, which then
+replaces it. Buzz supplies React
 and owns the Cordis runtime (`@deepseek-ai/cordis` 4.0.2). Import their types only
 in external plugins; runtime imports are rejected by the scaffold's builder.
 

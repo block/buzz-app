@@ -515,10 +515,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   Activity second, followed by the other apps. Community and profile controls
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages has All / Solo / Team sidebar filters; other apps use their main
-  view unless they provide their own sidebar. The sidebar and message pane
-  share one surface with a persistent divider; panel headers also have bottom
-  hairlines. Dock icons stay still, highlight on hover, and show instant labels
-  to their right. Bestie uses your configured avatar.
+  view unless they provide their own sidebar. Pages listed in the Messages
+  sidebar, such as Drafts & sent, keep Messages selected in the dock. The
+  Messages sidebar stays open unless the page provides its own sidebar, which
+  replaces it.
+  The sidebar and message pane share one surface with a persistent divider;
+  panel headers also have bottom hairlines. Dock icons stay still, highlight
+  on hover, and show instant labels to their right. Bestie uses your
+  configured avatar.
   The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
   the current app has a creation sidebar.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at

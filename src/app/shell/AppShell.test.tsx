@@ -19,7 +19,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { RegisteredPage } from "../../features/pages/service";
+import type {
+  PageSidebarProps,
+  RegisteredPage,
+} from "../../features/pages/service";
 import { createServices, type AppServices } from "../services";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AppShell } from "./AppShell";
@@ -91,6 +94,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
       title: "Inbox",
       component: () => null,
       primary: true,
+      placement: "topbar",
     },
   ];
   const onSelect = () => {};
@@ -138,7 +142,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
 });
 
 it.each([true, false])(
-  "shows app navigation only for primary plugin pages (primary: %s)",
+  "keeps the Messages sidebar for a plugin page listed in it, not for an unlisted one (primary: %s)",
   (primary) => {
     const current = createServices();
     services = current;
@@ -170,10 +174,20 @@ it.each([true, false])(
       </ToastProvider>,
     );
     expect(screen.getByText("Main app content")).toBeVisible();
-    expect(
-      screen.queryByRole("complementary", { name: "Message sidebar" }),
-    ).toBeNull();
-    expect(screen.queryByRole("button", { name: /sidebar/i })).toBeNull();
+    // A primary page is listed in the Messages sidebar, so it keeps it.
+    if (primary) {
+      expect(
+        screen.getByRole("complementary", { name: "Message sidebar" }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Hide sidebar" }),
+      ).toBeVisible();
+    } else {
+      expect(
+        screen.queryByRole("complementary", { name: "Message sidebar" }),
+      ).toBeNull();
+      expect(screen.queryByRole("button", { name: /sidebar/i })).toBeNull();
+    }
   },
 );
 
@@ -475,6 +489,208 @@ it("shows global pages in the side dock and keeps the conversation mounted acros
   expect(draft).toHaveValue("Keep this draft");
   expect(mounted).toHaveBeenCalledOnce();
   expect(unmounted).not.toHaveBeenCalled();
+});
+
+it.each([
+  // Channels, DMs, threads and Solo chats all open the Messages page, which
+  // has no row of its own in the sidebar.
+  ["a conversation", "buzz.channels/channels", undefined],
+  ["Drafts & sent", "buzz.drafts-sent/drafts-sent", "Drafts & sent"],
+  // A third-party page with `primary: true` and no `placement` or `sidebar`.
+  ["a third-party plugin page", "example.pr-status/pr-status", "PR status"],
+])(
+  "keeps Messages selected in the dock with its sidebar on %s",
+  async (_destination, selected, row) => {
+    const current = createServices();
+    services = current;
+    const onSelect = vi.fn();
+    const pages = [
+      { id: "channels", pluginId: "buzz.channels", title: "Channels" },
+      { id: "inbox", pluginId: "buzz.inbox", title: "Activity" },
+      {
+        id: "drafts-sent",
+        pluginId: "buzz.drafts-sent",
+        title: "Drafts & sent",
+      },
+      { id: "pr-status", pluginId: "example.pr-status", title: "PR status" },
+    ].map((page) => ({
+      ...page,
+      key: `${page.pluginId}/${page.id}`,
+      revision: "one",
+      primary: true,
+      component: () => null,
+    }));
+    render(
+      <ToastProvider>
+        <AppShell
+          pages={pages}
+          selected={selected}
+          navigationAttempt=""
+          onSelect={onSelect}
+          tone="default"
+          sidebar={(links) => <aside aria-label="Sidebar">{links}</aside>}
+          communities={current.communities}
+          accountActions={current.accountActions}
+          appearance={testAppearance}
+        >
+          Page content
+        </AppShell>
+      </ToastProvider>,
+    );
+    const dock = screen.getByRole("navigation", { name: "Apps dock" });
+    const messages = within(dock).getByRole("tab", { name: "Messages" });
+    expect(messages).toHaveAttribute("aria-selected", "true");
+    expect(within(dock).getByRole("tab", { name: "Activity" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+    expect(
+      screen.getByRole("tabpanel", { name: "Messages" }),
+    ).toHaveTextContent("Page content");
+    const sidebar = screen.getByRole("complementary", { name: "Sidebar" });
+    expect(sidebar).toBeVisible();
+    // The open page is the only current row in the sidebar.
+    expect(within(sidebar).queryByRole("button", { current: "page" })).toBe(
+      row ? within(sidebar).getByRole("button", { name: row }) : null,
+    );
+
+    // Messages returns from a page opened in its sidebar.
+    await userEvent.click(messages);
+    if (selected === "buzz.channels/channels")
+      expect(onSelect).not.toHaveBeenCalled();
+    else
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith(
+        "buzz.channels/channels",
+        { focus: "preserve" },
+      );
+  },
+);
+
+it("keeps Messages selected when a page listed in its sidebar supplies its own sidebar", async () => {
+  const current = createServices();
+  services = current;
+  const onSelect = vi.fn();
+  const page = (pluginId: string, id: string, title: string) => ({
+    id,
+    pluginId,
+    title,
+    key: `${pluginId}/${id}`,
+    revision: "one",
+    primary: true,
+    component: () => null,
+  });
+  function PlaygroundSidebar({ children }: PageSidebarProps) {
+    return <aside aria-label="Playground sidebar">{children}</aside>;
+  }
+  const playground: RegisteredPage = {
+    ...page("example.playground", "sidebar", "Sidebar playground"),
+    sidebar: PlaygroundSidebar,
+  };
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={[
+          page("buzz.channels", "channels", "Channels"),
+          page("buzz.inbox", "inbox", "Activity"),
+          playground,
+        ]}
+        selected={playground.key}
+        navigationAttempt=""
+        onSelect={onSelect}
+        tone="default"
+        // As in App, the open page's own sidebar replaces the Messages sidebar.
+        sidebar={(links) => (
+          <PlaygroundSidebar
+            target={{
+              version: 1,
+              kind: "page",
+              pluginId: playground.pluginId,
+              pageId: playground.id,
+            }}
+          >
+            {links}
+          </PlaygroundSidebar>
+        )}
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        Page content
+      </AppShell>
+    </ToastProvider>,
+  );
+  const dock = screen.getByRole("navigation", { name: "Apps dock" });
+  const messages = within(dock).getByRole("tab", { name: "Messages" });
+  expect(messages).toHaveAttribute("aria-selected", "true");
+  expect(within(dock).getByRole("tab", { name: "Activity" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+  expect(screen.getByRole("tabpanel", { name: "Messages" })).toHaveTextContent(
+    "Page content",
+  );
+  // One sidebar: the page's own, still listing the Messages sidebar pages.
+  expect(screen.getAllByRole("complementary")).toHaveLength(1);
+  const sidebar = screen.getByRole("complementary", {
+    name: "Playground sidebar",
+  });
+  expect(sidebar).toBeVisible();
+  expect(
+    within(sidebar).getByRole("button", { name: "Sidebar playground" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
+
+  await userEvent.click(messages);
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith("buzz.channels/channels", {
+    focus: "preserve",
+  });
+});
+
+it("opens the narrow navigation drawer from Drafts & sent", async () => {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media,
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const current = createServices();
+  services = current;
+  const pages = [
+    { id: "channels", pluginId: "buzz.channels", title: "Channels" },
+    { id: "drafts-sent", pluginId: "buzz.drafts-sent", title: "Drafts & sent" },
+  ].map((page) => ({
+    ...page,
+    key: `${page.pluginId}/${page.id}`,
+    revision: "one",
+    primary: true,
+    component: () => null,
+  }));
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected="buzz.drafts-sent/drafts-sent"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        sidebar={(links) => <aside aria-label="Sidebar">{links}</aside>}
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        Drafts content
+      </AppShell>
+    </ToastProvider>,
+  );
+  const navigation = document.getElementById("shell-navigation");
+  const toggle = screen.getByRole("button", { name: "Show navigation" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(navigation).toHaveAttribute("aria-hidden", "true");
+  await userEvent.click(toggle);
+  expect(navigation).toHaveAttribute("aria-hidden", "false");
+  expect(navigation).toContainElement(
+    screen.getByRole("complementary", { name: "Sidebar" }),
+  );
 });
 
 it.each(["sidebar", "topbar", "toolbar"] as const)(

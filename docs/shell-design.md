@@ -56,7 +56,10 @@ semantic tokens, UI authoring rules and the local component reference.
   channel sidebar's surface, resize owner, row treatment and section recipes.
   Bestie and Inbox lead the left app dock, followed by Messages and the other
   dock destinations. Sidebar-placed contributions remain in the conversation
-  sidebar. Its plus opens New for chat, project, DM and channel creation;
+  sidebar; while one is open, `navigationOwner` keeps Messages selected in the
+  dock and the conversation sidebar stays open unless the page supplies its own
+  sidebar, which replaces it. The conversation sidebar's plus opens New for
+  chat, project, DM and channel creation;
   Cmd/Ctrl+N opens that menu only where the current app has a creation sidebar. Every conversation, Solo or Team, opens in Messages; see
   [Solo](solo/README.md) for the Solo treatment, placement and the relay privacy
   boundary. Messages is the default destination.

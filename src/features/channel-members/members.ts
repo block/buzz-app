@@ -32,10 +32,12 @@ export function canAddMembers(
 }
 
 /** A DM member may add people and agents to it; the relay decides whether a
- * person joins this DM or a new one (see `directMessages.add`). */
+ * person joins this DM or a new one (see `directMessages.add`). The relay's
+ * moderation DM only carries its notices, so no one is added to it. */
 export function canAddToDirectMessage(
   session: {
     viewer?: string | undefined;
+    relayAuthor?: string | undefined;
     directMessages: { available: boolean };
   },
   channel?: ChannelSummary,
@@ -47,7 +49,8 @@ export function canAddToDirectMessage(
     channel.viewerRole !== "guest" &&
     !channel.archived &&
     !channel.cached &&
-    channel.members?.includes(session.viewer)
+    channel.members?.includes(session.viewer) &&
+    !(session.relayAuthor && channel.members.includes(session.relayAuthor))
   );
 }
 

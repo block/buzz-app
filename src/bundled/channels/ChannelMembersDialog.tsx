@@ -852,6 +852,11 @@ export function ChannelMembersDialog({
   const solo = channel?.channelType === "solo";
   const dm = channel?.channelType === "dm";
   const place = solo ? "chat" : dm ? "DM" : "channel";
+  // The relay's moderation DM carries its notices; no one joins it.
+  const moderationDm =
+    dm &&
+    !!session.relayAuthor &&
+    !!channel?.members?.includes(session.relayAuthor);
   const readOnlyAccess =
     channel?.viewerRole === "guest" ||
     (channel?.readOnly && channel.joinRole === "guest");
@@ -2335,15 +2340,17 @@ export function ChannelMembersDialog({
             {accessControl}
             {!canAdd && !readOnlyAccess && !(solo && rosterBusy) && (
               <p className="px-control-inset text-body-sm text-subtle">
-                {dm && !channel?.archived
-                  ? "Adding people to this DM is unavailable in this connection."
-                  : channel?.archived
-                    ? `Archived ${place}s cannot add members.`
-                    : !session.outbox?.supports(9000)
-                      ? "Adding members is unavailable in this connection."
-                      : solo
-                        ? "You cannot share this chat."
-                        : "Join this channel to add people and agents."}
+                {moderationDm
+                  ? "People can’t be added to this DM."
+                  : dm && !channel?.archived
+                    ? "Adding people to this DM is unavailable in this connection."
+                    : channel?.archived
+                      ? `Archived ${place}s cannot add members.`
+                      : !session.outbox?.supports(9000)
+                        ? "Adding members is unavailable in this connection."
+                        : solo
+                          ? "You cannot share this chat."
+                          : "Join this channel to add people and agents."}
               </p>
             )}
             {rosterError && (

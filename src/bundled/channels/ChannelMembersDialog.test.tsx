@@ -131,6 +131,8 @@ async function setup(
     directMessages?: boolean;
     /** The person's profile claims to be an agent; the relay disagrees. */
     personClaimsAgent?: boolean;
+    /** The DM is the relay's moderation DM with the viewer. */
+    moderation?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -153,6 +155,7 @@ async function setup(
       (i + 10000).toString(16).padStart(64, "0"),
     ),
     ...(options.memberProfiles ?? []).map((event) => event.pubkey),
+    ...(options.moderation ? [relay.pubkey] : []),
   ];
   const forkId = "22222222-2222-4222-8222-222222222222";
   let forkMembers: string[] | undefined;
@@ -1602,6 +1605,18 @@ it("DMs cannot add people without a connection that adds to them", async () => {
       filters.some((filter) => filter.search),
     ),
   ).toBe(false);
+});
+it("the moderation DM offers no way to add anyone", async () => {
+  const t = await setup("dm", false, false, undefined, undefined, {
+    directMessages: true,
+    moderation: true,
+  });
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  expect(screen.getByText("People can’t be added to this DM.")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /^Add Morgan/ }),
+  ).not.toBeInTheDocument();
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
 });
 it("a person joins a DM with its history when the adder includes it", async () => {
   const t = await setup("dm", false, false, undefined, undefined, {

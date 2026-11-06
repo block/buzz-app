@@ -34,14 +34,29 @@ impl CredentialService {
         }
     }
 
-    pub(super) async fn pair(&self, params: &[String]) -> Result<String, Failure> {
+    /// `ports` are the caller's and this service's, which name the process
+    /// asking.
+    pub(super) async fn pair(
+        &self,
+        params: &[String],
+        ports: Option<(u16, u16)>,
+    ) -> Result<String, Failure> {
         let [client, relay] = params else {
             return Err(Failure::new("invalid_request", "Wrong parameters for pair"));
+        };
+        let process = match ports {
+            Some((peer, local)) => tauri::async_runtime::spawn_blocking(move || {
+                super::peer::executable(peer, local).map(|path| path.display().to_string())
+            })
+            .await
+            .ok()
+            .flatten(),
+            None => None,
         };
         let (token, approver) = self
             .0
             .pairings
-            .pair(client, relay, None, || self.human())
+            .pair(client, relay, process, || self.human())
             .await?;
         Ok(json!({
             "token": token,

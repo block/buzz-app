@@ -19,6 +19,7 @@ mod keychain;
 mod owner;
 mod pairing;
 pub(crate) use pairing::Unrevoked;
+mod peer;
 mod policy;
 // No token is issued on Windows, so there is nothing to test there.
 #[cfg(all(test, not(windows)))]
@@ -804,12 +805,21 @@ async fn answer(
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(str::to_owned);
     let version = header(&request, VERSION_HEADER).and_then(|value| value.trim().parse().ok());
+    let ports = request
+        .extensions()
+        .get::<loopback::Peer>()
+        .zip(
+            authority
+                .rsplit_once(':')
+                .and_then(|(_, port)| port.parse().ok()),
+        )
+        .map(|(peer, local)| (peer.0.port(), local));
     let body = Limited::new(request.into_body(), BODY_LIMIT).collect();
     let body = match tokio::time::timeout(BODY_TIMEOUT, body).await {
         Ok(Ok(body)) => body.to_bytes(),
         _ => Bytes::new(),
     };
-    let (status, reply) = respond(service, token.as_deref(), version, &body).await;
+    let (status, reply) = respond(service, token.as_deref(), version, &body, ports).await;
     Ok(response
         .status(status)
         .header(headers::CONTENT_TYPE, "application/json")
@@ -823,6 +833,7 @@ async fn respond(
     token: Option<&str>,
     version: Option<u32>,
     body: &[u8],
+    ports: Option<(u16, u16)>,
 ) -> (StatusCode, Value) {
     #[derive(Deserialize)]
     struct Message {
@@ -845,7 +856,7 @@ async fn respond(
         }
         let message = message.map_err(|_| Failure::new("invalid_request", "Invalid request"))?;
         if message.method == "pair" {
-            return service.pair(&message.params).await;
+            return service.pair(&message.params, ports).await;
         }
         let token = token.ok_or(Failure::revoked())?;
         if !service.callers().contains_key(&digest(token)) {
@@ -893,6 +904,14 @@ pub(crate) fn credential_pair_answer(
     approve: bool,
 ) {
     service.0.pairings.answer(&id, approve);
+}
+
+#[tauri::command]
+pub(crate) fn credential_pairing_communities(
+    service: tauri::State<'_, CredentialService>,
+    communities: Vec<String>,
+) {
+    service.0.pairings.set_communities(communities);
 }
 
 #[tauri::command]

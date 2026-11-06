@@ -650,6 +650,7 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         credential_service::credential_pair_answer,
+        credential_service::credential_pairing_communities,
         credential_service::credential_pairings_list,
         credential_service::credential_pairing_revoke,
         window_state::onboarding_preserve_window,

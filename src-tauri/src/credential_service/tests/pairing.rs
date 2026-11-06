@@ -6,7 +6,7 @@ const CLIENT: &str = "buzz-cli";
 
 async fn pair_request(service: &CredentialService, params: &[&str]) -> (StatusCode, Value) {
     let body = json!({ "id": "p", "method": "pair", "params": params }).to_string();
-    respond(service, None, Some(1), body.as_bytes()).await
+    respond(service, None, Some(1), body.as_bytes(), None).await
 }
 
 /// The id of the request the page was asked about, once it was.
@@ -416,7 +416,7 @@ async fn revocation_while_a_paired_request_runs_withholds_the_result() {
             let (service, waiting) = (fixture.service.clone(), token.clone());
             let body = json!({ "id": "1", "method": method, "params": params }).to_string();
             let request = tokio::spawn(async move {
-                respond(&service, Some(&waiting), Some(1), body.as_bytes()).await
+                respond(&service, Some(&waiting), Some(1), body.as_bytes(), None).await
             });
             // Admitted: it spent one request of its rate, and now waits at the call.
             while !fixture
@@ -765,7 +765,7 @@ async fn a_second_app_over_the_same_pairings_serves_none_of_them() {
         IdentityHost::fixture(),
     );
     let body = json!({ "id": "1", "method": "get_public_key", "params": [] }).to_string();
-    let reply = respond(&second, Some(&token), Some(1), body.as_bytes()).await;
+    let reply = respond(&second, Some(&token), Some(1), body.as_bytes(), None).await;
     assert_eq!(
         error(&reply),
         (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
@@ -852,4 +852,55 @@ async fn an_expired_sign_in_asks_for_a_new_one() {
         .as_str()
         .unwrap()
         .contains("sign in again in Buzz"));
+}
+
+#[tokio::test]
+async fn a_community_not_saved_here_is_refused_before_anyone_is_asked() {
+    let fixture = fixture();
+    for relay in [
+        "wss://other.example",
+        "wss://relay.example/team/",
+        "wss://relay.example/?team=a",
+        "ws://relay.example",
+    ] {
+        let (status, reply) = pair_request(&fixture.service, &[CLIENT, relay]).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+        assert_eq!(reply["error"], "denied");
+        assert_eq!(
+            reply["message"],
+            format!("{relay} isn't a community in Buzz; add it first")
+        );
+    }
+    assert!(fixture.notices.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_saved_community_matches_as_a_whole_normalized_url() {
+    let fixture = fixture();
+    // The page reports communities as HTTP or WebSocket URLs.
+    fixture
+        .service
+        .0
+        .pairings
+        .set_communities(vec!["https://relay.example".into()]);
+    let service = fixture.service.clone();
+    let pairing =
+        tokio::spawn(
+            async move { pair_request(&service, &[CLIENT, "WSS://Relay.Example:443/"]).await },
+        );
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.answer(&id, false);
+    assert_eq!(
+        pairing.await.unwrap().1["message"],
+        "Pairing was declined in Buzz"
+    );
+}
+
+#[tokio::test]
+async fn pairing_waits_until_the_page_reports_its_communities() {
+    let fixture = fixture();
+    *fixture.service.0.pairings.communities.lock().unwrap() = None;
+    let (status, reply) = pair_request(&fixture.service, &[CLIENT, RELAY]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{reply}");
+    assert!(fixture.notices.lock().unwrap().is_empty());
 }

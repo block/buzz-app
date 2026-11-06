@@ -101,6 +101,7 @@ fn main() {
             "credential_pair_answer",
             "credential_pairings_list",
             "credential_pairing_revoke",
+            "credential_pairing_communities",
             "federated_identity_register",
             "federated_identity_unregister",
             "federated_identity_request",

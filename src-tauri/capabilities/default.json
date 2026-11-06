@@ -45,6 +45,7 @@
     "allow-credential-pair-answer",
     "allow-credential-pairings-list",
     "allow-credential-pairing-revoke",
+    "allow-credential-pairing-communities",
     "allow-federated-identity-register",
     "allow-federated-identity-unregister",
     "allow-federated-identity-request",

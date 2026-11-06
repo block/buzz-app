@@ -92,6 +92,9 @@ pub(crate) struct Pairings {
     /// This app's sole use of the keychain item, taken before the records are
     /// first read and held for good; without it nothing is read or written.
     lease: Mutex<Option<Lease>>,
+    /// The communities saved in Buzz, as the page last reported them; `None`
+    /// until it has. A tool pairs only for one of these.
+    pub(super) communities: Mutex<Option<Vec<String>>>,
 }
 #[derive(Default)]
 struct State {
@@ -113,6 +116,16 @@ struct State {
     retiring: usize,
 }
 
+/// A community URL as the relay URL a tool names: `https` as `wss`, `http`
+/// as `ws`.
+fn as_relay(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => format!("wss://{rest}"),
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("http") => format!("ws://{rest}"),
+        _ => url.into(),
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -125,7 +138,30 @@ impl Pairings {
             write: tokio::sync::Mutex::new(()),
             state: Mutex::default(),
             lease: Mutex::default(),
+            communities: Mutex::default(),
         }
+    }
+
+    /// Records the communities saved in Buzz, as WebSocket or HTTP URLs.
+    pub(crate) fn set_communities(&self, communities: Vec<String>) {
+        *self
+            .communities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(communities);
+    }
+
+    /// Whether `relay` is a saved community, compared as a whole URL.
+    fn saved(&self, relay: &str) -> Result<bool, Failure> {
+        let communities = self
+            .communities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let communities = communities
+            .as_ref()
+            .ok_or_else(|| Failure::new("unavailable", "Buzz is starting; try again"))?;
+        Ok(communities
+            .iter()
+            .any(|community| super::policy::same_relay(&as_relay(community), relay)))
     }
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
@@ -301,6 +337,13 @@ impl Pairings {
             .is_ok_and(|url| matches!(url.scheme(), "ws" | "wss") && url.host().is_some());
         if !valid_client || !valid_relay {
             return Err(Failure::new("invalid_request", "Invalid pairing request"));
+        }
+        // Refused before anyone is asked or notified.
+        if !self.saved(relay)? {
+            return Err(Failure::new(
+                "denied",
+                &format!("{relay} isn't a community in Buzz; add it first"),
+            ));
         }
         let approver = match human().await {
             Human::Ready(approver) => approver,

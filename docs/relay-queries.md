@@ -232,22 +232,40 @@ fallback. Non-UUID channels retain the legacy path. No capability cache persists
 across owners or connections.
 
 Each strict thread starts with 10 traversal rows plus their auxiliary events; later pages
-request 50 traversal rows, with at most ten pages per repair/load range. Legacy
-mode still requests 50 rows per page. The shared panel positions after the first
-strict page and demand-loads older pages on scrollback. Legacy mode still
-automatically walks its bounded oldest-first range and cannot promise the newest
-tail. Media review retains eager bounded traversal.
-Refresh re-reads the retained page range from the beginning while preserving known
-rows/edits/deletes: omitted events are not retractions. Live channel traffic feeds
+request 50 traversal rows. Legacy mode requests 50 rows per page. The view keeps a
+window of at most ten consecutive pages and records where each page it reads
+starts. `loadMore` continues the traversal (older for strict, newer for legacy);
+past a full window it evicts the page at the window's far end. `loadBack` reads the
+nearest evicted page again from its recorded start, evicting the other end, and
+reads on from where it stopped if a backdated reply grew that page. `latest`
+reopens a strict window that has moved off the newest page at its first page.
+`limited` means the window is full: the next continuation evicts. The shared panel
+positions after the first strict page and loads a page as the reader nears either
+edge. Legacy mode automatically walks oldest-first until its window fills, cannot
+promise the newest tail, and continues as the reader scrolls down. Media review
+eagerly loads until the window fills.
+Refresh re-reads the window's pages from its first page's recorded start while
+preserving known rows/edits/deletes: omitted events are not retractions. That is
+at most one root read plus ten window reads per open thread, however long the
+thread. A strict refresh at the newest end that never reaches a reply held across
+a drop drops those replies and settles on the pages the reader had, evicting the
+pages read past them. Live channel traffic feeds
 this same view without another subscription. Channel establishment triggers repair
 independently from finite channel-head invalidation. Author deletion of a retained
 edit/reaction removes that overlay. Unknown or denied auxiliary targets remain
 invisible; active thread target evidence survives shared-cache eviction but still
 passes the existing recursive access check.
 
-Threads share the 64 owned-handle ceiling. Each retains at most 2,000 events / 4 MiB;
-overflow clears display evidence and exposes an explicit recoverable limit rather
-than silently evicting a tombstone. Cache clear, access loss and session disposal
+Threads share the 64 owned-handle ceiling. Past 2,000 events / 4 MiB a view evicts
+whole pages from its far end, always keeping the last page read, so one oversized
+page is held rather than lost; live growth evicts the oldest end. Eviction drops
+replies with their edits and reactions, never a deletion (kinds 5 and 9005), the
+root, the exact target or an ancestor of a reply that stays. A reply whose
+deletion the view saw still folds as deleted when it is read again, from a lagging
+replica, a live replay or the shared cache, and no reply is detached from its
+parent. Own replies come from the outbox's confirmed journal, so the window's
+gating never hides them. While newer pages are evicted, live
+replies above the window are not merged; they return with their page. Cache clear, access loss and session disposal
 cancel pending work and purge owned state. A missing finite root hides the display
 but retains bounded tombstones for safe retry. Short/empty pages mean only what the
 relay returned; depth, serving-time filtering and retention can leave history unseen.

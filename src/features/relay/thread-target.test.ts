@@ -89,7 +89,7 @@ it("retains the selected reply beyond traversal limits without using it as a cur
     "First reply",
     "Edited target",
   ]); // Unrelated top-level seed events must not become replies before root resolution.
-  for (let page = 2; page <= 10; page++) {
+  for (let page = 2; page <= 12; page++) {
     const more = h.view.loadMore();
     const request = h.next();
     expect(request.filters[1]?.thread_cursor).toBe(page);
@@ -101,12 +101,17 @@ it("retains the selected reply beyond traversal limits without using it as a cur
     ]);
     await more;
   }
+  // The window slid past its first pages; the target stays selected.
   expect(h.view.snapshot()).toMatchObject({
     limited: true,
-    canLoadMore: false,
+    canLoadMore: true,
+    canLoadBack: true,
     targetStatus: "ready",
     target: { id: reply.id },
   });
+  const contents = h.view.snapshot().replies.map((row) => row.content);
+  expect(contents).not.toContain("First reply");
+  expect(contents).toContain("Edited target");
   expect(h.session.channels.window("a").rows.map((row) => row.id)).toEqual([
     head.id,
   ]);

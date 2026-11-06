@@ -49,6 +49,8 @@ function setup(
       },
       refresh: vi.fn(async () => {}),
       loadMore: vi.fn(async () => {}),
+      loadBack: vi.fn(async () => {}),
+      latest: vi.fn(async () => {}),
       retarget: vi.fn<ThreadView["retarget"]>(async () => "selected"),
       dispose: vi.fn(),
     } satisfies ThreadView;

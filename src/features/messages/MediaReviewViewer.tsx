@@ -134,9 +134,14 @@ function ResolvedReview({
     view?.snapshot ?? noThreadSnapshot,
   );
   useEffect(() => {
-    if (snapshot?.status === "ready" && snapshot.canLoadMore)
+    // Eager comments stop once the thread's window is full.
+    if (
+      snapshot?.status === "ready" &&
+      snapshot.canLoadMore &&
+      !snapshot.limited
+    )
       void view?.loadMore();
-  }, [view, snapshot?.status, snapshot?.canLoadMore]);
+  }, [view, snapshot?.status, snapshot?.canLoadMore, snapshot?.limited]);
   const knownRows = [
     snapshot?.root,
     snapshot?.target,

@@ -270,24 +270,30 @@ expanding nested replies or live agent streaming.
 
 `--scenario thread-scroll` measures the long-thread workload behind the
 [thread scrolling targets](channels.md#targets). `tests/browser/perf/thread-corpus.mjs`
-fills the strict-window fixture thread with 460 weekly-update replies from 40
-authors: Markdown lists, bold text, inline code, mentions, links, quotes and plain
-prose, with 19 replies in collapsed branches. Their heights follow a real long
-thread's (median about 280px). Each sample opens the thread and loads all ten pages:
-wheel input at the top requests each older page, the fixture holds it until the
-sample sees the request, and the sample waits for its rows, so every page is
-loaded before measurement without fixed delays.
+fills the strict-window fixture thread with 5,000 weekly-update replies from 40
+authors, each opening with its position in the thread ("Message #142"): Markdown lists, bold text, inline code, mentions, links, quotes and plain
+prose, with every 25th reply in a collapsed branch. Their heights follow a real long
+thread's (median about 280px). Each worker signs the corpus once and every sample
+serves the same frozen events. Scroll samples open the thread and fill its window
+at the newest end, ten pages and 460 replies: wheel input at the top requests each
+older page, the fixture holds it until the sample sees the request, and the sample
+waits for a new reply at the top, so every page is loaded before measurement
+without fixed delays.
 
 | Case | Action |
 | --- | --- |
 | `thread-scroll-open` | Click Reply on the root: `firstRowsMs` to visible thread rows |
 | `thread-scroll-fling` | From the bottom of the loaded thread, one 6000px upward gesture at 6000px/s |
 | `thread-scroll-reverse` | Up 6000px, down 3000px, up 3500px at 8000px/s |
+| `thread-scroll-deep-page` | After 20 pages (1,010 replies read, the window slid ten pages), one older page at the top: it lands above the reader while a newer page is evicted |
 
 Scroll cases report the scrolling cadence metrics above, `domGapFrames` (sampled
 frames inside the gesture with no loaded reply intersecting the viewport) and the
 traversed range,
 and require real wheel input, no older-page reads and at least 5000px of travel.
+`thread-scroll-deep-page` reports the cadence across the read, `readingShiftPx`
+(how far the row being read moved) and the window's top-level rows, and requires
+one older read, evicted newest replies and a window of at most 500 top-level rows.
 The pointer rests mid-pane over replies, after a press in the empty gutter sets
 pointer modality.
 
@@ -322,7 +328,7 @@ always signs through the HTTP broker with an ephemeral fixture key. The desktop 
 `BUZZ_DEV_VIEWER`, which keeps a `.env.local` pin out of the Rust process, and its
 own app identifier, which separates its app and WebKit storage; the Keychain and
 plugin data stay shared with other development launches. The agent seeds the
-fixture account, opens the thread, loads all of its history and records each
+fixture account, opens the thread, fills its window at the newest end and records each
 animation frame. Arms alternate run by run (ABBA) over one Rust build; a run whose
 gestures scrolled less than 10,000px (another window took the input) is repeated.
 

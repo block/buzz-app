@@ -230,6 +230,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   such as “Pinky and 182 others were added.” Hover or activate “182 others” to see
   the full, scrollable list of names. Messages and huddle entries split groups.
 
+- Threads have no reply limit. A thread opens at its newest replies and loads
+  older ones as you scroll up. It keeps a few hundred replies loaded at a time
+  and reloads the others as you scroll back to them. After scrolling far back,
+  **Jump to latest**, or sending a reply, returns to the newest replies.
+
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Solo conversations continue at the chat's top
   level rather than requiring a new thread for each reply. Where available, use

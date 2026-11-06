@@ -604,6 +604,18 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
+  // Strict windows continue toward older replies and read evicted newer
+  // pages back; legacy continues toward newer ones, walking eagerly until its
+  // window fills, and reads evicted older pages back.
+  const strict = snapshot.direction === "older";
+  const walked = !snapshot.canLoadMore || snapshot.limited;
+  const detached = strict && !!snapshot.canLoadBack;
+  // Only a window holding the whole thread counts newer rows as arrivals: a
+  // page read at either edge is history the reader scrolled to.
+  const complete =
+    snapshot.status === "ready" &&
+    !snapshot.canLoadMore &&
+    !snapshot.canLoadBack;
   const threadChannels = useMemo(() => new Set([channelId]), [channelId]);
   const activitySnapshot = useChannelActivitySnapshot(
     session.agentActivity,
@@ -762,7 +774,7 @@ function ThreadMessages({
       0,
       ...snapshot.replies.map((reply) => reply.createdAt),
     ),
-    complete: snapshot.status === "ready" && !snapshot.canLoadMore,
+    complete,
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -783,7 +795,8 @@ function ThreadMessages({
   const olderAnchor = useRef<
     { id: string; top: number; ancestors: readonly string[] } | undefined
   >(undefined);
-  const olderDemand = useRef(false);
+  /** A reader gesture since the last page read: only reading loads pages. */
+  const demand = useRef(false);
   const targetAnchor = useRef<number | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
@@ -1132,18 +1145,18 @@ function ThreadMessages({
     },
     [videoOwner, videoAttachment, onOpenMediaReview, openRootMedia],
   );
-  // Only legacy traversal is eager. Strict windows open at the newest page.
+  // Only legacy traversal is eager, until its window fills. Strict windows
+  // open at the newest page.
   useEffect(() => {
     if (
       snapshot.direction !== "older" &&
       snapshot.status === "ready" &&
-      snapshot.canLoadMore
+      !walked
     )
       void view.loadMore();
-  }, [view, snapshot]);
+  }, [view, snapshot, walked]);
   useLayoutEffect(() => {
     const previous = previousReplies.current;
-    const complete = snapshot.status === "ready" && !snapshot.canLoadMore;
     // Initial traversal has no baseline. Once complete, retain the last
     // observed replies through reconnect loading so recovery can reconcile them.
     if (!complete && !previous.complete) return;
@@ -1166,7 +1179,7 @@ function ThreadMessages({
       };
     if (arrivals > 0 && !follow.current)
       setNewMessageCount((count) => count + arrivals);
-  }, [snapshot.status, snapshot.canLoadMore, snapshot.replies]);
+  }, [complete, snapshot.replies]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -1202,7 +1215,7 @@ function ThreadMessages({
       (!positioned.current &&
         !(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
-          (snapshot.direction !== "older" && snapshot.canLoadMore)))
+          (snapshot.direction !== "older" && !walked)))
     )
       return;
     // Native scroll anchoring is off here, so this panel owns ordinary reading
@@ -1290,7 +1303,7 @@ function ThreadMessages({
         targetAnchor.current = offset;
         follow.current = false;
       }
-      if (snapshot.status !== "loading" && !snapshot.canLoadMore)
+      if (snapshot.status !== "loading" && walked)
         targetAnchor.current = undefined;
     }
     // Initial positioning waits for one strict page or the legacy bounded walk.
@@ -1306,7 +1319,7 @@ function ThreadMessages({
     } else {
       const bottom =
         element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-      setShowJumpToLatest(!bottom);
+      setShowJumpToLatest(!bottom || detached);
       if (bottom) setNewMessageCount(0);
     }
     captureResizePosition();
@@ -1319,7 +1332,8 @@ function ThreadMessages({
     snapshot.status,
     snapshot.targetStatus,
     snapshot.target,
-    snapshot.canLoadMore,
+    walked,
+    detached,
     snapshot.direction,
     snapshot.root,
     messageId,
@@ -1367,7 +1381,7 @@ function ThreadMessages({
       return;
     if (
       snapshot.status === "ready" &&
-      (snapshot.direction === "older" || !snapshot.canLoadMore)
+      (snapshot.direction === "older" || walked)
     ) {
       readingSettled.current = true;
       readingPositioned(scroller.current);
@@ -1429,6 +1443,8 @@ function ThreadMessages({
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
+    // Newer pages were evicted: the latest replies are not below.
+    if (detached) void view.latest();
     targetAnchor.current = undefined;
     positioned.current = true;
     follow.current = true;
@@ -1453,7 +1469,7 @@ function ThreadMessages({
       clearTimeout(jumpTimer.current);
       jumpTimer.current = undefined;
     }
-    olderDemand.current = true;
+    demand.current = true;
     targetAnchor.current = undefined;
     setInitialPositioned(true);
     // A new reader gesture supersedes any queued resize restoration.
@@ -1704,22 +1720,32 @@ function ThreadMessages({
         }
       : undefined;
   };
-  const loadOlder = () => {
+  /** Read the next page at the edge the reader approaches: older replies at
+   * the top, newer at the bottom. Its far end may be evicted, so the row
+   * being read is anchored either way. */
+  const loadEdge = (older: boolean) => {
     const element = scroller.current;
+    const continues = older === strict;
+    const range = element ? element.scrollHeight - element.clientHeight : 0;
     if (
       !element ||
-      !olderDemand.current ||
-      snapshot.direction !== "older" ||
+      !demand.current ||
+      !snapshot.direction ||
       snapshot.status !== "ready" ||
-      !snapshot.canLoadMore ||
-      element.scrollTop >
-        Math.max(80, (element.scrollHeight - element.clientHeight) * 0.2)
+      // Legacy's eager walk owns continuation until its window fills.
+      !(continues
+        ? snapshot.canLoadMore && (strict || walked)
+        : snapshot.canLoadBack) ||
+      (older ? element.scrollTop : range - element.scrollTop) >
+        Math.max(80, range * 0.2)
     )
       return;
-    olderDemand.current = false;
+    demand.current = false;
     captureOlderAnchor(element);
-    void view.loadMore();
+    void (continues ? view.loadMore() : view.loadBack());
   };
+  const loadOlder = () => loadEdge(true);
+  const loadNewer = () => loadEdge(false);
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
   const showOlderPageStatus =
@@ -1815,18 +1841,21 @@ function ThreadMessages({
             80;
           if (jumpingToLatest.current) return;
           captureResizePosition();
-          follow.current = bottom;
-          setShowJumpToLatest(!bottom);
+          follow.current = bottom && !detached;
+          setShowJumpToLatest(!bottom || detached);
           if (bottom) setNewMessageCount(0);
           loadOlder();
+          loadNewer();
         }}
         onWheel={(event) => {
           keepReadingPosition();
           if (event.deltaY < 0) loadOlder();
+          if (event.deltaY > 0) loadNewer();
         }}
         onTouchMove={() => {
           keepReadingPosition();
           loadOlder();
+          loadNewer();
         }}
         onPointerDown={keepReadingPosition}
         onKeyDown={(event) => {
@@ -1849,6 +1878,7 @@ function ThreadMessages({
               (event.key === " " && event.shiftKey)
             )
               loadOlder();
+            else loadNewer();
           }
         }}
         tabIndex={0}
@@ -1970,9 +2000,6 @@ function ThreadMessages({
               : "Couldn’t open that message."}
           </p>
         )}
-        {snapshot.limited && !snapshot.error && (
-          <p className={styles.threadNote}>Thread history limit reached.</p>
-        )}
         {(historyError || (targetUnavailable && snapshot.root)) && (
           <div className={styles.threadNotice}>
             {targetUnavailable && snapshot.root && (
@@ -2086,6 +2113,8 @@ function ThreadMessages({
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;
+            // The reply lands at the newest end; return the window there.
+            if (detached && !selectedParent) void view.latest();
             if (selectedParent)
               setExpanded(
                 (current) =>

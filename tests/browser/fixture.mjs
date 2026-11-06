@@ -2624,6 +2624,7 @@ export const test = base.extend({
         pending,
         served,
         histories,
+        threadReplies,
         // Signed device-cache input for the startup scale journey; same modeled
         // wire responses as a real roster/head read, without visiting every row.
         startupCache() {

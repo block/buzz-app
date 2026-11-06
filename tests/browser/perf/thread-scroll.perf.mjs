@@ -4,14 +4,16 @@ import {
   populateThread,
   THREAD_CHANNEL,
   THREAD_REPLIES,
+  THREAD_WINDOW,
 } from "./thread-corpus.mjs";
 import { hoverMessage } from "../message-actions.mjs";
 import { settle } from "../timeline.mjs";
 
-// Browser-only: scrolling the thread history once every reply the strict window
-// holds is loaded (docs/channels.md#scrolling-long-threads). Rendering and
-// scroll cost at that scale need a real engine; frame intervals reproduce the
-// compositing stalls only in WebKit (docs/performance.md#thread-scrolling).
+// Browser-only: scrolling a 5,000-reply thread once the panel's window of
+// loaded replies is full, and reading on past it as the window slides
+// (docs/channels.md#scrolling-long-threads). Rendering and scroll cost at that
+// scale need a real engine; frame intervals reproduce the compositing stalls
+// only in WebKit (docs/performance.md#thread-scrolling).
 test.use({
   productionBroker: true,
   readState: true,
@@ -51,17 +53,23 @@ async function openThread(page, app, perf) {
 const history = (page) =>
   page.getByRole("region", { name: "Thread messages", exact: true });
 
-// Every older page is requested by upward wheel input at the top and held by
-// the fixture until released, so each step waits for its request and rows.
-async function loadHistory(page, app) {
+const firstTopLevel = (element) =>
+  element
+    .locator(`${topLevel} [data-message-id]`)
+    .first()
+    .getAttribute("data-message-id");
+
+// Each older page is requested by upward wheel input at the top and held by
+// the fixture until released, so each step waits for its request and for a
+// new reply at the top. Ten pages fill the window; later pages slide it,
+// evicting newer pages.
+async function loadHistory(page, app, pages) {
   const element = history(page);
-  const expected =
-    THREAD_REPLIES - app.inboxWindow.replies.filter(isNested).length;
   const box = await element.boundingBox();
   await page.mouse.move(box.x + box.width - 12, box.y + box.height / 2);
   let released = app.pending.length;
-  for (let page_ = 0; page_ < 9; page_++) {
-    const before = await element.locator(topLevel).count();
+  for (let page_ = 1; page_ < pages; page_++) {
+    const before = await firstTopLevel(element);
     await element.evaluate((node) => {
       node.scrollTop = 0;
     });
@@ -71,19 +79,89 @@ async function loadHistory(page, app) {
       .toBeGreaterThan(released);
     while (released < app.pending.length) app.pending[released++].release();
     await expect
-      .poll(() => element.locator(topLevel).count(), {
-        message: "older page rendered",
-      })
-      .toBeGreaterThan(before);
+      .poll(() => firstTopLevel(element), { message: "older page rendered" })
+      .not.toBe(before);
   }
-  await expect(element.locator(topLevel)).toHaveCount(expected);
   await settle(page, element);
-  return expected;
+  return element.locator(topLevel).count();
+}
+// Top-level replies in the full window at the newest end.
+const windowTopLevel = (app) =>
+  app.inboxWindow.replies
+    .slice(-THREAD_WINDOW)
+    .filter((event) => !isNested(event)).length;
+// Pages read before the measured one: the window has slid ten pages past full.
+const DEEP_PAGES = 20;
+
+// One older page read into a full window deep in the thread: its rows land
+// above the reader while a newer page is evicted below. Reports the frame
+// cadence across the read and how far the row being read moved.
+async function deepPage(page, app, perf, ids, browserName) {
+  const element = history(page);
+  const before = await loadHistory(page, app, DEEP_PAGES);
+  const newest = app.inboxWindow.replies.at(-1).id;
+  await expect(
+    element.locator(`[data-message-id="${newest}"]`),
+    "the newest replies were evicted",
+  ).toHaveCount(0);
+  await element.evaluate((node) => {
+    node.scrollTop = 0;
+  });
+  await settle(page, element);
+  const reading = await firstTopLevel(element);
+  const offset = () =>
+    element
+      .locator(`[data-message-id="${reading}"]`)
+      .evaluate((row) => row.getBoundingClientRect().top);
+  const top = await offset();
+  let released = app.pending.length;
+  const requestsBefore = released;
+  const sample = await perf.measure(THREAD_CHANNEL, {
+    selector: historySelector,
+    ids,
+    timeoutMs: 60_000,
+    act: async () => {
+      await page.mouse.wheel(0, -400);
+      await expect
+        .poll(() => app.pending.length, { message: "older page requested" })
+        .toBeGreaterThan(released);
+      while (released < app.pending.length) app.pending[released++].release();
+      await expect
+        .poll(() => firstTopLevel(element), { message: "older page rendered" })
+        .not.toBe(reading);
+    },
+    work: {
+      engine: browserName,
+      repliesRead: 10 + 50 * DEEP_PAGES,
+      topLevelBefore: before,
+    },
+  });
+  Object.assign(sample.metrics, scrollCadence(sample.recording), {
+    readingShiftPx: Math.abs((await offset()) - top),
+  });
+  Object.assign(sample.work, {
+    wheels: sample.recording.wheels,
+    topLevelAfter: await element.locator(topLevel).count(),
+    mountedRows: await element.locator("[data-message-id]").count(),
+    olderReadsDuring: app.pending.length - requestsBefore,
+  });
+  await perf.save(sample);
+  expect(sample.work.wheels, "real wheel input").toBeGreaterThan(0);
+  expect(sample.work.olderReadsDuring, "one older page").toBe(1);
+  // Ten pages of 50: without eviction the panel would hold every reply read.
+  expect(
+    sample.work.topLevelAfter,
+    "the window stays bounded as it slides",
+  ).toBeLessThanOrEqual(500);
 }
 const isNested = (event) =>
   event.tags.some(([name, , , marker]) => name === "e" && marker === "root");
 
-for (const name of ["thread-scroll-open", ...Object.keys(gestures)])
+for (const name of [
+  "thread-scroll-open",
+  ...Object.keys(gestures),
+  "thread-scroll-deep-page",
+])
   for (let i = 1; i <= repeats; i++)
     test(`${name} sample ${i}`, async ({ page, app, perf, browserName }) => {
       test.setTimeout(180_000);
@@ -103,7 +181,14 @@ for (const name of ["thread-scroll-open", ...Object.keys(gestures)])
       await reply.click();
       const element = history(page);
       await expect(element).not.toHaveAttribute("data-positioning");
-      const loaded = await loadHistory(page, app);
+      if (name === "thread-scroll-deep-page") {
+        await deepPage(page, app, perf, ids, browserName);
+        return;
+      }
+      const loaded = await loadHistory(page, app, 10);
+      expect(loaded, "the full window at the newest end").toBe(
+        windowTopLevel(app),
+      );
       await element.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
       });

@@ -119,31 +119,31 @@
     return status();
   }
 
-  // Load every older page the thread holds. Upward wheel input records the
-  // panel's older-page demand; the host releases each page immediately.
+  // Fill the window at the newest end: ten pages, one wheel at the top each,
+  // waiting for each page's rows. Reading further would slide the window.
   async function preload({ timeoutMs = 120_000 } = {}) {
     const element = thread();
     if (!element) throw new Error("thread is not open");
+    const { topLevel } = await workloadNow();
     const deadline = performance.now() + timeoutMs;
-    let previous = -1;
-    let stable = 0;
-    while (stable < 15) {
-      if (performance.now() > deadline)
-        throw new Error("thread history did not finish loading");
+    const count = () =>
+      element.querySelectorAll(
+        ":scope > [data-thread-rows] > ol > li[data-layout]",
+      ).length;
+    while (count() < topLevel) {
+      const before = count();
       element.scrollTop = 0;
       element.dispatchEvent(
         new WheelEvent("wheel", { deltaY: -120, bubbles: true }),
       );
-      await pause(200);
-      const count = element.querySelectorAll(
-        ":scope > [data-thread-rows] > ol > li[data-layout]",
-      ).length;
-      stable = count === previous ? stable + 1 : 0;
-      previous = count;
+      await until(
+        () => count() !== before,
+        deadline - performance.now(),
+        "thread history did not finish loading",
+      );
     }
     element.scrollTop = element.scrollHeight;
     await pause(100);
-    const { topLevel } = await workloadNow();
     return { ...status(), expectedTopLevel: topLevel };
   }
 

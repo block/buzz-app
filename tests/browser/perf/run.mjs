@@ -23,6 +23,7 @@ const cases = [
   "thread-scroll-open",
   "thread-scroll-fling",
   "thread-scroll-reverse",
+  "thread-scroll-deep-page",
 ];
 // A case name selects only that case; a group selects every case it prefixes.
 const groups = [

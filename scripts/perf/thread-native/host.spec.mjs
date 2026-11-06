@@ -17,6 +17,7 @@ import {
   populateThread,
   THREAD_CHANNEL,
   THREAD_REPLIES,
+  THREAD_WINDOW,
 } from "../../../tests/browser/perf/thread-corpus.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -150,9 +151,13 @@ const types = {
 test("thread native host", async ({ page, app }) => {
   test.setTimeout(0);
   const rootEvent = populateThread(app);
-  const topLevel = app.inboxWindow.replies.filter(
-    (event) => !event.tags.some(([, , , marker]) => marker === "root"),
-  ).length;
+  // Top-level replies in the full window at the newest end, which the agent
+  // fills before measuring.
+  const topLevel = app.inboxWindow.replies
+    .slice(-THREAD_WINDOW)
+    .filter(
+      (event) => !event.tags.some(([, , , marker]) => marker === "root"),
+    ).length;
   // Copy the fixture's seeded storage for the native window, which never runs
   // Playwright init scripts. An empty same-origin page runs the init scripts
   // without starting a second app client.

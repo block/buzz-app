@@ -14,6 +14,7 @@ use std::{
 };
 
 pub mod access;
+pub mod gateway;
 pub mod imports;
 pub mod managed;
 mod migrate_agent_flag;
@@ -400,9 +401,23 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
 ];
 /// The matching Builderlab API base path, or empty when unconfigured.
 pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");
-/// The `BUZZ_AGENT_GATEWAY` descriptor's gateway origin, or empty when
-/// gateway routing is off in this build.
-pub const AGENT_GATEWAY_ORIGIN: &str = env!("BUZZ_AGENT_GATEWAY_ORIGIN");
+/// This build's agent gateway, from its `BUZZ_AGENT_GATEWAY` descriptor:
+/// `None` when the build has none, which keeps the integration off. `build.rs`
+/// already refused an invalid one; checked again here, an invalid one is off.
+pub fn agent_gateway() -> Option<&'static gateway::Native> {
+    static GATEWAY: std::sync::OnceLock<Option<gateway::Native>> = std::sync::OnceLock::new();
+    GATEWAY
+        .get_or_init(|| {
+            gateway::parse(env!("BUZZ_AGENT_GATEWAY"))
+                .ok()
+                .flatten()
+                .map(|(native, _)| native)
+        })
+        .as_ref()
+}
+fn agent_gateway_origin() -> &'static str {
+    agent_gateway().map_or("", |gateway| gateway.gateway.as_str())
+}
 /// The bundled Agents plugin, which may reach the agent gateway for its
 /// access check: that origin and nothing more.
 fn agents_manifest(gateway: &str) -> Manifest {
@@ -494,7 +509,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/repos/manifest.json"))
             .expect("projects manifest"),
-        agents_manifest(AGENT_GATEWAY_ORIGIN),
+        agents_manifest(agent_gateway_origin()),
         serde_json::from_str(include_str!("../../../src/bundled/watching/manifest.json"))
             .expect("watching manifest"),
         serde_json::from_str(include_str!(
@@ -2487,10 +2502,10 @@ mod tests {
         let grants = manager.host_grants("buzz.agents", "bundled").unwrap();
         assert_eq!(
             grants.network_origins,
-            if super::AGENT_GATEWAY_ORIGIN.is_empty() {
+            if super::agent_gateway_origin().is_empty() {
                 vec![]
             } else {
-                vec![super::AGENT_GATEWAY_ORIGIN.to_owned()]
+                vec![super::agent_gateway_origin().to_owned()]
             }
         );
     }

@@ -191,7 +191,8 @@ export function useConversationTabs({
   });
   const panelTrigger = useRef<HTMLElement | null>(null);
   // The return target the last linked thread's link named, as a media review's
-  // comment does (LinkThreadTabContext), until that thread's tab closes.
+  // comment does (LinkThreadTabContext), while that thread's tab stays open.
+  // It follows the thread's verified root.
   const linkedReturn = useRef<
     { channelId: string; rootId: string; trigger: HTMLElement } | undefined
   >(undefined);
@@ -575,7 +576,6 @@ export function useConversationTabs({
       closing?.kind === "thread" &&
       linked?.channelId === closing.channelId &&
       linked.rootId === rootOfTab(closing);
-    if (returning) linkedReturn.current = undefined;
     const trigger =
       returning &&
       linked.trigger.isConnected &&
@@ -747,6 +747,18 @@ export function useConversationTabs({
     if (!openIds.has(id)) visitTab.entered.delete(id);
   for (const id of visitTab.shown)
     if (!openIds.has(id)) visitTab.shown.delete(id);
+  // So does a linked thread's return target, however its tab closed.
+  const returnThread = linkedReturn.current;
+  if (
+    returnThread &&
+    !tabState.tabs.some(
+      (tab) =>
+        tab.kind === "thread" &&
+        tab.channelId === returnThread.channelId &&
+        rootOfTab(tab) === returnThread.rootId,
+    )
+  )
+    linkedReturn.current = undefined;
   function usableChannel(target: ChannelSummary) {
     return (
       !target.readOnly &&
@@ -1086,9 +1098,17 @@ export function useConversationTabs({
               extensions={extensions}
               navigation={route}
               onRetryNavigation={onRetryNavigation}
-              onResolvedRoot={(rootId) =>
-                tabState.resolveThreadRoot(tab.id, rootId)
-              }
+              onResolvedRoot={(rootId) => {
+                // A link at a reply hints that reply as its root. The return
+                // target follows the verified root, into any tab it merges with.
+                const linked = linkedReturn.current;
+                if (
+                  linked?.channelId === tab.channelId &&
+                  linked.rootId === rootOfTab(tab)
+                )
+                  linkedReturn.current = { ...linked, rootId };
+                tabState.resolveThreadRoot(tab.id, rootId);
+              }}
               onDifferentThread={(requested, kept) =>
                 tabState.divertThread(tab.id, requested, kept)
               }

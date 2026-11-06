@@ -116,13 +116,15 @@ function MessageActionBarControls({
     activate.current = openRequest.activate;
     setOpen(true);
   }, [openRequest]);
-  // The item is activated once the popup shows it; the contribution's own
+  // The item is activated once this bar's own popup shows it (another
+  // rendering of the same message has its own bar); the contribution's own
   // click handler runs, exactly as a chosen item's would.
+  const popupRef = useRef<HTMLDivElement>(null);
   const activateRequested = () => {
     const key = activate.current;
-    if (key === undefined || messageId === undefined) return;
-    const item = document.querySelector<HTMLElement>(
-      `[role="menu"][data-message-id="${CSS.escape(messageId)}"] [data-contribution="${key}"] [role="menuitem"]`,
+    if (key === undefined) return;
+    const item = popupRef.current?.querySelector<HTMLElement>(
+      `[data-contribution="${key}"] [role="menuitem"]`,
     );
     if (!item) return;
     activate.current = undefined;
@@ -177,6 +179,7 @@ function MessageActionBarControls({
   };
   const popup = (
     <MenuPopup
+      ref={popupRef}
       align={children ? "start" : "end"}
       anchor={contextAnchor}
       data-message-id={messageId}

@@ -15,6 +15,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { InputGroup } from "../../shared/design-system/ui/InputGroup";
+import { ScrollEdgeMaterial } from "../../shared/design-system/ui/ScrollEdgeMaterial";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   avatarPictureError,
@@ -477,6 +478,22 @@ function AvatarDraft({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  // Focus scrolling stops above the sticky footer, however its actions wrap.
+  const [footer, setFooter] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const popup = footer?.closest<HTMLElement>(`.${styles.popup}`);
+    if (!footer || !popup) return;
+    const measure = () => {
+      popup.style.scrollPaddingBlockEnd = `${footer.offsetHeight}px`;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      popup.style.removeProperty("scroll-padding-block-end");
+    };
+  }, [footer]);
   const [picture, setPicture] = useState(value);
   const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
   const [emoji, setEmoji] = useState("😀");
@@ -773,17 +790,23 @@ function AvatarDraft({
           </p>
         )}
         {!(mode === "background" && customColorOpen) && (
-          <div className="flex flex-wrap justify-between gap-2">
-            {!inlinePicker && (
-              <Button
-                variant="destructive"
-                disabled={(!value && !picture) || disabled || busy}
-                onClick={() => done("")}
-              >
-                Remove avatar
-              </Button>
-            )}
-            {actionTarget ? createPortal(doneButton, actionTarget) : doneButton}
+          <div ref={setFooter} className={styles.footer}>
+            {/* A short popup scrolls beneath its actions; inline, they sit in flow. */}
+            {!inlinePicker && <ScrollEdgeMaterial edge="bottom" />}
+            <div className={styles.footerActions}>
+              {!inlinePicker && (
+                <Button
+                  variant="destructive"
+                  disabled={(!value && !picture) || disabled || busy}
+                  onClick={() => done("")}
+                >
+                  Remove avatar
+                </Button>
+              )}
+              {actionTarget
+                ? createPortal(doneButton, actionTarget)
+                : doneButton}
+            </div>
           </div>
         )}
       </fieldset>

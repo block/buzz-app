@@ -1705,7 +1705,8 @@ Escape and Option+Arrow for the shell.
   are already applied; rows in a collapsed section or the inactive pane are skipped. A
   row is unread when it shows the unread or thread-activity marker that
   `SidebarUnread` also reads. The open conversation is the row marked `aria-current`.
-  Stepping does not wrap, and at either end it does nothing. When the open
+  Plain stepping does not wrap, and at either end it does nothing; unread stepping
+  wraps around to the nearest unread row from the other end. When the open
   conversation is not among the rows, next starts from the top and previous from the
   bottom. A conversation listed in two sections is stepped over once. The shortcuts
   are unavailable, leaving the key alone, while the sidebar renders no rows (for
@@ -1794,6 +1795,13 @@ message opens as the root in the existing thread panel; a reply opens there with
 its actual root and bounded surrounding replies. No around-message channel query
 or separate detail screen is added. The presentation choice stays fixed for that
 navigation attempt; exact reads do not insert isolated old rows into channel history.
+Only **Open in channel** from a thread tab also shows the thread's root in the
+timeline: the list waits while older pages are read to find it, within the same
+bound as conversation tabs, then reveals and marks the root without taking the
+thread's focus. A root it cannot find leaves the timeline at its usual place.
+Back or Forward to that visit, or closing Members, seeks the root again; a list
+already shown stays in place while it does. Cached rows cannot place the root,
+so a cached session shows them as usual and seeks once it connects.
 
 Navigation completes only after the exact folded target is visible and focused.
 Reclick/Back reveals again; live/profile updates do not steal focus. The shared

@@ -703,6 +703,13 @@ state. It retains shared focus, loading, and disabled behavior. Reduced
 transparency, forced colors, and missing backdrop-filter support use an opaque
 panel fill. Use it over artwork, not on ordinary neutral profile headers.
 
+Proposed for bright brand surfaces: `Button variant="glass-clear"` uses the
+most translucent glass fill with the primary blur and rim, so the backdrop stays
+visible. Hover and press step up to the primary glass fills. Use it for a
+secondary action beside a `prominent` one, such as the onboarding welcome.
+Reduced transparency, forced colors, and missing backdrop-filter support use an
+opaque panel fill with a boundary.
+
 ### Match controls to their surface
 
 The shell uses a vertical `Tabs variant="dock"` rail on the left, ordered
@@ -1868,7 +1875,12 @@ Reactions sit on `affordance-reaction`, a softer overlay than a chip: black 6%
 or white 10%, in the same direction as the chips. Hovering the add control lays
 the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
-they keep the standard ink and overlay of the panel they sit on.
+they keep the standard ink and overlay of the panel they sit on. A reaction you
+made stays marked as yours: `affordance-reaction-self` (accent step 3) with a
+1px inset `border-reaction-self` ring in the accent link ink, which clears 3:1 on
+the tint and its host where step 9 would not (Citrus, Bee). Inside your bubble
+it takes the `-own` pair, which at Buzzin’ is the accent's strong overlay ringed
+in the bubble's ink, since an accent ring would vanish on the accent fill.
 
 When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in

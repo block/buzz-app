@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import { requestWork } from "../agents/request-work";
+import { requestWork, isSettledWork } from "../agents/request-work";
 import { continuesMessageGroup } from "./message-grouping";
 import { activityRuns } from "./activity-groups";
 
@@ -114,23 +114,23 @@ function activityStatus(
         );
       })
     : [];
-  const settled = (entry: (typeof work)[number]) =>
-    ["done", "ended", "superseded", "stopped"].includes(entry.state);
   // A layout-associated request may prove ongoing work, but cannot prove
   // completion for an unlinked update. Keep those two evidence paths separate.
   const pending =
     snapshot && requestId
       ? requestWork(snapshot, latest.channelId, requestId).filter(
-          (entry) => participants.includes(entry.agent) && !settled(entry),
+          (entry) =>
+            participants.includes(entry.agent) && !isSettledWork(entry),
         )
       : [];
   const complete = participants.every((agent) =>
-    work.some((entry) => entry.agent === agent && settled(entry)),
+    work.some((entry) => entry.agent === agent && isSettledWork(entry)),
   );
   // Known pending, failed or uncertain work wins over the historical fallback.
   // Without lifecycle evidence, a related public reply only retires the display.
   const hidden =
-    !pending.length && (complete || (!!followedByReply && work.every(settled)));
+    !pending.length &&
+    (complete || (!!followedByReply && work.every(isSettledWork)));
   const working = new Set(
     [...work, ...pending]
       .filter((entry) => entry.working)

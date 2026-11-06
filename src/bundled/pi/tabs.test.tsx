@@ -556,7 +556,9 @@ it("settles a transcript request without opening it once Pi's late listing arriv
     within(here).getByRole("button", { name: /^View transcript/ }),
   ).toBeVisible();
   expect(runtime.transcript).not.toHaveBeenCalled();
-  expect(screen.queryByText("Hello from chan/root")).toBeNull();
+  expect(
+    screen.queryByText("Hello from chan/root", { selector: "summary span" }),
+  ).toBeNull();
 });
 
 it("shows a channel's lock as soon as the community makes it private, without reading Pi again", async () => {
@@ -632,8 +634,14 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   await user.click(
     within(here).getByRole("button", { name: /^View transcript/ }),
   );
-  expect(await screen.findByText("Hello from chan/root")).toBeVisible();
-  expect(screen.getByText("Hi there")).toBeVisible();
+  expect(
+    await screen.findByText("Hello from chan/root", {
+      selector: "summary span",
+    }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Hi there", { selector: "summary span" }),
+  ).toBeVisible();
   expect(runtime.transcript).toHaveBeenLastCalledWith(
     "c".repeat(64),
     expect.objectContaining({ conversation: 1 }),
@@ -646,7 +654,9 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
       name: "View transcript: other · channel",
     }),
   );
-  expect(await screen.findByText("Hello from other")).toBeVisible();
+  expect(
+    await screen.findByText("Hello from other", { selector: "summary span" }),
+  ).toBeVisible();
 
   // A refresh that fails says so, and keeps the transcript it has.
   runtime.transcript.mockRejectedValueOnce(new Error("Pi stopped"));
@@ -654,7 +664,9 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not read the Pi conversation: Pi stopped",
   );
-  expect(screen.getByText("Hello from other")).toBeVisible();
+  expect(
+    screen.getByText("Hello from other", { selector: "summary span" }),
+  ).toBeVisible();
 });
 
 it.each([

@@ -224,6 +224,40 @@ async fn restored_snapshots_do_not_wait_for_an_interactive_operation() {
     drop(operation);
 }
 
+#[test]
+fn a_callback_timeout_keeps_its_own_failure_code() {
+    assert_eq!(callback_failure("Sign-in canceled."), "sign-in-canceled");
+    assert_eq!(
+        callback_failure(crate::oauth_callback::TIMED_OUT),
+        "sign-in-timed-out"
+    );
+    assert_eq!(
+        callback_failure("Sign-in listener failed"),
+        "callback-refused"
+    );
+}
+
+#[test]
+fn the_login_start_asks_only_for_the_sign_up_screen_and_forced_login_it_was_given() {
+    let config = host(Arc::new(Memory::default())).0.config.clone().unwrap();
+    let start = "https://identity.example/v1/login/start?handoff_challenge=challenge&handoff_challenge_method=S256";
+    for (signup, force_login, hints) in [
+        (false, false, ""),
+        (true, false, "&screen_hint=signup"),
+        (false, true, "&prompt=login"),
+        (true, true, "&screen_hint=signup&prompt=login"),
+    ] {
+        let asked = LoginStart {
+            signup,
+            force_login,
+        };
+        assert_eq!(
+            login_start(&config, "challenge", asked).as_str(),
+            format!("{start}{hints}")
+        );
+    }
+}
+
 #[tokio::test]
 async fn cancel_releases_the_native_callback_before_a_replacement_login() {
     let owner = host(Arc::new(Memory::default()));
@@ -981,7 +1015,10 @@ async fn signing_in_adopts_a_session_another_copy_saved() {
         .manage(crate::oauth_callback::OAuthCallbackHost::default())
         .build(crate::app_context())
         .unwrap();
-    let snapshot = host.sign_in(app.handle()).await.unwrap();
+    let snapshot = host
+        .sign_in(app.handle(), LoginStart::default())
+        .await
+        .unwrap();
     assert!(snapshot.status == Status::SignedIn);
     assert_eq!(snapshot.failure, None);
     assert_eq!(snapshot.revision, other.record.revision);
@@ -1010,7 +1047,8 @@ async fn a_sign_out_during_the_shared_item_read_ends_signed_out() {
         .build(crate::app_context())
         .unwrap();
     let (worker, handle) = (host.clone(), app.handle().clone());
-    let signing_in = tokio::spawn(async move { worker.sign_in(&handle).await });
+    let signing_in =
+        tokio::spawn(async move { worker.sign_in(&handle, LoginStart::default()).await });
     tokio::task::spawn_blocking(move || reading.recv().unwrap())
         .await
         .unwrap();

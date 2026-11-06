@@ -175,6 +175,8 @@ it("shows one bubble per emoji, counts unique people, and removes all my duplica
     name: "👍: 2 people",
   });
   expect(own.getAttribute("aria-pressed")).toBe("true");
+  // The pill's highlight follows whether I am among its reactors.
+  expect(own.closest("[data-mine]")).not.toBeNull();
   expect(own.textContent).toBe("👍2");
   fireEvent.mouseEnter(own);
   fireEvent.mouseMove(own);
@@ -187,11 +189,11 @@ it("shows one bubble per emoji, counts unique people, and removes all my duplica
   expect(
     deletions?.map((event) => event.tags.filter(([name]) => name === "e")),
   ).toEqual([[["e", mine.id]], [["e", duplicate.id]]]);
-  expect(
-    screen
-      .getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` })
-      .getAttribute("aria-pressed"),
-  ).toBe("false");
+  const remaining = screen.getByRole("button", {
+    name: `👍: ${other.pubkey.slice(0, 10)}`,
+  });
+  expect(remaining.getAttribute("aria-pressed")).toBe("false");
+  expect(remaining.closest("[data-mine]")).toBeNull();
   await act(async () => {
     await flush();
     await flush();

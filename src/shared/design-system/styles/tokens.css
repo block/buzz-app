@@ -62,6 +62,10 @@
    step 10 and pressed: each accent's hover and press, retuned to move clearly
    off step 9 while staying clean rather than muddy. */
 :root {
+  /* Fixed palette values used by terminal status in either mode. */
+  --red-11-light: #ce2c31;
+  --neutral-status-ink: #ffffff;
+
   /* Branded onboarding palette; dark mode adds the approved 30% black tint. */
   --brand-chartreuse: #d7d72e;
   --brand-chartreuse-dimmed: color-mix(in srgb, #d7d72e 70%, black);
@@ -470,7 +474,7 @@
   --red-8: #eb8e90;
   --red-9: #e5484d;
   --red-10: #dc3e42;
-  --red-11: #ce2c31;
+  --red-11: var(--red-11-light);
   --red-12: #641723;
 
   /* green */
@@ -780,6 +784,10 @@
   --bubble-neutral: #e9e9ea;
   --bubble-received: #f3f3f4;
   --neutral-navigation-text: #404040; /* Tailwind neutral-700. */
+  /* Designer-requested light status text: the brightest green and red, 35% of
+     the way from step 11 to step 12, that keep AA on every light surface. */
+  --green-text: #1e6a49;
+  --red-text: #a9252c;
   --neutral-navigation-unread: #262626; /* Tailwind neutral-800. */
   --neutral-navigation-quiet: #f7f7f7; /* Designer-requested gentle sidenav states. */
   --neutral-1: #ffffff; /* bg-panel, bg-float, bg-chrome-selected */
@@ -1080,6 +1088,14 @@
 
 /* Semantic colors: color / purpose / emphasis / state.
    Components consume roles; palette steps stay inside this shared layer. */
+:root {
+  /* Terminal task status keeps the same solid fills and ink in both modes. */
+  --surface-status-success: var(--citrus-9);
+  --text-on-status-success: var(--citrus-ink-light);
+  --surface-status-danger: var(--red-11-light);
+  --text-on-status: var(--neutral-status-ink);
+}
+
 .light,
 :root {
   --surface-base: var(--neutral-2);
@@ -1128,10 +1144,10 @@
   --text-quiet-control: var(--neutral-8);
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
-  --text-danger: var(--red-12);
+  --text-danger: var(--red-text);
   --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
-  --text-success: var(--green-12);
+  --text-success: var(--green-text);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
   --icon-subtle: var(--text-subtle);
@@ -1607,6 +1623,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1647,6 +1669,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
+  /* A reaction you made: an accent tint and a ring in the accent link ink,
+     which clears 3:1 where step 9 (Citrus, Bee) would not. */
+  --affordance-reaction-self: var(--accent-3);
+  --affordance-reaction-self-own: var(--affordance-reaction-self);
+  --border-reaction-self: var(--accent-link);
+  --border-reaction-self-own: var(--border-reaction-self);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1964,6 +1992,9 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -1983,6 +2014,9 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
+  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
+  --affordance-reaction-self-own: var(--accent-overlay);
+  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -2043,6 +2077,10 @@
   --text-color-subtle: var(--text-subtle);
   --text-color-metadata: var(--text-metadata);
   --text-color-inverse: var(--text-inverse);
+  --text-color-on-status: var(--text-on-status);
+  --text-color-on-status-success: var(--text-on-status-success);
+  --color-surface-status-success: var(--surface-status-success);
+  --color-surface-status-danger: var(--surface-status-danger);
   --text-color-unavailable: var(--text-unavailable);
   --text-color-danger: var(--text-danger);
   --text-color-call-leave: var(--text-call-leave);
@@ -2117,6 +2155,8 @@
     --affordance-accent-prominent-hover
   );
   --border-color-accent: var(--border-accent);
+  --border-color-reaction-self: var(--border-reaction-self);
+  --border-color-reaction-self-own: var(--border-reaction-self-own);
 
   /* Palette utilities remain for the palette viewer and staged migration. */
   /* neutral */

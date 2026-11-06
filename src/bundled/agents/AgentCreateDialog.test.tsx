@@ -509,6 +509,36 @@ it("previews an upload in place with progress and cancel, keeping Name editable"
   );
 });
 
+it("moves the hidden-scrollbar avatar dock with a vertical mouse wheel", () => {
+  const { dialog } = setup([echo]);
+  const dock = within(dialog).getByRole("group", { name: "Agent avatars" });
+  Object.defineProperties(dock, {
+    clientWidth: { configurable: true, value: 500 },
+    scrollWidth: { configurable: true, value: 3000 },
+  });
+  const scrollBy = vi.fn();
+  dock.scrollBy = scrollBy;
+  const slot = within(dock).getAllByRole("button")[0];
+  if (!slot) throw new Error("The dock has an avatar");
+  const down = new WheelEvent("wheel", {
+    deltaY: 120,
+    bubbles: true,
+    cancelable: true,
+  });
+  slot.dispatchEvent(down);
+  expect(down.defaultPrevented).toBe(true);
+  expect(scrollBy).toHaveBeenCalledWith({ left: 120, behavior: "instant" });
+  // At the start, scrolling back stays native so the gesture is not swallowed.
+  const up = new WheelEvent("wheel", {
+    deltaY: -120,
+    bubbles: true,
+    cancelable: true,
+  });
+  slot.dispatchEvent(up);
+  expect(up.defaultPrevented).toBe(false);
+  expect(scrollBy).toHaveBeenCalledOnce();
+});
+
 it("keeps every bundled avatar available after switching from an uploaded image", async () => {
   const { dialog, user } = setup([echo], undefined, "https://a.example");
   const dock = within(dialog).getByRole("group", { name: "Agent avatars" });

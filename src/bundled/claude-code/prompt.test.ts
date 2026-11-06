@@ -67,6 +67,7 @@ it.each([false, true])(
     ]);
     expect(promptMessage(sections)).toEqual({
       author: undefined,
+      authorPubkey: alice,
       text: "the actual request",
     });
     expect(JSON.parse(sections[0]?.body ?? "").messages).toMatchObject([
@@ -91,7 +92,11 @@ it.each([false, true])(
       "mention",
       "buzz-event",
     ]);
-    expect(promptMessage(direct)).toEqual({ author: undefined, text: content });
+    expect(promptMessage(direct)).toEqual({
+      author: undefined,
+      authorPubkey: alice,
+      text: content,
+    });
   },
 );
 
@@ -127,6 +132,7 @@ it("names each message's author beside their pubkey", () => {
   });
   expect(promptMessage(sections)).toEqual({
     author: undefined,
+    authorPubkey: alice,
     text: "@Agent look",
   });
 });

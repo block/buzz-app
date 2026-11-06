@@ -24,6 +24,7 @@
     "allow-onboarding-preserve-window",
     "allow-identity-export",
     "allow-nsec-backup-available",
+    "allow-nsec-backup-confirmed",
     "allow-nsec-backup-session",
     "allow-nsec-backup-retry",
     "allow-nsec-backup-state",

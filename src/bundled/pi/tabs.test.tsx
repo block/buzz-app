@@ -660,7 +660,7 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
 
   // A refresh that fails says so, and keeps the transcript it has.
   runtime.transcript.mockRejectedValueOnce(new Error("Pi stopped"));
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await user.click(screen.getByRole("button", { name: "Refresh transcript" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not read the Pi conversation: Pi stopped",
   );

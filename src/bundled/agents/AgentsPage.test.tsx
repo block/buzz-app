@@ -427,6 +427,7 @@ function setup(
     inspectExecution: async () => undefined,
     execution: async () => undefined,
     harness: {} as Agents["harness"],
+    subscribeSteps: () => () => {},
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0, scope };
   const relay = {

@@ -1259,6 +1259,12 @@ evidence. A batch with a recognized denied channel is hidden as a whole.
 
 Activity frames (24200) and turn metrics (44200) are no longer saved locally or
 restored after reload; plugin harnesses show history from their own session files.
+An open transcript (`TranscriptPanel`, `src/features/agents/TranscriptPanel.tsx`)
+reads that history on open, on Refresh, when a turn starts or ends, every 2.5 s
+while the agent works and the window shows, and on each step the agent reports
+(`Agents.subscribeSteps`). One read runs at a time, and the last result stays
+while the next is read. Each harness supplies only its read, so a refresh costs
+what that read costs.
 The host archive store (`src-tauri/src/archive`, `browser-host/archive.mjs`) and
 any existing `archive/events.sqlite3` remain until a follow-up removes them.
 

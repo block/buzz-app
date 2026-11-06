@@ -33,6 +33,8 @@ export type CompanionComposerPresentation = {
   /** A session wrapping the bridge client's with more operations (pop-out
    * windows: the operations outbox, so edits follow one id to delivery). */
   session?: ComposerSession | undefined;
+  /** This window may record voice notes (pop-out windows; never the Huddle). */
+  capture?: boolean | undefined;
 };
 export type CompanionComposerClient = ReturnType<
   typeof createHuddleComposerClient
@@ -81,26 +83,35 @@ function ConnectedComposer({
     return (keys: readonly string[]) => client.models(keys);
   }, [client, modelRevision]);
   const keys = JSON.stringify([data?.tools ?? [], data?.completions ?? []]);
+  const capture = presentation?.capture ?? false;
   const extensions = useMemo(() => {
     const [tools, completions] = JSON.parse(keys) as [string[], string[]];
     return huddleComposerExtensions({
       tools,
       completions,
       gifRequests: client.gifs,
+      capture,
     });
-  }, [keys, client]);
+  }, [keys, client, capture]);
   // Held work is the editor's unsaved state or files kept only in this window.
   const [editorHeld, setEditorHeld] = useState(false);
   const draftKey = data
     ? `${data.scope}:${data.thread ? `draft:${data.room}:thread:${data.thread}` : `draft:${data.room}`}`
     : "";
+  // Drafts are keyed by the session the editor was given, which a host may
+  // wrap; count against that one, or the files it keeps go unguarded.
+  const editorSession = session
+    ? (presentation?.session ?? session)
+    : undefined;
   const files = useSyncExternalStore(
     useCallback(
       (listener: () => void) =>
-        session ? subscribeAttachmentDraftCounts(session, listener) : () => {},
-      [session],
+        editorSession
+          ? subscribeAttachmentDraftCounts(editorSession, listener)
+          : () => {},
+      [editorSession],
     ),
-    () => (session ? attachmentDraftCount(session, draftKey) : 0),
+    () => (editorSession ? attachmentDraftCount(editorSession, draftKey) : 0),
   );
   const onHeld = presentation?.onHeld;
   const held = editorHeld || files > 0;
@@ -111,7 +122,7 @@ function ConnectedComposer({
   return session && data ? (
     <MentionModelsContext.Provider value={models}>
       <MessageComposer
-        session={presentation?.session ?? session}
+        session={editorSession ?? session}
         extensions={extensions}
         scope={data.scope}
         channelId={data.room}

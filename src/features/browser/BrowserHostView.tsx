@@ -121,6 +121,8 @@ export function BrowserHostView({
   const [localError, setLocalError] = useState<string | null>(null);
   // Shown in the viewport instead of the error bar when attach fails this way.
   const [page, setPage] = useState<BrowserViewerPage | null>(null);
+  // A retry from that page keeps it, and its focused button, until it settles.
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
@@ -289,6 +291,8 @@ export function BrowserHostView({
           if (!sessionId || disposed) return;
           session.current = sessionId;
           element.dataset.browserSession = sessionId;
+          setPage(null);
+          setRetrying(false);
           syncBounds(true);
           void poll();
         })
@@ -300,6 +304,7 @@ export function BrowserHostView({
             setPage(
               error instanceof BrowserAttachError ? (error.page ?? null) : null,
             );
+            setRetrying(false);
           }
         });
     };
@@ -309,7 +314,7 @@ export function BrowserHostView({
       attachFailed = false;
       attachStarted = false;
       setLocalError(null);
-      setPage(null);
+      setRetrying(true);
       begin();
     };
 
@@ -364,6 +369,7 @@ export function BrowserHostView({
     setStatus({ ...EMPTY_STATUS, url, loading: true });
     setLocalError(null);
     setPage(null);
+    setRetrying(false);
     begin();
 
     return () => {
@@ -497,6 +503,7 @@ export function BrowserHostView({
                 <Button
                   type="button"
                   variant="primary"
+                  loading={retrying}
                   onClick={() => retryAttach.current?.()}
                 >
                   Try again

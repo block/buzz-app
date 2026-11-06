@@ -12,7 +12,7 @@ import {
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import userEvent from "@testing-library/user-event";
 import type { RegisteredPanel } from "../../features/panels/service";
-import type { ReactNode } from "react";
+import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
@@ -24,7 +24,10 @@ import {
   type Navigation,
 } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
-import type { PageNavigation } from "../../features/navigation/service";
+import {
+  provideNavigation,
+  type PageNavigation,
+} from "../../features/navigation/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
 import {
@@ -47,6 +50,9 @@ import { bestieRoute } from "./routes";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { useBestieConversation } from "../../app/shell/bestie-context";
 import type { RegisteredPage } from "../../features/pages/service";
+import type { Panels } from "../../features/panels/service";
+import { useChannelList } from "../../features/relay/react";
+import { ChannelsPage } from "../channels/ChannelsPage";
 
 // jsdom has no virtualized layout. Keep the real rows, thread reader and React
 // lifecycle; model only Virtua's imperative layout boundary, not scroll behavior.
@@ -237,7 +243,10 @@ async function fixture({
         if (
           withReply &&
           filters.some(
-            (f) => f.ids?.includes(root.id) || f["#e"]?.includes(root.id),
+            (f) =>
+              f.ids?.includes(root.id) ||
+              f.ids?.includes(response.id) ||
+              f["#e"]?.includes(root.id),
           )
         )
           return [root, response];
@@ -429,6 +438,7 @@ async function fixture({
       </ToastProvider>
     ),
     rootId: root.id,
+    replyId: response.id,
     mount: () =>
       render(
         <ToastProvider>
@@ -616,6 +626,105 @@ it("keeps the promoted verified DM usable through discovery failure until absenc
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(screen.getByLabelText("promoted DM")).toHaveTextContent("none");
   expect(f.open).not.toHaveBeenCalled();
+});
+
+// The "In DM" link on a thread tab opened from Activity, a notification or a
+// permalink is a Messages visit. Messages omits the promoted DM, so the visit
+// opens on Bestie's page with its thread, as Bestie's own thread links do.
+it("opens a thread linked from another page in Bestie's page, not Messages", async () => {
+  const f = await fixture({ existing: true, withReply: true });
+  f.choose(pollen);
+  const { Context } = await import("@deepseek-ai/cordis");
+  const ctx = new Context();
+  const host = provideNavigation(ctx);
+  disposals.push(() => void ctx.fiber.dispose());
+  const page: RegisteredPage = {
+    id: "bestie",
+    key: "buzz.bestie/bestie",
+    pluginId: "buzz.bestie",
+    revision: "bundled",
+    title: "Bestie",
+    component: () => null,
+  };
+  const panels = {
+    snapshot: () => empty,
+    subscribe: () => () => {},
+    resolve: () => undefined,
+    handleOpenRequests: () => () => {},
+  } as unknown as Panels;
+  // Stands in for App's page switch: Messages takes conversation visits.
+  function Pages() {
+    const { attempt, entry } = useSyncExternalStore(
+      host.navigation.subscribe,
+      host.navigation.snapshot,
+    );
+    const navigation = useMemo(
+      () =>
+        host.request(attempt, { valid: () => true, subscribe: () => () => {} })
+          .request,
+      [attempt],
+    );
+    // The shell's sidebar has already read the channel list.
+    useChannelList(f.session.channels);
+    const promoted = useBestieConversation(f.session);
+    if (entry.target.kind === "conversation")
+      return (
+        <ToastProvider>
+          <ChannelsPage
+            relay={f.relay}
+            panels={panels}
+            navigation={navigation}
+            navigator={host.navigation}
+          />
+        </ToastProvider>
+      );
+    if (entry.target.kind === "page" && entry.target.pluginId === "buzz.bestie")
+      return f.element({ renderedNavigator: host.navigation, navigation });
+    return <output aria-label="promoted DM">{promoted ?? "none"}</output>;
+  }
+  render(
+    <BestieNavigationProvider pages={[page]} relay={f.relay}>
+      <Pages />
+    </BestieNavigationProvider>,
+    { reactStrictMode: true },
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("promoted DM")).toHaveTextContent(pollenDM),
+  );
+  const scope = { viewer: f.viewer, communityOrigin: "https://test.example" };
+  act(() => {
+    void host.navigation.open({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: pollenDM,
+      messageId: f.replyId,
+      threadRootId: f.rootId,
+    });
+  });
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("textbox", { name: "Message Pollen" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
+  expect(host.navigation.snapshot().entry.target).toEqual({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.bestie",
+    pageId: "bestie",
+    scope,
+    route: {
+      version: 1,
+      params: {
+        channelId: pollenDM,
+        messageId: f.replyId,
+        threadRootId: f.rootId,
+      },
+    },
+  });
 });
 
 it("follows a bestie changed elsewhere without carrying the old DM draft or modifying the Solo draft", async () => {

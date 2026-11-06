@@ -40,7 +40,13 @@ and shows the current Bestie's chat; it never reads an old thread in the new DM.
 ⌘F on the page searches this DM, and Search Buzz offers **Search conversation
 with** the Bestie, as they do in any other conversation.
 While that exact DM is promoted, Messages omits its
-ordinary row and clears any old device-local hidden-DM intent. Replacing or
+ordinary row and clears any old device-local hidden-DM intent. A Messages visit
+to the DM itself or one of its threads, such as a thread tab's **In DM** link or
+**Open in channel** in Activity, a thread reply's notification or permalink, or
+the DM chosen in search, resolves in place to this page's visit before Messages
+presents it. A visit to a single top-level message, Forward or
+Members has no Bestie route yet and stays in Messages, as does a visit that
+Messages had already opened before the promotion was known. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the
 exact roster match releases the promotion and restores the ordinary DM row.
 

@@ -71,6 +71,26 @@ export function bestieInlineTarget(
   return { ...target, route: { version: 1, params: { ...route } } };
 }
 
+/** Bestie's visit for a visit to its DM, when its routes present it exactly:
+ * the DM itself or one of its threads. Other visits stay in Messages. */
+export function bestieConversationTarget(
+  target: Extract<OpenTarget, { kind: "conversation" }>,
+): BestiePageTarget | undefined {
+  const { channelId, messageId, threadRootId } = target;
+  if (target.panel || target.forward || target.detail) return;
+  if (messageId && !threadRootId) return;
+  const base: BestiePageTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.bestie",
+    pageId: "bestie",
+    scope: target.scope,
+  };
+  return messageId && threadRootId
+    ? bestieThreadTarget(base, { channelId, messageId, threadRootId })
+    : base;
+}
+
 export type BestieDetailRoute = {
   channelId: string;
   detail: string;

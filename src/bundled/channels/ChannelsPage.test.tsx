@@ -7,6 +7,8 @@ import type { ReactElement } from "react";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Panels } from "../../features/panels/service";
 import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
+import { BestieConversationContext } from "../../app/shell/bestie-context";
 import { ChannelsPage, mediaReviewForDestination } from "./ChannelsPage";
 
 afterEach(cleanup);
@@ -321,5 +323,128 @@ it("animates Connecting only while a connection is actually under way", async ()
     ).toBeTruthy();
   } finally {
     vi.useRealTimers();
+  }
+});
+
+// Messages omits the promoted Bestie DM's row; its visits, such as a thread
+// tab's "In DM" link from Activity, belong to Bestie's page instead.
+async function bestieHandoff(
+  visit: Partial<Extract<OpenTarget, { kind: "conversation" }>>,
+) {
+  const { Context } = await import("@deepseek-ai/cordis");
+  const { provideNavigation } = await import(
+    "../../features/navigation/service"
+  );
+  const { provideRelay } = await import("../../features/relay/service");
+  const ctx = new Context();
+  const host = provideNavigation(ctx);
+  const source = provideRelay(ctx);
+  const scope = {
+    viewer: "a".repeat(64),
+    communityOrigin: "https://relay.example",
+  };
+  const connection: RelaySnapshot = {
+    ...source.snapshot(),
+    status: "ready",
+    scope: `${scope.communityOrigin}:${scope.viewer}`,
+    viewer: scope.viewer,
+  };
+  const relay: RelayData = { ...source, snapshot: () => connection };
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: bestieDm,
+    ...visit,
+  } as const;
+  const opened = host.navigation.open(target);
+  const navigation = host.request(host.navigation.snapshot().attempt, {
+    valid: () => true,
+    subscribe: () => () => {},
+  }).request;
+  const page = renderHook(
+    () =>
+      ChannelsPage({
+        relay,
+        panels: {} as Panels,
+        navigation,
+        navigator: host.navigation,
+      }),
+    {
+      wrapper: ({ children }) => (
+        <BestieConversationContext
+          value={{ session: connection.session, channelId: bestieDm }}
+        >
+          {children}
+        </BestieConversationContext>
+      ),
+    },
+  );
+  return {
+    scope,
+    target,
+    opened,
+    navigation: host.navigation,
+    workspace: () =>
+      page.result.current.props.children as ReactElement<{
+        navigation?: PageNavigation;
+      }> | null,
+    dispose: () => ctx.fiber.dispose(),
+  };
+}
+const bestieDm = "11111111-1111-4111-8111-111111111111";
+const reply = "c".repeat(64),
+  root = "d".repeat(64);
+
+it.each([
+  [
+    "a thread",
+    { messageId: reply, threadRootId: root },
+    {
+      route: {
+        version: 1,
+        params: { channelId: bestieDm, messageId: reply, threadRootId: root },
+      },
+    },
+  ],
+  ["the DM", {}, {}],
+])(
+  "opens %s in the promoted Bestie DM on Bestie's page, not in Messages",
+  async (_, visit, route) => {
+    const h = await bestieHandoff(visit);
+    try {
+      // Resolved in place: the visit keeps its caller for Bestie to answer.
+      expect(h.navigation.snapshot().status).toBe("opening");
+      expect(h.navigation.snapshot().entry.target).toEqual({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.bestie",
+        pageId: "bestie",
+        scope: h.scope,
+        ...route,
+      });
+      // Messages never presents the visit Bestie now answers.
+      expect(h.workspace()).toBeNull();
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it.each([
+  [
+    "another DM's thread",
+    { channelId: "other", messageId: reply, threadRootId: root },
+  ],
+  ["a top-level message Bestie cannot reveal", { messageId: reply }],
+  ["the forwarding dialog", { forward: reply }],
+  ["the Members dialog", { panel: "members" as const }],
+])("keeps %s in Messages", async (_, visit) => {
+  const h = await bestieHandoff(visit);
+  try {
+    expect(h.navigation.snapshot().entry.target).toEqual(h.target);
+    expect(h.workspace()?.props.navigation).toBeDefined();
+  } finally {
+    await h.dispose();
   }
 });

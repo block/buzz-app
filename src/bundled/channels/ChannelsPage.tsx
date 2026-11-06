@@ -82,6 +82,8 @@ import {
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import type { CommunityMembership } from "../moderation/membership";
 import { useFirstChannel } from "./first-channel";
+import { bestieConversationTarget } from "../bestie/routes";
+import { useBestieConversation } from "../../app/shell/bestie-context";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
@@ -237,6 +239,18 @@ export function ChannelsPage({
     settled,
     settled,
   );
+  // Messages omits the promoted Bestie DM's row, so a pending visit to it that
+  // Bestie can present opens there instead, before this page presents it.
+  const bestieDm = useBestieConversation(session.session);
+  const bestie =
+    navigator.snapshot().status === "opening" &&
+    navigation?.target.kind === "conversation" &&
+    navigation.target.channelId === bestieDm
+      ? bestieConversationTarget(navigation.target)
+      : undefined;
+  useLayoutEffect(() => {
+    if (bestie) sessionNavigation?.resolve(bestie);
+  }, [sessionNavigation, bestie]);
   const presentedSession = useRef<
     | {
         scope: typeof session.scope;
@@ -355,7 +369,7 @@ export function ChannelsPage({
             </div>
           )}
         </PanelFrame>
-      ) : (
+      ) : bestie ? null : (
         <ChannelWorkspace
           chatMenus={chatMenus}
           extensions={extensions}

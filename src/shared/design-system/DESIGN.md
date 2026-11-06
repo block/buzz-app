@@ -1852,7 +1852,11 @@ Reactions sit on `affordance-reaction`, a softer overlay than a chip: black 6%
 or white 10%, in the same direction as the chips. Hovering the add control lays
 the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
-they keep the standard ink and overlay of the panel they sit on.
+they keep the standard ink and overlay of the panel they sit on. A reaction you
+made stays marked as yours: `affordance-reaction-self` (accent step 3) with a
+1px inset `border-reaction-self` ring (accent step 9). Inside your bubble it takes
+the `-own` pair, which at Buzzin’ is the accent's strong overlay ringed in the
+bubble's ink, since an accent ring would vanish on the accent fill.
 
 When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in

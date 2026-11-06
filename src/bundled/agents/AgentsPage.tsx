@@ -130,6 +130,7 @@ import {
   conversationOpener,
 } from "./routes";
 import { AgentCardCreate } from "./AgentCardCreate";
+import { syncText } from "../../features/agents/team-migration";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const message = (error: unknown) =>
@@ -2448,6 +2449,7 @@ function TeamEditor({
         }
         onClose={onDone}
       />
+      {team && <TeamSyncLine agents={agents} id={team.id} />}
       <Field label="Name">
         <Input
           autoFocus
@@ -2537,5 +2539,15 @@ function TeamEditor({
         )}
       </div>
     </form>
+  );
+}
+
+/** Where the team lives: synced in its community, or only on this device. */
+function TeamSyncLine({ agents, id }: { agents: Agents; id: string }) {
+  const { title, reason } = syncText(agents.teamSync(id), "team");
+  return (
+    <p className="m-0 text-body-sm text-secondary">
+      {reason ? `${title}. ${reason}` : title}
+    </p>
   );
 }

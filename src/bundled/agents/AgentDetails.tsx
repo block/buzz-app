@@ -59,6 +59,7 @@ import {
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { syncText } from "../../features/agents/team-migration";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
@@ -542,6 +543,9 @@ export function AgentDetails({
                       }
                     />
                     {agent.place === "here" && (
+                      <AgentSyncRow agents={agents} agent={agent} />
+                    )}
+                    {agent.place === "here" && (
                       <AgentConfigHistoryRow
                         agents={agents}
                         pubkey={agent.pubkey}
@@ -708,4 +712,12 @@ function SharedSettingsNotice({
       </PopoverRoot>
     </div>
   );
+}
+
+/** Where the agent's config lives; nothing while that is still settling. */
+function AgentSyncRow({ agents, agent }: { agents: Agents; agent: Agent }) {
+  const state = agents.agentSync(agent.pubkey);
+  if (!state) return null;
+  const { title, reason } = syncText(state, "agent");
+  return <PreferenceRow title={title} subtitle={reason} />;
 }

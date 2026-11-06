@@ -73,6 +73,8 @@ import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
+import { TEAM_MOVES_KEY } from "./team-migration";
+import { importedTeamId } from "./config-channels";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
 import { createPluginRequests } from "../../plugins/requests";
@@ -14843,6 +14845,92 @@ describe("synced teams", () => {
     expect(result.notes).toContain("Add Birch to relay.example.test first.");
     expect(result.teamError).toBeUndefined();
     expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  describe("moving local teams", () => {
+    const mine = {
+      id: "local-1",
+      name: "Mine",
+      instructions: "Go.",
+      members: [] as string[],
+    };
+    it("moves a team of one community's agents there, then repoints templates and drops the local copy", async () => {
+      const storage = memoryStorage();
+      await writeTeams(storage, [{ ...mine, members: [alder] }]);
+      const moved = vi
+        .spyOn(channelTemplates, "replaceTeam")
+        .mockImplementation(() => {});
+      const f = await ready([here(alder)], storage);
+      await vi.waitFor(() =>
+        expect(f.storage.get("buzz.agents.teams.v1")).not.toContain("Mine"),
+      );
+      const id = await importedTeamId({
+        owner: viewer,
+        community: home,
+        source: "local-team",
+        sourceId: "local-1",
+      });
+      expect(f.saveTeam).toHaveBeenCalledOnce();
+      expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+        id,
+        name: "Mine",
+        instructions: "Go.",
+        members: [alder],
+        adopt: true,
+      });
+      expect(moved).toHaveBeenCalledWith("local-1", id);
+      expect(JSON.parse(f.storage.get(TEAM_MOVES_KEY) ?? "{}").moves).toEqual(
+        {},
+      );
+      moved.mockRestore();
+    });
+
+    it("keeps a team local, saved as failed with its community, when the move fails, and moves it on the next try", async () => {
+      const storage = memoryStorage();
+      await writeTeams(storage, [{ ...mine, members: [alder] }]);
+      const answers = [
+        { ok: false, added: [], removed: [], skipped: [], error: "No answer" },
+      ];
+      const channels = teamChannels(async () => answers.shift());
+      const moved = vi
+        .spyOn(channelTemplates, "replaceTeam")
+        .mockImplementation(() => {});
+      const f = await setup({ identities: [here(alder)], storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(f.storage.get("buzz.agents.teams.v1")).toContain("Mine");
+      expect(JSON.parse(f.storage.get(TEAM_MOVES_KEY) ?? "{}").moves).toEqual({
+        "local-1": { community: home, failed: true },
+      });
+      expect(channels.saveTeam).toHaveBeenCalledOnce();
+      // The next connection tries it again, as the same team.
+      f.connect(false);
+      f.connect(true);
+      await vi.waitFor(() =>
+        expect(f.storage.get("buzz.agents.teams.v1")).not.toContain("Mine"),
+      );
+      const ids = channels.saveTeam.mock.calls.map(
+        ([edit]) => (edit as { id: string }).id,
+      );
+      expect(new Set(ids).size).toBe(1);
+      expect(moved).toHaveBeenCalledOnce();
+      moved.mockRestore();
+    });
+
+    it("keeps a team whose agents are in different communities local, saying so", async () => {
+      const storage = memoryStorage();
+      await writeTeams(storage, [{ ...mine, members: [alder, birch] }]);
+      const f = await ready(
+        [here(alder), here(birch, "wss://other.example.test")],
+        storage,
+      );
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "communities" }),
+      );
+      expect(f.saveTeam).not.toHaveBeenCalled();
+      expect(f.storage.get(TEAM_MOVES_KEY)).toBeFalsy();
+    });
   });
 
   it("imports over an edited local copy with its edits, moving templates before removing it", async () => {

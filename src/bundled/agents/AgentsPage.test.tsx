@@ -38,6 +38,7 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
+import type { SyncState } from "../../features/agents/team-migration";
 import { localStore } from "../../features/agents/state";
 import {
   chooseDefaultAgent,
@@ -387,6 +388,13 @@ function setup(
       ({ id }: Pick<TeamChange, "id" | "draft">, _community?: string) =>
         !id || !!snapshot.teams.find((team) => team.id === id)?.revision,
     ),
+    teamSync: vi.fn(
+      (id: string): SyncState =>
+        snapshot.teams.find((team) => team.id === id)?.revision
+          ? { synced: "wss://relay.example" }
+          : { local: undefined },
+    ),
+    agentSync: vi.fn((): SyncState | undefined => undefined),
     core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
@@ -2581,7 +2589,18 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   expect(card).toHaveTextContent("Ada, Cy");
 
   await user.click(card);
-  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  const form = screen.getByRole("form", { name: "Edit Crew" });
+  expect(form).toHaveTextContent("Only on this Mac");
+  agents.teamSync.mockReturnValue({ local: "communities" });
+  await user.click(within(form).getByRole("button", { name: "Close" }));
+  await user.click(
+    within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+      name: "Crew",
+    }),
+  );
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toHaveTextContent(
+    "Only on this Mac. Its agents are in different communities.",
+  );
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
@@ -3360,6 +3379,18 @@ it.each(["error", "unavailable"] as const)(
     ).toBeVisible();
   },
 );
+
+it("says in Settings where an agent's config lives, and why it is only here", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  agents.agentSync.mockReturnValue({ local: "unsupported" });
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(screen.getByText("Only on this Mac")).toBeVisible();
+  expect(
+    screen.getByText("This community's relay doesn't sync agent settings."),
+  ).toBeVisible();
+});
 
 it("keeps the copy and delete rows in Settings, below the agent identity", async () => {
   const user = userEvent.setup();

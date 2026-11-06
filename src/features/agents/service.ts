@@ -98,6 +98,7 @@ import {
   type Contribution,
 } from "../../plugins/contributions";
 import { channelTemplates, templateAgents } from "../channel-templates/local";
+import { moveHome, TeamMoves, type SyncState } from "./team-migration";
 import type { LocalAgentsSnapshot } from "./local";
 import { unshare } from "./agent-share";
 import {
@@ -1369,6 +1370,11 @@ export type Agents = {
   teamHere(team: Pick<TeamChange, "id" | "draft">, community?: string): boolean;
   /** Deletes the team; its agents are untouched. */
   removeTeam(id: string): Promise<void>;
+  /** Where the team's config lives, for its status line. */
+  teamSync(id: string): SyncState;
+  /** Where the agent's config lives here, for its status line; undefined
+   * for a hosted agent, or while its first copy is being made or checked. */
+  agentSync(agent: AgentKey): SyncState | undefined;
 };
 export type ConfigHistory = Readonly<{
   read: SnapshotRead;
@@ -1744,6 +1750,9 @@ export class AgentsService extends Service implements Agents {
   private teamList: readonly Team[];
   /** Synced teams as discovery last found them, by home community. */
   private readonly syncedTeams: SyncedTeams;
+  private readonly teamMoves: TeamMoves;
+  /** Local teams with a move running. */
+  private readonly moving = new Set<string>();
   /** The account whose synced teams `state.teams` shows. */
   private teamsFor: string | undefined;
   /** Each new synced team's home, fixed at its first Save, by draft id. */
@@ -1855,6 +1864,7 @@ export class AgentsService extends Service implements Agents {
     this.unarchiving = readArchiveUnchecked(storage);
     this.teamList = Object.freeze(readTeams(storage));
     this.syncedTeams = new SyncedTeams(storage);
+    this.teamMoves = new TeamMoves(storage);
     this.state = Object.freeze({
       status: native ? "loading" : "unavailable",
       classifier: this.availability(),
@@ -4708,6 +4718,90 @@ export class AgentsService extends Service implements Agents {
     await this.writeTeams(this.teamList.filter((team) => team.id !== id));
   }
 
+  /** The communities where `pubkey` is one of the owner's agents a team
+   * there can have. */
+  private homesOf(pubkey: string) {
+    return [...this.bound].flatMap(([origin, { binding }]) =>
+      this.teamAgents(origin).some(
+        (agent) =>
+          agent.pubkey === pubkey &&
+          (!("owner" in agent) || !binding || ownedBy(agent, binding)),
+      )
+        ? [origin]
+        : [],
+    );
+  }
+
+  /** Moves each local team whose members are all the owner's agents in
+   * `origin` there, once its config channels are up and its agent records
+   * read. A team that can't move yet stays local and is tried again on the
+   * next connection. */
+  private async moveTeams(origin: string) {
+    const config = this.communityConfigs.get(origin);
+    const binding = this.bound.get(origin)?.binding;
+    if (!config || !binding || !this.listings.has(origin)) return;
+    for (const local of this.teamList) {
+      const move = this.teamMoves.get(local.id);
+      const where = moveHome(local.members, (p) => this.homesOf(p), move);
+      if (!("home" in where) || where.home !== origin) continue;
+      if (this.moving.has(local.id)) continue;
+      this.moving.add(local.id);
+      try {
+        // Saved first, so a rerun moves it to the same team.
+        if (!move) await this.teamMoves.set(local.id, { community: origin });
+        const id = await syncedTeamId({
+          owner: binding.viewer,
+          community: origin,
+          source: "local-team",
+          sourceId: local.id,
+        });
+        await this.changeSyncedTeam(origin, { ...local, id }, { adopt: true });
+        channelTemplates.replaceTeam(local.id, id);
+        await this.writeTeams(this.teamList.filter((t) => t.id !== local.id));
+        await this.teamMoves.set(local.id, undefined);
+      } catch (error) {
+        console.warn(`Team ${local.name} was not moved`, error);
+        await this.teamMoves
+          .set(local.id, { community: origin, failed: true })
+          .catch(() => {});
+        this.notify();
+      } finally {
+        this.moving.delete(local.id);
+      }
+    }
+  }
+
+  teamSync = (id: string): SyncState => {
+    const synced = this.synced().find((entry) => entry.team.id === id);
+    if (synced) return { synced: synced.community };
+    const local = this.teamList.find((team) => team.id === id);
+    const move = this.teamMoves.get(id);
+    const where =
+      local && moveHome(local.members, (p) => this.homesOf(p), move);
+    if (where && "stay" in where && where.stay === "communities")
+      return { local: "communities" };
+    const home = where && "home" in where ? where.home : move?.community;
+    if (home && this.bound.get(home)?.binding?.support === "unsupported")
+      return { local: "unsupported" };
+    return { local: move?.failed ? "failed" : undefined };
+  };
+
+  agentSync = (key: AgentKey): SyncState | undefined => {
+    const agent = this.liveMember(key);
+    if (!agent) return undefined;
+    const home = this.configHome(agent);
+    if (this.bound.get(home)?.binding?.support === "unsupported")
+      return { local: "unsupported" };
+    const sides = Object.values(
+      this.communityConfigs.get(home)?.binding(pubkeyOf(key)) ?? {},
+    );
+    if (sides.some((side) => side?.mode === "local"))
+      return { local: "failed" };
+    return sides.length && sides.every((side) => side?.mode === "synced")
+      ? { synced: home }
+      : undefined;
+  };
+
   /** Synced teams with a confirmed copy, as members use them. */
   private synced() {
     const { viewer } = this.communities.snapshot();
@@ -4864,6 +4958,7 @@ export class AgentsService extends Service implements Agents {
       const written = [...(edits?.values() ?? [])].filter((row) => !!row);
       this.listings.set(origin, Object.freeze([...read, ...written]));
       this.edits.delete(origin);
+      void this.moveTeams(origin);
     } catch (error) {
       // Its edits stay for the next read, which a sync asks for.
       if (!controller.signal.aborted)
@@ -5812,6 +5907,7 @@ export class AgentsService extends Service implements Agents {
     delete binding.support;
     this.communityConfigs.set(origin, config);
     this.update();
+    void this.moveTeams(origin);
   }
 
   /** Delivers the session's live events, and retries what failed whenever its

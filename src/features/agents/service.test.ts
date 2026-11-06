@@ -74,6 +74,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
+import { NO_TEAM_CHANNEL } from "./team-ops";
 import { importedTeamId } from "./config-channels";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
@@ -15031,6 +15032,32 @@ describe("synced teams", () => {
       expect(channels.removeTeam).toHaveBeenLastCalledWith(await movedId());
       expect(f.storage.get(teamsKey)).not.toContain("Mine");
       expect(moves(f)).toEqual({});
+    });
+
+    it("starts no retry while a Delete is looking for the relay copy", async () => {
+      const t = await local([{ ...mine, members: [alder] }]);
+      const channels = teamChannels(async () => fail);
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      let release!: () => void;
+      channels.removeTeam.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            release = () => reject(new Error(NO_TEAM_CHANNEL));
+          }),
+      );
+      const deleting = f.service.removeTeam("local-1");
+      await vi.waitFor(() => expect(channels.removeTeam).toHaveBeenCalled());
+      // A reconnect during the lookup tries no move of the team going away.
+      f.recover();
+      await settle();
+      release();
+      await deleting;
+      await settle();
+      expect(channels.saveTeam).toHaveBeenCalledOnce();
+      expect(f.storage.get(teamsKey)).not.toContain("Mine");
     });
 
     it("skips a queued team deleted while an earlier one moves", async () => {

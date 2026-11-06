@@ -4724,25 +4724,31 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "This team is moving to its community; try again shortly",
       );
-    // A move that began may have left a copy there, which goes too.
-    const move = this.teamMoves.get(id);
-    if (move) {
-      const config = this.communityConfigs.get(move.community);
-      const owner = this.bound.get(move.community)?.binding?.viewer;
-      if (!config || !owner)
-        throw new Error(
-          `Connect to ${hostOf({ relay: move.community })} to delete this team`,
-        );
-      // Found on the relay by its fixed id, and its archive confirmed;
-      // none there means the move made no copy.
-      await config
-        .removeTeam(await this.movedTeamId(id, move.community, owner))
-        .catch((error: unknown) => {
-          if (message(error) !== NO_TEAM_CHANNEL) throw error;
-        });
+    // Held as moving until Delete settles, so no retry starts meanwhile.
+    this.moving.add(id);
+    try {
+      // A move that began may have left a copy there, which goes too.
+      const move = this.teamMoves.get(id);
+      if (move) {
+        const config = this.communityConfigs.get(move.community);
+        const owner = this.bound.get(move.community)?.binding?.viewer;
+        if (!config || !owner)
+          throw new Error(
+            `Connect to ${hostOf({ relay: move.community })} to delete this team`,
+          );
+        // Found on the relay by its fixed id, and its archive confirmed;
+        // none there means the move made no copy.
+        await config
+          .removeTeam(await this.movedTeamId(id, move.community, owner))
+          .catch((error: unknown) => {
+            if (message(error) !== NO_TEAM_CHANNEL) throw error;
+          });
+      }
+      await this.writeTeams(this.teamList.filter((team) => team.id !== id));
+      if (move) await this.teamMoves.set(id, undefined);
+    } finally {
+      this.moving.delete(id);
     }
-    await this.writeTeams(this.teamList.filter((team) => team.id !== id));
-    if (move) await this.teamMoves.set(id, undefined);
   }
 
   /** The communities where `pubkey` is one of the owner's agents a team

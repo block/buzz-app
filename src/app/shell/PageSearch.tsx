@@ -577,7 +577,11 @@ function CommunitySearch({
       services.communities.relay.snapshot().session === connection.session
     );
   };
-  const openConversation = (channelId: string, messageId?: string) => {
+  const openConversation = (
+    channelId: string,
+    messageId?: string,
+    threadRootId?: string,
+  ) => {
     if (!current() || !connection.session.channels.get?.(channelId)) return;
     close(messageId ? undefined : channelId);
     void services.navigation.open({
@@ -586,6 +590,7 @@ function CommunitySearch({
       scope,
       channelId,
       ...(messageId ? { messageId } : {}),
+      ...(threadRootId ? { threadRootId } : {}),
     });
   };
   const views =

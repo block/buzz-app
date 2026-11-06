@@ -20,7 +20,7 @@ import {
 import { createAgentDirectory } from "../../features/identity-names/testing";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
-import { eventDto } from "../../features/relay/events";
+import { eventDto, type RelayEvent } from "../../features/relay/events";
 import { ReadError } from "../../features/relay/errors";
 import {
   keypair,
@@ -32,6 +32,12 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
+import type { ReadStateSigning } from "../../features/relay/read-state-host";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Test the production Node codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 import {
   readJournal,
   type ReadJournal,
@@ -381,6 +387,124 @@ it("shows the first six unread conversations ahead of the rest", async () => {
       ).toBeNull(),
     );
     expect(screen.queryByText("No recent activity yet.")).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("previews and opens the newest unread reply of a channel unread only through threads", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    larry = keypair();
+  const discovery = [
+    profile(larry, { name: "Larry" }),
+    ...["team", "blank", "mixed"].flatMap((id) => [
+      metadata(relay, id, id),
+      roster(relay, id, [viewer.pubkey, larry.pubkey]),
+    ]),
+  ];
+  let live: LiveCallbacks | undefined;
+  let journal: ReadJournal | undefined;
+  const owner = createRelaySession(
+    {
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      readState: {
+        decode: async (events) => decodeReadState(events, viewer.secret),
+        sign: async (intent: ReadStateSigning) =>
+          signReadState(intent, viewer.secret),
+        publish: async () => {},
+      },
+      async query(filters) {
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      readStateFloor: () => 0,
+      readPublisherLock: async (_signal, work) => work(),
+      readStateStorage: {
+        close() {},
+        async update(change) {
+          journal = readJournal(change(journal), viewer.pubkey);
+          return journal;
+        },
+      },
+    },
+  );
+  const reply = (root: RelayEvent, content: string, time: number) =>
+    message(
+      larry,
+      root.tags.find(([tag]) => tag === "h")?.[1] ?? "",
+      content,
+      time,
+      [["e", root.id, "", "reply"]],
+    );
+  const root = message(
+    viewer,
+    "team",
+    "so uh how do I get that audio to stop",
+    10,
+  );
+  const blankRoot = message(viewer, "blank", "attachment thread", 10);
+  const mixedRoot = message(viewer, "mixed", "mixed thread", 10);
+  const open = vi.fn();
+  const rowsOf = (group: string) =>
+    within(screen.getByRole("group", { name: group })).getAllByRole("option");
+  const row = (name: string) =>
+    rowsOf("Unread").find((option) => option.textContent?.startsWith(name));
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query=""
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={open}
+      />,
+    );
+    await waitFor(() => expect(rowsOf("Recent activity")).toHaveLength(3));
+    assert(live);
+    const callbacks = live;
+    act(() =>
+      callbacks.receive([
+        root,
+        reply(root, "Draft PR is up", 11),
+        reply(root, "CI is green now", 12),
+        blankRoot,
+        reply(blankRoot, "", 13),
+        mixedRoot,
+        reply(mixedRoot, "mixed reply", 14),
+        message(larry, "mixed", "new top-level message", 15),
+      ]),
+    );
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(3));
+    // The newest unread reply, by its author, not the thread's root.
+    await waitFor(() =>
+      expect(row("team")).toHaveTextContent("Larry: CI is green now"),
+    );
+    expect(row("team")).not.toHaveTextContent("audio");
+    expect(row("blank")).toHaveTextContent("Larry replied in a thread");
+    // Unread channel messages keep the channel's own preview and destination.
+    expect(row("mixed")).not.toHaveTextContent("Larry:");
+    fireEvent.click(row("mixed") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("mixed");
+    fireEvent.click(row("team") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("team", root.id, root.id);
+    // Reading the thread takes the channel out of Unread.
+    await act(async () => {
+      await owner.session.unread.markThrough(
+        { kind: "thread", channelId: "team", rootId: root.id },
+        owner.session.unread.activity("team").items?.[0]?.latestMessageId ?? "",
+      );
+    });
+    await waitFor(() => expect(row("team")).toBeUndefined());
   } finally {
     cleanup();
     owner.dispose();

@@ -6,7 +6,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { DEFAULT_ACTIVE_WINDOW_SECONDS } from "../../features/relay/sidebar-preferences";
-import type { UnreadCapability } from "../../features/relay/unread";
+import type {
+  ThreadActivityItem,
+  UnreadCapability,
+} from "../../features/relay/unread";
 import type { sidebarSections } from "./sidebar-sections";
 
 export type { SidebarFilterMode as SidebarFilter } from "../../features/relay/sidebar-preferences";
@@ -117,4 +120,53 @@ export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
   );
   const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
   return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);
+}
+
+/** The newest unread thread reply of each channel among `ids` (a JSON id
+ * array) whose unread is only thread replies: no manual mark and no unread
+ * message outside the listed threads. */
+export function useUnreadThreadOnly(unread: UnreadCapability, ids: string) {
+  const channelIds = useMemo(() => JSON.parse(ids) as string[], [ids]);
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const stops = channelIds.flatMap((channelId) => [
+        unread.subscribe({ kind: "channel", channelId }, listener),
+        unread.subscribeActivity(channelId, listener),
+      ]);
+      return () => {
+        for (const stop of stops) stop();
+      };
+    },
+    [channelIds, unread],
+  );
+  const snapshot = useCallback(
+    () =>
+      JSON.stringify(
+        channelIds.flatMap((channelId) => {
+          const items = unread.activity(channelId).items ?? [];
+          const state = unread.snapshot({ kind: "channel", channelId });
+          const replies = items.reduce(
+            (sum, item) => sum + item.unreadCount,
+            0,
+          );
+          return items[0] &&
+            state.manual === "none" &&
+            (state.observedCount ?? 0) <= replies
+            ? [items[0]]
+            : [];
+        }),
+      ),
+    [channelIds, unread],
+  );
+  const threads = useSyncExternalStore(subscribe, snapshot, snapshot);
+  return useMemo(
+    () =>
+      new Map(
+        (JSON.parse(threads) as ThreadActivityItem[]).map((item) => [
+          item.channelId,
+          item,
+        ]),
+      ),
+    [threads],
+  );
 }

@@ -171,7 +171,8 @@ export function createPopoutThread(
         ];
       });
       // Admitted here but no longer in main's outbox: delivered and dropped.
-      // Report that terminal state once, then stop tracking it.
+      // Reported as accepted until the companion has received that report
+      // (`acknowledgePublished`); reading never consumes it.
       const finished: MainOperation[] = [];
       for (const [id, record] of admitted) {
         if (seen.has(id)) continue;
@@ -181,18 +182,26 @@ export function createPopoutThread(
           kind: record.kind,
           delivery: "accepted",
         });
-        admitted.delete(id);
       }
-      for (const op of channelOps)
-        if (admitted.has(op.id) && ["accepted", "seen"].includes(op.delivery))
-          admitted.delete(op.id);
-      // This window's own first, so the capped presentation keeps them.
-      const own = channelOps.filter((op) => finishedOrAdmitted(op.id));
-      const others = channelOps.filter((op) => !finishedOrAdmitted(op.id));
+      // This window's own first, so a capped presentation keeps them and
+      // their terminal states cannot be displaced by other operations.
+      const own = channelOps.filter((op) => admitted.has(op.id));
+      const others = channelOps.filter((op) => !admitted.has(op.id));
       return [...finished, ...own, ...others];
-      function finishedOrAdmitted(id: string) {
-        return admitted.has(id) || finished.some((op) => op.id === id);
-      }
+    },
+    /** The companion received these: terminal admitted operations can now be
+     * forgotten. Ones left out of a capped presentation stay tracked. */
+    acknowledgePublished(published: readonly MainOperation[]) {
+      let retired = false;
+      for (const op of published)
+        if (
+          admitted.has(op.id) &&
+          (op.delivery === "accepted" || op.delivery === "seen")
+        ) {
+          admitted.delete(op.id);
+          retired = true;
+        }
+      return retired;
     },
     /** Main admitted this operation for this window. */
     admit(

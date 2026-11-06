@@ -7,7 +7,11 @@ import { threadReference } from "../relay/thread-reference";
 
 export const ATTENTION_SCHEMA = "agent-attention/v1";
 
-export type Interest = Readonly<{ type: "interest"; instructions: string }>;
+export type Interest = Readonly<{
+  type: "interest";
+  instructions: string;
+  paused?: boolean;
+}>;
 export type ClassifierQuestion = Readonly<{
   question: string;
   true?: string;
@@ -301,7 +305,9 @@ export function validateObject(
     if (parsed.space === "interest") {
       if (object.type !== "interest")
         fail('An interest/ value has type "interest"');
-      fields(object, ["type", "instructions"]);
+      fields(object, ["type", "instructions"], ["paused"]);
+      if (object.paused !== undefined && typeof object.paused !== "boolean")
+        fail("paused must be true or false");
       filled(object.instructions, "instructions", TEXT_LIMIT);
     } else if (object.type === "event") eventWatch(object);
     else if (object.type === "timer") timer(object);
@@ -502,4 +508,13 @@ export function sourceCompleted(
     object?.value.type === "source" &&
     runs?.[object.slug] === sourceSignature(object)
   );
+}
+
+/** Interest pause leaves each watch's own enabled setting intact. */
+export function interestPaused(
+  attention: Readonly<Record<string, AttentionObject>>,
+  id: string,
+): boolean {
+  const value = attention[`interest/${id}`]?.value;
+  return value?.type === "interest" && value.paused === true;
 }

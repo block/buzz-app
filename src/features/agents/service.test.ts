@@ -1185,6 +1185,55 @@ it.each(["edit", "delete"])(
   },
 );
 
+it.each(["pause", "delete"])(
+  "rejects a stale interest %s without overwriting a newer edit",
+  async (operation) => {
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const expected = service.find(bot)?.attention["interest/default"];
+    if (expected?.value.type !== "interest") throw new Error("fixture");
+    await service.save(bot, {
+      attention: {
+        "interest/default": {
+          ...expected.value,
+          instructions: "New instructions",
+        },
+      },
+    });
+    const before = service.find(bot)?.attention;
+    await expect(
+      service.save(bot, {
+        attentionExpected: { "interest/default": expected },
+        attention: {
+          "interest/default":
+            operation === "pause" ? { ...expected.value, paused: true } : null,
+        },
+      }),
+    ).rejects.toThrow(/changed/);
+    expect(service.find(bot)?.attention).toEqual(before);
+  },
+);
+
+it("rejects deleting a displayed interest when a new child was added without saving a partial deletion", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const interest = service.find(bot)?.attention["interest/default"];
+  const watch = service.find(bot)?.attention["watch/channel"];
+  if (!interest || watch?.value.type !== "event") throw new Error("fixture");
+  await service.save(bot, { attention: { "watch/new": { ...watch.value } } });
+  const before = service.find(bot)?.attention;
+  await expect(
+    service.save(bot, {
+      attentionExpected: {
+        "interest/default": interest,
+        "watch/channel": watch,
+      },
+      attention: { "watch/channel": null, "interest/default": null },
+    }),
+  ).rejects.toThrow(/Remove or move/);
+  expect(service.find(bot)?.attention).toEqual(before);
+});
+
 it("sets a watch's target enabled value without changing its configuration", async () => {
   const { service } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -4892,6 +4941,39 @@ const tick = {
   },
 } as const;
 
+it("pauses an interest's timer without changing its enabled setting and resumes overdue work", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      ...tick,
+      "interest/default": {
+        type: "interest",
+        instructions: "Be brief.",
+        paused: true,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  expect(service.find(bot)?.attention["watch/tick"]?.value).toMatchObject({
+    enabled: true,
+  });
+  await service.save(bot, {
+    attention: {
+      "interest/default": {
+        type: "interest",
+        instructions: "Be brief.",
+        paused: false,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
 it("keeps a settings change still being saved when a timer saves its progress", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const disk = new Map<string, string>();
@@ -6501,26 +6583,38 @@ it("classifies a reply without its parent when the parent lookup does not answer
   }
 });
 
-it("sends nothing to the classifier for a watch stopped while its event waited", async () => {
-  const jev = fakeJev();
-  let known!: (value: boolean) => void;
-  jev.status.mockImplementationOnce(
-    () => new Promise<boolean>((resolve) => (known = resolve)),
-  );
-  const { service, run, emit } = await classifiedAgent(jev);
-  emit({ events: [event("w")] });
-  await settle();
-  const watch = service.find(bot)?.attention["watch/channel"]?.value;
-  if (watch?.type !== "event") throw new Error("no watch");
-  await service.save(bot, {
-    attention: { "watch/channel": { ...watch, enabled: false } },
-  });
-  known(true);
-  await settle();
-  await settle();
-  expect(jev.decide).not.toHaveBeenCalled();
-  expect(run).not.toHaveBeenCalled();
-});
+it.each(["watch", "interest"])(
+  "sends nothing to the classifier for a paused %s while its event waited",
+  async (target) => {
+    const jev = fakeJev();
+    let known!: (value: boolean) => void;
+    jev.status.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (known = resolve)),
+    );
+    const { service, run, emit } = await classifiedAgent(jev);
+    emit({ events: [event("w")] });
+    await settle();
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("no watch");
+    await service.save(bot, {
+      attention:
+        target === "watch"
+          ? { "watch/channel": { ...watch, enabled: false } }
+          : {
+              [`interest/${watch.interest_id}`]: {
+                type: "interest",
+                instructions: "Be brief.",
+                paused: true,
+              },
+            },
+    });
+    known(true);
+    await settle();
+    await settle();
+    expect(jev.decide).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  },
+);
 
 it("a copy of the app that does not hold the agent sends nothing to the classifier", async () => {
   const jev = fakeJev();

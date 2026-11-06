@@ -66,15 +66,7 @@ import * as typesafe from "./typesafe";
 import pluginDevelopmentManifest from "./plugin-development/manifest.json";
 import * as pluginDevelopment from "./plugin-development";
 
-import relayNotesManifest from "./relay-notes/manifest.json";
-import * as relayNotes from "./relay-notes";
-
 export const bundledPlugins: readonly BundledPlugin[] = [
-  {
-    manifest: { ...relayNotesManifest, apiVersion: 1 },
-    module: relayNotes,
-    enabledByDefault: false,
-  },
   {
     manifest: { ...huddlesManifest, apiVersion: 1 },
     module: huddles,

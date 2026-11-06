@@ -1074,6 +1074,53 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
 }
 
 #[test]
+fn retired_notes_reader_can_be_installed_with_old_bundled_settings() {
+    for enabled in [None, Some(true), Some(false)] {
+        let (root, manager, source) = fixture();
+        assert!(!bundled_manifests()
+            .iter()
+            .any(|m| m.id == "buzz.relay-notes"));
+        manager.catalog().unwrap();
+        let path = root.path().join("profiles/test/registry.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        if let Some(enabled) = enabled {
+            saved["bundledOverrides"]["buzz.relay-notes"] = serde_json::json!(enabled);
+        }
+        fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let reopened = Manager::open(Some(root.path().into()), "test", false).unwrap();
+        assert!(!reopened
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .any(|p| p.manifest.id == "buzz.relay-notes"));
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"buzz.relay-notes","name":"Notes reader","apiVersion":1}"#,
+        )
+        .unwrap();
+        let installed = reopened
+            .install(&source)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "buzz.relay-notes")
+            .unwrap();
+        assert_eq!(installed.source, "external");
+        assert!(!installed.enabled);
+        reopened.change("enable", "buzz.relay-notes").unwrap();
+        let again = Manager::open(Some(root.path().into()), "test", false).unwrap();
+        assert!(again
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .any(|p| p.manifest.id == "buzz.relay-notes" && p.enabled));
+    }
+}
+
+#[test]
 fn feedback_is_in_native_catalog() {
     let (root, manager, _source) = fixture();
     assert!(bundled_manifests().iter().any(|m| m.id == "buzz.feedback"));
@@ -1150,7 +1197,6 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.pi"
                 | "buzz.todos"
                 | "buzz.usage"
-                | "buzz.relay-notes"
                 | "buzz.reminders"
                 | "buzz.workflows"
                 | "buzz.focus"

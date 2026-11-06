@@ -25,9 +25,21 @@ import {
 } from "../conversation/typing-presentation";
 import type { RelaySession } from "../relay/session";
 
-function RecordedTyping({ session }: { session: RelaySession }) {
+function RecordedTyping({
+  session,
+  presence = false,
+}: {
+  session: RelaySession;
+  presence?: boolean;
+}) {
   useTypingReplacement(
-    { session, channelId: "alpha", threadRootId: undefined, pubkey: "agent" },
+    {
+      session,
+      channelId: "alpha",
+      threadRootId: undefined,
+      pubkey: "agent",
+      presence,
+    },
     true,
   );
   return null;
@@ -334,9 +346,13 @@ it.each([1, 4])(
   },
 );
 
-it.each([false, true])(
-  "keeps ongoing typing in the reply group after completed history (replaced=%s)",
-  (replaced) => {
+it.each([
+  [false, false],
+  [true, false],
+  [true, true],
+])(
+  "keeps ongoing typing in the reply group after completed history (replaced=%s, presented=%s)",
+  (replaced, presented) => {
     const { owner, updates, content } = activityFixture();
     try {
       const history = updates(2);
@@ -367,7 +383,9 @@ it.each([false, true])(
       };
       const view = render(
         <TypingPresentation active>
-          {replaced && <RecordedTyping session={queries} />}
+          {replaced && (
+            <RecordedTyping session={queries} presence={presented} />
+          )}
           {content(
             [...history, { ...reply, id: "reply", content: "Main reply" }],
             undefined,
@@ -377,6 +395,17 @@ it.each([false, true])(
         </TypingPresentation>,
       );
       expect(screen.queryByText("2 completed steps")).toBeNull();
+      if (presented) {
+        // A live bubble elsewhere shows the agent: no conversation cue, and
+        // the reply does not join one.
+        expect(
+          screen.queryByRole("button", { name: /Activity: .*working/ }),
+        ).toBeNull();
+        expect(
+          screen.getByText("Main reply").closest("li"),
+        ).not.toHaveAttribute("data-stack-next", "true");
+        return;
+      }
       expect(
         screen.getByRole("button", { name: /Activity: .*working/ }),
       ).toBeVisible();

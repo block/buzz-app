@@ -134,6 +134,7 @@ import {
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
+import { useShowingDraft } from "./draft-places";
 import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
@@ -699,6 +700,7 @@ function Composer({
   // subscribe only while they could seed. Nothing is loaded here: the host
   // owns the window.
   const presented = active && shown;
+  useShowingDraft(scope, draftKey, presented);
   const seeking =
     seedsFromWindow &&
     presented &&

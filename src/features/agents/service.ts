@@ -459,7 +459,7 @@ export type AgentHandle = Readonly<{
   readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
   /** The owner's teams the Agents page shows here, or the one with this id
    * or name. */
-  readTeams?(team?: string): TeamReadout | readonly TeamReadout[];
+  readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
   /** Owner-reviewed name and instructions changes to one of those teams. */
   updateTeam?(
     input: TeamUpdateInput,
@@ -2224,7 +2224,7 @@ export class AgentsService extends Service implements Agents {
           origin,
           new Set(held.map((identity) => identity.pubkey)),
         ).filter((item) => item.owner === agent.owner && !item.unfinished);
-        for (const item of listed) {
+        const remote = async (item: (typeof listed)[number]) => {
           const read = await config
             ?.readInstructions(item.pubkey)
             .catch(() => undefined);
@@ -2233,23 +2233,31 @@ export class AgentsService extends Service implements Agents {
             name: item.name,
             type: item.type,
           };
-          found.push(
-            read
-              ? { ...base, ...read, synced: true }
-              : {
-                  ...base,
-                  unavailable:
-                    item.place === "hosted"
-                      ? "Its provider keeps its config"
-                      : "Its config is on another device",
-                },
-          );
-        }
-        return target === undefined
-          ? found
-          : pick(found, target, (entry) => [entry.pubkey, entry.name], "agent");
+          return read
+            ? { ...base, ...read, synced: true }
+            : {
+                ...base,
+                unavailable:
+                  item.place === "hosted"
+                    ? "Its provider keeps its config"
+                    : "Its config is on another device",
+              };
+        };
+        if (target === undefined)
+          return [...found, ...(await Promise.all(listed.map(remote)))];
+        // Only the one asked for is read from the relay.
+        const readers = [
+          ...found.map((entry) => ({ entry, read: () => entry })),
+          ...listed.map((entry) => ({ entry, read: () => remote(entry) })),
+        ];
+        return pick(
+          readers,
+          target,
+          ({ entry }) => [entry.pubkey, entry.name],
+          "agent",
+        ).read();
       },
-      readTeams: (agent, target) => {
+      readTeams: async (agent, target) => {
         const found = this.callerTeams(agent).map((team) =>
           this.teamReadout(team),
         );
@@ -3397,22 +3405,26 @@ export class AgentsService extends Service implements Agents {
   private agentReadout(identity: AgentIdentity): AgentReadout {
     const kind = this.types().find((type) => type.key === identity.type);
     const saved = this.settingsOf(identity);
-    const config =
-      this.editorConfig(identity, saved.config as object)?.config ??
-      saved.config;
+    const editor = this.editorConfig(identity, saved.config as object);
+    const config = editor?.config ?? saved.config;
     const side = this.configBinding(identity).instructions;
-    const head =
-      side && isSynced(this.configStore, side)
-        ? this.configStore.state(side.subject).head
-        : undefined;
-    return {
+    const synced = !!side && isSynced(this.configStore, side);
+    const base = {
       pubkey: identity.pubkey,
       name: identity.name,
       type: identity.type,
+    };
+    // Synced instructions that are deleted, invalid or unreadable are not
+    // empty ones.
+    if (synced && editor?.problem)
+      return { ...base, unavailable: editor.problem };
+    const head = synced ? this.configStore.state(side.subject).head : undefined;
+    return {
+      ...base,
       instructions: kind?.adopt
         ? (kind.carry?.(config).instructions ?? "")
         : null,
-      synced: !!side && isSynced(this.configStore, side),
+      synced,
       ...(head && { revision: head.id }),
     };
   }

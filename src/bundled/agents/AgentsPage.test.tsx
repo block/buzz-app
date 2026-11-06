@@ -6003,6 +6003,125 @@ describe("team editor visits", () => {
     );
   });
 
+  describe("between two teams", () => {
+    const other = "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182";
+    const second = {
+      ...crew("s1", "There."),
+      id: other,
+      name: "Second",
+    };
+    const otherVisit = {
+      ...page,
+      route: { version: 1, params: { team: other } },
+    } as const;
+    const open = (options: Parameters<typeof setup>[1] = {}) => {
+      const view = setup([agent("Ada", 1)], {
+        teams: [crew("r1", "Hi."), second],
+        page: at(otherVisit, "second"),
+        ...options,
+      });
+      const show = (where: ReturnType<typeof at>) => {
+        view.rerender(
+          <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+        );
+        return where;
+      };
+      return { view, show };
+    };
+
+    it("keeps a dirty editor open on Back to another team, and Forward finds it", async () => {
+      const user = userEvent.setup();
+      const { show } = open();
+      const name = screen.getByRole("textbox", { name: "Name" });
+      await user.clear(name);
+      await user.type(name, "Unsaved Second");
+      show(at(visit, "team"));
+      expect(screen.getByRole("form", { name: "Edit Second" })).toBeVisible();
+      show(at(otherVisit, "second"));
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Unsaved Second",
+      );
+    });
+
+    it("keeps an editor whose Save runs, then dismisses its own visits", async () => {
+      const user = userEvent.setup();
+      const { view, show } = open();
+      let finish = () => {};
+      vi.mocked(view.agents.saveTeam).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ ...second, revision: "s2" });
+          }),
+      );
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      const first = show(at(visit, "team"));
+      expect(screen.getByRole("form", { name: "Edit Second" })).toBeVisible();
+      finish();
+      await vi.waitFor(() =>
+        expect(screen.getByRole("form", { name: "Edit Crew" })).toBeVisible(),
+      );
+      const ended = vi.mocked(first.navigator.dismiss).mock.calls[0]?.[0] as (
+        visit: OpenTarget,
+      ) => boolean;
+      expect(ended(otherVisit)).toBe(true);
+      expect(ended(visit)).toBe(false);
+    });
+
+    it("keeps an editor whose Save was refused", async () => {
+      const user = userEvent.setup();
+      const { view, show } = open();
+      vi.mocked(view.agents.saveTeam).mockRejectedValueOnce(
+        new Error("Refused"),
+      );
+      const name = screen.getByRole("textbox", { name: "Name" });
+      await user.type(name, "!");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await screen.findByText("Refused");
+      show(at(visit, "team"));
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Second!",
+      );
+    });
+  });
+
+  it("asks before a team's visit discards an agent's unsaved settings", async () => {
+    const user = userEvent.setup();
+    const ada = agent("Ada", 1);
+    const agentVisit = {
+      ...page,
+      route: { version: 1, params: { agent: ada.pubkey } },
+    } as const;
+    const view = setup([ada], {
+      dirtySettings: true,
+      teams: [crew("r1", "Hi.")],
+      page: at(agentVisit, "agent"),
+    });
+    const show = (where: ReturnType<typeof at>) =>
+      view.rerender(
+        <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+      );
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+    show(at(visit, "team"));
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Keep editing" }),
+    );
+    expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+    show(at(agentVisit, "agent-again"));
+    expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue(
+      "Ada says hi!",
+    );
+    show(at(visit, "team-again"));
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Discard changes" }),
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeVisible();
+  });
+
   it("leaves an editor open on Back while its Save runs, then closes it", async () => {
     const user = userEvent.setup();
     const view = setup([agent("Ada", 1)], {

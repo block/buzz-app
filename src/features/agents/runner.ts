@@ -490,7 +490,7 @@ export type RunnerHost = {
   readTeams(
     agent: Agent,
     target?: string,
-  ): TeamReadout | readonly TeamReadout[];
+  ): Promise<TeamReadout | readonly TeamReadout[]>;
   updateTeam(
     agent: Agent,
     input: TeamUpdateInput,
@@ -2780,7 +2780,7 @@ export class AgentRunners {
           lifetime.throwIfAborted();
           return this.host.readAgents(agent, target);
         },
-        readTeams: (target?: string) => {
+        readTeams: async (target?: string) => {
           lifetime.throwIfAborted();
           return this.host.readTeams(agent, target);
         },

@@ -699,7 +699,7 @@ mention picker. Select a team to insert its members as individual mentions.
 Typing its name alone does not notify it. Empty teams, teams with more than 32
 members, and teams with unavailable members cannot be selected; edit the team or
 refresh the choices. Adding people to a channel still requires the normal send
-confirmation.
+confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
 ## Optional features and limits
 

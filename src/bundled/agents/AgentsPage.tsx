@@ -93,6 +93,7 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -212,6 +213,17 @@ export function AgentsPage({
   const [flow, setFlow] = useState<"import" | "import-team">();
   // A team being edited by its id, or "new" for one being made.
   const [editingTeam, setEditingTeam] = useState<string>();
+  // A local team leaves the list as its delete starts, so its editor keeps it
+  // until the delete ends, to show a failure there.
+  const [removing, setRemoving] = useState<Team>();
+  const removeTeam = async (team: Team) => {
+    setRemoving(team);
+    try {
+      await agents.removeTeam(team.id);
+    } finally {
+      setRemoving(undefined);
+    }
+  };
   const newAgentButton = useRef<HTMLButtonElement>(null);
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
@@ -356,9 +368,12 @@ export function AgentsPage({
   // here, or with none in any community. A synced team always shows in its
   // home, and elsewhere only with a member there or while it has none.
   const teams = visibleTeams(agents);
-  // Only a team still saved, or one being made, keeps its editor open.
+  // Only a team still saved or being deleted, or one being made, keeps its
+  // editor open.
   const editing =
-    editingTeam === "new" || teams.some((team) => team.id === editingTeam)
+    editingTeam === "new" ||
+    editingTeam === removing?.id ||
+    teams.some((team) => team.id === editingTeam)
       ? editingTeam
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
@@ -677,7 +692,9 @@ export function AgentsPage({
               )}
               teams={teams}
               editing={editing}
+              removing={removing}
               onEdit={setEditingTeam}
+              onRemove={removeTeam}
               newTeam={!toolbarAction && newTeamMenu}
             />
           )}
@@ -2275,7 +2292,9 @@ function Teams({
   saved,
   teams,
   editing,
+  removing,
   onEdit,
+  onRemove,
   newTeam,
 }: {
   agents: Agents;
@@ -2283,10 +2302,15 @@ function Teams({
   teams: readonly Team[];
   /** A team's id while it is edited, or "new" for one being made. */
   editing: string | undefined;
+  /** A team while its delete runs, which may have left `teams`. */
+  removing: Team | undefined;
   onEdit(id: string | undefined): void;
+  onRemove(team: Team): Promise<void>;
   newTeam: ReactNode;
 }) {
-  const team = teams.find((item) => item.id === editing);
+  const team =
+    teams.find((item) => item.id === editing) ??
+    (removing?.id === editing ? removing : undefined);
   if (editing === "new" || team)
     return (
       <TeamEditor
@@ -2294,6 +2318,7 @@ function Teams({
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
+        onRemove={onRemove}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -2330,11 +2355,14 @@ function TeamEditor({
   agents,
   saved,
   team,
+  onRemove,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
+  /** Deletes the team, keeping this editor open until that ends. */
+  onRemove(team: Team): Promise<void>;
   onDone(): void;
 }) {
   const [name, setName] = useState(team?.name ?? "");
@@ -2344,6 +2372,12 @@ function TeamEditor({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
+  const askDelete = (open: boolean) => {
+    setError("");
+    setDeleting(open);
+  };
   // What a synced Save revises, and a new team's id for every retry.
   const [opened] = useState(team);
   const [draft] = useState(() => crypto.randomUUID());
@@ -2416,7 +2450,9 @@ function TeamEditor({
         void save();
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !pending) onDone();
+        // Not while Save runs, as its button keeps focus while loading, nor
+        // under the dialog: before focus moves into it, its Escape starts here.
+        if (event.key === "Escape" && !pending && !deleting) onDone();
       }}
     >
       <SideHeader
@@ -2491,7 +2527,7 @@ function TeamEditor({
           </p>
         )}
       </Section>
-      {error && (
+      {error && !deleting && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}
         </p>
@@ -2507,14 +2543,52 @@ function TeamEditor({
         </Button>
         {team && (
           <Button
+            ref={deleteButton}
             variant="destructive"
             disabled={pending}
-            onClick={() => void act(() => agents.removeTeam(team.id))}
+            onClick={() => askDelete(true)}
           >
             Delete team
           </Button>
         )}
       </div>
+      {team && deleting && (
+        <AlertDialog
+          title={`Delete ${team.name}?`}
+          description={`${team.revision ? "It's deleted on all your devices. " : ""}Its agents aren't deleted, but they stop getting its instructions. It can't be undone.`}
+          pending={pending}
+          // While pending, it closes only with the editor, once the delete
+          // ends. The editor also goes if the team is deleted elsewhere, and
+          // React has by then cleared Delete team's ref. Either way focus
+          // moves to the tab now shown, as leaveListing does.
+          finalFocus={() =>
+            pending || !deleteButton.current
+              ? (document.getElementById("agents-teams-tab") ?? false)
+              : deleteButton.current
+          }
+          onClose={() => askDelete(false)}
+          actions={
+            <>
+              <Button disabled={pending} onClick={() => askDelete(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={pending}
+                onClick={() => void act(() => onRemove(team))}
+              >
+                Delete team
+              </Button>
+            </>
+          }
+        >
+          {error && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {error}
+            </p>
+          )}
+        </AlertDialog>
+      )}
     </form>
   );
 }

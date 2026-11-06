@@ -2578,8 +2578,44 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(card);
   expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Delete team" }));
+  let dialog = await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  expect(dialog).toHaveAccessibleDescription(
+    "Its agents aren't deleted, but they stop getting its instructions. It can't be undone.",
+  );
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  // Escape dismisses only the confirmation, not the editor under it.
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(agents.removeTeam).not.toHaveBeenCalled();
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Delete team" })).toHaveFocus(),
+  );
+  // So does one pressed before focus moves into the dialog, which starts in
+  // the editor.
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  fireEvent.keyDown(
+    within(
+      screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+    ).getByRole("button", { name: "Delete team", hidden: true }),
+    { key: "Escape" },
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  dialog = await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
 });
 
 it("offers hosted agents as members, warning that they may not get the instructions", async () => {
@@ -2999,7 +3035,181 @@ it("keeps a synced team in its home while none of its members is listed", async 
   expect(agents.teamHere).toHaveBeenCalledWith({ id: "gone" }, undefined);
   await user.click(screen.getByRole("button", { name: "Gone" }));
   await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Gone?",
+  });
+  expect(dialog).toHaveAccessibleDescription(
+    "It's deleted on all your devices. Its agents aren't deleted, but they stop getting its instructions. It can't be undone.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("gone");
+});
+
+it("keeps a failed team delete in its dialog, and only there", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "crew",
+        name: "Crew",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  let fail!: (reason: Error) => void;
+  agents.removeTeam.mockImplementationOnce(
+    () =>
+      new Promise<void>((_, reject) => {
+        fail = reject;
+      }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Crew?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(agents.removeTeam).toHaveBeenCalledWith("crew");
+  // While pending, neither Cancel nor Escape closes it or the editor.
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeInTheDocument();
+  expect(
+    screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+  ).toBeInTheDocument();
+
+  await act(async () =>
+    fail(new Error("Connect to relay.example to delete this team")),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Connect to relay.example to delete this team",
+  );
+  expect(screen.getAllByText(/^Connect to relay\.example/)).toHaveLength(1);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByText(/^Connect to relay\.example/)).toBeNull();
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Delete team" })).toHaveFocus(),
+  );
+});
+
+it("keeps a local team's editor open through a failed delete, for a retry", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const crew = {
+    id: "crew",
+    name: "Crew",
+    instructions: "",
+    members: [ada.pubkey],
+  };
+  const { agents, change } = setup([ada], { teams: [crew] });
+  let fail!: () => void;
+  // As the service does: a local team leaves the list as its delete starts,
+  // and comes back when the write fails.
+  agents.removeTeam.mockImplementationOnce(async () => {
+    change({ teams: [] });
+    await new Promise<void>((resolve) => {
+      fail = resolve;
+    });
+    change({ teams: [crew] });
+    throw new Error("Could not save teams");
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Crew?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  expect(
+    screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+  ).toBeInTheDocument();
+
+  await act(async () => fail());
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Could not save teams",
+  );
+  expect(dialog).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(agents.removeTeam).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
+});
+
+it("closes a synced team's editor when its delete ends, before the team leaves the list", async () => {
+  const user = userEvent.setup();
+  const { agents, change } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "crew",
+        name: "Crew",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  let finish!: () => void;
+  agents.removeTeam.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete Crew?",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
+  expect(
+    within(dialog).getByRole("button", { name: "Delete team" }),
+  ).toHaveAttribute("aria-busy", "true");
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+  await act(async () => finish());
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
+  act(() => change({ teams: [] }));
+  expect(screen.queryByRole("button", { name: "Crew" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus();
+});
+
+it("focuses Your teams when a team is deleted elsewhere under its dialog", async () => {
+  const user = userEvent.setup();
+  const { change } = setup([agent("Ada", 1)], {
+    teams: [
+      {
+        id: "crew",
+        name: "Crew",
+        instructions: "",
+        members: ["9".repeat(64)],
+        revision: "1",
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "Crew" }));
+  await user.click(screen.getByRole("button", { name: "Delete team" }));
+  await screen.findByRole("alertdialog", { name: "Delete Crew?" });
+  act(() => change({ teams: [] }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
+  );
 });
 
 it("shows an agent on another device read-only, and offers only Finish setup and Delete for an unfinished hosted one", async () => {

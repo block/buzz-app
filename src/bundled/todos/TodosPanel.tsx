@@ -126,6 +126,7 @@ export function TodosPanel({
   close,
   active,
   onOpenLink = () => false,
+  canOpenLink,
 }: {
   canvas: ChannelCanvas;
   people: TodoPeople;
@@ -133,6 +134,7 @@ export function TodosPanel({
   close(): void;
   active(): boolean;
   onOpenLink?(url: string): boolean;
+  canOpenLink?(url: string): boolean;
 }) {
   const list = useSyncExternalStore(
     people.channels.subscribeList,
@@ -514,6 +516,7 @@ export function TodosPanel({
                         url={href}
                         registry={undefined}
                         onOpenLink={(url) => active() && onOpenLink(url)}
+                        canOpenLink={canOpenLink}
                       >
                         {children}
                       </MessageLink>

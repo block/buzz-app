@@ -57,6 +57,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         close={close}
         active={isActive}
         onOpenLink={(url) => host?.open(url) ?? false}
+        canOpenLink={(url) => host?.canOpen(url) ?? false}
       />
     );
   }

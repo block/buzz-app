@@ -255,6 +255,7 @@ test("message link context menus bypass the pane and return keyboard focus", asy
   });
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Open in browser",
+    "Open in side panel",
     "Copy link",
   ]);
   await expect(external).toHaveAttribute("href", target);
@@ -280,6 +281,10 @@ test("message link context menus bypass the pane and return keyboard focus", asy
   await expect(external).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(
+    menu.getByRole("menuitem", { name: "Open in side panel", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
     menu.getByRole("menuitem", { name: "Copy link", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Enter");
@@ -289,6 +294,20 @@ test("message link context menus bypass the pane and return keyboard focus", asy
     .toEqual([target]);
   await expect(anchor).toBeFocused();
   await expect(panel).toHaveCount(0);
+
+  await anchor.click({ button: "right" });
+  await menu
+    .getByRole("menuitem", { name: "Open in side panel", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("heading", { name: "A useful change #1" }),
+  ).toBeVisible();
+  expect(context.pages()).toHaveLength(1);
+  await page
+    .getByRole("button", { name: "Close GitHub tab", exact: true })
+    .click();
+  await expect(panel).toHaveCount(0);
+  await anchor.focus();
 
   await page.keyboard.press("Shift+F10");
   await expect(menu).toBeVisible();
@@ -304,6 +323,10 @@ test("message link context menus bypass the pane and return keyboard focus", asy
   await link(page, ordinary).filter({ visible: true }).focus();
   await page.keyboard.press("Shift+F10");
   await expect(menu).toBeFocused();
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Open in browser",
+    "Copy link",
+  ]);
   await page.keyboard.press("ArrowDown");
   await expect(external).toBeFocused();
   expect(await popup(page, external)).toBe(ordinary);

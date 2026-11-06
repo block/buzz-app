@@ -32,6 +32,9 @@ HTTP(S) links rendered in messages expose **Open in browser** and **Copy link**
 on right-click or long-press, or with Shift+F10 / the Context Menu key while focused.
 **Open in browser** uses the same `_blank` fallback above without consulting pane
 handlers; both actions retain the original URL, including query and fragment.
+When a side panel can show the link, the menu adds **Open in side panel** between
+**Open in browser** and **Copy link**. It opens that panel on the same URL, as an
+ordinary click does; if the panel can't open, a dismissible notice shows.
 Normal and modified clicks are unchanged. In Messages, `buzz://` message links
 expose **Open link** and **Copy link** the same ways. **Open link** opens the
 linked thread as a tab in the current channel's workspace without navigating;

@@ -460,7 +460,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
-  **Open in browser**.
+  **Open in browser**. When a side panel can show the link, the same menu
+  offers **Open in side panel**.
 - **Conversation members**: click the combined member avatars and conversation
   name in the header to open membership management. Other header actions remain
   on the right. Compact avatars sit before the name on the left; Solo chats show

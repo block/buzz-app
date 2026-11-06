@@ -26,6 +26,7 @@ import {
   CaretRightIcon,
   MessageReplyIcon,
   LockIcon,
+  SidebarRightIcon,
 } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
@@ -100,6 +101,8 @@ export function MessageLink({
   children?: ReactNode;
   registry: ContributionReader<LinkRenderer> | undefined;
   onOpenLink(url: string): boolean;
+  /** True offers Open in side panel on an http(s) link. Called during render,
+   * so it must not throw or have side effects. */
   canOpenLink?: ((url: string) => boolean) | undefined;
   label?: string | undefined;
   /** The receiving community's name for a raw destination. Display only: a raw
@@ -204,6 +207,7 @@ export function MessageLink({
         }
       : undefined;
   const menu = active && interactive && (external || !!thread);
+  const sidePanelItem = menu && external && canOpenLink?.(url) === true;
   async function copy() {
     if (!active || busy.current) return;
     busy.current = true;
@@ -232,6 +236,18 @@ export function MessageLink({
     const opened = (!panelTarget || !!canOpenLink?.(url)) && onOpenLink(url);
     setUnavailable(!opened);
     if (opened) setPreviewOpen(false);
+  };
+  const openInSidePanel = () => {
+    if (!active) return;
+    // The host records the focused link as the panel's return target.
+    if (trigger.current?.isConnected)
+      trigger.current.focus({ preventScroll: true });
+    setNotice(undefined);
+    if (!onOpenLink(url))
+      setNotice({
+        text: "Couldn’t open the link in a side panel.",
+        error: true,
+      });
   };
   const navigation = {
     target: "_blank",
@@ -464,6 +480,14 @@ export function MessageLink({
               </MenuIcon>
               Open in browser
             </MenuLinkItem>
+          )}
+          {sidePanelItem && (
+            <MenuItem onClick={openInSidePanel}>
+              <MenuIcon>
+                <SidebarRightIcon size={16} />
+              </MenuIcon>
+              Open in side panel
+            </MenuItem>
           )}
           <MenuItem disabled={copying} onClick={() => void copy()}>
             <MenuIcon>

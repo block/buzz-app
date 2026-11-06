@@ -97,7 +97,11 @@ it("skips throwing and unmatched renderers and resolves by order, then key", () 
   expect(resolveLink(url, [web, shaky])).toBe(shaky);
 });
 
-function mount(target = url, interactive = true) {
+function mount(
+  target = url,
+  interactive = true,
+  canOpenLink?: (url: string) => boolean,
+) {
   const onOpenLink = vi.fn(() => true);
   render(
     <ToastProvider>
@@ -105,6 +109,7 @@ function mount(target = url, interactive = true) {
         url={target}
         registry={undefined}
         onOpenLink={onOpenLink}
+        canOpenLink={canOpenLink}
         interactive={interactive}
         label="Message destination"
       />
@@ -141,6 +146,61 @@ it("opens a two-item context menu with the untouched external destination, not t
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
 });
+
+const rightClick = async (anchor: HTMLElement) => {
+  fireEvent.contextMenu(anchor);
+};
+const press = (keys: string) => async (anchor: HTMLElement) => {
+  anchor.focus();
+  await userEvent.setup().keyboard(keys);
+};
+it.each([
+  {
+    entry: "right-click, host can open",
+    open: rightClick,
+    target: url,
+    canOpen: true,
+    items: ["Open in browser", "Open in side panel", "Copy link"],
+  },
+  {
+    entry: "Shift+F10, host can open",
+    open: press("{Shift>}{F10}{/Shift}"),
+    target: url,
+    canOpen: true,
+    items: ["Open in browser", "Open in side panel", "Copy link"],
+  },
+  {
+    entry: "Context Menu key, host can open",
+    open: press("{ContextMenu}"),
+    target: url,
+    canOpen: true,
+    items: ["Open in browser", "Open in side panel", "Copy link"],
+  },
+  {
+    entry: "right-click on an uppercase scheme, host can open",
+    open: rightClick,
+    target: "HTTPS://EXAMPLE.ORG/DOCS",
+    canOpen: true,
+    items: ["Open in browser", "Open in side panel", "Copy link"],
+  },
+  {
+    entry: "right-click, host cannot open",
+    open: rightClick,
+    target: url,
+    canOpen: false,
+    items: ["Open in browser", "Copy link"],
+  },
+])(
+  "offers Open in side panel on an http(s) link only when the host can open it: $entry",
+  async ({ open, target, canOpen, items }) => {
+    const { anchor } = mount(target, true, () => canOpen);
+    await open(anchor);
+    await screen.findByRole("menu");
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual(items);
+  },
+);
 
 it.each(["{Shift>}{F10}{/Shift}", "{ContextMenu}"])(
   "supports keyboard invocation %s, copying, dismissal and focus return",
@@ -192,6 +252,40 @@ it("reports a clipboard failure and allows an explicit retry", async () => {
   expect(onOpenLink).not.toHaveBeenCalled();
 });
 
+it("Open in side panel focuses the link, gives the host the exact URL, and reports a refusal", async () => {
+  const user = userEvent.setup();
+  const target = "https://example.org/docs?a=1#b";
+  const { anchor, onOpenLink } = mount(target, true, () => true);
+  let focusedAtOpen: Element | null = null;
+  onOpenLink.mockImplementationOnce(() => {
+    focusedAtOpen = document.activeElement;
+    return false;
+  });
+  fireEvent.contextMenu(anchor);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open in side panel" }),
+  );
+  expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(target);
+  expect(focusedAtOpen).toBe(anchor);
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
+  expect(
+    await screen.findByText("Couldn’t open the link in a side panel."),
+  ).toBeInTheDocument();
+  fireEvent.contextMenu(anchor);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open in side panel" }),
+  );
+  expect(onOpenLink).toHaveBeenCalledTimes(2);
+  expect(onOpenLink).toHaveBeenLastCalledWith(target);
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Couldn’t open the link in a side panel."),
+    ).not.toBeInTheDocument(),
+  );
+});
+
 const messageId = "a".repeat(64);
 const threadLink = `buzz://message?channel=alpha&id=${messageId}`;
 it.each(["buzz://channel/alpha", threadLink])(
@@ -221,6 +315,7 @@ it("opens a message link's thread in a tab from its context menu, else as a clic
           url={target}
           registry={undefined}
           onOpenLink={onOpenLink}
+          canOpenLink={() => true}
         />
       </LinkThreadTabContext>
     </ToastProvider>

@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -991,6 +992,24 @@ it("routes copied Buzz links and filters unsupported task destinations", async (
     expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     expect(screen.getByText(name)).toBeInTheDocument();
   }
+});
+it("a todo link offers Open in side panel when the panel host can open it", async () => {
+  const f = fixture();
+  f.canvas.read.mockResolvedValue({
+    ...head,
+    content: "## Todos\n\n- [ ] Read [website](https://example.com)\n",
+  });
+  render(<TodosPanel {...f.props} canOpenLink={() => true} />);
+  const user = userEvent.setup();
+  fireEvent.contextMenu(await screen.findByRole("link", { name: "website" }));
+  await screen.findByRole("menu");
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Open in browser", "Open in side panel", "Copy link"]);
+  await user.click(
+    screen.getByRole("menuitem", { name: "Open in side panel" }),
+  );
+  expect(f.props.onOpenLink).toHaveBeenCalledWith("https://example.com/");
 });
 it("uses rendered Markdown and the displayed assignee in accessible names", async () => {
   const f = fixture();

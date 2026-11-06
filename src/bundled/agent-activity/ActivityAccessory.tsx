@@ -877,6 +877,8 @@ function TypingReplacement({
   session,
   channelId,
   threadRootId,
+  message,
+  messageLayout,
   agent,
   shared = false,
   presence = false,
@@ -886,8 +888,12 @@ function TypingReplacement({
   /** This bubble shows the agent working, so the conversation shows no second cue. */
   presence?: boolean;
 }) {
+  // A thread's root row has no thread root of its own, but its bubble shows in
+  // that thread's conversation, so it owns that thread's indicator.
+  const shownIn =
+    threadRootId ?? (messageLayout === "thread" ? message?.id : undefined);
   useActivityTypingReplacement(
-    { session, channelId, threadRootId, pubkey: agent, presence },
+    { session, channelId, threadRootId: shownIn, pubkey: agent, presence },
     shared,
   );
   useTypingReplacement(

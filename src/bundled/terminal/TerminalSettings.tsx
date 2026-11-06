@@ -14,6 +14,8 @@ import {
   MAX_FONT_SIZE,
   type TerminalFontPreference,
 } from "./font-preference";
+import type { TerminalThemePreference } from "./theme-preference";
+import { TerminalColorSettings } from "./TerminalColorSettings";
 
 /** Unsaved form state belongs to the plugin, across Settings card mounts. */
 export function createTerminalSettingsDraft() {
@@ -21,6 +23,9 @@ export function createTerminalSettingsDraft() {
     family: null as string | null,
     size: null as string | null,
     blurredValue: null as string | null,
+    schemeName: "",
+    schemeToml: "",
+    schemeError: null as string | null,
   };
   const listeners = new Set<() => void>();
   return {
@@ -40,10 +45,12 @@ export function createTerminalSettingsDraft() {
 
 export function TerminalSettings({
   font,
+  colors,
   drafts,
   active,
 }: {
   font: TerminalFontPreference;
+  colors: TerminalThemePreference;
   drafts: ReturnType<typeof createTerminalSettingsDraft>;
   active(): boolean;
 }) {
@@ -194,6 +201,7 @@ export function TerminalSettings({
           </div>
         </form>
       </SettingsGroup>
+      <TerminalColorSettings colors={colors} drafts={drafts} active={active} />
       {active() && error && (
         <ToastNotice
           title="Terminal font preference needs attention"

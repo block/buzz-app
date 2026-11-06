@@ -5,6 +5,7 @@ import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKe
 import { createScreen } from "../../src/bundled/terminal/renderer";
 import type { TerminalInputSource } from "../../src/bundled/terminal/renderer";
 import { createTerminalFontPreference } from "../../src/bundled/terminal/font-preference";
+import { createTerminalThemePreference } from "../../src/bundled/terminal/theme-preference";
 
 function Fixture() {
   useKeyboardFocusVisibility();
@@ -13,6 +14,7 @@ function Fixture() {
   const [input, setInput] = useState("");
   const [dimensions, resized] = useState("");
   const [font] = useState(() => createTerminalFontPreference());
+  const [colors] = useState(() => createTerminalThemePreference());
   const [generated] = useState<{ data: string; source: TerminalInputSource }[]>(
     [],
   );
@@ -24,6 +26,7 @@ function Fixture() {
       },
       (cols, rows) => resized(`${cols}x${rows}`),
       font,
+      colors,
     ),
   );
   useEffect(() => {
@@ -34,14 +37,16 @@ function Fixture() {
       terminalRenderer: {
         generated,
         font,
+        colors,
         output: (data: string) => screen.output(new TextEncoder().encode(data)),
       },
     });
     return () => {
       screen.dispose();
       font.dispose();
+      colors.dispose();
     };
-  }, [screen, generated, font]);
+  }, [screen, generated, font, colors]);
   return (
     <>
       <button

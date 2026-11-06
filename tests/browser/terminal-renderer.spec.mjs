@@ -1205,3 +1205,89 @@ test("focused terminal follows rebind, restore and reset without swallowing the 
     await server.close();
   }
 });
+
+// Browser-only: xterm's DOM renderer must repaint a retained emulator's
+// background and ANSI cells from a scheme, which a DOM emulator cannot render.
+test("terminal color schemes repaint the retained emulator in place and fall back", async ({
+  page,
+}) => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const server = await createServer({
+    root,
+    configFile: false,
+    envDir: false,
+    plugins: [react()],
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = watchPageErrors(page);
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal.html`,
+    );
+    const viewport = page.locator(".xterm-scrollable-element");
+    const host = page.locator(".xterm").locator("../..");
+    const red = page.locator(".xterm-rows span", { hasText: "ANSI_RED" });
+    await page.evaluate(() =>
+      window.terminalRenderer.output("\x1b[31mANSI_RED\x1b[0m\r\n"),
+    );
+    await expect(red).toBeVisible();
+    const buzz = await viewport.evaluate(
+      (el) => getComputedStyle(el).backgroundColor,
+    );
+    const buzzRed = await red.evaluate((el) => getComputedStyle(el).color);
+
+    await page.evaluate(() =>
+      window.terminalRenderer.colors.importScheme({
+        name: "Test",
+        background: "#102030",
+        foreground: "#e0e0e0",
+        black: "#000000",
+        red: "#ff0000",
+        green: "#00ff00",
+        yellow: "#ffff00",
+        blue: "#0000ff",
+        magenta: "#ff00ff",
+        cyan: "#00ffff",
+        white: "#ffffff",
+        brightBlack: "#808080",
+        brightRed: "#ff8080",
+        brightGreen: "#80ff80",
+        brightYellow: "#ffff80",
+        brightBlue: "#8080ff",
+        brightMagenta: "#ff80ff",
+        brightCyan: "#80ffff",
+        brightWhite: "#ffffff",
+      }),
+    );
+    await expect(viewport).toHaveCSS("background-color", "rgb(16, 32, 48)");
+    await expect(host).toHaveCSS("background-color", "rgb(16, 32, 48)");
+    await expect(red).toHaveCSS("color", "rgb(255, 0, 0)");
+
+    // Buzz with an explicit appearance scopes the host roles to the emulator.
+    await page.evaluate(() => {
+      window.terminalRenderer.colors.setScheme("Buzz");
+      window.terminalRenderer.colors.setAppearance("dark");
+    });
+    await expect(page.locator(".xterm").locator("..")).toHaveClass(/\bdark\b/);
+    await expect(viewport).not.toHaveCSS("background-color", buzz);
+    await expect
+      .poll(() => host.evaluate((el) => getComputedStyle(el).backgroundColor))
+      .toBe(
+        await viewport.evaluate((el) => getComputedStyle(el).backgroundColor),
+      );
+
+    // Removing the active import falls back to Buzz without losing output.
+    await page.evaluate(() => {
+      window.terminalRenderer.colors.setAppearance("system");
+      window.terminalRenderer.colors.setScheme("Test");
+      window.terminalRenderer.colors.remove("Test");
+    });
+    await expect(viewport).toHaveCSS("background-color", buzz);
+    await expect(red).toHaveCSS("color", buzzRed);
+    await expect(red).toBeVisible();
+    expect(errors.unexplained()).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});

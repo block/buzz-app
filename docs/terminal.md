@@ -56,6 +56,27 @@ xterm may adjust foreground lightness for contrast. The launcher and drawer use
 the shared design system: Base UI-backed buttons, Tabler icons, `PanelHeader`,
 named text roles and the system mono face. The drawer is a precise `data-buzz-ui`
 boundary inside the otherwise legacy channel screen, not a second rounded Panel.
+**Settings → Plugins → Terminal → Colors** offers color schemes and imports
+[Alacritty's color tables](https://alacritty.org/config-alacritty.html#colors), as
+published by [alacritty-theme](https://github.com/alacritty/alacritty-theme).
+**Buzz**, the default, is the host-role look above. Selenized ships as a Light/Dark
+pair in `src/bundled/terminal/themes/`. Schemes named `<Base> Light` and
+`<Base> Dark` collapse into one entry, and **Appearance** (Match app, Light or Dark)
+picks the variant. Buzz with an explicit Light or Dark scopes the shared roles to
+the emulator with the `.light`/`.dark` theme owner, as always-dark media does.
+A scheme replaces the whole xterm palette, including the 16 ANSI colors, and its
+background fills the emulator, its padding and the welcome. Its colors render as
+written: the minimum-contrast adjustment applies only to Buzz. An import takes a
+name and the TOML of an Alacritty theme or config (at most 64 KiB). It reads
+`[colors.primary]`, `[colors.normal]` and `[colors.bright]`, plus the optional
+`[colors.cursor]` and `[colors.selection]`, and ignores every other table. A
+color missing from `[colors.normal]` or `[colors.bright]` takes the other's, and
+`CellForeground` or `CellBackground` keeps xterm's default. Importing selects the scheme; an import
+with an existing name replaces it, and built-in names are refused. Up to 32 imports are kept with the
+choice in this device's storage and sync across its windows. Removing the selected
+scheme, or one that has gone from storage, falls back to Buzz. Changes update open
+terminals in place, preserving shells and scrollback.
+
 In **Settings → Plugins → Terminal**, choose an installed **Font family** and
 **Font size (px)**, then **Apply**. Nerd Fonts must be installed separately;
 use a Mono variant for cell alignment. Applying a new family requires a successful

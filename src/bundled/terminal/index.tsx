@@ -11,6 +11,7 @@ import { nativeBridge } from "./bridge";
 import { createSessions } from "./sessions";
 import { TerminalPanel } from "./TerminalPanel";
 import { createTerminalFontPreference } from "./font-preference";
+import { createTerminalThemePreference } from "./theme-preference";
 import {
   createTerminalSettingsDraft,
   TerminalSettings,
@@ -22,12 +23,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // No unusable launcher or reserved shortcut in a browser-only host.
   if (!nativeBridge.available) return;
   const font = createTerminalFontPreference();
+  const colors = createTerminalThemePreference();
   const drafts = createTerminalSettingsDraft();
   const sessions = createSessions(
     nativeBridge,
     async () => {
       const { createScreen } = await import("./renderer");
-      return (input, resize) => createScreen(input, resize, font);
+      return (input, resize) => createScreen(input, resize, font, colors);
     },
     ctx.relay.snapshot,
   );
@@ -35,6 +37,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.effect(() => () => {
     binding = undefined;
     font.dispose();
+    colors.dispose();
     return sessions.dispose();
   });
   ctx.settingsCards.register({
@@ -43,7 +46,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     icon: TerminalWindowIcon,
     group: "Plugins",
     component: (props) => (
-      <TerminalSettings {...props} font={font} drafts={drafts} />
+      <TerminalSettings
+        {...props}
+        font={font}
+        colors={colors}
+        drafts={drafts}
+      />
     ),
   });
   ctx.shortcuts.register({

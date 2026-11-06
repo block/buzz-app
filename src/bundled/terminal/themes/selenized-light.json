@@ -1,0 +1,23 @@
+{
+  "name": "Selenized Light",
+  "background": "#fbf3db",
+  "foreground": "#53676d",
+  "cursor": "#53676d",
+  "selectionBackground": "#d5cdb6",
+  "black": "#ece3cc",
+  "red": "#d2212d",
+  "green": "#489100",
+  "yellow": "#ad8900",
+  "blue": "#0072d4",
+  "magenta": "#ca4898",
+  "cyan": "#009c8f",
+  "white": "#53676d",
+  "brightBlack": "#909995",
+  "brightRed": "#d2212d",
+  "brightGreen": "#489100",
+  "brightYellow": "#ad8900",
+  "brightBlue": "#0072d4",
+  "brightMagenta": "#ca4898",
+  "brightCyan": "#009c8f",
+  "brightWhite": "#3a4d53"
+}

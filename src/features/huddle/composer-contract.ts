@@ -90,6 +90,12 @@ export type ComposerOperations = {
     result: import("../companion/operations").Admission;
   };
   retryOperation: { args: { id: string }; result: undefined };
+  /** The companion reconciled these terminal operation reports; main may
+   * stop repeating them. */
+  acknowledgeOperations: {
+    args: { ids: readonly string[] };
+    result: undefined;
+  };
   markRead: { args: { messageId: string; unread: boolean }; result: undefined };
   follow: { args: { following: boolean }; result: undefined };
   report: {

@@ -38,6 +38,7 @@ export type OperationBridge = {
   }): Promise<Admission>;
   sendToChannel(args: { messageId: string }): Promise<Admission>;
   retryOperation(args: { id: string }): Promise<undefined>;
+  acknowledgeOperations(args: { ids: readonly string[] }): Promise<undefined>;
 };
 type Local = {
   item: OutgoingEvent;
@@ -138,8 +139,12 @@ export function createCompanionOperations(
     const mirrored = latest.get(admitted.id);
     if (!mirrored) return;
     patch(local, { delivery: mirrored.delivery, error: mirrored.error });
-    if (mirrored.delivery === "accepted" || mirrored.delivery === "seen")
+    if (mirrored.delivery === "accepted" || mirrored.delivery === "seen") {
       locals.delete(local.item.event.id);
+      // Main repeats a terminal report until told it was reconciled here;
+      // a native update's success says nothing about this adapter's state.
+      void bridge.acknowledgeOperations({ ids: [admitted.id] }).catch(() => {});
+    }
   }
   function enqueue(
     kind: MainOperation["kind"],

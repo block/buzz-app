@@ -189,16 +189,18 @@ export function createPopoutThread(
       const others = channelOps.filter((op) => !admitted.has(op.id));
       return [...finished, ...own, ...others];
     },
-    /** The companion received these: terminal admitted operations can now be
-     * forgotten. Ones left out of a capped presentation stay tracked. */
-    acknowledgePublished(published: readonly MainOperation[]) {
+    /** The companion reconciled these terminal reports: forget them. Only
+     * ids whose current report is terminal retire; nothing else is affected. */
+    acknowledge(ids: readonly string[]) {
+      const terminal = new Set(
+        this.operations()
+          .filter((op) => op.delivery === "accepted" || op.delivery === "seen")
+          .map((op) => op.id),
+      );
       let retired = false;
-      for (const op of published)
-        if (
-          admitted.has(op.id) &&
-          (op.delivery === "accepted" || op.delivery === "seen")
-        ) {
-          admitted.delete(op.id);
+      for (const id of ids)
+        if (admitted.has(id) && terminal.has(id)) {
+          admitted.delete(id);
           retired = true;
         }
       return retired;

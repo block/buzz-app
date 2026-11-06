@@ -14,6 +14,9 @@ function setup() {
   const edit = vi.fn<(args: unknown) => Promise<Admit>>();
   const sendToChannel = vi.fn<(args: unknown) => Promise<Admit>>();
   const retryOperation = vi.fn<(args: unknown) => Promise<undefined>>();
+  const acknowledgeOperations = vi.fn<(args: unknown) => Promise<undefined>>(
+    async () => undefined,
+  );
   const base = {
     viewer: "a".repeat(64),
     messages: {},
@@ -27,6 +30,7 @@ function setup() {
       edit,
       sendToChannel,
       retryOperation,
+      acknowledgeOperations,
     },
     {
       messageOf: (eventId) => (eventId === OWN ? MESSAGE : undefined),
@@ -43,6 +47,7 @@ function setup() {
     edit,
     sendToChannel,
     retryOperation,
+    acknowledgeOperations,
     changed,
   };
 }
@@ -113,6 +118,8 @@ it("never infers delivery from absence; main's terminal report ends it, in eithe
     5,
   );
   expect(h.session.outbox?.snapshot()).toEqual([]);
+  // Only the adapter's own reconciliation tells main to stop repeating it.
+  expect(h.acknowledgeOperations).toHaveBeenCalledWith({ ids: [MAIN] });
   // Terminal report before the admission reply: reconciled on admission.
   let settle: (a: { id: string; version: number }) => void = () => {};
   h.edit.mockReturnValue(new Promise((resolve) => (settle = resolve)));

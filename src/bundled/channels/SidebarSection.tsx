@@ -62,6 +62,7 @@ export function SidebarSection({
   onToggle,
   headerActions,
   headerNotice,
+  labelIndicator,
   hideMoreActions = false,
   persistentChevron = false,
   createChannel,
@@ -90,6 +91,7 @@ export function SidebarSection({
   onToggle: (open: boolean) => void;
   headerActions?: ReactNode;
   headerNotice?: ReactNode;
+  labelIndicator?: ReactNode;
   onRemove?: (() => unknown) | undefined;
   onRename?: ((name: string) => unknown) | undefined;
   hideMoreActions?: boolean;
@@ -530,6 +532,9 @@ export function SidebarSection({
             ref={dragHandle?.ref}
             {...dragHandle?.listeners}
             aria-label={title}
+            aria-describedby={
+              !open && labelIndicator ? `${id}-indicator` : undefined
+            }
             aria-controls={id}
             onClick={(event) => {
               event.preventDefault();
@@ -552,6 +557,9 @@ export function SidebarSection({
                 {title}
               </FadingLabel>
             </span>
+            {!open && labelIndicator && (
+              <span id={`${id}-indicator`}>{labelIndicator}</span>
+            )}
             <span
               className={`${styles.sidebarIcon} ${styles.sectionChevron}`}
               data-navigation-reveal={persistentChevron ? undefined : ""}

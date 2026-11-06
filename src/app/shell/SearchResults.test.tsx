@@ -502,11 +502,14 @@ it("previews and opens the newest unread reply of a channel unread only through 
     await waitFor(() => expect(rowsOf("Unread")).toHaveLength(4));
     // The newest unread reply of the newest thread, by its author, not a root.
     await waitFor(() =>
-      expect(row("team")).toHaveTextContent("Larry: Newest thread reply"),
+      expect(row("team")).toHaveTextContent(
+        "Thread reply, Larry: Newest thread reply",
+      ),
     );
     expect(row("blank")).toHaveTextContent("Larry replied in a thread");
     // Unread channel messages keep the channel's own preview and destination.
     expect(row("mixed")).not.toHaveTextContent("Larry:");
+    expect(row("mixed")).not.toHaveTextContent("Thread reply,");
     fireEvent.click(row("mixed") as HTMLElement);
     expect(open).toHaveBeenLastCalledWith("mixed");
     // So does a channel marked unread, whatever its threads hold.

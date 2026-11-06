@@ -15,6 +15,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { InputGroup } from "../../shared/design-system/ui/InputGroup";
+import { ScrollEdgeMaterial } from "../../shared/design-system/ui/ScrollEdgeMaterial";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
   avatarPictureError,
@@ -773,7 +774,9 @@ function AvatarDraft({
           </p>
         )}
         {!(mode === "background" && customColorOpen) && (
-          <div className="flex flex-wrap justify-between gap-2">
+          <div className={styles.footer}>
+            {/* A short popup scrolls beneath its actions; inline, they sit in flow. */}
+            {!inlinePicker && <ScrollEdgeMaterial edge="bottom" />}
             {!inlinePicker && (
               <Button
                 variant="destructive"

@@ -300,6 +300,42 @@ test("emoji picker load failure fits above the footer and retries on reopen", as
   await expect(alert).toHaveCount(0);
 });
 
+test("a short avatar popup keeps Done in view on the Emoji tab", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/profile-settings.html");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  const done = page.getByRole("button", { name: "Done", exact: true });
+  // The popup scrolls beneath its sticky footer instead of hiding Done
+  // below the emoji grid, and the picker's own layers stay under it.
+  await expect
+    .poll(() =>
+      done.evaluate((button) => {
+        const popup = button.closest(".popover-surface");
+        const bounds = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          bounds.left + bounds.width / 2,
+          bounds.top + bounds.height / 2,
+        );
+        return (
+          popup.scrollHeight > popup.clientHeight &&
+          bounds.bottom <= popup.getBoundingClientRect().bottom &&
+          button.contains(hit)
+        );
+      }),
+    )
+    .toBe(true);
+});
+
 test("custom color and footer resize together without reversing direction", async ({
   page,
 }) => {

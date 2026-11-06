@@ -407,6 +407,11 @@ it.each([
       },
     },
   ],
+  [
+    "a message",
+    { messageId: root },
+    { route: { version: 1, params: { channelId: bestieDm, messageId: root } } },
+  ],
   ["the DM", {}, {}],
 ])(
   "opens %s in the promoted Bestie DM on Bestie's page, not in Messages",
@@ -436,7 +441,7 @@ it.each([
     "another DM's thread",
     { channelId: "other", messageId: reply, threadRootId: root },
   ],
-  ["a top-level message Bestie cannot reveal", { messageId: reply }],
+  ["another DM's message", { channelId: "other", messageId: root }],
   ["the forwarding dialog", { forward: reply }],
   ["the Members dialog", { panel: "members" as const }],
 ])("keeps %s in Messages", async (_, visit) => {

@@ -211,9 +211,10 @@ if that desktop app is up and running.
   can't finish, it says why and offers **Retry**.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu. With the optional
-  **Bestie** plugin on, links to its DM or threads, including **In DM** in
-  Activity, open in Bestie. Single-message links, Forward and Members still
-  open in Messages.
+  **Bestie** plugin on, links to its DM, threads or messages, including **In DM**
+  in Activity, open in Bestie. Thread links open the thread and briefly mark its
+  root in the chat; message links scroll to the message or open its thread for
+  a reply. Forward and Members still open in Messages.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents
   and the owner's workflows. Other people can talk to it, but it won't do work
   for them.

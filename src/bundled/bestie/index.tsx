@@ -18,7 +18,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { BestieChooser } from "./BestieChooser";
 import { PinnedBestie } from "./PinnedBestie";
-import { bestieRoute, bestieDetailRoute, bestieInlineRoute } from "./routes";
+import { bestieRoute, bestieMessageRoute, bestieDetailRoute, bestieInlineRoute } from "./routes";
 import { onBestieMade } from "../agents/BestieChoice";
 import { bestieTab, formerBestieTab } from "./BestieTab";
 import {
@@ -66,6 +66,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       validate: (params) =>
         !!(
           bestieRoute(params) ||
+          bestieMessageRoute(params) ||
           bestieDetailRoute(params) ||
           bestieInlineRoute(params)
         ),

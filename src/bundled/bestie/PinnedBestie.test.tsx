@@ -631,9 +631,24 @@ it("keeps the promoted verified DM usable through discovery failure until absenc
 // The "In DM" link on a thread tab opened from Activity, a notification or a
 // permalink is a Messages visit. Messages omits the promoted DM, so the visit
 // opens on Bestie's page with its thread, as Bestie's own thread links do.
-it("opens a thread linked from another page in Bestie's page, not Messages", async () => {
+// A link to the promoted DM from another page, as App's page switch shows it:
+// Messages takes conversation visits and hands the promoted DM's to Bestie.
+async function linkedVisit(
+  visit: (ids: { rootId: string; replyId: string }) => {
+    messageId: string;
+    threadRootId?: string;
+  },
+) {
   const f = await fixture({ existing: true, withReply: true });
+  // Rows revealed in the chat history or a thread, in order.
+  const scrolled: HTMLElement[] = [];
+  HTMLElement.prototype.scrollIntoView = vi.fn(function (this: HTMLElement) {
+    scrolled.push(this);
+  });
   f.choose(pollen);
+  // Browser history outlives the previous test's host; start at Home.
+  window.history.replaceState(null, "", "/");
+  sessionStorage.clear();
   const { Context } = await import("@deepseek-ai/cordis");
   const ctx = new Context();
   const host = provideNavigation(ctx);
@@ -652,7 +667,6 @@ it("opens a thread linked from another page in Bestie's page, not Messages", asy
     resolve: () => undefined,
     handleOpenRequests: () => () => {},
   } as unknown as Panels;
-  // Stands in for App's page switch: Messages takes conversation visits.
   function Pages() {
     const { attempt, entry } = useSyncExternalStore(
       host.navigation.subscribe,
@@ -698,33 +712,71 @@ it("opens a thread linked from another page in Bestie's page, not Messages", asy
       kind: "conversation",
       scope,
       channelId: pollenDM,
-      messageId: f.replyId,
-      threadRootId: f.rootId,
+      ...visit(f),
     });
   });
-  const thread = await screen.findByLabelText("Thread");
-  expect(
-    await within(thread).findByText("Yep, here. What’s up?"),
-  ).toBeVisible();
+  return {
+    f,
+    host,
+    scope,
+    /** The chat history's row for a message, once revealed there. */
+    revealed: (messageId: string) =>
+      scrolled.find(
+        (row) =>
+          row.dataset.messageId === messageId &&
+          !row.closest('[aria-label="Thread"]'),
+      ),
+  };
+}
+
+function bestieVisit(
+  h: Awaited<ReturnType<typeof linkedVisit>>,
+  route: Record<string, string>,
+) {
   expect(
     screen.getByRole("textbox", { name: "Message Pollen" }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
-  expect(host.navigation.snapshot().entry.target).toEqual({
+  expect(h.host.navigation.snapshot().entry.target).toEqual({
     version: 1,
     kind: "page",
     pluginId: "buzz.bestie",
     pageId: "bestie",
-    scope,
-    route: {
-      version: 1,
-      params: {
-        channelId: pollenDM,
-        messageId: f.replyId,
-        threadRootId: f.rootId,
-      },
-    },
+    scope: h.scope,
+    route: { version: 1, params: { channelId: pollenDM, ...route } },
   });
+}
+
+it("opens a thread linked from another page in Bestie's page, at its root, not Messages", async () => {
+  const h = await linkedVisit(({ rootId, replyId }) => ({
+    messageId: replyId,
+    threadRootId: rootId,
+  }));
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  // The chat history shows the thread's root beside it.
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  bestieVisit(h, { messageId: h.f.replyId, threadRootId: h.f.rootId });
+});
+
+it("opens a message linked from another page at that message in Bestie's page", async () => {
+  const h = await linkedVisit(({ rootId }) => ({ messageId: rootId }));
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  expect(screen.queryByLabelText("Thread")).toBeNull();
+  bestieVisit(h, { messageId: h.f.rootId });
+});
+
+it("opens a reply linked without its thread as its thread in Bestie's page", async () => {
+  const h = await linkedVisit(({ replyId }) => ({ messageId: replyId }));
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  bestieVisit(h, { messageId: h.f.replyId });
 });
 
 it("follows a bestie changed elsewhere without carrying the old DM draft or modifying the Solo draft", async () => {

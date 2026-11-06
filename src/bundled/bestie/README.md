@@ -41,11 +41,14 @@ and shows the current Bestie's chat; it never reads an old thread in the new DM.
 with** the Bestie, as they do in any other conversation.
 While that exact DM is promoted, Messages omits its
 ordinary row and clears any old device-local hidden-DM intent. A Messages visit
-to the DM itself or one of its threads, such as a thread tab's **In DM** link or
-**Open in channel** in Activity, a thread reply's notification or permalink, or
-the DM chosen in search, resolves in place to this page's visit before Messages
-presents it. A visit to a single top-level message, Forward or
-Members has no Bestie route yet and stays in Messages, as does a visit that
+to the DM, one of its threads or one of its messages, such as a thread tab's
+**In DM** link or **Open in channel** in Activity, a notification, a permalink,
+or the DM or a message chosen in search, resolves in place to this page's visit
+before Messages presents it. A thread visit opens the thread in its pane and
+shows the thread's root in the chat history, scrolled to and marked; a message
+visit shows that message the same way, reading older history to find it, or
+opens its thread when it is a reply or isn't in history. A visit to Forward or
+Members has no Bestie route and stays in Messages, as does a visit that
 Messages had already opened before the promotion was known. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the
 exact roster match releases the promotion and restores the ordinary DM row.

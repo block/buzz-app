@@ -278,6 +278,31 @@ it("keeps the verified name after choosing a forwarding recipient", async () => 
   ).toBeInTheDocument();
 });
 
+it("closes the people list once its one person is chosen and explains the limit when To is used again", async () => {
+  const user = userEvent.setup();
+  setup();
+  await choose(user);
+  const to = screen.getByRole("combobox", { name: "Message recipients" });
+  // The full field says so itself; no hint covers the note below it.
+  expect(to).toHaveFocus();
+  expect(to).toHaveAttribute("aria-expanded", "false");
+  expect(to).toHaveAttribute("placeholder", "1 person selected");
+  expect(screen.queryByText(/one person/i)).not.toBeInTheDocument();
+  await user.click(to);
+  expect(
+    await screen.findByText(
+      "One person at a time. Remove them to choose someone else.",
+    ),
+  ).toHaveAttribute("role", "status");
+  await user.keyboard("{Backspace}");
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery Chen" }),
+  ).not.toBeInTheDocument();
+  expect(
+    await screen.findByRole("option", { name: /Morgan Lee/ }),
+  ).toBeInTheDocument();
+});
+
 it("forwards a note and permalink through the chosen person's DM and retires the completed dialog", async () => {
   const user = userEvent.setup();
   const { navigation, directMessages, messages, outbox, operations } = setup();

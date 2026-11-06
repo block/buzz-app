@@ -37,7 +37,7 @@ import {
 import type { DraftPicks } from "../messages/ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import { useDefaultAgent } from "./default-agent";
-import { draftLifetime, useDefaultLifetime } from "./default-lifetime";
+import { draftLifetime } from "./default-lifetime";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
@@ -222,8 +222,6 @@ export function SoloDraft({
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
-  // Read again as the chat starts; this renders the current default.
-  useDefaultLifetime(scope);
   const [selectedProject, setSelectedProject] = useState(() => {
     const saved = readView<unknown>(
       scope,

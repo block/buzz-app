@@ -569,6 +569,17 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   await expect(
     reacted.getByRole("button", { name: /👍/ }).last(),
   ).toBeVisible();
+  // The chip renders optimistically; confirm a signed kind-7 tagged with this
+  // reply's id actually reached the relay before the journey moves on.
+  await expect
+    .poll(() =>
+      app.report.publications.some(
+        ({ event }) =>
+          event.kind === 7 &&
+          event.tags.some(([name, id]) => name === "e" && id === emojiReply.id),
+      ),
+    )
+    .toBe(true);
   await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
   const hook = await hookFor(reacted);
   expect(hook.itemBottom - hook.avatar.center).toBeGreaterThan(30);

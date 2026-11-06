@@ -575,10 +575,11 @@ it("reads an event sent as an exact record, in its own or a steer's section", ()
   for (const tag of ["buzz-event", STEER])
     expect(
       promptMessage(promptSections(`<${tag}>\n${body}\n</${tag}>`), name),
-    ).toEqual({ text: "<b>", author: "Sam" });
+    ).toEqual({ text: "<b>", author: "Sam", authorPubkey: event.pubkey });
   expect(promptMessage([{ tag: "buzz-event", body }])).toEqual({
     text: "<b>",
     author: undefined,
+    authorPubkey: event.pubkey,
   });
   // A steer before records wrapped a whole turn, which is not an event.
   expect(
@@ -651,7 +652,7 @@ it("reads an event sent before exact records as one escaped JSON object", () => 
       promptMessage(
         promptSections(`<${tag} type="@mention">\n${body}\n</${tag}>`),
       ),
-    ).toEqual({ text: content, author: "Sam" });
+    ).toEqual({ text: content, author: "Sam", authorPubkey: "a".repeat(64) });
 });
 
 it("reuses a transcript for the same frozen records and scope", () => {

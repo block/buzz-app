@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useEffectEvent, type RefObject } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ReadingHandle } from "../relay/unread";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -44,6 +44,9 @@ export function useReading({
   enabled = true,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
+  // Read at measurement time: a new latest message mutates the list, which
+  // already remeasures in the next frame, so it must not restart observation.
+  const latestId = useEffectEvent(() => latestMessageId);
   useEffect(() => {
     if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
@@ -148,15 +151,16 @@ export function useReading({
       return !!row && shown(row, element.getBoundingClientRect());
     };
     function bottomId() {
+      const latest = latestId();
       if (
-        !latestMessageId ||
+        !latest ||
         element.scrollHeight - element.clientHeight - element.scrollTop > 1
       )
         return;
       const viewport = element.getBoundingClientRect();
       const row = [
         ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-      ].find((row) => row.dataset.messageId === latestMessageId);
+      ].find((row) => row.dataset.messageId === latest);
       const bounds = row?.getBoundingClientRect();
       return bounds &&
         bounds.height > 0 &&
@@ -165,7 +169,7 @@ export function useReading({
         bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
         bounds.left >= Math.max(viewport.left, 0) &&
         bounds.right <= Math.min(viewport.right, window.innerWidth)
-        ? latestMessageId
+        ? latest
         : undefined;
     }
     // A discrete action (focus, pointer, key, visibility, settling) starts
@@ -319,7 +323,6 @@ export function useReading({
   }, [
     session,
     channelId,
-    latestMessageId,
     rootId,
     scroller,
     settled,

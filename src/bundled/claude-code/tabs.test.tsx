@@ -421,15 +421,21 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
       index
     ] as HTMLElement;
   await user.click(viewButton(0));
-  expect(await screen.findByText("what changed?")).toBeVisible();
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Refresh transcript" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Refresh transcript" }),
     ).not.toHaveAttribute("data-loading"),
   );
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
   await user.click(viewButton(1));
   expect(
@@ -467,14 +473,18 @@ it("opens the conversation's transcript when opened from its activity, once", as
     />,
   );
   const user = userEvent.setup();
-  expect(await screen.findByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to profile" }));
   expect(
     screen.getByRole("button", {
       name: "View transcript: channel",
     }),
   ).toBeVisible();
-  expect(screen.queryByText("Two files.")).toBeNull();
+  expect(
+    screen.queryByText("Two files.", { selector: "summary span" }),
+  ).toBeNull();
   unmount();
   // Opened from the profile itself, it lists conversations instead.
   render(
@@ -485,7 +495,9 @@ it("opens the conversation's transcript when opened from its activity, once", as
       name: "View transcript: channel",
     }),
   ).toBeVisible();
-  expect(screen.queryByText("Two files.")).toBeNull();
+  expect(
+    screen.queryByText("Two files.", { selector: "summary span" }),
+  ).toBeNull();
 });
 
 it("opens a channel's session transcript when opened from one of its threads' activity", async () => {
@@ -516,7 +528,9 @@ it("opens a channel's session transcript when opened from one of its threads' ac
       initialTranscript={{ opening: 1, done }}
     />,
   );
-  expect(await screen.findByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   expect(done).toHaveBeenCalledTimes(1);
 });
 
@@ -555,7 +569,9 @@ it("shows the transcript and that sessions may be missing when some history cann
       name: /^View transcript/,
     })[0] as HTMLElement,
   );
-  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
   expect(
     screen.getByText(/sessions may be missing\. Refresh to try again\./),
   ).toHaveTextContent(/unreadable\.jsonl/);
@@ -649,7 +665,9 @@ it("finds the thread's Claude session another build started", async () => {
     fireEvent.click(
       await within(opened).findByRole("button", { name: /^View transcript/ }),
     );
-    expect(await screen.findByText("what changed?")).toBeVisible();
+    expect(
+      await screen.findByText("what changed?", { selector: "summary span" }),
+    ).toBeVisible();
     view.unmount();
   };
   const searches = () =>

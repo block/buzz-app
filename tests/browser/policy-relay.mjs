@@ -18,6 +18,10 @@ export function policyRelay({
   holdOlder = true,
 }) {
   const sockets = [];
+  // A page can close between sending a publication and its acceptance. The
+  // relay still accepts it, but that community has no open socket left to
+  // deliver it to, so publish skips its delivery check for that community.
+  let closedAcceptance;
   let presenceHeld = false;
   const presenceWaiters = [];
   report.presenceSnapshots = [];
@@ -617,6 +621,14 @@ export function policyRelay({
             if (kind === "EVENT" && acceptPublication) {
               expect(this.authenticated).toBe(true);
               setTimeout(() => {
+                if (
+                  !sockets.some(
+                    (socket) =>
+                      socket.readyState === 1 &&
+                      socket.community === this.community,
+                  )
+                )
+                  closedAcceptance = this.community;
                 try {
                   const accepted = acceptPublication(this.community, id);
                   // A fixture may hold the OK while relay side effects proceed.
@@ -628,6 +640,8 @@ export function policyRelay({
                   else emit(this, ["OK", id.id, true, ""]);
                 } catch (error) {
                   fault(error);
+                } finally {
+                  closedAcceptance = undefined;
                 }
               }, latencyMs);
               return;
@@ -793,7 +807,7 @@ export function policyRelay({
           deliveries++;
         }
       }
-      if (requireSubscriber)
+      if (requireSubscriber && closedAcceptance !== community)
         expect(
           deliveries,
           "event must traverse an explicit production channel REQ",

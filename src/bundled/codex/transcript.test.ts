@@ -84,6 +84,7 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
       type: "prompt",
       text: "fix the <tests>",
       author: "Sam",
+      authorPubkey: "sam",
       steer: false,
       sections: [
         expect.objectContaining({ tag: "context" }),

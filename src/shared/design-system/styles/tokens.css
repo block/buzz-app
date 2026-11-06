@@ -62,6 +62,10 @@
    step 10 and pressed: each accent's hover and press, retuned to move clearly
    off step 9 while staying clean rather than muddy. */
 :root {
+  /* Fixed palette values used by terminal status in either mode. */
+  --red-11-light: #ce2c31;
+  --neutral-status-ink: #ffffff;
+
   /* Branded onboarding palette; dark mode adds the approved 30% black tint. */
   --brand-chartreuse: #d7d72e;
   --brand-chartreuse-dimmed: color-mix(in srgb, #d7d72e 70%, black);
@@ -470,7 +474,7 @@
   --red-8: #eb8e90;
   --red-9: #e5484d;
   --red-10: #dc3e42;
-  --red-11: #ce2c31;
+  --red-11: var(--red-11-light);
   --red-12: #641723;
 
   /* green */
@@ -1084,6 +1088,14 @@
 
 /* Semantic colors: color / purpose / emphasis / state.
    Components consume roles; palette steps stay inside this shared layer. */
+:root {
+  /* Terminal task status keeps the same solid fills and ink in both modes. */
+  --surface-status-success: var(--citrus-9);
+  --text-on-status-success: var(--citrus-ink-light);
+  --surface-status-danger: var(--red-11-light);
+  --text-on-status: var(--neutral-status-ink);
+}
+
 .light,
 :root {
   --surface-base: var(--neutral-2);
@@ -2065,6 +2077,10 @@
   --text-color-subtle: var(--text-subtle);
   --text-color-metadata: var(--text-metadata);
   --text-color-inverse: var(--text-inverse);
+  --text-color-on-status: var(--text-on-status);
+  --text-color-on-status-success: var(--text-on-status-success);
+  --color-surface-status-success: var(--surface-status-success);
+  --color-surface-status-danger: var(--surface-status-danger);
   --text-color-unavailable: var(--text-unavailable);
   --text-color-danger: var(--text-danger);
   --text-color-call-leave: var(--text-call-leave);

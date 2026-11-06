@@ -97,8 +97,10 @@ export function profileMentionParts(
 }
 
 const urlScheme = /^(?:[a-z][a-z\d+.-]*:\/\/|mailto:|nostr:)/.source;
-/** Bare URLs end where rendered ones do. A URL after `<`, or after `](` or a
- * pasted `]\(` and any whitespace, keeps CJK punctuation. */
+/** Bare URLs end where rendered ones do, and another can start right there. A
+ * URL after `<`, or after `](` or a pasted `]\(` and any whitespace, keeps
+ * CJK punctuation. */
+const urlChar = new RegExp(`^(?:${BARE_URL_REST})$`, "i");
 const wrapped = /(?<=<|\]\\?\(\s*)/y;
 const wrappedUrl = new RegExp(urlScheme + /[^\s<>`]+/.source, "i");
 const bareUrl = new RegExp(urlScheme + BARE_URL_REST, "i");
@@ -128,7 +130,8 @@ function protectedTextEnd(text: string, start: number): number {
       return match ? match.index + match[0].length : text.length;
     }
   }
-  const boundary = start === 0 || /[\s<([]/.test(text[start - 1] ?? "");
+  const prev = text[start - 1] ?? "";
+  const boundary = start === 0 || /[\s<([]/.test(prev) || !urlChar.test(prev);
   if (char !== "`" && char !== "~" && char !== "[" && char !== "!" && !boundary)
     return start;
   const span = /^(?:`+|~{3,})/.exec(rest)?.[0];
@@ -140,7 +143,9 @@ function protectedTextEnd(text: string, start: number): number {
     const link = /^!?\[[^\]\n]*\](?:\([^\n]*?\)|\[[^\]\n]*\])/.exec(rest)?.[0];
     if (link) return start + link.length;
   }
+  const bare = bareUrl.exec(rest)?.[0];
+  // The lookbehind rescans whitespace, so test it only where a URL starts.
   wrapped.lastIndex = start;
-  const url = (wrapped.test(text) ? wrappedUrl : bareUrl).exec(rest)?.[0];
+  const url = bare && wrapped.test(text) ? wrappedUrl.exec(rest)?.[0] : bare;
   return url ? start + url.length : start;
 }

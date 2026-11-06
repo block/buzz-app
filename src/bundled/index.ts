@@ -48,6 +48,8 @@ import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
+import decisionInboxManifest from "./decision-inbox/manifest.json";
+import * as decisionInbox from "./decision-inbox";
 import reposManifest from "./repos/manifest.json";
 import * as repos from "./repos";
 import workflowsManifest from "./workflows/manifest.json";
@@ -171,6 +173,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...decisionInboxManifest, apiVersion: 1 },
+    module: decisionInbox,
     enabledByDefault: false,
   },
   {

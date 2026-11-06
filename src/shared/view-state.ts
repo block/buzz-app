@@ -1,5 +1,84 @@
 // View intent is durable and explicitly partitioned; connection generations are not storage keys.
 const viewListeners = new Map<string, Set<() => void>>();
+const purgeListeners = new Map<string, Set<() => void>>();
+const purgeChannelName = "buzz-view-scope-purge.v1";
+const purgeRevisionKey = (scope: string) =>
+  `buzz-view-scope-purge.v1:${JSON.stringify(scope)}`;
+export const viewScopeLockName = (scope: string) => `buzz-view-scope:${scope}`;
+let purgeSequence = 0;
+let purgeChannel: BroadcastChannel | undefined;
+
+function notifyPurged(scope: string) {
+  for (const listener of purgeListeners.get(scope) ?? []) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn("Could not notify a view scope purge listener", error);
+    }
+  }
+}
+
+function channelForPurge() {
+  if (typeof window === "undefined" || !window.BroadcastChannel)
+    return undefined;
+  if (purgeChannel) return purgeChannel;
+  try {
+    const channel = new window.BroadcastChannel(purgeChannelName);
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      const data = event.data;
+      if (
+        data &&
+        typeof data === "object" &&
+        "scope" in data &&
+        typeof data.scope === "string"
+      )
+        notifyPurged(data.scope);
+    };
+    purgeChannel = channel;
+    return channel;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Only an explicit clearViewScope call announces a purge. Other view writes,
+ * membership changes and plugin lifecycle events never do. Cross-window
+ * delivery requires BroadcastChannel; callers can fail closed when absent. */
+export function subscribeViewScopePurge(scope: string, listener: () => void) {
+  let listeners = purgeListeners.get(scope);
+  if (!listeners) {
+    listeners = new Set();
+    purgeListeners.set(scope, listeners);
+  }
+  listeners.add(listener);
+  const crossWindow = !!channelForPurge();
+  return {
+    crossWindow,
+    stop: () => {
+      listeners?.delete(listener);
+      if (!listeners?.size) purgeListeners.delete(scope);
+    },
+  };
+}
+
+/** Durable fence for writes that began before a scope purge. Undefined means
+ * storage cannot be read and the caller must not commit a scoped write. */
+export function viewScopePurgeRevision(scope: string) {
+  try {
+    return localStorage.getItem(purgeRevisionKey(scope));
+  } catch {
+    return undefined;
+  }
+}
+
+function announcePurge(scope: string) {
+  notifyPurged(scope);
+  try {
+    channelForPurge()?.postMessage({ scope });
+  } catch (error) {
+    console.warn("Could not notify other windows of a view scope purge", error);
+  }
+}
 const composerDraftKey =
   /^draft:([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})(?::thread:([0-9a-f]{64}))?$/;
 export function draftCoordinates(key: string) {
@@ -158,16 +237,41 @@ export function listDraftViews(
   return { entries: drafts, limited, unavailable };
 }
 
-/** Forgets every key saved under one scope, for a community the viewer has left. */
-export function clearViewScope(scope: string) {
-  const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
-  const stale: string[] = [];
-  for (let index = 0; index < localStorage.length; index++) {
-    const key = localStorage.key(index);
-    if (key?.startsWith(prefix)) stale.push(key);
+/** Forgets every key saved under one scope, for a community the viewer has left.
+ * Decision Inbox writes share this lock and compare the purge revision inside it.
+ * A missing lock leaves saved keys alone; a marker failure is reported after the
+ * best-effort key cleanup, which can free quota for the marker. */
+export async function clearViewScope(scope: string) {
+  try {
+    if (!navigator.locks?.request)
+      throw new Error("Cannot safely clear view state without a scope lock");
+    await navigator.locks.request(
+      viewScopeLockName(scope),
+      { mode: "exclusive" },
+      () => {
+        const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
+        const stale: string[] = [];
+        for (let index = 0; index < localStorage.length; index++) {
+          const key = localStorage.key(index);
+          if (key?.startsWith(prefix)) stale.push(key);
+        }
+        for (const key of stale) localStorage.removeItem(key);
+        // The lock prevents queued writers from running between deletion and
+        // this fence. Deletion first leaves room when storage is at quota.
+        try {
+          localStorage.setItem(
+            purgeRevisionKey(scope),
+            `${Date.now()}:${++purgeSequence}:${Math.random()}`,
+          );
+        } finally {
+          changed(scope);
+        }
+      },
+    );
+  } finally {
+    // The community intended to purge this scope even if device storage failed.
+    announcePurge(scope);
   }
-  for (const key of stale) localStorage.removeItem(key);
-  changed(scope);
 }
 
 /** Forgets one key in every scope where it holds `value`, as when the thing it

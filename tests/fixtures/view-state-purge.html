@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>View scope purge fixture</title>
+  </head>
+  <body>
+    <script type="module">
+      import {
+        clearViewScope,
+        writeView,
+      } from "../../src/shared/view-state.ts";
+      import {
+        draftFor,
+        keepDraft,
+      } from "../../src/bundled/decision-inbox/drafts.ts";
+      window.purgeTest = { clearViewScope, writeView, draftFor, keepDraft };
+    </script>
+  </body>
+</html>

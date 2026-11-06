@@ -864,7 +864,6 @@ export function createChannelStore(
     started: ReadonlyMap<string, RelayEvent | undefined>,
   ) {
     return (
-      !!discovery &&
       !!transport &&
       !events.some(
         (event) =>
@@ -872,10 +871,24 @@ export function createChannelStore(
           event.pubkey === transport.relayAuthor &&
           tag(event, "d") === id,
       ) &&
+      unchangedPreview(id, started.get(id))
+    );
+  }
+  function unchangedPreview(id: string, version: RelayEvent | undefined) {
+    return (
+      !!discovery &&
       (!!discovery.get(id)?.readOnly ||
         discovery.suspendedChannels().includes(id)) &&
-      started.get(id) === discovery.metadataVersion(id)
+      version === discovery.metadataVersion(id)
     );
+  }
+  /** Denies the previews a multi-batch pass found omitted, once it ends, so
+   * their revocation does not cancel it. A membership grant or newer
+   * metadata that arrived in a later batch keeps the channel. */
+  function denyOmitted(omitted: ReadonlyMap<string, RelayEvent | undefined>) {
+    for (const [id, version] of omitted)
+      if (!discovery?.authorized(id) && unchangedPreview(id, version))
+        denyChannel(id, new Error("Conversation is unavailable"));
   }
   function denyChannel(channelId: string, error: unknown) {
     // A chat still starting is not there to deny yet; only a refused or
@@ -1772,8 +1785,7 @@ export function createChannelStore(
     let readingRoster = true;
     let denyAllOnFailure = true;
     let outcome: RosterRefresh = { state: "deferred" };
-    /** Previews whose exact metadata read omitted them: denied once the
-     * pass ends, so their revocation does not restart it. */
+    /** Previews the pass's metadata reads omitted (see `denyOmitted`). */
     const omitted = new Map<string, RelayEvent | undefined>();
     try {
       const ids = new Set<string>();
@@ -2085,9 +2097,7 @@ export function createChannelStore(
         else transport.rosterChanged?.();
         if (outcome.state === "verified")
           for (const id of windows.keys()) revalidateCached(id);
-        for (const [id, version] of omitted)
-          if (discovery.metadataVersion(id) === version)
-            denyChannel(id, new Error("Conversation is unavailable"));
+        denyOmitted(omitted);
       }
     }
   }
@@ -4118,7 +4128,7 @@ export function createChannelStore(
       controllers.add(controller);
       confirmingMetadata = true;
       let finished = false;
-      const omitted: string[] = [];
+      const omitted = new Map<string, RelayEvent | undefined>();
       try {
         for (let offset = 0; offset < ids.length; offset += DISCOVERY_LIMIT) {
           const batch = ids.slice(offset, offset + DISCOVERY_LIMIT);
@@ -4143,11 +4153,10 @@ export function createChannelStore(
               !discovery.authorized(id) &&
               omittedPreview(id, metadata, versions)
             )
-              omitted.push(id);
+              omitted.set(id, versions.get(id));
         }
         finished = true;
-        for (const id of omitted)
-          denyChannel(id, new Error("Conversation is unavailable"));
+        denyOmitted(omitted);
       } catch (error) {
         if (
           !disposed &&

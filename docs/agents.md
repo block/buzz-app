@@ -1123,7 +1123,7 @@ in its home record and applies everywhere.
   the team first and it was edited there), nothing is written, the team stays
   local and its status line says "A different copy of this team is already in
   <community>". Only once this device's own create is confirmed do its local
-  edits win over the relay copy on a retry. A team whose editor has unsaved
+  edits win over the relay copy on a retry. Likewise, Delete of a team whose move began archives the relay copy only once this device's create is confirmed; otherwise it removes the local team and leaves the relay alone. A team whose editor has unsaved
   changes or a Save running doesn't move until they settle. Its status line
   says why a team stays on this device: its agents are in different
   communities, the relay doesn't sync teams, or its move failed and will be

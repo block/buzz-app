@@ -69,7 +69,7 @@ import { TypeSafeKey } from "../../bundled/typesafe/key";
 import { typesafeProvider } from "../../bundled/typesafe";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { CHANNEL_KINDS } from "../relay/live";
-import { fileStore, type AgentStore } from "./state";
+import { fileStore, loadAgentStorage, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
@@ -15071,7 +15071,8 @@ describe("synced teams", () => {
         ).rejects.toThrow("moving");
         await expect(f.service.removeTeam("local-1")).rejects.toThrow("moving");
       } finally {
-        release(fail);
+        // Its create landed before a member add failed.
+        release({ ...fail, created: true });
       }
       await vi.waitFor(() =>
         expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
@@ -15085,7 +15086,7 @@ describe("synced teams", () => {
       );
       expect(f.storage.get(teamsKey)).toContain("Mine");
       expect(moves(f)).toEqual({
-        "local-1": { community: home, failed: true },
+        "local-1": { community: home, failed: true, created: true },
       });
       await f.service.removeTeam("local-1");
       expect(channels.removeTeam).toHaveBeenLastCalledWith(await movedId());
@@ -15093,9 +15094,99 @@ describe("synced teams", () => {
       expect(moves(f)).toEqual({});
     });
 
+    it("Delete with no proof of this device's create leaves the relay copy alone", async () => {
+      // The first try failed offline before creating anything; another app
+      // may since have moved the team, before this one finds the conflict.
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      const channels = teamChannels(async () => fail);
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(moves(f)).toEqual({
+        "local-1": { community: home, failed: true },
+      });
+      await f.service.removeTeam("local-1");
+      expect(channels.removeTeam).not.toHaveBeenCalled();
+      expect(f.storage.get(teamsKey)).not.toContain("Mine");
+      expect(moves(f)).toEqual({});
+    });
+
+    it("after a partial move and recovery from fallback storage, Delete still archives its own relay copy", async () => {
+      const local = memoryStorage();
+      const saved = new Map<string, string>();
+      const native = {
+        load: vi.fn(async () => Object.fromEntries(saved)),
+        set: vi.fn(async (key: string, value: string | null) => {
+          if (value === null) saved.delete(key);
+          else saved.set(key, value);
+        }),
+      };
+      await loadAgentStorage(local, native);
+      native.load.mockRejectedValueOnce(new Error("denied"));
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const fallback = await loadAgentStorage(local, native);
+      error.mockRestore();
+      await writeTeams(fallback, [{ ...mine, members: [alder] }]);
+      await new TeamMoves(fallback).set("local-1", {
+        community: home,
+        failed: true,
+        created: true,
+      });
+      const storage = await loadAgentStorage(local, native);
+      expect(local.length).toBe(0);
+      const channels = teamChannels(async () => fail);
+      const f = await setup({ identities: [here(alder)], storage });
+      await vi.waitFor(() => expect(channels.saveTeam).toHaveBeenCalled());
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      await f.service.removeTeam("local-1");
+      expect(channels.removeTeam).toHaveBeenCalledWith(await movedId());
+      expect(f.storage.get(teamsKey)).not.toContain("Mine");
+      expect(moves(f)).toEqual({});
+    });
+
+    it("a hold released while a move saves its journal still moves the team", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      let answer!: (value: unknown) => void;
+      const answers: Promise<unknown>[] = [
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      ];
+      const channels = teamChannels(() => answers.shift() ?? Promise.resolve());
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() => expect(channels.saveTeam).toHaveBeenCalled());
+      t.confirm(channels.stores.get(home));
+      // A draft begun mid-write; its journal save is held back.
+      const release = f.service.holdTeam("local-1");
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const set = t.storage.set.bind(t.storage);
+      const saving = vi
+        .spyOn(t.storage, "set")
+        .mockImplementation(async (key, value) => {
+          if (key === TEAM_MOVES_KEY) await gate;
+          return set(key, value);
+        });
+      answer(undefined);
+      await vi.waitFor(() =>
+        expect(saving).toHaveBeenCalledWith(TEAM_MOVES_KEY, expect.anything()),
+      );
+      release();
+      open();
+      await vi.waitFor(() =>
+        expect(f.storage.get(teamsKey)).not.toContain("Mine"),
+      );
+      expect(moves(f)).toEqual({});
+    });
+
     it("starts no retry while a Delete is looking for the relay copy", async () => {
       const t = await local([{ ...mine, members: [alder] }]);
-      const channels = teamChannels(async () => fail);
+      const channels = teamChannels(async () => ({ ...fail, created: true }));
       const f = await setup({ identities: [here(alder)], storage: t.storage });
       await vi.waitFor(() =>
         expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),

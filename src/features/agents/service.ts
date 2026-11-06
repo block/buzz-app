@@ -1760,6 +1760,9 @@ export class AgentsService extends Service implements Agents {
   /** Local teams kept from moving, as while their editor has a draft: how
    * many holds each has. */
   private readonly held = new Map<string, number>();
+  /** Teams whose last hold went while a move of them ran: tried again once
+   * it ends. */
+  private readonly unheld = new Set<string>();
   /** Local teams whose community already has a different copy, by id: the
    * community. */
   private readonly conflicts = new Map<string, string>();
@@ -4730,9 +4733,10 @@ export class AgentsService extends Service implements Agents {
     // Held as moving until Delete settles, so no retry starts meanwhile.
     this.moving.add(id);
     try {
-      // A move that began may have left a copy there, which goes too.
+      // A copy this device's move created goes too. Without that proof the
+      // relay team may be another app's, so it stays.
       const move = this.teamMoves.get(id);
-      if (move) {
+      if (move?.created) {
         const config = this.communityConfigs.get(move.community);
         const owner = this.bound.get(move.community)?.binding?.viewer;
         if (!config || !owner)
@@ -4848,6 +4852,7 @@ export class AgentsService extends Service implements Agents {
         this.notify();
       } finally {
         this.moving.delete(localId);
+        if (this.unheld.delete(localId)) void this.moveTeams(origin);
       }
     }
   }
@@ -4861,6 +4866,7 @@ export class AgentsService extends Service implements Agents {
       const left = (this.held.get(id) ?? 1) - 1;
       if (left > 0) return void this.held.set(id, left);
       this.held.delete(id);
+      if (this.moving.has(id)) this.unheld.add(id);
       for (const origin of this.communityConfigs.keys())
         void this.moveTeams(origin);
     };

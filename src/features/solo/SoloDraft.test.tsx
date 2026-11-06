@@ -3379,7 +3379,37 @@ it("restores workspace-only openDraft and never reseeds a removal, which undo re
   }
 });
 
-it.each(["projects", "token"] as const)(
+const chip = {
+  kind: "nexus.repository",
+  id: "repo",
+  label: "@repo",
+  verified: true,
+};
+// Each saved chip either restores as one or marks the draft another build's.
+const savedChips = {
+  projects: undefined,
+  valid: { source: "@repo", semantic: chip },
+  kind: { source: "@repo", semantic: { kind: "nexus.repository", id: "repo" } },
+  label: { source: "@other", semantic: chip },
+  recipient: {
+    source: "@repo",
+    semantic: chip,
+    recipient: { pubkey: "a".repeat(64), name: "repo" },
+  },
+  resource: {
+    source: "@repo",
+    semantic: chip,
+    resource: { uri: "buzz://channel/c", label: "@repo" },
+  },
+  pending: {
+    source: "@repo",
+    semantic: chip,
+    pending: { id: "p", name: "repo" },
+  },
+  snapshot: { source: "@repo", semantic: chip },
+};
+
+it.each(Object.keys(savedChips) as (keyof typeof savedChips)[])(
   "keeps another build's task draft with a staged chat link unchanged and unsent across mount, send and remount (%s)",
   async (variant) => {
     const f = setup();
@@ -3428,13 +3458,9 @@ it.each(["projects", "token"] as const)(
                 {
                   ...paragraph,
                   content: [
-                    {
-                      type: "token",
-                      attrs: {
-                        source: "@repo",
-                        semantic: { kind: "nexus.repository", id: "repo" },
-                      },
-                    },
+                    { type: "token", attrs: savedChips[variant] },
+                    // Supported chip data in an otherwise unreadable snapshot.
+                    ...(variant === "snapshot" ? [{ type: "text" }] : []),
                     ...paragraph.content,
                   ],
                 },
@@ -3459,6 +3485,9 @@ it.each(["projects", "token"] as const)(
           />,
         );
         expect(screen.getByText(/cannot send/)).toBeVisible();
+        expect(
+          screen.queryByRole("img", { name: "Repository @repo" }) !== null,
+        ).toBe(variant === "valid");
         await user.click(screen.getByRole("button", { name: "Send message" }));
         expect(prepare).not.toHaveBeenCalled();
         expect(f.channelWrites.start).not.toHaveBeenCalled();

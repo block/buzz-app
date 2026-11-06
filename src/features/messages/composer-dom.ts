@@ -1,6 +1,7 @@
 import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 import type { TaskWorkspace } from "../channel-navigation/solo-navigation-contract";
+import type { ComposerToken } from "./composer-token";
 
 export const inlineFormats = [
   {
@@ -137,6 +138,11 @@ export type ComposerInputElement = HTMLDivElement & {
   insertResource(resource: ComposerResource): true | string;
   /** A task draft's filing, kept in the document so undo restores it. */
   setWorkspace(workspace: TaskWorkspace | null): boolean;
+  /** A semantic chip over the open query, one undo step. */
+  insertToken(
+    token: ComposerToken,
+    range: { start: number; end: number },
+  ): boolean;
   toggleFormat(format: ComposerFormat): void;
   insertLineBreak(): boolean;
   editLink(): ComposerLinkEdit | null;

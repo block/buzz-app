@@ -51,6 +51,7 @@ import type {
   InlineRenderer,
 } from "../conversation/contracts";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
+import { bundledContribution } from "../../plugins/provenance";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import type { MentionRecipient } from "./mention-draft";
@@ -14421,6 +14422,62 @@ it.each(["revoked", "unavailable"])(
       state === "revoked" ? /no longer eligible/ : /Nexus is unavailable/,
     );
     expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "inserts a bundled provider's chip as one atom and keeps it unsent until task references ship (task chat: %s)",
+  async (task) => {
+    const publishes: ComposerCompletionProps["publish"][] = [];
+    function Completion({ publish }: ComposerCompletionProps) {
+      useLayoutEffect(() => {
+        publishes.push(publish);
+      }, [publish]);
+      return null;
+    }
+    const provider: Contribution<ComposerCompletion> = {
+      id: "folders",
+      key: "buzz.mentions/folders",
+      pluginId: "buzz.mentions",
+      revision: "bundled",
+      title: "Folder",
+      match: ({ text, start }) => mentionQuery(text, start),
+      component: Completion,
+    };
+    bundledContribution(provider);
+    const providers = [provider];
+    const empty: [] = [];
+    const none = { snapshot: () => empty, subscribe: () => () => {} };
+    const h = task ? (await taskComposerFixture()).h : mount();
+    h.retarget({
+      extensions: {
+        tools: none,
+        inline: none,
+        completions: { snapshot: () => providers, subscribe: () => () => {} },
+      },
+    });
+    h.fill("Use @no");
+    const folder = { kind: "nexus.folder", id: "/notes", label: "@notes" };
+    act(() => {
+      publishes.at(-1)?.({
+        items: [{ id: "notes", label: "notes", edit: { token: folder } }],
+      } as unknown as CompletionResult);
+    });
+    fireEvent.keyDown(h.input(), { key: "Enter" });
+    expect(h.input()).toHaveValue("Use @notes ");
+    expect(
+      within(h.input()).getByRole("img", { name: "Folder @notes" }),
+    ).toBeVisible();
+    h.submit();
+    if (task) expect(screen.getByText(/cannot send/)).toBeVisible();
+    else
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Task tokens require a task chat.",
+        ),
+      );
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("Use @notes ");
   },
 );
 

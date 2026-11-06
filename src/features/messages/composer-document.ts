@@ -14,6 +14,7 @@ import type {
 } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 import type { TaskWorkspace } from "../channel-navigation/solo-navigation-contract";
+import { composerToken, type ComposerToken } from "./composer-token";
 
 /** The document owns editable marks and exact source tokens. Unimplemented
  * Markdown stays source text, never round-trips through an HTML serializer. */
@@ -101,6 +102,8 @@ export const composerSchema = new Schema<
         recipient: { default: null },
         /** Host-owned `{ uri, label }`; valid only while `source` is its link. */
         resource: { default: null },
+        /** A `ComposerToken` whose label is `source`; never a recipient. */
+        semantic: { default: null },
         /** `{ id, name }` while the host resolves a mention Space committed
          * before the chooser could decide. Never persists past the editor. */
         pending: { default: null },
@@ -273,9 +276,11 @@ export function readComposerDocument(
         if (node.attrs.pending)
           return composerSchema.text(node.attrs.source, marks);
         const resource = composerResource(node.attrs.resource);
+        const semantic = composerToken(node.attrs.semantic);
         return node.type.create(
           {
             ...node.attrs,
+            semantic: semantic?.label === node.attrs.source ? semantic : null,
             recipient:
               node.attrs.recipient && valid(node.attrs.recipient)
                 ? node.attrs.recipient
@@ -408,6 +413,23 @@ export function composerResource(
   )
     return;
   return { resource: { uri, label: text }, source };
+}
+
+/** Semantic chips and their text spans. Host-internal: `MentionDraft`, which
+ * plugins see, never carries them. */
+export function composerChips(doc: EditorNode | undefined) {
+  const chips: Readonly<{
+    token: ComposerToken;
+    start: number;
+    end: number;
+  }>[] = [];
+  for (const { node, start, end } of doc
+    ? projectComposerDocument(doc).tokens
+    : []) {
+    const token = composerToken(node.attrs.semantic);
+    if (token) chips.push({ token, start, end });
+  }
+  return chips;
 }
 
 /** Document positions, editable text offsets, and serialized Markdown offsets
@@ -574,23 +596,25 @@ export function foreignComposerAttributes(value: unknown): boolean {
       ? value.content
       : undefined,
   ];
+  let chips = false;
   for (let count = 0; pending.length && count <= 32001; count++) {
     const node = pending.pop();
     if (!node || typeof node !== "object") continue;
     const { type, attrs, content } = node as Record<string, unknown>;
     const known =
       typeof type === "string" ? composerSchema.nodes[type]?.spec.attrs : {};
-    if (
-      attrs &&
-      typeof attrs === "object" &&
-      Object.entries(attrs).some(
-        ([key, item]) => item !== null && item !== undefined && !known?.[key],
-      )
-    )
-      return true;
+    if (attrs && typeof attrs === "object") {
+      const set = Object.entries(attrs).filter(
+        ([, item]) => item !== null && item !== undefined,
+      );
+      if (set.some(([key]) => !known?.[key])) return true;
+      chips ||= set.some(([key]) => key === "semantic");
+    }
     if (Array.isArray(content)) pending.push(...content);
   }
-  return false;
+  // Chip data is kept only when the snapshot restores it; whatever rejected
+  // the snapshot, loading would otherwise turn the chip into prose.
+  return chips && !readComposerSnapshot(value);
 }
 
 export function readComposerSnapshot(value: unknown): EditorNode | undefined {
@@ -648,6 +672,17 @@ function read(value: unknown): EditorNode | undefined {
       )
         return;
       length += node.attrs.source.length;
+      if ("semantic" in node.attrs && node.attrs.semantic !== null) {
+        const token = composerToken(node.attrs.semantic);
+        if (
+          !token ||
+          token.label !== node.attrs.source ||
+          ("recipient" in node.attrs && node.attrs.recipient) ||
+          ("resource" in node.attrs && node.attrs.resource) ||
+          ("pending" in node.attrs && node.attrs.pending)
+        )
+          return;
+      }
     }
     if (length > 16000) return;
     if (node.content !== undefined) {

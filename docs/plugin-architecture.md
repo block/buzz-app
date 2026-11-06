@@ -427,7 +427,8 @@ ctx.reflect.get("sidebarRows")?.register({
 
 `row` contains `id`, `kind` (`team` or `dm`), `label`, `sectionKey`, the current
 `channel` summary (including available labels, visibility and activity data), and
-its current `unread` snapshot. Unknown unread counts remain `null`; activity
+its current `unread` snapshot, and `selected`, which is true for the conversation
+the sidebar shows as open. Unknown unread counts remain `null`; activity
 fields retain their existing units and unknown values. This is the host's
 currently authorized roster, not a channel discovery API.
 

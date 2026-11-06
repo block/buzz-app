@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
 import {
   directoryChanges,
@@ -263,7 +264,13 @@ it("holds an agent from another community for every name its row has without the
     expect(
       elsewhereMatches(session, "c", false, undefined, elsewhere, name),
     ).toBe(true);
-  expect(
-    elsewhereMatches(session, "c", false, undefined, elsewhere, "Ada"),
-  ).toBe(false);
+  // Its exact key names only it, as it does for Space.
+  for (const typed of [far, npubEncode(far), `nostr:${npubEncode(far)}`])
+    expect(
+      elsewhereMatches(session, "c", false, undefined, elsewhere, typed),
+    ).toBe(true);
+  for (const typed of ["Ada", key(3), npubEncode(key(3))])
+    expect(
+      elsewhereMatches(session, "c", false, undefined, elsewhere, typed),
+    ).toBe(false);
 });

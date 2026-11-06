@@ -9,6 +9,7 @@ import { knownAgentPubkeys } from "../../features/agents/known";
 import type { Agent } from "../../features/agents/service";
 import { communityHost } from "../../features/messages/community-host";
 import { matchPerson, normalizeName } from "../../features/search/person-match";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import {
   allowsOutsideMentions,
   archivedMention,
@@ -103,7 +104,8 @@ export function offeredElsewhere(
  * the agent list is loading: Space waits as for invited agents. After a failed
  * read only local choices here can take Space. An agent matches by the names
  * its row has without the directory (`buildCandidates` aliases), such as the
- * name cached here for one archived here.
+ * name cached here for one archived here, or by its exact public key
+ * (`matchingMentions`), which no name matches.
  */
 export function elsewhereMatches(
   session: ComposerSession,
@@ -119,11 +121,13 @@ export function elsewhereMatches(
     .channels.find((c) => c.id === channelId);
   const profiles = session.profiles.snapshot();
   const here = session.agentChoices.snapshot().identities;
+  const key = typedPublicKey(query);
   return availableMentionAgents(
     channel,
     elsewhere,
     session.outbox?.supports(9000),
   ).some((agent) => {
+    if (key !== undefined) return agent.pubkey === key;
     const profile = profiles.get(agent.pubkey);
     return [
       agent.name,

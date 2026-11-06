@@ -342,8 +342,9 @@ These rules keep a row from moving under the user's pointer or keyboard.
   communities holds them, and directory people with them, so those agents
   still show before directory people. Its names are the ones its row has
   without the directory search, including aliases cached in this community,
-  such as the profile name of an agent archived here. While the read runs, the agent list is
-  still loading (section 5). Once it fails, the full choice set stays unknown
+  such as the profile name of an agent archived here; its exact public key
+  (Terms) holds it too. While the read runs, the agent list is still loading
+  (section 5). Once it fails, the full choice set stays unknown
   for that query: only the local step of section 5 applies, over the local
   choices the client has, and a retry reads again. A client SHOULD start
   loading the viewer's agents here when a composer that offers such agents

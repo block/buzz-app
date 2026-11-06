@@ -159,17 +159,6 @@ async function resolve(
   const kit = fullSession(session)?.channelKit;
   if (teamBlocksSpace(kit?.snapshot() ?? { entries: [] }, name, teamNames?.()))
     return null;
-  const offered = offeredElsewhere(session, elsewhere);
-  const local = new Set(
-    mentionCandidates(
-      session,
-      channelId,
-      inviteAgents,
-      roster,
-      undefined,
-      offered,
-    ).map((c) => c.recipient.pubkey),
-  );
   const profiles = session.profiles.snapshot();
   const unnamed = session.profiles.unnamed?.();
   const missingNames = channel?.members?.some(
@@ -184,6 +173,19 @@ async function resolve(
       teamBlocksSpace(kit?.snapshot() ?? { entries: [] }, query, teamNames?.())
     )
       return null;
+    // Read when deciding, as the chooser does on each render: a library read
+    // that lands during the directory lookup offers its agents here too.
+    const offered = offeredElsewhere(session, elsewhere);
+    const local = new Set(
+      mentionCandidates(
+        session,
+        channelId,
+        inviteAgents,
+        roster,
+        undefined,
+        offered,
+      ).map((c) => c.recipient.pubkey),
+    );
     const choices = namedCandidates(
       session,
       channelId,

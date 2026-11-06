@@ -174,7 +174,7 @@ export function createAttentionComponents({
                   loading={action.pending}
                   onClick={() => void remove()}
                 >
-                  Delete interest and watches
+                  Delete
                 </Button>
               </>
             }

@@ -335,9 +335,7 @@ test.describe("touch delete actions", () => {
     await expect(remaining).toBeVisible();
     await remaining.tap();
     await page.getByRole("menuitem", { name: "Delete", exact: true }).tap();
-    await dialog
-      .getByRole("button", { name: "Delete interest and watches", exact: true })
-      .tap();
+    await dialog.getByRole("button", { name: "Delete", exact: true }).tap();
     await expect(remaining).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: /^Watch status for / }),

@@ -311,9 +311,7 @@ it.each(["source", "event", "timer"] as const)(
       screen.getByRole("button", { name: "Interest status for release" }),
     );
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Delete interest and watches" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toBe(
         "Interest save failed",

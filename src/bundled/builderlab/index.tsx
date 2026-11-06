@@ -10,6 +10,8 @@ import { createAgentClient } from "./agents/client";
 import { startTurnStatusRecovery } from "./agents/turn-status";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
+import { BuilderlabDefaults } from "./adapter-type/defaults";
+import { createDefaultControl } from "./adapter-type/DefaultControl";
 import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
 import { offerBuilderlabDecisions } from "./decisions";
@@ -86,6 +88,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }),
     );
   const agents = createAgentClient(session);
+  const defaults = new BuilderlabDefaults();
   if (loginAvailable)
     ctx.effect(() =>
       startTurnStatusRecovery({ relay: ctx.relay, session, client: agents }),
@@ -135,7 +138,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     };
     ctx.agents.register({
-      ...builderlabType(agents, session, ctx.relay, openIdentity, openSettings),
+      ...builderlabType(
+        agents,
+        session,
+        ctx.relay,
+        openIdentity,
+        openSettings,
+        defaults,
+      ),
       provider: {
         snapshot: () => providerState,
         subscribe: (listener) => {
@@ -144,6 +154,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
         check: updateProvider,
         DialogBody: ProviderDialogBody,
+        DefaultControl: createDefaultControl(agents, session, defaults),
       },
     });
     ctx.effect(() => () => stopProvider());

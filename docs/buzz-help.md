@@ -645,6 +645,12 @@ available rather than silently discarding it.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
+  Builderlab's model and thinking default applies to new agents on this device,
+  separately for each Builderlab account. Explicit New agent choices win. If a
+  saved default is no longer offered, new agents use Builderlab's recommendation;
+  if there is no recommendation, choose a model and thinking level manually.
+  **Use Builderlab recommended** resets the preference. Existing agents keep
+  their saved configuration.
   On macOS, Claude security reviews need their own sign-in: run
   `claude setup-token` in Terminal and paste its token under **Sign in for
   reviews** in Claude's **Edit configuration**. Until it is saved, Claude

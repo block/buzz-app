@@ -21,6 +21,7 @@ import {
 import type { BuilderlabSession } from "../session";
 import { SignInAction } from "./SignInAction";
 import { effortLabel, modelChoice } from "./models";
+import { BuilderlabDefaults } from "./defaults";
 
 export type CreationConfig = {
   instructions: string;
@@ -60,6 +61,7 @@ export function createCreationAction(session: BuilderlabSession) {
 export function createCreationFields(
   client: AgentClient,
   session: BuilderlabSession,
+  defaults = new BuilderlabDefaults(),
 ) {
   function CreateConfiguration({
     config,
@@ -73,6 +75,10 @@ export function createCreationFields(
   }) {
     const draft = config as CreationConfig;
     const login = useSyncExternalStore(session.subscribe, session.snapshot);
+    const defaultsRevision = useSyncExternalStore(
+      defaults.subscribe,
+      defaults.snapshot,
+    );
     const [catalog, setCatalog] = useState<
       RemoteAgentModelCatalog & { login: typeof login }
     >();
@@ -103,9 +109,10 @@ export function createCreationFields(
       return () => controller.abort();
     }, [client, login, revision]);
     const suggestion = useRef<CreationConfig>(undefined);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: each loaded catalog suggests once; later draft edits are the person's.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: catalog/default changes suggest into untouched choices; later edits are the person's.
     useEffect(() => {
       if (!loaded || !login.account) return;
+      const preferred = defaults.resolve(login.account.subject, loaded);
       const last = suggestion.current;
       const suggested =
         draft.modelId === last?.modelId &&
@@ -113,17 +120,17 @@ export function createCreationFields(
         draft.subject === last.subject;
       const blank = !draft.modelId && !draft.reasoningEffort;
       // Only blank or still-suggested choices follow a newly loaded catalog.
-      if (!suggested && !(blank && loaded.recommended)) return;
+      if (!suggested && !(blank && preferred)) return;
       const next = {
         ...draft,
         modelId: "",
         reasoningEffort: "",
-        ...loaded.recommended,
+        ...preferred,
         subject: login.account.subject,
       };
       suggestion.current = next;
       onChange(next, { suggested: true });
-    }, [catalog]);
+    }, [catalog, defaultsRevision]);
     const signedIn = login.status === "signed-in";
     const choicesDisabled = disabled || !signedIn || !models?.length;
     const model = models?.find((choice) => choice.id === draft.modelId);

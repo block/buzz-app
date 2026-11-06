@@ -18,6 +18,7 @@ import {
 } from "../agents/registration";
 import { oauthTarget } from "../oauth/browser";
 import type { BuilderlabSession } from "../session";
+import { BuilderlabDefaults } from "./defaults";
 
 const PREFIX = "buzz.builderlab.adapter-identity.v1:";
 type Identity = {
@@ -34,6 +35,7 @@ export function builderlabType(
   relay: RelayData,
   openIdentity?: () => void,
   openSettings?: (section: string) => void,
+  defaults = new BuilderlabDefaults(),
 ): AgentType {
   const scope = () => ({
     target: oauthTarget(),
@@ -126,7 +128,7 @@ export function builderlabType(
       instructions:
         carry.instructions ?? (saved as CreationConfig).instructions,
     }),
-    ...createCreationFields(client, session),
+    ...createCreationFields(client, session, defaults),
     CreateAction: createCreationAction(session),
     ProfileActions: createProfileActions(session),
     tabs: [

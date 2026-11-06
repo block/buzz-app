@@ -1458,6 +1458,15 @@ changing the model clears the thinking choice. Creation places these controls
 beside the host-owned Harness row in one SettingsGroup, while keeping
 sign-in/recovery and Instructions outside the group.
 
+Builderlab's Harness defaults control saves a model/thinking pair on this device,
+separately for each Builderlab account and environment. For untouched creation
+choices, a supported saved pair takes precedence over the catalog recommendation.
+If the saved model or thinking level is no longer offered, the catalog's valid
+recommendation applies instead; without one, creation requires manual selection.
+**Use Builderlab recommended** clears the preference. Explicit creation choices
+are preserved. These defaults prefill new agents; existing remote agents keep
+their explicit configuration.
+
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,
 as explicitly confirmed by the product owner. On agent cards the Goose mark

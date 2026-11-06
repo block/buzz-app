@@ -335,6 +335,9 @@ it.each([undefined, false, true])(
           await screen.findByText("No remote agents yet."),
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("ready");
+        expect(
+          screen.getByRole("button", { name: /^Builderlab default model/ }),
+        ).toBeVisible();
       } else {
         expect(
           screen.getByRole("heading", { name: "Coming soon" }),
@@ -386,6 +389,9 @@ it.each([undefined, false, true])(
           screen.getByRole("heading", { name: "Coming soon" }),
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("attention");
+        expect(
+          screen.queryByRole("button", { name: /^Builderlab default model/ }),
+        ).not.toBeInTheDocument();
       }
     } finally {
       cleanup();
@@ -861,7 +867,8 @@ it.for([
       expect(decisions.status()).toBe("ready");
       // Sign-in also checks the account's linked Buzz identity, and the
       // account's community list follows through the same native session:
-      // the complete list is read once. The card's Communities section reads
+      // the complete list is read once. Harness defaults reads its catalog.
+      // The card's Communities section reads
       // the account's identity and its hosted communities.
       await waitFor(() => expect(knownCommunities.apply).toHaveBeenCalled());
       await waitFor(() =>
@@ -873,6 +880,7 @@ it.for([
         ).toEqual([
           "current",
           "current",
+          "get-model-catalog",
           "list",
           "list",
           "list-agents",

@@ -15,6 +15,7 @@ import type { Host, HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
 import type { Credential } from "../session";
 import { deferred, createTestSession } from "../test-helpers";
+import { BuilderlabDefaults } from "./defaults";
 import {
   createCreationAction,
   createCreationFields,
@@ -26,6 +27,7 @@ beforeEach(() =>
 );
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.useRealTimers();
   vi.unstubAllEnvs();
   delete document.documentElement.dataset.keyboardNavigation;
@@ -71,7 +73,12 @@ async function fixture(signedIn = true, recommended?: unknown) {
     };
   });
   const client = createAgentClient(session, null);
-  const { Create, CreateConfiguration } = createCreationFields(client, session);
+  const defaults = new BuilderlabDefaults();
+  const { Create, CreateConfiguration } = createCreationFields(
+    client,
+    session,
+    defaults,
+  );
   const submit = vi.fn();
   const ready = vi.fn();
   const Action = createCreationAction(session);
@@ -103,6 +110,7 @@ async function fixture(signedIn = true, recommended?: unknown) {
   render(<Form />, { wrapper: StrictMode });
   return {
     session,
+    defaults,
     acquire,
     request,
     pending,
@@ -210,6 +218,83 @@ it("loads the catalog and keeps instructions alongside explicit model and effort
       input.url.endsWith("/get-model-catalog"),
     ),
   ).toBe(true);
+});
+
+it("prefers a saved default and follows changes only while the draft is untouched", async () => {
+  const h = await fixture(true, { model_id: "one", reasoning_effort: "high" });
+  act(() =>
+    h.defaults.save("account", { modelId: "two", reasoningEffort: "none" }),
+  );
+  await act(async () => h.pending.resolve());
+  await screen.findByRole("button", { name: "Model: Model Two" });
+  expect(h.draft()).toMatchObject({
+    modelId: "two",
+    reasoningEffort: "none",
+    subject: "account",
+  });
+  expect(h.ready).toHaveBeenLastCalledWith(true);
+  act(() => h.defaults.save("account"));
+  await screen.findByRole("button", { name: "Model: Sol 6.1" });
+  expect(h.draft().reasoningEffort).toBe("high");
+  await choose("Thinking", "Low");
+  act(() =>
+    h.defaults.save("account", { modelId: "two", reasoningEffort: "none" }),
+  );
+  expect(h.draft()).toMatchObject({ modelId: "one", reasoningEffort: "low" });
+});
+
+it.each([
+  { modelId: "removed", reasoningEffort: "high" },
+  { modelId: "one", reasoningEffort: "removed" },
+])(
+  "uses the recommendation when the saved pair $modelId/$reasoningEffort is unavailable",
+  async (saved) => {
+    const h = await fixture(true, { model_id: "one", reasoning_effort: "low" });
+    act(() => h.defaults.save("account", saved));
+    await act(async () => h.pending.resolve());
+    await screen.findByRole("button", { name: "Model: Sol 6.1" });
+    expect(h.draft()).toMatchObject({ modelId: "one", reasoningEffort: "low" });
+    expect(h.ready).toHaveBeenLastCalledWith(true);
+  },
+);
+
+it("requires manual selection when neither the saved pair nor a recommendation is offered", async () => {
+  const h = await fixture();
+  act(() =>
+    h.defaults.save("account", { modelId: "removed", reasoningEffort: "high" }),
+  );
+  await act(async () => h.pending.resolve());
+  await screen.findByRole("button", { name: "Model: Choose a model" });
+  expect(h.draft()).toEqual(EMPTY_CREATION);
+  expect(h.ready).toHaveBeenLastCalledWith(false);
+});
+
+it("uses each account's saved default when switching an untouched draft", async () => {
+  const h = await fixture(true, { model_id: "one", reasoning_effort: "high" });
+  act(() =>
+    h.defaults.save("account", { modelId: "two", reasoningEffort: "none" }),
+  );
+  await act(async () => h.pending.resolve());
+  await screen.findByRole("button", { name: "Model: Model Two" });
+  act(() => h.session.signOut());
+  h.acquire.mockResolvedValue({
+    revision: "other",
+    account: {
+      subject: "other",
+      email: "b@example.com",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
+  });
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Sign in to Builderlab" }));
+  await screen.findByRole("button", { name: "Model: Sol 6.1" });
+  expect(h.draft()).toMatchObject({
+    modelId: "one",
+    reasoningEffort: "high",
+    subject: "other",
+  });
 });
 
 it("preselects Builderlab's recommendation and keeps the person's later choice", async () => {

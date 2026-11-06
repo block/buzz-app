@@ -71,6 +71,12 @@ function harness() {
       },
       { id: "dm", name: "DM", channelType: "dm", participants: [friend] },
       { id: "room", name: "Huddle", channelType: "stream", huddle: true },
+      {
+        id: "old",
+        name: "Old plans",
+        channelType: "stream",
+        archived: true,
+      },
     ],
   };
   const profiles = new Map<string, { name: string; isAgent?: true }>([
@@ -227,6 +233,35 @@ it("registers a sidebar page with a live draft count", () => {
   saved("draft:dm", "Second");
   act(() => window.dispatchEvent(new Event("focus")));
   expect(screen.getByLabelText("2 drafts")).toBeInTheDocument();
+});
+
+it("lists an archived conversation's draft as clearable without counting it", async () => {
+  const user = userEvent.setup();
+  saved("draft:old", "Stranded note");
+  const h = harness();
+  const Page = h.page.component;
+  const Badge = h.page.badge;
+  render(
+    <>
+      <Badge />
+      <Page />
+    </>,
+  );
+  expect(screen.queryByLabelText(/\d+ drafts?$/)).toBeNull();
+  const list = screen.getByRole("list", { name: "Drafts" });
+  expect(within(list).getByText("Stranded note")).toBeInTheDocument();
+  expect(within(list).getByText("Archived")).toBeInTheDocument();
+  await user.click(
+    within(list).getByRole("button", {
+      name: "Clear draft in #Old plans, archived: Stranded note",
+    }),
+  );
+  expect(screen.queryByText("Stranded note")).toBeNull();
+  expect(
+    localStorage.getItem(
+      `buzz-view.v1:${JSON.stringify([scope, "draft:old"])}`,
+    ),
+  ).toBeNull();
 });
 
 it("lists drafts first and continues a thread draft at its root", async () => {

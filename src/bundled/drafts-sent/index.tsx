@@ -10,7 +10,7 @@ export const inject = ["pages", "relay", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
 
-  /** Sidebar count of unsent drafts in the current community. */
+  /** Sidebar count of unsent drafts the current community can still send. */
   function Badge() {
     const connection = useRelayConnection(relay);
     const session =
@@ -18,9 +18,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const drafts = useDrafts(session);
     const { channels } = useChannelList(connection.session.channels);
     const count = session
-      ? drafts.entries.filter((entry) =>
-          listed(channels.find((channel) => channel.id === entry.channelId)),
-        ).length
+      ? drafts.entries.filter((entry) => {
+          const channel = channels.find(({ id }) => id === entry.channelId);
+          return listed(channel) && !channel?.archived;
+        }).length
       : 0;
     return count ? (
       <span

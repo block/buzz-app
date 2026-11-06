@@ -511,7 +511,8 @@ function ScopedPage({
         ? relativeTimestamp(entry.createdAt, now / 1000)
         : clockTime(entry.createdAt)
       : "";
-    const where = `${place.title}${entry.threadRootId ? ", thread" : ""}`;
+    const archived = draft && place.channel?.archived;
+    const where = `${place.title}${archived ? ", archived" : ""}${entry.threadRootId ? ", thread" : ""}`;
     const involved = (activity?.people ?? place.members)
       .slice(0, 5)
       .map((key) => nameOf(key));
@@ -550,6 +551,9 @@ function ScopedPage({
               )}
               {place.kind === "solo" && (
                 <span className={`text-caption ${styles.chip}`}>Solo</span>
+              )}
+              {archived && (
+                <span className={`text-caption ${styles.chip}`}>Archived</span>
               )}
             </span>
             <span

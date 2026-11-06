@@ -471,6 +471,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   Search matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation.
+  A draft in an archived conversation stays listed and marked **Archived**, but
+  isn't counted, because it can't be sent until the conversation is unarchived.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;

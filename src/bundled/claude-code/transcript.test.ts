@@ -14,7 +14,11 @@ import type { HostProcessOptions } from "../../features/host/service";
 import { manifestProcesses } from "./claude-testing";
 import manifest from "./manifest.json";
 import type { EventData } from "../../features/relay/events";
+import { localStore } from "../../features/agents/state";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
+import { sessionPrompts } from "../../features/agents/session-prompts";
 import { steerPrompt, turnPrompt } from "./prompt";
+import { ClaudeRuntime } from "./runtime";
 import {
   claudeTurns,
   projectName,
@@ -910,4 +914,60 @@ it("reads no latest turns when the chunk holds no whole turn", async () => {
       new AbortController().signal,
     ),
   ).resolves.toBeUndefined();
+});
+
+it("shows a session's prompt once over the latest turns it swaps in", async () => {
+  clock = 0;
+  const { spawn } = host({
+    "./-Users-me--buzz/session-1.jsonl": [
+      line("user", prompt("latest")),
+      line("assistant", [{ type: "text", text: "re: latest" }]),
+    ].join("\n"),
+  });
+  const items = new Map<string, string>();
+  const storage = localStore({
+    get length() {
+      return items.size;
+    },
+    key: (index: number) => [...items.keys()][index] ?? null,
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => void items.set(key, value),
+    removeItem: (key: string) => void items.delete(key),
+    clear: () => items.clear(),
+  });
+  const prompts = sessionPrompts(storage, "claude-code", agent);
+  await prompts.save("session-1", [{ label: "", text: "be brief" }]);
+  // The runtime's own method, with only what it reads.
+  const latest = (held: readonly TranscriptTurn[]) =>
+    ClaudeRuntime.prototype.latestTurns.call(
+      { spawn, reads: () => undefined, prompts: () => prompts } as never,
+      conversation,
+      "~/.buzz",
+      false,
+      new AbortController().signal,
+      held,
+    );
+  const shown = (turns: readonly TranscriptTurn[] | undefined) =>
+    turns?.map((turn) => ({
+      prompts: turn.items.filter((item) => item.type === "system").length,
+      continued: Boolean(turn.continued),
+    }));
+  const earlier = (sessionId: string) =>
+    ({
+      turnId: "earlier",
+      sessionId,
+      startedAt: 0,
+      items: [],
+    }) as unknown as TranscriptTurn;
+  const [first] = (await latest([])) ?? [];
+  // It replaces the session's first shown turn: one prompt.
+  expect(shown(await latest([]))).toEqual([{ prompts: 1, continued: false }]);
+  // Earlier turns of that session stay shown: no second prompt or marker.
+  expect(
+    shown(await latest([earlier("session-1"), ...(first ? [first] : [])])),
+  ).toEqual([{ prompts: 0, continued: false }]);
+  // Only another session's turns stay: this one shows its own prompt.
+  expect(
+    shown(await latest([earlier("other"), ...(first ? [first] : [])])),
+  ).toEqual([{ prompts: 1, continued: false }]);
 });

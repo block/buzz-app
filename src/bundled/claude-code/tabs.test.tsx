@@ -446,6 +446,51 @@ it("lists saved conversations and shows one's transcript, or that it is gone", a
   expect(save).not.toHaveBeenCalled();
 });
 
+it("reads an open transcript again in place when its conversation's session changes", async () => {
+  const thread = `channel/${"e".repeat(64)}`;
+  const saved = (id: string) =>
+    localStorage.setItem(
+      "buzz.claude-code.sessions.v1",
+      JSON.stringify({ [agent().key]: { [thread]: { id, seen: 0, at: 1 } } }),
+    );
+  const session = (uuid: string, text: string) =>
+    [
+      JSON.stringify({
+        type: "user",
+        uuid,
+        timestamp: "2026-10-09T10:00:00Z",
+        message: {
+          content: `<buzz-event>\nEvent ID: e\nContent: ${text}\nTags: []\n</buzz-event>`,
+        },
+      }),
+    ].join("\n");
+  saved("first");
+  const Activity = tab(
+    installed({
+      files: {
+        "./-Users-me--buzz/first.jsonl": session("u1", "older ask"),
+        "./-Users-me--buzz/second.jsonl": session("u2", "newer ask"),
+      },
+    }).type,
+    1,
+  );
+  const view = render(<Activity agent={agent()} save={vi.fn()} />);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: /^View transcript/ }));
+  const older = await screen.findByText("older ask", {
+    selector: "summary span",
+  });
+  saved("second");
+  view.rerender(<Activity agent={agent()} save={vi.fn()} />);
+  // The view isn't cleared while the new session reads.
+  expect(screen.queryByText("Reading the Claude session…")).toBeNull();
+  expect(older).toBeInTheDocument();
+  expect(
+    await screen.findByText("newer ask", { selector: "summary span" }),
+  ).toBeVisible();
+});
+
 it("opens the conversation's transcript when opened from its activity, once", async () => {
   const root = "e".repeat(64);
   localStorage.setItem(

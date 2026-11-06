@@ -1262,7 +1262,9 @@ restored after reload; plugin harnesses show history from their own session file
 An open transcript (`TranscriptPanel`, `src/features/agents/TranscriptPanel.tsx`)
 reads that history in full on open, on Refresh, and when a turn starts or
 ends. While the agent works it reads again 2.5 s after each read finishes and
-on each step the agent reports (`Agents.subscribeSteps`), using the harness's
+on the steps the agent reports (`Agents.subscribeSteps`): a step reads no
+sooner than 1 s after the previous read finishes, and steps inside that second
+make one read. These use the harness's
 `readLatest` when it has one: only the latest turns, swapped over the end of
 the held transcript by `turnId`, or a full read when they don't continue it.
 Claude Code reads the last 2 MiB of its saved session; Codex and Pi already

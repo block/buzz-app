@@ -83,7 +83,8 @@ export function emojiTags(event: {
  * Bare links end at the same CJK punctuation as rendered ones. Within a `<url>` or
  * `](url)` destination, a URL ends only at whitespace or `<>"\``. */
 const destinations =
-  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^\s<>]*|\]\\?\(\s*(?:<[^<>\r\n]*|\S*)/.source;
+  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|\]\\?\(\s*(?:<(?:\\.|[^<>\r\n\\])*|[^ \t\r\n]*)/
+    .source;
 const scheme = /https?:\/\/(?=[^\s<>"`])/.source;
 const links = new RegExp(`(${destinations}|${scheme}${BARE_URL_REST})`, "g");
 const runs = /(https?:\/\/[^\s<>"`]+)/;

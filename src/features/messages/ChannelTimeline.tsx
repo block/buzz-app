@@ -39,6 +39,7 @@ import {
   continuesMessageGroup,
   publicMessageNeighbor,
 } from "./message-grouping";
+import { calendarDay } from "../../shared/datetime";
 import type {
   Attachment,
   ChannelMessage,
@@ -670,11 +671,9 @@ function Timeline({
       ?.querySelector<HTMLButtonElement>("button")
       ?.focus({ preventScroll: true });
   }, [rows, focusedActivityId]);
-  const contentSignature = useMemo(
-    () => geometrySignature(visibleRows, profiles, resolveName),
-    [visibleRows, profiles, resolveName],
-  );
-  const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
+  // Only read at mount and unmount, so build it on demand.
+  const signature = () =>
+    `${geometrySignature(visibleRows, profiles, resolveName)}:${JSON.stringify([...foldedActivity].sort())}`;
   // Mount the saved boundary before restoration measures its divider inset.
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
@@ -828,7 +827,7 @@ function Timeline({
         previous &&
         (upwardGesture.current ||
           (!layoutOwned &&
-            element.clientWidth === previous.width &&
+            edge.current?.clientWidth === previous.width &&
             element.clientHeight === previous.viewport &&
             element.scrollHeight >= previous.height)) &&
         element.scrollTop < previous.offset;
@@ -847,7 +846,7 @@ function Timeline({
       measuredPosition.current = {
         offset: element.scrollTop,
         height: element.scrollHeight,
-        width: element.clientWidth,
+        width: edge.current?.clientWidth ?? 0,
         viewport: element.clientHeight,
       };
     },
@@ -1193,16 +1192,18 @@ function Timeline({
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
-    const measured = element.clientWidth;
+    // The observed spacer shares the message column's capped width. Using the
+    // outer scrollport misses rewraps caused by the Appearance preference.
+    const measured = edge.current?.clientWidth ?? 0;
     initialCache.current = geometry.get(
       channelId,
-      latest.current.signature,
+      latest.current.signature(),
       measured,
     );
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
     const measure = () => {
       const next = {
-        width: element.clientWidth,
+        width: edge.current?.clientWidth ?? 0,
         height: element.clientHeight,
         edgeHeight: edge.current?.getBoundingClientRect().height ?? 0,
       };
@@ -1244,7 +1245,7 @@ function Timeline({
       if (handle.current)
         geometry.set(
           channelId,
-          latest.current.signature,
+          latest.current.signature(),
           latest.current.width,
           handle.current.cache,
         );
@@ -1621,7 +1622,7 @@ function Timeline({
         const element = event.currentTarget;
         if (
           settled.current &&
-          element.clientWidth === size.width &&
+          edge.current?.clientWidth === size.width &&
           element.clientHeight === size.height
         )
           recordPosition(
@@ -1656,7 +1657,7 @@ function Timeline({
         if (
           v &&
           settled.current &&
-          element.clientWidth === size.width &&
+          edge.current?.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
           recordPosition(
@@ -1719,7 +1720,7 @@ function Timeline({
             if (
               element &&
               settled.current &&
-              element.clientWidth === size.width &&
+              edge.current?.clientWidth === size.width &&
               element.clientHeight === size.height &&
               !follow.current &&
               !restoredAnchor.current &&
@@ -1748,10 +1749,8 @@ function Timeline({
             const day =
               index === 0
                 ? true
-                : new Date(
-                    (rows[index - 1]?.createdAt ?? 0) * 1000,
-                  ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString();
+                : calendarDay(rows[index - 1]?.createdAt ?? 0) !==
+                  calendarDay(row.createdAt);
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
@@ -1821,10 +1820,8 @@ function Timeline({
                         const before = rows[first - 1];
                         return (
                           (!before ||
-                            new Date(before.createdAt * 1000).toDateString() !==
-                              new Date(
-                                row.createdAt * 1000,
-                              ).toDateString()) && (
+                            calendarDay(before.createdAt) !==
+                              calendarDay(row.createdAt)) && (
                             <DayDivider createdAt={row.createdAt} />
                           )
                         );

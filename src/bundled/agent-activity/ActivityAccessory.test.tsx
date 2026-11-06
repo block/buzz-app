@@ -576,8 +576,8 @@ it.each([false, true])(
 );
 
 it.each([false, true])(
-  "hands live activity to published content without hiding other work (thread=%s)",
-  (thread) => {
+  "keeps live activity after a public reply without hiding other work (thread=%s)",
+  async (thread) => {
     const f = fixture();
     const onFocusedRemoval = vi.fn();
     const view = render(
@@ -615,13 +615,16 @@ it.each([false, true])(
           representedAgents={represented.get(root)}
         />,
       );
-      expect(screen.queryByTitle("Blossom")).toBeNull();
+      expect(screen.getByTitle("Blossom")).toBeInTheDocument();
       expect(screen.getByTitle("Bubbles")).toBeInTheDocument();
       expect(represented.get(next)).toBeUndefined();
       act(() =>
         screen.getByRole("button", { name: /View agent activity/ }).focus(),
       );
       f.send(B, "other", 2, "turn_completed");
+      expect(screen.getByTitle("Blossom")).toBeInTheDocument();
+      f.send(A, "here", 2, "turn_completed");
+      await act(async () => vi.runAllTicks());
       expect(onFocusedRemoval).toHaveBeenCalledOnce();
       expect(
         screen.queryByLabelText("Agent activity on this message"),
@@ -1453,19 +1456,22 @@ it.each([false, true])(
         screen.queryByRole("button", { name: "Reading notes.txt" }),
       ).toBeNull();
       view.rerender(ui([A]));
+      expect(
+        screen.getByRole("button", {
+          name: "View agent activity: Blossom, Reading notes.txt",
+        }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Reading notes.txt" }),
+      ).toBeNull();
+      openBubble();
       if (stoppable) {
-        openBubble();
         fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
         await settle();
         expect(stop).toHaveBeenCalledOnce();
         return;
       }
-      expect(
-        screen.queryByLabelText("Agent activity on this message"),
-      ).toBeNull();
-      expect(
-        screen.getByRole("button", { name: "Reading notes.txt" }),
-      ).toHaveTextContent("Reading notes.txt");
+      expect(stopButton()).toBeNull();
     } finally {
       view.unmount();
       f.dispose();
@@ -1531,7 +1537,7 @@ it.each([false, true])(
   },
 );
 
-it("hands request controls to recorded history and keeps Stop and transcript there", async () => {
+it("hands live work to only the latest history for each agent and keeps Stop and transcript there", async () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);
   const stop = vi.fn(async () => {});
@@ -1544,6 +1550,7 @@ it("hands request controls to recorded history and keeps Stop and transcript the
     thread: true,
   });
   work.interruptible(stop);
+  work.step("Read", "files");
   const row = {
     ...f.props.message,
     id: "step",
@@ -1553,36 +1560,57 @@ it("hands request controls to recorded history and keeps Stop and transcript the
     audience: "agents" as const,
     content: "Checking the files",
   };
-  const group = activityPresentation(
-    [row],
+  const { audience: _audience, ...reply } = row;
+  const groups = activityPresentation(
+    [
+      row,
+      { ...reply, id: "reply" },
+      { ...row, id: "later", content: "Checking more files" },
+    ],
     f.props.session.agentActivity.snapshot(),
     new Set([A]),
     root,
-  ).groups[0];
-  if (!group) throw new Error("Missing group");
-  const view = render(
+  ).groups;
+  const ui = (expanded: boolean) => (
     <ActivityIndicatorPresentation>
       <ActivityAccessory {...f.props} messageLayout="thread" />
-      <ActivityGroupPreview
-        session={f.props.session}
-        group={group}
-        profiles={f.profiles}
-        media={() => undefined}
-        expanded
-        onToggle={() => {}}
-        openActivity={f.props.open}
-        canOpenActivity={f.props.canOpen}
-      />
-    </ActivityIndicatorPresentation>,
+      {groups.map((group) => (
+        <ActivityGroupPreview
+          key={group.ids[0]}
+          session={f.props.session}
+          group={group}
+          profiles={f.profiles}
+          media={() => undefined}
+          expanded={expanded}
+          onToggle={() => {}}
+          openActivity={f.props.open}
+          canOpenActivity={f.props.canOpen}
+        />
+      ))}
+    </ActivityIndicatorPresentation>
   );
+  const view = render(ui(false));
   try {
+    expect(screen.getByText("Checking the files")).not.toHaveAttribute(
+      "data-active",
+    );
+    expect(screen.getByText("Checking more files")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    view.rerender(ui(true));
     expect(
       screen.queryByLabelText("Agent activity on this message"),
     ).toBeNull();
     expect(
       screen.getAllByRole("button", { name: "Stop Blossom" }),
     ).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "View transcript" }));
+    const transcript = screen.getAllByRole("button", {
+      name: "View transcript",
+    })[1];
+    if (!transcript)
+      throw new Error("Missing latest history transcript control");
+    fireEvent.click(transcript);
     const activity = `buzz:profile?agent=${A}&tab=activity`;
     expect(f.props.open).toHaveBeenCalledWith(activity, { rootId: root });
     expect(claimProfileTranscript(activity)).toBeDefined();
@@ -1594,3 +1622,108 @@ it("hands request controls to recorded history and keeps Stop and transcript the
     f.dispose();
   }
 });
+
+it.each([
+  {
+    runtime: "block.builderlab/builderlab",
+    fallback: "Running remotely on Builderlab…",
+  },
+  { runtime: "other/provider", fallback: "Running on a remote machine…" },
+])(
+  "keeps one byline hint and a remote fallback until current steps arrive: $runtime",
+  async ({ runtime, fallback }) => {
+    const f = fixture();
+    const base = f.props.session.agentChoices;
+    const choices = {
+      ...base.snapshot(),
+      identities: [
+        {
+          pubkey: B,
+          name: "Bubbles",
+          managed: false,
+          execution: "remote",
+          runtime,
+        },
+      ],
+    };
+    Object.assign(f.props.session, {
+      agentChoices: { ...base, snapshot: () => choices },
+    });
+    const update = (seq: number, update: unknown) => {
+      // The latest step wins, so each one arrives later than the last.
+      vi.setSystemTime(Date.now() + 1000);
+      f.send(B, "b1", seq, "acp_read", {
+        method: "session/update",
+        params: { update },
+      });
+    };
+    const hint = () => {
+      const bubble = screen.getByRole("button", {
+        name: /View agent activity: Bubbles, remote, /,
+      });
+      const preview = bubble.closest("[data-agent-response-preview]");
+      if (!(preview instanceof HTMLElement)) throw new Error("Missing preview");
+      const labels = within(preview).getAllByText("Remote");
+      expect(labels).toHaveLength(1);
+      expect(labels[0]?.closest("strong")).toBeNull();
+      expect(labels[0]?.closest("button")).toBeNull();
+      expect(within(bubble).queryByText("Remote")).toBeNull();
+      return labels[0];
+    };
+    render(<ActivityAccessory {...f.props} />);
+    try {
+      f.send(B, "b1", 1, "turn_started", { triggeringEventIds: [root] });
+      expect(hint()).toBeVisible();
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: /View agent activity: Bubbles, remote, /,
+          }),
+        );
+        vi.advanceTimersToNextFrame();
+      });
+      expect(screen.getByText(fallback)).toBeVisible();
+      update(2, {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "On it" },
+      });
+      expect(hint()).toBeVisible();
+      expect(screen.queryByText(fallback)).toBeNull();
+      update(3, {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "Checking the row" },
+      });
+      expect(hint()).toBeVisible();
+      update(4, {
+        sessionUpdate: "tool_call",
+        toolCallId: "read",
+        title: "buzz-dev-mcp__read_file",
+        status: "in_progress",
+        rawInput: { path: "/project/file.ts" },
+      });
+      expect(hint()).toBeVisible();
+      f.send(B, "b1", 5, "turn_completed");
+      // A local agent's tool call never shows it.
+      f.send(A, "a1", 1, "turn_started", { triggeringEventIds: [root] });
+      f.send(A, "a1", 2, "acp_read", {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "read",
+            title: "buzz-dev-mcp__read_file",
+            status: "in_progress",
+            rawInput: { path: "/project/file.ts" },
+          },
+        },
+      });
+      const local = screen.getByRole("button", {
+        name: /View agent activity: Blossom/,
+      });
+      expect(local).not.toHaveAccessibleName(/remote/);
+      expect(within(local).queryByText("Remote")).not.toBeInTheDocument();
+    } finally {
+      f.dispose();
+    }
+  },
+);

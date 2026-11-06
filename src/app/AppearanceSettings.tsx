@@ -78,17 +78,21 @@ export function AppearanceSettings({
     preference,
     mode,
     error,
+    messageWidth,
+    messageWidthError,
     fontScale,
     fontError,
     accent,
     accentError,
     contrast,
     contrastError,
+    density,
+    densityError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
-      <AppearancePreview />
+      <AppearancePreview messageWidth={messageWidth} />
       <div>
         <InlineHeader title="Interface" />
         <SettingsGroup>
@@ -165,6 +169,29 @@ export function AppearanceSettings({
                   />
                 )}
               </fieldset>
+            }
+          />
+          <PreferenceRow
+            title="Message width"
+            trailing={
+              <Select
+                variant="compact"
+                label="Message width"
+                value={messageWidth}
+                groups={[
+                  {
+                    label: "Width",
+                    options: [
+                      { value: "narrow", label: "Narrow" },
+                      { value: "wide", label: "Wide" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "narrow" || value === "wide")
+                    appearance.setMessageWidth(value);
+                }}
+              />
             }
           />
           <PreferenceRow
@@ -279,6 +306,30 @@ export function AppearanceSettings({
         <InlineHeader title="Conversations" />
         <SettingsGroup>
           <PreferenceRow
+            title="Message density"
+            subtitle="Compact shows conversations as a flat list that fits more messages on screen."
+            trailing={
+              <Select
+                variant="compact"
+                label="Message density"
+                value={density}
+                groups={[
+                  {
+                    label: "Density",
+                    options: [
+                      { value: "default", label: "Default" },
+                      { value: "compact", label: "Compact" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "default" || value === "compact")
+                    appearance.setDensity(value);
+                }}
+              />
+            }
+          />
+          <PreferenceRow
             title="Follow-up behavior"
             subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
             trailing={
@@ -371,6 +422,19 @@ export function AppearanceSettings({
             onCheckedChange={setUnreadFirstPreference}
           />
         </SettingsGroup>
+        {active && messageWidthError && (
+          <ToastNotice
+            title="Message width wasn’t saved"
+            description={messageWidthError}
+          >
+            <Button
+              size="sm"
+              onClick={() => appearance.setMessageWidth(messageWidth)}
+            >
+              Retry saving message width
+            </Button>
+          </ToastNotice>
+        )}
         {active && followUp.unsaved && (
           <ToastNotice
             title="Follow-up preference wasn’t saved"
@@ -449,6 +513,16 @@ export function AppearanceSettings({
           >
             <Button size="sm" onClick={() => appearance.setContrast(contrast)}>
               Retry saving vibe level
+            </Button>
+          </ToastNotice>
+        )}
+        {active && densityError && (
+          <ToastNotice
+            title="Message density wasn’t saved"
+            description={densityError}
+          >
+            <Button size="sm" onClick={() => appearance.setDensity(density)}>
+              Retry saving message density
             </Button>
           </ToastNotice>
         )}

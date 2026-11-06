@@ -20,7 +20,7 @@
   background: transparent;
 }
 .feed {
-  --timeline-measure: 52rem;
+  --timeline-measure: var(--buzz-message-width, 52rem);
 
   flex: 1;
   min-height: 0;
@@ -43,6 +43,13 @@
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* Narrow conversations keep the shared compact inset beside the app dock. */
+@container messages (max-width: 30rem) {
+  .feed {
+    padding-inline: var(--space-4);
+  }
+}
+
 .threadHistory::-webkit-scrollbar {
   width: 8px;
 }
@@ -63,6 +70,11 @@
    at its end up by it. */
 .timelineEnd {
   height: calc(var(--space-8) + var(--channel-preview-inset, 0px));
+}
+/* The floating typing label is a 24px pill 2px above the composer; with the
+   history inset and a row's end padding, this still clears it. */
+:where(html[data-message-density="compact"]) .timelineEnd {
+  height: calc(var(--space-6) + var(--channel-preview-inset, 0px));
 }
 .feed ol {
   list-style: none;
@@ -106,6 +118,12 @@
   @apply text-caption;
   margin: var(--space-5) auto;
 }
+/* Compact density tightens vertical rhythm only; Interface size owns text.
+   :where() keeps each override at its default's specificity, so the layout
+   and stacking rules that follow it still apply. */
+:where(html[data-message-density="compact"]) .day {
+  margin-block: var(--space-3);
+}
 .day::before,
 .day::after {
   content: "";
@@ -137,6 +155,10 @@
   gap: var(--space-3);
   /* Match continuation bottom padding so regrouping preserves reading anchors. */
   padding: calc(var(--space-3) + var(--space-half)) 0 var(--space-half);
+}
+:where(html[data-message-density="compact"]) .message {
+  /* With the space-half end padding, groups start 12px apart. */
+  padding-top: calc(var(--space-2) + var(--space-half));
 }
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
@@ -339,6 +361,10 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
     transform: scale(0.96);
     transition-duration: var(--duration-fast);
   }
+}
+/* Read-only and busy pills reject clicks but still preview who reacted. */
+.reactionItem button[aria-disabled="true"] {
+  cursor: default;
 }
 .reactionNativeEmoji {
   display: inline-block;
@@ -660,7 +686,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   border-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
   box-shadow: var(--shadow-xs);
   padding: var(--space-3) var(--space-1h) var(--space-1h);
-  width: min(calc(100% - 2 * var(--space-4)), 52rem);
+  width: min(calc(100% - 2 * var(--space-4)), var(--buzz-message-width, 52rem));
   margin: 0 auto var(--space-4);
   display: flex;
   flex-shrink: 0;
@@ -683,6 +709,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composer[data-chat-presentation] {
   margin-bottom: var(--space-3);
 }
+/* The composer spans the same full width as a compact list. */
+:where(html[data-message-density="compact"]) .composer {
+  width: calc(100% - 2 * var(--space-4));
+}
 .empty {
   padding: var(--space-8) var(--space-4);
   color: var(--text-subtle);
@@ -698,7 +728,10 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
     padding-block: var(--space-3);
   }
   .composer {
-    width: min(calc(100% - 2 * var(--space-3)), 52rem);
+    width: min(
+      calc(100% - 2 * var(--space-3)),
+      var(--buzz-message-width, 52rem)
+    );
     margin: 0 auto var(--space-3);
   }
 }
@@ -858,15 +891,26 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   max-width: 100%;
   align-self: flex-start;
   margin-inline-start: var(--space-3);
+  margin-top: var(--space-1);
+}
+/* Channel and thread-branch reply summaries share one caption treatment. */
+.messageBody [data-thread-summary],
+.replyBranchSummary > [data-thread-summary] {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--type-weight-regular);
-  margin-top: var(--space-1);
-}
-.messageBody [data-thread-summary] {
   padding: var(--space-1);
   padding-right: var(--space-1h);
+}
+/* Compact summaries keep their 24px participants but drop the control's
+   spare block padding. */
+:where(html[data-message-density="compact"])
+  .messageBody
+  [data-thread-summary] {
+  min-height: 0;
+  margin-top: var(--space-half);
+  padding-block: var(--space-half);
 }
 .messageBody [data-reply-connector] {
   margin-inline-start: calc(var(--space-4) + var(--space-3));
@@ -886,7 +930,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 }
 
 .threadHistory {
-  --timeline-measure: 52rem;
+  --timeline-measure: var(--buzz-message-width, 52rem);
   position: relative;
   flex: 1;
   min-height: 0;
@@ -906,12 +950,20 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* Compact gives conversations the window's full width, as list layouts do. */
+:where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
+  --timeline-measure: 100%;
+}
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */
 .threadHistory > [data-thread-rows] {
   width: min(100%, var(--timeline-measure));
   margin-inline: auto;
   transition: opacity var(--duration-state) var(--easing-state);
+  /* A stacking context inside the scroller: each scroll update then reaches
+     the rows' layers from here, not from the panel around the scroller. The
+     jump control and composer stay outside it and keep their order. */
+  isolation: isolate;
 }
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
@@ -1377,9 +1429,6 @@ button.mediaPreview {
 }
 .mediaReviewHeading [class~="panel-header-actions"] {
   flex-shrink: 0;
-}
-.mediaReviewThreadHeading [class~="panel-header"]::after {
-  content: none;
 }
 .mediaReviewStage {
   display: grid;
@@ -2050,6 +2099,13 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
     opacity: 0;
     pointer-events: none;
     translate: 0 -100%;
+  }
+  /* Every row keeps its closed bar laid out (including the placeholder before
+     first hover), and WebKit composites each backdrop blur, even at opacity 0.
+     Closed bars are invisible, so they skip the glass; an open bar is
+     :popover-open and keeps it. */
+  .messageActions:not(:popover-open) {
+    backdrop-filter: none;
   }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
@@ -2970,6 +3026,14 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   color: var(--text-standard);
   overflow-wrap: anywhere;
 }
+/* Compact is a flat list without a bubble surface; see the flat list rules. */
+:where(html[data-message-density="compact"]) .messageBubble {
+  --surface-message: transparent;
+  --surface-message-hover: transparent;
+  margin-top: 0;
+  padding: 0;
+  border-radius: 0;
+}
 @media (hover: hover) and (pointer: fine) {
   /* An arrival cue replaces hover on its bubble rather than stacking on it. */
   .message[data-actions-revealed]:not(.messageHighlight)
@@ -3022,6 +3086,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   bottom: 0;
   right: calc(100% + var(--space-1));
   display: flex;
+}
+/* A flat list's avatar starts its group beside the byline. */
+:where(html[data-message-density="compact"]) .message .messageAvatar {
+  top: 0;
+  bottom: auto;
 }
 .message[data-viewer-message] .messageAvatar {
   right: auto;
@@ -3172,6 +3241,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message[data-layout="timeline"] {
   padding-block: var(--space-2);
 }
+:where(html[data-message-density="compact"]) .message[data-layout="timeline"] {
+  /* Groups start 12px apart, as thread rows do. */
+  padding-block: var(--space-2) var(--space-1);
+}
 .message[data-stack-next] {
   padding-bottom: 0;
 }
@@ -3190,6 +3263,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message .reactions {
   margin-inline-start: var(--space-2);
   max-width: calc(100% - var(--space-2));
+}
+:where(html[data-message-density="compact"]) .message .reactions {
+  margin-inline-start: 0;
+  max-width: 100%;
 }
 .message .messageBubble > .reactions {
   margin: var(--space-2) 0 0;
@@ -3214,6 +3291,40 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message .messageBubble > .reactions:empty {
   margin: 0;
   min-inline-size: 0;
+}
+
+/* Compact is a flat list: no bubble surface, the avatar beside the byline
+   that starts each group, and metadata aligned with the prose. MessageRow
+   places that avatar and leaves every row unaligned and unpainted as own. */
+:where(html[data-message-density="compact"])
+  .message:has(> .messageGutter)
+  > .messageBody {
+  max-width: none;
+}
+:where(html[data-message-density="compact"])
+  .message
+  :is(.byline, .delivery, .sentFromThread) {
+  padding-inline-start: 0;
+}
+:where(html[data-message-density="compact"])
+  .message
+  .messageBubble
+  > .reactions {
+  margin: var(--space-half) 0 0;
+  min-inline-size: 0;
+  max-width: 100%;
+}
+/* The summary's own inset puts its first participant on the prose edge. */
+:where(html[data-message-density="compact"])
+  .messageBody
+  :is([data-thread-summary], [data-reply-connector]) {
+  margin-inline-start: calc(-1 * var(--space-1));
+  max-width: none;
+}
+:where(html[data-message-density="compact"])
+  .messageBody
+  [data-reply-connector]::before {
+  content: none;
 }
 
 /* Outgoing metadata follows the bubble edge, even when media widens its body. */

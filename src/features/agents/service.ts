@@ -269,8 +269,9 @@ export type AgentChange<Config = unknown> = Readonly<{
 /** What a type's read-only peek receives. */
 export type AgentPeekProps<Config = unknown> = { agent: Agent<Config> };
 export type AgentSettingsHost = Readonly<{
-  /** A labelled Type control supplied only by the Agents build view. */
-  typeControl?: (dirty: boolean) => ReactNode;
+  /** A labelled Type control supplied only by the Agents build view.
+   * An optional provider action sits beside the harness choice. */
+  typeControl?: (dirty: boolean, action?: ReactNode) => ReactNode;
   /** Host-owned type change committed with the target type's settings draft. */
   pendingSave?: (config?: unknown) => Promise<void>;
 }>;
@@ -323,7 +324,10 @@ export type AgentCreateProps<Config = unknown> = {
   /** Hide effort editing in streamlined connection setup. */
   showEffort?: boolean;
   config: Config;
-  onChange(config: Config): void;
+  /** `suggested` fills choices the person has not made yet, such as a
+   * provider's recommended model, without counting as a started draft.
+   * The creation dialog honors it for CreateConfiguration. */
+  onChange(config: Config, options?: { suggested?: boolean }): void;
   disabled: boolean;
 };
 export type AgentTab<Config = unknown> = Readonly<{
@@ -787,17 +791,27 @@ export type AgentType<Config = unknown> = {
       onReadyChange?: (ready: boolean) => void;
     }
   >;
-  /** Provider-owned account notice, pinned across the agent's tabs.
+  /** Compact provider-owned action beside Harness. Readiness belongs to
+   * CreateConfiguration; this slot only presents the provider's action. */
+  CreateAction?: ComponentType<{
+    disabled: boolean;
+  }>;
+  /** Provider-owned account notice, pinned outside the agent's tab content.
    * Return null when no account notice is needed. The active settings view may
    * replace this slot through the AgentSaveFooter context's setPanelNotice(content),
+   * including when the type does not supply a PanelFooter.
    * clearing it with null on cleanup; the host retains outgoing content through exit.
    * By default a notice dims identity artwork and closes name/avatar editors.
    * Ordinary load/save notices must set data-agent-access-required="false" on
    * their outer DOM element to opt out of those access effects. Both kinds share
    * host-owned placement and measured scroll space. */
   PanelFooter?: ComponentType;
-  /** Provider-owned sign-in gate for messaging and name/avatar editing actions. */
-  ProfileActions?: ComponentType<{ children: ReactNode }>;
+  /** Provider-owned gate for name/avatar editing, independent of messaging.
+   * Report unavailable access so the host can retire open profile editors. */
+  ProfileActions?: ComponentType<{
+    children: ReactNode;
+    onUnavailable?: () => void;
+  }>;
   /** Compact model field for creation and library cards; the type owns discovery and configuration. */
   CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Compact Thinking control for creation; the type owns its values and default representation. */
@@ -2953,6 +2967,7 @@ export class AgentsService extends Service implements Agents {
     | {
         identities: readonly AgentIdentity[];
         state: Pick<AgentsSnapshot, "status" | "error">;
+        remote: ReadonlySet<AgentKey>;
         hosted: readonly Agent[];
         value: LocalAgentsSnapshot;
       }
@@ -2964,9 +2979,18 @@ export class AgentsService extends Service implements Agents {
     const hosted = state.agents.filter(
       (agent) => agent.place === "hosted" && !agent.unfinished,
     );
+    const remote = new Set(
+      identities
+        .filter(
+          (identity) => !identity.deleted && this.executions.read(identity.key),
+        )
+        .map((identity) => identity.key),
+    );
     const cached = this.localCache;
     if (
       cached?.identities === identities &&
+      cached.remote.size === remote.size &&
+      [...remote].every((key) => cached.remote.has(key)) &&
       cached.hosted.length === hosted.length &&
       hosted.every((agent, index) => agent === cached.hosted[index]) &&
       cached.state.status === state.status &&
@@ -2978,12 +3002,13 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ pubkey, name, relay, owner, picture }) =>
+          .map(({ key, pubkey, name, relay, owner, picture }) =>
             Object.freeze({
               pubkey,
               name,
               relayUrl: relay,
               owner,
+              ...(remote.has(key) ? { execution: "remote" as const } : {}),
               ...(picture ? { picture } : {}),
             }),
           ),
@@ -2991,12 +3016,13 @@ export class AgentsService extends Service implements Agents {
       ...(hosted.length
         ? {
             hosted: Object.freeze(
-              hosted.map(({ pubkey, name, relay, owner, picture }) =>
+              hosted.map(({ pubkey, name, relay, owner, picture, type }) =>
                 Object.freeze({
                   pubkey,
                   name,
                   relayUrl: relay,
                   owner,
+                  runtime: type,
                   ...(picture ? { picture } : {}),
                 }),
               ),
@@ -3005,7 +3031,7 @@ export class AgentsService extends Service implements Agents {
         : {}),
       ...(state.error ? { error: state.error } : {}),
     });
-    this.localCache = { identities, state, hosted, value };
+    this.localCache = { identities, state, remote, hosted, value };
     return value;
   };
 
@@ -4199,9 +4225,14 @@ export class AgentsService extends Service implements Agents {
     if (!native) throw new Error("Agents run only in the desktop app");
     const identity = this.liveRows(pubkey)[0];
     if (!identity) throw new Error("No such agent on this device");
+    // A list that fails to show must not stop the removal.
+    const refresh = () =>
+      this.refresh().catch((error: unknown) =>
+        console.warn(`Agents list was not refreshed`, error),
+      );
     // Saved first, so neither a relaunch nor another copy runs it again.
     await native.beginDelete(pubkey);
-    await this.refresh();
+    await refresh();
     // The community shown goes last, and only once the others are done, so
     // one that is not stays listed here with Forget.
     const shown = this.selectedOrigin();
@@ -4248,14 +4279,14 @@ export class AgentsService extends Service implements Agents {
       );
     if (left.length) {
       // Shows it gone from the communities it did leave.
-      await this.refresh();
+      await refresh();
       throw new Error(
         `${unfinished} It is still in ${left.map(hostOf).join(", ")}.`,
       );
     }
     for (const origin of this.listings.keys()) this.unlist(origin, pubkey);
     // Drops its settings.
-    await this.refresh();
+    await refresh();
     forgetDefaultAgent(pubkey);
     const failed: string[] = [];
     for (const binding of roleBindings)
@@ -5425,7 +5456,8 @@ export class AgentsService extends Service implements Agents {
     );
     return {
       config: Object.fromEntries(
-        Object.entries(local).filter(([name]) => !stale.has(name)),
+        // Undefined while its type isn't registered here.
+        Object.entries(local ?? {}).filter(([name]) => !stale.has(name)),
       ),
       base: Object.freeze(base),
       problem: resolved.reason,

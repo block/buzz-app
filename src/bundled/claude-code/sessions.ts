@@ -159,6 +159,7 @@ export class AgentSessions {
 
   /** Read defaults without assigning the shared spare to this agent. */
   async metadata(signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const fingerprint = this.options.fingerprint();
     const read = async (process: ClaudeProcess) => {
       const [models, model, effort] = await Promise.all([
@@ -170,10 +171,11 @@ export class AgentSessions {
     };
     for (const live of this.live.values())
       if (live.fingerprint === fingerprint && live.process.running) {
-        const metadata = await read(live.process);
+        // A conversation's process is its own: giving up only stops waiting.
+        const metadata = await abortable(read(live.process), signal);
         const discovered =
           this.discovery?.fingerprint === fingerprint
-            ? await this.discovery.result
+            ? await this.discovered(this.discovery.result, signal)
             : undefined;
         return { ...metadata, model: metadata.model ?? discovered?.model };
       }
@@ -188,7 +190,7 @@ export class AgentSessions {
         const launch = await this.options.launch();
         if (this.disposed || this.discovery !== discovery)
           throw new Error("Claude was stopped");
-        const process = await ClaudeProcess.start(this.spawn, {
+        const lookup = {
           cwd: launch.cwd,
           ...(launch.protection
             ? { protection: launch.protection, discovery: true }
@@ -196,11 +198,14 @@ export class AgentSessions {
           ...(launch.model ? { model: launch.model } : {}),
           ...(launch.effort ? { effort: launch.effort } : {}),
           systemPrompt: "",
-        });
+        };
+        // Kept as soon as it exists, so one still initializing can be stopped.
+        const process = await ClaudeProcess.spawn(this.spawn, lookup);
         discovery.process = process;
         try {
           if (this.disposed || this.discovery !== discovery)
             throw new Error("Claude was stopped");
+          await process.initialize(lookup);
           return await read(process);
         } finally {
           await process.kill();

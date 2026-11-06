@@ -980,6 +980,10 @@ it("shares a temporary metadata lookup, releases its process, and refreshes afte
   expect(first.model).toBe("claude-opus-5-5");
   expect(claudes()).toHaveLength(1);
   expect(live()).toHaveLength(0);
+  // A caller that already gave up leaves the shared lookup alone.
+  await expect(
+    pool.metadata(AbortSignal.abort(new Error("The turn ended"))),
+  ).rejects.toThrow("The turn ended");
   await pool.metadata();
   expect(claudes()).toHaveLength(1);
   setModel("haiku");
@@ -989,20 +993,55 @@ it("shares a temporary metadata lookup, releases its process, and refreshes afte
   pool.dispose();
 });
 
-it("stops a metadata lookup its caller gave up on, and starts the next one afresh", async () => {
-  const { pool, claudes, live } = sessions({ mute: true });
+it.each(["answering", "initializing"])(
+  "stops a metadata lookup its caller gave up on while it stalls %s, and starts the next one afresh",
+  async (stall) => {
+    let release!: () => void;
+    const initialized = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { pool, claudes, live } = sessions(
+      stall === "answering" ? { mute: true } : { initialized },
+    );
+    const deadline = new AbortController();
+    const result = pool.metadata(deadline.signal);
+    let next: Promise<unknown> | undefined;
+    try {
+      await flush();
+      expect(live()).toHaveLength(1);
+      const stopped = expect(result).rejects.toThrow("deadline");
+      deadline.abort(new Error("The turn ran past its deadline"));
+      await flush();
+      expect(live()).toHaveLength(0);
+      await stopped;
+      next = pool.metadata();
+      await flush();
+      expect(claudes()).toHaveLength(2);
+    } finally {
+      pool.dispose();
+      release();
+      await next?.catch(() => undefined);
+    }
+  },
+);
+
+it("stops waiting on a live conversation that doesn't answer, and keeps its process", async () => {
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "hi", 1);
+  const [conversation] = claudes();
+  if (!conversation) throw new Error("no conversation");
+  conversation.emit = () => {};
   const deadline = new AbortController();
-  const result = pool.metadata(deadline.signal);
+  const settled = vi.fn();
+  void pool.metadata(deadline.signal).catch(settled);
   await flush();
-  expect(live()).toHaveLength(1);
-  const stopped = expect(result).rejects.toThrow("deadline");
   deadline.abort(new Error("The turn ran past its deadline"));
   await flush();
-  expect(live()).toHaveLength(0);
-  await stopped;
-  void pool.metadata();
-  await flush();
-  expect(claudes()).toHaveLength(2);
+  expect(settled).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "The turn ran past its deadline" }),
+  );
+  expect(conversation.killed).toBe(false);
+  expect(claudes()).toHaveLength(1);
   pool.dispose();
 });
 

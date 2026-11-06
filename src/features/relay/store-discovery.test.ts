@@ -1405,29 +1405,49 @@ it("orders public matches by the shared ranks, best first", async () => {
   expect(h.pending).toHaveLength(0);
 });
 
-it("checks whether any channel exists with one relay-signed event at most", async () => {
+it("checks for any stream or forum in one capped read, skipping Solo chats", async () => {
   const h = setup();
   h.channels.ensureList();
   await h.rosters(0);
   await h.settled();
-  const empty = h.channels.anyChannel?.();
-  const first = await h.next(39000);
-  expect(first.filters).toEqual([
-    { kinds: [39000], authors: [relay.pubkey], limit: 1 },
-  ]);
-  first.respond([]);
-  expect(await empty).toBe(false);
-  const found = h.channels.anyChannel?.();
-  (await h.next(39000)).respond([
-    metadata(
-      relay,
-      "13200000-0000-4000-8000-000000000000",
-      "old",
-      1_700_000_000,
-      [["archived", "true"]],
-    ),
-  ]);
-  expect(await found).toBe(true);
+  const id = (n: number) =>
+    `13200000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const solo = (n: number) =>
+    metadata(relay, id(n), `solo-${n}`, 1_700_000_000, [
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+    ]);
+  const check = async (events: RelayEvent[]) => {
+    const answer = h.channels.anyChannel?.();
+    const request = await h.next(39000);
+    expect(request.filters).toEqual([
+      {
+        kinds: [39000],
+        authors: [relay.pubkey],
+        "#t": ["forum", "stream"],
+        limit: 20,
+      },
+    ]);
+    request.respond(events);
+    return answer;
+  };
+  // Nothing, or only the owner's Solo chats: a new community.
+  expect(await check([])).toBe(false);
+  expect(await check([solo(0)])).toBe(false);
+  // Any stream or forum, archived included, means it is not new.
+  expect(
+    await check([
+      solo(1),
+      metadata(relay, id(2), "old", 1_700_000_000, [
+        ["t", "stream"],
+        ["archived", "true"],
+      ]),
+    ]),
+  ).toBe(true);
+  // A full batch of Solo chats cannot tell.
+  expect(
+    await check(Array.from({ length: 20 }, (_, n) => solo(10 + n))),
+  ).toBeUndefined();
   expect(h.pending).toHaveLength(0);
 });
 

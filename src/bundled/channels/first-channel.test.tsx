@@ -43,11 +43,11 @@ function membership(role: Role | undefined) {
 
 function session({
   exists = false,
-  check = async () => exists,
+  check = async (): Promise<boolean | undefined> => exists,
   create = async () => created,
 }: {
   exists?: boolean;
-  check?: () => Promise<boolean>;
+  check?: () => Promise<boolean | undefined>;
   create?: () => Promise<string>;
 } = {}) {
   const anyChannel = vi.fn(check);
@@ -117,6 +117,15 @@ it("leaves a community where the relay already holds a channel", async () => {
   );
   expect(f.anyChannel).toHaveBeenCalledOnce();
   expect(f.creation).not.toHaveBeenCalled();
+});
+
+it("creates nothing when the check cannot tell, and settles nothing", async () => {
+  const f = session({ check: async () => undefined });
+  mount(f.queries);
+  await waitFor(() => expect(f.anyChannel).toHaveBeenCalledOnce());
+  await Promise.resolve();
+  expect(f.creation).not.toHaveBeenCalled();
+  expect(readView(scope, "first-channel", false)).toBe(false);
 });
 
 it("creates nothing when the check fails, and settles nothing", async () => {

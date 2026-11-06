@@ -14,7 +14,8 @@ const attempted = new Set<string>();
  * Gives a brand-new community its first channel, until the relay does
  * (block/buzz#9108). Only the community owner's client acts, only while it
  * has joined no channel, and only when the relay holds no channel at all,
- * archived and private ones included (one read, capped at one event). It then creates one open
+ * archived and private ones included, DMs and Solo chats aside (one small
+ * capped read). It then creates one open
  * `general` and flags it as the starter channel, so the relay joins new
  * members to it. It never joins anyone or posts in a channel. Messages opens
  * it through its usual first-channel fallback.
@@ -75,9 +76,11 @@ export function useFirstChannel({
 export async function ensureFirstChannel(queries: RelaySession) {
   const { channels, channelCreation, channelLifecycle } = queries;
   if (!channels.anyChannel || !channelCreation.available) return false;
-  // One event at most: any channel the relay knows of, open, private or
-  // archived, means the community is not new.
-  if (await channels.anyChannel()) return true;
+  // Any stream or forum the relay knows of, open, private or archived, means
+  // the community is not new. DMs and Solo chats (the Bestie tab opens one)
+  // do not count; an inconclusive check creates nothing.
+  const exists = await channels.anyChannel();
+  if (exists !== false) return exists === true;
   const id = await channelCreation.create({
     name: FIRST_CHANNEL_NAME,
     visibility: "open",

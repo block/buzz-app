@@ -244,6 +244,7 @@ function setup({
     messages,
     outbox,
     operations: () => operations,
+    publish,
     choices,
     profiles,
   };
@@ -451,7 +452,7 @@ it("restores a saved forward after reload and confirms its exact event instead o
   );
   expect(outbox.acknowledge).toHaveBeenCalledWith("9".repeat(64));
   expect(operations()).toEqual([]);
-  // The notice opens the restored event's DM, named by its outbox tag.
+  // The notice names the recovery payload's person and opens its h-tag DM.
   await user.click(
     await screen.findByRole("button", { name: "Open your DM with Avery Chen" }),
   );
@@ -461,6 +462,30 @@ it("restores a saved forward after reload and confirms its exact event instead o
       messageId: "9".repeat(64),
     }),
   );
+});
+
+it("names and opens the saved forward's DM when the outbox loads it after another person is picked", async () => {
+  const user = userEvent.setup();
+  const { navigation, directMessages, messages, outbox, publish } = setup();
+  directMessages.open.mockResolvedValueOnce(
+    "22222222-2222-4222-8222-222222222222",
+  );
+  // The outbox finishes loading mid-submit with a forward to Avery pending.
+  outbox.ready = async () => publish([pendingForward()]);
+  await user.click(screen.getByRole("button", { name: "Forward source" }));
+  await user.click(await screen.findByRole("option", { name: /Morgan Lee/ }));
+  await user.click(screen.getByRole("button", { name: "Forward" }));
+  await screen.findByText("Message forwarded to Avery Chen");
+  await user.click(
+    screen.getByRole("button", { name: "Open your DM with Avery Chen" }),
+  );
+  await waitFor(() =>
+    expect(navigation.snapshot().entry.target).toMatchObject({
+      channelId: destination,
+      messageId: "9".repeat(64),
+    }),
+  );
+  expect(messages.send).not.toHaveBeenCalled();
 });
 
 it("blocks another forward while a saved one is pending and offers to review it", async () => {
@@ -518,6 +543,11 @@ it("retains an editable draft when opening the DM fails", async () => {
   await user.type(note, "Try again");
   await user.click(screen.getByRole("button", { name: "Forward" }));
   await screen.findByRole("alert");
+  // The error notice reports the failure; there is no sent message to open.
+  await screen.findByRole("button", { name: "Dismiss notification" });
+  expect(
+    screen.queryByRole("button", { name: /^Open your DM/ }),
+  ).not.toBeInTheDocument();
   expect(note).toBeEnabled();
   expect(note).toHaveValue("Try again");
   expect(messages.send).not.toHaveBeenCalled();

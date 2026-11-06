@@ -335,10 +335,11 @@ function ForwardMessageDialog({
     setError("");
     setNotice(undefined);
     try {
-      let sent = recovered && {
-        id: recovered.id,
-        channelId: recovered.channelId,
-      };
+      // The confirmed record names its recipient: the outbox can turn up a
+      // saved forward to someone other than the person picked.
+      let sent:
+        | Pick<PendingForward, "id" | "channelId" | "person">
+        | undefined = recovered;
       if (!sent) {
         const validateRecipient = () => {
           if (
@@ -399,6 +400,7 @@ function ForwardMessageDialog({
             },
           ),
           channelId,
+          person,
         };
       }
       await session.directMessages.delivered(
@@ -414,13 +416,13 @@ function ForwardMessageDialog({
       setPeople([]);
       setNote("");
       close();
-      const { id, channelId } = sent;
+      const { id, channelId, person: to } = sent;
       // You stay where you forwarded from; the notice opens what you sent.
       setNotice({
-        text: `Message forwarded to ${person.name}`,
+        text: `Message forwarded to ${to.name}`,
         error: false,
         navigation: {
-          label: `Open your DM with ${person.name}`,
+          label: `Open your DM with ${to.name}`,
           open: () => {
             setNotice(undefined);
             void navigation.open({

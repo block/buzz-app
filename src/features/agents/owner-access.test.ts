@@ -16,6 +16,7 @@ const relayAuthor = "e".repeat(64);
 const community = "https://relay.example.test";
 const joined = "11111111-1111-4111-8111-111111111111";
 const archived = "22222222-2222-4222-8222-222222222222";
+const system = "44444444-4444-4444-8444-444444444444";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -72,6 +73,11 @@ function fakeSession(
     relayAuthor,
     channels: {
       list: () => ({ status: "ready", ...list }) as ChannelList,
+      // Never in list(), but a lookup can return one.
+      get: (id: string): ChannelSummary | undefined =>
+        id === system
+          ? { id, name: "App data", channelType: "system", members: [owner] }
+          : undefined,
       ensureList,
     },
     readRemote,
@@ -262,6 +268,11 @@ describe("owner access", () => {
       () => signed(joined, { [owner]: "owner" }).slice(0, 1),
     ],
     ["an ID that is not a channel's", "general", () => []],
+    [
+      "a system channel",
+      system,
+      () => signed(system, { [owner]: "owner" }, [["t", "system"]]),
+    ],
   ])("fails for %s", async (_what, id, events) => {
     const fake = fakeSession({ channels }, events);
     const access = createOwnerAccess(
@@ -272,6 +283,20 @@ describe("owner access", () => {
     await expect(
       access.members(id, { offset: 0, limit: 10 }),
     ).rejects.toThrow();
+  });
+
+  it("reads no roster for a channel outside the owner's channels", async () => {
+    const fake = fakeSession({ channels: [] }, () =>
+      signed(joined, { [owner]: "owner" }),
+    );
+    const access = createOwnerAccess(
+      { pubkey: agent, owner },
+      bound(fake.session).bind,
+    );
+    await expect(
+      access.members(joined, { offset: 0, limit: 10 }),
+    ).rejects.toThrow("not in your owner's channels");
+    expect(fake.readRemote).not.toHaveBeenCalled();
   });
 
   it("pages the roster with roles and names", async () => {

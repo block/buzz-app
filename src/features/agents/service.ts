@@ -192,7 +192,6 @@ import {
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
-import { isOwnerTool } from "../../buzz-mcp/owner";
 import type { OwnerAccess } from "../../buzz-mcp/client";
 import { nameSoloChat } from "./solo-chat-name";
 import {
@@ -2407,7 +2406,8 @@ export class AgentsService extends Service implements Agents {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
       BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
-      isOwnerTool(tool.name) ||
+      // The owner_ prefix is reserved for tools that run with the owner's access.
+      tool.name.startsWith("owner_") ||
       !tool.description ||
       tool.inputSchema?.type !== "object" ||
       !serializable(tool.inputSchema) ||

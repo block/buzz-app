@@ -9810,6 +9810,7 @@ it("adds plugins' tools to every session, each name once", async () => {
     { ...tool, inputSchema: { type: "string" } },
     { ...tool, inputSchema: { type: "object", default: 1n } },
     { ...tool, name: "owner_channel_list" },
+    { ...tool, name: "owner_message_list" },
   ])
     expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
   expect(service.tools()).toHaveLength(1);
@@ -13648,6 +13649,7 @@ describe("external private Solo creation", () => {
             /Bestie.*Buzz|Bestie could not be read|Bestie is not available/,
           ),
         );
+        expect(f.native.publish).not.toHaveBeenCalled();
       } finally {
         await f.cleanup();
       }
@@ -13663,6 +13665,7 @@ describe("external private Solo creation", () => {
       });
       expect(f.saved).not.toHaveBeenCalled();
       expect(f.libraryRead).not.toHaveBeenCalled();
+      expect(f.native.publish).not.toHaveBeenCalled();
     } finally {
       await f.cleanup();
     }
@@ -13685,6 +13688,7 @@ describe("external private Solo creation", () => {
           "result.content.0.text",
           "Your saved Bestie could not be checked. Check the community connection and try again.",
         );
+        expect(f.native.publish).not.toHaveBeenCalled();
       } finally {
         await f.cleanup();
       }
@@ -13755,6 +13759,7 @@ describe("external private Solo creation", () => {
       try {
         expect(await outcome).toBeInstanceOf(Error);
         await vi.waitFor(() => expect(f.close).toHaveBeenCalled());
+        expect(f.native.publish).not.toHaveBeenCalled();
       } finally {
         await f.cleanup();
       }

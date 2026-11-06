@@ -125,9 +125,18 @@ export function createOwnerAccess(
       );
     return memberAuthority(events, id, viewer, relayAuthor);
   };
-  const summary = (session: OwnerSession, id: string) =>
-    session.channels.list().channels.find((item) => item.id === id) ??
-    session.channels.get?.(id);
+  /** Channel `id` as the owner's session knows it; never a system channel,
+   * which `list()` never shows either. */
+  const known = (session: OwnerSession, id: string) => {
+    const item =
+      session.channels.list().channels.find((each) => each.id === id) ??
+      session.channels.get?.(id);
+    if (!item || item.channelType === "system")
+      throw new Error(
+        `Channel ${id} is not in your owner's channels; owner_channel_list lists them.`,
+      );
+    return item;
+  };
   const channelId = (id: string) => {
     try {
       return lifecycleChannelId(id);
@@ -154,25 +163,23 @@ export function createOwnerAccess(
       }),
     channel: (id: string, signal?: AbortSignal) =>
       run(signal, async (binding, bound) => {
-        const known = summary(binding.session, channelId(id));
-        if (!known)
-          throw new Error(
-            `Channel ${id} is not in your owner's channels; owner_channel_list lists them.`,
-          );
+        const summary = known(binding.session, channelId(id));
         const rights = await authority(binding, id, bound);
         const role = rights.roles[binding.viewer];
-        const offer = lifecycleOffer(known, binding.viewer, false);
+        const offer = lifecycleOffer(summary, binding.viewer, false);
         return {
           execution: execution(binding),
           channel: {
-            ...ownerChannel(known, binding.viewer),
+            ...ownerChannel(summary, binding.viewer),
             role: role ?? null,
             members: Object.keys(rights.roles).length,
-            ...(known.description ? { description: known.description } : {}),
-            ...(known.joinRole ? { joinRole: known.joinRole } : {}),
-            ...(known.ttlSeconds ? { ttlSeconds: known.ttlSeconds } : {}),
-            ...(known.creator ? { creator: known.creator } : {}),
-            ...(known.createdAt ? { createdAt: known.createdAt } : {}),
+            ...(summary.description
+              ? { description: summary.description }
+              : {}),
+            ...(summary.joinRole ? { joinRole: summary.joinRole } : {}),
+            ...(summary.ttlSeconds ? { ttlSeconds: summary.ttlSeconds } : {}),
+            ...(summary.creator ? { creator: summary.creator } : {}),
+            ...(summary.createdAt ? { createdAt: summary.createdAt } : {}),
           },
           capabilities: {
             manageRoles: rights.canManage,
@@ -189,7 +196,8 @@ export function createOwnerAccess(
       signal?: AbortSignal,
     ) =>
       run(signal, async (binding, bound) => {
-        const rights = await authority(binding, channelId(id), bound);
+        known(binding.session, channelId(id));
+        const rights = await authority(binding, id, bound);
         const roster = Object.entries(rights.roles);
         const shown = roster.slice(page.offset, page.offset + page.limit);
         const keys = shown.map(([pubkey]) => pubkey);

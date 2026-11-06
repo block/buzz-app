@@ -909,6 +909,44 @@ describe.each([
   });
 });
 
+it.each([
+  ["hex key", (key: string) => key],
+  ["npub", (key: string) => npubEncode(key)],
+  ["nostr: npub", (key: string) => `nostr:${npubEncode(key)}`],
+])(
+  "finds a local agent the directory has no profile for by its pasted %s",
+  async (_case, form) => {
+    const t = setup();
+    const owner = "f".repeat(64);
+    const local = {
+      pubkey: "c".repeat(64),
+      name: "Local helper",
+      relayUrl: "https://relay.example",
+      owner,
+    };
+    const otherCommunity = {
+      pubkey: "e".repeat(64),
+      name: "Other community agent",
+      relayUrl: "https://elsewhere.example",
+      owner,
+    };
+    t.updateControl({ status: "ready", agents: [local, otherCommunity] });
+    t.mount();
+    await screen.findByRole("option", { name: "Person 1" });
+    await t.user.click(recipient());
+    await t.user.paste(form(local.pubkey));
+    expect(
+      await screen.findByRole("option", { name: "Local helper, Agent" }),
+    ).toBeVisible();
+    await t.user.clear(recipient());
+    await t.user.paste(form(otherCommunity.pubkey));
+    await screen.findByText("No matching people.");
+    expect(
+      screen.queryByRole("option", { name: "Other community agent, Agent" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
 it("matches names from the start of a word, like mentions", async () => {
   const t = setup();
   t.mount();

@@ -280,6 +280,13 @@ revokes all of them, and a pairing unused for 30 days expires.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
+- **Hide muted channels** (Settings → Appearance, off by default, this device only)
+  removes muted channels from the sidebar. Starred channels, DMs, Solo chats and the
+  channel you have open stay visible. A hidden muted channel comes back while it has an unread
+  mention, a reply in a thread you're part of, a broadcast, or a manual unread mark,
+  and hides again once read. While it's back for a mention, reply or broadcast, it shows
+  the usual mention dot so you can tell why. Hidden ones are listed under **Muted** in each section's
+  **Filter** menu, and search still finds them.
 - **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,

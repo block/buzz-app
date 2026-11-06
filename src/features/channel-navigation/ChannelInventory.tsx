@@ -81,6 +81,8 @@ import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { useSidebarFilters } from "../../bundled/channels/useSidebarFilters";
+import { useHideMutedChannels } from "../../bundled/channels/hide-muted-preference";
+import type { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import {
   sidebarSections,
   contributedSidebarSectionKey,
@@ -196,6 +198,7 @@ export function ChannelInventory({
     rosterRecovering(live.roster),
   );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const hideMuted = useHideMutedChannels();
   const sortModesReady =
     pluginsSettled ||
     Object.values(preferences.data?.sort ?? {}).every(
@@ -622,6 +625,7 @@ export function ChannelInventory({
       ),
     ),
     list.activityStatus === "ready",
+    hideMuted ? hiddenMutes(preferences.data?.muted, mute?.intents) : undefined,
   );
   const firstChannelSection = filteredSections.find(({ key }) =>
     isChannelSectionKey(key),
@@ -632,7 +636,9 @@ export function ChannelInventory({
   useLayoutEffect(() => {
     hiddenRowSections.current = new Map(
       filteredSections.flatMap((section) =>
-        section.hiddenRows.map(({ id }) => [id, section.key] as const),
+        [...section.hiddenRows, ...section.mutedRows].map(
+          ({ id }) => [id, section.key] as const,
+        ),
       ),
     );
   }, [filteredSections]);
@@ -1426,6 +1432,7 @@ export function ChannelInventory({
               }
               channels={{
                 rows: section.hiddenRows,
+                muted: section.mutedRows,
                 selected: current?.id,
                 select,
               }}
@@ -1892,4 +1899,18 @@ export function ChannelInventory({
       </>
     ),
   });
+}
+
+/** Pending mute intents apply at once, so the row's menu can return focus to its section. */
+function hiddenMutes(
+  confirmed: readonly string[] | undefined,
+  intents: ReturnType<typeof useOptimisticMute>["intents"] | undefined,
+) {
+  const ids = new Set(confirmed);
+  for (const intent of intents?.values() ?? []) {
+    if (!intent.pending) continue;
+    if (intent.muted) ids.add(intent.channelId);
+    else ids.delete(intent.channelId);
+  }
+  return [...ids];
 }

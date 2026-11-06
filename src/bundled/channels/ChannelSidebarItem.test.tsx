@@ -18,6 +18,7 @@ import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { UnreadBadge } from "./UnreadBadge";
+import { setHideMutedChannelsPreference } from "./hide-muted-preference";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 
@@ -667,6 +668,45 @@ it.each([
       screen.getByRole("img", { name: "Marked unread on this device only" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Muted" })).toBeInTheDocument();
+  },
+);
+
+it.each(["stream", "dm"] as const)(
+  "with hide-muted on, a muted %s shows its attention dot only while attention is unread",
+  (channelType) => {
+    const state = owner();
+    act(() => setHideMutedChannelsPreference(true));
+    try {
+      const view = render(
+        <ChannelSidebarItem
+          {...itemProps(state.session, false, {
+            id: "alpha",
+            name: "Alpha",
+            channelType,
+          })}
+        />,
+      );
+      const row = () =>
+        view.container.querySelector("[data-channel-sidebar-row]");
+      const dot = () => view.container.querySelector("[data-channel-priority]");
+      act(() => state.mute(true));
+      act(() => state.unread(3, 0));
+      expect(row()).not.toHaveAttribute("data-ordinary");
+      expect(dot()).toBeNull();
+      act(() => state.unread(4, 1));
+      expect(row()).not.toHaveAttribute("data-ordinary");
+      if (channelType === "dm") expect(dot()).toBeNull();
+      else {
+        expect(dot()).toBeInTheDocument();
+        expect(
+          view.container.querySelector("[data-channel-unread]"),
+        ).not.toHaveAttribute("data-channel-muted");
+      }
+      act(() => state.unread(0, 0));
+      expect(dot()).toBeNull();
+    } finally {
+      act(() => setHideMutedChannelsPreference(false));
+    }
   },
 );
 

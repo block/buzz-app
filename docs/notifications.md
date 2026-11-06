@@ -83,7 +83,9 @@ checks, not that an OS banner was displayed or read.
   a broadcast notification category. Confirmed mute quiets ordinary channel unread
   styling and offscreen cues without clearing unread evidence. Muted channel and
   DM sidebar rows show a crossed-out bell immediately after their names and hide
-  unread dots, including thread dots. Manual unread can still emphasize
+  unread dots, including thread dots, except that **Hide muted channels** shows the
+  attention dot on a muted non-DM channel while it has unread attention (see unread.md).
+  Manual unread can still emphasize
   the name, and thread activity remains available. Muted DMs also suppress automatic
   unread emphasis; offscreen unread counts and avatar previews remain. Solo chat labels
   retain unread emphasis. Unread thread cues are distinct from participating-thread alerts,

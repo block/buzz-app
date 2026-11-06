@@ -38,6 +38,10 @@ import {
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
 import { macWebKit } from "../features/messages/mac-webkit";
+import {
+  setHideMutedChannelsPreference,
+  useHideMutedChannelsPreference,
+} from "../bundled/channels/hide-muted-preference";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
   setClockPreference,
@@ -80,6 +84,7 @@ export function AppearanceSettings({
   const autocorrect = useMessageAutocorrectPreference();
   const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
+  const hideMuted = useHideMutedChannelsPreference();
   const names = useNamePreference();
   const verifiedCommunity = useVerifiedCommunity(communities?.relay);
   const { placement, unsaved } = useThreadPlacementPreference();
@@ -471,6 +476,12 @@ export function AppearanceSettings({
             checked={unreadFirst.enabled}
             onCheckedChange={setUnreadFirstPreference}
           />
+          <SwitchPreferenceRow
+            label="Hide muted channels"
+            description="Muted channels leave the sidebar unless they’re open, starred, or need your attention. Find them under Muted in a section’s Filter menu, or use search. Direct messages stay visible. Applies to this device only."
+            checked={hideMuted.enabled}
+            onCheckedChange={setHideMutedChannelsPreference}
+          />
         </SettingsGroup>
         {active && messageWidthError && (
           <ToastNotice
@@ -509,6 +520,20 @@ export function AppearanceSettings({
               onClick={() => setClockPreference({})}
             >
               Retry saving clock preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && hideMuted.unsaved && (
+          <ToastNotice
+            title="Sidebar preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setHideMutedChannelsPreference(hideMuted.enabled)}
+            >
+              Retry saving muted channel visibility
             </Button>
           </ToastNotice>
         )}

@@ -54,6 +54,7 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
+import { setHideMutedChannelsPreference } from "../../bundled/channels/hide-muted-preference";
 import styles from "../../app/shell/PrimarySidebar.module.css";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { PageNavigation } from "../../app/shell/PageNavigation";
@@ -496,6 +497,178 @@ it.each(["Retry", "Dismiss"] as const)(
     }
   },
 );
+
+it("hides mutes on this device's opt-in, returns focus to the section and lists them under Muted", async () => {
+  const user = userEvent.setup();
+  let muted = ["beta"];
+  let settle: (error?: Error) => void = () => {};
+  const writes = vi.fn();
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted,
+    }),
+    available: true,
+    writeMute: ({ channelId, muted: next }) =>
+      new Promise<readonly string[]>((resolve, reject) => {
+        writes();
+        settle = (error) => {
+          if (error) return reject(error);
+          muted = next
+            ? [...muted, channelId]
+            : muted.filter((id) => id !== channelId);
+          resolve(muted);
+        };
+      }),
+  });
+  try {
+    const h = fixture(preferences.queries);
+    const mounted = render(h.view("alpha"));
+    expect(await screen.findByRole("button", { name: /^beta/ })).toBeVisible();
+    act(() => setHideMutedChannelsPreference(true));
+    expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
+    const summary = screen.getByLabelText("Channels", { selector: "summary" });
+    const mute = async () => {
+      fireEvent.keyDown(screen.getByRole("button", { name: /^gamma/ }), {
+        key: "ContextMenu",
+      });
+      await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+    };
+    await mute();
+    expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull();
+    await waitFor(() => expect(summary).toHaveFocus());
+    await waitFor(() => expect(writes).toHaveBeenCalledOnce());
+    await act(async () => settle(new Error("offline")));
+    expect(
+      await screen.findByRole("dialog", { name: "Couldn’t mute gamma" }),
+    ).toBeVisible();
+    // Rows fade on wall-clock motion; assert accessible presence, not opacity.
+    await screen.findByRole("button", { name: /^gamma/ });
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    await mute();
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
+    await act(async () => settle());
+    await waitFor(() =>
+      expect(preferences.queries.snapshot().data?.muted).toEqual([
+        "beta",
+        "gamma",
+      ]),
+    );
+    expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Channels" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+    const group = await screen.findByRole("group", { name: "Muted" });
+    expect(
+      within(group)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      expect.stringContaining("beta"),
+      expect.stringContaining("gamma"),
+    ]);
+    fireEvent.click(within(group).getByRole("menuitem", { name: /beta/ }));
+    expect(h.navigator.open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "conversation", channelId: "beta" }),
+    );
+    mounted.rerender(h.view("beta"));
+    await screen.findByRole("button", { name: /^beta/ });
+    act(() => setHideMutedChannelsPreference(false));
+    await screen.findByRole("button", { name: /^gamma/ });
+  } finally {
+    settle();
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
+
+it("hides cached mutes before live preferences arrive, then follows the live answer", async () => {
+  const cached: SidebarPreferences = {
+    sections: [],
+    assignments: {},
+    starred: [],
+    muted: ["beta"],
+  };
+  let answer!: (data: SidebarPreferences) => void;
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read: () =>
+      new Promise<SidebarPreferences>((resolve) => {
+        answer = resolve;
+      }),
+    persistence: {
+      read: async () => [],
+      readStartup: async () => ({
+        preferences: { savedAt: Date.now(), data: cached },
+      }),
+      write: async () => {},
+      remove: async () => {},
+      retain: async () => {},
+      clear: async () => {},
+      close() {},
+    },
+  });
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    await preferences.ready;
+    expect(preferences.queries.snapshot().cached).toBe(true);
+    render(fixture(preferences.queries).view("alpha"));
+    expect(await screen.findByRole("button", { name: "gamma" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
+    await act(async () => answer({ ...cached, muted: [] }));
+    await screen.findByRole("button", { name: "beta" });
+  } finally {
+    answer?.({ ...cached, muted: [] });
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
+
+it("keeps a channel visible while its unmute saves, and hides it again if the unmute fails", async () => {
+  const user = userEvent.setup();
+  let settle: (error?: Error) => void = () => {};
+  const writes = vi.fn();
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: ["beta"],
+    }),
+    available: true,
+    writeMute: () =>
+      new Promise<readonly string[]>((resolve, reject) => {
+        writes();
+        settle = (error) => (error ? reject(error) : resolve([]));
+      }),
+  });
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    const h = fixture(preferences.queries);
+    const mounted = render(h.view("beta"));
+    fireEvent.keyDown(await screen.findByRole("button", { name: /^beta/ }), {
+      key: "ContextMenu",
+    });
+    await user.click(await screen.findByRole("menuitem", { name: "Unmute" }));
+    mounted.rerender(h.view("alpha"));
+    await screen.findByRole("button", { name: "alpha" });
+    expect(screen.getByRole("button", { name: /^beta/ })).toBeVisible();
+    await waitFor(() => expect(writes).toHaveBeenCalledOnce());
+    await act(async () => settle(new Error("offline")));
+    expect(
+      await screen.findByRole("dialog", { name: "Couldn’t unmute beta" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
+  } finally {
+    settle();
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
 
 it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
   const user = userEvent.setup();
@@ -2058,6 +2231,66 @@ it("deleting a custom-sorted channel opens its displayed neighbor after the rost
     ),
   );
   expect(h.navigator.open).toHaveBeenCalledOnce();
+});
+
+it("deleting the open channel skips a neighbor hidden because it is muted", async () => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: ["gamma"],
+    }),
+    available: true,
+  });
+  await preferences.queries.ensure();
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    const h = pendingLifecycle("delete", preferences.queries);
+    await h.start();
+    expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull();
+    h.drop("beta");
+    await act(async () => h.finish());
+    await waitFor(() =>
+      expect(h.navigator.open).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "conversation", channelId: "alpha" }),
+      ),
+    );
+    expect(h.navigator.open).toHaveBeenCalledOnce();
+  } finally {
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
+
+it("deleting the open channel opens the empty Channels page when every other row is hidden by mute", async () => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: ["alpha", "gamma"],
+    }),
+    available: true,
+  });
+  await preferences.queries.ensure();
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    const h = pendingLifecycle("delete", preferences.queries);
+    await h.start();
+    expect(screen.queryByRole("button", { name: /^alpha/ })).toBeNull();
+    h.drop("beta");
+    await act(async () => h.finish());
+    await waitFor(() =>
+      expect(h.navigator.open).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "page", pageId: "channels" }),
+      ),
+    );
+    expect(h.navigator.open).toHaveBeenCalledOnce();
+  } finally {
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
 });
 
 it("deleting the only row in its section opens the nearest row below it", async () => {

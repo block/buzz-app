@@ -198,7 +198,7 @@ it("a known longer name continues the query, except an identity's own beside its
   ).toBe(false);
 });
 it("validates the portable mention fixture version and case lists", () => {
-  expect(mentionConformance.version).toBe(2);
+  expect(mentionConformance.version).toBe(3);
   expect(mentionConformance.matching.length).toBeGreaterThan(0);
   expect(mentionConformance.ranking.length).toBeGreaterThan(0);
   expect(mentionConformance.space.length).toBeGreaterThan(0);

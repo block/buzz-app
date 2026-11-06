@@ -128,7 +128,11 @@ vi.mock("../solo/default-agent", async (original) => ({
 const coordinators = vi.hoisted(() => ({
   make: undefined as
     | undefined
-    | ((community: string, store: AgentConfigStore) => unknown),
+    | ((
+        community: string,
+        store: AgentConfigStore,
+        changed?: () => void,
+      ) => unknown),
 }));
 vi.mock("./community-config", async (original) => {
   const actual = await original<typeof import("./community-config")>();
@@ -139,7 +143,11 @@ vi.mock("./community-config", async (original) => {
     ): ReturnType<typeof actual.communityConfig> =>
       coordinators.make
         ? Promise.resolve(
-            coordinators.make(args[0].community, args[0].store) as never,
+            coordinators.make(
+              args[0].community,
+              args[0].store,
+              args[0].changed,
+            ) as never,
           )
         : actual.communityConfig(...args),
   };
@@ -14686,7 +14694,11 @@ describe("synced teams", () => {
     await f.service.create({ type: "example/echo", name: "Echo" });
     await f.service.create({ type: "example/cloud", name: "Sky" });
     await vi.waitFor(() =>
-      expect(make).toHaveBeenCalledWith(home, expect.anything()),
+      expect(make).toHaveBeenCalledWith(
+        home,
+        expect.anything(),
+        expect.any(Function),
+      ),
     );
     await settle();
     expect(f.service.teamHere({ draft })).toBe(false);
@@ -14977,7 +14989,8 @@ describe("synced teams", () => {
     });
 
     it("refuses edits and Delete of a local team while it moves, and Delete after a partial move removes its copy", async () => {
-      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      // No confirmed head of the copy is cached here.
+      const t = await local([{ ...mine, members: [alder] }]);
       let release!: (value: unknown) => void;
       const answers: Promise<unknown>[] = [
         new Promise((resolve) => {
@@ -14986,7 +14999,6 @@ describe("synced teams", () => {
       ];
       const channels = teamChannels(() => answers.shift() ?? Promise.resolve());
       const f = await setup({ identities: [here(alder)], storage: t.storage });
-      t.confirm(channels.stores.get(home));
       try {
         await vi.waitFor(() => expect(channels.saveTeam).toHaveBeenCalled());
         await expect(
@@ -15004,8 +15016,19 @@ describe("synced teams", () => {
       await vi.waitFor(() =>
         expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
       );
+      // An archive that can't be confirmed refuses Delete and keeps it all.
+      channels.removeTeam.mockRejectedValueOnce(
+        new Error("The team's deletion couldn't be confirmed"),
+      );
+      await expect(f.service.removeTeam("local-1")).rejects.toThrow(
+        "couldn't be confirmed",
+      );
+      expect(f.storage.get(teamsKey)).toContain("Mine");
+      expect(moves(f)).toEqual({
+        "local-1": { community: home, failed: true },
+      });
       await f.service.removeTeam("local-1");
-      expect(channels.removeTeam).toHaveBeenCalledWith(await movedId());
+      expect(channels.removeTeam).toHaveBeenLastCalledWith(await movedId());
       expect(f.storage.get(teamsKey)).not.toContain("Mine");
       expect(moves(f)).toEqual({});
     });
@@ -15047,6 +15070,40 @@ describe("synced teams", () => {
       await settle();
       expect(channels.saveTeam).not.toHaveBeenCalled();
       expect(f.storage.get(teamsKey)).toContain("Mine");
+    });
+
+    it("notifies when an agent's first copy is refused, with no row changing", async () => {
+      let mode: "migrating" | "local" = "migrating";
+      let changed!: () => void;
+      const channels = teamChannels();
+      const make = coordinators.make;
+      coordinators.make = (community, store, notify) => {
+        if (notify) changed = notify;
+        return {
+          ...(make?.(community, store, notify) as object),
+          binding: () => ({
+            instructions: {
+              mode,
+              subject: {
+                owner: viewer,
+                community: home,
+                subject: alder,
+                channel: CH,
+                type: "buzz.agent.instructions",
+              },
+            },
+          }),
+        };
+      };
+      const f = await setup({ identities: [here(alder)] });
+      await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+      expect(f.service.agentSync(alder)).toBeUndefined();
+      const heard = vi.fn();
+      f.service.subscribe(heard);
+      mode = "local";
+      changed();
+      expect(heard).toHaveBeenCalled();
+      expect(f.service.agentSync(alder)).toEqual({ local: "failed" });
     });
 
     it("keeps a team whose agents are in different communities local, saying so", async () => {

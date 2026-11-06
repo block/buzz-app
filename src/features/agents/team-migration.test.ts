@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { memoryStorage } from "./test-fakes";
 import {
@@ -44,6 +44,22 @@ describe("TeamMoves", () => {
     const again = new TeamMoves(storage);
     expect(again.get("one")).toBeUndefined();
     expect(again.get("two")).toEqual({ community: b, failed: true });
+  });
+  it("keeps no entry from overlapping refused writes", async () => {
+    const storage = memoryStorage();
+    const moves = new TeamMoves(storage);
+    await moves.set("kept", { community: a });
+    vi.spyOn(storage, "set").mockRejectedValue(new Error("disk full"));
+    const one = moves.set("one", { community: a });
+    const two = moves.set("two", { community: b });
+    await expect(one).rejects.toThrow("disk full");
+    await expect(two).rejects.toThrow("disk full");
+    expect(moves.get("one")).toBeUndefined();
+    expect(moves.get("two")).toBeUndefined();
+    expect(moves.get("kept")).toEqual({ community: a });
+    expect(JSON.parse(storage.get(TEAM_MOVES_KEY) ?? "{}").moves).toEqual({
+      kept: { community: a },
+    });
   });
   it("starts empty from malformed data", async () => {
     const storage = memoryStorage();

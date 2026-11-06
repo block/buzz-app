@@ -99,6 +99,7 @@ import {
 } from "../../plugins/contributions";
 import { channelTemplates, templateAgents } from "../channel-templates/local";
 import { moveHome, TeamMoves, type SyncState } from "./team-migration";
+import { NO_TEAM_CHANNEL } from "./team-ops";
 import type { LocalAgentsSnapshot } from "./local";
 import { unshare } from "./agent-share";
 import {
@@ -4732,9 +4733,13 @@ export class AgentsService extends Service implements Agents {
         throw new Error(
           `Connect to ${hostOf({ relay: move.community })} to delete this team`,
         );
-      const copy = await this.movedTeamId(id, move.community, owner);
-      if (this.synced().some((entry) => entry.team.id === copy))
-        await config.removeTeam(copy);
+      // Found on the relay by its fixed id, and its archive confirmed;
+      // none there means the move made no copy.
+      await config
+        .removeTeam(await this.movedTeamId(id, move.community, owner))
+        .catch((error: unknown) => {
+          if (message(error) !== NO_TEAM_CHANNEL) throw error;
+        });
     }
     await this.writeTeams(this.teamList.filter((team) => team.id !== id));
     if (move) await this.teamMoves.set(id, undefined);
@@ -5930,6 +5935,8 @@ export class AgentsService extends Service implements Agents {
         changed: () => {
           this.teamsChanged();
           this.update();
+          // A sync mode can change with no row changing: status lines read it.
+          this.notify();
         },
       },
       binding.controller.signal,

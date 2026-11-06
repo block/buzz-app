@@ -56,6 +56,8 @@ export type TeamDeps = Readonly<{
   signal: AbortSignal;
 }>;
 
+/** A strong find saw no config channel for the team. */
+export const NO_TEAM_CHANNEL = "This team's config channel can't be found";
 const OFFLINE = "Connect to the team's community to change it";
 
 const others = (channel: ConfigChannel, owner: string) =>
@@ -242,8 +244,7 @@ export function teamOps(deps: TeamDeps) {
           await teamSubject(id),
           signal,
         );
-        if (!channel)
-          throw new Error("This team's config channel can't be found");
+        if (!channel) throw new Error(NO_TEAM_CHANNEL);
         if (!channel.archived) await channels.archive(channel.id, signal);
         if (!(await channels.archived(channel.id, signal)))
           throw new Error("The team's deletion couldn't be confirmed");

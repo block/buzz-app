@@ -37,9 +37,13 @@ export function moveHome(
   return { home };
 }
 
-/** The moves under way, by local team id. */
+/** The moves under way, by local team id. Writes run one at a time, each
+ * saving what memory holds then; a refused one puts back only its own
+ * entry, as last saved. */
 export class TeamMoves {
   private moves: Record<string, TeamMove> = {};
+  private saved: Record<string, TeamMove> = {};
+  private writing: Promise<unknown> = Promise.resolve();
   constructor(private readonly storage: AgentStore) {
     try {
       const stored = JSON.parse(storage.get(TEAM_MOVES_KEY) ?? "null") as {
@@ -53,26 +57,39 @@ export class TeamMoves {
     } catch {
       /* Malformed local data: moves start again from their teams. */
     }
+    this.saved = this.moves;
   }
   get = (id: string): TeamMove | undefined => this.moves[id];
   /** Saves `move` for team `id`, or that it is done; settles once saved. */
-  async set(id: string, move: TeamMove | undefined) {
-    const prior = this.moves;
-    const { [id]: _, ...rest } = prior;
-    const next = move ? { ...rest, [id]: move } : rest;
-    this.moves = next;
-    try {
-      await this.storage.set(
-        TEAM_MOVES_KEY,
-        JSON.stringify({ version: 1, moves: next }),
-      );
-    } catch (error) {
-      // Memory never trusts what storage didn't take.
-      if (this.moves === next) this.moves = prior;
-      throw error;
-    }
+  set(id: string, move: TeamMove | undefined) {
+    this.moves = withMove(this.moves, id, move);
+    const write = this.writing.then(async () => {
+      const next = this.moves;
+      try {
+        await this.storage.set(
+          TEAM_MOVES_KEY,
+          JSON.stringify({ version: 1, moves: next }),
+        );
+        this.saved = next;
+      } catch (error) {
+        // Memory never trusts what storage didn't take.
+        this.moves = withMove(this.moves, id, this.saved[id]);
+        throw error;
+      }
+    });
+    this.writing = write.catch(() => {});
+    return write;
   }
 }
+
+const withMove = (
+  moves: Record<string, TeamMove>,
+  id: string,
+  move: TeamMove | undefined,
+) => {
+  const { [id]: _, ...rest } = moves;
+  return move ? { ...rest, [id]: move } : rest;
+};
 
 const REASONS: Record<"team" | "agent", Record<LocalReason, string>> = {
   team: {

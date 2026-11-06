@@ -54,6 +54,10 @@ const unavailable = () =>
   new Error(
     "Your owner's Buzz is not connected to this community as them, so owner tools are unavailable now.",
   );
+const notOwners = (id: string) =>
+  new Error(
+    `Channel ${id} is not in your owner's channels; owner_channel_list lists them.`,
+  );
 const changed = () =>
   new Error(
     "Your owner's connection changed during the call, so nothing was returned. Try again.",
@@ -140,6 +144,8 @@ export function createOwnerAccess(
         `Channel ${id} was not found or your owner cannot see it.`,
       );
     const rights = memberAuthority(events, id, viewer, relayAuthor);
+    // Whatever the session's list says, a system channel is never read.
+    if (rights.system) throw notOwners(id);
     // memberAuthority has verified all three records.
     const metadata = lifecycleRecord(
       events,
@@ -155,10 +161,7 @@ export function createOwnerAccess(
     const item =
       session.channels.list().channels.find((each) => each.id === id) ??
       session.channels.get?.(id);
-    if (!item || item.channelType === "system")
-      throw new Error(
-        `Channel ${id} is not in your owner's channels; owner_channel_list lists them.`,
-      );
+    if (!item || item.channelType === "system") throw notOwners(id);
     return item;
   };
   const channelId = (id: string) => {

@@ -887,6 +887,84 @@ describe("GooseRuntime", () => {
     expect(channels).toHaveBeenCalledOnce();
   });
 
+  it("answers a watch's or timer's Buzz calls while it runs, and none once it is stopped", async () => {
+    const f = setup({
+      hold: true,
+      memoryRead: async (_pubkey, _signal, slug) => ({
+        entries: [{ slug: slug ?? "core", body: "core notes", createdAt: 1 }],
+        partial: false,
+      }),
+    });
+    const listing = {
+      execution: { agent: self, owner: alice, community: "relay" },
+      channels: [
+        {
+          id: channel,
+          name: "Owner secrets",
+          type: "stream" as const,
+          visibility: "private" as const,
+          archived: false,
+        },
+      ],
+      partial: false,
+    };
+    let release: (() => void) | undefined;
+    let entered!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const channels = vi.fn<OwnerAccess["channels"]>(async () => {
+      if (channels.mock.calls.length > 1) {
+        entered();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return listing;
+    });
+    Object.assign(f.agent, {
+      ownerAccess: { channels, held: vi.fn<OwnerAccess["held"]>() },
+    });
+    const stop = new AbortController();
+    const done = f.runtime.runOnce({
+      delivery: { agent: f.agent, channelId: channel, config: DEFAULT_CONFIG },
+      key: "timer/daily",
+      signal: stop.signal,
+      prompt: async () => "Check my channels.",
+    } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
+    try {
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const process = f.goose();
+      const sessionId = process?.turns[0]?.sessionId;
+      if (!process || !sessionId) throw new Error("Goose turn did not start");
+      const call = (name: string) =>
+        process.mcp(sessionId, "tools/call", {
+          name,
+          arguments: name === "mem_get" ? { slug: "core" } : {},
+        });
+      const memory = await call("mem_get");
+      expect(memory?.result).not.toMatchObject({ isError: true });
+      expect(JSON.stringify(memory)).toContain("core notes");
+      const owned = await call("owner_channel_list");
+      expect(owned?.result).not.toMatchObject({ isError: true });
+      expect(JSON.stringify(owned)).toContain("Owner secrets");
+
+      const pending = call("owner_channel_list");
+      await reading;
+      stop.abort(new Error("stopped"));
+      await done;
+      release?.();
+      const refused = await pending;
+      expect(refused?.result).toMatchObject({ isError: true });
+      expect(JSON.stringify(refused)).not.toContain("Owner secrets");
+      expect(JSON.stringify(refused)).toContain("turn has ended");
+    } finally {
+      release?.();
+      stop.abort();
+      await done;
+    }
+  });
+
   it("posts nothing goose wrote without `send`", async () => {
     // Text the agent writes outside `send` is narration, not a reply.
     for (const reply of ["I've replied to Will.", "Plain answer"]) {

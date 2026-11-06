@@ -171,6 +171,9 @@ export class ClaudeProcess {
   private stopping = false;
   /** Claude ended a turn aborted while the owner was stopping it. */
   private stopped = false;
+  /** Aborts when the owner stops the work; the next message starts anew, so a
+   * stopped turn's tool calls stay stopped. */
+  private workLifetime = new AbortController();
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
   /** It runs a turn of its own, such as one a finished background task starts. */
@@ -552,6 +555,8 @@ export class ClaudeProcess {
     // The model first: effort applies to whichever model runs.
     this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
     this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    if (this.workLifetime.signal.aborted)
+      this.workLifetime = new AbortController();
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;
@@ -579,6 +584,8 @@ export class ClaudeProcess {
   async interrupt() {
     if (!this.alive || !this.active) return;
     this.stopping = true;
+    const work = this.workLifetime;
+    work.abort(new Error("The owner stopped the turn"));
     if (this.protection) {
       this.protectionLifetime.abort();
       this.stopped = true;
@@ -589,6 +596,8 @@ export class ClaudeProcess {
     const answer = await this.call({ subtype: "interrupt" });
     if (answer.subtype === "error" && this.alive) {
       this.stopping = false;
+      // The turn goes on; calls it makes from now are not stopped.
+      if (this.workLifetime === work) this.workLifetime = new AbortController();
       throw new Error(`Claude did not stop: ${String(answer.error)}`);
     }
   }
@@ -849,7 +858,10 @@ export class ClaudeProcess {
         mcp_response: await this.tools(
           this.conversation,
           request.message,
-          this.protectionLifetime.signal,
+          AbortSignal.any([
+            this.protectionLifetime.signal,
+            this.workLifetime.signal,
+          ]),
         ).catch((error) => ({
           jsonrpc: "2.0",
           id: (request.message as Message | undefined)?.id ?? 0,

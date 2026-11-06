@@ -326,6 +326,26 @@ describe("owner access", () => {
     ).rejects.toThrow();
   });
 
+  it("reads nothing more from a channel the relay says is a system channel, whatever the list says", async () => {
+    const untyped = "55555555-5555-4555-8555-555555555555";
+    const fake = fakeSession(
+      { channels: [{ id: untyped, name: "Setup", members: [owner] }] },
+      () => signed(untyped, { [owner]: "owner" }, [["t", "system"]]),
+    );
+    const access = createOwnerAccess(
+      { pubkey: agent, owner },
+      bound(fake.session).bind,
+    );
+    await expect(access.channel(untyped)).rejects.toThrow(
+      "not in your owner's channels",
+    );
+    await expect(
+      access.members(untyped, { offset: 0, limit: 10 }),
+    ).rejects.toThrow("not in your owner's channels");
+    expect(fake.readRemote).toHaveBeenCalledTimes(2);
+    expect(fake.ensure).not.toHaveBeenCalled();
+  });
+
   it("reads no roster for a channel outside the owner's channels", async () => {
     const fake = fakeSession({ channels: [] }, () =>
       signed(joined, { [owner]: "owner" }),

@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { appClient } from "../../buzz-mcp/app-client";
+import type { OwnerAccess } from "../../buzz-mcp/client";
+import { callSessionTool } from "../../buzz-mcp/session-tools";
+import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
   backgroundTasks,
@@ -388,6 +392,133 @@ it("settles a stopped turn that Claude ends as aborted tools as stopped, not fai
   abortTools(fake);
   await expect(sent).resolves.toEqual({ ok: true, stopped: true });
   expect(claude.busy).toBe(false);
+});
+
+it("withholds an owner read an unprotected Stop overtook, which later work cannot revive", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const listing = {
+    execution: { agent: "agent", owner: "owner", community: "relay" },
+    channels: [
+      {
+        id: "c",
+        name: "Owner secrets",
+        type: "stream" as const,
+        visibility: "private" as const,
+        archived: false,
+      },
+    ],
+    partial: false,
+  };
+  let release: (() => void) | undefined;
+  let entered!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const channels = vi.fn<OwnerAccess["channels"]>(async () => {
+    if (channels.mock.calls.length === 1) {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    return listing;
+  });
+  const ownerAccess = {
+    channels,
+    channel: vi.fn(),
+    members: vi.fn(),
+    held: vi.fn<OwnerAccess["held"]>(),
+  };
+  const signals: AbortSignal[] = [];
+  const tools = vi.fn(
+    async (_conversation: unknown, message: unknown, signal: AbortSignal) => {
+      signals.push(signal);
+      const id = (message as { id: number }).id;
+      const client = appClient(
+        {
+          pubkey: "agent",
+          key: "agent",
+          ownerAccess,
+        } as unknown as AgentHandle,
+        {
+          read: vi.fn(),
+          memories: async () => ({ entries: [], partial: false }),
+          signal,
+        },
+      );
+      return callSessionTool(client, {}, "owner_channel_list", {}).then(
+        (text) => ({ jsonrpc: "2.0", id, result: { content: [{ text }] } }),
+        (error: Error) => ({
+          jsonrpc: "2.0",
+          id,
+          result: { isError: true, content: [{ text: error.message }] },
+        }),
+      );
+    },
+  );
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+    tools,
+  });
+  claude.conversation = "chan/root";
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  const answer = async (requestId: string) => {
+    await vi.waitFor(() =>
+      expect(
+        fake.received.some(
+          (message) =>
+            (message.response as { request_id?: string } | undefined)
+              ?.request_id === requestId,
+        ),
+      ).toBe(true),
+    );
+    return JSON.stringify(
+      fake.received.find(
+        (message) =>
+          (message.response as { request_id?: string } | undefined)
+            ?.request_id === requestId,
+      ),
+    );
+  };
+  const ask = (requestId: string, id: number) =>
+    fake.emit({
+      type: "control_request",
+      request_id: requestId,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: { jsonrpc: "2.0", id, method: "tools/call" },
+      },
+    });
+  try {
+    fake.hold = true;
+    const stopped = claude.send("list my channels");
+    await flush();
+    ask("r1", 1);
+    await reading;
+    await claude.interrupt();
+    release?.();
+    const refused = await answer("r1");
+    expect(refused).toContain('"isError":true');
+    expect(refused).not.toContain("Owner secrets");
+    expect(ownerAccess.held).not.toHaveBeenCalled();
+    abortTools(fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+
+    // The next message is new work; the stopped call stays stopped.
+    void claude.send("again");
+    await flush();
+    ask("r2", 2);
+    const answered = await answer("r2");
+    expect(answered).toContain("Owner secrets");
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+  } finally {
+    release?.();
+    fake.finish();
+  }
 });
 
 it("still reports aborted tools as a failure when the owner did not stop the turn", async () => {

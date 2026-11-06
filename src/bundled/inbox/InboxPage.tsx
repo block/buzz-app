@@ -120,19 +120,21 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
-/** A DM resuming at a top-level message, a DM reaction and a Solo chat's own
- * messages open whole; others, including a DM's thread replies, open at their
- * message. A DM reads as one channel, so its read target never names the
- * thread. */
+/** DMs, including their reactions, and a Solo chat's own messages open whole;
+ * others open at their message. Reading any of a DM reads all of it, so a DM
+ * row opens as its thread only when that thread alone shows its unread
+ * messages. */
 const tabTarget = (
-  item: Pick<InboxItem, "channelId" | "messageId" | "rootId" | "thread"> & {
+  item: Pick<
+    InboxItem,
+    "channelId" | "messageId" | "rootId" | "thread" | "threadOnly"
+  > & {
     target?: InboxItem["target"];
   },
   channel: { channelType?: string } | undefined,
 ): PageTabTarget =>
-  (item.target
-    ? item.target.kind === "channel" && !item.rootId
-    : channel?.channelType === "dm") ||
+  ((item.target?.kind === "channel" || channel?.channelType === "dm") &&
+    !item.threadOnly) ||
   (channel?.channelType === "solo" && !item.thread)
     ? { channelId: item.channelId }
     : {
@@ -1188,13 +1190,15 @@ function InboxList({
                           onClick={() => {
                             if (busy.current) return;
                             // The selected row reveals its current message in
-                            // its captured tab, even after regrouping would
-                            // open a whole conversation as a thread.
+                            // its captured tab, even after regrouping or
+                            // reading would open a whole conversation as a
+                            // thread. A captured thread follows the row,
+                            // which may now open whole.
                             const reselect =
                               selectedId === item.id &&
                               opened &&
-                              !opened.threadId !==
-                                !tabTarget(item, channel).threadId
+                              !opened.threadId &&
+                              tabTarget(item, channel).threadId
                                 ? opened
                                 : undefined;
                             if (

@@ -1186,6 +1186,10 @@ export function createUnread({
               ...(representative.rootId
                 ? { rootId: representative.rootId }
                 : {}),
+              ...(representative.rootId &&
+              unread.every((entry) => entry.rootId === representative.rootId)
+                ? { threadOnly: true as const }
+                : {}),
               authorId: shown.pubkey,
               workflowOwnerId: workflowOwner(shown, workflowAuthority),
               preview: content.get(shown.id) ?? shown.content,

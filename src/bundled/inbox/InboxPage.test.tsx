@@ -4115,6 +4115,55 @@ it("opens a DM row's whole conversation in a tab", async () => {
   expect(h.open).not.toHaveBeenCalled();
 });
 
+/** A DM with Alice holding `messages`, beside the fixture's channel rows. */
+function seedDm(
+  h: ReturnType<typeof fixture>,
+  messages: readonly RelayEvent[],
+) {
+  const dm = [
+    roster(h.relayKey, "dm-room", [h.viewer.pubkey, h.alice.pubkey], 10),
+    metadata(h.relayKey, "dm-room", "Direct message", 10, [
+      ["t", "dm"],
+      ["hidden"],
+    ]),
+    ...messages,
+  ];
+  for (const event of dm) h.addEvent(event);
+  h.emit(dm);
+  return {
+    row: () =>
+      h.owner.session.unread
+        .inbox()
+        .items.find((item) => item.channelId === "dm-room"),
+    open: () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
+      ),
+  };
+}
+/** The open DM tab's shape: its whole timeline, or one of its threads. */
+async function dmTabShows(shape: "whole" | "thread") {
+  await waitFor(() =>
+    expect(sideTabs()).toEqual([
+      shape === "whole" ? "Alice" : "Thread · Alice",
+    ]),
+  );
+  const tab = await screen.findByRole("region", {
+    name: "Conversation in Alice",
+  });
+  const [present, absent] =
+    shape === "whole"
+      ? ["Channel message history", "Thread messages"]
+      : ["Thread messages", "Channel message history"];
+  expect(
+    within(tab).getByRole("region", { name: present }),
+  ).toBeInTheDocument();
+  expect(
+    within(tab).queryByRole("region", { name: absent }),
+  ).not.toBeInTheDocument();
+  return tab;
+}
+
 it("opens a DM row resuming at a thread reply in that thread, at the reply", async () => {
   const h = fixture();
   // Alice's only DM activity is a reply under the viewer's DM message.
@@ -4122,38 +4171,98 @@ it("opens a DM row resuming at a thread reply in that thread, at the reply", asy
   const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
     ["e", root.id, "", "reply"],
   ]);
-  const dm = [
-    roster(h.relayKey, "dm-room", [h.viewer.pubkey, h.alice.pubkey], 10),
-    metadata(h.relayKey, "dm-room", "Direct message", 10, [
-      ["t", "dm"],
-      ["hidden"],
-    ]),
-    root,
-    reply,
-  ];
-  for (const event of dm) h.addEvent(event);
-  h.emit(dm);
+  const dm = seedDm(h, [root, reply]);
   render(h.view);
   await waitFor(() => expect(rows()).toHaveLength(3));
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
-  );
-  const tab = await screen.findByRole("region", {
-    name: "Conversation in Alice",
-  });
-  expect(sideTabs()).toEqual(["Thread · Alice"]);
-  expect(
-    within(tab).getByRole("region", { name: "Thread messages" }),
-  ).toBeInTheDocument();
-  expect(
-    within(tab).queryByRole("region", { name: "Channel message history" }),
-  ).not.toBeInTheDocument();
+  dm.open();
+  const tab = await dmTabShows("thread");
   await waitFor(() =>
     expect(
       tab.querySelector(`[data-message-id="${reply.id}"]`),
     ).toBeInTheDocument(),
   );
   expect(h.open).not.toHaveBeenCalled();
+});
+
+it("opens a DM whole when an older unread thread reply precedes newer top-level messages, and re-clicking keeps it whole", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const one = message(h.alice, "dm-room", "Top level one", 25);
+  const two = message(h.alice, "dm-room", "Top level two", 26);
+  const dm = seedDm(h, [root, reply, one, two]);
+  render(h.view);
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({ messageId: reply.id, unreadCount: 3 }),
+  );
+  expect(dm.row()?.threadOnly).toBeUndefined();
+  // Reading the row reads the whole DM, so its tab shows the top-level messages.
+  dm.open();
+  await dmTabShows("whole");
+  // Read, the row resumes at its newest, top-level message.
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({ messageId: two.id, unreadCount: 0 }),
+  );
+  dm.open();
+  await act(async () => {});
+  await dmTabShows("whole");
+  expect(h.open).not.toHaveBeenCalled();
+});
+
+it("opens a DM whole when an older unread top-level message precedes a newer thread reply, and re-clicking keeps it whole once read", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const top = message(h.alice, "dm-room", "A top-level message", 24);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 25, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = seedDm(h, [root, top, reply]);
+  render(h.view);
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({ messageId: top.id, unreadCount: 2 }),
+  );
+  dm.open();
+  await dmTabShows("whole");
+  // Read, the row would now open its newest message's thread, but
+  // re-clicking keeps the whole DM it opened.
+  await waitFor(() =>
+    expect(dm.row()).toMatchObject({
+      messageId: reply.id,
+      threadOnly: true,
+      unreadCount: 0,
+    }),
+  );
+  dm.open();
+  await act(async () => {});
+  await dmTabShows("whole");
+});
+
+it("re-clicking a DM row opened as a thread opens the whole DM once a top-level message arrives", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = seedDm(h, [root, reply]);
+  render(h.view);
+  await waitFor(() => expect(dm.row()?.threadOnly).toBe(true));
+  dm.open();
+  const thread = await dmTabShows("thread");
+  await waitFor(() =>
+    expect(
+      thread.querySelector(`[data-message-id="${reply.id}"]`),
+    ).toBeInTheDocument(),
+  );
+  const top = message(h.alice, "dm-room", "A new top-level message", 25);
+  h.addEvent(top);
+  act(() => h.emit([top]));
+  await waitFor(() => expect(dm.row()?.messageIds).toContain(top.id));
+  expect(dm.row()?.threadOnly).toBeUndefined();
+  // The captured thread would hide the row's current message.
+  dm.open();
+  await dmTabShows("whole");
 });
 
 it.each([false, true])(

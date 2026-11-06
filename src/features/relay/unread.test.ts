@@ -2763,6 +2763,63 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
   stop();
 });
 
+it("a DM row is threadOnly only while its representative's thread holds all its unread messages", async () => {
+  const h = setup();
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const root = message(h.viewer, "dm", "Our topic", 20);
+  const reply = (content: string, at: number) =>
+    message(h.alice, "dm", content, at, [["e", root.id, "", "reply"]]);
+  const unread = h.session.unread;
+  const row = () => {
+    const found = unread.inbox().items.find((item) => item.channelId === "dm");
+    assert(found);
+    return found;
+  };
+  // A DM reader's dwell reads all of it, through its newest message.
+  const read = async (seen: string) => {
+    const lease = unread.reading("dm");
+    await lease.observe([seen]);
+    lease.dispose();
+  };
+  const first = reply("First reply", 21);
+  h.emit([root, first]);
+  expect(row()).toMatchObject({
+    messageId: first.id,
+    rootId: root.id,
+    threadOnly: true,
+    unreadCount: 1,
+  });
+  // An older reply with a newer top-level message: the thread hides the latter.
+  const top = message(h.alice, "dm", "Top level", 22);
+  h.emit([top]);
+  expect(row()).toMatchObject({
+    messageId: first.id,
+    rootId: root.id,
+    unreadCount: 2,
+  });
+  expect(row().threadOnly).toBeUndefined();
+  // Read, it follows its newest message, which is top-level.
+  await read(top.id);
+  expect(row()).toMatchObject({ messageId: top.id, unreadCount: 0 });
+  expect(row().threadOnly).toBeUndefined();
+  // An older top-level message with a newer reply resumes at the former.
+  const later = message(h.alice, "dm", "Later top level", 23);
+  const second = reply("Second reply", 24);
+  h.emit([later, second]);
+  expect(row()).toMatchObject({ messageId: later.id, unreadCount: 2 });
+  expect(row().rootId).toBeUndefined();
+  expect(row().threadOnly).toBeUndefined();
+  // Read, it follows its newest message, a reply.
+  await read(later.id);
+  expect(row()).toMatchObject({
+    messageId: second.id,
+    rootId: root.id,
+    threadOnly: true,
+    unreadCount: 0,
+  });
+});
+
 it("inbox groups a Solo chat's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
   const h = setup();
   h.grant("room");

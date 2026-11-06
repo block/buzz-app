@@ -2255,6 +2255,42 @@ it("bottom catch-up reads top-level mentions and broadcasts; participating threa
   lease.dispose();
 });
 
+it.each([19, 20])(
+  "catch-up leaves attention arriving during its save unread (timestamp=%s)",
+  async (timestamp) => {
+    const h = setup();
+    h.grant("room");
+    const mention = message(h.alice, "room", "already visible", 15, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const bottom = message(h.alice, "room", "bottom", 20);
+    h.emit([channelMetadata(h, "stream"), mention, bottom]);
+    const late = message(h.alice, "room", "arrived during save", timestamp, [
+      ["p", h.viewer.pubkey],
+    ]);
+    const lease = h.session.unread.reading("room");
+    const held = h.holdSaveStarted();
+    const pending = lease.catchUp(bottom.id);
+    try {
+      await held.started;
+      h.emit([late]);
+      expect(h.session.unread.attention("room", late.id).unread).toBe(true);
+    } finally {
+      held.release();
+    }
+    await pending;
+    expect(h.journal()?.state.frontiers).toEqual({
+      "activity:room": 20,
+      [`msg:${mention.id}`]: 15,
+    });
+    expect(h.session.unread.attention("room", mention.id).unread).toBe(false);
+    expect(h.session.unread.attention("room", late.id).unread).toBe(true);
+    await lease.observe([late.id]);
+    expect(h.session.unread.attention("room", late.id).unread).toBe(false);
+    lease.dispose();
+  },
+);
+
 it.each(["catchUp", "observe"] as const)(
   "reading a DM (%s) reads all of it and ends its manual unread",
   async (step) => {

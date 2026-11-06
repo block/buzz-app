@@ -30,6 +30,7 @@ export function DraftPreview({
   entry,
   title,
   channel,
+  loading = false,
   session,
   host,
   extensions,
@@ -41,14 +42,16 @@ export function DraftPreview({
   entry: Entry;
   title: string;
   channel: ChannelSummary | undefined;
+  loading?: boolean;
   session: RelaySession;
   host: ConversationHostServices;
   extensions?: ConversationExtensions | undefined;
   autoFocus: boolean;
   onClose(): void;
   onOpen(): void;
-  onSaved(): void;
+  onSaved(restoreFocus: boolean): void;
 }) {
+  const region = useRef<HTMLElement>(null);
   const [sent, setSent] = useState<string>();
   const sending = useRef<string | undefined>(undefined);
   const [received, setReceived] = useState<string>();
@@ -74,7 +77,10 @@ export function DraftPreview({
       received === sent &&
       viewRevision(session.scope, entry.id) === cleaned.revision
     )
-      onSaved();
+      onSaved(
+        document.activeElement === document.body ||
+          !!region.current?.contains(document.activeElement),
+      );
   }, [cleaned, sent, received, session, entry.id, onSaved]);
   const sentMessage = (id: string) => {
     sending.current = id;
@@ -84,6 +90,11 @@ export function DraftPreview({
     setCleaned({ revision: viewRevision(session.scope, entry.id) });
   const close = useRef<HTMLButtonElement>(null);
   const [copyStatus, setCopyStatus] = useState("");
+  const waiting =
+    loading ||
+    !!channel?.cached ||
+    !!channel?.pending ||
+    (!!channel && !channel.members);
   const writable =
     channel &&
     !channel.cached &&
@@ -110,12 +121,16 @@ export function DraftPreview({
   }
   return (
     <section
+      ref={region}
       className={styles.draftPreview}
       aria-label={`Draft for ${title}`}
       onKeyDown={(event) => {
         if (
           event.key !== "Escape" ||
           event.defaultPrevented ||
+          event.shiftKey ||
+          event.nativeEvent.isComposing ||
+          event.nativeEvent.keyCode === 229 ||
           !event.currentTarget.contains(event.target as Node)
         )
           return;
@@ -154,7 +169,11 @@ export function DraftPreview({
           Back to drafts
         </Button>
       </div>
-      {writable ? (
+      {waiting ? (
+        <p role="status" className="text-body-sm text-subtle">
+          Loading conversation…
+        </p>
+      ) : writable ? (
         <ConversationChannel
           session={session}
           scope={session.scope}
@@ -185,7 +204,9 @@ export function DraftPreview({
       ) : (
         <div className={styles.draftUnavailable}>
           <p className="text-body-sm text-subtle">
-            You can’t post in {title} anymore. Your draft is still saved.
+            {channel
+              ? `You can’t post in ${title} anymore. Your draft is still saved.`
+              : "This conversation isn’t available right now. Your draft is still saved."}
           </p>
           <Button size="sm" onClick={() => void copy()}>
             Copy text

@@ -11,6 +11,10 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { DraftPreview } from "./DraftPreview";
+import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
+import { mentionQuery } from "../../bundled/mentions/mention-query";
+import type { ConversationExtensions } from "../conversation/contracts";
 import { DraftsSentPage } from "./DraftsSentPage";
 import { PublishRejected } from "../relay/outbox";
 import type { ComposerInputElement } from "../messages/composer-dom";
@@ -158,16 +162,19 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   } as unknown as Panels;
   return {
     session,
+    panels,
+    host: { panels, relay, navigation: { open } as unknown as Navigation },
     root,
     published,
     publish,
     open,
-    render: () =>
+    render: (extensions?: ConversationExtensions) =>
       render(
         <DraftsSentPage
           relay={relay}
           navigator={{ open } as unknown as Navigation}
           panels={panels}
+          extensions={extensions}
         />,
       ),
     reject: () => {
@@ -386,7 +393,10 @@ it("rechecks posting access, preserves the draft, and offers a text copy", async
   );
   await screen.findByRole("textbox");
   act(() => h.revoke());
-  await screen.findByText(/You can’t post/);
+  await screen.findByText(/Your draft is still saved/);
+  expect(draftButton("Saved after access changes")).not.toHaveAttribute(
+    "title",
+  );
   expect(screen.queryByRole("textbox")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Copy text" }));
   await waitFor(() =>
@@ -531,4 +541,148 @@ it("waits for a background attachment send whose draft cleanup happens before de
   );
   expect(h.published).toHaveLength(1);
   expect(h.published[0]?.tags.some(([tag]) => tag === "imeta")).toBe(true);
+});
+
+it("does not steal search focus when delayed delivery closes the preview", async () => {
+  const h = fixture();
+  const release = h.hold();
+  writeView(h.session.scope, "draft:room", "Delayed");
+  h.render();
+  const search = screen.getByRole("searchbox");
+  try {
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Continue draft.*Delayed/ }),
+    );
+    await screen.findByRole("textbox");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(h.publish).toHaveBeenCalled());
+    search.focus();
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Draft for #Design" }),
+    ).toBeNull(),
+  );
+  expect(search).toHaveFocus();
+});
+
+it.each([{ isComposing: true }, { keyCode: 229 }, { shiftKey: true }])(
+  "keeps the preview open for modified/composing Escape %j",
+  async (modifiers) => {
+    const h = fixture();
+    writeView(h.session.scope, "draft:room", "Keep typing");
+    h.render();
+    const row = await screen.findByRole("button", {
+      name: /Continue draft.*Keep typing/,
+    });
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-current", "true");
+    const editor = await screen.findByRole("textbox");
+    fireEvent.keyDown(editor, { key: "Escape", ...modifiers });
+    expect(
+      screen.getByRole("region", { name: "Draft for #Design" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(editor, { key: "Escape" });
+    expect(
+      screen.queryByRole("region", { name: "Draft for #Design" }),
+    ).toBeNull();
+  },
+);
+
+it("dismisses mention suggestions without closing the draft preview", async () => {
+  const h = fixture();
+  const empty: never[] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const completions = [
+    {
+      id: "mentions",
+      key: "buzz.mentions/mentions",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mention",
+      match: ({ text, start }: { text: string; start: number }) =>
+        mentionQuery(text, start),
+      component: MentionCompletion,
+    },
+  ];
+  writeView(h.session.scope, "draft:room", "Hello");
+  h.render({
+    tools: none,
+    inline: none,
+    completions: { snapshot: () => completions, subscribe: () => () => {} },
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue draft.*Hello/ }),
+  );
+  const editor = (await screen.findByRole("textbox")) as ComposerInputElement;
+  act(() => {
+    editor.focus();
+    editor.value = "@";
+    editor.setSelectionRange(1, 1);
+    fireEvent.input(editor);
+    fireEvent(document, new Event("selectionchange"));
+  });
+  await screen.findByRole("listbox");
+  fireEvent.keyDown(editor, { key: "Escape" });
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(
+    screen.getByRole("region", { name: "Draft for #Design" }),
+  ).toBeInTheDocument();
+});
+
+it.each([
+  { id: "room", name: "Design", cached: true as const },
+  { id: "room", name: "Design", pending: true as const },
+  { id: "room", name: "Design" },
+  undefined,
+])(
+  "shows loading instead of lost-access copy for unresolved channel %j",
+  (channel) => {
+    const h = fixture();
+    const props = {
+      entry: { id: "draft:room", channelId: "room", text: "Keep this" },
+      title: "#Design",
+      session: h.session,
+      host: h.host,
+      autoFocus: false,
+      onClose: vi.fn(),
+      onOpen: vi.fn(),
+      onSaved: vi.fn(),
+    };
+    const view = render(
+      <DraftPreview {...props} channel={channel} loading={!channel} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading conversation",
+    );
+    expect(screen.queryByText(/can’t post/)).toBeNull();
+    view.rerender(
+      <DraftPreview
+        {...props}
+        channel={{ id: "room", name: "Design", members: [] }}
+      />,
+    );
+    expect(screen.getByText(/can’t post/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy text" })).toBeEnabled();
+  },
+);
+
+it("clears the live announcement between two sends to the same conversation", async () => {
+  const h = fixture();
+  h.render();
+  for (const text of ["First", "Second"]) {
+    act(() => writeView(h.session.scope, "draft:room", text));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: new RegExp(`Continue draft.*${text}`),
+      }),
+    );
+    expect(screen.queryByText("Sent to #Design.")).toBeNull();
+    await screen.findByRole("textbox");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Sent to #Design.");
+  }
+  expect(h.published).toHaveLength(2);
 });

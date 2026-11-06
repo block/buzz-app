@@ -212,7 +212,9 @@ function ScopedPage({
     }
   }, [selected]);
   const drafts = useDrafts(session);
-  const { channels } = useChannelList(session.channels);
+  const { channels, status: channelListStatus } = useChannelList(
+    session.channels,
+  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -499,15 +501,16 @@ function ScopedPage({
     }
   }
 
-  function closePreview(current: Visit, sent = false) {
+  function closePreview(current: Visit, sent = false, restoreFocus = true) {
     if (visit.current !== current) return;
     const row = current.trigger.closest("li");
     const neighbor = (
       row?.nextElementSibling ?? row?.previousElementSibling
     )?.querySelector<HTMLElement>("[data-draft-row]");
-    neighborAfterClose.current = neighbor ?? null;
-    focusAfterClose.current =
-      !sent && current.trigger.isConnected
+    neighborAfterClose.current = restoreFocus ? (neighbor ?? null) : null;
+    focusAfterClose.current = !restoreFocus
+      ? null
+      : !sent && current.trigger.isConnected
         ? current.trigger
         : (neighbor ?? searchInput.current);
     visit.current = undefined;
@@ -597,9 +600,12 @@ function ScopedPage({
         aria-label={label}
         disabled={!draft && !place.available}
         selected={draft && selected?.entry.id === entry.id}
+        aria-current={
+          draft && selected?.entry.id === entry.id ? "true" : undefined
+        }
         data-draft-row={draft ? "" : undefined}
         title={
-          place.available
+          draft || place.available
             ? undefined
             : "This conversation is not available right now"
         }
@@ -620,6 +626,7 @@ function ScopedPage({
           );
           visit.current = next;
           setSelected(next);
+          setAnnouncement("");
           setNotice(undefined);
         }}
         avatar={
@@ -835,7 +842,14 @@ function ScopedPage({
               autoFocus={selected.autoFocus}
               onClose={() => closePreview(selected)}
               onOpen={() => void open(selected.entry, true)}
-              onSaved={() => closePreview(selected, true)}
+              loading={
+                !byId.get(selected.entry.channelId) &&
+                (channelListStatus === "idle" ||
+                  channelListStatus === "loading")
+              }
+              onSaved={(restoreFocus) =>
+                closePreview(selected, true, restoreFocus)
+              }
             />
           )}
         </section>

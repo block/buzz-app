@@ -1078,7 +1078,9 @@ in the bottom drawer by default or the existing companion column when the contri
 sets `channelPlacement: "side"`. The bottom drawer closes when the viewer leaves the
 channel. A side-column panel stays open in the channel's workspace: leaving the channel
 or page unmounts it, and returning shows it again until the viewer closes it, another
-channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. With `channelPlacement: "tab"` the launcher instead
+channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. For a side panel, `pressed` means the panel is shown in
+the open pane, not merely selected: while the pane is hidden the panel stays selected but
+reads unpressed, and `toggle` shows it again. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher

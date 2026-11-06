@@ -229,22 +229,28 @@ fn reachable_client(
     let y = i64::from(client.position.y);
     let right = x + i64::from(client.size.width.saturating_sub(1));
     let bottom = y + i64::from(header_height.saturating_sub(1));
-    let corners = [(x, y), (right, y), (x, bottom), (right, bottom)];
-    let inside = |area: &PhysicalRect<i32, u32>, (x, y): (i64, i64)| {
-        x >= i64::from(area.position.x)
-            && y >= i64::from(area.position.y)
-            && x < i64::from(area.position.x) + i64::from(area.size.width)
-            && y < i64::from(area.position.y) + i64::from(area.size.height)
-    };
     // A header may span adjacent monitors. Both control regions must remain
     // reachable, but need not belong to the same monitor.
-    let reachable = corners
-        .iter()
-        .all(|&corner| areas.iter().any(|(area, _)| inside(area, corner)));
-    // At least one monitor under the header must have a scale the saved size fits.
-    let fitted = areas
-        .iter()
-        .any(|(area, fits)| *fits && corners.iter().any(|&corner| inside(area, corner)));
+    let reachable = [(x, y), (right, y), (x, bottom), (right, bottom)]
+        .into_iter()
+        .all(|(x, y)| {
+            areas.iter().any(|(area, _)| {
+                x >= i64::from(area.position.x)
+                    && y >= i64::from(area.position.y)
+                    && x < i64::from(area.position.x) + i64::from(area.size.width)
+                    && y < i64::from(area.position.y) + i64::from(area.size.height)
+            })
+        });
+    // The size was saved at the scale of the monitor holding most of the window,
+    // which need not hold the header. Some monitor under the window must fit it.
+    let fitted = areas.iter().any(|(area, fits)| {
+        let (left, top) = (i64::from(area.position.x), i64::from(area.position.y));
+        *fits
+            && x < left + i64::from(area.size.width)
+            && y < top + i64::from(area.size.height)
+            && left <= right
+            && top < y + i64::from(client.size.height)
+    });
     if reachable && fitted {
         return None;
     }
@@ -336,6 +342,47 @@ mod tests {
         // Another 2x monitor does not change that.
         let left = rect(-3024, 0, 3024, 1964);
         assert_eq!(request(&[(laptop, 2.0), (left, 2.0)]), relocated);
+        // A 1x monitor that holds none of the window does not keep it. As the
+        // primary it receives the window, at the saved size that fits its scale.
+        let primary = rect(0, 982, 1920, 1080);
+        assert_eq!(
+            super::restore_request(
+                &saved,
+                offset,
+                96,
+                &[(laptop, 2.0), (left, 2.0), (primary, 1.0)],
+                (primary, 1.0),
+                &config()
+            ),
+            (
+                tauri::PhysicalPosition::new(659, 982),
+                tauri::PhysicalSize::new(602, 470),
+                Some(1.0)
+            ),
+        );
+        // The size was saved at the scale of the monitor holding most of the
+        // window, which need not hold the header: a 1x monitor below a 2x one,
+        // or between two 2x ones. Both windows stay.
+        let (upper, below) = (rect(0, -2160, 3840, 2160), rect(0, 0, 1920, 1040));
+        let (west, middle, east) = (
+            rect(0, 0, 2560, 1440),
+            rect(2560, 0, 1920, 1080),
+            rect(4480, 0, 2560, 1440),
+        );
+        for (areas, state) in [
+            (
+                vec![(upper, 2.0), (below, 1.0)],
+                saved_state(500, -100, 900, 700),
+            ),
+            (
+                vec![(west, 2.0), (middle, 1.0), (east, 2.0)],
+                saved_state(2500, 100, 2200, 600),
+            ),
+        ] {
+            let saved = decode(&state);
+            let request = super::restore_request(&saved, offset, 96, &areas, areas[0], &config());
+            assert_eq!(request.2, None);
+        }
     }
 
     #[test]

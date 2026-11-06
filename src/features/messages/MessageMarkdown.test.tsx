@@ -933,6 +933,13 @@ describe("Markdown inline extensions", () => {
     ]);
     expect(html).toContain('alt=":party_parrot:"');
     expect(html.replace(/<[^>]*>/g, "")).toBe("看这个 https://example.com，");
+    expect(
+      render("@Mic [x]: https://example.com，:party_parrot:", {
+        emoji: [party],
+        extensions,
+        media: () => "https://media.test/emoji.png",
+      }),
+    ).toContain('alt=":party_parrot:"');
   });
 
   it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {

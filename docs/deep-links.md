@@ -21,6 +21,7 @@ after this list:
 - `buzz://mcp-authorize?version=1&client=<name>&callback=<loopback-url>&state=<state>&scope=<scopes>&code_challenge=<challenge>&code_challenge_method=S256`
 - `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
 - `buzz://plugin-install?repository=<encoded-https-or-ssh-url>[&ref=<encoded-branch-or-tag>][&path=<encoded-folder>][&commit=<40-or-64-hex>]`
+- `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-artifact-url>&sha256=<64-hex>`
 - `buzz://channel/<id>`
 - `buzz://channel/<id>/<event>` (the original desktop message alias)
 - `buzz://repo?owner=<64-hex key>&d=<identifier>[&tab=<section>]`

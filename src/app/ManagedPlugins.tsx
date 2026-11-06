@@ -14,6 +14,7 @@ import type {
   PluginInfo,
 } from "../plugins/types";
 import { PluginAccessReview } from "./PluginAccessReview";
+import type { UrlPluginSource } from "../features/navigation/targets";
 import { importRollbackWarning } from "./PluginImport";
 import importStyles from "./PluginImport.module.css";
 import styles from "./Settings.module.css";
@@ -237,6 +238,7 @@ export function ManagedPluginReview({
   holdReview,
   requestedBy,
   recheck,
+  confirm,
   returnFocus,
   onInstalled,
   onClose,
@@ -253,6 +255,8 @@ export function ManagedPluginReview({
   requestedBy?: Readonly<{ name: string; reason: string }> | undefined;
   /** Run as the owner confirms; a returned reason refuses the install. */
   recheck?: (() => string | undefined) | undefined;
+  /** Marks the install as confirmed until the returned function runs. */
+  confirm?: (() => () => void) | undefined;
   returnFocus: () => HTMLElement | null;
   onInstalled?: () => void;
   onClose: () => void;
@@ -414,6 +418,7 @@ export function ManagedPluginReview({
     setInstalling(true);
     working.current = true;
     const value = review.preview.token;
+    const unconfirm = confirm?.();
     try {
       const success = await plugins.installImport(value, candidate.path);
       if (!success) {
@@ -433,6 +438,7 @@ export function ManagedPluginReview({
       onInstalled?.();
       onClose();
     } finally {
+      unconfirm?.();
       working.current = false;
       setInstalling(false);
     }
@@ -514,7 +520,7 @@ export function ManagedPluginReview({
       )}
       {ready && candidate && entry && (
         <section aria-label="Managed plugin source" className="text-body-sm">
-          {requestedBy && (
+          {requestedBy?.reason && (
             <p className="mb-4 mt-0 break-words">
               {updating && `${requestedBy.name}: `}
               {requestedBy.reason}
@@ -524,7 +530,9 @@ export function ManagedPluginReview({
             {location(entry)}
           </code>
           <p className="mb-4 mt-1 break-all text-caption text-muted">
-            Commit: {review.preview.commit}
+            {"url" in entry
+              ? `SHA-256: ${entry.sha256}`
+              : `Commit: ${review.preview.commit}`}
           </p>
           {existing?.source === "bundled" ? (
             <p className="m-0">
@@ -552,5 +560,100 @@ export function ManagedPluginReview({
         </section>
       )}
     </Dialog>
+  );
+}
+
+/**
+ * Reviews a plugin's or a link's request to install a single artifact from a URL.
+ * Git requests use the import dialog instead.
+ */
+export function UrlPluginInstallReview({
+  plugins,
+  catalog,
+  busy,
+  source,
+  requester,
+  holdReview,
+  request,
+  returnFocus,
+  onClose,
+}: {
+  plugins: PluginManager;
+  catalog: Catalog;
+  busy: boolean;
+  source: UrlPluginSource;
+  requester: string;
+  holdReview?: (() => () => void) | undefined;
+  /** A plugin's pending request, settled by this review. */
+  request?:
+    | Readonly<{
+        id: number;
+        claim(id: number): boolean;
+        confirm(id: number): () => void;
+        settle(id: number, outcome: "installed" | "updated"): void;
+        end(id: number): void;
+      }>
+    | undefined;
+  returnFocus: () => HTMLElement | null;
+  onClose?: (() => void) | undefined;
+}) {
+  const [claimed, setClaimed] = useState(!request);
+  const [closed, setClosed] = useState(false);
+  const latest = useRef(catalog);
+  latest.current = catalog;
+  const [updating] = useState(() =>
+    catalog.plugins.some((plugin) => plugin.manifest.id === source.id),
+  );
+  const mounted = useRef(false);
+  const claimOnce = useEffectEvent(() => {
+    if (request && !claimed && request.claim(request.id)) setClaimed(true);
+  });
+  const endOnce = useEffectEvent(() => {
+    if (!mounted.current) request?.end(request.id);
+  });
+  useEffect(() => {
+    mounted.current = true;
+    claimOnce();
+    return () => {
+      mounted.current = false;
+      queueMicrotask(endOnce);
+    };
+  }, []);
+  if (!claimed || closed || !plugins.imports) return null;
+  return (
+    <ManagedPluginReview
+      plugins={plugins}
+      catalog={catalog}
+      busy={busy}
+      source={requester}
+      entry={{ ...source, state: updating ? "outdated" : "missing" }}
+      holdReview={holdReview}
+      requestedBy={{ name: requester, reason: "" }}
+      recheck={() => {
+        const current = latest.current.plugins.find(
+          (plugin) => plugin.manifest.id === source.id,
+        );
+        const saved = current?.updateSource;
+        if (current?.source !== "external" || (saved && "url" in saved))
+          return undefined;
+        return `${current.manifest.name} is already installed from ${
+          saved && "repository" in saved
+            ? saved.repository
+            : saved
+              ? saved.root
+              : "an unknown source"
+        }; remove it first to install it from ${source.url}.`;
+      }}
+      confirm={request && (() => request.confirm(request.id))}
+      returnFocus={returnFocus}
+      onInstalled={() =>
+        request?.settle(request.id, updating ? "updated" : "installed")
+      }
+      onClose={() => {
+        setClosed(true);
+        if (request) request.end(request.id);
+        onClose?.();
+      }}
+    />
   );
 }

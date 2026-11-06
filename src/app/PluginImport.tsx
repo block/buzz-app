@@ -34,6 +34,7 @@ import type { GitPluginSource } from "../features/navigation/targets";
 const importOperations = new WeakMap<object, Promise<void>>();
 import type {
   PluginInstallOutcome,
+  GitPluginInstallRequest,
   PluginInstallRequest,
 } from "../plugins/installer";
 
@@ -110,7 +111,7 @@ export function PluginImport({
   onReviewHandled?: () => void;
   returnFocus?: () => HTMLElement | null;
   /** A source to review, prefilled; the user still finds, reviews and confirms it. */
-  request?: PluginInstallRequest | undefined;
+  request?: GitPluginInstallRequest | undefined;
   onRequestSettled?:
     | ((id: number, outcome: PluginInstallOutcome) => void)
     | undefined;
@@ -165,7 +166,7 @@ export function PluginImport({
   const [loading, setLoading] = useState(false);
   const [abandonable, setAbandonable] = useState(false);
   const mounted = useRef(true);
-  const [bound, setBound] = useState<PluginInstallRequest>();
+  const [bound, setBound] = useState<GitPluginInstallRequest>();
   const requested = !!bound && !updateId;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [checkedRevision, setCheckedRevision] = useState<string>();
@@ -258,7 +259,7 @@ export function PluginImport({
     if (!open || !holdReview) return;
     return holdReview();
   }, [open, holdReview]);
-  const claimRequest = useEffectEvent((next: PluginInstallRequest) => {
+  const claimRequest = useEffectEvent((next: GitPluginInstallRequest) => {
     // The store refuses a confirmed request first: its install, perhaps in a
     // replaced importer, still reports the outcome.
     if (onRequestClaimed && !onRequestClaimed(next.id)) return;

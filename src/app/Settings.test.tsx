@@ -3186,3 +3186,52 @@ it("leaves a confirmed install's request to the install when Settings closes", a
   unconfirm();
   await expect(outcome).resolves.toBe("installed");
 });
+
+it("reviews a requested plugin artifact in place of the add dialog and cancels it when Settings closes", async () => {
+  const url = vi.fn(async () => ({
+    token: "preview",
+    source: "https://cdn.example.com/a.json",
+    commit: null,
+    warnings: [],
+    candidates: [
+      {
+        path: ".",
+        revision: "d".repeat(64),
+        manifest: { id: "example.artifact", name: "Artifact", apiVersion: 1 },
+      },
+    ],
+  }));
+  const git = vi.fn();
+  const { cards, plugins, requests } = installRequestFixture({
+    git,
+    url,
+    discard: vi.fn(async () => {}),
+  });
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  const outcome = requests.request(
+    {
+      id: "example.artifact",
+      url: "https://cdn.example.com/a.json",
+      sha256: "d".repeat(64),
+    },
+    market,
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Review plugin access",
+  });
+  expect(
+    await within(dialog).findByText(`SHA-256: ${"d".repeat(64)}`),
+  ).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: "Add a plugin" })).toBeNull();
+  expect(git).not.toHaveBeenCalled();
+  view.unmount();
+  await expect(outcome).resolves.toBe("cancelled");
+});

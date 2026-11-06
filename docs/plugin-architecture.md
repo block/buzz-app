@@ -136,6 +136,12 @@ unless it matches. A link that carries `path` or `commit` locks the repository a
 reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
 `path` and `commit` may appear once; a repeated key makes the link invalid.
 
+`buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
+a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
+downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
+review as a recommended plugin. It never mixes with the Git keys, and each key may
+appear once.
+
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
 enable, or grant access. You can close the dialog while the preview loads. A late
@@ -321,12 +327,20 @@ lookup returns `undefined` when an older host has not provided it.
 
 ```ts
 type PluginInstaller = {
-  requestInstall(source: {
-    repository: string; // https://, ssh:// or scp-style git URL
-    reference: string; // branch or tag
-    path?: string; // relative folder inside the repository
-    commit?: string; // 40- or 64-hex; install exactly this commit
-  }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+  requestInstall(
+    source:
+      | {
+          repository: string; // https://, ssh:// or scp-style git URL
+          reference: string; // branch or tag
+          path?: string; // relative folder inside the repository
+          commit?: string; // 40- or 64-hex; install exactly this commit
+        }
+      | {
+          id: string; // the artifact's plugin ID
+          url: string; // https:// artifact from `buzzodz plugin pack`
+          sha256: string; // 64-hex; install exactly these bytes
+        },
+  ): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
   getInstallationStatus(
     id: string,
   ): "installed" | "absent" | "unavailable";
@@ -360,7 +374,11 @@ Settings closes, a `buzz://plugin-install` link replaces its review, or the requ
 plugin is disabled or removed, unless the user has already confirmed the install. A plugin that updates itself is replaced during that
 install and still resolves `updated`.
 
-A request can install a new plugin, or update an installed plugin only from the same
+A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
+its SHA-256 and plugin ID match, and shows the access review for the owner to
+confirm. It can install a new plugin or update one installed from a URL.
+
+A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
 including a local folder or an unknown one, is refused with a message naming both
 sources; remove it first to install it from the new one. Dismissing the review of a

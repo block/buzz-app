@@ -15874,6 +15874,48 @@ describe("synced teams", () => {
       expect(moves(f)).toEqual({});
     });
 
+    it("records the attempt durably before its first relay save", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      const stored: unknown[] = [];
+      const held = runnerGate<unknown>();
+      const channels = teamChannels(async (edit) => {
+        await edit.saving?.();
+        stored.push(new TeamMoves(t.storage).get("local-1"));
+        return held.promise;
+      });
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() => expect(stored).toHaveLength(1));
+      expect(stored[0]).toEqual({ community: home, attempted: true });
+      held.resolve({ ...fail, uncertain: true });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(channels.saveTeam).toHaveBeenCalledTimes(1);
+    });
+
+    it("saves nothing to the relay when the attempt record is refused", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      const sent = vi.fn();
+      teamChannels(async (edit) => {
+        await edit.saving?.();
+        sent();
+      });
+      const set = t.storage.set.bind(t.storage);
+      vi.spyOn(t.storage, "set").mockImplementation(async (key, value) => {
+        if (String(value).includes('"attempted":true'))
+          throw new Error("Storage refused");
+        return set(key, value);
+      });
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(sent).not.toHaveBeenCalled();
+      expect(
+        new TeamMoves(t.storage).get("local-1")?.attempted,
+      ).toBeUndefined();
+    });
+
     it("after a crash between its first save and recording the create, resumes the move, and Delete then archives the copy", async () => {
       const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
       await new TeamMoves(t.storage).set("local-1", {

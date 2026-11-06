@@ -4904,8 +4904,13 @@ export class AgentsService extends Service implements Agents {
                 resume: attempted,
                 saving: async () => {
                   if (attempted) return;
-                  await journal(move?.failed);
                   attempted = true;
+                  try {
+                    await journal(move?.failed);
+                  } catch (error) {
+                    attempted = false;
+                    throw error;
+                  }
                 },
               }),
             },

@@ -14,6 +14,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useLayoutEffect } from "react";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import * as modelStorage from "../messages/solo-model-picks-storage";
 import { readView, writeView } from "../../shared/view-state";
@@ -24,6 +25,7 @@ import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
+import { setDefaultAgent } from "./default-agent";
 import { attachmentDraft } from "../messages/attachment-draft";
 import { createSoloRegionFixture } from "../channel-navigation/solo-navigation-testing";
 import { mentionDraft } from "../messages/mention-draft";
@@ -33,6 +35,7 @@ import {
 } from "../messages/composer-document";
 import * as soloNavigation from "../channel-navigation/solo-navigation";
 import { soloDraft } from "../channel-navigation/routes";
+import { MentionPicker } from "../../bundled/mentions/MentionPicker";
 import type {
   ComposerToolProps,
   ConversationExtensions,
@@ -3461,6 +3464,10 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
   const f = setup();
   const region = createSoloRegionFixture(f.session.viewer);
   const agent = "a".repeat(64);
+  const workspace = {
+    id: "selected-workspace",
+    label: "#Private workspace label",
+  };
   const prepare = vi.fn<
     import("../channel-navigation/solo-navigation-contract").SoloTaskMode["prepare"]
   >(async (input) => ({
@@ -3505,6 +3512,13 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
       />,
     );
     const user = userEvent.setup();
+    const input = screen.getByRole(
+      "textbox",
+    ) as import("../messages/composer-dom").ComposerInputElement;
+    act(() => {
+      expect(input.setWorkspace(workspace)).toBe(true);
+    });
+    expect(input.value).not.toContain(workspace.label);
     await user.click(screen.getByRole("textbox"));
     await user.type(screen.getByRole("textbox"), "Do the task");
     await user.keyboard("{Enter}");
@@ -3521,10 +3535,13 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
     expect(prepared).toMatchObject({
       draftId: route.draftId,
       primary: agent,
+      workspace,
       attachments: [],
     });
     expect(f.channelWrites.start.mock.calls[0]?.[2]).toEqual([agent]);
     expect(f.messages.send.mock.calls[0]?.[2]).toEqual([agent]);
+    expect(f.messages.send.mock.calls[0]).toHaveLength(5);
+    expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(workspace.label);
     const recovery = f.messages.send.mock.calls[0]?.[4];
     expect(JSON.parse(recovery?.value ?? "null")).toMatchObject({
       draftId: route.draftId,
@@ -3615,9 +3632,10 @@ it("rejects multiple task targets before preparation or creation and retains the
   }
 });
 
-it.each([false, true])(
-  "resumes the saved task pair before prepare and transfers edits; keeps another build's task references unchanged and unsent=%s",
-  async (foreign) => {
+it.each(["text", "foreign", "workspace"] as const)(
+  "resumes the saved task pair before prepare and transfers edits; keeps another build's task references unchanged and unsent (%s)",
+  async (variant) => {
+    const foreign = variant === "foreign";
     const f = setup();
     const region = createSoloRegionFixture(f.session.viewer);
     let eligible = true;
@@ -3751,6 +3769,44 @@ it.each([false, true])(
         "nexus.tokens.v1",
         JSON.stringify([{ ...newToken, id: "old-repository" }]),
       ]);
+    if (variant === "workspace") {
+      // Personal filing is document metadata, never signed message content.
+      const workspace = {
+        id: "solo-workspace:private",
+        label: "Private workspace",
+      };
+      const filed = mentionDraft({
+        ...draft,
+        document: {
+          version: 1,
+          content: {
+            type: "doc",
+            attrs: { workspace },
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  {
+                    type: "token",
+                    attrs: {
+                      source: "@Member agent",
+                      recipient: {
+                        pubkey: "a".repeat(64),
+                        name: "Member agent",
+                      },
+                    },
+                  },
+                  { type: "text", text: " Edited while original was signing" },
+                ],
+              },
+            ],
+          },
+        },
+      });
+      expect(filed.workspace).toEqual(workspace);
+      Object.assign(draft, filed);
+      event.content = filed.text;
+    }
     writeView("task-resume", `solo:task:${route.draftId}:new-draft`, draft);
     const saved = localStorage.getItem(
       `buzz-view.v1:${JSON.stringify(["task-resume", `solo:task:${route.draftId}:new-draft`])}`,
@@ -3802,6 +3858,11 @@ it.each([false, true])(
       expect(
         readView("task-resume", `solo:task:${route.draftId}:new-draft`, null),
       ).toBe("");
+      if (variant === "workspace") {
+        expect(readView("task-resume", `draft:${channelId}`, null)).toBeNull();
+        mounted.unmount();
+        return;
+      }
       expect(readView("task-resume", `draft:${channelId}`, null)).toMatchObject(
         draft,
       );
@@ -3854,14 +3915,9 @@ it.each([false, true])(
           onStarted={started}
         />,
       );
-      await userEvent
-        .setup()
-        .click(screen.getByRole("button", { name: "Send message" }));
-      await waitFor(() =>
-        expect(screen.getByRole("alert")).toHaveTextContent(
-          "no longer eligible",
-        ),
-      );
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled();
       expect(resumeStart).not.toHaveBeenCalled();
       expect(retry).not.toHaveBeenCalled();
       expect(started).not.toHaveBeenCalled();
@@ -4002,9 +4058,13 @@ it.each(["resume", "already_sent"])(
   },
 );
 
-it.each([false, true])(
-  "same-ID attachment recovery transfers only actual file edits (changed=%s)",
-  async (modified) => {
+it.each([
+  { modified: false, implicit: false },
+  { modified: true, implicit: false },
+  { modified: false, implicit: true },
+])(
+  "same-ID attachment recovery transfers only actual file edits ($modified, implicit=$implicit)",
+  async ({ modified, implicit }) => {
     const f = setup(),
       region = createSoloRegionFixture(f.session.viewer);
     const viewer = f.session.viewer;
@@ -4052,7 +4112,7 @@ it.each([false, true])(
     writeView(
       "files",
       `solo:task:${route.draftId}:new-draft`,
-      taggedDraft("See attached"),
+      implicit ? "See attached" : taggedDraft("See attached"),
     );
     const eventId = "d".repeat(64),
       retry = vi.fn();
@@ -4108,6 +4168,7 @@ it.each([false, true])(
         ),
       );
       expect(files.snapshot()).toHaveLength(1);
+      const savedBytes = JSON.stringify(operations[0]?.event);
       expect(started).not.toHaveBeenCalled();
       const listed = {
         channels: [
@@ -4136,7 +4197,14 @@ it.each([false, true])(
       await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
       expect(prepare).toHaveBeenCalledTimes(1);
       expect(f.messages.send).toHaveBeenCalledTimes(1);
+      if (implicit) {
+        expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(
+          "@Member agent",
+        );
+        expect(f.messages.send.mock.calls[0]?.[2]).toEqual(["a".repeat(64)]);
+      }
       expect(retry).toHaveBeenCalledWith(eventId, expect.any(Function));
+      expect(JSON.stringify(operations[0]?.event)).toBe(savedBytes);
       expect(upload).not.toHaveBeenCalled();
       expect(files.snapshot()).toHaveLength(0);
       const target = attachmentDraft(
@@ -4324,8 +4392,11 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
       writeView(
         "first-send-order",
         `solo:task:${draftId}:new-draft`,
-        taggedDraft("Original task request", agent.pubkey, "Task agent"),
+        mode === "stable"
+          ? "Original task request"
+          : taggedDraft("Original task request", agent.pubkey, "Task agent"),
       );
+      if (mode === "stable") setDefaultAgent("first-send-order", agent.pubkey);
       mounted = render(
         <SoloDraft
           session={owner.session}
@@ -4346,6 +4417,14 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
           records.find((item) => item.event.kind === 9)?.signed,
         ).toBeDefined(),
       );
+      if (mode === "stable") {
+        expect(
+          records.find((item) => item.event.kind === 9)?.signed,
+        ).toMatchObject({
+          content: "Original task request",
+          tags: expect.arrayContaining([["p", agent.pubkey]]),
+        });
+      }
       expect(refreshingFirstEvent).toBe(false);
       expect(
         owner.session.outbox?.snapshot().map((item) => item.event.kind),
@@ -4610,6 +4689,446 @@ it("shows pending accepted-message recovery and cancels binding when its draft r
     await region.dispose();
   }
 });
+
+it.each([
+  "fresh",
+  "saved prose",
+  "late adoption",
+  "requested",
+  "saved primary",
+  "explicit saved",
+  "task eligible fallback",
+  "remove project with keyboard",
+  "remove project with icon",
+  "toolbar primary",
+  "typed explicit",
+  "toolbar demotes explicit",
+  "toolbar same explicit",
+  "toolbar failed explicit",
+  "toolbar ineligible explicit",
+  "toolbar undo explicit",
+] as const)(
+  "sends task prose with implicit routing and preserves workspace metadata (%s)",
+  async (mode) => {
+    const f = setup();
+    const region = createSoloRegionFixture(f.session.viewer);
+    const a = "a".repeat(64),
+      b = "b".repeat(64);
+    const scope = `implicit-${mode}`;
+    const draftId = "33333333-3333-4333-8333-333333333333";
+    const key = `solo:task:${draftId}`;
+    setDefaultAgent(scope, b);
+    let adopt!: (value: string) => void;
+    if (mode === "late adoption")
+      Object.assign(f.session, {
+        mainAgent: {
+          read: () =>
+            new Promise<string>((resolve) => {
+              adopt = resolve;
+            }),
+          write: vi.fn(),
+        },
+      });
+    if (mode === "saved prose")
+      writeView(scope, `${key}:new-draft`, "Do the task");
+    if (mode === "saved primary")
+      writeView(scope, `${key}:identity`, { primary: a, revision: 2 });
+    if (
+      mode === "explicit saved" ||
+      (mode.endsWith(" explicit") && mode.startsWith("toolbar"))
+    ) {
+      writeView(scope, `${key}:new-draft`, taggedDraft("Do the task"));
+      writeView(scope, `${key}:identity`, { primary: null });
+    }
+    const prepare = vi.fn<
+      import("../channel-navigation/solo-navigation-contract").SoloTaskMode["prepare"]
+    >(async (input) => ({
+      ok: true,
+      channelId: "22222222-2222-4222-8222-222222222222",
+      members: input.recipients,
+      revision: input.revision,
+      preparationId: "implicit",
+    }));
+    const source = await region.register({
+      task: {
+        prepare,
+        markChannelStarted: async () => "start",
+        recordFirstEvent: async () => {},
+        participants: {
+          eligible: (key) =>
+            key === a ||
+            (![
+              "explicit saved",
+              "task eligible fallback",
+              "toolbar ineligible explicit",
+            ].includes(mode) &&
+              key === b),
+          defaultRecipient: () => a,
+          makePrimary: async () => {},
+        },
+        header: (props) => {
+          if (!("draft" in props)) return null;
+          const workspace = props.draft.workspace;
+          return workspace ? (
+            <props.ui.Title
+              title={workspace.label}
+              actions={[
+                {
+                  id: "remove-project",
+                  label: `Remove project ${workspace.label}`,
+                  onSelect: () => {
+                    props.removeWorkspace();
+                  },
+                },
+              ]}
+            />
+          ) : null;
+        },
+      },
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    const started = vi.fn();
+    const tools = [
+      {
+        id: "picker",
+        key: "mentions/picker",
+        order: -10,
+        pluginId: "mentions",
+        revision: "1",
+        title: "Mentions",
+        component: (props: ComposerToolProps) => (
+          <MentionPicker {...props} select={props.insertMention} />
+        ),
+      },
+    ];
+    const completions = [
+      {
+        id: "typeahead",
+        key: "mentions/typeahead",
+        pluginId: "mentions",
+        revision: "1",
+        title: "Mention",
+        match: (
+          value: import("../conversation/contracts").ComposerObservation,
+        ) => mentionQuery(value.text, value.start),
+        component: MentionCompletion,
+      },
+    ];
+    try {
+      const renderDraft = (mountKey = 0) => (
+        <SoloDraft
+          key={mountKey}
+          session={f.session}
+          scope={scope}
+          task={{ region: source.handle.label, draftId }}
+          agent={mode === "requested" ? a : undefined}
+          extensions={{
+            inline: { snapshot: () => [], subscribe: () => () => {} },
+            tools: { snapshot: () => tools, subscribe: () => () => {} },
+            completions: {
+              snapshot: () => completions,
+              subscribe: () => () => {},
+            },
+          }}
+          onStarted={started}
+        />
+      );
+      const rendered = render(renderDraft());
+      let input = screen.getByRole(
+        "textbox",
+      ) as import("../messages/composer-dom").ComposerInputElement;
+      const project = { id: "project-id", label: "Private project" };
+      act(() => {
+        expect(input.setWorkspace(project)).toBe(true);
+      });
+      if (mode === "typed explicit") {
+        await userEvent.type(input, "@Mem");
+        await userEvent.click(
+          await screen.findByRole("option", { name: /^Member agent/ }),
+        );
+        await userEvent.type(input, "Do the task");
+      } else if (
+        mode !== "saved prose" &&
+        mode !== "explicit saved" &&
+        !mode.endsWith(" explicit")
+      )
+        await userEvent.type(input, "Do the task");
+      if (mode === "late adoption") {
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeDisabled();
+        expect(input.value).toBe("Do the task");
+        await act(async () => adopt(b));
+      }
+      const savedExplicit =
+        mode.endsWith(" explicit") && mode.startsWith("toolbar");
+      const rejected =
+        mode === "toolbar failed explicit" ||
+        mode === "toolbar ineligible explicit";
+      const explicit =
+        mode === "explicit saved" ||
+        mode === "typed explicit" ||
+        (savedExplicit && mode !== "toolbar demotes explicit");
+      if (savedExplicit) {
+        const before = input.value;
+        const beforeDraft = readView(scope, `${key}:new-draft`, null);
+        const beforeIdentity = readView(scope, `${key}:identity`, null);
+        const caret = input.selectionStart;
+        await userEvent.click(
+          screen.getByRole("button", {
+            name: "Choose primary agent, current recipient Member agent",
+          }),
+        );
+        const save = Storage.prototype.setItem;
+        const failure =
+          mode === "toolbar failed explicit"
+            ? vi
+                .spyOn(Storage.prototype, "setItem")
+                .mockImplementation(function (this: Storage, key, value) {
+                  if (key.includes(":identity"))
+                    throw new Error("Storage refused");
+                  save.call(this, key, value);
+                })
+            : undefined;
+        try {
+          await userEvent.click(
+            screen.getByRole("button", {
+              name:
+                mode === "toolbar same explicit"
+                  ? /^Member agent\s*Agent$/
+                  : /^Outside agent\s*Agent$/,
+            }),
+          );
+        } finally {
+          failure?.mockRestore();
+        }
+        expect(input.value).toBe(before);
+        expect(input.selectionStart).toBe(caret);
+        if (rejected) {
+          expect(readView(scope, `${key}:new-draft`, null)).toEqual(
+            beforeDraft,
+          );
+          expect(readView(scope, `${key}:identity`, null)).toEqual(
+            beforeIdentity,
+          );
+          await userEvent.keyboard("{Escape}");
+        } else if (mode === "toolbar undo explicit") {
+          act(() => input.undo(false));
+        }
+        expect(
+          mentionDraft(readView(scope, `${key}:new-draft`, "")).recipients.map(
+            (person) => person.pubkey,
+          ),
+        ).toEqual(explicit ? [a] : []);
+      }
+      if (mode === "toolbar primary") {
+        const before = input.value;
+        await userEvent.click(
+          screen.getByRole("button", {
+            name: "Choose primary agent, current recipient Outside agent",
+          }),
+        );
+        await userEvent.click(
+          screen.getByRole("button", { name: /^Member agent\s*Agent$/ }),
+        );
+        expect(input.value).toBe(before);
+        expect(readView(scope, `${key}:identity`, null)).toMatchObject({
+          primary: a,
+        });
+        rendered.rerender(renderDraft(1));
+        input = screen.getByRole(
+          "textbox",
+        ) as import("../messages/composer-dom").ComposerInputElement;
+        expect(input.value).toBe(before);
+      }
+      const authored =
+        explicit || savedExplicit ? "@Member agent Do the task" : "Do the task";
+      const prose = authored;
+      expect(input.value).toBe(authored);
+      expect(screen.queryByText(/^Primary:/)).toBeNull();
+      expect(screen.queryByText(/^To /)).toBeNull();
+      expect(
+        screen.getByText(project.label).closest(".inline-chip"),
+      ).not.toBeNull();
+      const primary = [
+        "requested",
+        "saved primary",
+        "explicit saved",
+        "task eligible fallback",
+        "toolbar primary",
+        "typed explicit",
+        "toolbar same explicit",
+        "toolbar failed explicit",
+        "toolbar ineligible explicit",
+        "toolbar undo explicit",
+      ].includes(mode)
+        ? a
+        : b;
+      expect(
+        screen.getByRole("button", {
+          name: `Choose primary agent, current recipient ${primary === a ? "Member agent" : "Outside agent"}`,
+        }),
+      ).toHaveTextContent(primary === a ? "Member agent" : "Outside agent");
+      const removeProject = screen.getByRole("button", {
+        name: `Remove project ${project.label}`,
+      });
+      const removed = mode.startsWith("remove project");
+      if (mode === "remove project with keyboard") {
+        removeProject.focus();
+        await userEvent.keyboard("{Enter}");
+      } else if (mode === "remove project with icon") {
+        const icon = removeProject.querySelector("svg");
+        assert(icon);
+        await userEvent.click(icon);
+      }
+      if (removed) {
+        expect(
+          screen.queryByRole("button", {
+            name: `Remove project ${project.label}`,
+          }),
+        ).toBeNull();
+        expect(input.value).toBe("Do the task");
+      }
+      const send = screen.getByRole("button", { name: "Send message" });
+      // Send waits for the chat's saved model choices.
+      await waitFor(() => expect(send).toBeEnabled());
+      await userEvent.click(send);
+      await waitFor(() => expect(started).toHaveBeenCalledOnce());
+      expect(prepare.mock.calls[0]?.[0]).toMatchObject({
+        primary,
+        recipients: [primary],
+        text: prose,
+      });
+      expect(prepare.mock.calls[0]?.[0].workspace).toEqual(
+        removed ? undefined : project,
+      );
+      expect(f.messages.send.mock.calls[0]?.[1]).toBe(prose);
+      expect(f.messages.send.mock.calls[0]?.[2]).toEqual([primary]);
+      expect(f.messages.send.mock.calls[0]).toHaveLength(5);
+      expect(readView(scope, "solo:default-agent", null)).toBe(b);
+      expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(project.label);
+    } finally {
+      adopt?.(b);
+      cleanup();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
+
+it.each([
+  { phase: "outbox", saved: true },
+  { phase: "prepare", saved: false },
+  { phase: "claim", saved: true },
+] as const)(
+  "refuses an implicit target that becomes unavailable during $phase (saved=$saved)",
+  async ({ phase, saved }) => {
+    const f = setup(),
+      region = createSoloRegionFixture(f.session.viewer);
+    const a = "a".repeat(64),
+      b = "b".repeat(64);
+    let release!: () => void, entered!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const began = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const hold = async () => {
+      entered();
+      await pending;
+    };
+    setDefaultAgent("stale-implicit", b);
+    if (saved)
+      writeView(
+        "stale-implicit",
+        "solo:task:33333333-3333-4333-8333-333333333333:identity",
+        { primary: a, revision: 1 },
+      );
+    if (phase === "outbox")
+      Object.assign(f.session.outbox as object, { ready: hold });
+    const prepare = vi.fn<
+      import("../channel-navigation/solo-navigation-contract").SoloTaskMode["prepare"]
+    >(async (input) => {
+      if (phase === "prepare") await hold();
+      return {
+        ok: true,
+        channelId: "22222222-2222-4222-8222-222222222222",
+        members: input.recipients,
+        revision: input.revision,
+        preparationId: "captured",
+      };
+    });
+    const source = await region.register({
+      task: {
+        prepare,
+        markChannelStarted: async () => {
+          if (phase === "claim") await hold();
+          return "start";
+        },
+        recordFirstEvent: async () => {},
+        participants: {
+          eligible: () => true,
+          defaultRecipient: () => b,
+          makePrimary: async () => {},
+        },
+      },
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    try {
+      render(
+        <SoloDraft
+          session={f.session}
+          scope="stale-implicit"
+          agent={saved ? undefined : a}
+          task={{
+            region: source.handle.label,
+            draftId: "33333333-3333-4333-8333-333333333333",
+          }}
+          onStarted={vi.fn()}
+        />,
+      );
+      await userEvent.type(screen.getByRole("textbox"), "Keep my request");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      await began;
+      expect(f.channelWrites.start).not.toHaveBeenCalled();
+      const choices = f.session.agentChoices.snapshot();
+      const withoutRequested = {
+        ...choices,
+        selectable: choices.selectable.filter((choice) => choice.pubkey !== a),
+      };
+      Object.assign(f.session.agentChoices, {
+        snapshot: () => withoutRequested,
+      });
+      await act(async () => release());
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "no longer eligible",
+        ),
+      );
+      expect(f.channelWrites.start).not.toHaveBeenCalled();
+      expect(f.messages.send).not.toHaveBeenCalled();
+      expect(prepare.mock.calls.every(([input]) => input.primary === a)).toBe(
+        true,
+      );
+      expect(screen.getByRole("textbox")).toHaveTextContent("Keep my request");
+      expect(screen.getByRole("textbox")).not.toHaveTextContent(
+        "@Member agent",
+      );
+    } finally {
+      release();
+      cleanup();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
 const aaron = { pubkey: "e".repeat(64), name: "Aaron" };
 /** A new Solo chat over the real mentions completion, with the agent
  * inventory answered by `read`; returns the composer and the `p` tags the
@@ -4729,6 +5248,167 @@ it("tags an agent whose name was typed with Space while a retry after a failed i
     draft.dispose();
   }
 });
+
+it.each(["selected", "refused", "typed later"] as const)(
+  "a toolbar choice supersedes an earlier pending mention only after saving (%s)",
+  async (mode) => {
+    const refused = mode === "refused";
+    const f = setup();
+    const region = createSoloRegionFixture(f.session.viewer);
+    const a = "a".repeat(64),
+      b = "b".repeat(64);
+    const scope = "pending-primary";
+    const draftId = "33333333-3333-4333-8333-333333333333";
+    const key = `solo:task:${draftId}`;
+    setDefaultAgent(scope, a);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resolve = vi.fn(async (_signal: AbortSignal) => {
+      await gate;
+      return { pubkey: a, name: "A" };
+    });
+    const source = await region.register({
+      task: {
+        prepare: async (draft) => ({
+          ok: true,
+          channelId: "22222222-2222-4222-8222-222222222222",
+          members: draft.recipients,
+          revision: draft.revision,
+          preparationId: "pending-primary",
+        }),
+        markChannelStarted: async () => "start",
+        recordFirstEvent: async () => {},
+        participants: {
+          eligible: (key) => key === a || key === b,
+          defaultRecipient: () => a,
+          makePrimary: async () => {},
+        },
+      },
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    const started = vi.fn();
+    const tools = [
+      {
+        id: "picker",
+        order: -10,
+        key: "mentions/picker",
+        pluginId: "mentions",
+        revision: "1",
+        title: "Mentions",
+        component: (props: ComposerToolProps) => (
+          <MentionPicker {...props} select={props.insertMention} />
+        ),
+      },
+    ];
+    const completions: readonly Contribution<ComposerCompletion>[] = [
+      {
+        id: "pending",
+        key: "mentions/pending",
+        pluginId: "mentions",
+        revision: "1",
+        title: "Mention",
+        match: ({ text, start }) => mentionQuery(text, start),
+        component: function Pending({ publish }) {
+          useLayoutEffect(() => {
+            const stop = publish({
+              items: [],
+              spacePending: { name: "A", resolve },
+            });
+            return typeof stop === "function" ? stop : undefined;
+          }, [publish]);
+          return null;
+        },
+      },
+    ];
+    let failure: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      render(
+        <SoloDraft
+          session={f.session}
+          scope={scope}
+          agent={a}
+          task={{ region: source.handle.label, draftId }}
+          extensions={{
+            tools: { snapshot: () => tools, subscribe: () => () => {} },
+            completions: {
+              snapshot: () => completions,
+              subscribe: () => () => {},
+            },
+            inline: { snapshot: () => [], subscribe: () => () => {} },
+          }}
+          onStarted={started}
+        />,
+      );
+      const input = screen.getByRole(
+        "textbox",
+      ) as import("../messages/composer-dom").ComposerInputElement;
+      await userEvent.type(input, "@A hi");
+      await waitFor(() => expect(resolve).toHaveBeenCalledOnce());
+      expect(
+        within(input).getByRole("img", { name: "Resolving mention A" }),
+      ).toBeInTheDocument();
+      const before = input.value;
+      const caret = input.selectionStart;
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: "Choose primary agent, current recipient Member agent",
+        }),
+      );
+      if (refused) {
+        const save = Storage.prototype.setItem;
+        failure = vi
+          .spyOn(Storage.prototype, "setItem")
+          .mockImplementation(function (this: Storage, key, value) {
+            if (key.includes(":identity")) throw new Error("Storage refused");
+            save.call(this, key, value);
+          });
+      }
+      await userEvent.click(
+        screen.getByRole("button", { name: /^Outside agent\s*Agent$/ }),
+      );
+      failure?.mockRestore();
+      failure = undefined;
+      expect(input.value).toBe(before);
+      expect(input.selectionStart).toBe(caret);
+      if (refused) await userEvent.keyboard("{Escape}");
+      else
+        expect(readView(scope, `${key}:identity`, null)).toMatchObject({
+          primary: b,
+        });
+      // Completion barrier: release the real mounted host's pending resolver,
+      // then Send waits for any resolver that could still change recipients.
+      await act(async () => release());
+      if (mode === "typed later") {
+        input.focus();
+        input.setSelectionRange(0, 0);
+        await userEvent.keyboard(" @A ");
+      }
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      await waitFor(() => expect(started).toHaveBeenCalledOnce());
+      expect(f.messages.send.mock.calls[0]?.[1]).toBe(
+        mode === "typed later" ? ` @A ${before}` : before,
+      );
+      expect(f.messages.send.mock.calls[0]?.[2]).toEqual([
+        refused || mode === "typed later" ? a : b,
+      ]);
+      expect(
+        mentionDraft(readView(scope, `${key}:new-draft`, "")).recipients,
+      ).toHaveLength(0);
+    } finally {
+      failure?.mockRestore();
+      release();
+      cleanup();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
 
 it("does not start a named Solo chat from a file alone", async () => {
   const test = setup(),

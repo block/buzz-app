@@ -103,6 +103,7 @@ import { entityHref } from "../repos/routes";
 import type { Entity, RepositoryHome } from "../repos/destinations";
 import { HELPFUL_HINT_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { composerWorkspaceDraft } from "./composer-document";
+import { MentionPicker } from "../../bundled/mentions/MentionPicker";
 
 // Pass-through spies: the real renderers run; tests count chip redraws.
 vi.mock("./MessageMarkdown", async (importOriginal) => {
@@ -14069,6 +14070,9 @@ async function taskComposerFixture(allowHistorical = false) {
   const eligible = new Set([first.pubkey, second.pubkey]);
   const historical = new Set([first.pubkey, second.pubkey]);
   let primary = first.pubkey;
+  const makePrimary = async (_channel: string, key: string) => {
+    primary = key;
+  };
   const source = await region.register({
     task: {
       prepare: async () => ({ ok: false, reason: "unused" }),
@@ -14086,9 +14090,7 @@ async function taskComposerFixture(allowHistorical = false) {
             }
           : {}),
         defaultRecipient: () => primary,
-        makePrimary: async (_channel, key) => {
-          primary = key;
-        },
+        makePrimary,
         maxRecipients: 1,
       },
     },
@@ -14138,13 +14140,84 @@ async function taskComposerFixture(allowHistorical = false) {
     },
   };
   h.retarget({ ownSoloConversation: true, requireMention: true, session });
-  return { h, session, region, source, eligible, addAgents, refreshMembership };
+  return {
+    h,
+    session,
+    region,
+    source,
+    eligible,
+    addAgents,
+    refreshMembership,
+    makePrimary,
+  };
 }
 
-it("task primary A survives explicit B; later Make primary B changes untagged routing without prefill", async () => {
-  const { h, addAgents } = await taskComposerFixture();
+it("shows the bound task's effective recipient in the existing mention toolbar", async () => {
+  const { h, eligible } = await taskComposerFixture();
+  const tools = [
+    {
+      id: "picker",
+      key: "mentions/picker",
+      order: -10,
+      pluginId: "mentions",
+      revision: "1",
+      title: "Mentions",
+      component: (props: ComposerToolProps) => (
+        <MentionPicker {...props} select={props.insertMention} />
+      ),
+    },
+  ];
+  h.retarget({
+    extensions: {
+      inline: { snapshot: () => [], subscribe: () => () => {} },
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+    },
+  });
+  const trigger = () =>
+    screen.getByRole("button", {
+      name: "Mention a member, current recipient Ada",
+    });
+  expect(trigger()).toHaveTextContent("Ada");
+  h.fill("Plain task message");
+  expect(h.input()).toHaveValue("Plain task message");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await h.user.click(trigger());
+  await h.user.click(screen.getByRole("button", { name: /^Bea\s*Agent$/ }));
+  expect(
+    screen.getByRole("button", {
+      name: "Mention a member, current recipient Bea",
+    }),
+  ).toHaveTextContent("Bea");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(trigger()).toHaveTextContent("Ada");
+  eligible.delete(first.pubkey);
+  h.fill("Refuse a missing primary");
+  expect(
+    screen.queryByRole("button", { name: /current recipient/ }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  h.submit();
+  expect(
+    screen.getByText(
+      "A task participant is no longer eligible. Repair task membership before sending.",
+    ),
+  ).toHaveAttribute("role", "status");
+  expect(h.messages.send).toHaveBeenCalledOnce();
+});
+
+it("routes task messages without a recipient footer while preserving explicit and primary changes", async () => {
+  const { h, addAgents, makePrimary } = await taskComposerFixture();
   expect(h.input()).toHaveValue("");
-  expect(screen.getByRole("button", { name: "To Ada" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", {
+      name: /^(To |Choose primary|This message)/,
+    }),
+  ).toBeNull();
   h.fill("Untagged A");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
@@ -14155,8 +14228,10 @@ it("task primary A survives explicit B; later Make primary B changes untagged ro
   });
   await h.user.type(h.input(), "Explicit B");
   expect(
-    screen.getByRole("button", { name: "This message → Bea" }),
-  ).toBeVisible();
+    screen.queryByRole("button", {
+      name: /^(To |Choose primary|This message)/,
+    }),
+  ).toBeNull();
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
   expect(addAgents).toHaveBeenCalledWith(
@@ -14170,11 +14245,7 @@ it("task primary A survives explicit B; later Make primary B changes untagged ro
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(3));
   expect(h.messages.send.mock.calls[2]?.[2]).toEqual([first.pubkey]);
-  await h.user.click(screen.getByRole("button", { name: "To Ada" }));
-  await h.user.click(
-    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
-  );
-  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  await act(() => makePrimary("channel", second.pubkey));
   h.fill("Now B");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(4));
@@ -14188,8 +14259,9 @@ it("task primary A survives explicit B; later Make primary B changes untagged ro
   expect(h.input()).toHaveValue("");
 });
 
-it("keeps task repair visible with revoked historical A, then sends only to eligible primary B", async () => {
-  const { h, session, eligible, addAgents } = await taskComposerFixture(true);
+it("keeps task repair visible without a recipient footer, then sends only to eligible primary B", async () => {
+  const { h, session, eligible, addAgents, makePrimary } =
+    await taskComposerFixture(true);
   act(() => h.commands().insertMention({ ...second, name: "Bea" }));
   await h.user.type(h.input(), "Admit B");
   h.submit();
@@ -14197,13 +14269,18 @@ it("keeps task repair visible with revoked historical A, then sends only to elig
   eligible.delete(first.pubkey);
   h.retarget({ session });
   expect(screen.getByText("Task repair")).toBeVisible();
-  await h.user.click(screen.getByRole("button", { name: "Choose primary" }));
-  expect(screen.queryByRole("menuitem", { name: /Ada/ })).toBeNull();
-  await h.user.click(
-    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
-  );
-  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", {
+      name: /^(To |Choose primary|This message)/,
+    }),
+  ).toBeNull();
+  await act(() => makePrimary("channel", second.pubkey));
+  h.retarget({ session });
   h.fill("Continue with B");
+  // Saving the first send's model choices starts a fresh read; Send waits.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
   expect(h.messages.send.mock.calls[1]?.[2]).toEqual([second.pubkey]);
@@ -14270,7 +14347,7 @@ it.each([false, true])(
   "queued task follow-ups preserve captured primary identity (explicit=%s)",
   async (explicit) => {
     localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
-    const { h, session, addAgents } = await taskComposerFixture();
+    const { h, session, addAgents, makePrimary } = await taskComposerFixture();
     await addAgents("channel", [second.pubkey], () => true);
     const listeners = new Set<() => void>();
     let activity = {
@@ -14312,11 +14389,7 @@ it.each([false, true])(
     await screen.findByRole("region", { name: "Queued follow-ups" });
     expect(h.messages.send).not.toHaveBeenCalled();
     // A primary update after queueing cannot retarget this captured request.
-    await h.user.click(screen.getByRole("button", { name: "To Ada" }));
-    await h.user.click(
-      await screen.findByRole("menuitem", { name: "Make Bea primary" }),
-    );
-    expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+    await act(() => makePrimary("channel", second.pubkey));
     act(() => {
       activity = {
         ...activity,

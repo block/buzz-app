@@ -18,6 +18,7 @@ pub(crate) fn is_legacy_cli_arg(arg: &OsStr) -> bool {
             | "messages"
             | "channels"
             | "canvas"
+            | "sidebar"
             | "reactions"
             | "emoji"
             | "gifs"
@@ -61,6 +62,7 @@ mod tests {
             "messages",
             "channels",
             "canvas",
+            "sidebar",
             "reactions",
             "emoji",
             "gifs",

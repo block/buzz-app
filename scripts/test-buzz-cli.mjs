@@ -86,7 +86,11 @@ try {
     if (result.error) throw result.error;
     assert.equal(result.status, 1, `${command}: expected bad-input exit`);
     assert.equal(result.stdout, "", `${command}: unexpected stdout`);
-    assert.match(result.stderr, /^This executable is the Buzz desktop app;/);
+    assert.match(
+      result.stderr,
+      /^This executable is the Buzz desktop app;/,
+      `${command}: expected migration diagnostic`,
+    );
     assert.match(result.stderr, /no CLI command was executed/);
   }
 } finally {

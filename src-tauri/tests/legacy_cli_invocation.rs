@@ -42,6 +42,7 @@ fn legacy_cli_commands_fail_without_echoing_payloads() {
         vec!["gifs", "search", "private-gif-query"],
         vec!["auth", "login", "private-auth-payload"],
         vec!["huddles", "join", "private-huddle-payload"],
+        vec!["sidebar", "sort", "list", "private-sidebar-payload"],
         vec!["--private-key=private-key-payload", "messages", "list"],
         vec!["--format", "compact", "channels", "list"],
     ] {
@@ -56,6 +57,7 @@ fn legacy_cli_commands_fail_without_echoing_payloads() {
         assert!(!stderr.contains("private-gif-query"));
         assert!(!stderr.contains("private-auth-payload"));
         assert!(!stderr.contains("private-huddle-payload"));
+        assert!(!stderr.contains("private-sidebar-payload"));
         assert!(!stderr.contains("private-key-payload"));
     }
 }

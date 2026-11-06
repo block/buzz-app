@@ -830,9 +830,9 @@ it("Close retires a plugin install link's Settings visit with the others", async
     );
     return current.navigation.snapshot().entry.id;
   };
-  const close = async () => {
+  const close = async (from: object = plugins) => {
     await waitFor(() =>
-      expect(current.navigation.snapshot().entry.target).toEqual(plugins),
+      expect(current.navigation.snapshot().entry.target).toEqual(from),
     );
     fireEvent.keyDown(screen.getByRole("dialog", { name: "Settings" }), {
       key: "Escape",
@@ -852,6 +852,9 @@ it("Close retires a plugin install link's Settings visit with the others", async
   await openLink();
   current.navigation.back();
   await close();
+  // With no importer (the browser build), Close runs from the link's visit.
+  await openLink();
+  await close(link);
 });
 
 it("Back closes Settings onto the view beneath and Forward reopens it; other shortcuts stay blocked", async () => {

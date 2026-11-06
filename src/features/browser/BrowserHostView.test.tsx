@@ -790,6 +790,68 @@ it("offers Try again and the system browser when Builderlab can't be reached", a
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it("keeps Try again focused while a refused app retries", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  const refused = () =>
+    new BrowserAttachError(
+      "Your Builderlab account cannot open this app",
+      "denied",
+    );
+  let settle: { resolve(id: string): void; reject(error: unknown): void } = {
+    resolve: () => {},
+    reject: () => {},
+  };
+  const deferred = () =>
+    new Promise<string>((resolve, reject) => {
+      settle = { resolve, reject };
+    });
+  vi.mocked(platform.attach)
+    .mockRejectedValueOnce(refused())
+    .mockImplementationOnce(deferred)
+    .mockRejectedValueOnce(refused())
+    .mockImplementationOnce(deferred);
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  retry.focus();
+
+  // Pending: the page and its focused button stay, and a repeat does nothing.
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  expect(retry).toHaveFocus();
+  expect(retry).toHaveAttribute("aria-busy", "true");
+  await user.keyboard("{Enter}");
+  expect(platform.attach).toHaveBeenCalledTimes(2);
+
+  // Refused again: still the same focused button, ready to retry.
+  await act(async () => settle.reject(refused()));
+  expect(retry).toBeInTheDocument();
+  expect(retry).toHaveFocus();
+  expect(retry).not.toHaveAttribute("aria-busy");
+
+  // An immediate repeated refusal keeps focus too.
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(retry).not.toHaveAttribute("aria-busy"));
+  expect(retry).toHaveFocus();
+
+  // Success replaces the page with the website.
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(4));
+  expect(retry).toHaveFocus();
+  await act(async () => settle.resolve("session-1"));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+});
+
 it("keeps other attach failures in the error bar", async () => {
   const platform = fakePlatform();
   vi.mocked(platform.attach).mockRejectedValue(

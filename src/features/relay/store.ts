@@ -97,6 +97,12 @@ type WindowState = {
    * the live stream then. A continuous replay of the channel closes the gap
    * from them, so `resume` needs no read. */
   keptLive?: boolean | undefined;
+  /** The rows held when a grant for the channel reached the session. The
+   * relay may have left the channel out of the stream until that grant, with
+   * no notice, and a read meanwhile is denied, so these all precede any gap:
+   * the next catch-up must reach them. Rows the re-sent batch delivers before
+   * its report are newer than the gap. */
+  grantKept?: Set<string> | undefined;
   /** When the head read whose rows the window holds started. A head read the
    * window never took (a prefetch, a cancelled catch-up) does not count. */
   readAt?: number | undefined;
@@ -747,6 +753,7 @@ export function createChannelStore(
       state.kept = rowIds(state);
       state.keptLive = false;
     }
+    if (state.grantKept) state.grantKept = rowIds(state);
     setWindow(state, patchFromHead(head));
     void fillNotices(state, true);
   }
@@ -1099,6 +1106,7 @@ export function createChannelStore(
         state.kept = rowIds(state);
         state.keptLive = false;
       }
+      if (state.grantKept && !cursor) state.grantKept = rowIds(state);
       setWindow(state, {
         status: "ready",
         rows,
@@ -1189,6 +1197,7 @@ export function createChannelStore(
     state.ceiling = ceiling ?? undefined;
     state.floor = undefined;
     state.kept = undefined;
+    state.grantKept = undefined;
     state.restored = false;
     moveCursor(state, page.cursor);
     setWindow(state, {
@@ -4263,7 +4272,11 @@ export function createChannelStore(
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
       for (const state of windows.values()) {
-        if (!state.kept) {
+        if (state.grantKept) {
+          state.kept ??= state.grantKept;
+          state.keptLive = false;
+          state.grantKept = undefined;
+        } else if (!state.kept) {
           state.kept = rowIds(state);
           state.keptLive =
             state.snapshot.freshness === "verified" &&
@@ -4422,7 +4435,13 @@ export function createChannelStore(
      * read. Any other window returns false and catches up. */
     resume(channelId: string): boolean {
       const state = windows.get(channelId);
-      if (disposed || !state?.keptLive || !authorized(channelId)) return false;
+      if (
+        disposed ||
+        !state?.keptLive ||
+        state.grantKept ||
+        !authorized(channelId)
+      )
+        return false;
       dropped = false;
       const head = heads.peek(channelId);
       if (head) heads.set(channelId, { ...head, cached: true });
@@ -4433,6 +4452,16 @@ export function createChannelStore(
       // failed or was cut before the drop. It reads nothing when none is owed.
       void fillNotices(state, false);
       return true;
+    },
+    /** A grant for the channel reached the session. The relay may have left
+     * the channel out of the stream until now, so a continuous replay before it
+     * proves nothing: the next catch-up reaches the rows held now. The grant
+     * reaches the session before the batch it re-sends can deliver anything,
+     * and before that batch's report. */
+    granted(channelId: string) {
+      const state = windows.get(channelId);
+      if (disposed || !state) return;
+      state.grantKept ??= rowIds(state);
     },
     retainedChannels: () => [...windows.keys()],
     retainedEvent(id: string) {
@@ -4465,14 +4494,13 @@ export function createChannelStore(
       const state = windows.get(channelId);
       if (state) {
         // This establishment's replay may stop short of the kept rows. A window
-        // with none (resumed with no read, or not dropped) takes the rows it
-        // holds now: they reached the stream, and rows it delivers from here on
-        // are newer than any gap. While the relay leaves a channel out (access
-        // ended, and the grant reached the broker after its replay), the stream
-        // delivers none for it, so these are still the rows of the drop. A drop
-        // before the catch-up settles keeps them.
-        state.kept ??= rowIds(state);
+        // with none (resumed with no read, or not dropped) takes the rows held
+        // at a grant since, or else the rows it holds now: they reached the
+        // stream, and rows it delivers from here on are newer than any gap. A
+        // drop before the catch-up settles keeps them.
+        state.kept ??= state.grantKept ?? rowIds(state);
         state.keptLive = false;
+        state.grantKept = undefined;
         setWindow(state, {
           freshness: "cached",
           error: undefined,

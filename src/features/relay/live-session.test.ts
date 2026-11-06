@@ -520,6 +520,31 @@ function reconnectHarness(
     live.established("c");
     await flush();
   };
+  /** The relay's grant notice for `channelId`, delivered live. Any roster
+   * check it schedules is answered with c's roster. */
+  const grant = async (channelId = "c") => {
+    live.receive([
+      signed(relay, {
+        kind: 44100,
+        content: "",
+        created_at: 55,
+        tags: [
+          ["p", viewer.pubkey],
+          ["h", channelId],
+        ],
+      }),
+    ]);
+    await flush();
+    for (const entry of wire.pending.splice(0))
+      if (entry.filters[0]?.top_level === true) wire.pending.push(entry);
+      else
+        entry.respond(
+          entry.filters[0]?.kinds?.includes(0)
+            ? []
+            : [roster(relay, "c", [viewer.pubkey]), metadata(relay, "c", "C")],
+        );
+    await flush();
+  };
   /** Drop the stream, with no reconnect yet. */
   const drop = async () => {
     live.state({ status: "retrying", routes: [] });
@@ -556,6 +581,7 @@ function reconnectHarness(
     list,
     open,
     reconnect,
+    grant,
     drop,
     connectAndReplay,
     dropAndReplay,
@@ -1862,19 +1888,21 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
-  it("catches up from the rows held at the report when a resumed channel is reported again with nothing continuous", async () => {
+  it("catches up from the rows held at a grant when a resumed channel is reported again with nothing continuous", async () => {
     const h = reconnectHarness();
     try {
       const seen = await verifiedThenDropped(h);
       await resume(h, [], true);
       expect(h.reads()).toHaveLength(0);
-      // A grant the broker learned of after the replay: the relay may have
-      // left the channel out, so the stream delivered nothing for it since.
-      h.live.established("c");
-      await flush();
-      // A live event after the re-sent batch is live, before the catch-up reads.
+      // Access ended during the outage, so the relay left c out of the batch,
+      // and the stream has delivered nothing for it since. A grant re-sends it.
+      await h.grant();
+      expect(h.reads()).toHaveLength(0);
+      // The re-sent batch delivers a live event before its report.
       const fresh = message(h.alice, "c", "fresh", 60);
       h.live.receive([fresh]);
+      await flush();
+      h.live.established("c");
       await flush();
       const hidden = message(h.alice, "c", "hidden", 30),
         newer = message(h.alice, "c", "newer", 50);
@@ -1892,21 +1920,58 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
-  it("keeps the rows held at the report when the stream drops again before a retracted resume catches up", async () => {
+  it("catches up from the drop's rows when a delayed continuous report arrives after a grant and its traffic", async () => {
+    // The browser broker writes live events at once but holds a report under
+    // backpressure: the grant and the re-sent batch's first event reach the
+    // session before the report of the replay that left c out.
+    const h = reconnectHarness();
+    try {
+      const seen = await verifiedThenDropped(h);
+      h.live.state({ status: "connected", routes: [] });
+      await flush();
+      await h.grant();
+      const fresh = message(h.alice, "c", "fresh", 60);
+      h.live.receive([fresh]);
+      await flush();
+      h.live.established("c", undefined, ["c"]);
+      await flush();
+      expect(h.window().freshness).toBe("cached");
+      const hidden = message(h.alice, "c", "hidden", 30),
+        newer = message(h.alice, "c", "newer", 50);
+      h.read().respond(h.page("head", [fresh, newer], newer));
+      await flush();
+      const older = h.read();
+      expect(older.filters[0]).toMatchObject({ before_id: newer.id });
+      older.respond(h.page(h.cursor(newer), [hidden, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, hidden.id, newer.id, fresh.id]);
+      expect(h.window().freshness).toBe("verified");
+      // The re-sent batch's own report then needs only the head.
+      h.live.established("c");
+      await flush();
+      h.read().respond(h.page("head", [fresh, newer], newer));
+      await flush();
+      expect(h.reads()).toHaveLength(0);
+      expect(h.window().freshness).toBe("verified");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("keeps the rows held at a grant when the stream drops again before its catch-up", async () => {
     const h = reconnectHarness();
     try {
       const seen = await verifiedThenDropped(h);
       await resume(h, [], true);
-      h.live.established("c");
-      await flush();
+      await h.grant();
       const fresh = message(h.alice, "c", "fresh", 60);
       h.live.receive([fresh]);
       await flush();
-      // The retraction's head is still outstanding when the stream drops again.
-      h.read();
+      // The stream drops before the re-sent batch reports.
       await h.drop();
       const later = message(h.alice, "c", "later", 70);
-      await resume(h, [later], false);
+      await resume(h, [later], true);
+      expect(h.window().freshness).toBe("cached");
       const hidden = message(h.alice, "c", "hidden", 30),
         newer = message(h.alice, "c", "newer", 50);
       h.read().respond(h.page("head", [later, fresh, newer], newer));
@@ -2212,15 +2277,20 @@ describe("a reconnect whose replay was continuous", () => {
       await verifiedThenDropped(h);
       await resume(h, [], true);
       const thread = h.owner.session.thread("c", root.id);
+      /** Replies the relay holds for the root. */
+      let replies: RelayEvent[] = [];
       const answer = async () => {
         for (let quiet = 0; quiet < 3; ) {
           await flush();
           if (!h.wire.pending.length) quiet++;
           else quiet = 0;
           for (const entry of h.wire.pending.splice(0))
-            entry.respond(
-              entry.filters[0]?.ids?.includes(root.id) ? [root] : [],
-            );
+            entry.respond([
+              ...(entry.filters[0]?.ids?.includes(root.id) ? [root] : []),
+              ...(entry.filters.some((f) => f["#e"]?.includes(root.id))
+                ? replies
+                : []),
+            ]);
         }
       };
       const threadReads = () =>
@@ -2232,12 +2302,18 @@ describe("a reconnect whose replay was continuous", () => {
       void thread.refresh();
       await answer();
       expect(thread.snapshot().status).toBe("ready");
+      // A reply the live stream dropped before the replay window.
+      const reply = message(h.alice, "c", "reply", 20, [
+        ["e", root.id, "", "reply"],
+      ]);
+      replies = [reply];
       clock += 15 * 60_000;
       await h.drop();
       h.queries.length = 0;
       await resume(h, [], true);
       await answer();
       expect(threadReads()).toEqual([]);
+      expect(thread.snapshot().replies).toEqual([]);
       clock += 1;
       await h.drop();
       h.queries.length = 0;
@@ -2245,6 +2321,9 @@ describe("a reconnect whose replay was continuous", () => {
       await answer();
       expect(threadReads().length).toBeGreaterThan(0);
       expect(thread.snapshot().status).toBe("ready");
+      expect(thread.snapshot().replies.map((row) => row.id)).toEqual([
+        reply.id,
+      ]);
       thread.dispose();
     } finally {
       h.owner.dispose();

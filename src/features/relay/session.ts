@@ -3592,16 +3592,20 @@ export function createRelaySession(
       );
       // Signed membership notifications are hints, not roster authority. Schedule
       // before visibility filtering, because a newly granted channel may be denied locally.
-      confirmMembershipHints(
-        events.filter(
-          (event) =>
-            [44100, 44101].includes(event.kind) &&
-            event.pubkey === transport.relayAuthor &&
-            event.tags.some(
-              ([name, value]) => name === "p" && value === transport.viewer,
-            ),
-        ),
+      const hints = events.filter(
+        (event) =>
+          [44100, 44101].includes(event.kind) &&
+          event.pubkey === transport.relayAuthor &&
+          event.tags.some(
+            ([name, value]) => name === "p" && value === transport.viewer,
+          ),
       );
+      confirmMembershipHints(hints);
+      // Before anything the batch it re-sends delivers (see `granted`).
+      for (const hint of hints)
+        if (hint.kind === 44100)
+          for (const [name, id] of hint.tags)
+            if (name === "h" && id) channels.granted(id);
       const epoch = accessEpoch;
       const generation = liveGeneration;
       const visible = accept(

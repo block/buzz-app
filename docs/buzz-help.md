@@ -254,6 +254,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   stopped reading, or at the latest message once you had caught up. You and
   the person asking may have different channel access. A link alone never
   grants access.
+- **Offline**: when Buzz can't reach a community, it shows the conversations
+  saved on this device. Once Buzz reconnects, you can load messages older than
+  those, and the top of the conversation says so.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private

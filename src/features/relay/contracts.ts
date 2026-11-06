@@ -331,6 +331,10 @@ export interface ChannelQueries {
    * withheld answers) and when it ends. Absent when no lookup can run, as in
    * a cached-only store. */
   refer?(channelId: string): () => void;
+  /** A cached-only store: saved conversations while Buzz can't reach the
+   * relay. It reads nothing, so `loadOlder` adds no rows, until a connected
+   * session replaces it. */
+  readonly cachedOnly?: true;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
    * membership change on one it already carries, without a full rediscovery.

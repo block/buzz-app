@@ -3314,8 +3314,10 @@ export function createChannelStore(
     subscribeDirectory: (listener: Listener) =>
       subscribe(directoryListeners, listener),
     describe: describeReference,
-    // A cached-only store never looks a reference up, so it offers no lookup.
-    ...(options.cachedOnly ? {} : { refer: referChannel }),
+    // A cached-only store reads nothing: it says so, and offers no lookup.
+    ...(options.cachedOnly
+      ? { cachedOnly: true as const }
+      : { refer: referChannel }),
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>

@@ -510,15 +510,18 @@ details:not([open]) > summary .sectionChevron {
   min-height: 0;
   min-width: 0;
 }
+/* Enlarged text in a narrow pane reflows and scrolls here, not past the frame's clip. */
 .connect {
   height: 100%;
   background: var(--surface-panel);
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   flex-direction: column;
   padding: var(--space-section-gap);
   text-align: center;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
 }
 .connectIcon {
   padding: var(--space-5);
@@ -536,8 +539,17 @@ details:not([open]) > summary .sectionChevron {
   max-width: 34.375rem;
   color: var(--text-subtle);
 }
+/* The pane cannot reflow the action as a whole control, so its label wraps. */
 .connect button {
   margin: var(--space-4) 0;
+  max-inline-size: 100%;
+  white-space: normal;
+}
+/* As in EmptyState, a narrow pane keeps more of each line for whole words. */
+@container (max-width: 16rem) {
+  .connect {
+    padding-inline: var(--space-2);
+  }
 }
 .failed {
   height: 100%;

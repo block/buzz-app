@@ -205,7 +205,8 @@ describe("teamOps.change", () => {
       saved: { status: "conflict", head: head() } as never,
     });
     const move = { ...edit, members: ["a"], adopt: true, fresh: true };
-    expect(await retry.ops.change({ ...move, resume: true })).toMatchObject({
+    const sent = { ...edit, members: ["a"] };
+    expect(await retry.ops.change({ ...move, resume: sent })).toMatchObject({
       ok: true,
       added: ["a"],
       created: true,
@@ -213,19 +214,66 @@ describe("teamOps.change", () => {
     // Without proof of that try it stays a conflict, and so does a copy
     // that differs in text or has a member this one doesn't.
     for (const [stored, members, resume] of [
-      [head(), [], false],
-      [head("Crew", "Other"), [], true],
-      [head(), ["z"], true],
+      [head(), [], undefined],
+      [head("Crew", "Other"), [], sent],
+      [head(), ["z"], sent],
     ] as const) {
       const other = setup({
         members: [...members],
         saved: { status: "conflict", head: stored } as never,
       });
-      const result = await other.ops.change({ ...move, resume });
+      const result = await other.ops.change({
+        ...move,
+        ...(resume && { resume }),
+      });
       expect(result).toMatchObject({ ok: false, conflict: true });
       expect(result.created).toBeUndefined();
       expect(other.channels.addMember).not.toHaveBeenCalled();
     }
+  });
+
+  // The first try sent "Crew" with a and b and stopped, its result unknown
+  // or a crash after a joined; the team was edited here since.
+  const resumed = (members: string[], change: object) => {
+    const retry = setup({
+      members,
+      saved: { status: "conflict", head: head() } as never,
+    });
+    const result = retry.ops.change({
+      ...edit,
+      members: ["a", "b"],
+      ...change,
+      adopt: true,
+      fresh: true,
+      resume: { ...edit, members: ["a", "b"] },
+    });
+    return { retry, result };
+  };
+
+  it("a resumed move with its name or instructions edited since matches what its earlier try sent", async () => {
+    const { retry, result } = resumed([], { name: "Renamed" });
+    expect(await result).toMatchObject({ ok: true, created: true });
+    // It sends the recorded text again; the edit follows as an Edit.
+    expect((retry.save.mock.calls[0] as unknown[] | undefined)?.[1]).toEqual({
+      version: 1,
+      name: "Crew",
+      instructions: "Ship it",
+    });
+  });
+
+  it("a resumed move with a member removed since its partial roster matches what its earlier try sent", async () => {
+    const { retry, result } = resumed(["a", "b"], { members: ["a"] });
+    expect(await result).toMatchObject({ ok: true, added: [], created: true });
+    expect(retry.channels.removeMember).not.toHaveBeenCalled();
+  });
+
+  it("a definitely refused first save is reported as refused", async () => {
+    const { ops } = setup({
+      saved: { status: "refused", refusal: "offline", message: "no" },
+    });
+    expect(
+      await ops.change({ ...edit, members: ["a"], adopt: true, fresh: true }),
+    ).toMatchObject({ ok: false, refused: true });
   });
 
   it("an unanswered content save is reported as uncertain, not success", async () => {

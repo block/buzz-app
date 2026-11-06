@@ -75,7 +75,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
-import { NoTeamChannel } from "./team-ops";
+import { NoTeamChannel, type TeamSent } from "./team-ops";
 import { importedTeamId } from "./config-channels";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
@@ -15238,11 +15238,11 @@ describe("synced teams", () => {
   /** Each community's config channels; `saveTeam` answers as `answer`. */
   function teamChannels(
     answer: (edit: {
-      saving?: () => Promise<void>;
+      saving?: (sent: TeamSent) => Promise<void>;
     }) => Promise<unknown> = async () => {},
   ) {
-    const saveTeam = vi.fn((edit: { saving?: () => Promise<void> }) =>
-      answer(edit),
+    const saveTeam = vi.fn(
+      (edit: { saving?: (sent: TeamSent) => Promise<void> }) => answer(edit),
     );
     const removeTeam = vi.fn(async (_id: string) => {});
     const made = new Set<string>();
@@ -15257,7 +15257,7 @@ describe("synced teams", () => {
         history: () => [],
         dispose: vi.fn(),
         removeTeam,
-        saveTeam: (edit: { saving?: () => Promise<void> }) =>
+        saveTeam: (edit: { saving?: (sent: TeamSent) => Promise<void> }) =>
           saveTeam(edit).then(
             (result) =>
               result ?? { ok: true, added: [], removed: [], skipped: [] },
@@ -15716,6 +15716,8 @@ describe("synced teams", () => {
       instructions: "Go.",
       members: [] as string[],
     };
+    // What a move's first save sent.
+    const sent = { name: "Mine", instructions: "Go.", members: [alder] };
     const teamsKey = "buzz.agents.teams.v1";
     let templates: ReturnType<typeof vi.spyOn>;
     beforeEach(() => {
@@ -15840,8 +15842,8 @@ describe("synced teams", () => {
     it("after its first save goes unanswered, retries by resuming its own partial relay copy", async () => {
       const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
       const answers = [
-        async (edit: { saving?: () => Promise<void> }) => {
-          await edit.saving?.();
+        async (edit: { saving?: (sent: TeamSent) => Promise<void> }) => {
+          await edit.saving?.(sent);
           return { ...fail, uncertain: true };
         },
         // The retry finds that copy, with no members yet, and finishes it.
@@ -15859,7 +15861,7 @@ describe("synced teams", () => {
         expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
       );
       expect(moves(f)).toEqual({
-        "local-1": { community: home, failed: true, attempted: true },
+        "local-1": { community: home, failed: true, attempted: sent },
       });
       t.confirm(channels.stores.get(home));
       f.recover();
@@ -15869,7 +15871,7 @@ describe("synced teams", () => {
       expect(channels.saveTeam.mock.calls[1]?.[0]).toMatchObject({
         id: await movedId(),
         fresh: true,
-        resume: true,
+        resume: sent,
       });
       expect(moves(f)).toEqual({});
     });
@@ -15879,13 +15881,13 @@ describe("synced teams", () => {
       const stored: unknown[] = [];
       const held = runnerGate<unknown>();
       const channels = teamChannels(async (edit) => {
-        await edit.saving?.();
+        await edit.saving?.(sent);
         stored.push(new TeamMoves(t.storage).get("local-1"));
         return held.promise;
       });
       const f = await setup({ identities: [here(alder)], storage: t.storage });
       await vi.waitFor(() => expect(stored).toHaveLength(1));
-      expect(stored[0]).toEqual({ community: home, attempted: true });
+      expect(stored[0]).toEqual({ community: home, attempted: sent });
       held.resolve({ ...fail, uncertain: true });
       await vi.waitFor(() =>
         expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
@@ -15893,16 +15895,43 @@ describe("synced teams", () => {
       expect(channels.saveTeam).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps no attempt record after a definitely refused first save, so another copy stays a conflict", async () => {
+      const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
+      const answers = [
+        async (edit: { saving?: (sent: TeamSent) => Promise<void> }) => {
+          await edit.saving?.(sent);
+          return { ...fail, error: "Refused", refused: true };
+        },
+        // Another install's copy, with fewer members, is there now.
+        async () => ({ ...fail, error: "A different copy", conflict: true }),
+      ];
+      const channels = teamChannels(async (edit) => answers.shift()?.(edit));
+      const f = await setup({ identities: [here(alder)], storage: t.storage });
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
+      );
+      expect(moves(f)).toEqual({
+        "local-1": { community: home, failed: true },
+      });
+      t.confirm(channels.stores.get(home));
+      f.recover();
+      await vi.waitFor(() =>
+        expect(f.service.teamSync("local-1")).toEqual({ conflict: home }),
+      );
+      expect(channels.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("resume");
+      expect(f.storage.get(teamsKey)).toContain("Mine");
+    });
+
     it("saves nothing to the relay when the attempt record is refused", async () => {
       const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
-      const sent = vi.fn();
+      const relay = vi.fn();
       teamChannels(async (edit) => {
-        await edit.saving?.();
-        sent();
+        await edit.saving?.(sent);
+        relay();
       });
       const set = t.storage.set.bind(t.storage);
       vi.spyOn(t.storage, "set").mockImplementation(async (key, value) => {
-        if (String(value).includes('"attempted":true'))
+        if (String(value).includes('"attempted":'))
           throw new Error("Storage refused");
         return set(key, value);
       });
@@ -15910,7 +15939,7 @@ describe("synced teams", () => {
       await vi.waitFor(() =>
         expect(f.service.teamSync("local-1")).toEqual({ local: "failed" }),
       );
-      expect(sent).not.toHaveBeenCalled();
+      expect(relay).not.toHaveBeenCalled();
       expect(
         new TeamMoves(t.storage).get("local-1")?.attempted,
       ).toBeUndefined();
@@ -15920,7 +15949,7 @@ describe("synced teams", () => {
       const t = await local([{ ...mine, members: [alder] }], ["local-1"]);
       await new TeamMoves(t.storage).set("local-1", {
         community: home,
-        attempted: true,
+        attempted: sent,
       });
       // The resumed copy is this device's, though a member add fails.
       const channels = teamChannels(async () => ({ ...fail, created: true }));
@@ -15930,13 +15959,13 @@ describe("synced teams", () => {
       );
       expect(channels.saveTeam.mock.calls[0]?.[0]).toMatchObject({
         fresh: true,
-        resume: true,
+        resume: sent,
       });
       expect(moves(f)).toEqual({
         "local-1": {
           community: home,
           failed: true,
-          attempted: true,
+          attempted: sent,
           created: true,
         },
       });
@@ -15974,8 +16003,8 @@ describe("synced teams", () => {
       expect(channels.saveTeam.mock.calls[1]?.[0]).toMatchObject({
         adopt: true,
         fresh: true,
-        resume: false,
       });
+      expect(channels.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("resume");
       expect(channels.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("base");
       expect(templates).not.toHaveBeenCalled();
       expect(f.storage.get(teamsKey)).toContain("Mine");

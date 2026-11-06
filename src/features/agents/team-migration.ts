@@ -6,16 +6,18 @@
 // create of the relay team landed: only then may the move write over what is
 // there.
 import type { AgentStore } from "./store";
+import type { TeamSent } from "./team-ops";
 
 export const TEAM_MOVES_KEY = "buzz.agents.teams.migration.v1";
 
 /** A move under way: its community, fixed before the first write.
- * `attempted` once a try reached its first save, which may have created the
- * relay team; `created` once this device's create is confirmed. */
+ * `attempted`: what a try sent in its first save, which may have created the
+ * relay team; none once that save was definitely refused. `created` once this
+ * device's create is confirmed. */
 export type TeamMove = Readonly<{
   community: string;
   failed?: true;
-  attempted?: true;
+  attempted?: TeamSent;
   created?: true;
 }>;
 

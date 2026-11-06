@@ -57,7 +57,7 @@ import {
   teamBody,
   teamSources,
 } from "./team-config";
-import type { TeamResult } from "./team-ops";
+import type { TeamResult, TeamSent } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
@@ -4881,12 +4881,12 @@ export class AgentsService extends Service implements Agents {
       // Whether the relay team is this device's own create, and whether a
       // try reached the save that may have made it.
       let own = !!move?.created;
-      let attempted = !!move?.attempted;
+      let attempted = move?.attempted;
       const journal = (failed?: true) =>
         this.teamMoves.set(localId, {
           community: origin,
           ...(failed && { failed }),
-          ...(attempted && { attempted: true }),
+          ...(attempted && { attempted }),
           ...(own && { created: true }),
         });
       try {
@@ -4901,14 +4901,14 @@ export class AgentsService extends Service implements Agents {
               adopt: true,
               ...(!own && {
                 fresh: true,
-                resume: attempted,
-                saving: async () => {
+                ...(attempted && { resume: attempted }),
+                saving: async (sent) => {
                   if (attempted) return;
-                  attempted = true;
+                  attempted = sent;
                   try {
                     await journal(move?.failed);
                   } catch (error) {
-                    attempted = false;
+                    attempted = undefined;
                     throw error;
                   }
                 },
@@ -4919,6 +4919,8 @@ export class AgentsService extends Service implements Agents {
         } catch (error) {
           const result = teamResultOf(error);
           own ||= !!result?.created;
+          // A definitely refused first save made nothing to recover.
+          if (result?.refused && !move?.attempted) attempted = undefined;
           if (result?.conflict && !own) throw new TeamConflict();
           throw error;
         }
@@ -5079,8 +5081,8 @@ export class AgentsService extends Service implements Agents {
       base?: Readonly<{ head: string; members: readonly string[] }>;
       adopt?: boolean;
       fresh?: boolean;
-      resume?: boolean;
-      saving?: () => Promise<void>;
+      resume?: TeamSent;
+      saving?: (sent: TeamSent) => Promise<void>;
     }>,
   ) {
     const host = hostOf({ relay: home });

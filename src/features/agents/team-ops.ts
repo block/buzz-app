@@ -9,6 +9,14 @@ import { teamSubject } from "./config-channels";
 import type { ConfigWriter, WriteSide } from "./config-writes";
 import { teamArtifact, teamBody } from "./team-config";
 
+/** What a team's first save sends: its name and instructions, with the
+ * members its members are then added from. */
+export type TeamSent = Readonly<{
+  name: string;
+  instructions: string;
+  members: readonly string[];
+}>;
+
 export type TeamEdit = Readonly<{
   id: string;
   name: string;
@@ -23,13 +31,15 @@ export type TeamEdit = Readonly<{
   /** With `adopt`, a move's first try: an existing team that differs in
    * name, instructions or members is a conflict, and nothing is written. */
   fresh?: boolean;
-  /** With `fresh`, an earlier try of this move reached its first save, so
-   * the team there may be that try's partial copy: identical name and
-   * instructions, with only members missing. It is resumed, not a conflict. */
-  resume?: boolean;
-  /** Awaited just before a Create or Import's first save, so the caller
-   * can durably record that this device may be creating the team. */
-  saving?: () => Promise<void>;
+  /** With `fresh`, what an earlier try of this move sent in its first save.
+   * It is sent again, so a team there with its name and instructions and
+   * only some of its members is that try's partial copy: resumed, not a
+   * conflict. */
+  resume?: TeamSent;
+  /** Awaited with what is sent just before a Create or Import's first save,
+   * so the caller can durably record that this device may be creating the
+   * team. */
+  saving?: (sent: TeamSent) => Promise<void>;
 }>;
 
 /** What the change did. `ok` only when the readback shows all of it. */
@@ -49,6 +59,8 @@ export type TeamResult = Readonly<{
   created?: true;
   /** A `fresh` change found a different team there and wrote nothing. */
   conflict?: true;
+  /** The first save was definitely refused: nothing was created. */
+  refused?: true;
 }>;
 
 /** The result a failed team change was thrown with, if any. */
@@ -185,10 +197,17 @@ export function teamOps(deps: TeamDeps) {
     const same =
       shown?.name === edit.name && shown.instructions === edit.instructions;
     if (!(base && head?.id === base.head && same)) {
-      if (!base) await edit.saving?.();
+      // A resumed move sends what its earlier try did; newer edits follow as
+      // an Edit of the copy.
+      const sent = edit.resume ?? {
+        name: edit.name,
+        instructions: edit.instructions,
+        members: edit.members,
+      };
+      if (!base) await edit.saving?.(sent);
       const saved = await deps.writer.save(
         write,
-        { version: 1, name: edit.name, instructions: edit.instructions },
+        { version: 1, name: sent.name, instructions: sent.instructions },
         base ? base.head : null,
         [["team", id]],
       );
@@ -200,20 +219,21 @@ export function teamOps(deps: TeamDeps) {
         saved.status === "conflict" &&
         !!body &&
         (edit.adopt ||
-          (body.name === edit.name && body.instructions === edit.instructions));
+          (body.name === sent.name && body.instructions === sent.instructions));
       if (saved.status === "unknown" || saved.status === "accepted-unavailable")
         return fail(
           "The name and instructions may or may not have saved; reopen the team to check",
           { uncertain: true },
         );
-      if (saved.status === "refused") return fail(saved.message);
+      if (saved.status === "refused")
+        return fail(saved.message, { ...(!base && { refused: true }) });
       if (saved.status !== "saved" && !adopted)
         return fail("The team changed since it was opened; reopen it");
       created = !base && saved.status === "saved";
       const partial =
-        body?.name === edit.name &&
-        body.instructions === edit.instructions &&
-        present.every((pubkey) => edit.members.includes(pubkey));
+        body?.name === sent.name &&
+        body.instructions === sent.instructions &&
+        present.every((pubkey) => sent.members.includes(pubkey));
       // An earlier try's own partial copy is this device's create.
       created ||= !!(edit.fresh && edit.resume && partial);
       // Another copy's team, unless it already is just this one.

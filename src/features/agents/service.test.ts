@@ -373,6 +373,7 @@ const internals = (service: AgentsService) =>
   service as unknown as {
     configStore: AgentConfigStore;
     communityConfigs: Map<string, unknown>;
+    records: Record<string, { config: unknown }>;
   };
 
 /** The events native published as an agent, of `kind`, in order. */
@@ -497,6 +498,11 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     name: "Dedicated",
   });
   await service.retype(agent.key, "example/native");
+  const beforeBinding = service.local();
+  expect(
+    beforeBinding.agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution,
+  ).toBeUndefined();
   const observed: Agent[] = [];
   const off = service.subscribe(() => {
     const current = service.find(agent.key);
@@ -522,6 +528,14 @@ it("binds a dedicated native agent and preserves its target when a provider chan
     finishRetirement();
   }
   await changing;
+  expect(
+    service.local().agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution,
+  ).toBe("remote");
+  expect(
+    beforeBinding.agents.find((item) => item.pubkey === agent.pubkey)
+      ?.execution,
+  ).toBeUndefined();
   off();
   expect(observed.at(-1)?.executionBinding).toEqual({
     provider: "internal/remote",
@@ -2394,6 +2408,29 @@ describe("a type without synced settings", () => {
       f.service.save(bot, { config: { reply: "local", instructions: "x" } }),
     ).rejects.toThrow("Waiting for this agent's config to sync");
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("deletes a synced agent whose type left it no config", async () => {
+    const instructions = {
+      ...subject,
+      type: "buzz.agent.instructions" as const,
+    };
+    const f = await setup({
+      binding: () => ({
+        instructions: { mode: "synced", subject: instructions },
+      }),
+    });
+    fixtures.push(f);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    internals(f.service).communityConfigs.set("https://relay.example.test", {
+      attach: vi.fn(),
+      remove: vi.fn(),
+    } as never);
+    // As while its type isn't registered yet.
+    const { records } = internals(f.service);
+    records[bot] = { ...records[bot], config: undefined };
+    await f.service.remove(bot);
+    expect(f.service.find(bot)).toBeUndefined();
   });
 
   it.each(["local", "migrating"] as const)(
@@ -9178,7 +9215,14 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
   });
   expect(service.local().agents).toEqual([]);
   expect(choices.snapshot().identities).toEqual([
-    { pubkey: hostedKey, name: "Sky", managed: false, messageable: true },
+    {
+      pubkey: hostedKey,
+      name: "Sky",
+      managed: false,
+      messageable: true,
+      execution: "remote",
+      runtime: "example/cloud",
+    },
   ]);
   expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
   expect(storage.get("buzz.agents.unfinished.v1")).toContain('"agents":[]');

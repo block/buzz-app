@@ -294,6 +294,17 @@ a new session** requests another allocation. **Interrupt** stops pending setup
 and keeps the key for retry. Activity reads the saved session inventory. Remote
 usage is unavailable. Settings and model discovery do not create targets.
 
+Claude uses the same contract with its stream-json process. Its tools and hooks
+use that process connection. Files come from the target. Each conversation
+keeps its execution key, workspace, and Claude session across app restarts.
+**Start a new session** selects a new execution key. An established session
+requires this reset when Claude cannot restore it. A session with no recorded
+submission can retry on the same target. The target must supply Claude
+Code 2.1.169 or later and its own authentication. No local credentials go to the
+target. Local Claude retains its device defaults. Remote Claude uses explicit
+agent settings or the target defaults. Model discovery does not allocate a
+target. Remote usage totals and transcript views are unavailable.
+
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. Plugins can add a tab to every local agent with
@@ -532,6 +543,15 @@ Buzz keeps no separate Goose defaults store. Readiness requires a working
 `goose-acp` and a configured default provider. The per-agent provider/model
 fields remain overrides. Types without a provider contribution have no Harness
 defaults row; a failed contribution retains the unavailable fallback.
+
+For creation-specific access, `CreateAction` presents a compact action beside
+Harness and receives the host's `disabled` state. `CreateConfiguration` reports
+readiness through `onReadyChange`; that gate also applies in the remote introduction.
+Builderlab uses it for Sign in with a pending loading spinner, while its creation
+fields keep Model and Thinking visible but disabled when signed out. After three
+seconds, browser sign-in shows guidance and Cancel sign-in, matching the agent
+pane. Account verification remains non-cancellable. Sign-in errors remain
+with the fields and drafts survive cancellation.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
@@ -1248,6 +1268,15 @@ reply. Once every represented agent has settled successfully, stopped, or been
 superseded, the updates leave the conversation flow. History and exact message
 links remain available.
 
+A public reply alone does not replace the request's live indicator. Mounted
+update history can take over that indicator and its controls. When public replies
+split one request's updates into several runs, only the latest run for each agent
+owns its live shimmer and Stop control; earlier runs remain readable history.
+Other agents and requests retain their own live presentation.
+Codex transfers live activity to an accepted follow-up in the same conversation.
+Top-level DM messages share that presentation scope; actual DM threads remain
+independent, even when they share a harness session.
+
 When lifecycle evidence is missing (including historical conversations after a
 reload), the next public reply can retire older updates from the same request
 if its author participated in the exchange or received the helper's last update.
@@ -1401,10 +1430,13 @@ continues to use a searchable Combobox.
 
 Builderlab Identity and creation reuse the shared family → model menu, with a
 separate compact Thinking selector. Builderlab requires an explicit supported
-model/thinking pair rather than an inherited default. Its plugin owns catalog
-family aliases; changing the model clears the thinking choice. Creation places
-these controls beside the host-owned Harness row in one SettingsGroup, while
-keeping sign-in/recovery and Instructions outside the group.
+model/thinking pair rather than an inherited default. When the catalog's
+optional `recommended_selection` names an offered pair, creation fills it into
+untouched choices as a suggested change, which does not start the draft; a
+person's choice is never replaced. Its plugin owns catalog family aliases;
+changing the model clears the thinking choice. Creation places these controls
+beside the host-owned Harness row in one SettingsGroup, while keeping
+sign-in/recovery and Instructions outside the group.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,

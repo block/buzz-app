@@ -72,6 +72,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { registerMessageList } from "./message-selection";
+import { setEditWithUpArrowPreference } from "./edit-key-preference";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
@@ -4055,6 +4056,117 @@ it("blocks plain-text DM sends during compaction even after removing the mention
   expect(h.messages.send).toHaveBeenCalledWith("channel", "plain text", [], []);
 });
 
+it.each(["block.builderlab/builderlab", "other/remote", "codex-remote"])(
+  "does not add a composer workspace button for %s without model controls",
+  (runtime) => {
+    const viewer = localAgent.owner;
+    const control = localAgentsFixture();
+    control.set(
+      runtime === "codex-remote"
+        ? { agents: [{ ...localAgent, ...first, execution: "remote" }] }
+        : { hosted: [{ ...localAgent, ...first, runtime }] },
+    );
+    const h = mount(
+      { scope: `https://relay.example.test:${viewer}` },
+      control,
+      viewer,
+    );
+    act(() => h.commands().insertMention(first));
+    expect(
+      screen.queryByRole("button", { name: /workspace|Model.*effort/i }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeVisible();
+    expect(h.commands().recipients).toEqual([first]);
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["remote", first.pubkey],
+  ["local", second.pubkey],
+])(
+  "preserves existing model and session controls for the %s target beside a remote mention",
+  async (_location, controlled) => {
+    const viewer = localAgent.owner;
+    const control = localAgentsFixture();
+    control.set({
+      hosted: [
+        { ...localAgent, ...first, runtime: "block.builderlab/builderlab" },
+      ],
+    });
+    const agents = sessionAgents(
+      "channel",
+      [
+        {
+          id: "fast",
+          label: "Fast",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+        {
+          id: "deep",
+          label: "Deep",
+          efforts: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+      [controlled],
+    );
+    const h = mount(
+      { scope: `https://relay.example.test:${viewer}` },
+      control,
+      viewer,
+      agents,
+    );
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+    });
+    const draft = h.input().value;
+    const trigger = await screen.findByRole("button", {
+      name: "Model, effort, and session controls",
+    });
+    expect(trigger.querySelector(".tabler-icon-gauge")).not.toBeNull();
+    expect(trigger.querySelector(".tabler-icon-cloud")).toBeNull();
+    await h.user.click(trigger);
+    const popup = await screen.findByRole("dialog", {
+      name: "Model, effort, and session controls",
+    });
+    expect(popup).not.toHaveTextContent(
+      "This agent works on another computer.",
+    );
+    const model = within(popup).getByRole("button", {
+      name: "Model for Honey's next run",
+    });
+    await h.user.click(model);
+    await h.user.click(
+      await screen.findByRole("menuitemradio", { name: "Deep" }),
+    );
+    expect(model).toHaveTextContent("Deep");
+    const slider = within(popup).getByLabelText("Effort for Honey's next run");
+    act(() => slider.focus());
+    await h.user.keyboard("{End}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await h.user.click(
+      within(popup).getByRole("button", { name: "Compact session" }),
+    );
+    expect(agents.session).toHaveBeenCalledWith(
+      controlled,
+      { channelId: "channel" },
+      "compact",
+    );
+    await h.user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(h.input()).toHaveValue(draft);
+    expect(h.commands().recipients).toEqual([first, second]);
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
 it("offers a one-to-one DM's agent its model and effort without a mention", async () => {
   const agents = sessionAgents("channel", [
     {
@@ -4972,6 +5084,9 @@ it("keeps initial saved choices pending, then supports retry without submitting 
     screen.getByRole("button", { name: "Retry saved choices" }),
   );
   await choicesLoaded();
+  expect(
+    h.input().closest("form")?.querySelector(".buzz-loading-region"),
+  ).not.toBeInTheDocument();
   await send(h);
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual({
@@ -8637,63 +8752,81 @@ it("edits in the same composer, cancels without persisting edit text, and restor
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
 
-it("selects the newest message on Up when the scope has a message list, instead of editing", () => {
-  const base = mount({}, undefined, first.pubkey);
-  base.unmount();
-  const row = editableMessage();
-  let scope: ReturnType<typeof useMessageEditScope>;
-  function Probe() {
-    scope = useMessageEditScope();
-    return null;
-  }
-  const list = document.createElement("ol");
-  list.innerHTML =
-    '<li data-message-id="older"><div data-layout="timeline">Older</div></li>' +
-    '<li data-message-id="newest"><div data-layout="timeline">Newest</div></li>';
-  document.body.append(list);
-  const unregister = registerMessageList(list, {
-    row: (id) => ({ id }) as ChannelMessage,
-    newest: () => "newest",
-    canEdit: () => false,
-    edit: () => {},
-    canDelete: () => false,
-    remove: () => {},
-    canMarkUnread: () => false,
-    markUnread: () => {},
-    composer: () => null,
-  });
-  try {
-    render(
-      <MessageEditScope>
-        <Probe />
-        <MessageComposer
-          session={base.session}
-          scope="scope"
-          channelId="channel"
-          channelName="General"
-          editMessages={[row]}
-        />
-      </MessageEditScope>,
-      { wrapper: ToastProvider },
-    );
-    if (scope) scope.list.current = list;
-    const input = screen.getByRole("textbox");
-    act(() => input.focus());
-    fireEvent.keyDown(input, { key: "ArrowUp" });
-    expect(
-      list.querySelector('[data-message-id="newest"] > div'),
-    ).toHaveFocus();
-    expect(input).not.toHaveAccessibleName("Edit message");
-    // Without a connected list, Up keeps editing the last own message.
-    list.remove();
-    act(() => input.focus());
-    fireEvent.keyDown(input, { key: "ArrowUp" });
-    expect(input).toHaveAccessibleName("Edit message");
-  } finally {
-    unregister();
-    list.remove();
-  }
-});
+it.each([
+  { enabled: false, metaKey: false, eligible: true },
+  { enabled: false, metaKey: true, eligible: true },
+  { enabled: true, metaKey: false, eligible: true },
+  { enabled: true, metaKey: true, eligible: true },
+  { enabled: true, metaKey: false, eligible: false },
+])(
+  "uses the Up Arrow preference with a message list: %j",
+  ({ enabled, metaKey, eligible }) => {
+    setEditWithUpArrowPreference(enabled);
+    const base = mount({}, undefined, first.pubkey);
+    base.unmount();
+    const row = editableMessage();
+    let scope: ReturnType<typeof useMessageEditScope>;
+    function Probe() {
+      scope = useMessageEditScope();
+      return null;
+    }
+    const list = document.createElement("ol");
+    list.innerHTML =
+      '<li data-message-id="older"><div data-layout="timeline">Older</div></li>' +
+      '<li data-message-id="newest"><div data-layout="timeline">Newest</div></li>';
+    document.body.append(list);
+    const unregister = registerMessageList(list, {
+      row: (id) => ({ id }) as ChannelMessage,
+      newest: () => "newest",
+      canEdit: () => false,
+      edit: () => {},
+      canDelete: () => false,
+      remove: () => {},
+      canMarkUnread: () => false,
+      markUnread: () => {},
+      composer: () => null,
+    });
+    try {
+      render(
+        <MessageEditScope>
+          <Probe />
+          <MessageComposer
+            session={base.session}
+            scope="scope"
+            channelId="channel"
+            channelName="General"
+            editMessages={eligible ? [row] : []}
+          />
+        </MessageEditScope>,
+        { wrapper: ToastProvider },
+      );
+      if (scope) scope.list.current = list;
+      const input = screen.getByRole("textbox");
+      act(() => input.focus());
+      fireEvent.keyDown(input, { key: "ArrowUp", metaKey });
+      if (enabled || metaKey) {
+        expect(input).toHaveFocus();
+        expect(input).toHaveAccessibleName(
+          eligible ? "Edit message" : "Message #General",
+        );
+        expect(input).toHaveValue(eligible ? row.content : "");
+        return;
+      }
+      expect(
+        list.querySelector('[data-message-id="newest"] > div'),
+      ).toHaveFocus();
+      expect(input).not.toHaveAccessibleName("Edit message");
+      // Without a connected list, Up keeps editing the last own message.
+      list.remove();
+      act(() => input.focus());
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(input).toHaveAccessibleName("Edit message");
+    } finally {
+      unregister();
+      list.remove();
+    }
+  },
+);
 
 it.each(["cancel", "accepted"])(
   "restores rich draft history and mention provenance after an edit is %s",
@@ -8989,6 +9122,7 @@ it.each([
   { isComposing: true },
   { keyCode: 229 },
 ])("does not take over modified/repeated/composing ArrowUp: %j", (keys) => {
+  setEditWithUpArrowPreference(true);
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
   fireEvent.keyDown(h.input(), { key: "ArrowUp", ...keys });
@@ -8997,6 +9131,7 @@ it.each([
 });
 
 it("does not replace a nonempty draft and confines channel/thread targets to their owner", () => {
+  setEditWithUpArrowPreference(true);
   const h = mount({}, undefined, first.pubkey);
   const channelRow = editableMessage();
   const reply = editableMessage({
@@ -9023,6 +9158,26 @@ it("does not replace a nonempty draft and confines channel/thread targets to the
   expect(h.input()).toHaveValue("");
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
+
+describe.each([false, true])(
+  "empty rich drafts with Up Arrow editing enabled: %s",
+  (enabled) => {
+    it.each(["code_block", "bullet_list", "blockquote"] as const)(
+      "preserves an empty-looking rich %s draft on Up Arrow",
+      (format) => {
+        setEditWithUpArrowPreference(enabled);
+        const h = mount({}, undefined, first.pubkey);
+        h.setRows([editableMessage()]);
+        act(() => h.input().toggleFormat(format));
+        expect(h.input()).toHaveValue("");
+        for (const metaKey of [false, true]) {
+          fireEvent.keyDown(h.input(), { key: "ArrowUp", metaKey });
+          expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+        }
+      },
+    );
+  },
+);
 
 it.each([false, true])(
   "renders preserved mention links as chips when editing (already edited: %s)",
@@ -11746,6 +11901,106 @@ it.each(["A ||hidden|| caption", "Use `a || b` here"])(
       `${link}\n\n${caption}`,
       [],
       [],
+    );
+  },
+);
+
+it.each(["saved", "recovered", "typed before the default"])(
+  "adds the required submission recipient to prose %s without losing rich content",
+  async (source) => {
+    const draft = {
+      text: "Keep this brief",
+      recipients: [],
+      document: {
+        version: 1 as const,
+        content: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  text: "Keep this brief",
+                  marks: [{ type: "bold" }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    if (source === "saved") writeView("scope", "task-brief", draft);
+    const submit = vi.fn();
+    const h = mount({
+      requireMention: true,
+      defaultMention: source === "typed before the default" ? undefined : first,
+      submission: {
+        draftKey: "task-brief",
+        recoveredDraft: source === "recovered" ? draft : undefined,
+        locked: false,
+        disabled: false,
+        submit,
+      },
+    });
+    if (source === "typed before the default") {
+      h.fill("Keep this brief");
+      act(() => {
+        h.input().setSelectionRange(0, draft.text.length);
+        h.input().toggleFormat("bold");
+      });
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      h.retarget({ defaultMention: first });
+    }
+    expect(h.input()).toHaveValue("@Honey Keep this brief");
+    expect(h.input().querySelector("strong")).toHaveTextContent(
+      "Keep this brief",
+    );
+    expect(h.commands().recipients).toEqual([first]);
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(submit).toHaveBeenCalledOnce();
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({
+      text: "@Honey Keep this brief",
+      recipients: [{ ...first, start: 0, end: 6 }],
+      document: { version: 1 },
+    });
+    expect(h.input().querySelector("strong")).toHaveTextContent(
+      "Keep this brief",
+    );
+  },
+);
+
+it.each(["channel", "optional submission", "explicit recipient"])(
+  "keeps a saved draft unchanged for %s when a default arrives",
+  (mode) => {
+    const draft = typedDraft({
+      text:
+        mode === "explicit recipient"
+          ? "@Honey Keep this brief"
+          : "Keep this brief",
+      recipients:
+        mode === "explicit recipient" ? [{ ...second, start: 0, end: 6 }] : [],
+    });
+    const submission =
+      mode === "channel"
+        ? undefined
+        : {
+            draftKey: "task-brief",
+            locked: false,
+            disabled: false,
+            submit: vi.fn(),
+          };
+    writeView("scope", submission?.draftKey ?? "draft:channel", draft);
+    const h = mount({
+      ...(submission ? { submission } : {}),
+      requireMention: mode !== "optional submission",
+    });
+    h.retarget({ defaultMention: first });
+    expect(h.input()).toHaveValue(draft.text);
+    expect(h.commands().recipients).toEqual(
+      mode === "explicit recipient" ? [second] : [],
     );
   },
 );

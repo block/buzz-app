@@ -55,7 +55,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
     name: "Actions for Alpha",
     exact: true,
   });
-  // Lifecycle items mount after each opening's permission read.
+  // Lifecycle items come from the live roster when the menu opens.
   const lifecycleReady = menu.getByRole("menuitem", {
     name: "Delete chat",
     exact: true,
@@ -470,7 +470,7 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   await page.setViewportSize({ width: 1280, height: 850 });
   await expect(row).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Alpha", exact: true }),
+    page.getByRole("button", { name: "Share access to Alpha", exact: true }),
   ).toBeVisible();
   await expect(history).toBeVisible();
   expect(grants).toHaveLength(0);

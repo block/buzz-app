@@ -55,7 +55,6 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
   ).toBe(true);
 });
 it("shows one agent's watches, reacts to changes and surfaces save errors", async () => {
-  let changed = () => {};
   const enabled = true;
   const record = () => ({
     key: "membership-a",
@@ -91,7 +90,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
       },
     },
   });
-  let snapshot = {
+  const snapshot = {
     status: "ready",
     running: [
       record(),
@@ -115,10 +114,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        changed = listener;
-        return () => {};
-      },
+      subscribe: () => () => {},
       save,
     },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
@@ -161,10 +157,10 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   expect(screen.getByRole("menuitem", { name: "Resume" })).toBeTruthy();
   expect(within(ada).getByText("Paused")).toBeTruthy();
   expect(
-    within(ada).getByRole("button", {
+    within(ada).queryByRole("button", {
       name: "Attention status for Ada",
     }),
-  ).toBeTruthy();
+  ).toBeNull();
   fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Save failed"),
@@ -177,28 +173,6 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
       },
     },
   });
-  await act(async () => {
-    snapshot = {
-      ...snapshot,
-      running: [{ ...record(), attentionEnabled: false }],
-    };
-    changed();
-  });
-  const toggle = within(ada).getByRole("button", {
-    name: "Attention status for Ada",
-  });
-  expect(toggle.textContent).toContain("Paused");
-  fireEvent.click(toggle);
-  fireEvent.click(
-    within(
-      screen.getByRole("menu", { name: "Attention status for Ada" }),
-    ).getByRole("menuitem", { name: "Resume" }),
-  );
-  await waitFor(() =>
-    expect(save).toHaveBeenCalledWith("membership-a", {
-      attentionEnabled: true,
-    }),
-  );
   expect(within(ada).getByRole("heading", { name: "task" })).toBeTruthy();
 });
 
@@ -537,8 +511,8 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
   expect(save).toHaveBeenCalledTimes(1);
 });
 
-it("explains Attention to a new agent and switches it on this device", async () => {
-  let snapshot = {
+it("explains Attention to a new agent with no switch to turn on", () => {
+  const snapshot = {
     status: "ready",
     running: [
       {
@@ -547,27 +521,19 @@ it("explains Attention to a new agent and switches it on this device", async () 
         owner: viewer,
         relay: "wss://example.com",
         name: "Bo",
-        attentionEnabled: false,
+        attentionEnabled: true,
         timers: {},
         attention: {},
       },
     ],
   };
-  const save = vi
-    .fn()
-    .mockRejectedValueOnce(new Error("Enable failed"))
-    .mockResolvedValueOnce(undefined);
   const disconnected = { status: "disconnected", ...community };
-  let changed = () => {};
   const ctx = {
     react: React,
     agents: {
       snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        changed = listener;
-        return () => {};
-      },
-      save,
+      subscribe: () => () => {},
+      save: vi.fn(),
     },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
@@ -576,32 +542,9 @@ it("explains Attention to a new agent and switches it on this device", async () 
   );
   expect(screen.getByRole("region", { name: "Start watching" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Attention" })).toBeTruthy();
-  expect(screen.queryByText(/Send Bo a message/)).toBeNull();
-  const toggle = screen.getByRole("button", {
-    name: "Attention status for Bo",
-  });
-  expect(toggle.textContent).toContain("Paused");
-  fireEvent.click(toggle);
-  fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }));
-  await waitFor(() =>
-    expect(screen.getByRole("alert").textContent).toBe("Enable failed"),
-  );
-  fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }));
-  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
-  expect(save).toHaveBeenLastCalledWith("membership-b", {
-    attentionEnabled: true,
-  });
-  act(() => {
-    snapshot = {
-      ...snapshot,
-      running: snapshot.running.map((agent) => ({
-        ...agent,
-        attentionEnabled: true,
-      })),
-    };
-    changed();
-  });
-  expect(screen.getByRole("region", { name: "Start watching" })).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Attention status for Bo" }),
+  ).toBeNull();
   expect(screen.getByText(/Send Bo a message/)).toBeTruthy();
 });
 

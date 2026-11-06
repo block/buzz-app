@@ -2182,7 +2182,6 @@ export class AgentsService extends Service implements Agents {
         changed: () => this.update(),
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
-      saved: (key) => this.records[key],
       attentionShown: () => this.attentionShown(),
       pluginsSettled: () => this.ctx.pluginStatus.settled?.() ?? true,
       record: (key) => {
@@ -5985,8 +5984,7 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
       attentionHistory: record.attentionHistory,
-      attentionEnabled:
-        record.attentionEnabled === true && this.attentionShown(),
+      attentionEnabled: this.attentionShown(),
       config: editor?.config ?? record.config,
       ...(editor && { configBase: editor.base }),
       ...(editor?.problem && { configProblem: editor.problem }),
@@ -6569,8 +6567,7 @@ export class AgentsService extends Service implements Agents {
           prior.timers === (record.timers ?? EMPTY) &&
           prior.sourceRuns === record.sourceRuns &&
           prior.attentionHistory === record.attentionHistory &&
-          prior.attentionEnabled ===
-            (record.attentionEnabled === true && this.attentionShown()) &&
+          prior.attentionEnabled === this.attentionShown() &&
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&
           prior.configProblem === editor?.problem &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&

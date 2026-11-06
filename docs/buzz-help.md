@@ -932,7 +932,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking
-  (**Instructions**), and whether Attention is active on this device. Use its Active/Paused menu to change that.
+  (**Instructions**). Attention is active for every agent while the Agent Attention plugin is on.
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
   Each interest has an Active/Paused menu. Pausing stops its triggers without changing
   individual watch settings. Running turns may finish; activating resumes enabled
@@ -944,7 +944,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   resume, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
   “Runs in” names its execution conversation; its instructions can specify a
   different place to report. A
-  mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
+  mention can still wake an agent when Attention is off; turning the plugin on does not grant new access.
   An event watch hears the channels its agent may read, including public channels
   the agent has not joined. A watch's delivery channel must be one the agent is
   a member of; the relay decides where the agent may post. On macOS and Linux,

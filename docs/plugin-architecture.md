@@ -610,13 +610,14 @@ Attention UI plugin uses it.
 A plugin that shows Attention and its device switch calls
 `ctx.agents.controlAttention()`. Installed plugins may call it too, and one that
 does should show that switch. Agents' watches, timers and sources run on this
-device only while such a plugin is on. With none on, every agent's
-`attentionEnabled` reads false and each keeps its saved switch. Messages from
+device only while such a plugin is on, and then for every agent: there is no
+per-agent switch. With none on, every agent's `attentionEnabled` reads false.
+Messages from
 then wake no kind 9 watch later, even across a restart, though a relay replay
-after a reconnect can still deliver one, as it can after the switch is off. While plugins are still
+after a reconnect can still deliver one. While plugins are still
 starting and none has shown Attention yet, kind 9 watches keep their catch-up
 place, so startup still catches up on what the app missed while closed, and the
-events an agent with its switch on would hear wait to be matched once startup
+events an agent would hear wait to be matched once startup
 ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
 other watches keep no such record, so they still match them. The bundled Agent
 Attention UI plugin calls it.

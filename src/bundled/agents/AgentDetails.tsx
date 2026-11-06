@@ -716,8 +716,10 @@ function SharedSettingsNotice({
 
 /** Where the agent's config lives; nothing while that is still settling. */
 function AgentSyncRow({ agents, agent }: { agents: Agents; agent: Agent }) {
-  const state = agents.agentSync(agent.pubkey);
-  if (!state) return null;
-  const { title, reason } = syncText(state, "agent");
-  return <PreferenceRow title={title} subtitle={reason} />;
+  const line = useSyncExternalStore(agents.subscribe, () =>
+    syncText(agents.agentSync(agent.pubkey), "agent"),
+  );
+  return line ? (
+    <PreferenceRow title={line.title} subtitle={line.reason} />
+  ) : null;
 }

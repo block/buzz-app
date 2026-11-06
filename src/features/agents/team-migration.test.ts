@@ -63,7 +63,7 @@ describe("syncText", () => {
       title: "Only on this Mac",
       reason: "Its agents are in different communities.",
     });
-    expect(syncText({ local: "failed" }, "agent").reason).toMatch(
+    expect(syncText({ local: "failed" }, "agent")?.reason).toMatch(
       /will try again/,
     );
     expect(syncText({ local: undefined }, "team")).toEqual({

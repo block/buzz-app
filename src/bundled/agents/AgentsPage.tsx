@@ -2544,10 +2544,13 @@ function TeamEditor({
 
 /** Where the team lives: synced in its community, or only on this device. */
 function TeamSyncLine({ agents, id }: { agents: Agents; id: string }) {
-  const { title, reason } = syncText(agents.teamSync(id), "team");
+  const line = useSyncExternalStore(agents.subscribe, () =>
+    syncText(agents.teamSync(id), "team"),
+  );
+  if (!line) return null;
   return (
     <p className="m-0 text-body-sm text-secondary">
-      {reason ? `${title}. ${reason}` : title}
+      {line.reason ? `${line.title}. ${line.reason}` : line.title}
     </p>
   );
 }

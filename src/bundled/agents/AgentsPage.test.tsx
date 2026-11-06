@@ -450,7 +450,11 @@ function setup(
     snapshot = { ...snapshot, ...patch };
     for (const listener of listeners) listener();
   };
-  return { agents, echoProvider, types, show, change, relay, ...view };
+  /** Tells subscribers something changed, with the same snapshot. */
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  return { agents, echoProvider, types, show, change, notify, relay, ...view };
 }
 
 it("opens settings for a selected agent beside the grid and follows the arrow keys", async () => {
@@ -2560,7 +2564,7 @@ it("neither counts nor adds a member another account on this device has", async 
 it("makes a team of chosen agents and lists it with its members", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
-  const { agents } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
+  const { agents, notify } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   expect(screen.queryByRole("grid", { name: "Teams" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "New team" }));
@@ -2591,15 +2595,11 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(card);
   const form = screen.getByRole("form", { name: "Edit Crew" });
   expect(form).toHaveTextContent("Only on this Mac");
-  agents.teamSync.mockReturnValue({ local: "communities" });
-  await user.click(within(form).getByRole("button", { name: "Close" }));
-  await user.click(
-    within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
-      name: "Crew",
-    }),
-  );
-  expect(screen.getByRole("form", { name: "Edit Crew" })).toHaveTextContent(
-    "Only on this Mac. Its agents are in different communities.",
+  // A move that fails while the editor is open shows at once.
+  agents.teamSync.mockReturnValue({ local: "failed" });
+  act(() => notify());
+  expect(form).toHaveTextContent(
+    "Only on this Mac. Moving it to the community failed; Buzz will try again.",
   );
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
@@ -3382,10 +3382,13 @@ it.each(["error", "unavailable"] as const)(
 
 it("says in Settings where an agent's config lives, and why it is only here", async () => {
   const user = userEvent.setup();
-  const { agents } = setup([agent("Ada", 1)]);
-  agents.agentSync.mockReturnValue({ local: "unsupported" });
+  const { agents, notify } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: "Ada" }));
   await user.click(screen.getByRole("tab", { name: "Settings" }));
+  // Still checking: no line, until the relay turns out not to sync.
+  expect(screen.queryByText("Only on this Mac")).not.toBeInTheDocument();
+  agents.agentSync.mockReturnValue({ local: "unsupported" });
+  act(() => notify());
   expect(screen.getByText("Only on this Mac")).toBeVisible();
   expect(
     screen.getByText("This community's relay doesn't sync agent settings."),

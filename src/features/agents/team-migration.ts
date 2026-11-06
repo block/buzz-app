@@ -56,13 +56,21 @@ export class TeamMoves {
   }
   get = (id: string): TeamMove | undefined => this.moves[id];
   /** Saves `move` for team `id`, or that it is done; settles once saved. */
-  set(id: string, move: TeamMove | undefined) {
-    const { [id]: _, ...rest } = this.moves;
-    this.moves = move ? { ...rest, [id]: move } : rest;
-    return this.storage.set(
-      TEAM_MOVES_KEY,
-      JSON.stringify({ version: 1, moves: this.moves }),
-    );
+  async set(id: string, move: TeamMove | undefined) {
+    const prior = this.moves;
+    const { [id]: _, ...rest } = prior;
+    const next = move ? { ...rest, [id]: move } : rest;
+    this.moves = next;
+    try {
+      await this.storage.set(
+        TEAM_MOVES_KEY,
+        JSON.stringify({ version: 1, moves: next }),
+      );
+    } catch (error) {
+      // Memory never trusts what storage didn't take.
+      if (this.moves === next) this.moves = prior;
+      throw error;
+    }
   }
 }
 
@@ -80,11 +88,26 @@ const REASONS: Record<"team" | "agent", Record<LocalReason, string>> = {
 };
 
 /** A sync status line: where it lives, and why it is only here. */
-export function syncText(state: SyncState, of: "team" | "agent") {
-  if ("synced" in state)
-    return { title: `Synced in ${state.synced.replace(/^\w+:\/\//, "")}` };
-  return {
-    title: "Only on this Mac",
-    ...(state.local && { reason: REASONS[of][state.local] }),
-  };
+export function syncText(
+  state: SyncState | undefined,
+  of: "team" | "agent",
+): SyncLine | undefined {
+  if (!state) return undefined;
+  const key = `${of} ${JSON.stringify(state)}`;
+  let line = lines.get(key);
+  if (!line) {
+    line = Object.freeze(
+      "synced" in state
+        ? { title: `Synced in ${state.synced.replace(/^\w+:\/\//, "")}` }
+        : {
+            title: "Only on this Mac",
+            ...(state.local && { reason: REASONS[of][state.local] }),
+          },
+    );
+    lines.set(key, line);
+  }
+  return line;
 }
+export type SyncLine = Readonly<{ title: string; reason?: string }>;
+/** One line per state, so a store snapshot of it stays the same object. */
+const lines = new Map<string, SyncLine>();

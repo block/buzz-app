@@ -408,6 +408,8 @@ const agents = {
         ]
       : [],
   configHistory: () => undefined,
+  agentSync: () => undefined,
+  teamSync: () => ({ local: undefined }),
   addedTabs: () => [],
   registerTab: () => {},
   controlAttention: () => {},

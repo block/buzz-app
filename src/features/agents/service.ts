@@ -4629,6 +4629,10 @@ export class AgentsService extends Service implements Agents {
       if (draft) this.teamDrafts.delete(draft);
       return team;
     }
+    if (id && this.moving.has(id))
+      throw new Error(
+        "This team is moving to its community; try again shortly",
+      );
     const unknown = members.find((pubkey) => !this.liveRows(pubkey).length);
     if (unknown) throw new Error("A member is not an agent on this device");
     if (id && !this.teamList.some((team) => team.id === id))
@@ -4715,7 +4719,25 @@ export class AgentsService extends Service implements Agents {
         );
       return config.removeTeam(id);
     }
+    if (this.moving.has(id))
+      throw new Error(
+        "This team is moving to its community; try again shortly",
+      );
+    // A move that began may have left a copy there, which goes too.
+    const move = this.teamMoves.get(id);
+    if (move) {
+      const config = this.communityConfigs.get(move.community);
+      const owner = this.bound.get(move.community)?.binding?.viewer;
+      if (!config || !owner)
+        throw new Error(
+          `Connect to ${hostOf({ relay: move.community })} to delete this team`,
+        );
+      const copy = await this.movedTeamId(id, move.community, owner);
+      if (this.synced().some((entry) => entry.team.id === copy))
+        await config.removeTeam(copy);
+    }
     await this.writeTeams(this.teamList.filter((team) => team.id !== id));
+    if (move) await this.teamMoves.set(id, undefined);
   }
 
   /** The communities where `pubkey` is one of the owner's agents a team
@@ -4740,35 +4762,49 @@ export class AgentsService extends Service implements Agents {
     const config = this.communityConfigs.get(origin);
     const binding = this.bound.get(origin)?.binding;
     if (!config || !binding || !this.listings.has(origin)) return;
-    for (const local of this.teamList) {
-      const move = this.teamMoves.get(local.id);
+    for (const { id: localId } of this.teamList) {
+      // Read again each time: an earlier move may have taken a while.
+      const local = this.teamList.find((team) => team.id === localId);
+      if (!local || this.moving.has(localId)) continue;
+      const move = this.teamMoves.get(localId);
       const where = moveHome(local.members, (p) => this.homesOf(p), move);
       if (!("home" in where) || where.home !== origin) continue;
-      if (this.moving.has(local.id)) continue;
-      this.moving.add(local.id);
+      this.moving.add(localId);
       try {
         // Saved first, so a rerun moves it to the same team.
-        if (!move) await this.teamMoves.set(local.id, { community: origin });
-        const id = await syncedTeamId({
-          owner: binding.viewer,
-          community: origin,
-          source: "local-team",
-          sourceId: local.id,
-        });
+        if (!move) await this.teamMoves.set(localId, { community: origin });
+        const id = await this.movedTeamId(localId, origin, binding.viewer);
         await this.changeSyncedTeam(origin, { ...local, id }, { adopt: true });
-        channelTemplates.replaceTeam(local.id, id);
-        await this.writeTeams(this.teamList.filter((t) => t.id !== local.id));
-        await this.teamMoves.set(local.id, undefined);
+        // An earlier try's copy is adopted; this device's edits since win.
+        const copy = this.synced().find((entry) => entry.team.id === id)?.team;
+        if (!copy?.revision) throw new Error("The moved team isn't confirmed");
+        if (!sameTeam(copy, local))
+          await this.changeSyncedTeam(
+            origin,
+            { ...local, id },
+            { base: { head: copy.revision, members: copy.members } },
+          );
+        channelTemplates.replaceTeam(localId, id);
+        await this.writeTeams(this.teamList.filter((t) => t.id !== localId));
+        await this.teamMoves.set(localId, undefined);
       } catch (error) {
         console.warn(`Team ${local.name} was not moved`, error);
         await this.teamMoves
-          .set(local.id, { community: origin, failed: true })
+          .set(localId, { community: origin, failed: true })
           .catch(() => {});
         this.notify();
       } finally {
-        this.moving.delete(local.id);
+        this.moving.delete(localId);
       }
     }
+  }
+  private movedTeamId(localId: string, community: string, owner: string) {
+    return syncedTeamId({
+      owner,
+      community,
+      source: "local-team",
+      sourceId: localId,
+    });
   }
 
   teamSync = (id: string): SyncState => {
@@ -5902,6 +5938,7 @@ export class AgentsService extends Service implements Agents {
     if (!config) {
       binding.support =
         config === null ? "unsupported" : { failed: Date.now() };
+      this.notify();
       return;
     }
     delete binding.support;
@@ -5939,6 +5976,7 @@ export class AgentsService extends Service implements Agents {
       if (now && !connected) {
         this.sync();
         this.refreshCore(origin);
+        void this.moveTeams(origin);
       }
       connected = now;
       this.runners.catchUp(false);
@@ -6322,3 +6360,13 @@ const sameConfig = (prior: Agent, config: unknown, base?: ConfigBase) =>
   (prior.config === config ||
     JSON.stringify(prior.config) === JSON.stringify(config)) &&
   JSON.stringify(prior.configBase) === JSON.stringify(base);
+
+/** Whether a synced copy has a local team's name, instructions and members. */
+function sameTeam(copy: Team, local: Team) {
+  return (
+    copy.name === local.name &&
+    copy.instructions === local.instructions &&
+    copy.members.length === local.members.length &&
+    local.members.every((pubkey) => copy.members.includes(pubkey))
+  );
+}

@@ -120,15 +120,19 @@ const targetOf = (item: InboxItem) => ({
   ...(item.rootId ? { rootId: item.rootId } : {}),
 });
 
-/** DMs and a Solo chat's own messages open whole; others open at their message. */
+/** A DM resuming at a top-level message, a DM reaction and a Solo chat's own
+ * messages open whole; others, including a DM's thread replies, open at their
+ * message. A DM reads as one channel, so its read target never names the
+ * thread. */
 const tabTarget = (
   item: Pick<InboxItem, "channelId" | "messageId" | "rootId" | "thread"> & {
     target?: InboxItem["target"];
   },
   channel: { channelType?: string } | undefined,
 ): PageTabTarget =>
-  item.target?.kind === "channel" ||
-  channel?.channelType === "dm" ||
+  (item.target
+    ? item.target.kind === "channel" && !item.rootId
+    : channel?.channelType === "dm") ||
   (channel?.channelType === "solo" && !item.thread)
     ? { channelId: item.channelId }
     : {

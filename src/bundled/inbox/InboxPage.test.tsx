@@ -4115,6 +4115,47 @@ it("opens a DM row's whole conversation in a tab", async () => {
   expect(h.open).not.toHaveBeenCalled();
 });
 
+it("opens a DM row resuming at a thread reply in that thread, at the reply", async () => {
+  const h = fixture();
+  // Alice's only DM activity is a reply under the viewer's DM message.
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = [
+    roster(h.relayKey, "dm-room", [h.viewer.pubkey, h.alice.pubkey], 10),
+    metadata(h.relayKey, "dm-room", "Direct message", 10, [
+      ["t", "dm"],
+      ["hidden"],
+    ]),
+    root,
+    reply,
+  ];
+  for (const event of dm) h.addEvent(event);
+  h.emit(dm);
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in DM · Alice" }),
+  );
+  const tab = await screen.findByRole("region", {
+    name: "Conversation in Alice",
+  });
+  expect(sideTabs()).toEqual(["Thread · Alice"]);
+  expect(
+    within(tab).getByRole("region", { name: "Thread messages" }),
+  ).toBeInTheDocument();
+  expect(
+    within(tab).queryByRole("region", { name: "Channel message history" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      tab.querySelector(`[data-message-id="${reply.id}"]`),
+    ).toBeInTheDocument(),
+  );
+  expect(h.open).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   "opening a conversation's tab preserves channel forced-unread intent (left channel: %s)",
   async (leftChannel) => {

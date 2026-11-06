@@ -559,6 +559,7 @@ it("requires the model control to resolve provider and model, and revokes readin
   const types: RegisteredAgentType[] = [
     {
       ...type,
+      createModelReportsReadiness: true,
       CreateModel: ({ config, onChange, onReadyChange }) => {
         const values = config as { provider: string; model: string };
         const ready = !!values.provider?.trim() && !!values.model?.trim();
@@ -624,5 +625,47 @@ it("requires the model control to resolve provider and model, and revokes readin
         model: "model-a",
       }),
     }),
+  );
+});
+
+it("offers another harness when the saved plugin cannot report model readiness", async () => {
+  const unsupported = {
+    ...type,
+    CreateModel: () => <span>Old plugin model</span>,
+  };
+  const replacement = {
+    ...type,
+    key: "replacement",
+    title: "Replacement",
+    importShared: () => undefined,
+  };
+  const snapshot = {};
+  const port = vi.fn(async () => ({ notes: [] }));
+  const types = [unsupported, replacement];
+  const agents = {
+    types: () => types,
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    port,
+  } as unknown as Agents;
+  render(
+    <AgentConnectionForm agents={agents} candidate={candidate} scope="scope" />,
+  );
+  expect(
+    screen.getByText(/previously used harness isn’t available/),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+  expect(screen.queryByText("Old plugin model")).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Replacement" }));
+  expect(
+    screen.queryByText(/previously used harness isn’t available/),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Connect" }));
+  await waitFor(() =>
+    expect(port).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "replacement" }),
+    ),
   );
 });

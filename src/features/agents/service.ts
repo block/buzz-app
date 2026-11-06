@@ -816,6 +816,9 @@ export type AgentType<Config = unknown> = {
   }>;
   /** Compact model field for creation and library cards; the type owns discovery and configuration. */
   CreateModel?: ComponentType<AgentCreateProps<Config>>;
+  /** CreateModel reports onReadyChange; opt in to inline connection setup.
+   * Omit for older controls: users must choose another harness for that flow. */
+  createModelReportsReadiness?: boolean;
   /** Compact Thinking control for creation; the type owns its values and default representation. */
   CreateThinking?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,

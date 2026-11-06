@@ -334,7 +334,10 @@ export function AgentConnectionForm({
   preview?: boolean;
   onSendAgain?: (() => Promise<void>) | undefined;
 }) {
-  const { types } = useAgents(agents);
+  const { types: installedTypes } = useAgents(agents);
+  const types = installedTypes.filter(
+    (type) => !type.CreateModel || type.createModelReportsReadiness,
+  );
   const [draft, setDraft] = useState(() => connectionDraft(candidate, types));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -445,9 +448,9 @@ export function AgentConnectionForm({
                         ? onSendAgain
                           ? `Send “Please respond to my message above.” to ${candidate.name} in your original message’s thread.`
                           : "Send a message to continue your conversation."
-                        : draft
+                        : type
                           ? "Review the settings to import this agent and continue your conversation."
-                          : "Choose a harness for this agent. Its previous harness is not available here."}
+                          : "The previously used harness isn’t available here. Choose another harness to continue."}
                     {!done &&
                       " Stop this agent in old Buzz before connecting, so only one app replies."}
                   </p>

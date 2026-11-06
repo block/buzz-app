@@ -59,8 +59,6 @@ export interface ChannelLifecycleCapability {
     /** The channel's relay records the caller already read, so its answer and
      * these rights share one snapshot; omitted, load reads them. */
     records?: readonly RelayEvent[],
-    /** "strong" reads the writer, for a reread after a refresh. */
-    options?: Pick<ReadFilter, "consistency">,
   ): Promise<ChannelLifecycleSettings>;
   run(
     action: ChannelLifecycleCommand,
@@ -431,13 +429,11 @@ export function createChannelLifecycle({
       value: string,
       caller?: AbortSignal,
       records?: readonly RelayEvent[],
-      options?: Pick<ReadFilter, "consistency">,
     ) {
       const id = lifecycleChannelId(value);
-      const strong = options?.consistency === "strong";
       return owned({ id, caller }, (signal) =>
         retryRead(
-          () => reread(signal, () => load(id, signal, "any", records, strong)),
+          () => reread(signal, () => load(id, signal, "any", records)),
           signal,
         ),
       );

@@ -715,7 +715,7 @@ it.each(["a direct role", "owner-agent evidence"] as const)(
           ),
     );
     try {
-      // Ordinary reads, as Settings makes before a refresh, deny Archive.
+      // An ordinary load reads the replica, which denies Archive.
       expect(await h.owner.capability.load(id)).toMatchObject({
         canArchive: false,
       });
@@ -1517,24 +1517,6 @@ describe("channel owner-agent Archive and Delete eligibility", () => {
       h.owner.dispose();
     },
   );
-  it("a strong load reads channel state and owner profiles from the writer", async () => {
-    const h = ownedAgent("member");
-    h.read.mockClear();
-    expect(
-      await h.owner.capability.load(id, undefined, { consistency: "strong" }),
-    ).toMatchObject({ canArchive: true, canDelete: true });
-    expect(h.read.mock.calls.map(([filters]) => filters)).toEqual([
-      [39000, 39001, 39002].map((kind) => ({
-        kinds: [kind],
-        consistency: "strong",
-        authors: [relayAuthor],
-        "#d": [id],
-        limit: 1,
-      })),
-      [{ kinds: [0], consistency: "strong", authors: [other], limit: 1 }],
-    ]);
-    h.owner.dispose();
-  });
   it("a member owning an owner-agent can archive and unarchive", async () => {
     const h = ownedAgent("member");
     await h.owner.capability.run("archive", id);

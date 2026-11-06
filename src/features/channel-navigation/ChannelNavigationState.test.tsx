@@ -82,10 +82,6 @@ function fixture(
       };
       for (const listener of listeners) listener();
     },
-    switchScope(scope: string) {
-      snapshot = { ...snapshot, scope };
-      for (const listener of listeners) listener();
-    },
   };
 }
 function mount(relay: RelayData, toasts = false) {
@@ -451,13 +447,10 @@ it("offers Refresh channels when a lifecycle action failed on stale state", asyn
     within(toast).getByRole("button", { name: "Dismiss notification" }),
     refresh,
   ]);
-  expect(view.result.current.lifecycleRefreshes).toBe(0);
   fireEvent.click(refresh);
   expect(h.refreshList).toHaveBeenCalledExactlyOnceWith({
     consistency: "strong",
   });
-  // Settings reads its channel actions again on each one.
-  expect(view.result.current.lifecycleRefreshes).toBe(1);
   expect(h.refreshVisibility).not.toHaveBeenCalled();
   await waitFor(() =>
     expect(
@@ -494,38 +487,6 @@ it("also rereads DM visibility from the writer after an unconfirmed Hide", async
   expect(h.refreshVisibility).toHaveBeenCalledExactlyOnceWith(undefined, {
     consistency: "strong",
   });
-});
-
-it("resets lifecycle refreshes on session replacement and community switch", async () => {
-  const h = fixture(async () => {
-    throw new ChannelLifecycleStale("This action is no longer permitted.");
-  });
-  const view = mount(h.relay, true);
-  const refresh = async () => {
-    act(() =>
-      view.result.current.openLifecycle(
-        { id: "channel", name: "Channel" },
-        "archive",
-      ),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Archive channel" }),
-    );
-    const toast = await screen.findByRole("dialog", {
-      name: "Archive channel failed",
-    });
-    fireEvent.click(
-      within(toast).getByRole("button", { name: "Refresh channels" }),
-    );
-  };
-  await refresh();
-  expect(view.result.current.lifecycleRefreshes).toBe(1);
-  act(() => h.replace());
-  expect(view.result.current.lifecycleRefreshes).toBe(0);
-  await refresh();
-  expect(view.result.current.lifecycleRefreshes).toBe(1);
-  act(() => h.switchScope("community:other"));
-  expect(view.result.current.lifecycleRefreshes).toBe(0);
 });
 
 it("keeps other lifecycle failures' toasts to Dismiss", async () => {

@@ -320,7 +320,7 @@ it("offers Option as Meta only on a Mac", () => {
   ).not.toBeInTheDocument();
 });
 
-it("keeps an unsaved Option as Meta choice active beside the switch and retries it", async () => {
+it("keeps an unsaved Option as Meta choice and its retry across Settings visits", async () => {
   setupOptionMeta();
   const user = userEvent.setup();
   const write = vi
@@ -328,9 +328,15 @@ it("keeps an unsaved Option as Meta choice active beside the switch and retries 
     .mockImplementation(() => {
       throw new Error("Unavailable");
     });
-  const toggle = screen.getByRole("switch", { name: "Use Option as Meta key" });
-  await user.click(toggle);
-  expect(toggle).toBeChecked();
+  await user.click(
+    screen.getByRole("switch", { name: "Use Option as Meta key" }),
+  );
+  // Leave Terminal settings and return.
+  cleanup();
+  setupOptionMeta();
+  expect(
+    screen.getByRole("switch", { name: "Use Option as Meta key" }),
+  ).toBeChecked();
   expect(screen.getByRole("alert")).toHaveTextContent("could not be saved");
   write.mockRestore();
   await user.click(screen.getByRole("button", { name: "Retry saving" }));

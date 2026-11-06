@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -217,9 +217,7 @@ export function TerminalSettings({
 
 function OptionMetaSetting() {
   const checked = optionMetaPreference.usePreference();
-  const [error, setError] = useState<string | null>(null);
-  const change = (enabled: boolean) =>
-    setError(optionMetaPreference.set(enabled));
+  const error = optionMetaPreference.useSaveError();
   return (
     <section className="mt-section-gap">
       <InlineHeader title="Keyboard" />
@@ -228,14 +226,17 @@ function OptionMetaSetting() {
           label="Use Option as Meta key"
           description="Treat the Option key as the Meta key in the terminal."
           checked={checked}
-          onCheckedChange={change}
+          onCheckedChange={optionMetaPreference.set}
         />
       </SettingsGroup>
       {error && (
         <div role="alert" className="grid gap-3 text-body-sm text-standard">
           <p className="m-0">{error}</p>
           <div>
-            <Button type="button" onClick={() => change(checked)}>
+            <Button
+              type="button"
+              onClick={() => optionMetaPreference.set(checked)}
+            >
               Retry saving
             </Button>
           </div>

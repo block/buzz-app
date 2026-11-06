@@ -490,6 +490,17 @@ const agents = {
   },
   classifier: () => "unavailable",
 } as unknown as Agents;
+if (settingsSync) {
+  Object.assign(window, {
+    updateFixtureInstructions: (instructions: string) => {
+      const agent = snapshot.agents[0];
+      if (!agent) throw new Error("Missing fixture agent");
+      return agents.save(agent.key, {
+        config: { ...(agent.config as Record<string, unknown>), instructions },
+      });
+    },
+  });
+}
 const disconnected = {
   status: "disconnected",
   generation: 0,

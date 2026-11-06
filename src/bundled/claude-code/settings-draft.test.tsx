@@ -144,12 +144,11 @@ it("preserves an intentional revert during a pending save", () => {
   expect(f.result.current.conflicts).toEqual([]);
 });
 
-it("preserves a pending revert after settlement and an unrelated edit", () => {
+it("preserves an intentional revert across an unrelated edit", () => {
   const f = editor();
   const submitted = { ...DEFAULT_CONFIG, instructions: "Submitted" };
   act(() => f.result.current.submitted(submitted));
   act(() => f.result.current.setDraft(DEFAULT_CONFIG));
-  act(() => f.result.current.settled());
   act(() =>
     f.result.current.setDraft({ ...f.result.current.draft, model: "opus" }),
   );
@@ -157,6 +156,27 @@ it("preserves a pending revert after settlement and an unrelated edit", () => {
   expect(f.result.current.draft).toEqual({ ...DEFAULT_CONFIG, model: "opus" });
   expect(f.result.current.changed).toBe(true);
   expect(f.result.current.conflicts).toEqual([]);
+});
+
+it("preserves an intentional revert when a competing update arrives before acknowledgement", () => {
+  const f = editor();
+  const original = { ...DEFAULT_CONFIG, instructions: "Original" };
+  f.rerender({ key: "a", saved: original, available: true });
+  const submitted = { ...original, instructions: "Submitted" };
+  act(() => f.result.current.submitted(submitted));
+  act(() => f.result.current.setDraft(original));
+  expect(f.result.current.changed).toBe(true);
+  f.rerender({
+    key: "a",
+    saved: { ...original, instructions: "Other device" },
+    available: true,
+  });
+  expect(f.result.current.draft.instructions).toBe("Original");
+  expect(f.result.current.conflicts).toEqual(["instructions"]);
+  expect(f.result.current.changed).toBe(true);
+  f.rerender({ key: "a", saved: submitted, available: true });
+  expect(f.result.current.draft.instructions).toBe("Original");
+  expect(f.result.current.conflicts).toEqual(["instructions"]);
 });
 
 it("keeps the last usable draft through config loss and reconciles on recovery", () => {
@@ -197,7 +217,6 @@ it.each([true, false])(
     act(() =>
       f.result.current.submitted({ ...DEFAULT_CONFIG, model: "submitted" }),
     );
-    act(() => f.result.current.settled());
     f.rerender({
       key: "a",
       saved: { ...DEFAULT_CONFIG, model: "external" },
@@ -225,7 +244,7 @@ it.each([true, false])(
   },
 );
 
-it("follows saved changes after reverting an edit following a failed save", () => {
+it("preserves a revert through acknowledgement of the outstanding submission", () => {
   const f = editor();
   act(() =>
     f.result.current.submitted({
@@ -233,13 +252,28 @@ it("follows saved changes after reverting an edit following a failed save", () =
       instructions: "Submitted",
     }),
   );
-  act(() => f.result.current.settled());
   act(() => f.result.current.setDraft(DEFAULT_CONFIG));
   f.rerender({
     key: "a",
     saved: { ...DEFAULT_CONFIG, instructions: "Submitted" },
     available: true,
   });
-  expect(f.result.current.draft.instructions).toBe("Submitted");
-  expect(f.result.current.changed).toBe(false);
+  expect(f.result.current.draft.instructions).toBe("");
+  expect(f.result.current.changed).toBe(true);
+});
+
+it("keeps an outstanding receipt when a retry submits the unchanged saved value", () => {
+  const f = editor();
+  const submitted = { ...DEFAULT_CONFIG, instructions: "Submitted" };
+  act(() => f.result.current.submitted(submitted));
+  act(() => f.result.current.setDraft(DEFAULT_CONFIG));
+  act(() => f.result.current.submitted(DEFAULT_CONFIG));
+  expect(f.result.current.changed).toBe(true);
+  // An unrelated group can also be saved without retiring this receipt.
+  const draft = { ...DEFAULT_CONFIG, model: "opus" };
+  act(() => f.result.current.submitted(draft));
+  f.rerender({ key: "a", saved: submitted, available: true });
+  expect(f.result.current.draft).toEqual(draft);
+  expect(f.result.current.changed).toBe(true);
+  expect(f.result.current.conflicts).toEqual([]);
 });

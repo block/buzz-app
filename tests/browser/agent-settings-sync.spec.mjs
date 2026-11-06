@@ -5,7 +5,10 @@ import { test, expect } from "./source-fixture.mjs";
 test("Claude grid changes reconcile with the open settings draft", async ({
   page,
 }, info) => {
-  await page.goto("/tests/fixtures/agent-library.html?settingsSync");
+  // The interactive controls establish readiness; unrelated image loads do not.
+  await page.goto("/tests/fixtures/agent-library.html?settingsSync", {
+    waitUntil: "domcontentloaded",
+  });
   await page.getByText("Ada", { exact: true }).click();
   const pane = page.getByRole("tabpanel", { name: "Identity", exact: true });
   const sidebarModel = pane.getByRole("combobox", {
@@ -43,7 +46,7 @@ test("Claude grid changes reconcile with the open settings draft", async ({
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toHaveCount(0);
-  await page.reload();
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText("Ada", { exact: true }).click();
   await expect(pane.getByLabel("Instructions", { exact: true })).toHaveValue(
     "Keep these instructions.",
@@ -60,9 +63,29 @@ test("Claude grid changes reconcile with the open settings draft", async ({
   await page
     .getByRole("option", { name: "Other Claude model", exact: true })
     .click();
-  await expect(pane.getByRole("alert")).toContainText(
+  const modelConflict = pane.getByRole("group", {
+    name: "Model and thinking conflict",
+  });
+  await expect(modelConflict.getByRole("alert")).toContainText(
     "Model and thinking changed elsewhere",
   );
+  await expect(modelConflict).toContainText("Latest: Other Claude model");
+  await expect(modelConflict).toContainText("Yours: my-model");
+  await pane
+    .getByLabel("Instructions", { exact: true })
+    .fill("My newer instructions");
+  await page.evaluate(() =>
+    window.updateFixtureInstructions(
+      "Other device instructions\nKeep this second line.",
+    ),
+  );
+  const instructionsConflict = pane.getByRole("group", {
+    name: "Instructions conflict",
+  });
+  await instructionsConflict
+    .getByRole("button", { name: "View latest instructions" })
+    .click();
+  await expect(instructionsConflict).toContainText("Keep this second line.");
   for (const { width, dark, fontSize } of [
     { width: 1280, dark: false, fontSize: "16px" },
     { width: 390, dark: true, fontSize: "20px" },
@@ -75,18 +98,31 @@ test("Claude grid changes reconcile with the open settings draft", async ({
       },
       { dark, fontSize },
     );
-    const resolve = pane.getByRole("button", {
-      name: "Use saved model and thinking",
+    const resolve = modelConflict.getByRole("button", {
+      name: "Use latest",
     });
     await resolve.scrollIntoViewIfNeeded();
     await expect(resolve).toBeVisible();
     await resolve.focus();
     await expect(resolve).toBeFocused();
     await page.screenshot({ path: info.outputPath(`conflict-${width}.png`) });
+    await instructionsConflict
+      .getByRole("button", { name: "Keep mine" })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: info.outputPath(`instructions-conflict-${width}.png`),
+    });
+    await resolve.focus();
   }
   await page.keyboard.press("Enter");
-  await expect(pane.getByRole("alert")).toHaveCount(0);
+  await expect(modelConflict).toHaveCount(0);
+  await expect(instructionsConflict).toBeVisible();
   await expect(sidebarModel).toContainText("Other Claude model");
+  await instructionsConflict.getByRole("button", { name: "Keep mine" }).click();
+  await expect(pane.getByLabel("Instructions", { exact: true })).toHaveValue(
+    "My newer instructions",
+  );
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toHaveCount(0);

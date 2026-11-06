@@ -2359,9 +2359,7 @@ it("blocks conflicting submission, preserves its discard guard, and keeps the ex
     "unsaved changes",
   );
   await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
-  await userEvent.click(
-    screen.getByRole("button", { name: "Keep my instructions" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Keep mine" }));
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(f.save).toHaveBeenCalledWith(f.source().key, {
     config: { ...config, model: "grid-model", instructions: "Mine" },
@@ -2561,4 +2559,99 @@ it("can stage Claude over an unavailable source config, retry, and discard throu
   ).toBeVisible();
   expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
   expect(retype).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])(
+  "warns before navigation when reverting around uncertain settlement (revertAfter=%s)",
+  async (revertAfter) => {
+    const f = syncedSettings();
+    let rejectSave!: (reason: Error) => void;
+    const pending = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    f.save.mockImplementationOnce(() => pending);
+    editInstructions("Submitted");
+    await userEvent.click(await screen.findByRole("button", { name: "Save" }));
+    try {
+      expect(f.save).toHaveBeenCalledTimes(1);
+      if (!revertAfter) editInstructions("");
+    } finally {
+      await act(async () => rejectSave(new Error("Save outcome is unknown")));
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Save outcome is unknown",
+    );
+    if (revertAfter) editInstructions("");
+    // Retrying the original value may be a successful no-op against the local
+    // snapshot; it does not disprove the earlier uncertain publication.
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(f.save).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "unsaved changes",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    f.update({ ...DEFAULT_CONFIG, instructions: "Other device" });
+    expect(screen.getByLabelText("Instructions")).toHaveValue("");
+    expect(
+      screen.getByRole("group", { name: "Instructions conflict" }),
+    ).toHaveTextContent("Instructions changed elsewhere");
+  },
+);
+
+it("places separate conflict choices beside their fields and shows the competing values", async () => {
+  const f = syncedSettings();
+  await choose("Model", "Sonnet 5.5");
+  editInstructions("My instructions");
+  f.update({
+    ...DEFAULT_CONFIG,
+    model: "opus",
+    effort: "high",
+    instructions: "Latest instructions\nSecond line",
+  });
+  const modelConflict = screen.getByRole("group", {
+    name: "Model and thinking conflict",
+  });
+  expect(modelConflict).toHaveTextContent(/Latest:.*Opus.*High thinking/);
+  expect(modelConflict).toHaveTextContent(
+    /Yours:.*Sonnet 5.5.*Automatic thinking/,
+  );
+  expect(modelConflict.parentElement).toContainElement(
+    screen.getByRole("combobox", { name: "Model" }),
+  );
+  const instructionsConflict = screen.getByRole("group", {
+    name: "Instructions conflict",
+  });
+  expect(instructionsConflict.parentElement).toContainElement(
+    screen.getByLabelText("Instructions"),
+  );
+  await userEvent.click(
+    within(instructionsConflict).getByRole("button", {
+      name: "View latest instructions",
+    }),
+  );
+  expect(
+    within(instructionsConflict).getByText(/Latest instructions/),
+  ).toHaveTextContent("Second line");
+  await userEvent.click(
+    within(modelConflict).getByRole("button", { name: "Use latest" }),
+  );
+  expect(
+    screen.queryByRole("group", { name: "Model and thinking conflict" }),
+  ).not.toBeInTheDocument();
+  expect(instructionsConflict).toBeInTheDocument();
+  await userEvent.click(
+    within(instructionsConflict).getByRole("button", { name: "Keep mine" }),
+  );
+  expect(screen.getByLabelText("Instructions")).toHaveValue("My instructions");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(f.save).toHaveBeenLastCalledWith(f.source().key, {
+    config: {
+      ...DEFAULT_CONFIG,
+      model: "opus",
+      effort: "high",
+      instructions: "My instructions",
+    },
+    base: { settings: "s0", instructions: "i0" },
+  });
 });

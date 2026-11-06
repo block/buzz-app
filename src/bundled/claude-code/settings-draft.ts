@@ -27,8 +27,14 @@ type Draft = {
   conflicts: SettingGroup[];
   submitted?: Config;
   awaiting?: SettingGroup[];
-  pending?: boolean;
 };
+
+// A settled save promise is not proof of refusal: publication may still arrive.
+// Keep newer intent until observed acknowledgement or an explicit choice.
+const editedSinceSubmission = (state: Draft, group: SettingGroup) =>
+  !!state.submitted &&
+  !!state.awaiting?.includes(group) &&
+  !same(state.value, state.submitted, group);
 
 /** Reconcile values, not object identity: config readers normalize every render.
  * Model and effort travel together; independent settings can merge safely. */
@@ -46,7 +52,8 @@ function reconcile(prior: Draft, saved: Config): Draft {
     const base =
       acknowledged && prior.submitted ? prior.submitted : prior.saved;
     if (acknowledged) awaiting.splice(awaiting.indexOf(group), 1);
-    if (same(prior.value, base, group)) continue;
+    if (same(prior.value, base, group) && !editedSinceSubmission(prior, group))
+      continue;
     value = { ...value, ...copy(prior.value, group) };
     if (
       !same(value, saved, group) &&
@@ -77,7 +84,10 @@ export function useSettingsDraft(key: string, saved: Config, available = true) {
   }
   return {
     draft: state.value,
-    changed: JSON.stringify(state.value) !== JSON.stringify(state.saved),
+    latest: state.saved,
+    changed:
+      JSON.stringify(state.value) !== JSON.stringify(state.saved) ||
+      names.some((group) => editedSinceSubmission(state, group)),
     conflicts: state.conflicts,
     setDraft(value: Config) {
       setStored((prior) =>
@@ -88,12 +98,6 @@ export function useSettingsDraft(key: string, saved: Config, available = true) {
               value,
               conflicts: prior.conflicts.filter(
                 (group) => !same(value, prior.saved, group),
-              ),
-              awaiting: (prior.awaiting ?? []).filter(
-                (group) =>
-                  prior.pending ||
-                  same(value, prior.value, group) ||
-                  !same(value, prior.saved, group),
               ),
             },
       );
@@ -109,16 +113,20 @@ export function useSettingsDraft(key: string, saved: Config, available = true) {
       }));
     },
     submitted(value: Config) {
-      setStored((prior) => ({
-        ...prior,
-        value,
-        submitted: value,
-        awaiting: names.filter((group) => !same(value, prior.saved, group)),
-        pending: true,
-      }));
-    },
-    settled() {
-      setStored((prior) => ({ ...prior, pending: false }));
+      setStored((prior) => {
+        let receipt = value;
+        const awaiting = names.filter((group) => {
+          if (!same(value, prior.saved, group)) return true;
+          // A retry matching our local snapshot may perform no write. It
+          // cannot acknowledge or supersede an earlier uncertain submission.
+          if (prior.submitted && prior.awaiting?.includes(group)) {
+            receipt = { ...receipt, ...copy(prior.submitted, group) };
+            return true;
+          }
+          return false;
+        });
+        return { ...prior, value, submitted: receipt, awaiting };
+      });
     },
   };
 }

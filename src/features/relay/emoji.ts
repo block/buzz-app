@@ -80,13 +80,14 @@ export function emojiTags(event: {
   return Object.freeze([...entries.values()]);
 }
 /** Share token boundaries with the renderer: never substitute inside HTTP(S) links.
- * Bare links end at the same CJK punctuation as rendered ones. In a `<url>` or
- * `](url)` destination, its first URL keeps it and the text before stays text. */
-const written =
-  /((?:<|\]\\?\(\s*)(?:(?!\]\\?\()[^\s<>"`])*?)(https?:\/\/[^\s<>"`]+)/.source;
-const links = new RegExp(`${written}|(https?://${BARE_URL_REST})`, "g");
+ * Bare links end at the same CJK punctuation as rendered ones. Within a `<url>` or
+ * `](url)` destination, a URL ends only at whitespace or `<>"\``. */
+const destinations =
+  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^\s<>]*|\]\\?\(\s*(?:<[^<>\r\n]*|\S*)/.source;
+const links = new RegExp(`(${destinations}|https?://${BARE_URL_REST})`, "g");
+const runs = /(https?:\/\/[^\s<>"`]+)/;
 export const messageParts = (content: string) =>
-  content.split(links).filter((part) => part !== undefined);
+  content.split(links).flatMap((part) => part.split(runs));
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
 export function* emojiMatches(

@@ -904,3 +904,48 @@ async fn pairing_waits_until_the_page_reports_its_communities() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{reply}");
     assert!(fixture.notices.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn removing_the_community_declines_the_waiting_request() {
+    let fixture = fixture();
+    let service = fixture.service.clone();
+    let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.set_communities(Vec::new());
+    let (status, reply) = pairing.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+    assert_eq!(
+        reply["message"],
+        format!("{RELAY} isn't a community in Buzz; add it first")
+    );
+    // The prompt closed, and a late Allow issues nothing.
+    assert!(fixture
+        .notices
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|notice| matches!(notice, Notice::Closed(closed) if *closed == id)));
+    fixture.service.0.pairings.answer(&id, true);
+    assert!(fixture.keychain.value.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn the_caller_is_looked_up_only_for_a_request_that_is_asked() {
+    let fixture = fixture();
+    let pairings = &fixture.service.0.pairings;
+    let unlooked = || async { panic!("a refused request looked up its caller") };
+    let human = || async { crate::credential_service::pairing::Human::Absent };
+    let refused = pairings
+        .pair(CLIENT, "wss://other.example", unlooked, human)
+        .await;
+    assert_eq!(refused.err().unwrap().code, "denied");
+    // One request waits; the next is rate limited without a lookup.
+    let service = fixture.service.clone();
+    let waiting = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    let ready = || fixture.service.human();
+    let limited = pairings.pair(CLIENT, RELAY, unlooked, ready).await;
+    assert_eq!(limited.err().unwrap().code, "rate_limited");
+    pairings.answer(&id, false);
+    waiting.await.unwrap();
+}

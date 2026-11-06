@@ -102,7 +102,8 @@ struct State {
     records: Option<Result<Vec<Record>, String>>,
     /// When `last_used` last reached the keychain.
     flushed: u64,
-    pending: Option<(String, oneshot::Sender<bool>)>,
+    /// The request waiting for the human: its id, relay and answer.
+    pending: Option<(String, String, oneshot::Sender<bool>)>,
     asked: VecDeque<Instant>,
     /// Bumped by every revoke-all; a token admitted, or an approval begun,
     /// under an earlier one never acts or is saved.
@@ -114,6 +115,13 @@ struct State {
     /// Sign-outs and changes of account recorded but not yet over; see
     /// [`Pairings::record_retirement`].
     retiring: usize,
+}
+
+/// Whether `relay` is one of `communities`, compared as whole URLs.
+fn is_saved(communities: &[String], relay: &str) -> bool {
+    communities
+        .iter()
+        .any(|community| super::policy::same_relay(&as_relay(community), relay))
 }
 
 /// A community URL as the relay URL a tool names: `https` as `wss`, `http`
@@ -143,11 +151,20 @@ impl Pairings {
     }
 
     /// Records the communities saved in Buzz, as WebSocket or HTTP URLs.
+    /// A request waiting for the human whose community is gone is declined.
     pub(crate) fn set_communities(&self, communities: Vec<String>) {
-        *self
+        let mut saved = self
             .communities
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(communities);
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.state();
+        if let Some((.., relay, _)) = &state.pending {
+            if !is_saved(&communities, relay) {
+                // Dropping the sender declines it.
+                state.pending = None;
+            }
+        }
+        *saved = Some(communities);
     }
 
     /// Whether `relay` is a saved community, compared as a whole URL.
@@ -159,9 +176,7 @@ impl Pairings {
         let communities = communities
             .as_ref()
             .ok_or_else(|| Failure::new("unavailable", "Buzz is starting; try again"))?;
-        Ok(communities
-            .iter()
-            .any(|community| super::policy::same_relay(&as_relay(community), relay)))
+        Ok(is_saved(communities, relay))
     }
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
@@ -320,16 +335,18 @@ impl Pairings {
     /// approval saves the new token's digest, then returns the token.
     /// `human` is asked once now and again once approved, so an account
     /// change while the prompt is open issues nothing.
-    pub(crate) async fn pair<F, Fut>(
+    /// `process` names the caller, only for a request that will be asked.
+    pub(crate) async fn pair<F, Fut, P>(
         &self,
         client: &str,
         relay: &str,
-        process: Option<String>,
+        process: impl FnOnce() -> P,
         human: F,
     ) -> Result<(String, Approver), Failure>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Human>,
+        P: std::future::Future<Output = Option<String>>,
     {
         let valid_client =
             (1..=64).contains(&client.chars().count()) && !client.chars().any(char::is_control);
@@ -383,12 +400,13 @@ impl Pairings {
                 });
             }
             let (send, answer) = oneshot::channel();
-            state.pending = Some((id.clone(), send));
+            state.pending = Some((id.clone(), relay.into(), send));
             state.asked.push_back(now);
             answer
         };
         // Whatever ends the wait, even the caller hanging up, closes the prompt.
         let _closing = Closing(self, id.clone());
+        let process = process().await;
         (self.notify)(Notice::Ask(Request {
             id: id.clone(),
             client: client.into(),
@@ -396,8 +414,15 @@ impl Pairings {
             process,
             expires_in: APPROVAL.as_secs(),
         }));
+        let unsaved = || {
+            Failure::new(
+                "denied",
+                &format!("{relay} isn't a community in Buzz; add it first"),
+            )
+        };
         match tokio::time::timeout(APPROVAL, answer).await {
             Ok(Ok(true)) => {}
+            Ok(_) if !self.saved(relay)? => return Err(unsaved()),
             Ok(_) => return Err(Failure::new("denied", "Pairing was declined in Buzz")),
             Err(_) => {
                 return Err(Failure::new(
@@ -425,12 +450,28 @@ impl Pairings {
         let account_changed = || Failure::new("denied", "Your Buzz account changed");
         // Saved only under the generation it was approved in, and returned
         // only if no revoke-all began while it was saved: that one removes it.
+        // Its community is checked under the lock that removes one.
+        let mut unsaved_community = false;
         self.mutate(|records| {
-            (self.generation() == Some(generation)).then(|| records.push(record))
+            if self.generation() != Some(generation) {
+                return None;
+            }
+            let communities = self
+                .communities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            unsaved_community = !communities.as_deref().is_some_and(|c| is_saved(c, relay));
+            (!unsaved_community).then(|| records.push(record))
         })
         .await
         .map_err(Failure::unavailable)?
-        .ok_or_else(account_changed)?;
+        .ok_or_else(|| {
+            if unsaved_community {
+                unsaved()
+            } else {
+                account_changed()
+            }
+        })?;
         if self.generation() != Some(generation) {
             return Err(account_changed());
         }
@@ -442,11 +483,11 @@ impl Pairings {
         let pending = {
             let mut state = self.state();
             match &state.pending {
-                Some((current, _)) if current == id => state.pending.take(),
+                Some((current, ..)) if current == id => state.pending.take(),
                 _ => None,
             }
         };
-        if let Some((_, send)) = pending {
+        if let Some((.., send)) = pending {
             let _ = send.send(approve);
         }
     }
@@ -590,7 +631,7 @@ struct Closing<'a>(&'a Pairings, String);
 impl Drop for Closing<'_> {
     fn drop(&mut self) {
         let mut state = self.0.state();
-        if state.pending.as_ref().is_some_and(|(id, _)| *id == self.1) {
+        if state.pending.as_ref().is_some_and(|(id, ..)| *id == self.1) {
             state.pending = None;
         }
         drop(state);

@@ -805,21 +805,17 @@ async fn answer(
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(str::to_owned);
     let version = header(&request, VERSION_HEADER).and_then(|value| value.trim().parse().ok());
-    let ports = request
+    let connection = request
         .extensions()
         .get::<loopback::Peer>()
-        .zip(
-            authority
-                .rsplit_once(':')
-                .and_then(|(_, port)| port.parse().ok()),
-        )
-        .map(|(peer, local)| (peer.0.port(), local));
+        .zip(authority.parse().ok())
+        .map(|(peer, service)| (peer.0, service));
     let body = Limited::new(request.into_body(), BODY_LIMIT).collect();
     let body = match tokio::time::timeout(BODY_TIMEOUT, body).await {
         Ok(Ok(body)) => body.to_bytes(),
         _ => Bytes::new(),
     };
-    let (status, reply) = respond(service, token.as_deref(), version, &body, ports).await;
+    let (status, reply) = respond(service, token.as_deref(), version, &body, connection).await;
     Ok(response
         .status(status)
         .header(headers::CONTENT_TYPE, "application/json")
@@ -833,7 +829,7 @@ async fn respond(
     token: Option<&str>,
     version: Option<u32>,
     body: &[u8],
-    ports: Option<(u16, u16)>,
+    connection: Option<(std::net::SocketAddr, std::net::SocketAddr)>,
 ) -> (StatusCode, Value) {
     #[derive(Deserialize)]
     struct Message {
@@ -856,7 +852,7 @@ async fn respond(
         }
         let message = message.map_err(|_| Failure::new("invalid_request", "Invalid request"))?;
         if message.method == "pair" {
-            return service.pair(&message.params, ports).await;
+            return service.pair(&message.params, connection).await;
         }
         let token = token.ok_or(Failure::revoked())?;
         if !service.callers().contains_key(&digest(token)) {

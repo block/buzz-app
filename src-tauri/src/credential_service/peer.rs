@@ -1,37 +1,160 @@
 //! The executable on the other end of a loopback TCP connection, for the
 //! pairing prompt to name. A TCP socket has no peer-credential option, so the
-//! connection is found among the processes' open sockets by its two ports.
-//! What it names is shown to the person, never trusted: the token a pairing
-//! issues is bound by their approval, not by the process.
-use std::path::PathBuf;
+//! connection is found among the processes' open sockets by its whole
+//! address pair. What it names is shown to the person, never trusted: the
+//! token a pairing issues is bound by their approval, not by the process.
+use std::net::{SocketAddr, SocketAddrV4};
+use std::time::{Duration, Instant};
 
-/// The executable of the process whose loopback socket on port `peer` is
-/// connected to this app's port `local`, if it can be found.
-pub(crate) fn executable(peer: u16, local: u16) -> Option<PathBuf> {
-    imp::executable(peer, local)
+/// How long naming may take; past it the caller is unknown.
+const LOOKUP: Duration = Duration::from_millis(500);
+/// Processes and descriptors examined at most, past which the caller is
+/// unknown.
+const PROCESSES: usize = 16_384;
+const DESCRIPTORS: usize = 4_096;
+
+/// One established IPv4 TCP connection, as the process holding it sees it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Connection {
+    local: SocketAddrV4,
+    remote: SocketAddrV4,
+}
+
+/// The executable of the process connected from `peer` to this service at
+/// `service`, within [`LOOKUP`]; `None` when it can't be found then, or more
+/// than one process holds the socket.
+pub(crate) async fn name(peer: SocketAddr, service: SocketAddr) -> Option<String> {
+    let (SocketAddr::V4(local), SocketAddr::V4(remote)) = (peer, service) else {
+        return None;
+    };
+    let want = Connection { local, remote };
+    bounded(LOOKUP, move |deadline| {
+        imp::owner(want, deadline)
+            .and_then(imp::path)
+            .map(|path| path.display().to_string())
+    })
+    .await
+}
+
+/// Runs `lookup` off the async runtime with a deadline it must honor, and
+/// stops waiting for it once that has passed.
+async fn bounded<T: Send + 'static>(
+    budget: Duration,
+    lookup: impl FnOnce(Instant) -> Option<T> + Send + 'static,
+) -> Option<T> {
+    let deadline = Instant::now() + budget;
+    let work = tauri::async_runtime::spawn_blocking(move || lookup(deadline));
+    tokio::time::timeout(budget + Duration::from_millis(50), work)
+        .await
+        .ok()?
+        .ok()
+        .flatten()
+}
+
+/// The one process among `holders` (pids holding the matching socket),
+/// stopping at `deadline` or past [`PROCESSES`]: none, several, or an
+/// unfinished scan name nobody.
+fn unique(holders: impl Iterator<Item = Option<u32>>, deadline: Instant) -> Option<u32> {
+    let mut found = None;
+    for (seen, holder) in holders.enumerate() {
+        if seen >= PROCESSES || Instant::now() >= deadline {
+            return None;
+        }
+        match (holder, found) {
+            (Some(pid), None) => found = Some(pid),
+            (Some(pid), Some(other)) if pid != other => return None,
+            _ => {}
+        }
+    }
+    found
 }
 
 #[cfg(target_os = "macos")]
 mod imp {
+    //! libproc, through typed mirrors of `<sys/proc_info.h>`; the layout
+    //! assertions below hold them to the SDK's.
+    use super::{unique, Connection, DESCRIPTORS};
     use std::ffi::c_void;
+    use std::mem::{offset_of, size_of, zeroed};
+    use std::net::{Ipv4Addr, SocketAddrV4};
     use std::path::PathBuf;
+    use std::time::Instant;
 
     const PROC_PIDFDSOCKETINFO: i32 = 3;
     const SOCKINFO_TCP: i32 = 2;
-    /// `struct socket_fdinfo` (`<sys/proc_info.h>`) is larger than this; only
-    /// these offsets into it are read: `psi.soi_kind`, and the
-    /// `insi_fport` and `insi_lport` that open its `soi_proto` union.
-    const KIND: usize = 24 + 232;
-    const FOREIGN_PORT: usize = 24 + 240;
-    const LOCAL_PORT: usize = 24 + 244;
-    const SOCKET_FDINFO: usize = 792;
+    const TSI_S_ESTABLISHED: i32 = 4;
+    const INI_IPV4: u8 = 1;
 
-    fn int(bytes: &[u8], at: usize) -> i32 {
-        i32::from_ne_bytes(bytes[at..at + 4].try_into().unwrap_or_default())
+    /// `struct socket_fdinfo`.
+    #[repr(C)]
+    pub(super) struct SocketFdInfo {
+        pfi: [u64; 3],
+        pub(super) psi: SocketInfo,
     }
-    /// A port as `in_sockinfo` holds it, in network order in an `int`.
-    fn port(bytes: &[u8], at: usize) -> u16 {
-        u16::from_be(int(bytes, at) as u16)
+    /// `struct socket_info`, up to its protocol union.
+    #[repr(C)]
+    pub(super) struct SocketInfo {
+        stat: [u64; 17],
+        so: u64,
+        pcb: u64,
+        kind_type: i32,
+        protocol: i32,
+        pub(super) family: i32,
+        shorts: [i16; 8],
+        oobmark: u32,
+        buffers: [u32; 12],
+        pub(super) kind: i32,
+        rfu: u32,
+        pub(super) tcp: TcpSockInfo,
+    }
+    /// `struct tcp_sockinfo`, the largest member of `soi_proto` padded out.
+    #[repr(C)]
+    pub(super) struct TcpSockInfo {
+        pub(super) foreign_port: i32,
+        pub(super) local_port: i32,
+        gencnt: u64,
+        flags: u32,
+        flow: u32,
+        pub(super) vflag: u8,
+        ttl: u8,
+        rfu: u32,
+        /// `in4in6_addr`: the IPv4 address is its last four bytes.
+        pub(super) foreign: [u8; 16],
+        pub(super) local: [u8; 16],
+        v4v6: [u8; 16],
+        pub(super) state: i32,
+        rest: [u8; 444],
+    }
+    // The SDK's layout, from `offsetof` and `sizeof` over `<sys/proc_info.h>`.
+    const _: () = {
+        assert!(size_of::<SocketFdInfo>() == 792);
+        assert!(offset_of!(SocketFdInfo, psi) == 24);
+        assert!(24 + offset_of!(SocketInfo, family) == 184);
+        assert!(24 + offset_of!(SocketInfo, kind) == 256);
+        assert!(24 + offset_of!(SocketInfo, tcp) == 264);
+        assert!(264 + offset_of!(TcpSockInfo, vflag) == 288);
+        assert!(264 + offset_of!(TcpSockInfo, foreign) == 296);
+        assert!(264 + offset_of!(TcpSockInfo, local) == 312);
+        assert!(264 + offset_of!(TcpSockInfo, state) == 344);
+    };
+
+    fn address(raw: &[u8; 16], port: i32) -> SocketAddrV4 {
+        let ip = Ipv4Addr::new(raw[12], raw[13], raw[14], raw[15]);
+        // The port is in network order in an `int`.
+        SocketAddrV4::new(ip, u16::from_be(port as u16))
+    }
+
+    /// The established IPv4 TCP connection `info` describes, if it is one.
+    pub(super) fn connection(info: &SocketFdInfo) -> Option<Connection> {
+        let (psi, tcp) = (&info.psi, &info.psi.tcp);
+        (psi.kind == SOCKINFO_TCP
+            && psi.family == libc::AF_INET
+            && tcp.vflag & INI_IPV4 != 0
+            && tcp.state == TSI_S_ESTABLISHED)
+            .then(|| Connection {
+                local: address(&tcp.local, tcp.local_port),
+                remote: address(&tcp.foreign, tcp.foreign_port),
+            })
     }
 
     fn pids() -> Vec<i32> {
@@ -46,20 +169,19 @@ mod imp {
     }
 
     fn sockets(pid: i32) -> Vec<i32> {
+        let entry = size_of::<libc::proc_fdinfo>();
         // SAFETY: a null buffer asks only for the size.
         let size =
             unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
         if size <= 0 {
             return Vec::new();
         }
-        let mut fds = vec![
-            libc::proc_fdinfo {
-                proc_fd: 0,
-                proc_fdtype: 0
-            };
-            size as usize / size_of::<libc::proc_fdinfo>() + 16
-        ];
-        let bytes = (fds.len() * size_of::<libc::proc_fdinfo>()) as i32;
+        let empty = libc::proc_fdinfo {
+            proc_fd: 0,
+            proc_fdtype: 0,
+        };
+        let mut fds = vec![empty; (size as usize / entry + 16).min(DESCRIPTORS)];
+        let bytes = (fds.len() * entry) as i32;
         // SAFETY: the buffer holds `bytes` bytes.
         let used = unsafe {
             libc::proc_pidinfo(
@@ -70,36 +192,42 @@ mod imp {
                 bytes,
             )
         };
-        fds.truncate(used.max(0) as usize / size_of::<libc::proc_fdinfo>());
+        fds.truncate(used.max(0) as usize / entry);
         fds.into_iter()
             .filter(|fd| fd.proc_fdtype == libc::PROX_FDTYPE_SOCKET as u32)
             .map(|fd| fd.proc_fd)
             .collect()
     }
 
-    fn connects(pid: i32, fd: i32, peer: u16, local: u16) -> bool {
-        #[repr(C, align(8))]
-        struct Info([u8; SOCKET_FDINFO]);
-        let mut info = Info([0; SOCKET_FDINFO]);
-        // SAFETY: the buffer holds `SOCKET_FDINFO` bytes, at least
-        // `sizeof(struct socket_fdinfo)`.
+    fn holds(pid: i32, fd: i32, want: Connection) -> bool {
+        // SAFETY: all-zero is a valid value of these plain-data structs.
+        let mut info: SocketFdInfo = unsafe { zeroed() };
+        let size = size_of::<SocketFdInfo>() as i32;
+        // SAFETY: the buffer is a whole `socket_fdinfo`.
         let read = unsafe {
             libc::proc_pidfdinfo(
                 pid,
                 fd,
                 PROC_PIDFDSOCKETINFO,
-                (&mut info as *mut Info).cast::<c_void>(),
-                SOCKET_FDINFO as i32,
+                (&mut info as *mut SocketFdInfo).cast::<c_void>(),
+                size,
             )
         };
-        let info = &info.0;
-        read as usize > LOCAL_PORT + 4
-            && int(info, KIND) == SOCKINFO_TCP
-            && port(info, LOCAL_PORT) == peer
-            && port(info, FOREIGN_PORT) == local
+        read == size && connection(&info) == Some(want)
     }
 
-    fn path(pid: i32) -> Option<PathBuf> {
+    pub(super) fn owner(want: Connection, deadline: Instant) -> Option<u32> {
+        let holders = pids().into_iter().filter(|&pid| pid > 0).map(|pid| {
+            sockets(pid)
+                .into_iter()
+                .any(|fd| holds(pid, fd, want))
+                .then_some(pid as u32)
+        });
+        unique(holders, deadline)
+    }
+
+    pub(super) fn path(pid: u32) -> Option<PathBuf> {
+        let pid = i32::try_from(pid).ok()?;
         let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
         // SAFETY: the buffer holds its length in bytes.
         let len =
@@ -109,78 +237,238 @@ mod imp {
             PathBuf::from(String::from_utf8_lossy(&buffer).into_owned())
         })
     }
+}
 
-    pub(super) fn executable(peer: u16, local: u16) -> Option<PathBuf> {
-        let pid = pids().into_iter().find(|&pid| {
-            pid > 0
-                && sockets(pid)
-                    .into_iter()
-                    .any(|fd| connects(pid, fd, peer, local))
-        })?;
-        path(pid)
+/// The established IPv4 connections in `/proc/net/tcp` text, with their
+/// socket inodes.
+#[cfg(any(target_os = "linux", test))]
+fn proc_net_tcp(table: &str) -> impl Iterator<Item = (Connection, &str)> {
+    fn address(field: &str) -> Option<SocketAddrV4> {
+        let (ip, port) = field.split_once(':')?;
+        // The address is printed as a host-order word of network-order bytes.
+        let ip = u32::from_str_radix(ip, 16).ok()?.to_ne_bytes();
+        Some(SocketAddrV4::new(
+            ip.into(),
+            u16::from_str_radix(port, 16).ok()?,
+        ))
     }
+    table.lines().skip(1).filter_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // State 01 is ESTABLISHED.
+        if fields.len() <= 9 || fields[3] != "01" {
+            return None;
+        }
+        let connection = Connection {
+            local: address(fields[1])?,
+            remote: address(fields[2])?,
+        };
+        Some((connection, fields[9]))
+    })
+}
+
+/// The inode of the one socket for `want` in `table`; none for several.
+#[cfg(any(target_os = "linux", test))]
+fn inode(table: &str, want: Connection) -> Option<&str> {
+    let mut matches = proc_net_tcp(table).filter(|(connection, _)| *connection == want);
+    let (_, inode) = matches.next()?;
+    matches.next().is_none().then_some(inode)
 }
 
 #[cfg(target_os = "linux")]
 mod imp {
+    use super::{inode, unique, Connection, DESCRIPTORS};
     use std::path::PathBuf;
+    use std::time::Instant;
 
-    /// The inode of the IPv4 TCP socket from port `peer` to port `local`.
-    fn inode(peer: u16, local: u16) -> Option<String> {
+    pub(super) fn owner(want: Connection, deadline: Instant) -> Option<u32> {
         let table = std::fs::read_to_string("/proc/net/tcp").ok()?;
-        let port = |address: &str| {
-            address
-                .rsplit_once(':')
-                .and_then(|(_, port)| u16::from_str_radix(port, 16).ok())
-        };
-        table.lines().skip(1).find_map(|line| {
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            (fields.len() > 9 && port(fields[1]) == Some(peer) && port(fields[2]) == Some(local))
-                .then(|| fields[9].to_owned())
-        })
-    }
-
-    pub(super) fn executable(peer: u16, local: u16) -> Option<PathBuf> {
-        let socket = PathBuf::from(format!("socket:[{}]", inode(peer, local)?));
-        std::fs::read_dir("/proc")
+        let socket = PathBuf::from(format!("socket:[{}]", inode(&table, want)?));
+        let holders = std::fs::read_dir("/proc")
             .ok()?
             .flatten()
-            .find_map(|process| {
-                let holds = std::fs::read_dir(process.path().join("fd"))
-                    .ok()?
+            .filter_map(|entry| {
+                let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+                let fds = std::fs::read_dir(entry.path().join("fd")).ok();
+                let holds = fds
+                    .into_iter()
                     .flatten()
+                    .flatten()
+                    .take(DESCRIPTORS)
                     .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|link| link == socket));
-                holds
-                    .then(|| std::fs::read_link(process.path().join("exe")).ok())
-                    .flatten()
-            })
+                Some(holds.then_some(pid))
+            });
+        unique(holders, deadline)
+    }
+
+    pub(super) fn path(pid: u32) -> Option<PathBuf> {
+        std::fs::read_link(format!("/proc/{pid}/exe")).ok()
     }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 mod imp {
-    pub(super) fn executable(_: u16, _: u16) -> Option<std::path::PathBuf> {
+    use super::Connection;
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    pub(super) fn owner(_: Connection, _: Instant) -> Option<u32> {
+        None
+    }
+    pub(super) fn path(_: u32) -> Option<PathBuf> {
         None
     }
 }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(test)]
 mod tests {
-    /// A connection this process makes to itself is found, as this test's
-    /// own executable.
+    use super::*;
+    use std::io::{Read, Write};
+
+    const CONNECT: &str = "BUZZ_PEER_TEST_CONNECT";
+
+    fn v4(raw: &str) -> SocketAddrV4 {
+        raw.parse().unwrap()
+    }
+
+    /// Run by [`names_a_separate_process`]: connects, then holds the
+    /// connection until the other end closes it.
     #[test]
-    fn names_the_process_on_the_other_end() {
+    #[ignore = "a helper process, run by names_a_separate_process"]
+    fn connect_and_wait() {
+        let Ok(address) = std::env::var(CONNECT) else {
+            return;
+        };
+        let mut stream = std::net::TcpStream::connect(address).unwrap();
+        stream.write_all(b"x").unwrap();
+        let _ = stream.read(&mut [0]);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn names_a_separate_process() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (_server, peer) = listener.accept().unwrap();
-        let local = listener.local_addr().unwrap().port();
-        assert_eq!(peer.port(), client.local_addr().unwrap().port());
-        let found = super::executable(peer.port(), local).expect("the peer process");
+        let service = listener.local_addr().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "credential_service::peer::tests::connect_and_wait",
+            ])
+            .args(["--ignored", "--test-threads=1"])
+            .env(CONNECT, service.to_string())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let (mut stream, SocketAddr::V4(peer)) = listener.accept().unwrap() else {
+            panic!("an IPv4 peer");
+        };
+        stream.read_exact(&mut [0]).unwrap();
+        let SocketAddr::V4(remote) = service else {
+            panic!("an IPv4 service");
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let want = Connection {
+            local: peer,
+            remote,
+        };
+        assert_eq!(imp::owner(want, deadline), Some(child.id()));
+        // This process holds the other end, which is not the caller's.
+        let reversed = Connection {
+            local: remote,
+            remote: peer,
+        };
+        assert_eq!(imp::owner(reversed, deadline), Some(std::process::id()));
+        drop(stream);
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_passed_deadline_names_nobody() {
+        let past = Instant::now();
+        assert_eq!(unique([Some(1)].into_iter(), past), None);
+        let later = Instant::now() + Duration::from_secs(10);
+        assert_eq!(unique([None, Some(7), Some(7)].into_iter(), later), Some(7));
+        // Two processes holding the socket (an inherited descriptor) name nobody.
+        assert_eq!(unique([Some(7), Some(8)].into_iter(), later), None);
+        assert_eq!(unique([None].into_iter(), later), None);
+    }
+
+    #[tokio::test]
+    async fn a_slow_lookup_is_given_up_on() {
+        let started = Instant::now();
+        let found = bounded(Duration::from_millis(50), |_| {
+            std::thread::sleep(Duration::from_secs(2));
+            Some(1)
+        })
+        .await;
+        assert_eq!(found, None);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// Only the socket whose addresses and ports all match is chosen; one
+    /// with the same ports and another address is not, nor one not
+    /// established.
+    #[test]
+    fn proc_net_tcp_matches_the_whole_connection() {
+        let want = Connection {
+            local: v4("127.0.0.1:50000"),
+            remote: v4("127.0.0.1:40000"),
+        };
+        let header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+        let line = |local: &str, remote: &str, state: &str, inode: &str| {
+            format!("   0: {local} {remote} {state} 00000000:00000000 00:00000000 00000000  1000        0 {inode}\n")
+        };
+        let exact = line("0100007F:C350", "0100007F:9C40", "01", "111");
+        let other_address = line("0200007F:C350", "0100007F:9C40", "01", "222");
+        let listening = line("0100007F:C350", "0100007F:9C40", "0A", "333");
+        let table = format!("{header}{other_address}{listening}{exact}");
+        assert_eq!(inode(&table, want), Some("111"));
         assert_eq!(
-            found.canonicalize().unwrap(),
-            std::env::current_exe().unwrap().canonicalize().unwrap()
+            inode(&format!("{header}{other_address}{listening}"), want),
+            None
         );
-        // A port nothing connects from names nobody.
-        assert_eq!(super::executable(peer.port(), local.wrapping_add(1)), None);
+        // Two exact matches are ambiguous.
+        let twice = format!(
+            "{header}{exact}{}",
+            line("0100007F:C350", "0100007F:9C40", "01", "444")
+        );
+        assert_eq!(inode(&twice, want), None);
+    }
+
+    /// The same, for libproc's socket records.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn libproc_matches_the_whole_connection() {
+        let record = |local: [u8; 4], state: i32, family: i32| {
+            // SAFETY: all-zero is a valid value of this plain-data struct.
+            let mut info: imp::SocketFdInfo = unsafe { std::mem::zeroed() };
+            info.psi.kind = 2;
+            info.psi.family = family;
+            let tcp = &mut info.psi.tcp;
+            tcp.vflag = 1;
+            tcp.state = state;
+            tcp.local[12..].copy_from_slice(&local);
+            tcp.foreign[12..].copy_from_slice(&[127, 0, 0, 1]);
+            tcp.local_port = i32::from(50000u16.to_be());
+            tcp.foreign_port = i32::from(40000u16.to_be());
+            info
+        };
+        let want = Connection {
+            local: v4("127.0.0.1:50000"),
+            remote: v4("127.0.0.1:40000"),
+        };
+        assert_eq!(
+            imp::connection(&record([127, 0, 0, 1], 4, libc::AF_INET)),
+            Some(want)
+        );
+        let other = imp::connection(&record([127, 0, 0, 2], 4, libc::AF_INET));
+        assert!(other.is_some_and(|other| other != want));
+        assert_eq!(
+            imp::connection(&record([127, 0, 0, 1], 1, libc::AF_INET)),
+            None
+        );
+        assert_eq!(
+            imp::connection(&record([127, 0, 0, 1], 4, libc::AF_INET6)),
+            None
+        );
     }
 }

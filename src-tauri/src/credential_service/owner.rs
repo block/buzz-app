@@ -6,6 +6,7 @@ use super::{full_budgets, spend, CredentialService, Failure, Unsigned};
 use crate::identity::EventTemplate;
 use buzz_agent_controller::{bounded, framed, CANVAS_MAX_EVENT_BYTES};
 use serde_json::json;
+use std::net::SocketAddr;
 
 const STARTING: &str = "Buzz is still starting; retry shortly";
 
@@ -34,24 +35,19 @@ impl CredentialService {
         }
     }
 
-    /// `ports` are the caller's and this service's, which name the process
-    /// asking.
+    /// `connection` is the caller's address and this service's, which name
+    /// the process asking.
     pub(super) async fn pair(
         &self,
         params: &[String],
-        ports: Option<(u16, u16)>,
+        connection: Option<(SocketAddr, SocketAddr)>,
     ) -> Result<String, Failure> {
         let [client, relay] = params else {
             return Err(Failure::new("invalid_request", "Wrong parameters for pair"));
         };
-        let process = match ports {
-            Some((peer, local)) => tauri::async_runtime::spawn_blocking(move || {
-                super::peer::executable(peer, local).map(|path| path.display().to_string())
-            })
-            .await
-            .ok()
-            .flatten(),
-            None => None,
+        let process = || async move {
+            let (peer, service) = connection?;
+            super::peer::name(peer, service).await
         };
         let (token, approver) = self
             .0

@@ -246,6 +246,10 @@ export class ClaudeRuntime {
     private readonly targetKey?: string,
   ) {}
 
+  /** A failed turn's error as its report says it, such as where to fix
+   * Claude's credentials. */
+  explain: (error: string) => string = (error) => error;
+
   private executionKey(agent: AgentKey, conversation: string) {
     const scope = this.reads(agent)?.scope;
     if (!scope) throw new Error("Buzz is not connected");
@@ -1219,7 +1223,7 @@ export class ClaudeRuntime {
     return agent
       .publish({
         kind: 9,
-        content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+        content: `⚠️ I couldn't finish that: ${this.explain(error.slice(0, 500))}`,
         tags: [
           ["h", channel],
           ...(topLevel

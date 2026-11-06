@@ -101,3 +101,27 @@ it("tells listeners of a saved key, or a stopped save, but not a refused one", a
   await expect(auth.save(KEY, stopped.signal)).rejects.toThrow();
   expect(told).toBe(2);
 });
+
+it("links a turn that failed for want of a working key to Settings", async () => {
+  const auth = new ClaudeAuth(undefined);
+  const settings = "buzz://settings?section=agents";
+  const missing = await auth
+    .authorize(async () => {
+      throw new Error("unreachable");
+    }, true)("claude")
+    .then(
+      () => "",
+      (error: unknown) => String(error),
+    );
+  expect(auth.explainTurn(missing, settings)).toBe(
+    `Claude is missing an API key. Head to [Settings](${settings}) to add one.`,
+  );
+  expect(
+    auth.explainTurn("Invalid API key · Fix external API key", settings),
+  ).toBe(
+    `Anthropic rejected Claude's API key. It may have been revoked or run out of credit. Head to [Settings](${settings}) to replace it.`,
+  );
+  expect(auth.explainTurn("Error: overloaded", settings)).toBe(
+    "Error: overloaded",
+  );
+});

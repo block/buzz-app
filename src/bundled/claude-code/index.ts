@@ -20,7 +20,7 @@ export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 
-export const inject = ["agents", "host", "agentProtection"];
+export const inject = ["agents", "host", "agentProtection", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
@@ -105,8 +105,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
+  const openSetup = () =>
+    void ctx.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "agents",
+      provider: typeKey,
+    });
+  // Failed turns' reports link to the same place.
+  runtime.explain = (error) =>
+    setup.auth.explainTurn(
+      error,
+      `buzz://settings?section=agents&provider=${encodeURIComponent(typeKey)}`,
+    );
   const {
     Create,
+    CreateConfiguration,
     CreateModel,
     CreateThinking,
     DefaultControl,
@@ -117,6 +131,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     setup,
     defaults: providerDefaults,
     runtime,
+    openSetup,
   });
   agents.register<Config>({
     id: TYPE_ID,
@@ -130,6 +145,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
+    CreateConfiguration,
     CreateModel,
     createModelReportsReadiness: true,
     CreateThinking,

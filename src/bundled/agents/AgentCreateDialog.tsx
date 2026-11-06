@@ -428,6 +428,7 @@ export function AgentCreateDialog({
             {Configuration ? (
               <Configuration
                 key={type.key}
+                {...(edited ? { agent: edited } : {})}
                 config={config}
                 disabled={pending}
                 harnessControl={harnessControl}

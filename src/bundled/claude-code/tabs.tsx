@@ -8,12 +8,14 @@ import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 // Claude's provider controls, New agent choices, and agent settings.
 import {
+  type ReactNode,
   useEffect,
   useRef,
   useId,
   useState,
   useSyncExternalStore,
 } from "react";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
@@ -46,7 +48,7 @@ import {
   type SavedConversation,
   modelName as resolvedModelName,
 } from "./runtime";
-import { SignedIn, SignIn } from "./auth";
+import { Missing, SignedIn, SignIn } from "./auth";
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
@@ -163,18 +165,24 @@ const SCOPES = options([
   ["channel", "One session per channel"],
 ]);
 
+/** A model field's stand-in while Claude cannot run. `inline` asks for
+ * sign-in in place; otherwise, as in a row, a button opens setup. */
 function ClaudeSignIn({
   setup,
   disabled,
+  inline = false,
 }: {
   setup: ClaudeSetup;
   disabled: boolean;
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
   const missing = state.status?.state === "missing";
   const outdated = state.status?.state === "outdated";
-  if (state.status?.state === "signed-out" && state.running !== "install")
+  const signedOut =
+    state.status?.state === "signed-out" && state.running !== "install";
+  if (signedOut && inline)
     return <SignIn setup={setup} disabled={disabled} variant="compact" />;
   return (
     <>
@@ -188,7 +196,13 @@ function ClaudeSignIn({
           if (missing || outdated) void setup.run("install");
         }}
       >
-        {missing ? "Install Claude" : outdated ? "Update Claude" : "Set up"}
+        {missing
+          ? "Install Claude"
+          : outdated
+            ? "Update Claude"
+            : signedOut
+              ? setup.auth.attentionLabel
+              : "Set up"}
       </Button>
       <Dialog
         open={open}
@@ -198,7 +212,12 @@ function ClaudeSignIn({
           if (!next) void setup.cancel();
         }}
       >
-        <ClaudeSetupPanel setup={setup} disabled={disabled} variant="compact" />
+        <ClaudeSetupPanel
+          setup={setup}
+          disabled={disabled}
+          variant="compact"
+          onSaved={() => setOpen(false)}
+        />
       </Dialog>
     </>
   );
@@ -208,10 +227,13 @@ function ClaudeSetupPanel({
   setup,
   disabled = false,
   variant = "full",
+  onSaved,
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
   variant?: "full" | "compact";
+  /** Follows saved credentials, so the panel's dialog can close. */
+  onSaved?: (() => void) | undefined;
 }) {
   const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
   useEffect(() => {
@@ -248,7 +270,12 @@ function ClaudeSetupPanel({
         </p>
       )}
       {signingIn && (
-        <SignIn setup={setup} disabled={disabled} variant={variant} />
+        <SignIn
+          setup={setup}
+          disabled={disabled}
+          variant={variant}
+          onSaved={onSaved}
+        />
       )}
       <div className="flex flex-wrap gap-2">
         {action && (
@@ -316,10 +343,13 @@ export function createTabs({
   setup,
   defaults,
   runtime,
+  openSetup,
 }: Readonly<{
   setup: ClaudeSetup;
   defaults: ClaudeDefaults;
   runtime: ClaudeRuntime;
+  /** Opens Claude's setup in Settings → Agent setup. */
+  openSetup?: () => void;
 }>) {
   function useRemote(agent: AgentViewProps<Config>["agent"]) {
     const key = agent.key;
@@ -401,8 +431,21 @@ export function createTabs({
           Checking sign-in…
         </span>
       );
+    // A library card is one agent's: the key is added once, in Settings.
+    if (
+      props.modelAppearance === "glass-ghost" &&
+      state.status.state === "signed-out" &&
+      !state.running
+    )
+      return <Missing openSettings={openSetup} />;
     if (state.status.state !== "ready" || state.running)
-      return <ClaudeSignIn setup={setup} disabled={props.disabled} />;
+      return (
+        <ClaudeSignIn
+          setup={setup}
+          disabled={props.disabled}
+          inline={props.modelAppearance === "inverted"}
+        />
+      );
     return (
       <CreateModelChoices
         {...props}
@@ -512,6 +555,51 @@ export function createTabs({
     );
   }
 
+  /** New agent's Harness, Model and Thinking. While Claude needs its
+   * credentials, they take Model's and Thinking's place, full width, and the
+   * agent waits for them. */
+  function CreateConfiguration({
+    harnessControl,
+    onReadyChange,
+    agent,
+    ...props
+  }: AgentCreateProps<Config> & {
+    harnessControl: ReactNode;
+    onReadyChange?: (ready: boolean) => void;
+  }) {
+    const state = useSetupCatalog();
+    const signedOut =
+      state.status?.state === "signed-out" && state.running !== "install";
+    // Only missing credentials hold creation: an agent made before Claude is
+    // installed waits for the download, as it did with the Model row alone.
+    const ready = !!state.status && !signedOut;
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
+    return (
+      <div className="grid gap-4">
+        <SettingsGroup>
+          {harnessControl}
+          {!signedOut && (
+            <>
+              <PreferenceRow
+                title="Model"
+                trailing={<CreateModel {...props} />}
+              />
+              <PreferenceRow
+                title="Thinking"
+                trailing={
+                  <CreateThinking {...(agent && { agent })} {...props} />
+                }
+              />
+            </>
+          )}
+        </SettingsGroup>
+        {signedOut && (
+          <SignIn setup={setup} disabled={props.disabled} variant="compact" />
+        )}
+      </div>
+    );
+  }
+
   /** The instructions a new agent starts with. */
   function Create({ config, onChange, disabled }: AgentCreateProps<Config>) {
     const current = readConfig(config);
@@ -596,6 +684,8 @@ export function createTabs({
     const signingIn =
       state.running === "sign-in" ||
       (status?.state === "signed-out" && !state.running);
+    // Credentials pasted here, not an interactive sign-in.
+    const keyEntry = !setup.auth.signIn;
     const line =
       !status || state.checking
         ? "Checking Claude…"
@@ -630,7 +720,8 @@ export function createTabs({
           </p>
         )}
         <div className="grid gap-2" hidden={ready}>
-          {!state.running && (
+          {/* A key's own form takes the dialog over: it says what is missing. */}
+          {!state.running && !(keyEntry && status?.state === "signed-out") && (
             <p
               role={status?.state === "error" ? "alert" : "status"}
               className="m-0 text-body-sm text-primary"
@@ -670,7 +761,7 @@ export function createTabs({
               {state.output}
             </div>
           )}
-          {signingIn && <SignIn setup={setup} />}
+          {signingIn && <SignIn setup={setup} onSaved={onClose} />}
           {status?.state === "error" && (
             <p className="m-0 text-body-sm text-subtle">
               Open Claude Code in a terminal for more details, then please try
@@ -678,8 +769,12 @@ export function createTabs({
             </p>
           )}
         </div>
-        {/* Kept through a routine check, so a paste or save goes on. */}
-        {status?.state === "ready" && <SignedIn setup={setup} />}
+        {/* Kept through a routine check, so a paste or save goes on. Saving
+            the key closes the dialog while the key is all it edits; once it
+            has other settings, saving should leave it open. */}
+        {status?.state === "ready" && (
+          <SignedIn setup={setup} onSaved={onClose} />
+        )}
         <ProviderDialogActions>
           <Button
             onClick={() =>
@@ -1169,6 +1264,7 @@ export function createTabs({
 
   return {
     CreateModel,
+    CreateConfiguration,
     CreateThinking,
     Create,
     ProviderDialogBody,

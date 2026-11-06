@@ -9,11 +9,15 @@ import { useEffect, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import inlineStyles from "../../shared/InlineReference.module.css";
 import type { Spawn } from "./claude";
 import type { ClaudeSetup } from "./setup";
 
 const NO_KEY =
   "Claude needs an Anthropic API key. Add one in Settings → Agent setup → Harness defaults → Claude → Edit configuration.";
+/** What setup says first: the key is one for all of Claude, not per agent. */
+const KEY_ONCE =
+  "Claude requires an API key to connect to your account. You only have to set this up once.";
 const REJECTED_KEY =
   "Anthropic rejected the Claude API key. It may have been revoked or run out of credit. Paste a working key in Settings → Agent setup → Harness defaults → Claude → Edit configuration.";
 
@@ -156,43 +160,100 @@ export class ClaudeAuth {
 
   /** A failed review's error, as the person can act on it. */
   explain(error: string) {
-    return /authentication_error|invalid x-api-key/i.test(error)
-      ? REJECTED_KEY
+    return rejected(error) ? REJECTED_KEY : error;
+  }
+
+  /** A failed turn's error as its report in the conversation says it, in
+   * Markdown: a missing or rejected key links to `settings`, where it is
+   * added once for every Claude agent. */
+  explainTurn(error: string, settings: string) {
+    if (error.includes(NO_KEY))
+      return `Claude is missing an API key. Head to [Settings](${settings}) to add one.`;
+    return rejected(error)
+      ? `Anthropic rejected Claude's API key. It may have been revoked or run out of credit. Head to [Settings](${settings}) to replace it.`
       : error;
   }
 }
 
+/** Whether Claude's error says Anthropic refused the key; turns end with
+ * "Invalid API key · Fix external API key". */
+const rejected = (error: string) =>
+  /authentication_error|invalid x-api-key|invalid api key/i.test(error);
+
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** Setup's ask while Claude cannot run: the key. */
+/** Setup's ask while Claude cannot run: the key, once for every agent.
+ * `onSaved` follows a saved key, so a surface can close. */
 export function SignIn({
   setup,
   disabled = false,
   variant = "full",
+  onSaved,
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
   variant?: "full" | "compact";
+  onSaved?: (() => void) | undefined;
 }) {
   return (
-    <KeyForm
-      setup={setup}
-      disabled={disabled}
-      compact={variant === "compact"}
-    />
+    <div className="grid gap-3">
+      <p className="m-0 text-body-sm text-secondary">{KEY_ONCE}</p>
+      <KeyForm
+        setup={setup}
+        disabled={disabled}
+        compact={variant === "compact"}
+        onSaved={onSaved}
+      />
+    </div>
   );
 }
 
-/** Claude's settings once it can run: replacing the key. */
-export function SignedIn({ setup }: { setup: ClaudeSetup }) {
+/** Claude's settings once it can run: replacing the key. `onSaved` follows
+ * a saved key, so a surface can close. */
+export function SignedIn({
+  setup,
+  onSaved,
+}: {
+  setup: ClaudeSetup;
+  onSaved?: (() => void) | undefined;
+}) {
   return (
     <div className="grid gap-2">
       <p className="m-0 text-body-sm text-subtle">
         Claude runs with your Anthropic API key.
       </p>
-      <KeyForm setup={setup} replace />
+      <KeyForm setup={setup} replace onSaved={onSaved} />
     </div>
+  );
+}
+
+/** Where an agent's own surface, such as its library card, says Claude
+ * cannot run: setup is one step in Settings, not one per agent. */
+export function Missing({
+  openSettings,
+}: {
+  openSettings?: (() => void) | undefined;
+}) {
+  return (
+    <p className="m-0 text-body-sm text-secondary">
+      Claude is missing an API key.{" "}
+      {openSettings ? (
+        <>
+          Head to{" "}
+          <button
+            type="button"
+            className={inlineStyles.link}
+            onClick={openSettings}
+          >
+            Settings
+          </button>{" "}
+          to add one.
+        </>
+      ) : (
+        "Add one in Settings → Agent setup."
+      )}
+    </p>
   );
 }
 
@@ -201,11 +262,13 @@ function KeyForm({
   disabled = false,
   compact = false,
   replace = false,
+  onSaved,
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
   compact?: boolean;
   replace?: boolean;
+  onSaved?: (() => void) | undefined;
 }) {
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState<AbortController>();
@@ -223,6 +286,7 @@ function KeyForm({
       setKey("");
       setSaved({ ok: true, text });
       await setup.check();
+      onSaved?.();
     } catch (error) {
       if (!controller.signal.aborted)
         setSaved({ ok: false, text: message(error) });

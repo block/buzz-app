@@ -265,6 +265,7 @@ function applied({
   });
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
+    navigation: { open: vi.fn(async () => ({ status: "opened" })) },
     agentProtection: { registerModels: vi.fn() },
     host: {
       spawn,
@@ -310,6 +311,7 @@ function applied({
     spawn,
     home,
     execution: ctx.agents.execution,
+    navigation: ctx.navigation,
     setRemote: (value: boolean) => {
       remote = value;
     },
@@ -782,7 +784,7 @@ it("shows the channel's current kind for a session another build started", async
 });
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents", "host", "agentProtection"]);
+  expect(inject).toEqual(["agents", "host", "agentProtection", "navigation"]);
   const { type } = installed();
   expect(type).toMatchObject({
     id: "claude-code",
@@ -961,13 +963,18 @@ it("preserves native behavior for invalid defaults and keeps explicit agent mode
 it("asks for an API key and is ready once one is saved", async () => {
   const { type, spawn } = installed({ keySaved: false });
   const Setup = providerSetup(type);
-  render(<Setup onClose={vi.fn()} />);
+  const onClose = vi.fn();
+  render(<Setup onClose={onClose} />);
   const user = userEvent.setup();
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Claude 2.1.292 needs an Anthropic API key.",
+  // The key's form takes the dialog over, saying once is enough.
+  expect(
+    await screen.findByText(
+      "Claude requires an API key to connect to your account. You only have to set this up once.",
     ),
-  );
+  ).toBeVisible();
+  expect(
+    screen.queryByText("Claude 2.1.292 needs an Anthropic API key."),
+  ).toBeNull();
   expect(type.provider?.snapshot()).toMatchObject({
     readiness: "attention",
     attentionLabel: "Add Claude API key",
@@ -986,7 +993,21 @@ it("asks for an API key and is ready once one is saved", async () => {
     ([, options]) => options?.args?.[2] === "save-key",
   );
   expect(save?.[1]?.args?.slice(1)).toEqual(["claude.sh", "save-key"]);
-  expect(screen.getByRole("button", { name: "Done" })).toBeVisible();
+  // The key is all the dialog edits, so saving it closes the dialog.
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("closes the configuration once a replacement key is saved", async () => {
+  const { type } = installed();
+  const Setup = providerSetup(type);
+  const onClose = vi.fn();
+  render(<Setup onClose={onClose} />);
+  const user = userEvent.setup();
+  await user.type(
+    await screen.findByLabelText("Replace API key"),
+    "sk-ant-api03-other{Enter}",
+  );
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 });
 
 it("saves the key with Enter without submitting the form it sits in", async () => {
@@ -1654,21 +1675,90 @@ it("shares one customization-free discovery across cards and workspace changes",
   expect(probes[0]?.[1]?.args).not.toContain("bypassPermissions");
 });
 
-it("asks for the key where an agent is created, then offers its models", async () => {
+it("asks for the key in place of Model where an agent is created, then offers its models", async () => {
+  const { type } = installed({ keySaved: false });
+  const Configuration = type.CreateConfiguration;
+  if (!Configuration) throw new Error("Missing creation configuration");
+  const onReadyChange = vi.fn();
+  render(
+    <Configuration
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      harnessControl={<div>Harness row</div>}
+      onReadyChange={onReadyChange}
+      onChange={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const field = await screen.findByLabelText("Anthropic API key");
+  expect(screen.getByText("Harness row")).toBeVisible();
+  expect(
+    screen.getByText(
+      "Claude requires an API key to connect to your account. You only have to set this up once.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText("Model")).toBeNull();
+  expect(onReadyChange).toHaveBeenLastCalledWith(false);
+  await user.type(field, "sk-ant-api03-pasted");
+  await user.click(screen.getByRole("button", { name: "Save key" }));
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
+  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+  expect(onReadyChange).toHaveBeenLastCalledWith(true);
+});
+
+it("sends a library card without a key to Claude's setup in Settings", async () => {
+  const { type, navigation } = installed({ keySaved: false });
+  const Model = type.CreateModel;
+  if (!Model) throw new Error("Missing model field");
+  render(
+    <Model
+      agent={agent()}
+      modelAppearance="glass-ghost"
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText(/Claude is missing an API key\./),
+  ).toBeVisible();
+  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Settings" }));
+  expect(navigation.open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "buzz.claude-code/claude-code",
+  });
+});
+
+it("opens setup from a Model row without a key and closes it once one is saved", async () => {
   const { type } = installed({ keySaved: false });
   const Model = type.CreateModel;
   if (!Model) throw new Error("Missing model field");
   render(<Model config={DEFAULT_CONFIG} disabled={false} onChange={vi.fn()} />);
   const user = userEvent.setup();
-  await user.type(
-    await screen.findByLabelText("Anthropic API key"),
-    "sk-ant-api03-pasted",
+  await user.click(
+    await screen.findByRole("button", { name: "Add Claude API key" }),
   );
-  await user.click(screen.getByRole("button", { name: "Save key" }));
+  const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
+  await user.type(
+    within(dialog).getByLabelText("Anthropic API key"),
+    "sk-ant-api03-pasted{Enter}",
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Set up Claude" }),
+    ).not.toBeInTheDocument(),
+  );
   expect(
     await screen.findByRole("combobox", { name: "Model" }),
   ).toBeInTheDocument();
-  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
 });
 
 it("offers an update before discovering models on a pre-safe-mode Claude copy", async () => {

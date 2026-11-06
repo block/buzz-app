@@ -19,29 +19,44 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  vi.restoreAllMocks();
 });
 
-it("relabels mounted callers from one interval that stops with the last of them", () => {
-  const interval = vi.spyOn(globalThis, "setInterval");
-  const clear = vi.spyOn(globalThis, "clearInterval");
-  const { container, unmount } = render(
+it("relabels mounted callers from one timer that stops with the last of them", () => {
+  const callers = (more: number[] = []) => (
     <>
       <Label at={now - 30} />
       <Label at={now - 3600} />
       <Label at={undefined} />
-    </>,
+      {more.map((at) => (
+        <Label key={at} at={at} />
+      ))}
+    </>
   );
+  const { container, rerender, unmount } = render(callers());
   expect(labels(container)).toEqual(["just now", "1 hour ago", "none"]);
-  expect(interval).toHaveBeenCalledOnce();
-  act(() => vi.advanceTimersByTime(60_000));
-  expect(labels(container)).toEqual(["1 minute ago", "1 hour ago", "none"]);
+  expect(vi.getTimerCount()).toBe(1);
+  // A label mounted between ticks reads the same clock as those showing.
+  vi.setSystemTime((now + 45) * 1000);
+  rerender(callers([now - 30]));
+  expect(labels(container)).toEqual([
+    "just now",
+    "1 hour ago",
+    "none",
+    "just now",
+  ]);
+  expect(vi.getTimerCount()).toBe(1);
+  act(() => vi.advanceTimersByTime(30_000));
+  expect(labels(container)).toEqual([
+    "1 minute ago",
+    "1 hour ago",
+    "none",
+    "1 minute ago",
+  ]);
   unmount();
-  expect(clear).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("arms nothing for callers without a time", () => {
-  const interval = vi.spyOn(globalThis, "setInterval");
   render(<Label at={undefined} />);
-  expect(interval).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
 });

@@ -260,8 +260,8 @@ export function deletionApplies(
  * author edits (40003, latest wins), reactions (7) and relay-signed thread summaries (39005).
  * Replies stay out of the top level; when they are not rows, the non-deleted `pendingReplies`
  * of a root layer on top of its summary: they add to `replyCount`, their authors lead
- * `participants` and a later one moves `lastReplyAt`, so an own reply counts and shows
- * before the relay's summary round trip.
+ * `participants` and a later direct one moves `lastReplyAt`, so an own reply counts and
+ * shows before the relay's summary round trip.
  * Output is ascending by time; ties break on id so windows merge deterministically. */
 export function foldMessages(
   channelId: string,
@@ -430,9 +430,12 @@ export function foldMessages(
         ? reply.pubkey
         : author;
     });
+    // The relay moves `last_reply_at` for direct replies only.
     const lastReplyAt = Math.max(
       summary.lastReplyAt ?? 0,
-      ...pending.map((reply) => reply.created_at),
+      ...pending
+        .filter((reply) => threadReference(reply)?.parentId === event.id)
+        .map((reply) => reply.created_at),
     );
     rows.push(
       Object.freeze({

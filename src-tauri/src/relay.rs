@@ -2112,9 +2112,7 @@ async fn serve_blob(
     range: Option<(u64, u64)>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
     match range {
-        Some((start, end)) => {
-            media_blocks::read(host, fi, &url, start, end, WHOLE_VIDEO_MAX).await
-        }
+        Some((start, end)) => media_blocks::read(host, fi, &url, start, end, WHOLE_VIDEO_MAX).await,
         None => fetch_media(host, fi, url, None).await,
     }
 }

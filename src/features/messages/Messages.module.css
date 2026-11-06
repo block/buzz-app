@@ -1766,6 +1766,17 @@ button.mediaPreview {
 .text :where(h4, h5, h6) {
   font-weight: var(--type-weight-medium);
 }
+/* Previews keep their row's type role and clamp. */
+.text[data-compact],
+.text[data-compact] :where(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+.text[data-compact] :where(p, ul, ol, blockquote, pre, .codeBlock, table, hr) {
+  margin: 0;
+}
 .text.text :where(ul, ol) {
   padding-left: var(--space-6);
 }
@@ -1907,6 +1918,37 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
 .text hr {
   border: 0;
   border-top: 1px solid var(--border-standard);
+}
+/* A preview reads code and tables as text in its row's clamped flow: a framed,
+   scrolling block is its own formatting context, which the clamp cannot cut. */
+.text[data-compact] :is(pre, .codeBlock, table, thead, tbody, tr, th, td) {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+}
+.text[data-compact] pre code {
+  display: inline;
+  overflow: visible;
+  padding: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.text[data-compact] :is(table, thead, tbody, tr, th, td) {
+  display: inline;
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: normal;
+}
+.text[data-compact] th {
+  font-weight: var(--type-weight-medium);
+}
+.text[data-compact] :is(th, td) + :is(th, td)::before {
+  content: " · ";
+}
+.text[data-compact] tbody tr::before {
+  content: " / ";
 }
 .text input[type="checkbox"] {
   width: 1em;
@@ -2565,6 +2607,12 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   border-radius: var(--radius-chip);
   padding-inline: var(--space-half);
   vertical-align: baseline;
+}
+/* A preview's clamp cannot cut inside this box, so it keeps one line. */
+.text[data-compact] .spoiler {
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: top;
 }
 .spoilerMask {
   position: absolute;

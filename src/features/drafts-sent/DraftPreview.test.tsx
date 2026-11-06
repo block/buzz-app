@@ -520,6 +520,12 @@ it("keeps an emptied editor and filtered selection open, then closes on Escape w
   expect(
     screen.getByRole("region", { name: "Draft for #Design" }),
   ).toBeInTheDocument();
+  // Its row reads as emptied, not as the text it was selected with.
+  const emptied = screen.getByRole("button", {
+    name: /Continue draft.*Empty draft/,
+  });
+  expect(emptied).toHaveTextContent("Empty draft");
+  expect(emptied).not.toHaveTextContent("Erase me");
   fireEvent.change(screen.getByRole("searchbox"), {
     target: { value: "missing" },
   });

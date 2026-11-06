@@ -53,11 +53,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
         relay={relay}
         navigator={navigator}
         tabs={ctx.conversation.ui.Tabs}
+        extensions={ctx.conversation}
         navigation={navigation}
       />
     ),
     preview: ({ close }) => (
-      <InboxPreview relay={relay} navigator={navigator} close={close} />
+      <InboxPreview
+        relay={relay}
+        navigator={navigator}
+        extensions={ctx.conversation}
+        close={close}
+      />
     ),
   });
 };

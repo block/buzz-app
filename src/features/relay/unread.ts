@@ -1,7 +1,7 @@
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience } from "./audience";
-import type { InboxItem, InboxSnapshot } from "./inbox";
+import type { InboxItem, InboxSnapshot, PreviewBody } from "./inbox";
 import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import {
@@ -171,6 +171,19 @@ const order = (a: RelayEvent, b: RelayEvent) =>
   eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
 const contentKind = (event: RelayEvent) =>
   event.kind === 9 || event.kind === 40002 || event.kind === 40008;
+/** Only the bindings a preview renders, so reactions and replies to the
+ * shown message do not change the inbox snapshot. */
+const previewBody = (row: ChannelMessage): PreviewBody =>
+  Object.freeze({
+    mentions: row.mentions,
+    ...(row.mentionReferences && { mentionReferences: row.mentionReferences }),
+    ...(row.emoji && { emoji: row.emoji }),
+    ...(row.edited && { edited: row.edited }),
+    ...(row.attachmentSeams && { attachmentSeams: row.attachmentSeams }),
+    ...(row.diff && { diff: row.diff }),
+    attachments: row.attachments,
+  });
+
 /**
  * Live Inbox recompute window. Each recompute folds every channel (7-70 ms at
  * 100-1000 items), so a burst would otherwise cost that per message. 200 ms
@@ -1097,7 +1110,7 @@ export function createUnread({
         }
         if (!groups.size) continue;
         const rows = folded(channel.id);
-        const content = new Map(rows.map((row) => [row.id, row.content]));
+        const byRow = new Map(rows.map((row) => [row.id, row]));
         // A session's top-level row shows its newest message from someone
         // else, unless that message is the root of its own thread row. This
         // mostly matches its newest evidence, but follows a relay-signed row's
@@ -1130,6 +1143,7 @@ export function createUnread({
               timeline && newest && order(newest, latest.event) >= 0
                 ? newest
                 : latest.event;
+            const shownRow = byRow.get(shown.id);
             const unread = entries.filter((entry) =>
               isUnread(entry, state, dm),
             );
@@ -1198,7 +1212,8 @@ export function createUnread({
                 : {}),
               authorId: shown.pubkey,
               workflowOwnerId: workflowOwner(shown, workflowAuthority),
-              preview: content.get(shown.id) ?? shown.content,
+              preview: shownRow?.content ?? shown.content,
+              ...(shownRow && { previewBody: previewBody(shownRow) }),
               previewMessageId: shown.id,
               createdAt: shown.created_at,
               mentioned: entries.some((entry) => entry.mentioned),

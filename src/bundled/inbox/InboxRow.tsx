@@ -1,16 +1,25 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { InboxReaction } from "../../features/relay/inbox-reactions";
 import { groupReactions } from "../../features/relay/fold";
 import { useReactionName } from "../../features/messages/use-reaction-name";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
 import { channelText } from "../../features/channels/channel-icon";
-import type { ChannelSummary, Profile } from "../../features/relay/contracts";
+import type {
+  ChannelMessage,
+  ChannelSummary,
+  Profile,
+} from "../../features/relay/contracts";
 import type { InboxItem } from "../../features/relay/inbox";
 import type { InboxFeedSnapshot } from "../../features/relay/inbox-feed";
 import type { RelaySession } from "../../features/relay/session";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
-import { messagePreview } from "../../features/notifications/content";
+import { PLAIN_TEXT_LIMIT } from "../../features/notifications/content";
+import {
+  MessagePreview,
+  plainPreview,
+} from "../../features/messages/MessagePreview";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LightningIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -54,12 +63,20 @@ export function rowIdentity(
   return { sender, context, profile };
 }
 
-/** Profiles a row names: its sender or workflow owner and up to three DM participants. */
+/** Profiles a row names: its sender or workflow owner, the people its preview
+ * mentions, and up to three DM participants. */
 export const rowProfileIds = (
-  item: Pick<InboxItem, "workflowOwnerId">,
+  item: Readonly<{
+    workflowOwnerId?: string | undefined;
+    previewBody?:
+      | Pick<ChannelMessage, "mentions" | "mentionReferences">
+      | undefined;
+  }>,
   channel: ChannelSummary | undefined,
 ): string[] => [
   ...(item.workflowOwnerId ? [item.workflowOwnerId] : []),
+  ...(item.previewBody?.mentions ?? []),
+  ...(item.previewBody?.mentionReferences ?? []),
   ...(channel?.channelType === "dm"
     ? (channel.participants?.slice(0, 3) ?? [])
     : []),
@@ -69,7 +86,8 @@ export const rowProfileIds = (
 export function InboxRowButton({
   item,
   identity: { sender, context, profile },
-  media,
+  session,
+  extensions,
   feed,
   time,
   previewId,
@@ -77,7 +95,8 @@ export function InboxRowButton({
 }: {
   item: InboxItem;
   identity: ReturnType<typeof rowIdentity>;
-  media: RelaySession["media"];
+  session: RelaySession;
+  extensions?: ConversationExtensions | undefined;
   feed: InboxFeedSnapshot;
   time: ReactNode;
   previewId?: string | undefined;
@@ -86,6 +105,25 @@ export function InboxRowButton({
   "icon" | "label" | "trailing" | "aria-label"
 >) {
   const unread = hasUnread(item);
+  const status = [item.previewMessageId, ...item.messageIds].some(
+    (id) => id !== undefined && feed.incomplete.includes(id),
+  )
+    ? feed.status === "error"
+      ? "Preview unavailable. Retry activity."
+      : "Preview updating…"
+    : undefined;
+  const row = useMemo(() => previewRow(item), [item]);
+  // The clamp is visual: a long body describes the row by its bounded text.
+  const bounded = useMemo(
+    () =>
+      previewId && !status && item.preview.length > PLAIN_TEXT_LIMIT
+        ? plainPreview(row)
+        : undefined,
+    [previewId, status, item.preview, row],
+  );
+  const preview = (
+    <MessagePreview row={row} session={session} extensions={extensions} />
+  );
   return (
     <MessageListRow
       {...props}
@@ -102,7 +140,7 @@ export function InboxRowButton({
           src={
             item.workflowOwnerId
               ? undefined
-              : avatarMedia(profile?.picture, media)
+              : avatarMedia(profile?.picture, session.media)
           }
           shape={
             item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
@@ -117,15 +155,19 @@ export function InboxRowButton({
         </time>
       }
       unread={unread}
-      previewId={previewId}
+      previewId={bounded ? undefined : previewId}
       preview={
-        [item.previewMessageId, ...item.messageIds].some(
-          (id) => id !== undefined && feed.incomplete.includes(id),
-        )
-          ? feed.status === "error"
-            ? "Preview unavailable. Retry activity."
-            : "Preview updating…"
-          : messagePreview(item.preview)
+        status ??
+        (bounded ? (
+          <>
+            <span aria-hidden="true">{preview}</span>
+            <span id={previewId} className="sr-only">
+              {bounded}
+            </span>
+          </>
+        ) : (
+          preview
+        ))
       }
     />
   );
@@ -138,12 +180,14 @@ export function ReactionRowButton({
   profiles,
   name,
   channel,
+  extensions,
   time = relativeTimestamp(item.createdAt),
   ...props
 }: {
   item: InboxReaction;
   time?: ReactNode;
   session: RelaySession;
+  extensions?: ConversationExtensions | undefined;
   profiles: ReadonlyMap<string, Profile>;
   name: ResolveName;
   channel: ChannelSummary | undefined;
@@ -173,7 +217,7 @@ export function ReactionRowButton({
         ? channelText(channel)
         : "Conversation";
   const reactions = groupReactions(item.events);
-  const preview = messagePreview(item.message.content);
+  const preview = useMemo(() => plainPreview(item.message), [item.message]);
   const emojiNames = reactions
     .map((reaction) =>
       reaction.emoji
@@ -233,7 +277,11 @@ export function ReactionRowButton({
             </time>
           </span>
           <span className={`text-body text-subtle ${styles.reactionPreview}`}>
-            {preview}
+            <MessagePreview
+              row={item.message}
+              session={session}
+              extensions={extensions}
+            />
           </span>
           <span className={`text-caption ${rowStyles.source}`}>
             in {context}
@@ -243,6 +291,21 @@ export function ReactionRowButton({
     />
   );
 }
+/** The shown message as a renderable row: its body and signed display bindings. */
+const previewRow = (item: InboxItem): ChannelMessage => ({
+  id: item.previewMessageId ?? item.messageId,
+  channelId: item.channelId,
+  authorId: item.authorId,
+  createdAt: item.createdAt,
+  content: item.preview,
+  mentions: [],
+  attachments: [],
+  ...item.previewBody,
+  participants: [],
+  reactions: [],
+  replyCount: 0,
+});
+
 function ActivityReactionGlyph({
   reaction,
   session,

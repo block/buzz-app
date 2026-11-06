@@ -13,6 +13,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import type {
+  ConversationExtensions,
   PageTabsProps,
   PageTabTarget,
 } from "../../features/conversation/contracts";
@@ -184,10 +185,13 @@ export function InboxPage({
   relay,
   navigator,
   tabs,
+  extensions,
   navigation,
 }: {
   relay: RelayData;
   navigator: Navigation;
+  /** Message renderers, `ctx.conversation`, so previews read like the timeline. */
+  extensions?: ConversationExtensions | undefined;
   navigation?: PageNavigation | undefined;
   /** The host tab workspace, `conversation.ui.Tabs`, while a plugin provides it. */
   tabs?: InboxPageTabs | undefined;
@@ -209,6 +213,7 @@ export function InboxPage({
             }}
             navigator={navigator}
             tabs={tabs}
+            extensions={extensions}
             navigation={navigation}
           />
         ) : (
@@ -244,6 +249,7 @@ type InboxViewProps = {
   scope: NavigationScope;
   navigator: Navigation;
   tabs?: InboxPageTabs | undefined;
+  extensions?: ConversationExtensions | undefined;
   navigation?: PageNavigation | undefined;
 };
 
@@ -278,6 +284,7 @@ function InboxList({
   scope,
   navigator,
   navigation,
+  extensions,
   open: openTab,
   close: closeTab,
   isOpen,
@@ -635,7 +642,7 @@ function InboxList({
       ...authorIds,
       ...reactionItems.slice(0, 50).flatMap((item) =>
         rowProfileIds(
-          {},
+          { previewBody: item.message },
           list.channels.find((entry) => entry.id === item.channelId),
         ),
       ),
@@ -1103,6 +1110,7 @@ function InboxList({
                         channel={list.channels.find(
                           (channel) => channel.id === item.channelId,
                         )}
+                        extensions={extensions}
                         selected={selectedId === item.id}
                         onClick={() => {
                           const target: PageTabTarget = {
@@ -1186,7 +1194,8 @@ function InboxList({
                         <InboxRowButton
                           item={item}
                           identity={identity}
-                          media={session.media}
+                          session={session}
+                          extensions={extensions}
                           feed={feed}
                           time={relativeTimestamp(item.createdAt)}
                           previewId={`${previewId}-${item.id}`}

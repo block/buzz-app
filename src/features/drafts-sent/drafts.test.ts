@@ -49,12 +49,19 @@ it("reads actual scoped drafts without touching any original records", () => {
       placeholder: true,
       createdAt: NOW,
     },
-    { id: "draft:solo", channelId: "solo", text: "Solo prose", createdAt: NOW },
+    {
+      id: "draft:solo",
+      channelId: "solo",
+      text: "Solo prose",
+      markdown: "Solo prose",
+      createdAt: NOW,
+    },
     {
       id: `draft:team:thread:${root}`,
       channelId: "team",
       threadRootId: root,
       text: "Unfinished reply",
+      markdown: "Unfinished reply",
       createdAt: NOW,
     },
   ]);

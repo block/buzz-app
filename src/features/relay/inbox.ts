@@ -1,4 +1,16 @@
+import type { ChannelMessage } from "./contracts";
 import type { ReadTarget } from "./read-state-model";
+
+export type PreviewBody = Pick<
+  ChannelMessage,
+  | "edited"
+  | "attachmentSeams"
+  | "mentions"
+  | "mentionReferences"
+  | "emoji"
+  | "diff"
+  | "attachments"
+>;
 
 /** A conversation projected from the unread owner's bounded verified evidence. */
 export type InboxItem = Readonly<{
@@ -17,6 +29,10 @@ export type InboxItem = Readonly<{
   authorId: string;
   workflowOwnerId?: string | undefined;
   preview: string;
+  /** The folded row's signed display bindings for `preview`, so it renders
+   * mentions and custom emoji as the timeline does, and names attachments
+   * when it has no text. Absent when unfolded. */
+  previewBody?: PreviewBody;
   /** The message the preview shows, which may be outside `messageIds`. */
   previewMessageId?: string;
   createdAt: number;

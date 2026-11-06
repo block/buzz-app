@@ -12,7 +12,8 @@ export type NotificationText = Readonly<{ title: string; body: string }>;
 const loneSurrogate =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-function shortText(value: string, limit: number) {
+/** One line of at most `limit` code points, without control or bidi characters. */
+export function shortText(value: string, limit: number) {
   const points = Array.from(
     value
       .replace(loneSurrogate, "\uFFFD")
@@ -24,6 +25,9 @@ function shortText(value: string, limit: number) {
     ? `${points.slice(0, limit - 1).join("")}…`
     : points.join("");
 }
+
+/** The most characters `plainText` keeps. */
+export const PLAIN_TEXT_LIMIT = 200;
 
 type TextNode = { type: string; value?: string; children?: TextNode[] };
 function prose(node: TextNode): string {
@@ -61,7 +65,8 @@ export function plainText(content: string, options: PreviewOptions = {}) {
   if (opener >= 0) bounded = `${bounded.slice(0, opener)}[Spoiler]`;
   const original = scanMarkdown(bounded);
   if (original.tooDeep) return "";
-  if (!bounded.includes("||")) return shortText(prose(original.tree), 200);
+  if (!bounded.includes("||"))
+    return shortText(prose(original.tree), PLAIN_TEXT_LIMIT);
   const prepared = prepareMarkdown(bounded);
   if (prepared.kind === "plain") return "";
   // Protect only authored spoiler delimiters, using the renderer's source
@@ -77,7 +82,7 @@ export function plainText(content: string, options: PreviewOptions = {}) {
     source = source.slice(0, offset) + delimiter + source.slice(offset + 2);
   const { tree, tooDeep } = scanMarkdown(source);
   if (!tooDeep) remarkSpoilers(delimiter, content.length > end)(tree);
-  return tooDeep ? "" : shortText(prose(tree), 200);
+  return tooDeep ? "" : shortText(prose(tree), PLAIN_TEXT_LIMIT);
 }
 
 /** Bounded CommonMark text, not rendered HTML or a fetch of linked/attached content. */

@@ -965,6 +965,65 @@ it("scopes conversation search at the relay and discards out-of-scope hits", asy
   }
 });
 
+it("renders a message hit as its timeline row, named by its plain text", async () => {
+  vi.useFakeTimers();
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters, signal) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return wire.transport.query(filters, signal);
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="ship"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    await act(async () =>
+      wire
+        .next()
+        .respond([
+          message(
+            viewer,
+            "crew",
+            "**Ship** [the PR](https://example.com/pr) ||secret||",
+            1700000001,
+          ),
+        ]),
+    );
+    const option = screen.getByRole("option", {
+      name: /^Ship the PR \[Spoiler\]/,
+    });
+    expect(within(option).getByText("Ship").tagName).toBe("STRONG");
+    expect(option).not.toHaveTextContent("https://example.com/pr");
+    expect(option).not.toHaveTextContent("**");
+    // The row is the control: nothing inside its preview is focusable.
+    expect(option.querySelector("a[href], button")).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("offers more messages in overall search when the first page shows none", async () => {
   vi.useFakeTimers();
   const relay = keypair();

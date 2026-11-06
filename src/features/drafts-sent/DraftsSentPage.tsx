@@ -52,7 +52,7 @@ import {
   type Activity,
   type Shape,
 } from "./context";
-import { clearDraft, useDrafts } from "./drafts";
+import { clearDraft, useDrafts, type DraftEntry } from "./drafts";
 import {
   SENT_LIMIT,
   clockTime,
@@ -66,6 +66,8 @@ import {
 import { listed, scopeOf } from "./scope";
 import { useActivity, useDeletions, useSent } from "./views";
 import styles from "./DraftsSent.module.css";
+import { MessagePreview, plainPreview } from "../messages/MessagePreview";
+import { rowProfileIds } from "../relay/membership";
 
 /** Labels change by the minute, so half a minute keeps them current. */
 const TICK_MS = 30_000;
@@ -306,23 +308,30 @@ function ScopedPage({
   useLayoutEffect(() => {
     if (currentIndex >= 0) selectedIndex.current = currentIndex;
   }, [currentIndex]);
-  const entries: (Entry & { placeholder?: boolean })[] = [...drafts.entries];
+  const entries: Omit<DraftEntry, "signature">[] = [...drafts.entries];
+  // The emptied draft drops the body it was selected with.
   if (selected?.draft && currentIndex < 0)
     entries.splice(selectedIndex.current, 0, {
       ...selected.entry,
+      row: undefined,
       text: "Empty draft",
       placeholder: true,
     });
   const shownDrafts = entries.filter((entry) =>
     listed(byId.get(entry.channelId)),
   );
+  // Folded once per read, not on every channel list change.
+  const sentRead = useMemo(
+    () => sentEntries(sent.events, viewer),
+    [sent.events, viewer],
+  );
   const sentList = useMemo(
     () =>
-      sentEntries(sent.events, viewer).filter(
+      sentRead.filter(
         (entry) =>
           byId.has(entry.channelId) && listed(byId.get(entry.channelId)),
       ),
-    [sent.events, viewer, byId],
+    [sentRead, byId],
   );
 
   const { threads, rooms } = contextFilters(
@@ -425,7 +434,24 @@ function ScopedPage({
     // A draft has no send time: others' messages never count as "after" it.
     const { createdAt: _, ...unsent } = entry;
     return {
-      entry,
+      // Its Markdown and mentions, as the timeline will show it once sent.
+      entry: !entry.placeholder
+        ? {
+            ...entry,
+            row: {
+              id: entry.id,
+              channelId: entry.channelId,
+              authorId: viewer,
+              createdAt: entry.createdAt ?? 0,
+              content: entry.markdown || entry.text,
+              mentions: entry.mentions ?? [],
+              attachments: [],
+              participants: [],
+              reactions: [],
+              replyCount: 0,
+            },
+          }
+        : entry,
       place: where,
       shape,
       placeholder: "placeholder" in entry ? entry.placeholder : undefined,
@@ -453,8 +479,11 @@ function ScopedPage({
   // Everyone shown in a row, so their names and pictures load.
   const people = new Set<string>();
   for (const row of [...draftRows, ...sentRows])
-    for (const key of row.activity?.people.slice(0, 4) ??
-      row.place.members.slice(0, 3))
+    for (const key of [
+      ...(row.activity?.people.slice(0, 4) ?? row.place.members.slice(0, 3)),
+      // And the people the message mentions.
+      ...(row.entry.row ? rowProfileIds(row.entry.row) : []),
+    ])
       people.add(key);
   const missing = [...people]
     .sort()
@@ -466,8 +495,13 @@ function ScopedPage({
       void session.profiles.ensure(missing.split(",")).catch(() => {});
   }, [session, missing]);
 
+  // A sent row's label and search read what its preview shows.
   const text = (row: Row) =>
-    row.placeholder ? row.entry.text : preview(row.entry.text, "Attachment");
+    row.placeholder
+      ? row.entry.text
+      : row.entry.row
+        ? plainPreview(row.entry.row)
+        : preview(row.entry.text, "Attachment");
   const visibleDrafts = draftRows.filter((row) =>
     matches(text(row), row.place.title, search),
   );
@@ -637,7 +671,17 @@ function ScopedPage({
             </span>
           </span>
         }
-        preview={line}
+        preview={
+          entry.row ? (
+            <MessagePreview
+              row={entry.row}
+              session={session}
+              extensions={extensions}
+            />
+          ) : (
+            line
+          )
+        }
       />
     );
     return (

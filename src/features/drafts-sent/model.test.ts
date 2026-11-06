@@ -195,6 +195,10 @@ it("shows sent messages as they read now: latest edit, deletions dropped, in Buz
     ],
     viewer,
   );
+  expect(sent[0]?.row).toMatchObject({
+    content: "First, edited",
+    edited: true,
+  });
   expect(sent.map((entry) => [entry.id, entry.text])).toEqual([
     [a, "First, edited"],
     [b, "Second"],
@@ -256,4 +260,48 @@ it("labels days", () => {
   const at = (minutesAgo: number) => (NOW - minutesAgo * 60000) / 1000;
   expect(dayLabel(at(5), NOW)).toBe("Today");
   expect(dayLabel(at(60 * 26), NOW)).toBe("Yesterday");
+});
+
+it("keeps a sent message's attachments from its latest edit that changed them", () => {
+  const original = "1".repeat(64);
+  const media = "https://media.invalid";
+  const [entry] = sentEntries(
+    [
+      event({
+        id: original,
+        created_at: 10,
+        content: "Report",
+        tags: [
+          ["h", "team"],
+          ["imeta", `url ${media}/report.pdf`, "m application/pdf"],
+        ],
+      }),
+      event({
+        id: "2".repeat(64),
+        kind: 40003,
+        created_at: 20,
+        content: "Chart",
+        tags: [
+          ["h", "team"],
+          ["e", original],
+          ["imeta", `url ${media}/chart.png`, "m image/png"],
+        ],
+      }),
+      event({
+        id: "3".repeat(64),
+        kind: 40003,
+        created_at: 30,
+        content: "Chart, fixed typo",
+        tags: [
+          ["h", "team"],
+          ["e", original],
+        ],
+      }),
+    ],
+    viewer,
+  );
+  expect(entry?.row?.content).toBe("Chart, fixed typo");
+  expect(entry?.row?.attachments.map((item) => item.url)).toEqual([
+    `${media}/chart.png`,
+  ]);
 });

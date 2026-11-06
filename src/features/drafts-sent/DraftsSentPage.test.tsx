@@ -993,6 +993,64 @@ it("asks for a community before showing anything", () => {
   expect(screen.getByText("Choose a community")).toBeInTheDocument();
 });
 
+it("shows a sent message as its timeline row, named by its plain text", async () => {
+  vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+  const h = harness();
+  h.emit([event({ content: "**Ship** [the PR](https://example.com/pr)" })]);
+  const Page = h.page.component;
+  render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  const row = await screen.findByRole("button", {
+    name: /View message in #launch-room: Ship the PR/,
+  });
+  expect(within(row).getByText("Ship").tagName).toBe("STRONG");
+  expect(row).not.toHaveTextContent("**");
+  expect(row).not.toHaveTextContent("https://example.com/pr");
+  expect(within(row).queryByRole("link")).toBeNull();
+});
+
+it("shows a draft with its formatting and mentions, named by its plain text", () => {
+  const ada = "6".repeat(64);
+  // The editor keeps formatting as marks, not Markdown in its text.
+  saved("draft:team", {
+    text: "Ship it, @Ada",
+    recipients: [{ pubkey: ada, name: "Ada", start: 9, end: 13 }],
+    document: {
+      version: 1,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "Ship", marks: [{ type: "bold" }] },
+              { type: "text", text: " it, " },
+              {
+                type: "text",
+                text: "@Ada",
+                marks: [
+                  { type: "recipient", attrs: { pubkey: ada, name: "Ada" } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const h = harness();
+  const Page = h.page.component;
+  render(<Page />);
+  const row = screen.getByRole("button", {
+    name: /Continue draft in #launch-room: Ship it, @Ada/,
+  });
+  expect(within(row).getByText("Ship").tagName).toBe("STRONG");
+  expect(row).not.toHaveTextContent("**");
+  expect(h.session.profiles.ensure).toHaveBeenCalledWith(
+    expect.arrayContaining([ada]),
+  );
+});
+
 it("focuses search only after an excluded preview closes", async () => {
   const h = harness();
   saved("draft:team", "Draft to hide");

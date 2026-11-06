@@ -22,6 +22,9 @@ export type SearchDestination = {
   rank?: number;
   key: string;
   label: string;
+  /** Shown in place of `label`, which stays the row's accessible name, as a
+   * message hit renders its body. */
+  preview?: ReactNode;
   detail?: string;
   /** Quiet metadata at the row's end, such as a count. */
   trailing?: ReactNode;
@@ -583,6 +586,7 @@ export function SearchChoices({
                             content,
                             key,
                             label,
+                            preview,
                             detail,
                             detailIcon: DetailIcon,
                             detailIconLabel,
@@ -747,12 +751,26 @@ export function SearchChoices({
                                     }
                                     label={
                                       <>
-                                        <span className="block truncate text-body-sm">
-                                          <MatchedLabel
-                                            label={label}
-                                            positions={matches}
-                                          />
-                                        </span>
+                                        {preview ? (
+                                          <>
+                                            <span className="sr-only">
+                                              {label}
+                                            </span>
+                                            <span
+                                              aria-hidden="true"
+                                              className="line-clamp-1 text-body-sm wrap-anywhere"
+                                            >
+                                              {preview}
+                                            </span>
+                                          </>
+                                        ) : (
+                                          <span className="block truncate text-body-sm">
+                                            <MatchedLabel
+                                              label={label}
+                                              positions={matches}
+                                            />
+                                          </span>
+                                        )}
                                         {detail && (
                                           <span className="block truncate text-body-sm text-subtle">
                                             {/* Read in place of the icon. jsdom (dom-accessibility-api) trims

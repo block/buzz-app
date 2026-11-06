@@ -5,6 +5,9 @@ import {
   searchDebounce,
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
+import type { ChannelMessage } from "../../features/relay/contracts";
+import { foldMessages } from "../../features/relay/fold";
+import { plainPreview } from "../../features/messages/MessagePreview";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import { foldProfiles } from "../../features/relay/profiles";
@@ -30,7 +33,11 @@ export type SearchMessage = Readonly<{
   authorId: string;
   workflowOwnerId?: string | undefined;
   createdAt: number;
+  /** The hit's bounded plain text, its accessible name. */
   preview: string;
+  /** The hit as its timeline row, so its preview renders as the message
+   * does. Absent for an agent message without a text body. */
+  row?: ChannelMessage | undefined;
 }>;
 type Result = {
   owner: object;
@@ -81,12 +88,13 @@ async function readPage(
     // Search returns original indexed events, not an auxiliary edit fold.
     // Exact navigation owns current content/deletion checks when opened.
     const body = event.kind === 40002 ? objectBody(event.content) : undefined;
-    const text =
-      event.kind === 40002
-        ? typeof body?.content === "string"
-          ? body.content
-          : "Agent message"
-        : event.content;
+    const [row] =
+      event.kind === 40002 && typeof body?.content !== "string"
+        ? []
+        : foldMessages(hitChannelId, "", [event], {
+            includeReplies: true,
+            signingAuthority: session.workflowAuthority,
+          });
     return [
       {
         id: event.id,
@@ -94,7 +102,8 @@ async function readPage(
         authorId: event.pubkey,
         workflowOwnerId: workflowOwner(event, session.workflowAuthority),
         createdAt: event.created_at,
-        preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
+        preview: row ? plainPreview(row) : "Agent message",
+        row,
       },
     ];
   });

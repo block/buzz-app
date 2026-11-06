@@ -580,15 +580,20 @@ function sourceFields(args: Args) {
 }
 function eventFields(args: Args) {
   const fields = pick(args, EVENT, [...TIMER, ...SOURCE]);
-  if (fields.since === "now") fields.since = seconds();
+  if ("since" in fields)
+    fields.since = fields.since === "now" ? seconds() : whole(fields.since);
   return fields;
 }
 function timerFields(args: Args) {
   const fields = pick(args, TIMER, [...EVENT, ...SOURCE]);
   for (const key of ["max_occurrences", "expires_at"])
-    if (fields[key] === "unbounded") fields[key] = null;
+    if (key in fields)
+      fields[key] = fields[key] === "unbounded" ? null : whole(fields[key]);
   return fields;
 }
+/** Some clients send an integer whose schema also allows a word as its digits. */
+const whole = (value: unknown) =>
+  typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
 
 const seconds = () => Math.floor(Date.now() / 1000);
 const fail = (message: string): never => {

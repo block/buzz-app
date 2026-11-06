@@ -419,6 +419,36 @@ describe("the attention tools", () => {
     });
   });
 
+  it("accepts a timer budget and an event start sent as digits", async () => {
+    // Some MCP clients send an integer that shares its schema with a word as a string.
+    const { call } = agent();
+    await call("interest_set", {
+      id: "triage",
+      instructions: "T.",
+      expected_state: ABSENT,
+    });
+    const timer = await call("watch_add", {
+      interest: "triage",
+      id: "nudge",
+      type: "timer",
+      prompt: "Check the queue.",
+      interval_secs: 60,
+      max_occurrences: "3",
+      expires_at: String(NOW + 600),
+      expected_state: ABSENT,
+    });
+    expect(timer.object).toMatchObject({
+      max_occurrences: 3,
+      expires_at: NOW + 600,
+    });
+    const event = await call("watch_add", {
+      ...asks,
+      since: String(NOW),
+      expected_state: ABSENT,
+    });
+    expect(event.object.since).toBe(NOW);
+  });
+
   it("filters the watch list by type, status and search", async () => {
     const { call } = agent();
     await call("interest_set", {

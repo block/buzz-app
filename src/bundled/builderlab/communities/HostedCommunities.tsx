@@ -61,6 +61,8 @@ type Confirm = {
   title: string;
   description: string;
   action: string;
+  /** Permanent changes focus Cancel and show the action in red. */
+  permanent?: true;
   run(): Promise<void>;
 };
 
@@ -87,6 +89,7 @@ export function HostedCommunities({
   const [action, setAction] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   const [transfer, setTransfer] = useState<Community | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Community | null>(null);
   const [pendingDeletion, setPendingDeletion] =
@@ -589,6 +592,7 @@ export function HostedCommunities({
                       description:
                         "The key your account uses now will be permanently unlinked. It can never be linked to a Builderlab account again. If this device’s key was unlinked before, Builderlab refuses it too, and your account is left with no key.",
                       action: "Switch identity",
+                      permanent: true,
                       run: async () => {
                         check(
                           await api.call("unbind"),
@@ -949,6 +953,7 @@ export function HostedCommunities({
           title={confirm.title}
           description={confirm.description}
           pending={busy}
+          initialFocus={confirm.permanent ? undefined : proceed}
           onClose={() => setConfirm(null)}
           {...(failure ? { children: failure } : {})}
           actions={
@@ -957,7 +962,8 @@ export function HostedCommunities({
                 Cancel
               </Button>
               <Button
-                variant="prominent"
+                ref={proceed}
+                variant={confirm.permanent ? "destructive" : "prominent"}
                 loading={busy}
                 onClick={() =>
                   void run("confirm", confirm.run).then(

@@ -38,7 +38,7 @@ export function useBringAgents(
 ) {
   const [pending, setPending] = useState<Pending>();
   const working = useRef(false);
-  const safeAction = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   // Read only while it asks, not on every render of the composer.
   const channel =
     pending &&
@@ -147,7 +147,7 @@ export function useBringAgents(
           pending && describe(pending.agents, canAdd, !!pending.reviewed)
         }
         preventClose={!!pending?.busy}
-        initialFocus={safeAction}
+        initialFocus={proceed}
         finalFocus={() => {
           restoreFocus();
           return false;
@@ -155,7 +155,6 @@ export function useBringAgents(
         actions={
           <>
             <Button
-              ref={safeAction}
               type="button"
               disabled={pending?.busy}
               onClick={() => pending?.finish(null)}
@@ -163,6 +162,7 @@ export function useBringAgents(
               {pending?.reviewed ? "Don't send" : "Don't bring"}
             </Button>
             <Button
+              ref={proceed}
               type="button"
               variant="prominent"
               // Keeps its label and focus, so Enter goes on to Send.

@@ -10231,20 +10231,18 @@ it.each([
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Honey is in oss.example.com. Bringing it here adds the same agent",
     );
-    // Enter on the initial focus declines: nothing joins, sends, or is lost.
-    const safe = screen.getByRole("button", { name: "Don't bring" });
-    await waitFor(() => expect(safe).toHaveFocus());
-    await userEvent.setup().keyboard("{Enter}");
+    // Declining leaves nothing joined, sent, or lost.
+    fireEvent.click(screen.getByRole("button", { name: "Don't bring" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(join).not.toHaveBeenCalled();
     expect(add).not.toHaveBeenCalled();
     expect(h.messages.send).not.toHaveBeenCalled();
     expect(h.input()).toHaveValue("@Honey ");
-    // Confirming joins first, then adds to the channel, then sends.
+    // Enter on the highlighted Bring joins first, then adds to the channel, then sends.
     fireEvent.submit(screen.getByRole("form"));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Bring it here" }),
-    );
+    const bring = await screen.findByRole("button", { name: "Bring it here" });
+    await waitFor(() => expect(bring).toHaveFocus());
+    await userEvent.setup().keyboard("{Enter}");
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
     expect(join).toHaveBeenCalledWith(first.pubkey);
     expect(calls).toEqual(["join", "add", "send"]);

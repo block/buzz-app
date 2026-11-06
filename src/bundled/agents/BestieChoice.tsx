@@ -200,21 +200,26 @@ function BestieReplacement({
   onChoose(): void;
   onClose(): void;
 }) {
-  const keep = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog
       title={`Make ${bestieName(replacing)} your bestie?`}
       description={`Your existing chats with ${bestieName(current)} will still be available in your DMs.${remote ? ` ${REMOTE_BESTIE_WARNING}` : ""}`}
-      initialFocus={keep}
+      initialFocus={proceed}
       pending={pending}
       onClose={onClose}
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button ref={keep} disabled={pending} onClick={onClose}>
+          <Button disabled={pending} onClick={onClose}>
             Keep {bestieName(current)}
           </Button>
-          <Button variant="prominent" loading={pending} onClick={onChoose}>
+          <Button
+            ref={proceed}
+            variant="prominent"
+            loading={pending}
+            onClick={onChoose}
+          >
             Switch to {bestieName(replacing)}
           </Button>
         </>
@@ -238,21 +243,26 @@ export function RemoteBestieConfirm({
   onConfirm(): void;
   onClose(): void;
 }) {
-  const cancel = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog
       title={`Use ${name} as your bestie?`}
       description={REMOTE_BESTIE_WARNING}
-      initialFocus={cancel}
+      initialFocus={proceed}
       pending={pending}
       onClose={onClose}
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button ref={cancel} disabled={pending} onClick={onClose}>
+          <Button disabled={pending} onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="prominent" loading={pending} onClick={onConfirm}>
+          <Button
+            ref={proceed}
+            variant="prominent"
+            loading={pending}
+            onClick={onConfirm}
+          >
             Use as bestie
           </Button>
         </>
@@ -277,21 +287,22 @@ function RemoveBestie({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const keep = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog
       title={`Remove ${name} as your Bestie?`}
       description={`${name} stays in Agents, with your chats in your DMs. Its check-ins stop. Its memory rules and private channels stay; turn them off in its Former Bestie tab${remote ? " on the device it runs on" : ""}.`}
-      initialFocus={keep}
+      initialFocus={proceed}
       pending={pending}
       onClose={onClose}
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button ref={keep} disabled={pending} onClick={onClose}>
+          <Button disabled={pending} onClick={onClose}>
             Cancel
           </Button>
           <Button
+            ref={proceed}
             variant="prominent"
             loading={pending}
             onClick={() => {

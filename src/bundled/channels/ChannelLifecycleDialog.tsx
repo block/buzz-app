@@ -60,13 +60,10 @@ function copyFor(action: ChannelLifecycleAction, noun: LifecycleNoun) {
   };
 }
 
-// Enter confirms reversible actions; irreversible ones focus Cancel, which
-// stays neutral so it never competes with a red confirm.
-const reversible = new Set<ChannelLifecycleAction>([
-  "archive",
-  "unarchive",
-  "hide",
-]);
+// Enter confirms unarchive and hide. Archive affects everyone, so it starts on
+// Cancel, which takes the highlight; leave and delete start on a neutral Cancel
+// so it never competes with a red confirm.
+const reversible = new Set<ChannelLifecycleAction>(["unarchive", "hide"]);
 
 export function ChannelLifecycleDialog({
   channelId,
@@ -202,7 +199,12 @@ export function ChannelLifecycleDialog({
         description={description}
         actions={
           <>
-            <Button ref={cancel} type="button" onClick={close}>
+            <Button
+              ref={cancel}
+              type="button"
+              variant={action === "archive" ? "prominent" : "subtle"}
+              onClick={close}
+            >
               Cancel
             </Button>
             <Button

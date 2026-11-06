@@ -1260,11 +1260,15 @@ evidence. A batch with a recognized denied channel is hidden as a whole.
 Activity frames (24200) and turn metrics (44200) are no longer saved locally or
 restored after reload; plugin harnesses show history from their own session files.
 An open transcript (`TranscriptPanel`, `src/features/agents/TranscriptPanel.tsx`)
-reads that history on open, on Refresh, when a turn starts or ends, every 2.5 s
-while the agent works and the window shows, and on each step the agent reports
-(`Agents.subscribeSteps`). One read runs at a time, and the last result stays
-while the next is read. Each harness supplies only its read, so a refresh costs
-what that read costs.
+reads that history in full on open, on Refresh, and when a turn starts or
+ends. While the agent works it reads again 2.5 s after each read finishes and
+on each step the agent reports (`Agents.subscribeSteps`), using the harness's
+`readLatest` when it has one: only the latest turns, swapped over the end of
+the held transcript by `turnId`, or a full read when they don't continue it.
+Claude Code reads the last 2 MiB of its saved session; Codex and Pi already
+read only recent turns; goose has no recent-messages API, so it reads in full.
+Automatic reads wait while the window is hidden. One read runs at a time, and
+the last result stays while the next is read.
 The host archive store (`src-tauri/src/archive`, `browser-host/archive.mjs`) and
 any existing `archive/events.sqlite3` remain until a follow-up removes them.
 

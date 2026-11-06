@@ -15,8 +15,9 @@ import {
   LIVE_READ_MS,
   TranscriptPanel,
   useLiveTranscript,
+  withLatest,
 } from "./TranscriptPanel";
-import type { Transcript } from "./activity-transcript";
+import type { Transcript, TranscriptTurn } from "./activity-transcript";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -63,7 +64,17 @@ function setup() {
       key: string;
       again?: string;
       working: boolean;
-    }) => useLiveTranscript(read(key), key, again, working, "agent"),
+    }) =>
+      useLiveTranscript({
+        // The hook only holds what it reads, so tests read strings.
+        read: read(key) as unknown as (
+          signal: AbortSignal,
+        ) => Promise<Transcript | undefined>,
+        key,
+        again,
+        working,
+        agentKey: "agent",
+      }),
     { wrapper, initialProps: { key: "a", working: false } as Props },
   );
   const step = () =>
@@ -266,4 +277,61 @@ it("keeps the shown transcript mounted while its sessions change", async () => {
   expect(screen.queryByRole("alert")).toBeNull();
   // The same element, so it keeps the reader's place and open details.
   expect(screen.getByText("No turns captured for this scope yet.")).toBe(shown);
+});
+
+const turn = (turnId: string, text = turnId) =>
+  ({
+    turnId,
+    startedAt: 1,
+    items: [{ id: text }],
+  }) as unknown as TranscriptTurn;
+
+it("swaps the latest turns over the end of the held transcript", () => {
+  const held = { turns: [turn("1"), turn("2", "open")], more: true };
+  expect(withLatest(held, [turn("2", "grown"), turn("3")])).toEqual({
+    turns: [turn("1"), turn("2", "grown"), turn("3")],
+    more: true,
+  });
+  expect(withLatest(held, [])).toBe(held);
+  // A turn it doesn't hold can't be placed.
+  expect(withLatest(held, [turn("9")])).toBeUndefined();
+});
+
+it("reads only the latest turns while working, and in full when they don't fit", async () => {
+  const full: ((value: Transcript) => void)[] = [];
+  const latest: ((value: readonly TranscriptTurn[]) => void)[] = [];
+  const view = renderHook(
+    ({ working }: { working: boolean }) =>
+      useLiveTranscript({
+        read: () =>
+          new Promise<Transcript | undefined>((resolve) => full.push(resolve)),
+        readLatest: () =>
+          new Promise<readonly TranscriptTurn[] | undefined>((resolve) =>
+            latest.push(resolve),
+          ),
+        key: "a",
+        again: "",
+        working,
+        agentKey: "agent",
+      }),
+    { initialProps: { working: true } },
+  );
+  await act(async () => full[0]?.({ turns: [turn("1"), turn("2")] }));
+  // The next read starts a full interval after this one finished.
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS - 1));
+  expect(latest).toHaveLength(0);
+  act(() => vi.advanceTimersByTime(1));
+  expect(latest).toHaveLength(1);
+  await act(async () => latest[0]?.([turn("2", "grown"), turn("3")]));
+  expect(view.result.current.shown.transcript?.turns).toEqual([
+    turn("1"),
+    turn("2", "grown"),
+    turn("3"),
+  ]);
+  expect(full).toHaveLength(1);
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS));
+  await act(async () => latest[1]?.([turn("9")]));
+  expect(full).toHaveLength(2);
+  await act(async () => full[1]?.({ turns: [turn("9")] }));
+  expect(view.result.current.shown.transcript?.turns).toEqual([turn("9")]);
 });

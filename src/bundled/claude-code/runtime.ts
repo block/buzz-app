@@ -68,6 +68,7 @@ import {
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { protectionHistoryEntry } from "./security";
 import {
+  readLatestTurns,
   readSessionTitle,
   readTranscript,
   type Conversation,
@@ -618,6 +619,25 @@ export class ClaudeRuntime {
       (transcript) =>
         transcript && { ...transcript, turns: prompts.shown(transcript.turns) },
     );
+  }
+  /** The latest whole turns of a conversation's saved session, or undefined
+   * when it has none to read that way. */
+  async latestTurns(
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+  ) {
+    if (await this.inspect?.(conversation.agent)) return undefined;
+    const turns = await readLatestTurns(
+      this.spawn,
+      workspace,
+      conversation,
+      working,
+      signal,
+      (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+    );
+    return turns && this.prompts(conversation.agent).shown(turns);
   }
   /** What each of the agent's sessions started with. */
   private prompts(agent: AgentKey) {

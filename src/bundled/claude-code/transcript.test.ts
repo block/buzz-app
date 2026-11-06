@@ -18,6 +18,7 @@ import { steerPrompt, turnPrompt } from "./prompt";
 import {
   claudeTurns,
   projectName,
+  readLatestTurns,
   readTranscript,
   TURN_LIMIT,
 } from "./transcript";
@@ -855,4 +856,58 @@ it("passes this platform's base64 a session path it reads as a file", async () =
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+it("reads a session's latest whole turns from its end", async () => {
+  clock = 0;
+  const { spawn } = host({
+    "./-Users-me--buzz/session-1.jsonl": [
+      line("user", prompt("older")),
+      line("assistant", [{ type: "text", text: "x".repeat(3 << 20) }]),
+      line("assistant", [{ type: "text", text: "older reply" }]),
+      line("user", prompt("latest")),
+      line("assistant", [{ type: "text", text: "re: latest" }]),
+    ].join("\n"),
+  });
+  const turns = await readLatestTurns(
+    spawn,
+    "~/.buzz",
+    conversation,
+    true,
+    new AbortController().signal,
+  );
+  // The chunk starts partway through the long reply: that line and the rest
+  // of its turn are left, not read as a turn.
+  expect(turns?.map((turn) => turn.items)).toEqual([
+    [
+      expect.objectContaining({ text: "latest" }),
+      expect.objectContaining({ text: "re: latest" }),
+    ],
+  ]);
+  expect(turns?.[0]).toMatchObject({ newSession: false, partial: false });
+  expect(
+    spawn.mock.calls
+      .filter(([id]) => id === "read-page")
+      .map(([, options]) => options?.args?.slice(1)),
+  ).toEqual([["2", "2"]]);
+});
+
+it("reads no latest turns when the chunk holds no whole turn", async () => {
+  clock = 0;
+  const { spawn } = host({
+    "./-Users-me--buzz/session-1.jsonl": [
+      line("user", prompt("only")),
+      line("assistant", [{ type: "text", text: "x".repeat(3 << 20) }]),
+      line("assistant", [{ type: "text", text: "done" }]),
+    ].join("\n"),
+  });
+  await expect(
+    readLatestTurns(
+      spawn,
+      "~/.buzz",
+      conversation,
+      false,
+      new AbortController().signal,
+    ),
+  ).resolves.toBeUndefined();
 });

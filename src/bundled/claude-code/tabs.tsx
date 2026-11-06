@@ -856,6 +856,9 @@ export function createTabs({
         read={(signal) =>
           runtime.transcript(conversation, workspace, working, signal)
         }
+        readLatest={(signal) =>
+          runtime.latestTurns(conversation, workspace, working, signal)
+        }
         readKey={`${conversation.key}\u0000${workspace}`}
         working={working}
         reading="Reading the Claude session…"

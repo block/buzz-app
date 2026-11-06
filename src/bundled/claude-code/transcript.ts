@@ -316,6 +316,74 @@ const PAGE_MIB = 32;
 const PAGE_BUDGET = 2;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
+/** A session file's size in bytes. */
+async function sizeOf(spawn: Spawn, path: string, signal: AbortSignal) {
+  let output = "";
+  const sizing = await spawn("size", {
+    args: [path],
+    cwd: "~/.claude/projects",
+    onStdout: (data) => {
+      output += data;
+    },
+  });
+  const stop = () => void sizing.kill();
+  signal.addEventListener("abort", stop, { once: true });
+  if (signal.aborted) stop();
+  const code = await sizing.exited.finally(() =>
+    signal.removeEventListener("abort", stop),
+  );
+  const size = Number.parseInt(output, 10);
+  if (code !== 0 || !(size > 0)) throw new Error(`Could not read ${path}`);
+  signal.throwIfAborted();
+  return size;
+}
+
+/** MiB read from the end of a session for its latest turns. */
+const LATEST_MIB = 2;
+
+/** The whole turns in the last {@link LATEST_MIB} MiB of the conversation's
+ * saved session, oldest first, or undefined when there are none: no saved
+ * session, or a turn larger than that. */
+export async function readLatestTurns(
+  spawn: Spawn,
+  workspace: string,
+  conversation: Conversation,
+  working: boolean,
+  signal: AbortSignal,
+  nameOf?: Names,
+): Promise<TranscriptTurn[] | undefined> {
+  const project = await workspaceProject(spawn, workspace, signal);
+  const { sessionId } = conversation;
+  if (!project || !sessionId) return undefined;
+  const path = `./${project}/${sessionId}.jsonl`;
+  const size = await sizeOf(spawn, path, signal);
+  const from = Math.max(0, Math.floor((size - 1) / (1 << 20)) - LATEST_MIB + 1);
+  const bytes = await readFile(
+    spawn,
+    "~/.claude/projects",
+    path,
+    signal,
+    undefined,
+    "read-page",
+    [String(from), String(LATEST_MIB)],
+  );
+  // A chunk from partway through starts partway through a line.
+  const start = from ? bytes.indexOf(10) + 1 : 0;
+  if (from && !start) return undefined;
+  const turns = claudeTurns(
+    decode(bytes.subarray(start)),
+    {
+      sessionId,
+      channelId: conversation.channelId,
+      ...(conversation.root ? { root: conversation.root } : {}),
+    },
+    working,
+    nameOf,
+  ).filter((turn) => !turn.partial);
+  if (from && turns[0]) turns[0].newSession = false;
+  return turns.length ? turns : undefined;
+}
+
 /** A session file in `~/.claude/projects`. One too large to read whole is
  * read a page at a time from its end, until `enough` of its latest lines are
  * read, its start is or `PAGE_BUDGET` pages are; `cut` says older ones were
@@ -345,23 +413,7 @@ async function readSession(
     if (!/larger than 50 MB/.test(error instanceof Error ? error.message : ""))
       throw error;
   }
-  let output = "";
-  const sizing = await spawn("size", {
-    args: [path],
-    cwd: "~/.claude/projects",
-    onStdout: (data) => {
-      output += data;
-    },
-  });
-  const stop = () => void sizing.kill();
-  signal.addEventListener("abort", stop, { once: true });
-  if (signal.aborted) stop();
-  const code = await sizing.exited.finally(() =>
-    signal.removeEventListener("abort", stop),
-  );
-  const size = Number.parseInt(output, 10);
-  if (code !== 0 || !(size > 0)) throw new Error(`Could not read ${path}`);
-  signal.throwIfAborted();
+  const size = await sizeOf(spawn, path, signal);
   let page = Math.floor((size - 1) / (PAGE_MIB << 20));
   let text = "";
   // A page starts partway through a line, which ends the page before it.

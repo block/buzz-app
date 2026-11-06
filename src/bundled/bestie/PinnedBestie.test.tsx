@@ -143,6 +143,7 @@ async function fixture({
   withLink = false,
   olderRoot = false,
   holdOlder = false,
+  withActivity = false,
 } = {}) {
   // jsdom has no native scrolling; reveals still use this DOM boundary. Rows
   // revealed in the chat history or a thread, in order.
@@ -196,6 +197,16 @@ async function fixture({
     `see buzz://channel/${pollenDM}/${root.id}`,
     1_700_000_002,
   );
+  // An agent's update, retired from the chat by its public reply.
+  const agent = keypair();
+  const step = message(
+    agent,
+    pollenDM,
+    "Checking the calendar…",
+    1_700_000_003,
+    [["audience", "agents"]],
+  );
+  const done = message(agent, pollenDM, "Nothing on today.", 1_700_000_004);
   const gate = deferred();
   const olderGate = deferred();
   const olderStarted = vi.fn();
@@ -277,6 +288,7 @@ async function fixture({
           return [
             root,
             ...(withLink ? [link] : []),
+            ...(withActivity ? [step, done] : []),
             thread,
             bounds(relayKey, pollenDM, "head", {
               has_more: hasOlder,
@@ -487,6 +499,7 @@ async function fixture({
     ),
     rootId: root.id,
     replyId: response.id,
+    stepId: step.id,
     release: {
       head: reads.head.resolve,
       thread: reads.thread.resolve,
@@ -694,7 +707,7 @@ it("keeps the promoted verified DM usable through discovery failure until absenc
 // A link to the promoted DM from another page, as App's page switch shows it:
 // Messages takes conversation visits and hands the promoted DM's to Bestie.
 async function linkedVisit(
-  visit: (ids: { rootId: string; replyId: string }) => {
+  visit: (ids: { rootId: string; replyId: string; stepId: string }) => {
     messageId: string;
     threadRootId?: string;
   },
@@ -703,6 +716,7 @@ async function linkedVisit(
     holdThread?: boolean;
     olderRoot?: boolean;
     holdOlder?: boolean;
+    withActivity?: boolean;
   } = {},
 ) {
   const f = await fixture({ existing: true, withReply: true, ...hold });
@@ -952,6 +966,24 @@ it.each([
     expect(h.revealed(h.f.rootId)).toBeUndefined();
   },
 );
+
+// A message visit's reveal is the visit itself: the chat shows a retired agent
+// update only as the revealed message, so it must outlast the reader's gestures.
+it("keeps a revealed retired agent update, and its focus, through the reader's first gesture", async () => {
+  const h = await linkedVisit(({ stepId }) => ({ messageId: stepId }), {
+    withActivity: true,
+  });
+  await waitFor(() => expect(h.revealed(h.f.stepId)).toBeDefined());
+  const row = h.revealed(h.f.stepId) as HTMLElement;
+  expect(row).toHaveTextContent("Checking the calendar…");
+  await waitFor(() => expect(document.activeElement).toBe(row));
+  fireEvent.wheel(inChat("[data-message-scroller]") as HTMLElement, {
+    deltaY: -40,
+  });
+  await act(() => frames(2));
+  expect(row).toBeInTheDocument();
+  expect(document.activeElement).toBe(row);
+});
 
 it("returns to a reply's thread after leaving Bestie for another page", async () => {
   // In the main pane, the thread shows only while its visit selects it.

@@ -211,20 +211,21 @@ export function BestieConversation({
   const sought = handedOff
     ? (routed?.threadRootId ?? exact?.messageId)
     : undefined;
-  // The reader's own move in the chat during the visit, a scroll or a send,
-  // ends its context reveal: a thread's root is no longer sought, while a
-  // message visit still decides between the chat and its thread.
+  // The reader's own move in the chat during a thread visit, a scroll or a
+  // send, ends its context reveal: the root is no longer sought. A message
+  // visit's reveal is the visit itself and stays, as it does in Messages: a
+  // revealed activity row the chat otherwise hides keeps its place and focus.
   const [movedOn, setMovedOn] = useState<number>();
   const stayed = movedOn !== visit;
   const context = useRef<number>(undefined);
-  context.current = sought && stayed ? visit : undefined;
+  context.current = sought && stayed && !exact ? visit : undefined;
   const moveOn = useCallback(() => {
     if (context.current !== undefined) setMovedOn(context.current);
   }, []);
   const inTimeline = useMessageOpening(
     session.channels,
     channel.id,
-    stayed || exact ? sought : undefined,
+    stayed ? sought : undefined,
     visit,
   );
   // A message visit that opened as a thread returns to that thread. The tab

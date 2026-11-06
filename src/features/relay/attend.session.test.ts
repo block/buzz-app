@@ -70,6 +70,7 @@ function harness() {
       live.state(snapshot),
     establish: (...args: Parameters<LiveCallbacks["established"]>) =>
       live.established(...args),
+    recover: () => live.recover?.(),
   };
 }
 /** The relay's signed metadata and roster of a channel only `other` is in. */
@@ -1032,7 +1033,7 @@ it("skips the queued lookups of attended channels no watch wants any more, so a 
   next();
 });
 
-it("reads again a joined channel's metadata a drop left unconfirmed when the membership replay resumes without a gap", async () => {
+it("reads again a joined channel's metadata a drop left unconfirmed when the membership replay resumes without a gap, and through recovery if that read fails", async () => {
   const h = harness();
   const metadata = (visibility: "public" | "private", created_at: number) =>
     signed(relay, {
@@ -1070,11 +1071,28 @@ it("reads again a joined channel's metadata a drop left unconfirmed when the mem
   expect(live((entry) => !entry.filters.some((filter) => filter["#d"]))).toBe(
     -1,
   );
+  // The first read fails while the socket stays up: the confirmation is
+  // owed to recovery, whose next tick reads again through discovery.
+  h.wire.pending.splice(live(lookup), 1)[0]?.fail(new Error("timed out"));
+  await flush();
+  expect(summary()?.metadataCached).toBe(true);
+  h.recover();
+  const rosterRead = (entry: (typeof h.wire.pending)[number]) =>
+    !entry.filters.some((filter) => filter["#d"]);
+  await vi.waitFor(() => expect(live(rosterRead)).not.toBe(-1));
+  h.wire.pending
+    .splice(live(rosterRead), 1)[0]
+    ?.respond([roster] as RelayEvent[]);
+  await vi.waitFor(() => expect(live(lookup)).not.toBe(-1));
   h.wire.pending
     .splice(live(lookup), 1)[0]
     ?.respond([metadata("public", 10)] as RelayEvent[]);
   await vi.waitFor(() => expect(summary()?.metadataCached).toBeUndefined());
   expect(summary()?.visibility).toBe("public");
+  // Confirmed, so the next tick owes no read.
+  h.recover();
+  await flush();
+  expect(live(rosterRead)).toBe(-1);
 });
 
 it("keeps the agents-only mark another agents' read set on a channel whose queued attendance batch is skipped", async () => {

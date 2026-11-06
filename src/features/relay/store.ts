@@ -327,8 +327,10 @@ export function createChannelStore(
     : null;
   // Restored metadata needs confirmation independently of roster progress/retries.
   const pendingMetadata = new Set<string>();
-  /** A `confirmMetadata` read is in flight. */
-  let confirmingMetadata = false;
+  /** A `confirmMetadata` read is in flight; one that failed left its
+   * confirmation owed to the next discovery, as a failed roster read would. */
+  let confirmingMetadata = false,
+    metadataOwed = false;
   const checkedMetadata = new Set<string>();
   const heads = new ByteLru<Head>(maxHeads, maxHeadBytes);
   const windows = new Map<string, WindowState>();
@@ -1971,7 +1973,10 @@ export function createChannelStore(
         applyDiscovery(metadata);
         if (disposed || generation !== epoch) return;
       }
-      if (!disposed && generation === epoch) outcome = { state: "verified" };
+      if (!disposed && generation === epoch) {
+        outcome = { state: "verified" };
+        metadataOwed = false;
+      }
     } catch (error) {
       if (disposed || generation !== epoch) return;
       outcome = isAbort(error)
@@ -3997,16 +4002,22 @@ export function createChannelStore(
   return {
     queries,
     roster: () => rosterRefresh,
-    /** A full roster read is still due: the last one did not verify, or a
-     * retired exact confirmation left a strong read owed. */
-    rosterOwed: () => rosterRefresh.state !== "verified" || strongListAgain,
+    /** A full roster read is still due: the last one did not verify, a
+     * retired exact confirmation left a strong read owed, or a metadata
+     * confirmation failed. */
+    rosterOwed: () =>
+      rosterRefresh.state !== "verified" || strongListAgain || metadataOwed,
     /** Preserve a retired exact confirmation's routing without scheduling work.
      * The next refresh/Retry owns dispatch and the existing cooldown. */
     requireStrongListRead() {
       if (!disposed) strongListAgain = true;
     },
     retryList() {
-      if (rosterRefresh.state === "error" || rosterRefresh.state === "deferred")
+      if (
+        rosterRefresh.state === "error" ||
+        rosterRefresh.state === "deferred" ||
+        metadataOwed
+      )
         void discover(true);
     },
     restore,
@@ -4048,8 +4059,9 @@ export function createChannelStore(
     },
     /** Reads again the metadata still unconfirmed, as after a continuous
      * resume that skips the roster read and so the discovery that would. In
-     * discovery's bounded batches, beside a discovery already reading it; a
-     * failed read leaves it unconfirmed for the next discovery. */
+     * discovery's bounded batches, beside a discovery already reading it. A
+     * failed read owes a discovery (`rosterOwed`), which recovery and Retry
+     * dispatch within the relay's cooldown. */
     async confirmMetadata() {
       if (
         disposed ||
@@ -4084,8 +4096,12 @@ export function createChannelStore(
           if (disposed || generation !== epoch) return;
           applyDiscovery(metadata);
         }
-      } catch {
-        // Still unconfirmed: the next discovery reads it.
+      } catch (error) {
+        if (!disposed && generation === epoch) {
+          metadataOwed = true;
+          if (error instanceof ReadError && error.retryAfterMs !== undefined)
+            listRetryAt = performance.now() + error.retryAfterMs;
+        }
       } finally {
         controllers.delete(controller);
         confirmingMetadata = false;

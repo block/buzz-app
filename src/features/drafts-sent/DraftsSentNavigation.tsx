@@ -5,7 +5,7 @@ import { useChannelList, useRelayConnection } from "../relay/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SendIcon } from "../../shared/design-system/icons";
 import { useDrafts } from "./drafts";
-import { listed, scopeOf } from "./scope";
+import { draftListed, scopeOf } from "./scope";
 import styles from "./DraftsSent.module.css";
 
 /** The host's Drafts & sent destination, shared by sidebar and global search. */
@@ -53,7 +53,7 @@ export function DraftsSentNavigation({
   );
 }
 
-/** Sidebar count of unsent drafts in the current community. */
+/** Sidebar count of unsent drafts in the current community, leaving out archived conversations. */
 export function DraftsSentBadge({ relay }: { relay: RelayData }) {
   const connection = useRelayConnection(relay);
   const session =
@@ -62,7 +62,7 @@ export function DraftsSentBadge({ relay }: { relay: RelayData }) {
   const { channels } = useChannelList(connection.session.channels);
   const count = session
     ? drafts.entries.filter((entry) =>
-        listed(channels.find((channel) => channel.id === entry.channelId)),
+        draftListed(channels.find((channel) => channel.id === entry.channelId)),
       ).length
     : 0;
   return count ? (

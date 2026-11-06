@@ -142,3 +142,9 @@
   flex: none;
   align-self: center;
 }
+
+/* Drafts in archived conversations stay out of the list until asked for. */
+.archivedToggle {
+  align-self: flex-start;
+  font-variant-numeric: tabular-nums;
+}

@@ -19,6 +19,8 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
   ArrowsClockwiseIcon,
+  CaretDownIcon,
+  CaretUpIcon,
   MessageReplyIcon,
   SendIcon,
   CheckIcon,
@@ -60,7 +62,7 @@ import {
   sentEntries,
   type Entry,
 } from "./model";
-import { listed, scopeOf } from "./scope";
+import { draftListed, listed, scopeOf } from "./scope";
 import { useActivity, useDeletions, useSent } from "./views";
 import styles from "./DraftsSent.module.css";
 
@@ -192,6 +194,7 @@ function ScopedPage({
       : "drafts",
   );
   const [notice, setNotice] = useState<string>();
+  const [showArchived, setShowArchived] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
   const { sent, refresh: refreshSent } = useSent(session, viewer);
 
@@ -251,9 +254,17 @@ function ScopedPage({
     };
   }
 
-  const shownDrafts = drafts.entries.filter((entry) =>
-    listed(byId.get(entry.channelId)),
+  const liveDrafts = drafts.entries.filter((entry) =>
+    draftListed(byId.get(entry.channelId)),
   );
+  // Left out unless asked for, after the live ones, so they can be found and cleared.
+  const archivedDrafts = drafts.entries.filter((entry) => {
+    const channel = byId.get(entry.channelId);
+    return listed(channel) && channel?.archived;
+  });
+  const shownDrafts = showArchived
+    ? [...liveDrafts, ...archivedDrafts]
+    : liveDrafts;
   const sentList = useMemo(
     () =>
       sentEntries(sent.events, viewer).filter(
@@ -481,6 +492,7 @@ function ScopedPage({
   function row(item: Row, draft: boolean) {
     const { entry, place, activity, status } = item;
     const destinationIcon = !draft && place.kind !== "dm";
+    const archived = draft && byId.get(entry.channelId)?.archived;
     const person =
       !draft && place.kind === "dm" ? (place.members[0] ?? viewer) : viewer;
     const profile = profiles.get(person);
@@ -489,6 +501,7 @@ function ScopedPage({
       draft ? place.title : place.kind === "dm" ? "Direct message" : undefined,
       entry.threadRootId ? "Thread" : undefined,
       place.kind === "solo" ? "Solo" : undefined,
+      archived ? "Archived" : undefined,
     ]
       .filter(Boolean)
       .join(" · ");
@@ -498,12 +511,12 @@ function ScopedPage({
         ? relativeTimestamp(entry.createdAt, now / 1000)
         : clockTime(entry.createdAt)
       : "";
-    const where = `${place.title}${entry.threadRootId ? ", thread" : ""}`;
+    const where = `${place.title}${archived ? ", archived" : ""}${entry.threadRootId ? ", thread" : ""}`;
     const involved = (activity?.people ?? place.members)
       .slice(0, 5)
       .map((key) => nameOf(key));
     const label = [
-      `${draft ? "Continue draft" : "View message"} in ${where}: ${line}`,
+      `${draft ? (archived ? "Open conversation" : "Continue draft") : "View message"} in ${where}: ${line}`,
       status?.detail,
       involved.length && place.kind !== "dm"
         ? `With ${involved.join(", ")}`
@@ -633,9 +646,10 @@ function ScopedPage({
                 value: "drafts",
                 label: "Drafts",
                 panelId: "drafts-view",
-                trailing: shownDrafts.length ? (
+                // Live drafts only, matching the sidebar badge.
+                trailing: liveDrafts.length ? (
                   <span className="text-caption text-subtle">
-                    {shownDrafts.length}
+                    {liveDrafts.length}
                   </span>
                 ) : undefined,
               },
@@ -687,8 +701,29 @@ function ScopedPage({
             <p className={`text-body-sm text-subtle ${styles.sectionCopy}`}>
               {search && shownDrafts.length
                 ? `No drafts match “${search.trim()}”.`
-                : "No drafts. Messages you start and don’t send wait here."}
+                : archivedDrafts.length
+                  ? "No drafts outside archived conversations."
+                  : "No drafts. Messages you start and don’t send wait here."}
             </p>
+          )}
+          {archivedDrafts.length > 0 && (
+            <div className={`${styles.sectionCopy} ${styles.archivedToggle}`}>
+              <Button
+                variant="plain"
+                size="sm"
+                aria-expanded={showArchived}
+                onClick={() => setShowArchived((shown) => !shown)}
+              >
+                {showArchived ? (
+                  <CaretUpIcon size={14} aria-hidden="true" />
+                ) : (
+                  <CaretDownIcon size={14} aria-hidden="true" />
+                )}
+                {showArchived
+                  ? "Hide archived"
+                  : `Show archived (${archivedDrafts.length})`}
+              </Button>
+            </div>
           )}
           {drafts.limited && (
             <p className={`text-caption text-subtle ${styles.sectionCopy}`}>

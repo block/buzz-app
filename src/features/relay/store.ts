@@ -4477,8 +4477,11 @@ export function createChannelStore(
       if (head) heads.set(channelId, { ...head, cached: true });
       const state = windows.get(channelId);
       if (state) {
-        // This establishment's replay may stop short of the kept rows.
+        // This establishment's replay may stop short of the kept rows. A
+        // resumed window owes a catch-up again: a drop before it settles keeps
+        // the rows of the first drop.
         state.keptLive = false;
+        state.resumed = undefined;
         setWindow(state, {
           freshness: "cached",
           error: undefined,

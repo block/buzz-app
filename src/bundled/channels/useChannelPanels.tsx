@@ -21,6 +21,8 @@ type Opening = {
 };
 /** The page's tab workspace, which owns `channelPlacement: "tab"` panels. */
 export type ChannelPanelTabs = {
+  /** Side panels show only while the pane is open; closing it retains them. */
+  paneOpen: boolean;
   pressed(panel: RegisteredPanel, context: ChannelPanelContext): boolean;
   toggle(
     panel: RegisteredPanel,
@@ -65,6 +67,10 @@ export function useChannelPanels(
   useLayoutEffect(() => {
     if (opened && !selected) setOpened(undefined);
   }, [opened, selected]);
+  const shown =
+    selected?.panel.channelPlacement !== "side" || tabs?.paneOpen !== false
+      ? selected
+      : undefined;
   const activeOpening = useRef<Opening>(undefined);
   useLayoutEffect(() => {
     activeOpening.current = selected;
@@ -105,7 +111,7 @@ export function useChannelPanels(
                 pressed={
                   tabbed
                     ? !!tabs?.pressed(panel, context)
-                    : selected?.panel === panel
+                    : shown?.panel === panel
                 }
                 openMembers={
                   openMembers
@@ -125,7 +131,7 @@ export function useChannelPanels(
                 toggle={(target) => {
                   if (!bound(context, panel)) return;
                   if (tabbed) tabs?.toggle(panel, context, target);
-                  else if (selected?.panel === panel) hide(selected);
+                  else if (shown?.panel === panel) hide(shown);
                   else {
                     onOpen?.();
                     setOpened({

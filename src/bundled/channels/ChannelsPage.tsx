@@ -1239,11 +1239,15 @@ function ChannelWorkspace({
       );
       const keptTab = tabState.tabs.find((tab) => tab.id === keep);
       const keptEntry = remaining[0];
+      // A launcher's side panel in the open pane outlives the tabs, as when its
+      // last tab closes; a hidden one stays hidden.
       const pane = keptTab
         ? tabPane(keptTab)
         : keptEntry
           ? entryPane(tabState.mainEntries, keptEntry)
-          : "main";
+          : tabState.paneOpen && tabState.sidePanel
+            ? "side"
+            : "main";
       const fallback = closeTarget(pane, remaining);
       if (!navigator || !fallback) return;
       const visits = [

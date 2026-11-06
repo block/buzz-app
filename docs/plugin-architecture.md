@@ -1017,7 +1017,9 @@ A panel may additionally contribute `channelLauncher: ComponentType<ChannelLaunc
 Channels renders these in its conversation header with public `context`, `pressed`,
 `available()`, `toggle(target)` and the channel's `canOpen`/`open`. The page owns one selected channel panel, placed
 in the bottom drawer by default or the existing companion column when the contribution
-sets `channelPlacement: "side"`. With `channelPlacement: "tab"` the launcher instead
+sets `channelPlacement: "side"`. For a side panel, `pressed` means the panel is shown in
+the open pane, not merely selected: while the pane is hidden the panel stays selected but
+reads unpressed, and `toggle` shows it again. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher

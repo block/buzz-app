@@ -82,7 +82,7 @@ export function emojiTags(event: {
 /** Share token boundaries with the renderer: never substitute inside HTTP(S) links.
  * Bare links end at the same CJK punctuation as rendered ones; `<url>` and `](url)` keep it. */
 const written = /(?<=<|\]\\?\(\s*)https?:\/\/[^\s<>"`]+/.source;
-const links = new RegExp(`(${written}|https?://${BARE_URL_REST})`, "gi");
+const links = new RegExp(`(${written}|https?://${BARE_URL_REST})`, "g");
 export const messageParts = (content: string) => content.split(links);
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;

@@ -101,6 +101,8 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "[a](https://example.com/a，:party:)",
     "[a]( https://example.com/a，:party:)",
     String.raw`[a]\(https://example.com/a，:party:\)`,
+    "HTTPS://example.com/?redirect=https://other.com/:party:",
+    "https://github。COM/:party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([]);
     expect(referencedEmoji(content)).toEqual([]);

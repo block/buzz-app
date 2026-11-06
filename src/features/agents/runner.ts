@@ -2679,7 +2679,12 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
-    const ownerAccess = run ? this.host.ownerAccess?.(agent) : undefined;
+    // Only a bundled harness's run: an installed harness plugin is not trusted
+    // with its owner's access.
+    const ownerAccess =
+      run && runner.type?.revision === "bundled"
+        ? this.host.ownerAccess?.(agent)
+        : undefined;
     const handle = guarded(
       {
         protection: protection && {

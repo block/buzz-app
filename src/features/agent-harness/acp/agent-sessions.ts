@@ -208,6 +208,13 @@ export class AgentSessions {
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.session.working;
   }
+  /** Whether the work conversation `key`'s session runs now still runs,
+   * unstopped and in that session, when asked later. */
+  current(key: string): () => boolean {
+    const session = this.live.get(key)?.session;
+    const current = session?.current();
+    return () => !!current?.() && this.live.get(key)?.session === session;
+  }
   /** The harness session serving a conversation or one-off turn, and the
    * process it lives in. */
   serving(key: string) {

@@ -11,11 +11,17 @@ import type {
 } from "../../buzz-mcp/client";
 import { memberAuthority } from "../channel-members/administration-protocol";
 import { communityDestination } from "../communities/destination";
+import { channelIdentity } from "../relay/channel-labels";
 import type { ChannelSummary } from "../relay/contracts";
+import type { RelayEvent } from "../relay/events";
 import {
+  channelTypeTag,
+  exactLifecycleTag,
   lifecycleChannelId,
-  lifecycleOffer,
+  lifecycleRecord,
+  lifecycleSettings,
 } from "../relay/channel-lifecycle-protocol";
+import { soloLabels } from "../solo/labels";
 import type { RelaySession } from "../relay/session";
 
 /** Whether this build lets agents read with their owner's access in
@@ -59,6 +65,8 @@ export function createOwnerAccess(
   agent: Readonly<{ pubkey: string; owner: string }>,
   bind: () => OwnerBinding | undefined,
 ): OwnerAccess {
+  /** The binding each answer was read with. */
+  const answered = new WeakMap<OwnerExecution, OwnerBinding>();
   const current = () => {
     const binding = bind();
     if (!binding || binding.signal.aborted || binding.viewer !== agent.owner)
@@ -84,6 +92,11 @@ export function createOwnerAccess(
       throw binding.signal.aborted ? changed() : error;
     }
     signal?.throwIfAborted();
+    holds(binding);
+    return result;
+  }
+  /** Throws unless `binding` is still the current one. */
+  const holds = (binding: OwnerBinding) => {
     const now = bind();
     if (
       binding.signal.aborted ||
@@ -92,13 +105,16 @@ export function createOwnerAccess(
     )
       throw changed();
     current();
-    return result;
-  }
-  const execution = (binding: OwnerBinding): OwnerExecution => ({
-    agent: agent.pubkey,
-    owner: binding.viewer,
-    community: binding.origin,
-  });
+  };
+  const execution = (binding: OwnerBinding): OwnerExecution => {
+    const execution = {
+      agent: agent.pubkey,
+      owner: binding.viewer,
+      community: binding.origin,
+    };
+    answered.set(execution, binding);
+    return execution;
+  };
   /** The relay-signed metadata, admin list and roster, read fresh. */
   const authority = async (
     binding: OwnerBinding,
@@ -123,7 +139,15 @@ export function createOwnerAccess(
       throw new Error(
         `Channel ${id} was not found or your owner cannot see it.`,
       );
-    return memberAuthority(events, id, viewer, relayAuthor);
+    const rights = memberAuthority(events, id, viewer, relayAuthor);
+    // memberAuthority has verified all three records.
+    const metadata = lifecycleRecord(
+      events,
+      39000,
+      id,
+      relayAuthor,
+    ) as RelayEvent;
+    return { events, relayAuthor, rights, metadata };
   };
   /** Channel `id` as the owner's session knows it; never a system channel,
    * which `list()` never shows either. */
@@ -164,13 +188,31 @@ export function createOwnerAccess(
     channel: (id: string, signal?: AbortSignal) =>
       run(signal, async (binding, bound) => {
         const summary = known(binding.session, channelId(id));
-        const rights = await authority(binding, id, bound);
-        const role = rights.roles[binding.viewer];
-        const offer = lifecycleOffer(summary, binding.viewer, false);
+        const { events, relayAuthor, rights, metadata } = await authority(
+          binding,
+          id,
+          bound,
+        );
+        const { viewer } = binding;
+        const role = rights.roles[viewer];
+        // Type, archive state and lifecycle rights from the records just read,
+        // never the session's list.
+        const tag = channelTypeTag(metadata);
+        const type: OwnerChannel["type"] =
+          tag === "stream" && soloLabels(channelIdentity(metadata).labels)
+            ? "solo"
+            : tag === "stream" || tag === "forum" || tag === "dm"
+              ? tag
+              : "unknown";
+        const offer = role
+          ? lifecycleSettings(events, id, viewer, relayAuthor)
+          : undefined;
         return {
           execution: execution(binding),
           channel: {
-            ...ownerChannel(summary, binding.viewer),
+            ...ownerChannel(summary, viewer),
+            type,
+            archived: exactLifecycleTag(metadata, "archived") === "true",
             role: role ?? null,
             members: Object.keys(rights.roles).length,
             ...(summary.description
@@ -184,9 +226,9 @@ export function createOwnerAccess(
           capabilities: {
             manageRoles: rights.canManage,
             removeMembers: rights.canRemove,
-            archive: !!role && !!offer?.canArchive,
-            unarchive: !!role && !!offer?.canUnarchive,
-            delete: !!role && !!offer?.canDelete,
+            archive: !!offer?.canArchive,
+            unarchive: !!offer?.canUnarchive,
+            delete: !!offer?.canDelete,
           },
         };
       }),
@@ -197,7 +239,7 @@ export function createOwnerAccess(
     ) =>
       run(signal, async (binding, bound) => {
         known(binding.session, channelId(id));
-        const rights = await authority(binding, id, bound);
+        const { rights } = await authority(binding, id, bound);
         const roster = Object.entries(rights.roles);
         const shown = roster.slice(page.offset, page.offset + page.limit);
         const keys = shown.map(([pubkey]) => pubkey);
@@ -217,16 +259,22 @@ export function createOwnerAccess(
           }),
         };
       }),
+    held: (answer: OwnerExecution) => {
+      const binding = answered.get(answer);
+      if (!binding) throw changed();
+      holds(binding);
+    },
   });
 }
 
 function ownerChannel(item: ChannelSummary, viewer: string): OwnerChannel {
   const type = item.channelType;
-  const role: OwnerRole | null | undefined =
+  // Membership alone does not say which role the owner holds.
+  const role: OwnerRole | "unknown" | null | undefined =
     item.viewerRole ??
     (item.members
       ? item.members.includes(viewer)
-        ? "member"
+        ? "unknown"
         : null
       : undefined);
   return {

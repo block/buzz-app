@@ -96,6 +96,10 @@ export function appClient(
         channel: (id) => owned((signal) => ownerAccess.channel(id, signal)),
         members: (id, page) =>
           owned((signal) => ownerAccess.members(id, page, signal)),
+        held: (execution) => {
+          check();
+          ownerAccess.held(execution);
+        },
       },
     }),
     relayAuthor: options.relayAuthor,

@@ -64,16 +64,17 @@ servers do not support these operations.
 ## Owner tools
 
 In communities the build flag `BUZZ_OWNER_MCP_COMMUNITIES` enables, an agent's
-runs in this app list `owner_channel_list`, `owner_channel_get` and
+runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get` and
 `owner_member_list`. They read the owner's channels, one channel's details and
 the owner's rights in it, and its roster, through the owner's own signed-in
 session, including private and archived channels, DMs and Solo chats the agent
 is not in. They write nothing. The app decides the agent, owner and community;
 answers name them in `executedAs`. Each call needs the agent's owner signed in
 to that community now and fails, returning nothing, when the account, community
-or connection changes during it or the turn ends. Plugins' tools, plugin MCP
-connections and external apps never get this access, and a plugin cannot add a
-tool whose name starts with `owner_`. Protection reviews these calls and their
+or connection changes during it or the turn ends or is stopped, including while
+protection reviews its result. Installed harness plugins, plugins' tools, plugin
+MCP connections and external apps never get this access, and a plugin cannot add
+a tool whose name starts with `owner_`. Protection reviews these calls and their
 results as it does other Buzz tools. See
 [configuration](configuration.md#owner-mcp-community-flag).
 

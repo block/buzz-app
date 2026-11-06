@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { BuzzClient } from "../../buzz-mcp/client";
+import { callSessionTool } from "../../buzz-mcp/session-tools";
+import type { ProtectionAction } from "../agent-protection/service";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type { RelayEvent } from "../relay/events";
 import {
@@ -188,7 +191,8 @@ describe("owner access", () => {
           type: "forum",
           visibility: "open",
           archived: true,
-          role: "member",
+          // Listed as a member with no role: which role is not known.
+          role: "unknown",
           members: 3,
         },
       ],
@@ -225,7 +229,14 @@ describe("owner access", () => {
     expect(details).toMatchObject({
       execution: { agent, owner, community },
       channel: { id: joined, role: "admin", members: 3, visibility: "private" },
-      capabilities: { manageRoles: true, removeMembers: true },
+      // An admin, not the sole owner the list says: no Delete.
+      capabilities: {
+        manageRoles: true,
+        removeMembers: true,
+        archive: true,
+        unarchive: false,
+        delete: false,
+      },
     });
     expect(fake.readRemote).toHaveBeenCalledExactlyOnceWith(
       [39000, 39001, 39002].map((kind) => ({
@@ -238,6 +249,36 @@ describe("owner access", () => {
       expect.objectContaining({ priority: "foreground" }),
     );
   });
+
+  it.each([
+    [
+      "archived since it was listed",
+      [["t", "stream"], ["private"], ["archived", "true"]],
+      { type: "stream", archived: true },
+      { archive: false, unarchive: true, delete: false },
+    ],
+    [
+      "a DM, whatever the list says",
+      [["t", "dm"], ["private"]],
+      { type: "dm", archived: false },
+      { archive: false, unarchive: false, delete: false },
+    ],
+  ])(
+    "answers the current state of a channel %s",
+    async (_what, metadata, channel, rights) => {
+      const fake = fakeSession({ channels }, () =>
+        signed(joined, { [owner]: "owner", [person]: "member" }, metadata),
+      );
+      const access = createOwnerAccess(
+        { pubkey: agent, owner },
+        bound(fake.session).bind,
+      );
+      await expect(access.channel(joined)).resolves.toMatchObject({
+        channel: { ...channel, role: "owner" },
+        capabilities: rights,
+      });
+    },
+  );
 
   it("gives an owner without a role no rights, whatever the list says", async () => {
     const fake = fakeSession({ channels }, () =>
@@ -400,6 +441,55 @@ describe("owner access", () => {
       await expect(call).rejects.toThrow("changed during the call");
     },
   );
+
+  it.each(["signs in as someone else", "reconnects", "disconnects"])(
+    "withholds an answer when the owner's connection %s while its result is reviewed",
+    async (change) => {
+      const fake = fakeSession({ channels }, () =>
+        signed(joined, { [owner]: "owner" }),
+      );
+      const binding = bound(fake.session);
+      const access = createOwnerAccess({ pubkey: agent, owner }, binding.bind);
+      const reviewing = started();
+      const approve = started();
+      const protect = vi.fn(async (action: ProtectionAction) => {
+        if (action.kind !== "tool-result") return;
+        reviewing.resolve();
+        await approve.promise;
+      });
+      const client = {
+        pubkey: agent,
+        key: agent,
+        ownerAccess: access,
+        protect,
+      } as unknown as BuzzClient;
+      const call = callSessionTool(client, {}, "owner_channel_get", {
+        channel: joined,
+      });
+      await reviewing.promise;
+      const replacement = fakeSession({ channels });
+      if (change === "signs in as someone else")
+        binding.set({ ...binding.first, viewer: otherOwner });
+      else if (change === "reconnects")
+        binding.set({ ...binding.first, session: replacement.session });
+      else binding.set(undefined);
+      approve.resolve();
+      await expect(call).rejects.toThrow("changed during the call");
+      // Checked, not read again or read elsewhere.
+      expect(fake.readRemote).toHaveBeenCalledOnce();
+      expect(replacement.readRemote).not.toHaveBeenCalled();
+    },
+  );
+
+  it("answers only reads it made itself", () => {
+    const access = createOwnerAccess(
+      { pubkey: agent, owner },
+      bound(fakeSession({ channels }).session).bind,
+    );
+    expect(() => access.held({ agent, owner, community })).toThrow(
+      "changed during the call",
+    );
+  });
 
   it("returns nothing once the binding is replaced mid-read", async () => {
     const reading = started();

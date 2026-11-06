@@ -392,6 +392,7 @@ it("offers the handle's owner reads with the turn's signal, withholding answers 
       return answer;
     }),
     members: vi.fn(async () => answer),
+    held: vi.fn(),
   };
   let ended = false;
   const controller = new AbortController();
@@ -416,10 +417,16 @@ it("offers the handle's owner reads with the turn's signal, withholding answers 
     { offset: 2, limit: 5 },
     controller.signal,
   );
+  const execution = { agent: "agent", owner: "owner", community: "c" };
+  client.ownerAccess?.held(execution);
+  expect(ownerAccess.held).toHaveBeenCalledExactlyOnceWith(execution);
   const pending = client.ownerAccess?.channel("c");
   ended = true;
   held.resolve();
   await expect(pending).rejects.toThrow("ended");
   await expect(client.ownerAccess?.channels()).rejects.toThrow("ended");
   expect(ownerAccess.channels).toHaveBeenCalledOnce();
+  // An answer read before the turn ended is not released after it.
+  expect(() => client.ownerAccess?.held(execution)).toThrow("ended");
+  expect(ownerAccess.held).toHaveBeenCalledOnce();
 });

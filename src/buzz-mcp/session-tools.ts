@@ -173,12 +173,17 @@ export async function callSessionTool(
       ...(typeof args.command === "string" ? { command: args.command } : {}),
     });
   let reply: Reply;
+  let held: (() => void) | undefined;
   try {
-    reply = await dispatchSessionTool(client, context, name, args, added);
+    if (isOwnerTool(name) && !added.some((tool) => tool.name === name))
+      ({ text: reply, held } = await callOwnerTool(client, name, args));
+    else reply = await dispatchSessionTool(client, context, name, args, added);
   } catch (error) {
     return checkedToolError(client, session, error);
   }
   await client.protect?.({ kind: "tool-result", session, content: reply });
+  // An owner read is released only while the binding it was read with holds.
+  held?.();
   return reply;
 }
 
@@ -208,7 +213,6 @@ async function dispatchSessionTool(
     const { settings: _, ownerAccess: __, ...plugin } = client;
     return tool.call(plugin, context, args);
   }
-  if (isOwnerTool(name)) return callOwnerTool(client, name, args);
   if (isSoloWorkerTool(name)) return callSoloWorkerTool(client, name, args);
   if (isPluginTool(name)) return callPluginTool(client, context, name, args);
   if (isSettingsTool(name)) return callSettingsTool(client, name, args);

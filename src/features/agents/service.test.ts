@@ -190,6 +190,8 @@ async function setup({
   starting = false,
   /** The Buzz settings agents' runs can change. */
   deviceSettings = undefined as DeviceSettings | undefined,
+  /** The echo type's plugin revision: "bundled" for a bundled harness. */
+  revision = "one",
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -233,7 +235,7 @@ async function setup({
     deviceSettings,
   );
   const plugin = ctx.extend({
-    pluginOwner: Object.freeze({ id: "example", revision: "one" }),
+    pluginOwner: Object.freeze({ id: "example", revision }),
   });
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
@@ -15452,7 +15454,7 @@ describe("Owner tools", () => {
 
   it("read the owner's channels as the owner, only on the run's handle", async () => {
     vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
-    const f = await setup();
+    const f = await setup({ revision: "bundled" });
     try {
       const agent = await running(f);
       expect(f.plugin.agents.handle(bot)).not.toHaveProperty("ownerAccess");
@@ -15462,9 +15464,10 @@ describe("Owner tools", () => {
         owner: viewer,
         community: "https://relay.example.test",
       });
-      // The agent is not in `private`; its owner is.
+      // The agent is not in `private`; its owner is, in a role the list
+      // does not say.
       expect(answer.channels).toContainEqual(
-        expect.objectContaining({ id: "private", role: "member", members: 1 }),
+        expect.objectContaining({ id: "private", role: "unknown", members: 1 }),
       );
       expect(answer.partial).toBe(false);
 
@@ -15472,6 +15475,19 @@ describe("Owner tools", () => {
       await expect(list(agent)).rejects.toThrow("not connected");
       f.connect(false);
       await expect(list(agent)).rejects.toThrow("not connected");
+    } finally {
+      await f.ctx.fiber.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("are not given to an installed harness plugin's runs", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await setup();
+    try {
+      const agent = await running(f);
+      expect(agent).not.toHaveProperty("ownerAccess");
+      await expect(list(agent)).rejects.toThrow("nothing was read");
     } finally {
       await f.ctx.fiber.dispose();
       vi.unstubAllEnvs();
@@ -15487,7 +15503,7 @@ describe("Owner tools", () => {
     "are not offered outside the enabled communities (%s)",
     async (enabled) => {
       vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", enabled);
-      const f = await setup();
+      const f = await setup({ revision: "bundled" });
       try {
         const agent = await running(f);
         expect(agent).not.toHaveProperty("ownerAccess");

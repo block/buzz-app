@@ -150,6 +150,9 @@ export type OwnerAccess = Readonly<{
     page: Readonly<{ offset: number; limit: number }>,
     signal?: AbortSignal,
   ): Promise<OwnerMemberPage>;
+  /** Throws unless the binding that answered with `execution` still holds,
+   * as checked just before its answer is released; reads nothing. */
+  held(execution: OwnerExecution): void;
 }>;
 
 export interface BuzzClient {
@@ -195,7 +198,8 @@ export interface BuzzClient {
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Reads with the owner's access, only in the owner's app-hosted run of
-   * the agent where the build enables it. Never given to plugins. */
+   * the agent by a bundled harness where the build enables it. Never given to
+   * plugins, including installed harness plugins. */
   readonly ownerAccess?: OwnerAccess;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;

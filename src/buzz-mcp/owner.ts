@@ -1,7 +1,7 @@
 // The owner tools (`owner_*`): read with the signed-in human's access instead
 // of the agent's, only where the host gives the client `ownerAccess`. The host
 // decides who the owner, agent and community are; no argument names them.
-import type { BuzzClient } from "./client";
+import type { BuzzClient, OwnerAccess, OwnerExecution } from "./client";
 import type { Tool } from "./tools";
 
 const channel = {
@@ -63,7 +63,7 @@ export async function callOwnerTool(
   client: BuzzClient,
   name: string,
   args: Readonly<Record<string, unknown>>,
-): Promise<string> {
+): Promise<Readonly<{ text: string; held(): void }>> {
   const tool = OWNER_TOOLS.find((tool) => tool.name === name);
   if (!tool) throw new Error(`No tool ${name}`);
   const { ownerAccess } = client;
@@ -85,8 +85,7 @@ export async function callOwnerTool(
       : list.channels;
     const shown = matched.slice(page.offset, page.offset + page.limit);
     const next = page.offset + shown.length;
-    return JSON.stringify({
-      executedAs: list.execution,
+    return answer(ownerAccess, list.execution, {
       channels: shown,
       total: matched.length,
       ...(next < matched.length ? { next: { offset: next } } : {}),
@@ -98,16 +97,28 @@ export async function callOwnerTool(
   if (!id) throw new Error("channel is required.");
   if (name === "owner_channel_get") {
     const { execution, ...details } = await ownerAccess.channel(id);
-    return JSON.stringify({ executedAs: execution, ...details });
+    return answer(ownerAccess, execution, details);
   }
   const page = paging(args);
   const { execution, ...members } = await ownerAccess.members(id, page);
   const next = page.offset + members.members.length;
-  return JSON.stringify({
-    executedAs: execution,
+  return answer(ownerAccess, execution, {
     ...members,
     ...(next < members.total ? { next: { offset: next } } : {}),
   });
+}
+
+/** The answer's text, and a check that the binding it was read with still
+ * holds. */
+function answer(
+  ownerAccess: OwnerAccess,
+  execution: OwnerExecution,
+  fields: object,
+) {
+  return {
+    text: JSON.stringify({ executedAs: execution, ...fields }),
+    held: () => ownerAccess.held(execution),
+  };
 }
 
 function paging(args: Readonly<Record<string, unknown>>) {

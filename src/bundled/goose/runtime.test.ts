@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BuzzClient, Memories } from "../../buzz-mcp/client";
+import type { BuzzClient, Memories, OwnerAccess } from "../../buzz-mcp/client";
 import { callTool, memoryVersion } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import {
@@ -837,6 +837,54 @@ describe("GooseRuntime", () => {
     await interruptible.mock.calls[0]?.[0]();
     await flush(100);
     expect(process?.cancelled).toEqual([process?.turns[0]?.sessionId]);
+  });
+
+  it("returns no owner read that the owner's Stop overtook", async () => {
+    const { agent, deliver, goose } = setup({ hold: true });
+    let release!: () => void;
+    let entered!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const channels = vi.fn<OwnerAccess["channels"]>(async () => {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return {
+        execution: { agent: self, owner: alice, community: "relay" },
+        channels: [
+          {
+            id: channel,
+            name: "Owner secrets",
+            type: "stream",
+            visibility: "private",
+            archived: false,
+          },
+        ],
+        partial: false,
+      };
+    });
+    const held = vi.fn<OwnerAccess["held"]>();
+    Object.assign(agent, { ownerAccess: { channels, held } });
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await deliver(message("1", "@Gander list my channels"), { interruptible });
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+    const process = goose();
+    const sessionId = process?.turns[0]?.sessionId;
+    if (!process || !sessionId) throw new Error("Goose turn did not start");
+    const pending = process.mcp(sessionId, "tools/call", {
+      name: "owner_channel_list",
+      arguments: {},
+    });
+    await reading;
+    await interruptible.mock.calls[0]?.[0]();
+    release();
+    const reply = await pending;
+    expect(reply?.result).toMatchObject({ isError: true });
+    expect(JSON.stringify(reply)).not.toContain("Owner secrets");
+    expect(JSON.stringify(reply)).toContain("turn has ended");
+    expect(channels).toHaveBeenCalledOnce();
   });
 
   it("posts nothing goose wrote without `send`", async () => {

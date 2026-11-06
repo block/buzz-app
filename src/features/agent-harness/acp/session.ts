@@ -99,6 +99,8 @@ export class AcpSession {
     | { waiters: Waiter[]; receipts: Set<ActivityReceipt>; ended?: true }
     | undefined;
   private idlers: (() => void)[] = [];
+  /** How often the owner has stopped its work. */
+  private stops = 0;
 
   constructor(
     private readonly acp: AcpProcess,
@@ -181,6 +183,13 @@ export class AcpSession {
     return settled;
   }
 
+  /** Whether the work running now, if any, still runs unstopped when asked
+   * later. */
+  current(): () => boolean {
+    const stops = this.stopped ? -1 : this.stops;
+    return () => this.stops === stops && !this.stopped && !this.quiet();
+  }
+
   /** A final message succeeded: the work counts as done at once, unless
    * another message is still waiting for its answer. The harness may still end
    * its turn with one more model call, whose text nobody posts. */
@@ -195,6 +204,7 @@ export class AcpSession {
    * harness ends it; a message sent before it has runs as a new turn after. */
   interrupt() {
     if (!this.working || this.closed) return;
+    this.stops++;
     this.queue.length = 0;
     this.steered = Promise.resolve();
     this.stopped = {

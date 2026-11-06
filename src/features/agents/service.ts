@@ -500,8 +500,8 @@ export type AgentHandle = Readonly<{
   tabs(): ReturnType<typeof channelTabs> | undefined;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
-  /** On a run's handle only, where the build enables owner tools for its
-   * community: reads with the owner's access. */
+  /** On a bundled harness's run handle only, where the build enables owner
+   * tools for its community: reads with the owner's access. */
   ownerAccess?: OwnerAccess;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */

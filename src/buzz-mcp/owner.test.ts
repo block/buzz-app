@@ -49,6 +49,7 @@ function owned() {
       total: 3,
       members: [{ pubkey: executedAs.owner, role: "owner" as const }],
     })),
+    held: vi.fn<OwnerAccess["held"]>(),
   };
 }
 const clientWith = (fields: Partial<BuzzClient> = {}) =>
@@ -64,10 +65,12 @@ describe("callOwnerTool", () => {
     const client = clientWith({ ownerAccess });
     expect(
       JSON.parse(
-        await callOwnerTool(client, "owner_channel_list", {
-          q: "PLAN",
-          limit: 1,
-        }),
+        (
+          await callOwnerTool(client, "owner_channel_list", {
+            q: "PLAN",
+            limit: 1,
+          })
+        ).text,
       ),
     ).toEqual({
       executedAs,
@@ -83,7 +86,7 @@ describe("callOwnerTool", () => {
       error: "offline",
     });
     expect(
-      JSON.parse(await callOwnerTool(client, "owner_channel_list", {})),
+      JSON.parse((await callOwnerTool(client, "owner_channel_list", {})).text),
     ).toEqual({
       executedAs,
       channels: [],
@@ -98,17 +101,20 @@ describe("callOwnerTool", () => {
     const client = clientWith({ ownerAccess });
     expect(
       JSON.parse(
-        await callOwnerTool(client, "owner_channel_get", { channel: id }),
+        (await callOwnerTool(client, "owner_channel_get", { channel: id }))
+          .text,
       ),
     ).toMatchObject({ executedAs, channel: { name: "Plans" } });
     expect(ownerAccess.channel).toHaveBeenCalledWith(id);
     expect(
       JSON.parse(
-        await callOwnerTool(client, "owner_member_list", {
-          channel: id,
-          offset: 1,
-          limit: 1,
-        }),
+        (
+          await callOwnerTool(client, "owner_member_list", {
+            channel: id,
+            offset: 1,
+            limit: 1,
+          })
+        ).text,
       ),
     ).toEqual({
       executedAs,
@@ -145,7 +151,8 @@ describe("callOwnerTool", () => {
     await expect(
       callOwnerTool(clientWith({ ownerAccess }), name, args),
     ).rejects.toThrow(message);
-    for (const read of Object.values(ownerAccess))
+    const { held: _, ...reads } = ownerAccess;
+    for (const read of Object.values(reads))
       expect(read).not.toHaveBeenCalled();
   });
 
@@ -230,6 +237,31 @@ describe("owner tools in the session", () => {
       expect(each.pubkey).toBe(executedAs.agent);
     }
     expect(ownerAccess.channels).not.toHaveBeenCalled();
+  });
+
+  it("releases an owner answer only after its review, while its binding holds", async () => {
+    const ownerAccess = owned();
+    const order: string[] = [];
+    const protect = vi.fn(async (action: ProtectionAction) => {
+      order.push(action.kind);
+    });
+    ownerAccess.held.mockImplementation(() => {
+      order.push("held");
+    });
+    const client = clientWith({ ownerAccess, protect });
+    expect(
+      JSON.parse(
+        String(await callSessionTool(client, {}, "owner_channel_list", {})),
+      ),
+    ).toMatchObject({ executedAs });
+    expect(order).toEqual(["tool", "tool-result", "held"]);
+    expect(ownerAccess.held).toHaveBeenCalledWith(executedAs);
+    ownerAccess.held.mockImplementation(() => {
+      throw new Error("changed during the call");
+    });
+    await expect(
+      callSessionTool(client, {}, "owner_channel_list", {}),
+    ).rejects.toThrow("changed during the call");
   });
 
   it("reads nothing when protection refuses the call, and withholds a refused result", async () => {

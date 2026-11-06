@@ -6512,6 +6512,7 @@ it.each([true, false])(
       })),
       channel: vi.fn(),
       members: vi.fn(),
+      held: vi.fn(),
     };
     const delivery = f.delivery("@Codex list my channels");
     await f.runtime.run({

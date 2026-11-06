@@ -2631,6 +2631,9 @@ it("reports Codex connection readiness only after resolving a model", async () =
     await f.provider.check();
   });
   expect(onReadyChange).toHaveBeenLastCalledWith(false);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This model isn’t available. Choose another model to continue.",
+  );
   rerender(
     <f.tabs.CreateModel
       config={defaults}
@@ -2640,4 +2643,7 @@ it("reports Codex connection readiness only after resolving a model", async () =
     />,
   );
   await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
+  expect(
+    screen.queryByText(/This model isn’t available/),
+  ).not.toBeInTheDocument();
 });

@@ -652,6 +652,16 @@ export function createTabs(
             onChange(readConfig({ ...current, ...modelChange(model, data) }))
           }
         />
+        {onReadyChange &&
+          !checking &&
+          !error &&
+          data &&
+          current.model &&
+          !catalogModel(current.model, data) && (
+            <p role="status" className="m-0 text-body-sm text-subtle">
+              This model isn’t available. Choose another model to continue.
+            </p>
+          )}
       </div>
     );
   }

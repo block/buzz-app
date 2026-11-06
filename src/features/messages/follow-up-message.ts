@@ -4,6 +4,7 @@ import { ownSolo } from "../solo/labels";
 import { archivedMention } from "./mention-admission";
 import type { FollowUpMessage } from "./follow-up-storage";
 import { isTaskChannel, validateTaskRecipients } from "../solo/task-mode";
+import { signTaskTokens } from "./task-tokens";
 
 /** Recreated after restart; no composer closures or old membership authority. */
 export function followUpMessage(
@@ -50,6 +51,20 @@ export function followUpMessage(
         );
       if (isTaskChannel(session, message.channelId))
         validateTaskRecipients(session, message.channelId, message.recipients);
+      else if (message.taskTokens?.length)
+        throw new Error("Task tokens require a task chat.");
+      if (message.taskTokens?.length)
+        return signTaskTokens(message.taskTokens, () =>
+          session.messages.send(
+            message.channelId,
+            message.text,
+            message.recipients,
+            message.attachments,
+            recovery,
+            message.references,
+            message.picks,
+          ),
+        );
       if (
         !recovery &&
         !message.references.length &&

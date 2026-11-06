@@ -11,6 +11,7 @@ import {
   TASK_MODE_LABEL,
 } from "./task-mode";
 import { eventDto } from "../relay/events";
+import { taskTokenTags } from "../messages/task-tokens";
 import type { SoloTaskMode } from "../channel-navigation/solo-navigation-contract";
 
 const cleanups: (() => unknown)[] = [];
@@ -204,16 +205,30 @@ it("binds the exact preparation identity and revision before exposing the first 
   expect(() => beforeLocal()).toThrow("participant");
 });
 
-it("refuses task references another build signed, on send and first-event retry, and ignores unknown versions", async () => {
+it("checks signed chips against the task chat's recipients, refuses them outside a task chat and malformed ones on send and first-event retry, and ignores unknown versions", async () => {
   const f = await fixture();
-  const foreign = [["nexus.tokens.v1", '[{"kind":"nexus.skill"}]']];
+  const tokens = taskTokenTags([
+    {
+      kind: "nexus.skill",
+      id: JSON.stringify({ path: "/task/repo/SKILL.md" }),
+      label: "/Review",
+      target: f.a,
+    },
+  ]);
+  expect(
+    validateTaskPublication(f.session, f.event([f.a], tokens)),
+  ).toBeDefined();
   expect(() =>
-    validateTaskPublication(f.session, f.event([f.a], foreign)),
-  ).toThrow("cannot send");
+    validateTaskPublication(f.session, f.event([f.b], tokens)),
+  ).toThrow("another agent");
+  const malformed = [["nexus.tokens.v1", '[{"kind":"nexus.skill"}]']];
+  expect(() =>
+    validateTaskPublication(f.session, f.event([f.a], malformed)),
+  ).toThrow("invalid task tokens");
   await expect(
     recordTaskFirstEvent(
       f.session,
-      f.event([f.a], foreign),
+      f.event([f.a], malformed),
       taskFirstEventRecovery({
         draftId: "draft",
         revision: 7,
@@ -223,7 +238,7 @@ it("refuses task references another build signed, on send and first-event retry,
       }),
       new AbortController().signal,
     ),
-  ).rejects.toThrow("cannot send");
+  ).rejects.toThrow("invalid task tokens");
   expect(f.recordFirstEvent).not.toHaveBeenCalled();
   expect(
     validateTaskPublication(
@@ -231,6 +246,11 @@ it("refuses task references another build signed, on send and first-event retry,
       f.event([f.b], [["nexus.tokens.v2", "future"]]),
     ),
   ).toBeDefined();
+  f.roster([{ ...f.channel, labels: ["buzz.solo", f.source.handle.label] }]);
+  expect(validateTaskPublication(f.session, f.event([f.a]))).toBeUndefined();
+  expect(() =>
+    validateTaskPublication(f.session, f.event([f.a], tokens)),
+  ).toThrow("Task tokens require a task chat.");
 });
 
 it("applies task policy to every signed member addition, including a direct outbox retry", async () => {
@@ -457,12 +477,21 @@ it("admits verified owner information through only the current source policy", a
   expect(Object.isFrozen(event.tags[0])).toBe(true);
 });
 
-it("refuses recognized information carrying a recipient even if ordinary admission would allow it", async () => {
-  const f = await fixture(false, () => true);
-  expect(() =>
-    validateTaskPublication(f.session, information(f, [["p", f.a]])),
-  ).toThrow("Informational task notices");
-});
+it.each(["recipient", "tokens"] as const)(
+  "refuses recognized information carrying %s even if ordinary admission would allow it",
+  async (extra) => {
+    const f = await fixture(false, () => true);
+    const tags =
+      extra === "recipient"
+        ? [["p", f.a]]
+        : taskTokenTags([
+            { kind: "nexus.folder", id: "/repos/notes", label: "notes" },
+          ]);
+    expect(() =>
+      validateTaskPublication(f.session, information(f, tags)),
+    ).toThrow("Informational task notices");
+  },
+);
 
 it.each(["absent", "false", "throw"] as const)(
   "keeps recipient-free publication closed when the source policy is %s",
@@ -508,7 +537,7 @@ it.each(["unproved", "other author", "duplicate destination"] as const)(
   },
 );
 
-it("keeps foreign task-reference and live task-member guards ahead of informational policy", async () => {
+it("keeps malformed task-token and live task-member guards ahead of informational policy", async () => {
   const policy = vi.fn(() => true);
   const f = await fixture(false, policy);
   expect(() =>
@@ -516,7 +545,7 @@ it("keeps foreign task-reference and live task-member guards ahead of informatio
       f.session,
       information(f, [["nexus.tokens.v1", "invalid"]]),
     ),
-  ).toThrow("cannot send");
+  ).toThrow("invalid task tokens");
   f.eligible.delete(f.b);
   expect(() => validateTaskPublication(f.session, information(f))).toThrow(
     "participant",

@@ -30,6 +30,7 @@ import {
 import { writeClipboardText } from "../../shared/clipboard";
 import {
   SelectedMentionContext,
+  TaskCompletionContext,
   TaskRecipientContext,
 } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
@@ -144,6 +145,7 @@ import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { AgentsContext, useSessionState } from "../agents/react";
 import { ComposerModels, type DraftPicks } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
+import { signTaskTokens, taskTokenTags } from "./task-tokens";
 import type {
   ConversationExtensions,
   CompletionPending,
@@ -597,6 +599,38 @@ function Composer({
   } catch (reason) {
     taskError = reason instanceof Error ? reason.message : TASK_UNAVAILABLE;
   }
+  // Bundled `@` and `#` completions read the task's own region binding: a
+  // task chat's from its channel, a task draft's from the host draft around
+  // it, never from props a plugin's composer can pass.
+  const outerTask = useContext(TaskCompletionContext);
+  const [boundScope, boundViewer, boundIncarnation] = taskContext
+    ? [
+        taskContext.binding.scope,
+        taskContext.binding.viewer,
+        taskContext.binding.incarnation,
+      ]
+    : [];
+  const channelCompletion = useMemo(
+    () =>
+      boundScope !== undefined &&
+      boundViewer !== undefined &&
+      boundIncarnation !== undefined
+        ? {
+            binding: {
+              scope: boundScope,
+              viewer: boundViewer,
+              incarnation: boundIncarnation,
+            },
+            draft: false,
+          }
+        : undefined,
+    [boundScope, boundViewer, boundIncarnation],
+  );
+  const taskCompletion = taskChannel
+    ? channelCompletion
+    : taskDraft && outerTask?.draft
+      ? outerTask
+      : undefined;
   const disabled = requestedDisabled || readOnly || !!taskError;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
@@ -1316,14 +1350,13 @@ function Composer({
     (channel) => !!channel?.archived || !!channel?.readOnly,
   );
   const editDisabled = disabled || editLocked;
-  // Task data from another build stays saved as it is until a build that
-  // understands it sends it.
   const chips = useMemo(
     () => composerChips(readComposerSnapshot(value.document)),
     [value.document],
   );
-  const unsupportedDraft =
-    (!!taskDraft || taskChannel) && (!!value.unsupported || !!chips.length);
+  // Task data this build cannot keep stays saved as it is until a build that
+  // understands it sends it.
+  const unsupportedDraft = (!!taskDraft || taskChannel) && !!value.unsupported;
   const editingDisabled =
     disabled ||
     unsupportedDraft ||
@@ -2203,6 +2236,11 @@ function Composer({
       completion.invalidate();
       return input.current?.insertToken(edit.token, query) ?? false;
     }
+    if ("workspace" in edit && edit.workspace) {
+      if (!taskDraft || editing.target) return false;
+      completion.invalidate();
+      return input.current?.setWorkspace(edit.workspace, query) ?? false;
+    }
     return (
       typeof edit.text === "string" &&
       insert(
@@ -2806,8 +2844,12 @@ function Composer({
       session.agentChoices.snapshot(),
     );
     try {
-      // Task composers already keep chip drafts unsent (`unsupportedDraft`).
-      if (composerChips(readComposerSnapshot(captured.document)).length)
+      // Only the host signs chips, in a task chat; a task draft's submission
+      // starts the task with them.
+      const taskTokens = composerChips(
+        readComposerSnapshot(captured.document),
+      ).map((chip) => chip.token);
+      if (taskTokens.length && !taskChannel && !(taskDraft && submission))
         throw new Error("Task tokens require a task chat.");
       if (command && onCommand) {
         const handled = onCommand(command, attempt.signal);
@@ -2887,6 +2929,17 @@ function Composer({
             "Select an eligible task agent from the chooser before sending this identity link.",
           );
         recipients = resolveTaskRecipients(session, channelId, recipients);
+        taskTokenTags(taskTokens);
+        if (
+          taskTokens.some(
+            (token) =>
+              token.kind === "nexus.skill" &&
+              !recipients.includes(token.target),
+          )
+        )
+          throw new Error(
+            "The selected skill belongs to another agent. Select it again for this recipient.",
+          );
       }
       const queueFollowUp =
         !!host &&
@@ -3056,6 +3109,21 @@ function Composer({
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
         if (taskChannel) validateTaskRecipients(session, channelId, recipients);
+        if (taskTokens.length) {
+          // A detached window's relay connection would drop the chips.
+          const host = fullSession(sender);
+          if (!host)
+            throw new Error("Send task references from the main window.");
+          return signTaskTokens(taskTokens, () =>
+            publishMessage(host, uploaded),
+          );
+        }
+        return publishMessage(sender, uploaded);
+      }
+      function publishMessage(
+        sender: ComposerSession,
+        uploaded: readonly UploadedAttachment[],
+      ) {
         return threadRootId
           ? sender.messages.reply(
               channelId,
@@ -3095,6 +3163,7 @@ function Composer({
           attachments: uploaded,
           references,
           picks: sentPicks,
+          ...(taskTokens.length ? { taskTokens } : {}),
         };
         const send = followUpMessage(host, message);
         return followUpQueue(host).submit(
@@ -3505,18 +3574,20 @@ function Composer({
           {label}
         </label>
         {active && extensions?.completions && (
-          <ComposerCompletions
-            registry={extensions.completions}
-            editor={completion}
-            input={input}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            threadRootId={threadRootId}
-            inviteAgents={agentChoices && !editing.target}
-            replace={replaceCompletion}
-            resolved={chips.length ? { ...value, tokens: chips } : value}
-          />
+          <TaskCompletionContext.Provider value={taskCompletion}>
+            <ComposerCompletions
+              registry={extensions.completions}
+              editor={completion}
+              input={input}
+              session={session}
+              scope={scope}
+              channelId={channelId}
+              threadRootId={threadRootId}
+              inviteAgents={agentChoices && !editing.target}
+              replace={replaceCompletion}
+              resolved={chips.length ? { ...value, tokens: chips } : value}
+            />
+          </TaskCompletionContext.Provider>
         )}
         <BackgroundUploadStatus
           session={session}

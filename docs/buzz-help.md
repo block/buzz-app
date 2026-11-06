@@ -240,6 +240,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   shows **Lead unavailable** with **Retry**, and its title opens no composer until
   they load; chats and tasks stay usable. New task's agent picker
   lists agents eligible to run the task on this device.
+  In a new task, type **#** to choose its workspace. In a task composer on the
+  desktop app, **@** also lists the folders in this community's repositories
+  folder (**Local settings**); choosing one adds it to the message as a chip
+  for the task agent.
   Without Nexus, chat creation remains available in the global **+** menu,
   Solo and each workspace; creating a workspace opens a chat draft filed there.
   Folders are optional unless **Work in a new worktree** is on. In that mode,

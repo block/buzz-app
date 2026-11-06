@@ -1,5 +1,7 @@
 import type { MentionRecipient } from "../messages/mention-draft";
 import { composerToken, type ComposerToken } from "../messages/composer-token";
+import { composerWorkspace } from "../messages/composer-document";
+import type { TaskWorkspace } from "../channel-navigation/solo-navigation-contract";
 import type { Contribution } from "../../plugins/contributions";
 import { isBundledContribution } from "../../plugins/provenance";
 import type {
@@ -12,12 +14,22 @@ import type {
   CompletionSuggestion,
 } from "./contracts";
 
-/** Host-internal edits, outside the plugin contract: a semantic chip is
- * accepted only from a provider a bundled plugin registered. */
+/** Host-internal edits, outside the plugin contract: a semantic chip, or a
+ * task draft's workspace, is accepted only from a provider a bundled plugin
+ * registered. */
 export type HostCompletionEdit =
   | CompletionEdit
   | Readonly<{
       token: ComposerToken;
+      workspace?: never;
+      text?: never;
+      mention?: never;
+      mentions?: never;
+      pending?: never;
+    }>
+  | Readonly<{
+      workspace: TaskWorkspace;
+      token?: never;
       text?: never;
       mention?: never;
       mentions?: never;
@@ -107,12 +119,17 @@ export function completionResult(
     const edit = item.edit;
     // Provenance is the registered entry, never an id, title or flag the
     // provider reports about itself.
+    const bundled = !!provider && isBundledContribution(provider);
     const token =
-      "token" in edit && provider && isBundledContribution(provider)
-        ? composerToken(edit.token)
+      "token" in edit && bundled ? composerToken(edit.token) : undefined;
+    const workspace =
+      "workspace" in edit && bundled
+        ? composerWorkspace(edit.workspace)
         : undefined;
     if ("token" in edit) {
       if (!token) continue;
+    } else if ("workspace" in edit) {
+      if (!workspace) continue;
     } else if ("mentions" in edit) {
       if (
         !Array.isArray(edit.mentions) ||
@@ -155,20 +172,22 @@ export function completionResult(
         edit: Object.freeze(
           token
             ? { token }
-            : "mentions" in edit && edit.mentions
-              ? {
-                  mentions: Object.freeze(
-                    edit.mentions.map((person: MentionRecipient) =>
-                      Object.freeze({
-                        pubkey: person.pubkey,
-                        name: person.name,
-                      }),
+            : workspace
+              ? { workspace }
+              : "mentions" in edit && edit.mentions
+                ? {
+                    mentions: Object.freeze(
+                      edit.mentions.map((person: MentionRecipient) =>
+                        Object.freeze({
+                          pubkey: person.pubkey,
+                          name: person.name,
+                        }),
+                      ),
                     ),
-                  ),
-                }
-              : "mention" in edit
-                ? { mention: Object.freeze({ ...edit.mention }) }
-                : { text: edit.text },
+                  }
+                : "mention" in edit
+                  ? { mention: Object.freeze({ ...edit.mention }) }
+                  : { text: edit.text },
         ),
       }),
     );

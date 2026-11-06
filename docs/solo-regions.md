@@ -76,4 +76,11 @@ enforces authorization, record capacity, and revision checks.
 
 Regions own their task filing; they do not add an ordinary Solo assignment for
 each task. Workspace selection in a task draft is personal metadata and is
-never part of the signed message.
+excluded from new signed task-token tags. Previously signed tags remain readable.
+The host's `#` completion in a task draft files catalog workspace `id` as
+`solo-workspace:<id>`.
+
+Folder and skill chips reach the source as `TaskDraft.references`, in document
+order. Host task sends, replies, queued follow-ups and first events sign them as
+one `nexus.tokens.v1` tag. Publication refuses that tag outside a task chat,
+on an informational notice, or with a skill whose target is not a recipient.

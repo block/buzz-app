@@ -168,7 +168,7 @@ it("copies and freezes batch recipients without allowing malformed or oversized 
   }
 });
 
-it("keeps chip edits only from a provider a bundled plugin registered, for that registration's lifetime", async () => {
+it("keeps chip and workspace edits only from a provider a bundled plugin registered, for that registration's lifetime", async () => {
   const folder = {
     kind: "nexus.folder" as const,
     id: "/notes",
@@ -177,6 +177,11 @@ it("keeps chip edits only from a provider a bundled plugin registered, for that 
   const offered = {
     items: [
       { id: "notes", label: "notes", edit: { token: folder } },
+      {
+        id: "workspace",
+        label: "Notes",
+        edit: { workspace: { id: "solo-workspace:w1", label: "Notes" } },
+      },
       { id: "text", label: "Text", edit: { text: "notes" } },
     ],
   };
@@ -251,7 +256,7 @@ it("keeps chip edits only from a provider a bundled plugin registered, for that 
       .snapshot()
       .find((entry) => entry.key === "buzz.mentions/typeahead");
     expect(kept()).toEqual({
-      "buzz.mentions/typeahead": ["notes", "text"],
+      "buzz.mentions/typeahead": ["notes", "workspace", "text"],
       "example.forger/typeahead": ["text"],
       "buzz.mentions/forged": ["text"],
     });
@@ -260,6 +265,14 @@ it("keeps chip edits only from a provider a bundled plugin registered, for that 
     expect(Object.isFrozen(token && "token" in token && token.token)).toBe(
       true,
     );
+    const malformed = { id: "solo-workspace:w1", label: "Notes", extra: 1 };
+    expect(
+      first &&
+        completionResult(
+          { items: [{ id: "w", label: "W", edit: { workspace: malformed } }] },
+          first,
+        ).items,
+    ).toEqual([]);
     // Without a registered entry, a result never carries a chip.
     expect(completionResult(offered).items.map((item) => item.id)).toEqual([
       "text",
@@ -280,7 +293,7 @@ it("keeps chip edits only from a provider a bundled plugin registered, for that 
       .find((entry) => entry.key === "buzz.mentions/typeahead");
     expect(second).not.toBe(first);
     expect(kept()).toEqual({
-      "buzz.mentions/typeahead": ["notes", "text"],
+      "buzz.mentions/typeahead": ["notes", "workspace", "text"],
       "example.forger/typeahead": ["text"],
       "buzz.mentions/forged": ["text"],
     });

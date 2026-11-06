@@ -1150,16 +1150,30 @@ export function EditableInput({
       );
       return true;
     };
-    /** One undo step. The caret stays where it is and the editor keeps focus. */
-    const setWorkspace = (value: TaskWorkspace | null) => {
+    /** One undo step. The caret stays where it is, or replaces `range`, and
+     * the editor keeps focus. */
+    const setWorkspace = (
+      value: TaskWorkspace | null,
+      range?: { start: number; end: number },
+    ) => {
       if (!editable() || composing.current || editor.composing) return false;
       const workspace = value && composerWorkspace(value);
       if (value && !workspace) return false;
       const before = editor.state;
+      const tr = closeHistory(editor.state.tr);
+      if (range) {
+        const source = projection();
+        const from = source.position(range.start),
+          to = source.position(range.end, -1);
+        if (
+          source.source(from) !== range.start ||
+          source.source(to) !== range.end
+        )
+          return false;
+        tr.delete(from, to);
+      }
       editor.dispatch(
-        closeHistory(editor.state.tr)
-          .setDocAttribute("workspace", workspace ?? null)
-          .scrollIntoView(),
+        tr.setDocAttribute("workspace", workspace ?? null).scrollIntoView(),
       );
       editor.focus();
       return editor.state !== before;

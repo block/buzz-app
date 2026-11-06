@@ -24,8 +24,14 @@ import {
   buzzCopyDocument,
 } from "../../features/messages/composer-clipboard";
 import { composerSchema } from "../../features/messages/composer-document";
+import { TaskCompletionContext } from "../../features/messages/selected-mention-context";
+import * as soloNavigation from "../../features/channel-navigation/solo-navigation";
+import type { SoloWorkspaceSnapshot } from "../../features/channel-navigation/solo-navigation-contract";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 const channel = (
   id: string,
   extra: Partial<ChannelSummary> = {},
@@ -685,3 +691,59 @@ it.each([true, false])(
       );
   },
 );
+
+it("in a task draft, `#` offers the region's workspaces instead of channels; a task chat keeps channel links", () => {
+  const t = fixture([channel("work-stream")]);
+  const binding = { scope: "scope:viewer", viewer: "viewer", incarnation: "1" };
+  let catalog: SoloWorkspaceSnapshot = {
+    status: "loading",
+    workspaces: [],
+    canCreate: false,
+  };
+  const listeners = new Set<() => void>();
+  const snapshot = vi.fn((_binding: unknown) => catalog);
+  vi.spyOn(soloNavigation, "soloNavigationFor").mockReturnValue({
+    workspaces: {
+      snapshot,
+      subscribe: (_binding: unknown, listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  } as unknown as ReturnType<typeof soloNavigation.soloNavigationFor>);
+  const view = render(
+    <TaskCompletionContext.Provider value={{ binding, draft: true }}>
+      {t.element("wo")}
+    </TaskCompletionContext.Provider>,
+  );
+  expect(snapshot).toHaveBeenCalledWith(binding);
+  expect(t.result()).toEqual({ items: [], status: "Loading workspaces…" });
+  catalog = {
+    status: "ready",
+    workspaces: [
+      { id: "work", name: "Work" },
+      { id: "home", name: "Home" },
+    ],
+    canCreate: true,
+  };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  expect(t.result()).toEqual({
+    items: [
+      {
+        id: "solo-workspace:work",
+        label: "Work",
+        detail: "Workspace",
+        edit: { workspace: { id: "solo-workspace:work", label: "Work" } },
+      },
+    ],
+  });
+  view.unmount();
+  render(
+    <TaskCompletionContext.Provider value={{ binding, draft: false }}>
+      {t.element("wo")}
+    </TaskCompletionContext.Provider>,
+  );
+  expect(t.result().items.map((item) => item.id)).toEqual(["work-stream"]);
+});

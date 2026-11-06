@@ -6,6 +6,8 @@ import {
 } from "../../shared/view-state";
 import type { UploadedAttachment } from "../relay/attachments";
 import type { MentionPicks } from "../relay/messages";
+import type { ComposerToken } from "./composer-token";
+import { taskTokenTags } from "./task-tokens";
 
 export type FollowUpMessage = {
   channelId: string;
@@ -14,6 +16,8 @@ export type FollowUpMessage = {
   attachments: readonly UploadedAttachment[];
   references: readonly string[];
   picks: MentionPicks;
+  /** A task chat message's chips; publication signs them as task tokens. */
+  taskTokens?: readonly ComposerToken[];
 };
 export type SavedFollowUp = FollowUpMessage & {
   id: string;
@@ -185,8 +189,15 @@ function strings(value: unknown): value is string[] {
 function valid(value: unknown): value is SavedFollowUp {
   if (!value || typeof value !== "object") return false;
   const v = value as SavedFollowUp;
-  // Task details another build saved stay in storage; this build cannot send them.
-  if ("taskTokens" in v) return false;
+  // Malformed task details stay in storage; this build cannot send them.
+  try {
+    if (v.taskTokens !== undefined) {
+      if (!Array.isArray(v.taskTokens)) return false;
+      taskTokenTags(v.taskTokens);
+    }
+  } catch {
+    return false;
+  }
   return (
     typeof v.id === "string" &&
     typeof v.channelId === "string" &&

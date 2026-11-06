@@ -11,12 +11,33 @@ export type TaskDraft = Readonly<{
   recipients: readonly string[];
   primary?: string;
   workspace?: TaskWorkspace;
+  /** Folder, repository and skill chips, in document order. The host checks
+   * their shape and that a skill targets a recipient; the source checks access. */
+  references?: readonly TaskReference[];
   attachments: readonly UploadedAttachment[];
   /** Present only while the draft still targets this workspace's optional lead. */
   workspaceLead?: string;
 }>;
-/** A source-owned filing. The host stores it with the draft and never interprets the id. */
+/** A source-owned filing. The host stores it with the draft and never interprets
+ * the id; its own workspace completion files catalog workspace `id` as
+ * `solo-workspace:<id>`. */
 export type TaskWorkspace = Readonly<{ id: string; label: string }>;
+/** A chip's wire shape. `label` is its displayed text. A folder `id` is the
+ * folder's absolute path; a skill `target` is the recipient that runs it.
+ * Extra JSON fields round-trip without interpretation. */
+export type TaskReference = Readonly<
+  (
+    | { kind: "nexus.folder"; id: string; label: string }
+    | {
+        kind: "nexus.repository";
+        id: string;
+        label: string;
+        verified: boolean;
+        alias?: string;
+      }
+    | { kind: "nexus.skill"; id: string; label: string; target: string }
+  ) & { readonly [key: string]: JsonValue | undefined }
+>;
 export type TaskPrepareResult =
   | Readonly<{
       ok: true;

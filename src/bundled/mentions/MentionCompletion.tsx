@@ -11,6 +11,7 @@ import {
 import { useTeamMentions } from "./use-team-mentions";
 import { MENTION_ROWS, useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
+import type { HostCompletionResult } from "../../features/conversation/completion";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
@@ -20,7 +21,11 @@ import {
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
 import { continuedMention, matchingMentions } from "./mention-ranking";
 import { resolveSpaceMention } from "./resolve-space-mention";
-import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
+import {
+  SelectedMentionContext,
+  TaskCompletionContext,
+} from "../../features/messages/selected-mention-context";
+import { useTaskFolders } from "../../features/solo/task-folders";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { AgentsContext } from "../../features/agents/react";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -67,13 +72,23 @@ export function MentionCompletion({
 }: ComposerCompletionProps) {
   // The host remounts this provider on every keystroke. One `@` token in one
   // composer is the chooser lifetime that keeps the last directory page.
+  const lifetime = JSON.stringify([
+    "inline",
+    scope,
+    channelId,
+    threadRootId,
+    query.start,
+  ]);
   const model = useMentionChoices(
     session,
     channelId,
     inviteAgents,
     query.query,
-    JSON.stringify(["inline", scope, channelId, threadRootId, query.start]),
+    lifetime,
   );
+  // A host task composer also offers its repositories folder's folders.
+  const task = useContext(TaskCompletionContext);
+  const folders = useTaskFolders(task?.binding, lifetime);
   const { profiles, agents, channel, list, choices } = model;
   const teams = useTeamMentions(
     session,
@@ -193,12 +208,21 @@ export function MentionCompletion({
       (teams.names.length > 0 && matchesMentionQuery(query.query, teams.names));
     const matching = admitted ? choices : [];
     const matchingTeams = admitted ? teams.choices : [];
+    const needle = query.query.trim().toLowerCase();
+    const matchingFolders = (folders?.rows ?? []).filter((folder) =>
+      folder.name.toLowerCase().includes(needle),
+    );
+    // Chips are accepted from bundled providers only (completionResult).
+    const publishHost = publish as unknown as (
+      result: HostCompletionResult,
+    ) => (() => void) | false;
     const membershipMissing =
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
     // A multi-word query that continues no known name is prose, not a search.
     if (
       !admitted &&
+      !matchingFolders.length &&
       !model.pending &&
       !model.directory.loading &&
       !model.directory.error
@@ -280,6 +304,18 @@ export function MentionCompletion({
           ? { text: `@${team.name}` }
           : { mentions: team.recipients },
       })),
+      ...matchingFolders.map((folder) => ({
+        id: `nexus.folder:${folder.path}`,
+        label: folder.name,
+        detail: `Local folder · ${folder.displayPath}`,
+        edit: {
+          token: {
+            kind: "nexus.folder" as const,
+            id: folder.path,
+            label: folder.name,
+          },
+        },
+      })),
     ];
     const key = JSON.stringify([
       channelId,
@@ -329,7 +365,7 @@ export function MentionCompletion({
         matchingMentions(model.candidates, query.query),
         query.query,
       );
-    const withdraw = publish({
+    const withdraw = publishHost({
       spaceId: teams.blocksSpace ? undefined : model.spaceId,
       ...(undecided
         ? {
@@ -378,9 +414,12 @@ export function MentionCompletion({
                         ? { status: "Searching community…" }
                         : teams.status
                           ? { status: teams.status }
-                          : {}),
+                          : folders?.error
+                            ? { status: folders.error }
+                            : {}),
       ...((admitted && teams.canRetry) ||
       model.directory.error ||
+      folders?.error ||
       (admitted &&
         (model.archives.status === "error" ||
           agents.status === "error" ||
@@ -397,6 +436,7 @@ export function MentionCompletion({
               );
               void session.archives?.refresh();
               retry((value) => value + 1);
+              if (folders?.error) folders.retry();
               if (membershipMissing || membershipError)
                 session.channels.refreshList?.();
             },
@@ -427,6 +467,7 @@ export function MentionCompletion({
     parentAdmission,
     selected,
     community,
+    folders,
   ]);
   return null;
 }

@@ -156,27 +156,60 @@ it("addressingOnly holds for selected tags with no prose or chat card", () => {
   expect(addressingOnly({ ...tags, chatCards: ["card"] })).toBe(false);
 });
 
-it("keeps a task draft's workspace and marks document data another build saved as unsupported", () => {
+it("keeps a task draft's workspace, lifts one saved project into it, and marks other data another build saved as unsupported", () => {
   const workspace = { id: "opaque", label: "Workspace" };
+  const project = { kind: "nexus.project", ...workspace };
   const paragraph = {
     type: "paragraph",
     content: [{ type: "text", text: "Do it" }],
   };
-  const own = mentionDraft({
-    text: "Do it",
-    recipients: [],
-    document: {
-      version: 1,
-      content: { type: "doc", attrs: { workspace }, content: [paragraph] },
-    },
+  const saved = (content: object) =>
+    mentionDraft({
+      text: "",
+      recipients: [],
+      document: { version: 1, content },
+    });
+  const own = saved({
+    type: "doc",
+    attrs: { workspace },
+    content: [paragraph],
   });
   expect(own.workspace).toEqual(workspace);
   expect(own.unsupported).toBeUndefined();
   expect(mentionDraft({ ...own }).workspace).toEqual(workspace);
+  const inline = {
+    type: "paragraph",
+    content: [
+      { type: "token", attrs: { source: "Workspace", semantic: project } },
+      { type: "text", text: " Do it" },
+    ],
+  };
+  for (const content of [
+    { type: "doc", attrs: { projects: [project] }, content: [paragraph] },
+    { type: "doc", content: [inline] },
+    { type: "doc", attrs: { projects: [project] }, content: [inline] },
+  ]) {
+    const draft = saved(content);
+    expect(draft.unsupported).toBeUndefined();
+    expect(draft.workspace).toEqual(workspace);
+    expect(draft.text.trim()).toBe("Do it");
+    expect(mentionDraft(JSON.parse(JSON.stringify(draft)))).toEqual(draft);
+  }
   for (const content of [
     {
       type: "doc",
-      attrs: { projects: [{ kind: "nexus.project", ...workspace }] },
+      attrs: { projects: [project, { ...project, id: "other" }] },
+      content: [paragraph],
+    },
+    {
+      type: "doc",
+      attrs: { workspace, projects: [project] },
+      content: [paragraph],
+    },
+    { type: "doc", attrs: { projects: project }, content: [paragraph] },
+    {
+      type: "doc",
+      attrs: { projects: [{ ...project, kind: "nexus.folder" }] },
       content: [paragraph],
     },
     {
@@ -197,13 +230,8 @@ it("keeps a task draft's workspace and marks document data another build saved a
       ],
     },
   ]) {
-    const draft = mentionDraft({
-      text: "",
-      recipients: [],
-      document: { version: 1, content },
-    });
+    const draft = saved(content);
     expect(draft.unsupported).toBe(true);
-    expect(draft.workspace).toBeUndefined();
     // The normalized document no longer holds the foreign data; the mark stays.
     expect(mentionDraft(draft).unsupported).toBe(true);
     expect(mentionDraft(JSON.parse(JSON.stringify(draft))).unsupported).toBe(

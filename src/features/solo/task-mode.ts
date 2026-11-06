@@ -13,9 +13,7 @@ import {
 } from "../relay/events";
 import type { OutboxRecovery } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
-
-/** Task references another build signed. This build cannot honor them. */
-const FOREIGN_TASK_REFERENCES = "nexus.tokens.v1";
+import { readTaskTokens } from "../messages/task-tokens";
 
 export const TASK_UNAVAILABLE =
   "Nexus is unavailable; this task chat is read-only until it reloads";
@@ -165,10 +163,7 @@ export function validateTaskPublication(
       channelId,
       event.tags.filter(([key]) => key === "p").map((tag) => tag[1] ?? ""),
     );
-  if (event.tags.some(([name]) => name === FOREIGN_TASK_REFERENCES))
-    throw new Error(
-      "This message has task details this version of Buzz cannot send. It is kept unchanged.",
-    );
+  const tokens = readTaskTokens(event.tags);
   const recipients = event.tags
     .filter(([key]) => key === "p")
     .map((tag) => tag[1] ?? "");
@@ -181,13 +176,24 @@ export function validateTaskPublication(
     destinations[0]?.length === 2 &&
     context?.mode.isInformational?.(channelId, event) === true
   ) {
-    if (!allowInformational || recipients.length)
+    if (!allowInformational || recipients.length || tokens.length)
       throw new Error(
-        "Informational task notices cannot address agents or start a task.",
+        "Informational task notices cannot address agents, carry task tokens or start a task.",
       );
     return context;
   }
   validateTaskRecipients(session, channelId, recipients);
+  if (tokens.length && !context)
+    throw new Error("Task tokens require a task chat.");
+  if (
+    tokens.some(
+      (token) =>
+        token.kind === "nexus.skill" && !recipients.includes(token.target),
+    )
+  )
+    throw new Error(
+      "The selected skill belongs to another agent. Select it again for this recipient.",
+    );
   return context;
 }
 

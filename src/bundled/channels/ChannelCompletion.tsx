@@ -1,4 +1,4 @@
-import { useLayoutEffect, useSyncExternalStore } from "react";
+import { useContext, useLayoutEffect, useSyncExternalStore } from "react";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import type {
@@ -7,6 +7,8 @@ import type {
 } from "../../features/conversation/contracts";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { MatchRank, matchName } from "../../features/search/match";
+import { TaskCompletionContext } from "../../features/messages/selected-mention-context";
+import { TaskWorkspaceCompletion } from "../../features/solo/task-workspace-completion";
 
 const LIMIT = 20;
 /** Rows kept for open channels when joined matches would fill the list. */
@@ -61,7 +63,17 @@ function rank(name: string, needle: string) {
   return found;
 }
 
-export function ChannelCompletion({
+/** In a task draft, `#` chooses its workspace instead of linking a channel. */
+export function ChannelCompletion(props: ComposerCompletionProps) {
+  const task = useContext(TaskCompletionContext);
+  return task?.draft ? (
+    <TaskWorkspaceCompletion {...props} binding={task.binding} />
+  ) : (
+    <ChannelLinkCompletion {...props} />
+  );
+}
+
+function ChannelLinkCompletion({
   session,
   query,
   publish,

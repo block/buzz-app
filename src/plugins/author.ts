@@ -207,6 +207,7 @@ export type {
   SoloTaskMode,
   TaskDraftControls,
   TaskWorkspace,
+  TaskReference,
   TaskHeaderTitleProps,
   TaskHeaderUI,
 } from "../features/channel-navigation/solo-navigation-contract";

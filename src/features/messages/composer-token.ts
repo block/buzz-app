@@ -1,22 +1,16 @@
 import type { JsonValue } from "../navigation/targets";
+import type { TaskReference } from "../channel-navigation/solo-navigation-contract";
 
 /** A host-internal semantic editor atom, separate from notification
- * recipients. Only bundled completion providers create one; it is not part of
- * the plugin contract. Extra JSON fields round-trip without interpretation. */
-export type ComposerToken = Readonly<
-  (
-    | { kind: "nexus.project"; id: string; label: string }
-    | {
-        kind: "nexus.repository";
-        id: string;
-        label: string;
-        verified: boolean;
-        alias?: string;
+ * recipients. Only bundled completion providers create one. A project is a
+ * legacy saved filing; loading lifts it into the draft's workspace. */
+export type ComposerToken =
+  | TaskReference
+  | Readonly<
+      { kind: "nexus.project"; id: string; label: string } & {
+        readonly [key: string]: JsonValue | undefined;
       }
-    | { kind: "nexus.skill"; id: string; label: string; target: string }
-    | { kind: "nexus.folder"; id: string; label: string }
-  ) & { readonly [key: string]: JsonValue | undefined }
->;
+    >;
 
 /** Copy only bounded JSON. A provider cannot retain mutable editor metadata or
  * turn a token into a recipient through a label, prototype or callback. */

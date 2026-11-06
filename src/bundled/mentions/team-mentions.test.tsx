@@ -28,6 +28,7 @@ import { SyncedTeams, teamArtifact } from "../../features/agents/team-config";
 import type { RelayEvent } from "../../features/relay/events";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { MentionCompletion } from "./MentionCompletion";
 import { MentionPicker } from "./MentionPicker";
 import { mentionQuery } from "./mention-query";
@@ -43,10 +44,19 @@ import type {
 import type { CompletionEditor } from "../../features/conversation/useCompletionEditor";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
-import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
+import {
+  SelectedMentionContext,
+  TaskCompletionContext,
+} from "../../features/messages/selected-mention-context";
+import { saveRepositoriesFolder } from "../../features/communities/repositories";
 import type { RelaySession } from "../../features/relay/session";
 import type { Contribution } from "../../plugins/contributions";
 import * as personMatch from "../../features/search/person-match";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: vi.fn(() => false),
+  invoke: vi.fn(),
+}));
 
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
@@ -1455,5 +1465,228 @@ it("projects confirmed synced teams through the real service without colliding w
     view.unmount();
     h.library.dispose();
     await h.context.fiber.dispose();
+  }
+});
+
+const folderViewer = "a".repeat(64);
+const folderTask = (incarnation: string) => ({
+  binding: {
+    scope: `https://one.example:${folderViewer}`,
+    viewer: folderViewer,
+    incarnation,
+  },
+  draft: false,
+});
+/** One `@` query at position 0. `remount` swaps in a new provider in one
+ * commit, as the host does per keystroke; `close` ends the query. */
+function showFolders(
+  h: ReturnType<typeof fixture>,
+  value: ReturnType<typeof folderTask> | undefined,
+  query: string,
+) {
+  let publish = vi.fn();
+  let mounts = 0;
+  const element = (text: string) => (
+    <TaskCompletionContext.Provider value={value}>
+      <MentionCompletion
+        key={mounts++}
+        session={h.session}
+        scope="test"
+        channelId="parent"
+        publish={publish}
+        observation={{
+          revision: 1,
+          text: `@${text}`,
+          start: text.length + 1,
+          end: text.length + 1,
+        }}
+        query={{ start: 0, end: text.length + 1, query: text }}
+      />
+    </TaskCompletionContext.Provider>
+  );
+  const view = render(element(query));
+  const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  return {
+    view,
+    last,
+    publishes: () =>
+      publish.mock.calls.map(
+        ([result]) => result as CompletionResult | undefined,
+      ),
+    items: () => last()?.items ?? [],
+    /** Closing is its own input event; the next one starts after it ends. */
+    async close() {
+      view.unmount();
+      await act(async () => {});
+    },
+    remount(text: string) {
+      publish = vi.fn();
+      view.rerender(element(text));
+    },
+  };
+}
+
+it("a host task composer offers its repositories folder's folders as chips, listed once per query; other composers never list it", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const rows = [
+    { name: "notes", path: "/code/notes", displayPath: "~/code/notes" },
+    { name: "site", path: "/code/site", displayPath: "~/code/site" },
+  ];
+  vi.mocked(invoke).mockReset().mockResolvedValue(rows);
+  const h = fixture();
+  try {
+    const first = showFolders(h, folderTask("1"), "no");
+    await waitFor(() =>
+      expect(first.items()).toEqual([
+        {
+          id: "nexus.folder:/code/notes",
+          label: "notes",
+          detail: "Local folder · ~/code/notes",
+          edit: {
+            token: { kind: "nexus.folder", id: "/code/notes", label: "notes" },
+          },
+        },
+      ]),
+    );
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("repositories_folder_list", {
+      path: "~/.buzz/REPOS",
+    });
+    // The host remounts the provider per keystroke; the query keeps its listing.
+    first.remount("not");
+    await waitFor(() =>
+      expect(first.items().map((item) => item.id)).toEqual([
+        "nexus.folder:/code/notes",
+      ]),
+    );
+    expect(invoke).toHaveBeenCalledOnce();
+    first.view.unmount();
+
+    vi.mocked(invoke).mockRejectedValueOnce(
+      new Error("The configured repositories folder is unavailable."),
+    );
+    const failed = showFolders(h, folderTask("2"), "");
+    await waitFor(() =>
+      expect(failed.last()?.status).toBe(
+        "The configured repositories folder is unavailable.",
+      ),
+    );
+    expect(failed.items().map((item) => item.label)).toEqual([
+      "Person 00",
+      "Team",
+    ]);
+    failed.view.unmount();
+
+    vi.mocked(invoke).mockClear();
+    const ordinary = showFolders(h, undefined, "");
+    await waitFor(() =>
+      expect(ordinary.items().map((item) => item.label)).toEqual([
+        "Person 00",
+        "Team",
+      ]),
+    );
+    expect(ordinary.items().some((item) => "token" in item.edit)).toBe(false);
+    ordinary.view.unmount();
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    h.library.dispose();
+  }
+});
+
+it("an `@` query reopened at the same position, after a preference change, or retried after a failed read lists the folders again; a closed query's late listing never publishes", async () => {
+  vi.mocked(isTauri).mockReturnValue(true);
+  const row = (name: string, root: string) => ({
+    name,
+    path: `${root}/${name}`,
+    displayPath: `${root}/${name}`,
+  });
+  const listings: {
+    path: string;
+    resolve(rows: unknown): void;
+    reject(error: Error): void;
+  }[] = [];
+  vi.mocked(invoke)
+    .mockReset()
+    .mockImplementation(
+      (_command, args) =>
+        new Promise((resolve, reject) =>
+          listings.push({
+            path: (args as { path: string }).path,
+            resolve,
+            reject,
+          }),
+        ),
+    );
+  const folders = (shown: ReturnType<typeof showFolders>) =>
+    shown.items().flatMap((item) => ("token" in item.edit ? [item.label] : []));
+  const h = fixture();
+  try {
+    saveRepositoriesFolder("https://one.example", folderViewer, "/code/old");
+    const open = showFolders(h, folderTask("reopen"), "");
+    await waitFor(() => expect(listings).toHaveLength(1));
+    listings[0]?.resolve([row("old", "/code/old")]);
+    await waitFor(() => expect(folders(open)).toEqual(["old"]));
+    await open.close();
+
+    // Reopened at the same position with the same preference: a fresh read.
+    const again = showFolders(h, folderTask("reopen"), "");
+    await waitFor(() => expect(listings).toHaveLength(2));
+    expect(listings[1]?.path).toBe("/code/old");
+    listings[1]?.resolve([row("again", "/code/old")]);
+    await waitFor(() => expect(folders(again)).toEqual(["again"]));
+    await again.close();
+
+    // A changed preference lists the new folder.
+    saveRepositoriesFolder("https://one.example", folderViewer, "/code/new");
+    const changed = showFolders(h, folderTask("reopen"), "");
+    await waitFor(() => expect(listings).toHaveLength(3));
+    expect(listings[2]?.path).toBe("/code/new");
+    listings[2]?.resolve([row("new", "/code/new")]);
+    await waitFor(() => expect(folders(changed)).toEqual(["new"]));
+    // So does one changed while the query is open, at its next keystroke.
+    saveRepositoriesFolder("https://one.example", folderViewer, "/code/newer");
+    changed.remount("n");
+    await waitFor(() => expect(listings).toHaveLength(4));
+    expect(listings[3]?.path).toBe("/code/newer");
+    listings[3]?.resolve([row("newer", "/code/newer")]);
+    await waitFor(() => expect(folders(changed)).toEqual(["newer"]));
+    await changed.close();
+
+    // A failed read stays for the open query's keystrokes; Retry reads again.
+    const failing = showFolders(h, folderTask("reopen"), "");
+    await waitFor(() => expect(listings).toHaveLength(5));
+    listings[4]?.reject(new Error("Folder unavailable"));
+    await waitFor(() =>
+      expect(failing.last()?.status).toBe("Folder unavailable"),
+    );
+    failing.remount("n");
+    await waitFor(() =>
+      expect(failing.last()?.status).toBe("Folder unavailable"),
+    );
+    expect(listings).toHaveLength(5);
+    act(() => failing.last()?.retry?.());
+    await waitFor(() => expect(listings).toHaveLength(6));
+    listings[5]?.resolve([row("newer", "/code/newer")]);
+    await waitFor(() => expect(folders(failing)).toEqual(["newer"]));
+    await failing.close();
+
+    // A query closed while its read is pending never shows that read.
+    const closed = showFolders(h, folderTask("reopen"), "");
+    await waitFor(() => expect(listings).toHaveLength(7));
+    await closed.close();
+    const reopened = showFolders(h, folderTask("reopen"), "");
+    await waitFor(() => expect(listings).toHaveLength(8));
+    listings[6]?.resolve([row("late", "/code/newer")]);
+    listings[7]?.resolve([row("current", "/code/newer")]);
+    // The later read settles after the earlier one.
+    await waitFor(() => expect(folders(reopened)).toEqual(["current"]));
+    expect(
+      [...closed.publishes(), ...reopened.publishes()].some((result) =>
+        result?.items.some((item) => item.label === "late"),
+      ),
+    ).toBe(false);
+    reopened.view.unmount();
+  } finally {
+    localStorage.clear();
+    h.library.dispose();
   }
 });

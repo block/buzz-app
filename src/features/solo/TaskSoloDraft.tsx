@@ -1,13 +1,18 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../relay/session";
+import { TaskCompletionContext } from "../messages/selected-mention-context";
 import type { ConversationExtensions } from "../conversation/contracts";
-import type { TaskDraft } from "../channel-navigation/solo-navigation-contract";
+import type {
+  TaskDraft,
+  TaskReference,
+} from "../channel-navigation/solo-navigation-contract";
 import { soloNavigationFor } from "../channel-navigation/solo-navigation";
 import {
   taskDraftContext,
@@ -31,6 +36,16 @@ import {
   type AttachmentDraft,
 } from "../messages/attachment-draft";
 import { composerMarkdown } from "../messages/composer-markdown";
+import {
+  composerChips,
+  readComposerSnapshot,
+} from "../messages/composer-document";
+import {
+  readTaskTokens,
+  signTaskTokens,
+  taskTokenFallback,
+  taskTokenTags,
+} from "../messages/task-tokens";
 import {
   readView,
   writeView,
@@ -157,6 +172,11 @@ export function TaskSoloDraft({
     state.primary ?? agent,
     eligible,
   );
+  // Projects lift into `workspace` on load, so every chip is a reference.
+  const references = (draft: MentionDraft) =>
+    composerChips(readComposerSnapshot(draft.document)).flatMap(({ token }) =>
+      token.kind === "nexus.project" ? [] : [token as TaskReference],
+    );
   const snapshot = (
     draft: MentionDraft,
     attachments: TaskDraft["attachments"] = [],
@@ -167,6 +187,7 @@ export function TaskSoloDraft({
         ? current.current.primary
         : explicit[0]
       : eligiblePrimary?.pubkey;
+    const chips = references(draft);
     return context
       ? {
           draftId: route.draftId,
@@ -176,6 +197,7 @@ export function TaskSoloDraft({
           recipients: explicit.length ? explicit : primary ? [primary] : [],
           ...(primary ? { primary } : {}),
           ...(draft.workspace ? { workspace: draft.workspace } : {}),
+          ...(chips.length ? { references: chips } : {}),
           attachments,
           ...(current.current.workspaceLead &&
           draft.workspace?.id === current.current.workspaceLead
@@ -235,6 +257,15 @@ export function TaskSoloDraft({
         const recipients = saved.event.tags
           .filter(([key]) => key === "p")
           .map((tag) => tag[1] ?? "");
+        const tokens = readTaskTokens(saved.event.tags);
+        if (
+          tokens.some(
+            (token) =>
+              token.kind === "nexus.skill" &&
+              !recipients.includes(token.target),
+          )
+        )
+          throw new Error("The saved skill belongs to another task agent.");
         const active = () => {
           try {
             return (
@@ -259,26 +290,42 @@ export function TaskSoloDraft({
         const targetKey = `draft:${recovery.channelId}`;
         const targetRevision = viewRevision(scope, targetKey);
         const target = mentionDraft(readView(scope, targetKey, ""));
-        const content = composerMarkdown(draft);
         const retained = files.snapshot();
         const uploaded = retained.flatMap((item) =>
           item.uploaded ? [item.uploaded] : [],
         );
-        let outgoing: ReturnType<typeof attachmentMessage> | undefined;
+        const chips = references(draft);
+        let unchanged = false;
         if (uploaded.length === retained.length) {
           try {
-            outgoing = attachmentMessage(content, uploaded, uploaded[0]?.url);
+            // Earlier builds signed chips as fallback lines after the prose.
+            unchanged = [
+              composerMarkdown(draft),
+              [composerMarkdown(draft, "legacy"), taskTokenFallback(chips)]
+                .filter(Boolean)
+                .join("\n\n"),
+            ].some((content) => {
+              const outgoing = attachmentMessage(
+                content,
+                uploaded,
+                uploaded[0]?.url,
+              );
+              return (
+                outgoing.content === saved.event.content &&
+                JSON.stringify(outgoing.tags) ===
+                  JSON.stringify(
+                    saved.event.tags.filter(([name]) => name === "imeta"),
+                  )
+              );
+            });
           } catch {
             /* Changed/invalid files remain editable; never re-upload recovery. */
           }
         }
         const edited =
-          !outgoing ||
-          outgoing.content !== saved.event.content ||
-          JSON.stringify(outgoing.tags) !==
-            JSON.stringify(
-              saved.event.tags.filter(([name]) => name === "imeta"),
-            ) ||
+          !unchanged ||
+          JSON.stringify(taskTokenTags(chips)) !==
+            JSON.stringify(taskTokenTags(tokens)) ||
           JSON.stringify([...(selection?.recipients ?? [])].sort()) !==
             JSON.stringify([...new Set(recipients)].sort());
         const targetFiles = attachmentDraft(
@@ -381,6 +428,15 @@ export function TaskSoloDraft({
       const uploaded = await files.prepareForSend(signal);
       checkActive();
       input.attachments = uploaded;
+      const chips = input.references ?? [];
+      taskTokenTags(chips);
+      if (
+        chips.some(
+          (token) =>
+            token.kind === "nexus.skill" && token.target !== input.primary,
+        )
+      )
+        throw new Error("Select a skill for the primary agent.");
       const result = await context.mode.prepare(input, signal);
       checkActive();
       if (!result.ok)
@@ -449,18 +505,20 @@ export function TaskSoloDraft({
         if (reason instanceof ChatNotStarted)
           onFailed?.(prepared.channelId, reason.message);
       });
-      const firstEvent = session.messages.send(
-        prepared.channelId,
-        input.text,
-        [input.primary],
-        uploaded,
-        taskFirstEventRecovery({
-          draftId: input.draftId,
-          revision: input.revision,
-          preparationId: prepared.preparationId,
-          channelId: prepared.channelId,
-          regionLabel: context.label,
-        }),
+      const firstEvent = signTaskTokens(chips, () =>
+        session.messages.send(
+          prepared.channelId,
+          input.text,
+          [input.primary],
+          uploaded,
+          taskFirstEventRecovery({
+            draftId: input.draftId,
+            revision: input.revision,
+            preparationId: prepared.preparationId,
+            channelId: prepared.channelId,
+            regionLabel: context.label,
+          }),
+        ),
       );
       await session.outbox.whenPrepared(firstEvent);
       signal.throwIfAborted();
@@ -481,68 +539,97 @@ export function TaskSoloDraft({
       if (!controller.signal.aborted) setBusy(false);
     }
   }
+  const [boundScope, boundViewer, boundIncarnation] = context
+    ? [
+        context.binding.scope,
+        context.binding.viewer,
+        context.binding.incarnation,
+      ]
+    : [];
+  // The composer's `@` folders and `#` workspaces read this binding.
+  const completion = useMemo(
+    () =>
+      boundScope !== undefined &&
+      boundViewer !== undefined &&
+      boundIncarnation !== undefined
+        ? {
+            binding: {
+              scope: boundScope,
+              viewer: boundViewer,
+              incarnation: boundIncarnation,
+            },
+            draft: true,
+          }
+        : undefined,
+    [boundScope, boundViewer, boundIncarnation],
+  );
   const Header = context?.mode.header;
   const selected = snapshot(state.draft);
   const canSubmit = !!selected?.primary && selected.recipients.every(eligible);
   return (
     <SoloDraftView title="New task">
-      <MessageComposer
-        session={session}
-        scope={scope}
-        channelId={route.draftId}
-        channelName="this task"
-        extensions={extensions}
-        chatPresentation
-        ownSoloConversation
-        inviteAgents
-        label="Message your task agent"
-        placeholder="What do you want to accomplish?"
-        autoFocus={!!focusRequest}
-        taskDraft={{
-          region:
-            context?.region ??
-            route.region.slice(route.region.lastIndexOf(":") + 1),
-          policy: context?.mode.participants,
-          recipient: selected?.primary,
-          selectPrimary: (pubkey, draft) => {
-            if (
-              attempt.current ||
+      <TaskCompletionContext.Provider value={completion}>
+        <MessageComposer
+          session={session}
+          scope={scope}
+          channelId={route.draftId}
+          channelName="this task"
+          extensions={extensions}
+          chatPresentation
+          ownSoloConversation
+          inviteAgents
+          label="Message your task agent"
+          placeholder="What do you want to accomplish?"
+          autoFocus={!!focusRequest}
+          taskDraft={{
+            region:
+              context?.region ??
+              route.region.slice(route.region.lastIndexOf(":") + 1),
+            policy: context?.mode.participants,
+            recipient: selected?.primary,
+            selectPrimary: (pubkey, draft) => {
+              if (
+                attempt.current ||
+                !context ||
+                !eligible(pubkey) ||
+                taskDraftContext(session, context.label)?.binding
+                  .incarnation !== context.binding.incarnation
+              )
+                return false;
+              try {
+                changed(draft, pubkey);
+                setError(undefined);
+                return true;
+              } catch (reason) {
+                setError(
+                  reason instanceof Error ? reason.message : String(reason),
+                );
+                return false;
+              }
+            },
+          }}
+          submission={{
+            draftKey: `${key}:new-draft`,
+            locked: busy,
+            disabled:
+              busy ||
               !context ||
-              !eligible(pubkey) ||
-              taskDraftContext(session, context.label)?.binding.incarnation !==
-                context.binding.incarnation
-            )
-              return false;
-            try {
-              changed(draft, pubkey);
-              setError(undefined);
-              return true;
-            } catch (reason) {
-              setError(
-                reason instanceof Error ? reason.message : String(reason),
-              );
-              return false;
-            }
-          },
-        }}
-        submission={{
-          draftKey: `${key}:new-draft`,
-          locked: busy,
-          disabled:
-            busy || !context || !canSubmit || !session.channelWrites.available,
-          attachments: true,
-          changed,
-          header: (draft, controls) => {
-            const input = snapshot(draft);
-            return Header && input ? (
-              <Header draft={input} {...controls} ui={taskHeaderUI} />
-            ) : null;
-          },
-          submit: (draft, files) => {
-            void start(draft, files);
-          },
-        }}
-      />
+              !canSubmit ||
+              !session.channelWrites.available,
+            attachments: true,
+            changed,
+            header: (draft, controls) => {
+              const input = snapshot(draft);
+              return Header && input ? (
+                <Header draft={input} {...controls} ui={taskHeaderUI} />
+              ) : null;
+            },
+            submit: (draft, files) => {
+              void start(draft, files);
+            },
+          }}
+        />
+      </TaskCompletionContext.Provider>
       {!context && (
         <p className={composerStyles.composerColumn} role="status">
           {TASK_UNAVAILABLE}

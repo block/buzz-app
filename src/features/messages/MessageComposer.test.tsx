@@ -37,7 +37,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect, useLayoutEffect } from "react";
+import { type ReactNode, useContext, useEffect, useLayoutEffect } from "react";
+import { TaskCompletionContext } from "./selected-mention-context";
+import { readComposerSnapshot } from "./composer-document";
+import { channelQuery } from "../../bundled/channels/channel-query";
 import { createRecovery } from "../relay/recovery";
 import type { Contribution } from "../../plugins/contributions";
 import type {
@@ -63,6 +66,7 @@ import { UploadError, UPLOAD_FAILURES } from "../relay/attachments";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import { createMessages } from "../relay/messages";
+import { taskTokenTags } from "./task-tokens";
 import { ClaudeProcess } from "../../bundled/claude-code/claude";
 import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
@@ -85,7 +89,7 @@ import type {
 } from "../relay/contracts";
 import { readView, viewRevision, writeView } from "../../shared/view-state";
 import { clearDraft } from "../../bundled/drafts-sent/drafts";
-import { followupDraft } from "./mention-draft";
+import { followupDraft, mentionDraft } from "./mention-draft";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import { EmojiCompletion } from "../../bundled/emoji/EmojiCompletion";
@@ -212,6 +216,7 @@ function mount(
   control?: LocalAgents,
   viewer?: string,
   agents?: Agents,
+  wrapper?: (props: { children: ReactNode }) => ReactNode,
 ) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
@@ -471,6 +476,7 @@ function mount(
   );
   const view = render(tree(), {
     reactStrictMode: true,
+    wrapper,
   });
   const input = () =>
     within(view.container).getByRole<ComposerInputElement>("textbox");
@@ -737,6 +743,72 @@ it.each(["missing", "stream"] as const)(
     expect(refreshMembership).toHaveBeenCalledOnce();
     expect(addAgents).not.toHaveBeenCalled();
     expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  "task draft submission",
+  "submission alone",
+  "taskDraft alone",
+] as const)(
+  "a plugin Composer seeded with chip data never gets it signed (%s)",
+  async (variant) => {
+    const folder = { kind: "nexus.folder", id: "/repos/notes", label: "notes" };
+    // Plugin-reachable seed data: the document is plain JSON.
+    const seed = mentionDraft({
+      text: "notes Fix",
+      recipients: [],
+      document: {
+        version: 1,
+        content: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "token", attrs: { source: "notes", semantic: folder } },
+                { type: "text", text: " Fix" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const submit = vi.fn();
+    if (variant === "taskDraft alone")
+      writeView("scope", "draft:channel", seed);
+    const h = mount({
+      ...(variant === "submission alone"
+        ? {}
+        : { taskDraft: { region: "tasks" } }),
+      ...(variant === "taskDraft alone"
+        ? {}
+        : {
+            submission: {
+              draftKey: "plugin-seed",
+              initialDraft: seed,
+              locked: false,
+              disabled: false,
+              submit,
+            },
+          }),
+    });
+    expect(
+      within(h.input()).getByRole("img", { name: "Folder notes" }),
+    ).toBeVisible();
+    h.submit();
+    if (variant === "task draft submission") {
+      // The plugin owns this send; the host signs nothing for it.
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      expect(submit.mock.calls[0]?.[0].document).toEqual(seed.document);
+    } else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Task tokens require a task chat.",
+      );
+      expect(submit).not.toHaveBeenCalled();
+    }
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.messages.reply).not.toHaveBeenCalled();
   },
 );
 
@@ -14426,7 +14498,7 @@ it.each(["revoked", "unavailable"])(
 );
 
 it.each([false, true])(
-  "inserts a bundled provider's chip as one atom and keeps it unsent until task references ship (task chat: %s)",
+  "inserts a bundled provider's chip as one atom and signs it only in a task chat (task chat: %s)",
   async (task) => {
     const publishes: ComposerCompletionProps["publish"][] = [];
     function Completion({ publish }: ComposerCompletionProps) {
@@ -14468,16 +14540,162 @@ it.each([false, true])(
     expect(
       within(h.input()).getByRole("img", { name: "Folder @notes" }),
     ).toBeVisible();
+    // The real message API, so the event shows what the host signs.
+    const events: { content: string; tags: string[][] }[] = [];
+    const relay = createMessages(
+      {
+        supports: () => true,
+        send: (event: { content: string; tags: string[][] }) => {
+          events.push(event);
+          return "channel-id";
+        },
+      } as unknown as Outbox,
+      "f".repeat(64),
+      () => undefined,
+      () => [],
+      () => {},
+    );
+    h.messages.send.mockImplementation((...args) => relay.send(...args));
     h.submit();
-    if (task) expect(screen.getByText(/cannot send/)).toBeVisible();
-    else
+    if (!task) {
       await waitFor(() =>
         expect(screen.getByRole("alert")).toHaveTextContent(
           "Task tokens require a task chat.",
         ),
       );
-    expect(h.messages.send).not.toHaveBeenCalled();
-    expect(h.input()).toHaveValue("Use @notes ");
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.input()).toHaveValue("Use @notes ");
+      return;
+    }
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(events).toHaveLength(1);
+    // The chip is its label as literal text, never a mention.
+    expect(events[0]?.content).toBe("Use &#64;notes");
+    expect(events[0]?.tags).toContainEqual(taskTokenTags([folder as never])[0]);
+    expect(events[0]?.tags.filter(([name]) => name === "p")).toEqual([
+      ["p", first.pubkey],
+    ]);
+  },
+);
+
+it.each([true, false])(
+  "a bundled `#` workspace choice files a task draft in one undo step, and nothing else (task draft: %s)",
+  async (task) => {
+    const publishes: ComposerCompletionProps["publish"][] = [];
+    const contexts: unknown[] = [];
+    function Completion({ publish }: ComposerCompletionProps) {
+      contexts.push(useContext(TaskCompletionContext));
+      useLayoutEffect(() => {
+        publishes.push(publish);
+      }, [publish]);
+      return null;
+    }
+    const provider: Contribution<ComposerCompletion> = {
+      id: "channel-typeahead",
+      key: "buzz.channels/channel-typeahead",
+      pluginId: "buzz.channels",
+      revision: "bundled",
+      title: "Channel",
+      match: ({ text, start }) => channelQuery(text, start),
+      component: Completion,
+    };
+    bundledContribution(provider);
+    const providers = [provider];
+    const empty: [] = [];
+    const none = { snapshot: () => empty, subscribe: () => () => {} };
+    const submit = vi.fn();
+    const h = mount({
+      extensions: {
+        tools: none,
+        inline: none,
+        completions: { snapshot: () => providers, subscribe: () => () => {} },
+      },
+      ...(task
+        ? {
+            taskDraft: { region: "tasks" },
+            submission: {
+              draftKey: "task-draft",
+              locked: false,
+              disabled: false,
+              submit,
+            },
+          }
+        : {}),
+    });
+    h.fill("Fix #Wo");
+    // Props a plugin's composer can pass never name a task binding; only the
+    // host task draft around a composer does (TaskSoloDraft).
+    expect(contexts.at(-1)).toBeUndefined();
+    const workspace = { id: "solo-workspace:work", label: "Work" };
+    act(() => {
+      publishes.at(-1)?.({
+        items: [{ id: "work", label: "Work", edit: { workspace } }],
+      } as unknown as CompletionResult);
+    });
+    fireEvent.keyDown(h.input(), { key: "Enter" });
+    if (!task) {
+      expect(h.input()).toHaveValue("Fix #Wo");
+      return;
+    }
+    expect(h.input()).toHaveValue("Fix ");
+    act(() => h.input().undo(false));
+    expect(h.input()).toHaveValue("Fix #Wo");
+    act(() => h.input().undo(true));
+    h.submit();
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(
+      readComposerSnapshot(submit.mock.calls[0]?.[0].document)?.attrs.workspace,
+    ).toEqual(workspace);
+  },
+);
+
+it.each([true, false])(
+  "inside a host task draft, only its own composer gets the draft's completion context (task draft: %s)",
+  (task) => {
+    const contexts: unknown[] = [];
+    function Completion() {
+      contexts.push(useContext(TaskCompletionContext));
+      return null;
+    }
+    const providers: readonly Contribution<ComposerCompletion>[] = [
+      {
+        id: "channel-typeahead",
+        key: "buzz.channels/channel-typeahead",
+        pluginId: "buzz.channels",
+        revision: "bundled",
+        title: "Channel",
+        match: ({ text, start }) => channelQuery(text, start),
+        component: Completion,
+      },
+    ];
+    const empty: [] = [];
+    const none = { snapshot: () => empty, subscribe: () => () => {} };
+    const draft = {
+      binding: { scope: "scope", viewer: "viewer", incarnation: "1" },
+      draft: true,
+    };
+    const h = mount(
+      {
+        extensions: {
+          tools: none,
+          inline: none,
+          completions: { snapshot: () => providers, subscribe: () => () => {} },
+        },
+        ...(task ? { taskDraft: { region: "tasks" } } : {}),
+      },
+      undefined,
+      undefined,
+      undefined,
+      ({ children }) => (
+        <TaskCompletionContext.Provider value={draft}>
+          {children}
+        </TaskCompletionContext.Provider>
+      ),
+    );
+    h.fill("Fix #Wo");
+    // Another composer the task draft renders, such as a plugin's, offers no
+    // task completions.
+    expect(contexts.at(-1)).toBe(task ? draft : undefined);
   },
 );
 

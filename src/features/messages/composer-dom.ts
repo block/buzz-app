@@ -136,8 +136,12 @@ export type ComposerInputElement = HTMLDivElement & {
   ): boolean | Promise<boolean>;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
-  /** A task draft's filing, kept in the document so undo restores it. */
-  setWorkspace(workspace: TaskWorkspace | null): boolean;
+  /** A task draft's filing, kept in the document so undo restores it. A
+   * `range` is the open query it replaces, in the same undo step. */
+  setWorkspace(
+    workspace: TaskWorkspace | null,
+    range?: { start: number; end: number },
+  ): boolean;
   /** A semantic chip over the open query, one undo step. */
   insertToken(
     token: ComposerToken,

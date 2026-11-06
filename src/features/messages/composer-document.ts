@@ -607,8 +607,10 @@ export function foreignComposerAttributes(value: unknown): boolean {
       const set = Object.entries(attrs).filter(
         ([, item]) => item !== null && item !== undefined,
       );
-      if (set.some(([key]) => !known?.[key])) return true;
-      chips ||= set.some(([key]) => key === "semantic");
+      // Saved projects are task data the snapshot may lift.
+      const legacy = (key: string) => type === "doc" && key === "projects";
+      if (set.some(([key]) => !known?.[key] && !legacy(key))) return true;
+      chips ||= set.some(([key]) => key === "semantic" || legacy(key));
     }
     if (Array.isArray(content)) pending.push(...content);
   }
@@ -635,6 +637,8 @@ function read(value: unknown): EditorNode | undefined {
   )
     return;
   const pending = [{ node: value.content, depth: 0 }];
+  // Earlier builds filed a draft as project tokens: inline, or in `projects`.
+  const projects: ComposerToken[] = [];
   let count = 0,
     length = 0;
   while (pending.length) {
@@ -654,15 +658,23 @@ function read(value: unknown): EditorNode | undefined {
       if (typeof node.text !== "string") return;
       length += node.text.length;
     }
-    if (
-      node.type === "doc" &&
-      node.attrs &&
-      typeof node.attrs === "object" &&
-      "workspace" in node.attrs &&
-      node.attrs.workspace !== null &&
-      !composerWorkspace(node.attrs.workspace)
-    )
-      return;
+    if (node.type === "doc" && node.attrs && typeof node.attrs === "object") {
+      if (
+        "workspace" in node.attrs &&
+        node.attrs.workspace !== null &&
+        !composerWorkspace(node.attrs.workspace)
+      )
+        return;
+      const saved = "projects" in node.attrs ? node.attrs.projects : null;
+      if (saved !== null && saved !== undefined) {
+        if (!Array.isArray(saved)) return;
+        for (const value of saved) {
+          const token = composerToken(value);
+          if (token?.kind !== "nexus.project") return;
+          projects.push(token);
+        }
+      }
+    }
     if (node.type === "token") {
       if (
         !node.attrs ||
@@ -682,6 +694,7 @@ function read(value: unknown): EditorNode | undefined {
           ("pending" in node.attrs && node.attrs.pending)
         )
           return;
+        if (token.kind === "nexus.project") projects.push(token);
       }
     }
     if (length > 16000) return;
@@ -695,7 +708,36 @@ function read(value: unknown): EditorNode | undefined {
     const doc = composerSchema.nodeFromJSON(value.content);
     if (doc.type !== composerSchema.nodes.doc) return;
     doc.check();
-    return doc;
+    if (!projects.length) return doc;
+    // One project lifts into the workspace; prose and other atoms stay.
+    const [project] = projects;
+    const workspace =
+      project && composerWorkspace({ id: project.id, label: project.label });
+    if (
+      !workspace ||
+      doc.attrs.workspace ||
+      projects.some(
+        (item) => item.id !== project.id || item.label !== project.label,
+      )
+    )
+      return;
+    const lift = (node: EditorNode): EditorNode =>
+      node.isLeaf
+        ? node
+        : node.copy(
+            Fragment.fromArray(
+              node.content.content
+                .filter(
+                  (child) =>
+                    composerToken(child.attrs.semantic)?.kind !==
+                    "nexus.project",
+                )
+                .map(lift),
+            ),
+          );
+    const lifted = doc.type.create({ workspace }, lift(doc).content);
+    lifted.check();
+    return lifted;
   } catch {
     return;
   }

@@ -19,6 +19,14 @@ import {
   followUpStorage,
   type FollowUpMessage,
 } from "./follow-up-storage";
+import { taskTokenTags } from "./task-tokens";
+
+const task = vi.hoisted(() => ({ channel: false }));
+vi.mock("../solo/task-mode", async (actual) => ({
+  ...(await actual<typeof import("../solo/task-mode")>()),
+  isTaskChannel: () => task.channel,
+  validateTaskRecipients: () => undefined,
+}));
 
 const secret = new Uint8Array(32).fill(7);
 const viewer = getPublicKey(secret);
@@ -35,6 +43,7 @@ const message: FollowUpMessage = {
 const cleanup: (() => void)[] = [];
 const journals = new Map<string, readonly OutgoingEvent[]>();
 beforeEach(() => {
+  task.channel = false;
   localStorage.clear();
   journals.clear();
   const locks = new Map<string, Promise<unknown>>();
@@ -330,32 +339,60 @@ it("restores ordered payloads in the same account/community without automaticall
   ).toEqual(["Second"]);
 });
 
-it("keeps a saved follow-up with task details this build cannot send, unsent and unchanged", async () => {
-  const key = `buzz-view.v1:${JSON.stringify([scope, "follow-up:with-task-details"])}`;
-  followUpStorage(scope).save({
-    ...message,
-    id: "with-task-details",
-    createdAt: 1,
-    // Another build saved task details beside the message.
-    ...({
-      taskTokens: [
-        {
-          kind: "nexus.skill",
-          id: "/SKILL.md",
-          label: "/review",
-          target: agent,
-        },
-      ],
-    } as object),
-  });
-  const saved = localStorage.getItem(key);
+it("restores a task chat's queued chips and signs them on the recovered send, never in another chat", async () => {
+  const token = {
+    kind: "nexus.folder" as const,
+    id: "/Users/me/.buzz/REPOS/notes",
+    label: "notes",
+  };
+  fixture().enqueue({ ...message, taskTokens: [token] });
   const restored = fixture();
-  await restored.owner.ready.catch(() => {});
-  expect(restored.queue.storageError()).toContain("could not be read");
-  expect(restored.queue.snapshot()).toEqual([]);
+  await restored.owner.ready;
+  const row = restored.queue.snapshot()[0];
+  if (!row) throw new Error("Queued message was not restored");
+  expect(row.message?.taskTokens).toEqual([token]);
+  // `chat` is an ordinary Solo chat: its chips never go out as prose.
+  restored.queue.sendNow(row.id);
+  await vi.waitFor(() =>
+    expect(restored.queue.snapshot()[0]?.error).toContain(
+      "Task tokens require a task chat",
+    ),
+  );
   expect(restored.send).not.toHaveBeenCalled();
-  expect(localStorage.getItem(key)).toBe(saved);
+  task.channel = true;
+  restored.queue.sendNow(row.id);
+  await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledOnce());
+  const [event] = restored.publish.mock.calls[0] as unknown as [
+    { tags: string[][] },
+  ];
+  expect(event.tags).toContainEqual(taskTokenTags([token])[0]);
 });
+
+it.each([
+  {},
+  [{ kind: "unknown", id: "broken", label: "Broken" }],
+  Array(33).fill({ kind: "nexus.folder", id: "/f", label: "f" }),
+])(
+  "keeps saved messages with invalid or oversized task tokens unsent and unchanged: %j",
+  async (taskTokens) => {
+    followUpStorage(scope).save({
+      ...message,
+      id: "invalid-tokens",
+      createdAt: 1,
+      taskTokens: taskTokens as unknown as NonNullable<
+        FollowUpMessage["taskTokens"]
+      >,
+    });
+    const key = `buzz-view.v1:${JSON.stringify([scope, "follow-up:invalid-tokens"])}`;
+    const saved = localStorage.getItem(key);
+    const restored = fixture();
+    await restored.owner.ready.catch(() => {});
+    expect(restored.queue.storageError()).toContain("could not be read");
+    expect(restored.queue.snapshot()).toEqual([]);
+    expect(restored.send).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe(saved);
+  },
+);
 
 it("refuses enqueue on save failure and leaves no in-memory-only queued row", () => {
   const h = fixture();

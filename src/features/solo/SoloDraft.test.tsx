@@ -14,7 +14,8 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useLayoutEffect } from "react";
+import { useContext, useLayoutEffect } from "react";
+import { TaskCompletionContext } from "../messages/selected-mention-context";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import * as modelStorage from "../messages/solo-model-picks-storage";
 import { readView, writeView } from "../../shared/view-state";
@@ -22,7 +23,11 @@ import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
-import { createOutbox } from "../relay/outbox";
+import { createOutbox, type Outbox } from "../relay/outbox";
+import { createMessages } from "../relay/messages";
+import { taskTokenFallback, taskTokenTags } from "../messages/task-tokens";
+import { composerMarkdown } from "../messages/composer-markdown";
+import { composerTokenName } from "../messages/composer-token";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
 import { setDefaultAgent } from "./default-agent";
@@ -3385,10 +3390,10 @@ const chip = {
   label: "@repo",
   verified: true,
 };
-// Each saved chip either restores as one or marks the draft another build's.
+// Each saved chip either restores as one (see the next test) or marks the
+// draft another build's.
 const savedChips = {
   projects: undefined,
-  valid: { source: "@repo", semantic: chip },
   kind: { source: "@repo", semantic: { kind: "nexus.repository", id: "repo" } },
   label: { source: "@other", semantic: chip },
   recipient: {
@@ -3486,8 +3491,8 @@ it.each(Object.keys(savedChips) as (keyof typeof savedChips)[])(
         );
         expect(screen.getByText(/cannot send/)).toBeVisible();
         expect(
-          screen.queryByRole("img", { name: "Repository @repo" }) !== null,
-        ).toBe(variant === "valid");
+          screen.queryByRole("img", { name: "Repository @repo" }),
+        ).toBeNull();
         await user.click(screen.getByRole("button", { name: "Send message" }));
         expect(prepare).not.toHaveBeenCalled();
         expect(f.channelWrites.start).not.toHaveBeenCalled();
@@ -3502,6 +3507,219 @@ it.each(Object.keys(savedChips) as (keyof typeof savedChips)[])(
     }
   },
 );
+
+const otherSkill = {
+  kind: "nexus.skill",
+  id: JSON.stringify({ path: "/repo/SKILL.md" }),
+  label: "/Review",
+  target: "b".repeat(64),
+};
+it.each([
+  ["a repository", chip],
+  ["another agent's skill", otherSkill],
+] as const)(
+  "restores %s chip saved beside a staged chat link across remount; starts the task with it inline and signed only if it is for the primary agent",
+  async (_, saved) => {
+    const f = setup();
+    const region = createSoloRegionFixture(f.session.viewer);
+    const agent = "a".repeat(64);
+    const prepare = vi.fn<
+      import("../channel-navigation/solo-navigation-contract").SoloTaskMode["prepare"]
+    >(async (input) => ({
+      ok: true as const,
+      channelId: "22222222-2222-4222-8222-222222222222",
+      members: input.recipients,
+      revision: input.revision,
+      preparationId: `prepared:${input.revision}`,
+    }));
+    const source = await region.register({
+      task: {
+        prepare,
+        markChannelStarted: async () => "start",
+        recordFirstEvent: async () => {},
+        participants: {
+          eligible: (key) => key === agent,
+          defaultRecipient: () => agent,
+          makePrimary: async () => {},
+        },
+      },
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    // The real message API, so the event shows what the host signs.
+    const events: { content: string; tags: string[][] }[] = [];
+    const relay = createMessages(
+      {
+        supports: () => true,
+        send: (event: { content: string; tags: string[][] }) => {
+          events.push(event);
+          return "d".repeat(64);
+        },
+      } as unknown as Outbox,
+      f.session.viewer,
+      () => undefined,
+      () => [],
+      () => {},
+    );
+    f.messages.send.mockImplementation((...args) => relay.send(...args));
+    try {
+      source.handle.openDraft(source.binding(), { mode: "task" });
+      const target = region.navigator.snapshot().entry.target;
+      if (target.kind !== "page") throw new Error("Missing task route");
+      const route = soloDraft(target.route?.params);
+      if (!route?.task) throw new Error("Missing task draft identity");
+      const own = projectComposerDocument(
+        readComposerDocument(
+          mentionDraft("Fix [Session: Fix](buzz://channel/session-id)"),
+          [],
+        ),
+      ).draft;
+      const doc = own.document?.content as {
+        content: { content: unknown[] }[];
+      };
+      const [paragraph] = doc.content;
+      assert.exists(paragraph);
+      const key = `solo:task:${route.task.draftId}:new-draft`;
+      writeView(region.scope, key, {
+        ...own,
+        document: {
+          version: 1,
+          content: {
+            ...doc,
+            content: [
+              {
+                ...paragraph,
+                content: [
+                  {
+                    type: "token",
+                    attrs: { source: saved.label, semantic: saved },
+                  },
+                  { type: "text", text: " " },
+                  ...paragraph.content,
+                ],
+              },
+            ],
+          },
+        },
+      });
+      const storage = `buzz-view.v1:${JSON.stringify([region.scope, key])}`;
+      const stored = localStorage.getItem(storage);
+      const started = vi.fn();
+      const mount = () =>
+        render(
+          <SoloDraft
+            session={f.session}
+            scope={region.scope}
+            agent={route.agent}
+            task={route.task}
+            onStarted={started}
+          />,
+        );
+      const first = mount();
+      expect(
+        screen.getByRole("img", { name: composerTokenName(saved as never) }),
+      ).toBeVisible();
+      expect(screen.queryByText(/cannot send/)).toBeNull();
+      first.unmount();
+      expect(localStorage.getItem(storage)).toBe(stored);
+      mount();
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Send message" }));
+      if (saved === otherSkill) {
+        expect(
+          await screen.findByText("Select a skill for the primary agent."),
+        ).toBeVisible();
+        expect(prepare).not.toHaveBeenCalled();
+        expect(events).toEqual([]);
+        return;
+      }
+      await waitFor(() => expect(started).toHaveBeenCalledOnce());
+      expect(prepare.mock.calls[0]?.[0].references).toEqual([chip]);
+      expect(events).toHaveLength(1);
+      // The chip is its label as literal text, never a mention.
+      expect(events[0]?.content).toContain("&#64;repo Fix");
+      expect(events[0]?.content).toContain("buzz://channel/session-id");
+      expect(events[0]?.tags).toContainEqual(taskTokenTags([chip as never])[0]);
+    } finally {
+      cleanup();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
+
+it("gives the task draft's own region binding to its composer's completions", async () => {
+  const f = setup();
+  const region = createSoloRegionFixture(f.session.viewer);
+  const agent = "a".repeat(64);
+  const source = await region.register({
+    task: {
+      prepare: async () => ({ ok: false, reason: "unused" }),
+      markChannelStarted: async () => "start",
+      recordFirstEvent: async () => {},
+      participants: {
+        eligible: (key) => key === agent,
+        defaultRecipient: () => agent,
+        makePrimary: async () => {},
+      },
+    },
+  });
+  const lookup = vi
+    .spyOn(soloNavigation, "soloNavigationFor")
+    .mockReturnValue(region.service);
+  const contexts: unknown[] = [];
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "probe",
+      key: "probe/probe",
+      pluginId: "probe",
+      revision: "1",
+      title: "Probe",
+      match: ({ text, start }) =>
+        text.startsWith("#") ? { start: 0, end: start, query: "" } : null,
+      component: () => {
+        contexts.push(useContext(TaskCompletionContext));
+        return null;
+      },
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  try {
+    render(
+      <SoloDraft
+        session={f.session}
+        scope="task-binding"
+        agent={agent}
+        task={{
+          region: source.handle.label,
+          draftId: "44444444-4444-4444-8444-444444444444",
+        }}
+        extensions={{
+          inline: none,
+          tools: none,
+          completions: {
+            snapshot: () => completions,
+            subscribe: () => () => {},
+          },
+        }}
+        onStarted={vi.fn()}
+      />,
+    );
+    await userEvent.type(screen.getByRole("textbox"), "#");
+    const { scope, viewer, incarnation } = source.binding();
+    expect(contexts.at(-1)).toEqual({
+      binding: { scope, viewer, incarnation },
+      draft: true,
+    });
+  } finally {
+    cleanup();
+    lookup.mockRestore();
+    await region.dispose();
+  }
+});
 
 it("prepares a task before starting it, keeps a refused draft and signs only its primary recipient", async () => {
   const f = setup();
@@ -3675,10 +3893,17 @@ it("rejects multiple task targets before preparation or creation and retains the
   }
 });
 
-it.each(["text", "foreign", "workspace"] as const)(
-  "resumes the saved task pair before prepare and transfers edits; keeps another build's task references unchanged and unsent (%s)",
+it.each([
+  "text",
+  "token",
+  "workspace",
+  "legacy-workspace",
+  "malformed",
+] as const)(
+  "resumes the saved task pair before prepare and transfers edits, including a chip-only change; refuses malformed signed chips (%s)",
   async (variant) => {
-    const foreign = variant === "foreign";
+    const tokenOnly = variant === "token";
+    const malformed = variant === "malformed";
     const f = setup();
     const region = createSoloRegionFixture(f.session.viewer);
     let eligible = true;
@@ -3769,8 +3994,7 @@ it.each(["text", "foreign", "workspace"] as const)(
       label: "@repo",
       verified: false,
     };
-    // Another build saved this draft and signed its first message.
-    const draft = foreign
+    const draft = tokenOnly
       ? {
           text: "",
           recipients: [],
@@ -3807,12 +4031,18 @@ it.each(["text", "foreign", "workspace"] as const)(
           },
         }
       : taggedDraft("Edited while original was signing");
-    if (foreign)
-      event.tags.push([
-        "nexus.tokens.v1",
-        JSON.stringify([{ ...newToken, id: "old-repository" }]),
-      ]);
-    if (variant === "workspace") {
+    if (tokenOnly) {
+      Object.assign(draft, mentionDraft(draft));
+      // An earlier build signed the old chip as a fallback line.
+      const oldToken = { ...newToken, id: "old-repository" };
+      event.content = [
+        composerMarkdown(mentionDraft(draft), "legacy"),
+        taskTokenFallback([oldToken]),
+      ].join("\n\n");
+      event.tags.push(...taskTokenTags([oldToken]));
+    }
+    if (malformed) event.tags.push(["nexus.tokens.v1", "[{}]"]);
+    if (variant === "workspace" || variant === "legacy-workspace") {
       // Personal filing is document metadata, never signed message content.
       const workspace = {
         id: "solo-workspace:private",
@@ -3824,7 +4054,11 @@ it.each(["text", "foreign", "workspace"] as const)(
           version: 1,
           content: {
             type: "doc",
-            attrs: { workspace },
+            // An earlier build filed the draft as a project token and signed it.
+            attrs:
+              variant === "workspace"
+                ? { workspace }
+                : { projects: [{ kind: "nexus.project", ...workspace }] },
             content: [
               {
                 type: "paragraph",
@@ -3849,6 +4083,11 @@ it.each(["text", "foreign", "workspace"] as const)(
       expect(filed.workspace).toEqual(workspace);
       Object.assign(draft, filed);
       event.content = filed.text;
+      if (variant === "legacy-workspace")
+        event.tags.push([
+          "nexus.tokens.v1",
+          JSON.stringify([{ kind: "nexus.project", ...workspace }]),
+        ]);
     }
     writeView("task-resume", `solo:task:${route.draftId}:new-draft`, draft);
     const saved = localStorage.getItem(
@@ -3864,14 +4103,15 @@ it.each(["text", "foreign", "workspace"] as const)(
           onStarted={started}
         />,
       );
-      if (foreign) {
-        expect(screen.getByText(/cannot send/)).toBeVisible();
-        expect(screen.getByRole("textbox")).toHaveTextContent(
-          "Edited while original was signing",
-        );
+      if (malformed) {
         await userEvent
           .setup()
           .click(screen.getByRole("button", { name: "Send message" }));
+        await waitFor(() =>
+          expect(screen.getByRole("alert")).toHaveTextContent(
+            "invalid task tokens",
+          ),
+        );
         expect(resumeStart).not.toHaveBeenCalled();
         expect(retry).not.toHaveBeenCalled();
         expect(started).not.toHaveBeenCalled();
@@ -3901,7 +4141,7 @@ it.each(["text", "foreign", "workspace"] as const)(
       expect(
         readView("task-resume", `solo:task:${route.draftId}:new-draft`, null),
       ).toBe("");
-      if (variant === "workspace") {
+      if (variant === "workspace" || variant === "legacy-workspace") {
         expect(readView("task-resume", `draft:${channelId}`, null)).toBeNull();
         mounted.unmount();
         return;

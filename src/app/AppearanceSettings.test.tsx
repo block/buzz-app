@@ -340,6 +340,11 @@ it("chooses a theme by pointer and keyboard, saves only the theme, and recovers 
   expect(
     within(group).getByRole("radio", { name: "Troupe" }),
   ).toHaveAccessibleDescription("Soft periwinkle on calm, even grays.");
+  expect(
+    within(group).getByRole("radio", { name: "Cacophony" }),
+  ).toHaveAccessibleDescription(
+    "Stacked slate panels with an electric violet glow.",
+  );
   expect(buzz).toBeChecked();
   expect(relax).toHaveAccessibleDescription(
     "Deep plum frame around a bright, open workspace.",
@@ -352,9 +357,10 @@ it("chooses a theme by pointer and keyboard, saves only the theme, and recovers 
   expect(group.querySelectorAll("svg[aria-hidden='true']")).toHaveLength(
     THEMES.length,
   );
-  expect(
-    group.querySelector("svg[data-theme='relax'][data-color-mode]"),
-  ).not.toBeNull();
+  for (const theme of ["relax", "cacophony"])
+    expect(
+      group.querySelector(`svg[data-theme='${theme}'][data-color-mode]`),
+    ).not.toBeNull();
 
   const save = vi
     .spyOn(Storage.prototype, "setItem")

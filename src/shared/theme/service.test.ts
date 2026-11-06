@@ -573,24 +573,31 @@ it("keeps density active on storage failure, retries, and follows other windows"
   expect(b.root.dataset.messageDensity).toBe("default");
 });
 
-it.each([null, "", "RELAX", "garbage", "buzz", "relax", "utmost", "troupe"])(
-  "bootstrap and service agree on stored theme %j",
-  (value) => {
-    const b = browser();
-    if (value !== null) b.values.set(THEME_KEY, value);
-    runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
-      localStorage: b.storage,
-      document: b.host.document,
-      matchMedia: b.host.matchMedia,
-    });
-    const initial = b.root.dataset.theme;
-    const app = createAppearance(b.host);
-    expect(initial).toBe(parseTheme(value));
-    expect(app.snapshot().theme).toBe(parseTheme(value));
-    expect(b.root.dataset.theme).toBe(initial);
-    app.dispose();
-  },
-);
+it.each([
+  null,
+  "",
+  "RELAX",
+  "garbage",
+  "buzz",
+  "relax",
+  "utmost",
+  "troupe",
+  "cacophony",
+])("bootstrap and service agree on stored theme %j", (value) => {
+  const b = browser();
+  if (value !== null) b.values.set(THEME_KEY, value);
+  runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+    localStorage: b.storage,
+    document: b.host.document,
+    matchMedia: b.host.matchMedia,
+  });
+  const initial = b.root.dataset.theme;
+  const app = createAppearance(b.host);
+  expect(initial).toBe(parseTheme(value));
+  expect(app.snapshot().theme).toBe(parseTheme(value));
+  expect(b.root.dataset.theme).toBe(initial);
+  app.dispose();
+});
 
 it("keeps every registered theme restorable before and after startup", () => {
   for (const theme of THEMES) {

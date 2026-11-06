@@ -1,5 +1,11 @@
 /** Named, complete color sets. A theme owns the shell's neutrals, canvas and sidebar. */
-export const THEMES = ["buzz", "relax", "utmost", "troupe"] as const;
+export const THEMES = [
+  "buzz",
+  "relax",
+  "utmost",
+  "troupe",
+  "cacophony",
+] as const;
 export type Theme = (typeof THEMES)[number];
 export const DEFAULT_THEME: Theme = "buzz";
 export const THEME_KEY = "buzz-theme.v1";
@@ -50,6 +56,14 @@ export const THEME_DEFINITIONS: Readonly<Record<Theme, ThemeDefinition>> = {
     frame: { light: "light", dark: "dark" },
     accentFamily: "troupe",
     accentName: "Periwinkle",
+  },
+  cacophony: {
+    id: "cacophony",
+    label: "Cacophony",
+    description: "Stacked slate panels with an electric violet glow.",
+    frame: { light: "light", dark: "dark" },
+    accentFamily: "iris",
+    accentName: "Iris",
   },
 };
 

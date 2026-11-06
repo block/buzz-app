@@ -96,7 +96,7 @@ const FRAMED_THEMES = [
     },
   },
 ];
-const UNFRAMED_THEMES = ["troupe"];
+const UNFRAMED_THEMES = ["troupe", "cacophony"];
 const THEME_COUNT = 1 + FRAMED_THEMES.length + UNFRAMED_THEMES.length;
 
 for (const [index, theme] of FRAMED_THEMES.entries()) {
@@ -320,4 +320,58 @@ test("a theme with a light frame keeps the shell unframed in both modes and the 
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "troupe");
   await expectFramed(page, false);
+});
+
+test("Cacophony keeps its frame in the page mode and stacks three distinct dark layers", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await appearance(page);
+  const group = page.getByRole("radiogroup", { name: "Theme", exact: true });
+  await group.getByText("Cacophony", { exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "cacophony");
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "theme");
+
+  await expectFramed(page, false);
+  expect(await resolved(page, "--surface-sidebar", "#shell-navigation")).toBe(
+    "rgb(240, 241, 245)",
+  );
+  expect(await resolved(page, "--bg-app", "header.shell-header")).toBe(
+    "rgb(225, 227, 234)",
+  );
+  expect(await resolved(page, "--accent-9", "body")).toBe("rgb(95, 85, 250)");
+
+  await chooseColorMode(page, "Dark");
+  await expectFramed(page, false);
+  const layers = {
+    canvas: await resolved(page, "--bg-app", "header.shell-header"),
+    sidebar: await resolved(page, "--surface-sidebar", "#shell-navigation"),
+    main: await resolved(page, "--surface-panel", "body"),
+  };
+  expect(layers).toEqual({
+    canvas: "rgb(18, 19, 24)",
+    sidebar: "rgb(25, 26, 33)",
+    main: "rgb(32, 33, 43)",
+  });
+  const brightness = (color) =>
+    color.match(/\d+/g).reduce((sum, channel) => sum + Number(channel), 0);
+  expect(brightness(layers.canvas)).toBeLessThan(brightness(layers.sidebar));
+  expect(brightness(layers.sidebar)).toBeLessThan(brightness(layers.main));
+  const bubbles = {
+    received: await resolved(page, "--bubble-received", "body"),
+    own: await resolved(page, "--bubble-neutral", "body"),
+  };
+  expect(bubbles).toEqual({
+    received: "rgb(44, 46, 56)",
+    own: "rgb(58, 60, 69)",
+  });
+  expect(
+    new Set([...Object.values(bubbles), layers.main]).size,
+    "the bubbles and the main pane are three distinct steps",
+  ).toBe(3);
+  expect(
+    await background(page.locator("#shell-navigation .panel[data-sidebar]")),
+  ).toBe(layers.sidebar);
+  expect(await resolved(page, "--accent-9", "body")).toBe("rgb(95, 85, 250)");
 });

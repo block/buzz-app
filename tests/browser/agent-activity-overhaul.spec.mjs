@@ -167,7 +167,9 @@ test("message activity opens a grouped preview and the agent's profile without l
       },
     });
   });
-  const region = thread.getByRole("region", {
+  const requestRow = thread.locator(`[data-message-id="${root.id}"]`);
+  // Expired outcomes can follow public replies; inspect this request's activity.
+  const region = requestRow.getByRole("region", {
     name: "Agent activity on this message",
     exact: true,
   });
@@ -210,7 +212,6 @@ test("message activity opens a grouped preview and the agent's profile without l
     ["h", "alpha"],
     ["e", root.id],
   ]);
-  const requestRow = thread.locator(`[data-message-id="${root.id}"]`);
   const messageActions = requestRow.getByRole("group", {
     name: "Message actions",
     includeHidden: true,

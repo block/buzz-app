@@ -133,7 +133,10 @@ export function PluginImport({
   const currentPlugin = catalog.plugins.find(
     (item) => item.manifest.id === updateId,
   );
-  const savedSource = updateAction?.source ?? currentPlugin?.updateSource;
+  const recordedSource = updateAction?.source ?? currentPlugin?.updateSource;
+  // A URL install is pinned to one artifact; it updates through its recommendation.
+  const savedSource =
+    recordedSource && "url" in recordedSource ? undefined : recordedSource;
   const [repository, setRepository] = useState(
     initialGit?.repository ??
       (savedSource && "repository" in savedSource
@@ -357,9 +360,11 @@ export function PluginImport({
       ? `${existing.manifest.name} is already installed from ${
           installedSource && "repository" in installedSource
             ? sourceLabel(installedSource.repository, installedSource.path)
-            : installedSource
-              ? sourceLabel(installedSource.root, installedSource.path)
-              : "an unknown source"
+            : installedSource && "url" in installedSource
+              ? installedSource.url
+              : installedSource
+                ? sourceLabel(installedSource.root, installedSource.path)
+                : "an unknown source"
         }; remove it first to install it from ${sourceLabel(preview.source, candidate.path)}.`
       : null;
   const constraint =

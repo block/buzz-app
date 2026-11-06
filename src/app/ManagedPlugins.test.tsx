@@ -181,6 +181,94 @@ it("reviews at the pinned commit, then installs and enables only after confirmat
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
+it("reviews a URL recommendation from its pinned artifact without Git", async () => {
+  const { manager, git } = harness();
+  const sha256 = "a".repeat(64);
+  const url = vi.fn(async () =>
+    preview({
+      source: "https://cdn.example.com/example.managed.json",
+      commit: null,
+      candidates: [{ path: ".", revision: sha256, manifest }],
+    }),
+  );
+  Object.assign(manager.imports, { url });
+  show(
+    manager,
+    ready([
+      {
+        id: "example.managed",
+        url: "https://cdn.example.com/example.managed.json",
+        sha256,
+        state: "missing",
+      },
+    ]),
+    [],
+    { strict: true },
+  );
+  expect(
+    screen.getByText("https://cdn.example.com/example.managed.json"),
+  ).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Review plugin access",
+  });
+  expect(url).toHaveBeenCalledExactlyOnceWith(
+    "https://cdn.example.com/example.managed.json",
+    sha256,
+  );
+  expect(git).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Install plugin" }),
+  );
+  await waitFor(() =>
+    expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+      "preview",
+      ".",
+    ),
+  );
+});
+
+it("refuses a URL artifact that is a different plugin", async () => {
+  const { manager, imports } = harness();
+  const url = vi.fn(async () =>
+    preview({
+      commit: null,
+      candidates: [
+        {
+          path: ".",
+          revision: "b".repeat(64),
+          manifest: { ...manifest, id: "example.other" },
+        },
+      ],
+    }),
+  );
+  Object.assign(manager.imports, { url });
+  show(
+    manager,
+    ready([
+      {
+        id: "example.managed",
+        url: "https://cdn.example.com/example.managed.json",
+        sha256: "b".repeat(64),
+        state: "missing",
+      },
+    ]),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Review and install example.managed" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    await within(dialog).findByText(
+      "The plugin at this URL is example.other, not example.managed.",
+    ),
+  ).toBeVisible();
+  expect(imports.discard).toHaveBeenCalledWith("preview");
+  expect(manager.installImport).not.toHaveBeenCalled();
+});
+
 const market = { id: "example.market", name: "Market" };
 
 it("holds install requests off while a managed review is open, including one already admitted", async () => {

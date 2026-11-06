@@ -22,8 +22,14 @@ type Authorize = (
   repository: string,
 ) => Promise<{ repository: string; token: string } | null>;
 
-const location = ({ repository, reference, path }: ManagedEntry) =>
-  [repository, reference, ...(path === "." ? [] : [path])].join(" · ");
+const location = (entry: ManagedEntry) =>
+  "url" in entry
+    ? entry.url
+    : [
+        entry.repository,
+        entry.reference,
+        ...(entry.path === "." ? [] : [entry.path]),
+      ].join(" · ");
 
 export function ManagedPlugins({
   plugins,
@@ -215,8 +221,11 @@ type Review =
   | { status: "error"; reason: string }
   | { status: "ready"; preview: ImportPreview; path: string; key: string };
 
-const entryKey = ({ repository, reference, commit, path }: ManagedEntry) =>
-  [repository, reference, commit, path].join("\n");
+const entryKey = (entry: ManagedEntry) =>
+  ("url" in entry
+    ? [entry.url, entry.sha256]
+    : [entry.repository, entry.reference, entry.commit, entry.path]
+  ).join("\n");
 
 export function ManagedPluginReview({
   plugins,
@@ -272,6 +281,31 @@ export function ManagedPluginReview({
     async (current: { active: boolean }, wanted: ManagedEntry) => {
       if (!imports) return;
       try {
+        if ("url" in wanted) {
+          const preview = await imports.url(wanted.url, wanted.sha256);
+          if (!preview) throw new Error("No plugin found at this URL.");
+          if (!current.active) {
+            discard(preview.token);
+            return;
+          }
+          const found = preview.candidates[0];
+          if (found?.manifest.id === wanted.id) {
+            token.current = preview.token;
+            setReview({
+              status: "ready",
+              preview,
+              path: found.path,
+              key: entryKey(wanted),
+            });
+            return;
+          }
+          discard(preview.token);
+          throw new Error(
+            found
+              ? `The plugin at this URL is ${found.manifest.id}, not ${wanted.id}.`
+              : (preview.warnings[0] ?? "No plugin found at this URL."),
+          );
+        }
         const signed = await authorizeGit?.(wanted.repository);
         const preview = await imports.git(
           signed?.repository ?? wanted.repository,
@@ -468,8 +502,9 @@ export function ManagedPluginReview({
     >
       {!ready && review.status !== "error" && (
         <p role="status">
-          Reading the plugin at the pinned commit… Git imports may take up to a
-          minute.
+          {entry && "url" in entry
+            ? "Downloading the plugin…"
+            : "Reading the plugin at the pinned commit… Git imports may take up to a minute."}
         </p>
       )}
       {review.status === "error" && (

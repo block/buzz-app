@@ -71,6 +71,7 @@ mod reshow;
 
 mod notifications;
 mod os_idle;
+mod plugin_url;
 mod repositories_folder;
 mod window_controls;
 mod window_state;
@@ -478,6 +479,19 @@ async fn plugin_import_git(
     .await
 }
 
+#[tauri::command]
+async fn plugin_import_url(
+    imports: tauri::State<'_, Imports>,
+    url: String,
+    sha256: String,
+) -> Result<Option<Preview>, String> {
+    let bytes = plugin_url::download(&url).await?;
+    prepare_import(imports.inner().clone(), move || {
+        buzzodz_plugins::imports::prepare_url(&url, &sha256, bytes).map(Some)
+    })
+    .await
+}
+
 /// Admits a Git import's response; only a refused Add clears the preview it stored.
 async fn admit_git_result(
     fi: &federated_identity::FederatedIdentity,
@@ -743,6 +757,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_update_check,
         plugin_update_preview,
         plugin_import_git,
+        plugin_import_url,
         plugin_import_install,
         plugin_import_discard,
         plugin_catalog,

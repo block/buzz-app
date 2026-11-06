@@ -158,6 +158,7 @@ fn main() {
             "plugin_update_check",
             "plugin_update_preview",
             "plugin_import_git",
+            "plugin_import_url",
             "plugin_import_install",
             "plugin_import_discard",
             "plugin_catalog",

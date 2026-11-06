@@ -150,6 +150,7 @@ fn native_command_permissions_isolate_webviews() {
         "plugin_update_check",
         "plugin_update_preview",
         "plugin_import_git",
+        "plugin_import_url",
         "plugin_import_install",
         "plugin_import_discard",
         "plugin_catalog",

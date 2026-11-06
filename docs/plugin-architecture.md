@@ -1853,6 +1853,13 @@ Buzz checks the event ID, signature and exact artifact bytes before install and
 each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
 local development.
 
+`buzzodz plugin pack DIST_DIRECTORY FILE` writes the same single-file artifact,
+unsigned, and prints its SHA-256. An organization can serve that file over HTTPS
+for people without access to the Git host and recommend it with a `url` and
+`sha256` [managed plugin](managed-plugins.md#url-entries) entry. Buzz downloads
+it, refuses any bytes that do not match the pin, and records the URL as the
+plugin's saved source.
+
 A build may also include conventional `README.md`, `icon.png`, and `icon.jpg` files beside
 those required files. README content must be UTF-8 and is limited to 256 KiB.
 Icons must match their PNG or JPEG filename and have a decodable first image, each at most 1 MiB, no more than 4096 pixels on

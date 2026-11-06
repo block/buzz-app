@@ -102,6 +102,7 @@
     "allow-legacy-communities",
     "allow-plugin-import-folder",
     "allow-plugin-import-git",
+    "allow-plugin-import-url",
     "allow-plugin-import-install",
     "allow-plugin-import-discard",
     "allow-plugin-update-check",

@@ -120,6 +120,8 @@ export type CommunityConfigInput = Readonly<{
   info(signal: AbortSignal): Promise<unknown>;
   /** Reports each binding change, so starts and the UI re-resolve. */
   changed(): void;
+  /** Reports a history change, which may leave every head as it was. */
+  historyChanged(): void;
 }>;
 
 /** Config sync's view of a relay session. */
@@ -189,6 +191,7 @@ export async function communityConfig(
     community,
     signal,
     changed: input.changed,
+    historyChanged: input.historyChanged,
     dispose: stopReconnected,
   });
   return configs;
@@ -218,6 +221,7 @@ export function agentConfigs(
     community: string;
     signal: AbortSignal;
     changed(): void;
+    historyChanged?(): void;
     dispose?(): void;
   }>,
 ) {
@@ -258,9 +262,14 @@ export function agentConfigs(
         );
         if (disposed) return;
         if (found) {
-          // History's sides, made once per team: their `d` is async.
+          // History's side for each team's selected channel, made again
+          // when it selects another: its `d` is async.
           for (const team of found)
-            if (!team.archived && !team.unproven && !teamSides.has(team.id))
+            if (
+              !team.archived &&
+              !team.unproven &&
+              teamSides.get(team.id)?.expected.channel !== team.channel
+            )
               teamSides.set(
                 team.id,
                 await ops.side(team.id, team.channel, team.id),
@@ -554,6 +563,7 @@ export function agentConfigs(
       const key = `${channel} ${d}`;
       versions.set(key, (versions.get(key) ?? 0) + 1);
       input.changed();
+      input.historyChanged?.();
     },
     /** Each synced side's artifact, for History. */
     history(pubkey: string) {

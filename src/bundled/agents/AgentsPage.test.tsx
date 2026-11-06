@@ -24,7 +24,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { Context } from "@deepseek-ai/cordis";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
   AgentCreateProps,
@@ -5987,4 +5987,188 @@ it("explains an agent card that can't be loaded, and retries it", async () => {
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+describe("team editor visits", () => {
+  const id = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const visit = {
+    ...page,
+    route: { version: 1, params: { team: id } },
+  } as const;
+  const crew = (revision: string, instructions: string) => ({
+    id,
+    name: "Crew",
+    instructions,
+    members: [agent("Ada", 1).pubkey],
+    revision,
+  });
+  function at(target: OpenTarget, entryId: string) {
+    const navigator = {
+      snapshot: () => ({ entry: { id: entryId, target } }),
+      open: vi.fn(),
+      dismiss: vi.fn(),
+    } as unknown as Navigation;
+    const navigation = {
+      entryId,
+      target,
+      signal: new AbortController().signal,
+      position: () => undefined,
+      savePosition() {},
+      passThrough: () => () => {},
+      forSession: () => navigation,
+      resolve: () => true,
+      complete: () => true,
+    } as unknown as PageNavigation;
+    return { navigation, navigator };
+  }
+
+  it("opens a team card as a visit that Back and Forward leave and return to", async () => {
+    const user = userEvent.setup();
+    const start = at(page, "page");
+    const view = setup([agent("Ada", 1)], {
+      teams: [crew("r1", "Hi.")],
+      page: start,
+    });
+    await user.click(screen.getByRole("tab", { name: "Your teams" }));
+    await user.click(
+      within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+        name: "Crew",
+      }),
+    );
+    expect(start.navigator.open).toHaveBeenCalledWith(visit);
+    expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+    const show = (where: ReturnType<typeof at>) =>
+      view.rerender(
+        <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+      );
+    show(at(visit, "team"));
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+    show(at(page, "page"));
+    expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+    show(at(visit, "team"));
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  });
+
+  it("ends the team's visit when its editor closes", async () => {
+    const user = userEvent.setup();
+    const where = at(visit, "team");
+    setup([agent("Ada", 1)], { teams: [crew("r1", "Hi.")], page: where });
+    await user.click(
+      within(screen.getByRole("form", { name: "Edit Crew" })).getByRole(
+        "button",
+        { name: "Close" },
+      ),
+    );
+    expect(where.navigator.dismiss).toHaveBeenCalledOnce();
+    const [matches, fallback] = vi.mocked(where.navigator.dismiss).mock
+      .calls[0] as unknown as [(target: OpenTarget) => boolean, OpenTarget];
+    expect(fallback).toEqual(page);
+    expect(matches(visit)).toBe(true);
+    expect(
+      matches({
+        ...page,
+        route: {
+          version: 1,
+          params: { team: id, revision: `instructions/${"a".repeat(64)}` },
+        },
+      }),
+    ).toBe(true);
+    expect(matches(page)).toBe(false);
+  });
+
+  it("takes a revert's instructions and version but keeps the other edits", async () => {
+    const user = userEvent.setup();
+    const revision = (n: number, text: string) => ({
+      id: `${n}`.repeat(64),
+      pubkey: "o".repeat(64),
+      sig: "b".repeat(128),
+      kind: 45010,
+      created_at: 1700000000 + n,
+      content: JSON.stringify({ version: 1, name: "Crew", instructions: text }),
+      tags: [
+        ["ar", "1"],
+        ["h", "c"],
+        ["d", "team"],
+        ["type", "buzz.team"],
+        ["title", "Crew"],
+        ["op", n ? "update" : "create"],
+        ["team", id],
+        ...(n ? [["prev", "0".repeat(64)]] : []),
+      ],
+    });
+    const [now, before] = [revision(1, "Now."), revision(0, "Before.")];
+    const revisions = [now, before];
+    const view = setup([agent("Ada", 1), agent("Bo", 2)], {
+      teams: [crew(now.id, "Now.")],
+      page: at(visit, "team"),
+    });
+    Object.assign(view.agents, {
+      teamHistory: () => ({
+        read: vi.fn(async () => revisions),
+        revise: vi.fn(async () => {
+          view.change({ teams: [crew("2".repeat(64), "Before.")] });
+          return { status: "accepted" };
+        }),
+        sides: [
+          {
+            side: "instructions",
+            expected: { channel: "c", d: "team", type: "buzz.team", team: id },
+            head: now,
+            version: 0,
+          },
+        ],
+      }),
+    });
+    view.change({});
+    const name = screen.getByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "Night crew");
+    await user.click(screen.getByRole("checkbox", { name: "Bo" }));
+    const older = {
+      ...page,
+      route: {
+        version: 1,
+        params: { team: id, revision: `instructions/${before.id}` },
+      },
+    } as const;
+    view.rerender(
+      <AgentsPage
+        agents={view.agents}
+        relay={view.relay}
+        {...at(older, "version")}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Revert to this" }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Instructions", hidden: true }),
+      ).toHaveValue("Before."),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Name", hidden: true }),
+    ).toHaveValue("Night crew");
+    expect(
+      screen.getByRole("checkbox", { name: "Bo", hidden: true }),
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Save", hidden: true }));
+    await vi.waitFor(() =>
+      expect(view.agents.saveTeam).toHaveBeenCalledWith(
+        expect.objectContaining({
+          opened: expect.objectContaining({ revision: "2".repeat(64) }),
+          name: "Night crew",
+          instructions: "Before.",
+          members: [agent("Ada", 1).pubkey, agent("Bo", 2).pubkey],
+        }),
+      ),
+    );
+  });
 });

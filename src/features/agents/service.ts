@@ -1113,15 +1113,14 @@ export type AgentUpdateRequest = AgentUpdate &
     agentType: string;
   }>;
 /** What `agent_read` shows of one of the owner's agents. Instructions are
- * null for a type that has none. */
-export type AgentReadout = Readonly<{
-  pubkey: string;
-  name: string;
-  type: string;
-  instructions: string | null;
-  synced: boolean;
-  revision?: string;
-}>;
+ * null for a type that has none; an agent hosted or on another device has
+ * `unavailable` instead, saying why. */
+export type AgentReadout = Readonly<
+  { pubkey: string; name: string; type: string } & (
+    | { instructions: string | null; synced: boolean; revision?: string }
+    | { unavailable: string }
+  )
+>;
 /** What `team_read` shows of one of the owner's teams. */
 export type TeamReadout = Readonly<{
   id: string;
@@ -2308,6 +2307,18 @@ export class AgentsService extends Service implements Agents {
               originOf(identity.relay) === origin,
           )
           .map((identity) => this.agentReadout(identity));
+        // Hosted ones and ones on the owner's other devices, as listed here.
+        for (const listed of this.listedAgents(origin))
+          if (listed.owner === agent.owner && !listed.unfinished)
+            found.push({
+              pubkey: listed.pubkey,
+              name: listed.name,
+              type: listed.type,
+              unavailable:
+                listed.place === "hosted"
+                  ? "Its provider keeps its config"
+                  : "Its config is on another device",
+            });
         return target === undefined
           ? found
           : pick(found, target, (item) => [item.pubkey, item.name], "agent");
@@ -6175,6 +6186,11 @@ export class AgentsService extends Service implements Agents {
         changed: () => {
           this.teamsChanged();
           this.update();
+        },
+        // A new snapshot, so open History lists read their version again.
+        historyChanged: () => {
+          this.state = Object.freeze({ ...this.state });
+          this.notify();
         },
       },
       binding.controller.signal,

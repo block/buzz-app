@@ -37,6 +37,29 @@ afterEach(() => {
   localStorage.clear();
 });
 
+it("opens Drafts & sent in Messages without changing the sidebar's Solo filter", async () => {
+  const f = fixture(true);
+  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  await userEvent.click(screen.getByRole("button", { name: "Drafts & sent" }));
+  expect(f.open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    scope: { viewer, communityOrigin: "https://relay.test" },
+    route: { version: 1, params: "drafts-sent" },
+  });
+  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: /^Planning/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Drafts & sent" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
 it("double-clicks a Solo row to edit its selected name, retaining a failed save for retry", async () => {
   const user = userEvent.setup();
   const f = fixture();

@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { sourceCompleted, sourceSignature, validateObject } from "./attention";
 import { fileStore } from "./state";
 import {
   STORAGE_KEY,
@@ -469,4 +470,165 @@ it("keeps a watch's ten latest valid recent events, each clipped", async () => {
     // An event without a body, such as a deletion, still woke the agent.
     { id: "gone", at: 14, text: "" },
   ]);
+});
+
+it("stores paused-interest watches fail-closed and restores their exact settings on a supported reader", async () => {
+  const storage = memoryStorage();
+  let saved = setAttention(
+    record,
+    "interest/task",
+    {
+      type: "interest",
+      instructions: "Report only to the owner.",
+      paused: true,
+    },
+    1,
+  );
+  const watches = {
+    "watch/event": {
+      type: "event",
+      interest_id: "task",
+      enabled: true,
+      since: 1,
+      channels: "all",
+      kinds: [9],
+    },
+    "watch/timer": {
+      type: "timer",
+      interest_id: "task",
+      enabled: true,
+      prompt: "Check",
+      interval_secs: 60,
+      armed_at: 1,
+      max_occurrences: null,
+      expires_at: null,
+    },
+    "watch/source": {
+      type: "source",
+      interest_id: "task",
+      enabled: false,
+      provider: "example/check",
+      config: {},
+    },
+  } as const;
+  for (const [slug, value] of Object.entries(watches))
+    saved = setAttention(saved, slug, value, 1);
+  const originalSource = saved.attention["watch/source"];
+  if (!originalSource) throw new Error("fixture");
+  // Older persisted signatures may use the original object's property order.
+  const source = {
+    slug: originalSource.slug,
+    modifiedAt: originalSource.modifiedAt,
+    value: originalSource.value,
+  };
+  saved = {
+    ...saved,
+    attention: { ...saved.attention, "watch/source": source },
+  };
+  saved = {
+    ...saved,
+    timers: { "watch/timer": { armedAt: 1, nextDue: 121, used: 2 } },
+    sourceRuns: { "watch/source": sourceSignature(source) },
+    attentionHistory: {
+      "watch/timer": { lastWokeAt: 61, output: "Already ran twice" },
+    },
+  };
+  await writeRecord(storage, saved);
+  const raw = JSON.parse(storage.getItem(recordKey(pubkey)) ?? "{}");
+  for (const slug of Object.keys(watches)) {
+    expect(raw.attention[slug].value.interest_paused).toBeTypeOf("object");
+    // The unchanged watch-format validator is what older storage readers use.
+    expect(validateObject(slug, raw.attention[slug].value)).toMatch(
+      /Unknown field/,
+    );
+  }
+  // An older reader drops metadata for skipped objects but retains their values.
+  delete raw.timers;
+  delete raw.sourceRuns;
+  delete raw.attentionHistory;
+  storage.setItem(recordKey(pubkey), JSON.stringify(raw));
+  const restored = readRecords(storage)[pubkey];
+  expect(restored?.timers).toEqual(saved.timers);
+  expect(restored?.attentionHistory).toEqual(saved.attentionHistory);
+  expect(
+    sourceCompleted(restored?.sourceRuns, restored?.attention["watch/source"]),
+  ).toBe(true);
+  expect(restored?.attention).toEqual(saved.attention);
+  expect(restored?.skipped).toEqual({});
+  if (!restored) throw new Error("fixture");
+  await writeRecord(
+    storage,
+    setAttention(
+      restored,
+      "interest/task",
+      {
+        type: "interest",
+        instructions: "Report only to the owner.",
+        paused: false,
+      },
+      2,
+    ),
+  );
+  const resumed = JSON.parse(storage.getItem(recordKey(pubkey)) ?? "{}");
+  expect(resumed.attention["interest/task"].value).toEqual({
+    type: "interest",
+    instructions: "Report only to the owner.",
+  });
+  for (const slug of Object.keys(watches))
+    expect(resumed.attention[slug].value).toEqual(
+      watches[slug as keyof typeof watches],
+    );
+  // A lost/unsupported parent must not cause a supported reader to unwrap children.
+  delete raw.attention["interest/task"];
+  storage.setItem(recordKey(pubkey), JSON.stringify(raw));
+  const orphan = readRecords(storage)[pubkey];
+  expect(orphan?.attention).toEqual({});
+  expect(Object.keys(orphan?.skipped ?? {}).sort()).toEqual(
+    Object.keys(watches).sort(),
+  );
+});
+
+it("retains the original pause envelope when a child exceeds the supported object limit", async () => {
+  const storage = memoryStorage();
+  const value = {
+    type: "event",
+    interest_id: "task",
+    enabled: true,
+    since: 1,
+    channels: "all",
+    kinds: [9],
+    interest_paused: {},
+  };
+  storage.setItem(
+    recordKey(pubkey),
+    JSON.stringify({
+      ...record,
+      attention: {
+        "interest/task": {
+          slug: "interest/task",
+          value: {
+            type: "interest",
+            instructions: "Report privately",
+            paused: true,
+          },
+          modifiedAt: 1,
+        },
+        ...Object.fromEntries(
+          Array.from({ length: 101 }, (_, index) => {
+            const slug = `watch/${String(index).padStart(3, "0")}`;
+            return [slug, { slug, value, modifiedAt: 1 }];
+          }),
+        ),
+      },
+    }),
+  );
+  const read = readRecords(storage)[pubkey];
+  if (!read) throw new Error("fixture");
+  expect(read.skipped?.["watch/100"]?.value).toEqual(value);
+  await writeRecord(storage, read);
+  expect(
+    JSON.parse(storage.getItem(recordKey(pubkey)) ?? "{}").attention[
+      "watch/100"
+    ].value,
+  ).toEqual(value);
 });

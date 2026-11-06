@@ -22,6 +22,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
+import { useShowingDraft } from "./draft-places";
+import { clearView, writeView } from "../../shared/view-state";
 import {
   profileTarget,
   profileActivityViewTarget,
@@ -42,6 +44,7 @@ import {
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { ReplySummary } from "./ReplySummary";
 import { setClockPreference } from "../../shared/clock-preference";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -4957,3 +4960,91 @@ it.each([false, true])(
     }
   },
 );
+
+it("notes a thread's unsent reply on its summary until the thread's composer shows it", () => {
+  const scope = `https://demo.invalid:${"a".repeat(64)}`;
+  // Drafts are keyed by a real event id.
+  const root = { ...row, id: "d".repeat(64) };
+  const key = `draft:${root.channelId}:thread:${root.id}`;
+  const channels = { channels: [], status: "ready" };
+  const profiles = new Map();
+  const library = { identities: [] };
+  const typing: readonly never[] = [];
+  const session = {
+    scope,
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  function Composer({ shown }: { shown: boolean }) {
+    useShowingDraft(scope, key, shown);
+    return null;
+  }
+  let view = renderMessage({
+    session,
+    row: { ...root, replyCount: 0 },
+    onOpenThread: () => {},
+  });
+  try {
+    // A message nobody replied to has no line until a reply is drafted.
+    expect(screen.queryByRole("button", { name: /^View thread/ })).toBeNull();
+    act(() => {
+      writeView(scope, key, { text: "Half a reply", recipients: [] });
+    });
+    const first = screen.getByRole("button", {
+      name: "View thread: Draft reply",
+    });
+    expect(first).toHaveTextContent("Draft reply");
+    expect(first).not.toHaveTextContent("View thread");
+    view.unmount();
+    view = renderMessage({ session, row: root, onOpenThread: () => {} });
+    const summary = screen.getByRole("button", {
+      name: "View thread: 23 replies. Draft reply",
+    });
+    expect(summary.querySelector("[data-thread-draft]")).toHaveTextContent(
+      "·Draft",
+    );
+    // A retained tab's composer is mounted but out of sight.
+    const open = renderDom(<Composer shown={false} />);
+    expect(summary.querySelector("[data-thread-draft]")).not.toBeNull();
+    open.rerender(<Composer shown />);
+    expect(
+      screen.getByRole("button", { name: "View thread: 23 replies" }),
+    ).toBe(summary);
+    expect(summary.querySelector("[data-thread-draft]")).toBeNull();
+    open.unmount();
+    expect(summary.querySelector("[data-thread-draft]")).not.toBeNull();
+    act(() => clearView(scope, key));
+    expect(summary.querySelector("[data-thread-draft]")).toBeNull();
+  } finally {
+    view.unmount();
+    localStorage.clear();
+  }
+});
+
+it("words a thread's draft by its replies even while an activity line hides their count", () => {
+  const summary = (replied: boolean) =>
+    renderDom(
+      <ReplySummary
+        count={0}
+        hideEmptyLabel
+        draft
+        replied={replied}
+        participants={[]}
+        resolveName={(id) => id}
+        media={() => undefined}
+      />,
+    );
+  const busy = summary(true);
+  expect(busy.container.querySelector("[data-thread-draft]")).toHaveTextContent(
+    /^·Draft$/,
+  );
+  busy.unmount();
+  const fresh = summary(false);
+  expect(
+    fresh.container.querySelector("[data-thread-draft]"),
+  ).toHaveTextContent(/^Draft reply$/);
+  fresh.unmount();
+});

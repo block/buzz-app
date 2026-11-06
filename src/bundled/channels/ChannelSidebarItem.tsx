@@ -19,8 +19,12 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { ClockIcon } from "../../shared/design-system/icons/index";
+import {
+  ClockIcon,
+  PencilSimpleIcon,
+} from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
+import { useChannelDraft } from "../../features/messages/draft-places";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
@@ -174,6 +178,8 @@ function ChannelSidebarItemCore({
       ? channel.participants[0]
       : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
+  // The open conversation already shows its draft in the composer.
+  const draft = useChannelDraft(session, channel.id) && selected !== channel.id;
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
@@ -236,6 +242,17 @@ function ChannelSidebarItemCore({
       }
       badge={
         <>
+          {draft && (
+            <span
+              className={styles.draftMarker}
+              data-channel-draft=""
+              role="img"
+              aria-label="Draft"
+              title="Draft"
+            >
+              <PencilSimpleIcon size={14} />
+            </span>
+          )}
           <span className={styles.indicatorStack} data-channel-indicators="">
             <span className={styles.indicatorLayer}>
               <UnreadBadge
@@ -251,9 +268,9 @@ function ChannelSidebarItemCore({
               waiting={waiting}
             />
           </span>
-          {channel.ttlSeconds !== undefined && agents.length === 0 && (
-            <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
-          )}
+          {channel.ttlSeconds !== undefined &&
+            agents.length === 0 &&
+            !draft && <TemporaryMarker ttlSeconds={channel.ttlSeconds} />}
         </>
       }
       wrapSelect={(trigger) => {

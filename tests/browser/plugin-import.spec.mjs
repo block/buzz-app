@@ -261,6 +261,7 @@ async function nativeImports(
             samples.find((sample) => sample.manifest.id === args.id)?.code ??
             "export function apply() {}"
           );
+        if (command === "credential_pairing_communities") return;
         throw new Error(`Unexpected command ${command}`);
       },
     };

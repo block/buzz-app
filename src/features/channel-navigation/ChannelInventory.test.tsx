@@ -803,7 +803,7 @@ it("closes a removed DM's menu and focuses its neighbor before the exit ends", a
   const bob = screen.getByRole("button", { name: "Bob" });
   fireEvent.keyDown(alice, { key: "ContextMenu" });
   await screen.findByRole("menu", { name: "Actions for Alice" });
-  fireEvent.click(screen.getByRole("menuitem", { name: "Remove from Team" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Close conversation" }));
   // Assert synchronously while the retained row's exit is still mounted.
   expect(alice.closest("[inert]")).not.toBeNull();
   expect(screen.queryByRole("menu", { name: "Actions for Alice" })).toBeNull();

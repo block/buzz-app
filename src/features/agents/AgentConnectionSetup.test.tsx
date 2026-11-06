@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ import {
   connectionMentions,
 } from "./AgentConnectionSetup";
 import type { Agents, RegisteredAgentType } from "./service";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import type { PortableAgent } from "./native";
 
 afterEach(() => {
@@ -99,178 +99,229 @@ it("connects the exact identity with reviewed defaults and retains errors for re
   ).toBeVisible();
 });
 
-it.each(["dm", "stream", "forum"] as const)(
-  "persists channel-scoped dismissal for the exact owned %s identity and preserves explicit connection",
-  async (channelType) => {
-    const { schnorr } = await import("@noble/curves/secp256k1.js");
-    const { bytesToHex } = await import("nostr-tools/utils");
-    const secret = new Uint8Array(32);
-    secret[31] = 1;
-    const viewer = bytesToHex(schnorr.getPublicKey(secret));
-    const digest = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(`nostr:agent-auth:${candidate.pubkey}:`),
-    );
-    const profile = {
-      id: "f".repeat(64),
-      kind: 0,
-      pubkey: candidate.pubkey,
-      created_at: 1,
-      content: "{}",
-      tags: [
-        [
-          "auth",
-          viewer,
-          "",
-          bytesToHex(schnorr.sign(new Uint8Array(digest), secret)),
-        ],
+/** An offline agent the viewer owns, mentioned by the viewer in a shared channel. */
+async function ownedAgentChannel(
+  channelType: "dm" | "stream" | "forum",
+  {
+    choicesReady = false,
+    listed = false,
+  }: {
+    /** Agent choices are complete and none covers the agent yet. */
+    choicesReady?: boolean;
+    /** The channel list carries the channel, so its roster updates live. */
+    listed?: boolean;
+  } = {},
+) {
+  const { schnorr } = await import("@noble/curves/secp256k1.js");
+  const { bytesToHex } = await import("nostr-tools/utils");
+  const secret = new Uint8Array(32);
+  secret[31] = 1;
+  const viewer = bytesToHex(schnorr.getPublicKey(secret));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${candidate.pubkey}:`),
+  );
+  const profile = {
+    id: "f".repeat(64),
+    kind: 0,
+    pubkey: candidate.pubkey,
+    created_at: 1,
+    content: "{}",
+    tags: [
+      [
+        "auth",
+        viewer,
+        "",
+        bytesToHex(schnorr.sign(new Uint8Array(digest), secret)),
       ],
-    };
-    const view = { status: "ready", events: [profile] };
-    let choices: {
+    ],
+  };
+  const view = { status: "ready", events: [profile] };
+  const channel = {
+    id: channelType,
+    name: "Helper",
+    channelType,
+    members: [viewer, candidate.pubkey],
+    viewerRole: "member",
+  } as ChannelSummary;
+  const state = {
+    choices: {
+      complete: choicesReady,
+      identities: [],
+      archives: { status: "ready", archived: [] },
+    } as {
       complete: boolean;
       archives: { status: "ready"; archived: string[] };
       identities: { pubkey: string; managed: boolean; messageable: boolean }[];
-    } = {
-      complete: false,
-      identities: [],
-      archives: { status: "ready", archived: [] },
+    },
+    presence: "offline",
+    list: { status: "ready", channels: listed ? [channel] : [] },
+  };
+  const profiles = new Map([
+    [candidate.pubkey, { name: candidate.name, isAgent: true }],
+  ]);
+  type Store = keyof typeof state;
+  const listeners: Record<Store, Set<() => void>> = {
+    choices: new Set(),
+    presence: new Set(),
+    list: new Set(),
+  };
+  const subscribe = (store: Store) => (listener: () => void) => {
+    listeners[store].add(listener);
+    return () => {
+      listeners[store].delete(listener);
     };
-    const profiles = new Map([
-      [candidate.pubkey, { name: candidate.name, isAgent: true }],
-    ]);
-    const listeners = new Set<() => void>();
-    let presence = "offline";
-    const noop = () => () => {};
-    const reply = vi.fn();
-    const observe = vi.fn(() => ({
-      snapshot: () => view,
+  };
+  /** Tells only `store`'s subscribers that its `state` entry changed. */
+  const notify = (store: Store) => {
+    for (const listener of [...listeners[store]]) listener();
+  };
+  const noop = () => () => {};
+  const reply = vi.fn();
+  const observe = vi.fn(() => ({
+    snapshot: () => view,
+    subscribe: noop,
+    dispose: () => {},
+  }));
+  const sendObservers = new Set<
+    Parameters<import("../relay/outbox").Outbox["observeSend"]>[0]
+  >();
+  const session = {
+    outbox: {
+      observeSend: (
+        listener: Parameters<
+          import("../relay/outbox").Outbox["observeSend"]
+        >[0],
+      ) => {
+        sendObservers.add(listener);
+        return () => {
+          sendObservers.delete(listener);
+        };
+      },
+    },
+    messages: { reply },
+    scope: "scope",
+    viewer,
+    observe,
+    profiles: {
       subscribe: noop,
-      dispose: () => {},
-    }));
-    const sendObservers = new Set<
-      Parameters<import("../relay/outbox").Outbox["observeSend"]>[0]
-    >();
-    const session = {
-      outbox: {
-        observeSend: (
-          listener: Parameters<
-            import("../relay/outbox").Outbox["observeSend"]
-          >[0],
-        ) => {
-          sendObservers.add(listener);
-          return () => {
-            sendObservers.delete(listener);
-          };
-        },
-      },
-      messages: { reply },
-      scope: "scope",
-      viewer,
-      observe,
-      profiles: {
-        subscribe: noop,
-        snapshot: () => profiles,
-        event: () => profile,
-      },
-      agentChoices: {
-        subscribe: (listener: () => void) => {
-          listeners.add(listener);
-          return () => {
-            listeners.delete(listener);
-          };
-        },
-        snapshot: () => choices,
-      },
-      presence: {
-        status: () => presence,
-        subscribe: (_key: string, listener: () => void) => {
-          listeners.add(listener);
-          return () => {
-            listeners.delete(listener);
-          };
-        },
-      },
-    } as unknown as import("../relay/session").RelaySession;
-    const types = [type];
-    const snapshot = {};
-    const portable = vi.fn(async () => ({
-      agents: [candidate],
-      warnings: [],
-      here: [],
-    }));
-    const agents = {
-      port: vi
-        .fn()
-        .mockRejectedValueOnce(new Error("Import interrupted"))
-        .mockResolvedValue({ notes: [] }),
-      types: () => types,
-      snapshot: () => snapshot,
-      subscribe: noop,
-      find: () => undefined,
-      portable,
-    } as unknown as Agents;
-    const channel = {
-      id: "dm",
-      name: "Helper",
-      channelType,
-      members: [viewer, candidate.pubkey],
-      viewerRole: "member",
-    } as import("../relay/contracts").ChannelSummary;
-    const { AgentConnectionSetup } = await import("./AgentConnectionSetup");
-    const { AgentsContext } = await import("./react");
-    const { act } = await import("@testing-library/react");
-    const setup = (sessionValue = session, channelValue = channel) => (
-      <ToastProvider>
-        <AgentsContext.Provider value={agents}>
-          <AgentConnectionSetup
-            session={sessionValue}
-            channel={channelValue}
-            rows={[
-              {
-                id: "b".repeat(64),
-                channelId: channel.id,
-                createdAt: 1,
-                content: "Hello",
-                attachments: [],
-                reactions: [],
-                replyCount: 0,
-                participants: [],
-                threadRootId: "c".repeat(64),
-                authorId: viewer,
-                mentions: [candidate.pubkey, "human"],
-              },
-            ]}
-          />
-        </AgentsContext.Provider>
-      </ToastProvider>
+      snapshot: () => profiles,
+      event: () => profile,
+    },
+    agentChoices: {
+      subscribe: subscribe("choices"),
+      snapshot: () => state.choices,
+    },
+    presence: {
+      status: () => state.presence,
+      subscribe: (_key: string, listener: () => void) =>
+        subscribe("presence")(listener),
+    },
+    channels: { subscribeList: subscribe("list"), list: () => state.list },
+  } as unknown as import("../relay/session").RelaySession;
+  const types = [type];
+  const snapshot = {};
+  const portable = vi.fn(async () => ({
+    agents: [candidate],
+    warnings: [],
+    here: [],
+  }));
+  const agents = {
+    port: vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Import interrupted"))
+      .mockResolvedValue({ notes: [] }),
+    types: () => types,
+    snapshot: () => snapshot,
+    subscribe: noop,
+    find: () => undefined,
+    portable,
+  } as unknown as Agents;
+  const { AgentConnectionSetup } = await import("./AgentConnectionSetup");
+  const { AgentsContext } = await import("./react");
+  const setup = (sessionValue = session, channelValue = channel) => (
+    <ToastProvider>
+      <AgentsContext.Provider value={agents}>
+        <AgentConnectionSetup
+          session={sessionValue}
+          channel={channelValue}
+          rows={[
+            {
+              id: "b".repeat(64),
+              channelId: channel.id,
+              createdAt: 1,
+              content: "Hello",
+              attachments: [],
+              reactions: [],
+              replyCount: 0,
+              participants: [],
+              threadRootId: "c".repeat(64),
+              authorId: viewer,
+              mentions: [candidate.pubkey, "human"],
+            },
+          ]}
+        />
+      </AgentsContext.Provider>
+    </ToastProvider>
+  );
+  /** Reports the viewer sending the mention in `rows` (or a variant) live. */
+  const sendMention = (kind = 9, author = viewer, destination = channel.id) => {
+    const event = {
+      id: "b".repeat(64),
+      kind,
+      pubkey: author,
+      created_at: 1,
+      content: "Hello",
+      tags: [
+        ["h", destination],
+        ["p", candidate.pubkey],
+      ],
+    };
+    return [...sendObservers].map((observer) =>
+      observer(event, new AbortController().signal),
     );
-    const sendMention = (
-      kind = 9,
-      author = viewer,
-      destination = channel.id,
-    ) => {
-      const event = {
-        id: "b".repeat(64),
-        kind,
-        pubkey: author,
-        created_at: 1,
-        content: "Hello",
-        tags: [
-          ["h", destination],
-          ["p", candidate.pubkey],
-        ],
-      };
-      return [...sendObservers].map((observer) =>
-        observer(event, new AbortController().signal),
-      );
-    };
-    const deliverMention = (destination = channel.id) => {
-      act(() => {
-        for (const delivered of sendMention(9, viewer, destination))
-          delivered?.([]);
-      });
-    };
+  };
+  /** Sends the mention and confirms its delivery. */
+  const deliverMention = (destination = channel.id) => {
+    act(() => {
+      for (const delivered of sendMention(9, viewer, destination))
+        delivered?.([]);
+    });
+  };
+  return {
+    viewer,
+    state,
+    notify,
+    reply,
+    observe,
+    session,
+    portable,
+    agents,
+    channel,
+    setup,
+    sendMention,
+    deliverMention,
+  };
+}
+
+it.each(["dm", "stream", "forum"] as const)(
+  "persists channel-scoped dismissal for the exact owned %s identity and preserves explicit connection",
+  async (channelType) => {
+    const {
+      viewer,
+      state,
+      notify,
+      reply,
+      observe,
+      session,
+      portable,
+      agents,
+      channel,
+      setup,
+      sendMention,
+      deliverMention,
+    } = await ownedAgentChannel(channelType);
+    const { act } = await import("@testing-library/react");
     let mounted = render(setup());
     if (channelType !== "dm") {
       // History hydration alone does not even start candidate discovery.
@@ -291,28 +342,31 @@ it.each(["dm", "stream", "forum"] as const)(
     await waitFor(() => expect(portable).toHaveBeenCalledOnce());
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     act(() => {
-      choices = {
+      state.choices = {
         complete: true,
         archives: { status: "ready", archived: [] },
         identities: [
           { pubkey: candidate.pubkey, managed: false, messageable: true },
         ],
       };
-      for (const listener of [...listeners]) listener();
+      notify("choices");
     });
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     act(() => {
-      choices = {
+      state.choices = {
         complete: true,
         identities: [],
         archives: { status: "ready", archived: [candidate.pubkey] },
       };
-      for (const listener of [...listeners]) listener();
+      notify("choices");
     });
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     act(() => {
-      choices = { ...choices, archives: { status: "ready", archived: [] } };
-      for (const listener of [...listeners]) listener();
+      state.choices = {
+        ...state.choices,
+        archives: { status: "ready", archived: [] },
+      };
+      notify("choices");
     });
     expect(
       await screen.findByRole("heading", { name: /^Connect / }),
@@ -367,8 +421,8 @@ it.each(["dm", "stream", "forum"] as const)(
       "Import interrupted",
     );
     act(() => {
-      presence = "online";
-      for (const listener of [...listeners]) listener();
+      state.presence = "online";
+      notify("presence");
     });
     expect(screen.queryByRole("heading", { name: /^Connect / })).toBeNull();
     expect(await screen.findByRole("dialog")).toHaveTextContent(
@@ -376,8 +430,8 @@ it.each(["dm", "stream", "forum"] as const)(
     );
     if (channelType !== "dm") {
       act(() => {
-        presence = "offline";
-        for (const listener of [...listeners]) listener();
+        state.presence = "offline";
+        notify("presence");
       });
       await user.click(await screen.findByRole("button", { name: "Connect" }));
       await screen.findByRole("button", { name: "Ask Helper to respond" });
@@ -394,6 +448,70 @@ it.each(["dm", "stream", "forum"] as const)(
         "b".repeat(64),
       );
     }
+  },
+);
+
+it.each(["stream", "forum"] as const)(
+  "offers no %s setup for a mentioned agent outside the channel roster",
+  async (channelType) => {
+    const f = await ownedAgentChannel(channelType, { choicesReady: true });
+    render(f.setup(f.session, { ...f.channel, members: [f.viewer] }));
+    f.deliverMention();
+    // A mounted candidate observes owner evidence on mount, inside the delivery's act.
+    expect(f.observe).not.toHaveBeenCalled();
+    expect(f.portable).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("region", { name: "Agent connection setup" }),
+    ).toBeNull();
+  },
+);
+
+it.each(["stream", "forum"] as const)(
+  "withdraws %s setup when a render drops the agent from the roster",
+  async (channelType) => {
+    const f = await ownedAgentChannel(channelType, { choicesReady: true });
+    const mounted = render(f.setup());
+    f.deliverMention();
+    await screen.findByRole("region", { name: "Agent connection setup" });
+    mounted.rerender(f.setup(f.session, { ...f.channel, members: [f.viewer] }));
+    expect(
+      screen.queryByRole("region", { name: "Agent connection setup" }),
+    ).toBeNull();
+  },
+);
+
+// The viewer case keeps the agent listed, so only a viewer check that reads the
+// live roster withdraws the card.
+it.each([
+  ["stream", "agent"],
+  ["forum", "agent"],
+  ["stream", "viewer"],
+  ["forum", "viewer"],
+] as const)(
+  "withdraws %s setup when a live roster update drops the %s, without a parent render",
+  async (channelType, dropped) => {
+    const f = await ownedAgentChannel(channelType, {
+      choicesReady: true,
+      listed: true,
+    });
+    render(f.setup());
+    f.deliverMention();
+    await screen.findByRole("region", { name: "Agent connection setup" });
+    act(() => {
+      f.state.list = {
+        status: "ready",
+        channels: [
+          {
+            ...f.channel,
+            members: [dropped === "agent" ? f.viewer : candidate.pubkey],
+          },
+        ],
+      };
+      f.notify("list");
+    });
+    expect(
+      screen.queryByRole("region", { name: "Agent connection setup" }),
+    ).toBeNull();
   },
 );
 

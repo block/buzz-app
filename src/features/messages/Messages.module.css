@@ -778,6 +778,29 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composer .composerInput [data-placeholder]::before {
   color: var(--text-metadata);
 }
+/* Stands in for the editor's text placeholder, and shows only while it would. */
+.channelPlaceholder {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+  pointer-events: none;
+}
+.channelPlaceholder::before {
+  content: attr(data-lead) " ";
+}
+.channelPlaceholder::after {
+  content: attr(data-name);
+}
+.composerInput:has(> .channelPlaceholder) [data-placeholder]::before {
+  visibility: hidden;
+}
+.composerInput:not(:has([data-placeholder])) > .channelPlaceholder {
+  display: none;
+}
 .composerActions {
   display: flex;
   flex-wrap: wrap;
@@ -888,6 +911,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--text-standard);
+}
+.threadDraft {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-subtle);
 }
 .threadWorking {
   margin-inline-start: var(--space-1);

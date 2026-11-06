@@ -464,7 +464,9 @@ it.each(["current", "unmounted", "replaced"])(
     );
     try {
       await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
-      expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Publishing…" }),
+      ).toBeDisabled();
       expect(app.communities.snapshot().memberships).toEqual([]);
       expect(journal().get(community)?.profile?.name).toBe("Submitted");
       if (state === "unmounted") await app.stop();
@@ -544,6 +546,7 @@ it("fences a late claim completion after the dialog is replaced", async () => {
     expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(true),
   );
   try {
+    expect(screen.getByRole("button", { name: "Joining…" })).toBeDisabled();
     await first.stop();
     await open();
     await user.click(screen.getByRole("button", { name: "Continue" }));

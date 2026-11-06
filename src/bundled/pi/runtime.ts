@@ -1142,8 +1142,8 @@ export class PiRuntime {
       agent,
       // Whichever host runs the agent fills in its tools' credential.
       ...(handle && { as: { pubkey: handle.pubkey, relay: handle.relay } }),
-      tools: sessionTools(this.added()),
-      hint: sessionHint(this.added()),
+      tools: sessionTools(this.added(), !!handle?.ownerAccess),
+      hint: sessionHint(this.added(), !!handle?.ownerAccess),
     });
   }
 
@@ -1363,6 +1363,11 @@ export class PiRuntime {
     const spawn = this.host.spawn?.bind(this.host);
     if (!spawn) throw new Error("Pi agents run only in the desktop app");
     return spawn;
+  }
+
+  /** A file as the agent's sessions read one: in its saved workspace. */
+  workspaceFile(agent: Agent, path: string) {
+    return this.readFile(path, { cwd: config(agent.config).workspace });
   }
 
   private get readFile() {

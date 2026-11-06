@@ -1558,8 +1558,13 @@ it("observes a visible reply before its root resolves, then enables thread catch
 
   h.snapshot.root = row;
   h.render();
+  // The rows measure in the next frame. That list mutation restarts dwell,
+  // which measures again in the frame after it.
   await act(() => vi.advanceTimersToNextFrame());
-  await act(() => vi.advanceTimersByTimeAsync(300));
+  await act(() => vi.advanceTimersToNextFrame());
+  await act(() => vi.advanceTimersByTimeAsync(299));
+  expect(catchUp).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1));
   expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
 });
 
@@ -2513,5 +2518,7 @@ it("reveals a completed step selected by an exact thread link", async () => {
   });
   h.render();
   expect(await screen.findByText("Completed tool result")).toBeVisible();
-  expect(screen.queryByRole("button", { name: /activity history/ })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /Collapse activity history/ }),
+  ).toBeVisible();
 });

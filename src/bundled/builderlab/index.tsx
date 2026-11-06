@@ -102,7 +102,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         state.status === "signed-in"
           ? state.account?.canUseRemoteAgents
             ? { readiness: "ready" }
-            : { readiness: "attention", attentionLabel: "Coming soon" }
+            : {
+                readiness: "attention",
+                attentionLabel: null,
+                attentionDescription: "Unavailable for this account",
+              }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -128,7 +132,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           {state.status === "signed-in" &&
             !state.account?.canUseRemoteAgents && (
               <p role="status" className="text-body-sm text-secondary">
-                Builderlab remote agents are coming soon for your account.
+                Builderlab remote agents are unavailable for this account.
               </p>
             )}
         </div>

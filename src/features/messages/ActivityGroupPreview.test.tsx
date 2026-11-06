@@ -65,24 +65,25 @@ function fixture() {
     },
   };
 }
-it("keeps working activity through a public reply, then retires only that request", () => {
+it("keeps a dispatch readable after its sender finishes, while the helper works and after reload", () => {
   const f = fixture();
   try {
+    const dispatch = {
+      ...step,
+      content: "@helper check the layout",
+      mentions: ["helper"],
+    };
     const { audience: _audience, ...publicStep } = step;
-    function Preview() {
+    const rows = [
+      dispatch,
+      { ...publicStep, id: "reply", content: "Status update", createdAt: 101 },
+    ];
+    function Preview({ reloaded = false }: { reloaded?: boolean }) {
+      const [expanded, setExpanded] = useState(false);
       const presentation = useActivityPresentation(
-        [
-          { ...step, id: "first" },
-          step,
-          {
-            ...publicStep,
-            id: "reply",
-            content: "Result",
-            createdAt: 101,
-          },
-        ],
-        f.activity,
-        new Set(["agent"]),
+        rows,
+        reloaded ? undefined : f.activity,
+        new Set(["agent", "helper"]),
         "request",
       );
       const group = presentation.groups[0];
@@ -92,8 +93,9 @@ it("keeps working activity through a public reply, then retires only that reques
           group={group}
           profiles={new Map()}
           media={() => undefined}
-          expanded={false}
-          onToggle={() => {}}
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+          renderHistory={(row) => <p>{row.content}</p>}
         />
       );
     }
@@ -105,24 +107,35 @@ it("keeps working activity through a public reply, then retires only that reques
       threadRootId: "request",
     });
     work.started();
-    render(<Preview />);
-    expect(
-      screen.getByRole("button", { name: /Show activity history/ }),
-    ).toBeVisible();
-    act(() => work.finish({ ok: true }));
-    expect(screen.queryByRole("button")).toBeNull();
+    const view = render(<Preview />);
+    const toggle = screen.getByRole("button", {
+      name: /Show activity history/,
+    });
+    expect(toggle).toBeVisible();
     act(() => {
       f.local
         .begin({
           scope: "test",
-          agent: "agent",
+          agent: "helper",
           channelId: "channel",
-          messageId: "next-request",
+          messageId: dispatch.id,
           threadRootId: "request",
         })
         .started();
+      work.finish({ ok: true });
     });
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(toggle).toBeVisible();
+    fireEvent.click(toggle, { detail: 0 });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(dispatch.content, { selector: "p" })).toBeVisible();
+    fireEvent.click(toggle, { detail: 0 });
+    view.rerender(<Preview reloaded />);
+    const restored = screen.getByRole("button", {
+      name: /Show activity history/,
+    });
+    expect(restored).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(restored, { detail: 0 });
+    expect(screen.getByText(dispatch.content, { selector: "p" })).toBeVisible();
   } finally {
     f.dispose();
   }

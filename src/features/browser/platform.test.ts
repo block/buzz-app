@@ -97,6 +97,7 @@ describe("createBrowserPlatform", () => {
     );
     await platform.attach("https://example.com", bounds, "builderlab-apps");
     await platform.setBounds("session-1", bounds, true);
+    await platform.setMediaSuspended("session-1", true);
     await platform.navigate("session-1", "https://other.example.com");
     await platform.navigate("session-1", "https://typed.example.com", true);
     await platform.action("session-1", "reload");
@@ -122,6 +123,10 @@ describe("createBrowserPlatform", () => {
         },
       ],
       ["browser_set_bounds", { sessionId: "session-1", bounds, visible: true }],
+      [
+        "browser_set_media_suspended",
+        { sessionId: "session-1", suspended: true },
+      ],
       [
         "browser_navigate",
         {

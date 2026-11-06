@@ -1,4 +1,5 @@
 import { ActivityNavigationProvider } from "./ActivityNavigation";
+import { DraftsSentNavigation } from "../../features/drafts-sent/DraftsSentNavigation";
 import { PageNavigation } from "./PageNavigation";
 import { orderPages, pagePlacement } from "./presentation";
 import {
@@ -59,6 +60,7 @@ export function AppShell(props: ComponentProps<typeof AppShellContent>) {
 function AppShellContent({
   pages,
   selected,
+  target,
   navigationAttempt,
   onSelect,
   tone,
@@ -86,6 +88,8 @@ function AppShellContent({
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
+  /** The retained workspace target, including while Settings is open. */
+  target?: OpenTarget;
   navigationAttempt: string;
   onSelect: (
     key: string,
@@ -247,6 +251,15 @@ function AppShellContent({
     const content = sidebar
       ? sidebar(
           <nav aria-label="Pages" className="shell-pages">
+            {target &&
+              searchServices &&
+              pages.some((page) => page.key === "buzz.channels/channels") && (
+                <DraftsSentNavigation
+                  relay={communities.relay}
+                  navigator={searchServices.navigation}
+                  target={target}
+                />
+              )}
             <PageNavigation
               pages={orderPages(
                 pages.filter((page) => pagePlacement(page) === "sidebar"),
@@ -266,7 +279,17 @@ function AppShellContent({
     ) : (
       content
     );
-  }, [pages, selected, sidebar, sidebarScope, onSelect, creationInNavigation]);
+  }, [
+    pages,
+    selected,
+    sidebar,
+    sidebarScope,
+    onSelect,
+    creationInNavigation,
+    searchServices,
+    communities.relay,
+    target,
+  ]);
   const dockPages = orderPages(
     pages.filter((page) => page.primary && pagePlacement(page) !== "sidebar"),
     "dock",

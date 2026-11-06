@@ -178,6 +178,9 @@ export interface ReadTransport {
     signal: AbortSignal,
   ): Promise<string | undefined>;
   readonly profiling?: RelayProfiler;
+  /** Verifies events read back from device storage as a relay read does, with
+   * the host's native batch check; only present with one. Rejects on any bad record or host failure. */
+  verifyStored?(values: readonly unknown[]): Promise<RelayEvent[]>;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
   /** Stable community endpoint identity for durable session partitioning. */
@@ -275,7 +278,7 @@ export function relayHttpBase(
     : undefined;
 }
 
-async function parseEvents(
+export async function parseEvents(
   raw: unknown,
   verify: EventVerifier,
   signal?: AbortSignal,
@@ -1368,6 +1371,9 @@ export async function connectSignedTransport(
   const upload = signer.upload?.bind(signer);
   return {
     profiling,
+    ...(verify.native
+      ? { verifyStored: (values) => parseEvents(values, verify) }
+      : {}),
     ...(upload ? { uploadAttachment: hostUpload(upload, httpOrigin) } : {}),
     observePresence: presence.observe,
     async presenceSnapshot(authors, signal) {

@@ -1,3 +1,4 @@
+import { interestPaused } from "./attention";
 // Saved catch-up progress for event watches, as Janet keeps it: one stream
 // for each watch and channel, which reads the watch's own kinds. Each window
 // of missed events is read whole, newest page first, within a bound, and then
@@ -325,7 +326,8 @@ export function streamsOf(agent: Pick<Agent, "key" | "attention">) {
         ...(channel ? { channel } : {}),
         kinds: value.kinds.length ? value.kinds : CHANNEL_KINDS,
         since: value.since,
-        enabled: value.enabled,
+        enabled:
+          value.enabled && !interestPaused(agent.attention, value.interest_id),
       });
   }
   return streams;

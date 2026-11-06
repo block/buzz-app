@@ -1630,7 +1630,9 @@ export function EditableInput({
     /** Runs an Apple paragraph command in document terms, since native ones
      * stop at a token's uneditable edge. Control-A and Control-E move to the
      * paragraph's edge, and Option-Up and Option-Down first step off an edge
-     * they start at, as natively. Paragraphs are lines of the draft text, as
+     * they start at, as natively. An empty draft leaves Option-Up and
+     * Option-Down to the conversation shortcuts, as in Slack. Paragraphs are
+     * lines of the draft text, as
      * for triple click. Control-K deletes to the paragraph's end across a
      * token. Elsewhere it stays native, which keeps Control-Y working there. */
     const paragraphKey = (event: globalThis.KeyboardEvent, named: string) => {
@@ -1654,6 +1656,7 @@ export function EditableInput({
       const side = backward ? "start" : "end";
       const source = projection(),
         text = source.draft.text;
+      if (command === "step" && !text) return false;
       const at = event.shiftKey
         ? selection.head
         : backward

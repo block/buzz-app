@@ -740,6 +740,7 @@ fn port_picture(
 /// as `app_agent_create` does for a new one, and reports its carried settings.
 /// Its old store keeps it.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri passes each IPC field as an argument.
 pub(crate) async fn app_agent_port(
     state: tauri::State<'_, AppAgentHost>,
     identity: tauri::State<'_, crate::identity::IdentityHost>,

@@ -2126,9 +2126,9 @@
      Keep that focus indicator separate from the button's action hierarchy. */
   html[data-keyboard-navigation] .buzz-button:focus-visible,
   .buzz-dialog .buzz-button:focus {
-    outline: 3px solid var(--border-focus);
+    outline: 2px solid var(--border-focus);
     /* Fit the existing 4px focus allowance in scrolling dialog footers. */
-    outline-offset: 1px;
+    outline-offset: 2px;
   }
 
   /* The navigation list scrolls, so it clips: its first tab sits flush against

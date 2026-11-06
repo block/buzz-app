@@ -99,7 +99,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(cancel).toBeFocused();
   // Pointer entry still shows what Enter will activate without swapping emphasis.
   await expect(cancel).toHaveCSS("outline-style", "solid");
-  await expect(cancel).toHaveCSS("outline-width", "3px");
+  await expect(cancel).toHaveCSS("outline-width", "2px");
   expect(
     await cancel.evaluate((button) => {
       const row = button.closest(".buzz-dialog-action-row");

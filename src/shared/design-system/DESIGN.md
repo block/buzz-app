@@ -753,7 +753,7 @@ panel grid must have a shrinkable column so tabs do not widen other content.
 ## Focus appearance
 
 Keyboard focus is visible, and the component recipes in this guide own the ring.
-Buttons use a 3px `border-focus` outline with a 1px offset, fitting the existing
+Buttons use a 2px `border-focus` outline with a 2px offset, fitting the existing
 4px focus allowance in scrolling dialog footers. In Dialog and AlertDialog,
 the focused button always shows this ring, including automatic focus after pointer
 entry: it identifies what Enter will activate without changing the primary and

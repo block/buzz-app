@@ -323,6 +323,10 @@ export interface ChannelQueries {
   readDirectory?(options?: {
     signal?: AbortSignal | undefined;
   }): Promise<{ partial: boolean }>;
+  /** Whether the relay holds metadata for any channel this viewer can see,
+   * open, private or archived, from one read capped at a single event. A
+   * cheap existence check: it names no channel and never grants access. */
+  anyChannel?(options?: { signal?: AbortSignal | undefined }): Promise<boolean>;
   /** Member counts for browsing, from a joined channel's roster or an open
    * channel's relay-signed one, kept a few minutes. A channel without a
    * roster is left out of `counts`; `failed` names the ids whose read

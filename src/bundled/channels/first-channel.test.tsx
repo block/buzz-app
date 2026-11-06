@@ -42,27 +42,23 @@ function membership(role: Role | undefined) {
 }
 
 function session({
-  open = [],
-  partial = false,
+  exists = false,
+  check = async () => exists,
   create = async () => created,
 }: {
-  open?: { id: string; name: string; archived?: true }[];
-  partial?: boolean;
+  exists?: boolean;
+  check?: () => Promise<boolean>;
   create?: () => Promise<string>;
 } = {}) {
-  let directory: typeof open = [];
-  const readDirectory = vi.fn(async () => {
-    directory = open;
-    return { partial };
-  });
+  const anyChannel = vi.fn(check);
   const creation = vi.fn(create);
   const run = vi.fn(async () => {});
   const queries = {
-    channels: { readDirectory, openDirectory: () => directory },
+    channels: { anyChannel },
     channelCreation: { available: true, create: creation },
     channelLifecycle: { available: true, run },
   } as unknown as RelaySession;
-  return { queries, readDirectory, creation, run };
+  return { queries, anyChannel, creation, run };
 }
 
 const ready = (channels: ChannelSummary[] = []): ChannelList => ({
@@ -109,34 +105,30 @@ it("creates one open general for the owner of an empty community and flags it", 
   view.unmount();
   resetFirstChannelAttempts();
   mount(f.queries);
-  expect(f.readDirectory).toHaveBeenCalledOnce();
+  expect(f.anyChannel).toHaveBeenCalledOnce();
   expect(f.creation).toHaveBeenCalledOnce();
 });
 
-it("leaves a community that already has an open channel, archived included", async () => {
-  const f = session({
-    open: [
-      {
-        id: "33333333-3333-4333-8333-333333333333",
-        name: "old",
-        archived: true,
-      },
-    ],
-  });
+it("leaves a community where the relay already holds a channel", async () => {
+  const f = session({ exists: true });
   mount(f.queries);
   await waitFor(() =>
     expect(readView(scope, "first-channel", false)).toBe(true),
   );
+  expect(f.anyChannel).toHaveBeenCalledOnce();
   expect(f.creation).not.toHaveBeenCalled();
 });
 
-it("creates nothing from a partial directory read, and settles nothing", async () => {
-  const f = session({ partial: true });
+it("creates nothing when the check fails, and settles nothing", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const f = session({
+    check: () => Promise.reject(new Error("Relay is unavailable")),
+  });
   mount(f.queries);
-  await waitFor(() => expect(f.readDirectory).toHaveBeenCalledOnce());
-  await Promise.resolve();
+  await waitFor(() => expect(warn).toHaveBeenCalled());
   expect(f.creation).not.toHaveBeenCalled();
   expect(readView(scope, "first-channel", false)).toBe(false);
+  warn.mockRestore();
 });
 
 it.each<Role | null>(["admin", "member", null])(
@@ -144,7 +136,7 @@ it.each<Role | null>(["admin", "member", null])(
   (role) => {
     const f = session();
     mount(f.queries, { role });
-    expect(f.readDirectory).not.toHaveBeenCalled();
+    expect(f.anyChannel).not.toHaveBeenCalled();
   },
 );
 
@@ -161,7 +153,7 @@ it("does nothing while the owner has joined a channel, the list is loading or ca
   });
   mount(f.queries, { list: { status: "loading", channels: [] } });
   mount(f.queries, { cached: true });
-  expect(f.readDirectory).not.toHaveBeenCalled();
+  expect(f.anyChannel).not.toHaveBeenCalled();
   // Nor does it read the community roster for a viewer with a channel to open.
   expect(ensure).not.toHaveBeenCalled();
 });

@@ -64,9 +64,10 @@ channels they have never been in each time they connect, so those channels
 appear a moment later. See [local-first launch](channels.md#local-first-launch).
 
 A brand-new community has no channels. When its owner opens Messages there,
-having joined no channel, the client reads the whole open-channel directory and,
-only when that complete read finds no open channel, archived ones included,
-creates one open `general` and makes it a starter channel. It does this at most
+having joined no channel, the client asks the relay for at most one channel
+metadata event (`anyChannel`). Only when none comes back, so the community has
+no channel at all, open, private or archived, does it create one open `general`
+and make it a starter channel. It does this at most
 once per community on each device (a view-state marker) and once per app run,
 and the relay's unique open channel names refuse a second `general` from
 another device. Admins and members never create it, and it joins no one and

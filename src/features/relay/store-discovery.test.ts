@@ -1405,6 +1405,32 @@ it("orders public matches by the shared ranks, best first", async () => {
   expect(h.pending).toHaveLength(0);
 });
 
+it("checks whether any channel exists with one relay-signed event at most", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const empty = h.channels.anyChannel?.();
+  const first = await h.next(39000);
+  expect(first.filters).toEqual([
+    { kinds: [39000], authors: [relay.pubkey], limit: 1 },
+  ]);
+  first.respond([]);
+  expect(await empty).toBe(false);
+  const found = h.channels.anyChannel?.();
+  (await h.next(39000)).respond([
+    metadata(
+      relay,
+      "13200000-0000-4000-8000-000000000000",
+      "old",
+      1_700_000_000,
+      [["archived", "true"]],
+    ),
+  ]);
+  expect(await found).toBe(true);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("reads the open directory for browsing with descriptions, sharing the search read", async () => {
   const h = setup();
   h.channels.ensureList();

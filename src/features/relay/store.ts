@@ -2541,6 +2541,27 @@ export function createChannelStore(
       throw error;
     }
   }
+  /** Whether the relay holds any channel's metadata, from one event at most.
+   * Cheaper than the directory when only existence matters. */
+  async function anyChannel(settings?: {
+    signal?: AbortSignal | undefined;
+  }): Promise<boolean> {
+    if (disposed || !transport || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const relay = transport;
+    const generation = epoch;
+    const signal = settings?.signal;
+    signal?.throwIfAborted();
+    const events = await relay.read(
+      [{ kinds: [39000], authors: [relay.relayAuthor], limit: 1 }],
+      { ...(signal ? { signal } : {}), priority: "foreground", fresh: true },
+    );
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel check", "AbortError");
+    return events.some(
+      (event) => event.kind === 39000 && event.pubkey === relay.relayAuthor,
+    );
+  }
   /** Recent member counts, by channel, for this epoch. */
   let memberCounts:
     | { generation: number; counts: Map<string, { count: number; at: number }> }
@@ -3353,6 +3374,7 @@ export function createChannelStore(
     findLabeled,
     matchPublic,
     readDirectory,
+    anyChannel,
     readMemberCounts,
     directoryComplete: () =>
       publicDirectory?.generation === epoch &&

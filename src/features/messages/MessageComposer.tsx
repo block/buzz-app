@@ -1246,18 +1246,15 @@ function Composer({
   // The editor's placeholder is text, so a channel's own placeholder is drawn
   // over it with its sidebar icon; DMs, threads and edits keep their text.
   const ChannelIcon = useListedChannel(listed, channelId, channelIcon);
+  const channelLabel =
+    !editing.target && customLabel === undefined && !threadRootId;
   const iconPlaceholder =
-    ChannelIcon !== ChatCircleIcon &&
-    !editing.target &&
-    customLabel === undefined &&
-    placeholder === undefined &&
-    !threadRootId;
-  const label = editing.target
-    ? "Edit message"
-    : (customLabel ??
-      (threadRootId
-        ? "Reply to thread"
-        : `Message ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`));
+    channelLabel && placeholder === undefined && ChannelIcon !== ChatCircleIcon;
+  const label = channelLabel
+    ? `Message ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`
+    : editing.target
+      ? "Edit message"
+      : (customLabel ?? "Reply to thread");
   const gifPreview = useGifDraftPreview(extensions?.tools);
   const attachments = useAttachmentDraft(
     session,
@@ -3576,10 +3573,15 @@ function Composer({
               }}
             />
             {iconPlaceholder && (
-              <span className={styles.channelPlaceholder} aria-hidden="true">
-                Message{" "}
+              // Its words are drawn by CSS, like the editor's own placeholder,
+              // so find-in-page and copying skip them.
+              <span
+                className={styles.channelPlaceholder}
+                aria-hidden="true"
+                data-lead="Message"
+                data-name={channelName}
+              >
                 <ChannelIcon className={channelIconClass(ChannelIcon)} />
-                {channelName}
               </span>
             )}
           </div>

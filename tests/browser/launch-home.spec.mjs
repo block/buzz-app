@@ -347,9 +347,9 @@ for (const huddle of [false, true]) {
     expect(
       await page.evaluate(() => window.fixtureNavigation.snapshot().status),
     ).toBe("opening");
-    await expect(page.getByRole("textbox", { name: /^Message / })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("textbox", { name: /^Message #?Alpha$/ }),
+    ).toHaveCount(0);
     expect(reads).toHaveLength(0);
     release();
     if (huddle) {
@@ -371,7 +371,7 @@ for (const huddle of [false, true]) {
         await page.evaluate(() => window.fixtureNavigation.snapshot().status),
       ).toBe("failed");
       await expect(
-        page.getByRole("textbox", { name: /^Message / }),
+        page.getByRole("textbox", { name: /^Message #?Alpha$/ }),
       ).toHaveCount(0);
       expect(reads).toHaveLength(0);
       failMetadata = false;

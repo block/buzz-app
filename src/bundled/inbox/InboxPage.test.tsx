@@ -4167,8 +4167,10 @@ function threadLayout() {
       : getClientRects.call(this);
   });
   return async (reader: HTMLElement, read: () => void) => {
-    // A reveal can still be between its two real frames here; the fake clock
-    // below never runs a frame requested before it, so let those land first.
+    // A reveal can still be between its two real frames here (use-message-
+    // reveal's placing frame, then its completing one); the fake clock below
+    // never runs a frame requested before it, so let those land first. Its
+    // settled state is a private ref with no DOM signal to wait on instead.
     for (let frame = 0; frame < 2; frame++)
       await act(
         () =>

@@ -6812,7 +6812,9 @@ it("leads the placeholder's channel name with its sidebar icon", () => {
   expect(screen.getByRole("textbox", { name: "Message #General" })).toBe(
     h.input(),
   );
-  expect(lead()).toHaveTextContent(/^Message General$/);
+  expect(lead()).toHaveTextContent(/^$/);
+  expect(lead()).toHaveAttribute("data-lead", "Message");
+  expect(lead()).toHaveAttribute("data-name", "General");
   expect(lead()?.querySelector("svg.tabler-icon-hash")).not.toBeNull();
   const channel: ChannelSummary = {
     id: "channel",
@@ -6832,7 +6834,7 @@ it("leads the placeholder's channel name with its sidebar icon", () => {
   expect(screen.getByRole("textbox", { name: "Message General" })).toBe(
     h.input(),
   );
-  expect(lead()).toHaveTextContent(/^Message General$/);
+  expect(lead()).toHaveAttribute("data-name", "General");
   expect(lead()?.querySelector("svg.tabler-icon-lock")).not.toBeNull();
   expect(lead()?.querySelector("svg.tabler-icon-hash")).toBeNull();
   h.retarget({ session, threadRootId: "root" });

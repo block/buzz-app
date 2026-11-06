@@ -119,11 +119,6 @@
   background: var(--affordance-accent-prominent);
 }
 
-.badge {
-  color: var(--text-navigation-unread);
-  font-weight: var(--type-weight-semibold);
-}
-
 /* Activity's panel-tab toolbar geometry. */
 .tabsToolbar {
   flex: none;

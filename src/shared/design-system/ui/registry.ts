@@ -382,6 +382,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["field", "radio-group"],
   },
   {
+    slug: "count-badge",
+    name: "CountBadge",
+    purpose:
+      "Show a quiet item count, such as drafts, at the end of a navigation row.",
+    behavior:
+      "Image role with an exact spoken count; caps the visible number at 99+. Not interactive.",
+    variants: ["single digit", "multiple digits", "capped", "selected row"],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Messages",
+    source: "shared/design-system/ui/CountBadge.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "keyboard-shortcut",
     name: "KeyboardShortcut",
     purpose:

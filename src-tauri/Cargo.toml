@@ -26,6 +26,7 @@ url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
+buzz-mesh-compute = { path = "../src/bundled/mesh-compute/compute" }
 buzz-nsec-backup = { path = "../crates/nsec-backup" }
 buzz-pairing = { path = "../crates/pairing" }
 nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }
@@ -78,7 +79,8 @@ tempfile = "3"
 fs2 = "0.4"
 arboard = { version = "3", features = ["wayland-data-control"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
-rusqlite = { version = "0.38", features = ["bundled"] }
+# 0.40: mesh-llm's log store requires it, and only one libsqlite3-sys may link sqlite3.
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
 hex = "0.4"

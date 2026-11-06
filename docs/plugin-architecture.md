@@ -100,6 +100,16 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+A bundled plugin may own Rust as a Cargo workspace member under
+`bundled/<plugin>/<crate>/`, including its Tauri commands (Mesh:
+`bundled/mesh-compute/compute/`). Its host adapter is one `src-tauri/src/<plugin>.rs`
+module that lends it narrow identity/relay access and exposes `setup` and
+`commands`; `lib.rs` only manages its state, routes its command prefix, and calls
+its shutdown. The crate must not enable Tauri features, entitlements or app
+config for the whole host. Source colocation does not make Rust dynamically
+installable. When adding such a crate, include its path in the Rust input
+selection in `scripts/check-push.mjs` and cover that selection in the hook tests.
+
 ## Open a Git import from a link
 
 Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>][&path=<encoded-folder>][&commit=<hex>]`
@@ -865,7 +875,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos, Usage, Reminders and Workflows are off by default for fresh installs. Feedback, Diff viewer, Identity
+Todos, Usage, Reminders, Workflows and Shared compute are off by default for fresh installs. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and

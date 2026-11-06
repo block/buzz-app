@@ -60,6 +60,7 @@ import {
   FolderSimpleIcon,
   MinusIcon,
   PlusIcon,
+  XIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
@@ -976,9 +977,9 @@ export function ChannelInventory({
           }}
         >
           <MenuIcon>
-            <MinusIcon size={14} />
+            <XIcon size={14} />
           </MenuIcon>
-          Remove from Team
+          Close conversation
         </MenuItem>,
       );
     }

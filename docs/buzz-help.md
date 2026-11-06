@@ -299,7 +299,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
-- **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
+- **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,
   without being marked read. Sending a message reopens the DM and brings it
@@ -505,7 +505,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   approval, Buzz opens the approval page in your default browser, where you
   are signed in to Builderlab. Approve it there, return to Buzz and click
   **Reload** to open the app.
-- **Drafts & sent** lists the messages you started but did not send, newest
+- **Drafts & sent** is part of Messages. Opening it keeps the conversation
+  sidebar available, so you can switch straight back to a chat. Use the **Drafts**
+  and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
+  Rows use Activity’s message layout, with recipient identities in Sent. It lists
+  the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by
   day. A sent message shows who replied after you ("2 after you") or that you
@@ -829,6 +833,11 @@ confirmation.
   On macOS and Linux, watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.
+- **Shared compute** is off by default; enable it in Settings → Plugins, then
+  turn on sharing separately. **Mesh agents**, when it is enabled, use saved Interest
+  instructions for watched turns in both Chat and Agent mode. Watched messages
+  are context for that Interest; later direct requests do not inherit it. Mesh
+  agents respond only to their owner.
 - **Solo workers**: where a plugin offers it, an owner can authorize one agent to
   start, message, read, stop, and archive the owner's workers in Solo chats. The
   agent asks the owner's Buzz in a private channel with only the two of them;

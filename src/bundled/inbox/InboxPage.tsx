@@ -121,7 +121,7 @@ const targetOf = (item: InboxItem) => ({
 });
 
 /** DMs, including their reactions, and a Solo chat's own messages open whole;
- * others open at their message. Reading any of a DM reads all of it, so a DM
+ * others open at their message. A DM row's read covers all of the DM, so the
  * row opens as its thread only when that thread alone shows its unread
  * messages. */
 const tabTarget = (

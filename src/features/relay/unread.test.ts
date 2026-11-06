@@ -2820,6 +2820,71 @@ it("a DM row is threadOnly only while its representative's thread holds all its 
   });
 });
 
+it.each(["catchUp", "observe"] as const)(
+  "a DM thread reader (%s) reads only up to the earliest unread message outside its thread",
+  async (step) => {
+    const h = setup();
+    h.grant("dm");
+    h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+    const unread = h.session.unread;
+    const frontier = () => h.journal()?.state.frontiers.dm;
+    const isUnread = (event: RelayEvent) =>
+      unread.attention("dm", event.id).unread;
+    const row = () => {
+      const found = unread
+        .inbox()
+        .items.find((item) => item.channelId === "dm");
+      assert(found);
+      return found;
+    };
+    const read = async (seen: RelayEvent, thread?: string) => {
+      const lease = unread.reading("dm", thread);
+      if (step === "catchUp") await lease.catchUp(seen.id, thread);
+      else await lease.observe([seen.id]);
+      lease.dispose();
+    };
+    // Alice's root is the thread's own message; the viewer's topic is another.
+    const root = message(h.alice, "dm", "Alice's topic", 20);
+    const topic = message(h.viewer, "dm", "My topic", 21);
+    const reply = (parent: RelayEvent, content: string, at: number) =>
+      message(h.alice, "dm", content, at, [["e", parent.id, "", "reply"]]);
+    // With every unread message in the thread, it reads the whole DM.
+    const first = reply(root, "First reply", 22);
+    h.emit([root, topic, first]);
+    await read(first, root.id);
+    expect(frontier()).toBe(22);
+    // A reply in another thread is outside this one.
+    const other = reply(topic, "Other thread reply", 30);
+    const second = reply(root, "Second reply", 31);
+    h.emit([other, second]);
+    await read(second, root.id);
+    expect(frontier()).toBe(29);
+    expect(isUnread(other)).toBe(true);
+    // One frontier cannot skip a message: the thread's later reply stays
+    // unread too.
+    expect(isUnread(second)).toBe(true);
+    // A whole reader reads all of it.
+    await read(topic);
+    expect(frontier()).toBe(31);
+    // The viewer's own messages are never unread, so they do not stop it. A
+    // top-level message from Alice does.
+    const mine = message(h.viewer, "dm", "Mine", 40);
+    const top = message(h.alice, "dm", "Top level", 41);
+    const third = reply(root, "Third reply", 42);
+    h.emit([mine, top, third]);
+    await read(third, root.id);
+    expect(frontier()).toBe(40);
+    expect(isUnread(top)).toBe(true);
+    expect(isUnread(third)).toBe(true);
+    // Its row no longer opens as the thread, so reopening shows `top`.
+    expect(row()).toMatchObject({ messageId: top.id, unreadCount: 2 });
+    expect(row().threadOnly).toBeUndefined();
+    // Another thread dwell cannot pass `top` either.
+    await read(third, root.id);
+    expect(frontier()).toBe(40);
+  },
+);
+
 it("inbox groups a Solo chat's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
   const h = setup();
   h.grant("room");

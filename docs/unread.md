@@ -81,6 +81,11 @@ catch-up (including a message taller than the viewport):
   advances the DM's channel frontier through the newest retained verified message
   (replies included) and ends a local manual unread on the DM. It writes no
   `activity:` or per-message marks. Like catch-up, it never uses wall time.
+  A thread reader (`reading(channelId, rootId)`) shows only its thread, so its
+  dwell stops the frontier just before the earliest unread message outside that
+  thread: a top-level message or a reply in another thread. That message stays
+  unread, and so do the thread's replies from it on, since one frontier cannot
+  skip a message; a whole-DM read covers them.
 
 This intentionally relaxes the old individual-row-only policy for the channel
 timeline and the thread being read, without reading unopened threads' replies.

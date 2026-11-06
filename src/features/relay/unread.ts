@@ -108,7 +108,8 @@ export interface UnreadCapability {
   revision(): number;
   /** Access/cache/connection retirement fence. */
   generation(): number;
-  reading(channelId: string): ReadingHandle;
+  /** `rootId` names the thread a reader shows, which bounds its DM reads. */
+  reading(channelId: string, rootId?: string): ReadingHandle;
   /** Whether the viewer follows this canonical root: an explicit choice,
    * otherwise writing or replying anywhere in its thread. */
   following(channelId: string, rootId: string): boolean;
@@ -2210,7 +2211,7 @@ export function createUnread({
       saved = next;
       followsChanged(changed);
     },
-    reading(channelId) {
+    reading(channelId, rootId) {
       if (closed || !allowed(channelId) || handles.size >= 64)
         throw new Error("Reading handle unavailable");
       let active = true;
@@ -2235,9 +2236,12 @@ export function createUnread({
       handles.add(dispose);
       // Reading a DM reads all of it, through the newest retained message,
       // and ends a manual unread on it. A DM is all for the reader, so there
-      // is no backlog to keep. One lease is one earned dwell, so its catchUp
-      // and observe share the first cutoff: a message arriving between them
-      // waits for the next dwell. Returns undefined outside DMs.
+      // is no backlog to keep. A thread reader shows only its thread, so its
+      // read stops just before the earliest unread message outside it: one
+      // frontier cannot skip that message, so the thread's later replies stay
+      // unread too. One lease is one earned dwell, so its catchUp and observe
+      // share the first cutoff: a message arriving between them waits for the
+      // next dwell. Returns undefined outside DMs.
       let dmRead: Promise<unknown> | undefined;
       const readDm = (
         witnesses: readonly Readonly<{ target: ReadTarget; id: string }>[],
@@ -2252,13 +2256,22 @@ export function createUnread({
             continue;
           }
           indexEvidence();
-          const cut = (byChannel.get(channelId) ?? []).reduce(
+          const rows = byChannel.get(channelId) ?? [];
+          const state = reads.state();
+          let cut = rows.reduce(
             (newest, row) => Math.max(newest, row.event.created_at),
             -1,
           );
+          if (rootId)
+            for (const row of rows)
+              if (
+                row.event.id !== rootId &&
+                row.rootId !== rootId &&
+                isUnread(row, state, true)
+              )
+                cut = Math.min(cut, row.event.created_at - 1);
           dmRead =
-            (reads.state().frontiers[channelId] ?? -1) < cut ||
-            manual(channelId)
+            (state.frontiers[channelId] ?? -1) < cut || manual(channelId)
               ? reads.read(
                   channelId,
                   cut,

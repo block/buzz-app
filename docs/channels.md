@@ -147,10 +147,12 @@ sidebar coordinates must match what the sidebar signer produces, and every
 other coordinate must satisfy the recipe contract.
 
 Move channel, Create new, exclusive Starred placement and startup presentation also
-belong to this persistent sidebar. Rows in saved groups, **Starred** and **Channels**
-can also be dragged with a pointer onto another saved group, **Starred** or
+belong to this persistent sidebar. Rows in saved groups, **Starred**, **Channels**
+and **Forums** can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
-placement, rollback notice and Retry.
+placement, rollback notice and Retry. Forums can use the same Move channel menu,
+including Create new and Starred. An unassigned, unstarred forum stays under
+**Forums**, including after removing its saved section.
 The **Channels** ellipsis menu also offers **Create section**, which creates an
 empty section without moving a channel. Its dialog retains the name and section
 ID after an attempted write fails and waits for confirmation before closing.

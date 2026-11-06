@@ -817,6 +817,21 @@ describe("team history", () => {
   });
 });
 
+describe("another device's agent", () => {
+  it("reads its synced instructions without creating or binding anything", async () => {
+    const f = setup();
+    expect(await f.configs.readInstructions(agent.pubkey)).toBeUndefined();
+    const head = await created("elsewhere text");
+    f.heads.set(tag(head, "d") ?? "", head);
+    expect(await f.configs.readInstructions(agent.pubkey)).toEqual({
+      instructions: "elsewhere text",
+      revision: head.id,
+    });
+    expect(f.ensure).not.toHaveBeenCalled();
+    expect(f.configs.binding(agent.pubkey)).toBeUndefined();
+  });
+});
+
 describe("deleting an agent", () => {
   it("archives its config channel and stops syncing it", async () => {
     const f = setup();

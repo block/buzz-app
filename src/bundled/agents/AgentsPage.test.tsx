@@ -5830,7 +5830,19 @@ describe("team editor visits", () => {
     expect(matches(page)).toBe(false);
   });
 
-  it("takes a revert's instructions and version but keeps the other edits", async () => {
+  const ada = agent("Ada", 1).pubkey;
+  const bo = agent("Bo", 2).pubkey;
+  /** Edits the open team, lets `elsewhere` save over it, reverts its
+   * instructions to "Before." as `reverted`, then saves. */
+  async function revert({
+    edit,
+    elsewhere,
+    reverted,
+  }: {
+    edit(user: ReturnType<typeof userEvent.setup>): Promise<void>;
+    elsewhere?: ReturnType<typeof crew>;
+    reverted: ReturnType<typeof crew>;
+  }) {
     const user = userEvent.setup();
     const revision = (n: number, text: string) => ({
       id: `${n}`.repeat(64),
@@ -5851,16 +5863,15 @@ describe("team editor visits", () => {
       ],
     });
     const [now, before] = [revision(1, "Now."), revision(0, "Before.")];
-    const revisions = [now, before];
     const view = setup([agent("Ada", 1), agent("Bo", 2)], {
       teams: [crew(now.id, "Now.")],
       page: at(visit, "team"),
     });
     Object.assign(view.agents, {
       teamHistory: () => ({
-        read: vi.fn(async () => revisions),
+        read: vi.fn(async () => [now, before]),
         revise: vi.fn(async () => {
-          view.change({ teams: [crew("2".repeat(64), "Before.")] });
+          view.change({ teams: [reverted] });
           return { status: "accepted" };
         }),
         sides: [
@@ -5874,10 +5885,8 @@ describe("team editor visits", () => {
       }),
     });
     view.change({});
-    const name = screen.getByRole("textbox", { name: "Name" });
-    await user.clear(name);
-    await user.type(name, "Night crew");
-    await user.click(screen.getByRole("checkbox", { name: "Bo" }));
+    await edit(user);
+    if (elsewhere) view.change({ teams: [elsewhere] });
     const older = {
       ...page,
       route: {
@@ -5900,22 +5909,118 @@ describe("team editor visits", () => {
         screen.getByRole("textbox", { name: "Instructions", hidden: true }),
       ).toHaveValue("Before."),
     );
-    expect(
-      screen.getByRole("textbox", { name: "Name", hidden: true }),
-    ).toHaveValue("Night crew");
-    expect(
-      screen.getByRole("checkbox", { name: "Bo", hidden: true }),
-    ).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Save", hidden: true }));
-    await vi.waitFor(() =>
-      expect(view.agents.saveTeam).toHaveBeenCalledWith(
-        expect.objectContaining({
-          opened: expect.objectContaining({ revision: "2".repeat(64) }),
-          name: "Night crew",
-          instructions: "Before.",
-          members: [agent("Ada", 1).pubkey, agent("Bo", 2).pubkey],
+    await vi.waitFor(() => expect(view.agents.saveTeam).toHaveBeenCalled());
+    return vi.mocked(view.agents.saveTeam).mock.calls[0]?.[0];
+  }
+  const rename = async (user: ReturnType<typeof userEvent.setup>) => {
+    const name = screen.getByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "Night crew");
+  };
+
+  it("takes a revert's instructions and version but keeps the other edits", async () => {
+    const saved = await revert({
+      edit: async (user) => {
+        await rename(user);
+        await user.click(screen.getByRole("checkbox", { name: "Bo" }));
+      },
+      reverted: crew("2".repeat(64), "Before."),
+    });
+    expect(saved).toMatchObject({
+      opened: { revision: "2".repeat(64) },
+      name: "Night crew",
+      instructions: "Before.",
+      members: [ada, bo],
+    });
+  });
+
+  it("takes another device's rename and new member with a revert", async () => {
+    const renamed = {
+      ...crew("2".repeat(64), "Now."),
+      name: "Day crew",
+      members: [ada, bo],
+    };
+    const saved = await revert({
+      edit: async () => {},
+      elsewhere: renamed,
+      reverted: {
+        ...renamed,
+        revision: "3".repeat(64),
+        instructions: "Before.",
+      },
+    });
+    expect(saved).toMatchObject({
+      opened: { revision: "3".repeat(64) },
+      name: "Day crew",
+      instructions: "Before.",
+      members: [ada, bo],
+    });
+  });
+
+  it("keeps an edit over another device's rename a conflict after a revert", async () => {
+    const renamed = { ...crew("2".repeat(64), "Now."), name: "Day crew" };
+    const saved = await revert({
+      edit: rename,
+      elsewhere: renamed,
+      reverted: {
+        ...renamed,
+        revision: "3".repeat(64),
+        instructions: "Before.",
+      },
+    });
+    expect(saved).toMatchObject({
+      opened: { revision: "1".repeat(64) },
+      name: "Night crew",
+    });
+  });
+
+  it("leaves an editor with unsaved edits open on Back", async () => {
+    const view = setup([agent("Ada", 1)], {
+      teams: [crew("r1", "Hi.")],
+      page: at(visit, "team"),
+    });
+    await rename(userEvent.setup());
+    const show = (where: ReturnType<typeof at>) =>
+      view.rerender(
+        <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+      );
+    show(at(page, "page"));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Night crew",
+    );
+    show(at(visit, "team"));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Night crew",
+    );
+  });
+
+  it("leaves an editor open on Back while its Save runs, then closes it", async () => {
+    const user = userEvent.setup();
+    const view = setup([agent("Ada", 1)], {
+      teams: [crew("r1", "Hi.")],
+      page: at(visit, "team"),
+    });
+    let finish = () => {};
+    vi.mocked(view.agents.saveTeam).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(crew("r2", "Hi."));
         }),
-      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    view.rerender(
+      <AgentsPage
+        agents={view.agents}
+        relay={view.relay}
+        {...at(page, "page")}
+      />,
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+    expect(view.agents.saveTeam).toHaveBeenCalled();
+    finish();
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull(),
     );
   });
 });

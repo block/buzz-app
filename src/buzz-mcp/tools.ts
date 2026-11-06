@@ -158,7 +158,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_read",
-    "Read one of your owner's agents here, yourself included: name, type, instructions, whether they sync and their current revision; a hosted agent or one on another device says its config is unavailable. agent is its pubkey or exact name; without it, lists them all.",
+    "Read one of your owner's agents here, yourself included: name, type, instructions, whether they sync and their current revision; a hosted agent or one on another device says its config is unavailable when it can't be read here. agent is its pubkey or exact name; without it, lists them all.",
     { agent: str },
   ),
   tool(

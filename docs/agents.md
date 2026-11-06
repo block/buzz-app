@@ -62,8 +62,9 @@ does. Change requests share the creation requests' local bound and lifetime.
 `agent_read` returns one of the owner's agents in the caller's community, by
 pubkey or exact name, or all of them: name, type, instructions (null for a type
 without them), whether they sync and the current instructions revision. A
-hosted agent or one on another device is listed with `unavailable` saying why
-its config can't be read here.
+hosted agent or one on another device gives its synced instructions when the
+owner can read them here (read only, never creating or moving its config),
+and otherwise `unavailable` saying why.
 `team_read` returns the teams Your teams shows in that community, by id or
 exact name, or all of them: name, instructions, members, whether the team syncs
 and its revision. `team_update` submits an unsaved draft of a team's new name

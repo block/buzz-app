@@ -486,7 +486,7 @@ export type RunnerHost = {
   readAgents(
     agent: Agent,
     target?: string,
-  ): AgentReadout | readonly AgentReadout[];
+  ): Promise<AgentReadout | readonly AgentReadout[]>;
   readTeams(
     agent: Agent,
     target?: string,

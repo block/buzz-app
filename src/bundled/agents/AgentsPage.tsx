@@ -390,11 +390,15 @@ export function AgentsPage({
     routed && navigation.target.kind === "page"
       ? teamRoute(navigation.target.route?.params)
       : undefined;
+  // An editor with unsaved edits or a Save running, which Back leaves open
+  // as it leaves an agent's panel.
+  const teamBusy = useRef(false);
   useEffect(() => {
     if (!routedEntry) return;
     if (!routedTeam) {
       // Back past a team's visit closes its editor; a new team has none.
-      setEditingTeam((open) => (open === "new" ? open : undefined));
+      if (!teamBusy.current)
+        setEditingTeam((open) => (open === "new" ? open : undefined));
       return;
     }
     setSelectedKey(undefined);
@@ -424,11 +428,10 @@ export function AgentsPage({
       });
       return;
     }
-    const closing = routedTeam;
-    if (!closing) {
-      setEditingTeam(undefined);
-      return;
-    }
+    // An editor Back left open closes here, and its visits end too.
+    const closing = routedTeam ?? editingTeam;
+    if (!routedTeam) setEditingTeam(undefined);
+    if (!closing || closing === "new") return;
     const pageKey = targetKey(page);
     navigator.dismiss(
       (visit) =>
@@ -739,6 +742,9 @@ export function AgentsPage({
               teams={teams}
               editing={editing}
               onEdit={editTeam}
+              onBusy={(busy) => {
+                teamBusy.current = busy;
+              }}
               historyPresentation={
                 editing &&
                 navigation &&
@@ -2390,6 +2396,7 @@ function Teams({
   teams,
   editing,
   onEdit,
+  onBusy,
   historyPresentation,
   newTeam,
 }: {
@@ -2399,6 +2406,7 @@ function Teams({
   /** A team's id while it is edited, or "new" for one being made. */
   editing: string | undefined;
   onEdit(id: string | undefined): void;
+  onBusy(busy: boolean): void;
   historyPresentation?: HistoryPresentation | undefined;
   newTeam: ReactNode;
 }) {
@@ -2411,6 +2419,7 @@ function Teams({
         saved={saved}
         {...(team ? { team } : {})}
         historyPresentation={historyPresentation}
+        onBusy={onBusy}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -2443,17 +2452,22 @@ function Teams({
   );
 }
 
+const sameMembers = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((pubkey) => b.includes(pubkey));
+
 function TeamEditor({
   agents,
   saved,
   team,
   historyPresentation,
+  onBusy,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
   historyPresentation?: HistoryPresentation | undefined;
+  onBusy(busy: boolean): void;
   onDone(): void;
 }) {
   // A saved revert, until the team shows its new version.
@@ -2474,15 +2488,37 @@ function TeamEditor({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const done = useRef(onDone);
+  done.current = onDone;
   // What a synced Save revises, and a new team's id for every retry.
   const [opened, setOpened] = useState(team);
-  // A revert takes its instructions and version, keeping the other edits.
+  const nameEdited = !!opened && name !== opened.name;
+  const membersEdited = !!opened && !sameMembers(members, opened.members);
+  const busy =
+    pending ||
+    (opened
+      ? nameEdited || membersEdited || instructions !== opened.instructions
+      : !!(name.trim() || instructions || members.length));
   useEffect(() => {
-    if (!reverted || !team || team.revision === opened?.revision) return;
+    onBusy(busy);
+    return () => onBusy(false);
+  }, [busy, onBusy]);
+  // A revert takes its instructions, and the saved name and members unless
+  // edited here. An edit over a newer saved change keeps the opened version,
+  // so Save is refused as a conflict rather than undoing that change.
+  useEffect(() => {
+    if (!reverted || !team || !opened || team.revision === opened.revision)
+      return;
     setReverted(false);
-    setOpened(team);
     setInstructions(team.instructions);
-  }, [reverted, team, opened]);
+    if (!nameEdited) setName(team.name);
+    if (!membersEdited) setMembers(team.members);
+    if (
+      !(nameEdited && team.name !== opened.name) &&
+      !(membersEdited && !sameMembers(team.members, opened.members))
+    )
+      setOpened(team);
+  }, [reverted, team, opened, nameEdited, membersEdited]);
   const [draft] = useState(() => crypto.randomUUID());
   const which = opened ? { id: opened.id } : { draft };
   // Each hosted agent picked, as listed then in the only community with it.
@@ -2529,7 +2565,8 @@ function TeamEditor({
     setError("");
     try {
       await work();
-      onDone();
+      // The latest, as Back may have moved on while it ran.
+      done.current();
     } catch (reason) {
       setError(message(reason));
       setPending(false);

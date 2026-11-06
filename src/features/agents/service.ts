@@ -456,7 +456,7 @@ export type AgentHandle = Readonly<{
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The owner's agents here, or the one with this pubkey or name. */
-  readAgents?(agent?: string): AgentReadout | readonly AgentReadout[];
+  readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
   /** The owner's teams the Agents page shows here, or the one with this id
    * or name. */
   readTeams?(team?: string): TeamReadout | readonly TeamReadout[];
@@ -2206,32 +2206,47 @@ export class AgentsService extends Service implements Agents {
         this.notify();
         return { requestId: next.id, saved: false };
       },
-      readAgents: (agent, target) => {
+      readAgents: async (agent, target) => {
         const origin = this.callerOrigin(agent);
-        const found = this.identities
-          .filter(
-            (identity) =>
-              !identity.deleted &&
-              !identity.deleting &&
-              identity.owner === agent.owner &&
-              originOf(identity.relay) === origin,
-          )
-          .map((identity) => this.agentReadout(identity));
-        // Hosted ones and ones on the owner's other devices, as listed here.
-        for (const listed of this.listedAgents(origin))
-          if (listed.owner === agent.owner && !listed.unfinished)
-            found.push({
-              pubkey: listed.pubkey,
-              name: listed.name,
-              type: listed.type,
-              unavailable:
-                listed.place === "hosted"
-                  ? "Its provider keeps its config"
-                  : "Its config is on another device",
-            });
+        const held = this.identities.filter(
+          (identity) =>
+            !identity.deleted &&
+            !identity.deleting &&
+            identity.owner === agent.owner &&
+            originOf(identity.relay) === origin,
+        );
+        const found = held.map((identity) => this.agentReadout(identity));
+        // Hosted ones and ones on the owner's other devices, as listed here,
+        // with their synced instructions where the owner can read them.
+        const config = origin ? this.communityConfigs.get(origin) : undefined;
+        const listed = this.listedAgents(
+          origin,
+          new Set(held.map((identity) => identity.pubkey)),
+        ).filter((item) => item.owner === agent.owner && !item.unfinished);
+        for (const item of listed) {
+          const read = await config
+            ?.readInstructions(item.pubkey)
+            .catch(() => undefined);
+          const base = {
+            pubkey: item.pubkey,
+            name: item.name,
+            type: item.type,
+          };
+          found.push(
+            read
+              ? { ...base, ...read, synced: true }
+              : {
+                  ...base,
+                  unavailable:
+                    item.place === "hosted"
+                      ? "Its provider keeps its config"
+                      : "Its config is on another device",
+                },
+          );
+        }
         return target === undefined
           ? found
-          : pick(found, target, (item) => [item.pubkey, item.name], "agent");
+          : pick(found, target, (entry) => [entry.pubkey, entry.name], "agent");
       },
       readTeams: (agent, target) => {
         const found = this.callerTeams(agent).map((team) =>
@@ -5232,10 +5247,12 @@ export class AgentsService extends Service implements Agents {
   }
   /** The selected community's agents that are not here: hosted ones, set up
    * or not, and ones on the viewer's other devices. */
-  private listedAgents(origin: string | undefined) {
+  private listedAgents(
+    origin: string | undefined,
+    here = new Set(this.identities.map((identity) => identity.pubkey)),
+  ) {
     const binding = origin ? this.bound.get(origin)?.binding : undefined;
     if (!origin || !binding) return [];
-    const here = new Set(this.identities.map((identity) => identity.pubkey));
     const listings = this.rowsOf(origin);
     const types = new Map(this.types().map((type) => [type.key, type]));
     const relay = wssOf(binding.origin);

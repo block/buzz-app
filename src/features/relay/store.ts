@@ -1785,8 +1785,10 @@ export function createChannelStore(
     let readingRoster = true;
     let denyAllOnFailure = true;
     let outcome: RosterRefresh = { state: "deferred" };
-    /** Previews the pass's metadata reads omitted (see `denyOmitted`). */
+    /** Previews the pass's metadata reads omitted (see `denyOmitted`),
+     * denied only once every batch has been read. */
     const omittedPreviews = new Map<string, RelayEvent | undefined>();
+    let metadataRead = false;
     try {
       const ids = new Set<string>();
       let scannedBytes = 0;
@@ -2029,6 +2031,7 @@ export function createChannelStore(
             omittedPreviews.set(id, versions.get(id));
         if (disposed || generation !== epoch) return;
       }
+      metadataRead = true;
       if (!disposed && generation === epoch) {
         outcome = { state: "verified" };
         metadataOwed = false;
@@ -2090,15 +2093,15 @@ export function createChannelStore(
         rosterRefresh = Object.freeze(outcome);
         // Stale work cannot consume a newer hint or certify freshness. A failed
         // read waits for deliberate retry/a later hint instead of draining work.
-        if (
+        const again =
           (listAgain || (generation !== epoch && revokedEpoch === epoch)) &&
-          outcome.state !== "error"
-        )
-          void discover(true);
+          outcome.state !== "error";
+        // Before a queued pass starts: a denial retires the reads in flight.
+        if (metadataRead) denyOmitted(omittedPreviews);
+        if (again) void discover(true);
         else transport.rosterChanged?.();
         if (outcome.state === "verified")
           for (const id of windows.keys()) revalidateCached(id);
-        denyOmitted(omittedPreviews);
       }
     }
   }

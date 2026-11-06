@@ -16,7 +16,14 @@ const accent =
 // code point alone keeps a map from folded text back to the name for
 // underlining, and gives the same result as folding the whole name.
 const foldPoint = (char: string) =>
-  char.normalize("NFKD").replace(accent, "").toLowerCase().replace(/ς/g, "σ");
+  // ASCII has no accents, decompositions or final sigma.
+  char < "\x80"
+    ? char.toLowerCase()
+    : char
+        .normalize("NFKD")
+        .replace(accent, "")
+        .toLowerCase()
+        .replace(/ς/g, "σ");
 
 /** The folded code points of `text`, one or more per code point. */
 const foldChars = (text: string) =>

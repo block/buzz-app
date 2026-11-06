@@ -15,7 +15,6 @@ import {
   withoutStartingAgents,
 } from "./membership-rows";
 import {
-  activityDisplayRows,
   useActivityPresentation,
   useStableRowActivity,
 } from "./activity-presentation";
@@ -187,9 +186,10 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
-  /** One inline exact visit: focus the verified mounted row, without a page navigation. */
+  /** One inline exact visit: focus the verified mounted row, without a page
+   * navigation. `focus: false` marks it beside a reader that owns focus. */
   inlineTarget?:
-    | Readonly<{ messageId: string; signal: AbortSignal }>
+    | Readonly<{ messageId: string; signal: AbortSignal; focus?: false }>
     | undefined;
   /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
   transient?: boolean | undefined;
@@ -559,8 +559,6 @@ function Timeline({
     chronologicalRows,
     queries.agentActivity,
     agentPubkeys,
-    undefined,
-    pinnedIds,
   );
   const activity = presentation.groups;
   const stableActivity = useStableRowActivity();
@@ -591,24 +589,7 @@ function Timeline({
     (navigation?.target.kind === "conversation" && !returning
       ? navigation.target.messageId
       : undefined);
-  // Activity updates rebuild the hidden-row filter without changing its
-  // result; keep the same rows so positioning effects keyed on them stay idle.
-  const displayedRows = useRef(chronologicalRows);
-  const rows = useMemo(() => {
-    const next = activityDisplayRows(
-      chronologicalRows,
-      activity,
-      targetId ?? revealMessageId,
-    );
-    const prior = displayedRows.current;
-    if (
-      next.length === prior.length &&
-      next.every((row, index) => row === prior[index])
-    )
-      return prior;
-    displayedRows.current = next;
-    return next;
-  }, [chronologicalRows, activity, targetId, revealMessageId]);
+  const rows = chronologicalRows;
   const lastPublicMessage = publicMessageNeighbor(rows, rows.length, -1);
   const intent = useRef(0);
   // Keep expansion pending with scroll restoration until the saved row arrives.
@@ -628,24 +609,18 @@ function Timeline({
     }
   }
   const disclosures = new Map(
-    activity
-      .filter((group) => !group.hidden || group.retained)
-      .map((group) => [
-        group.ids[0],
-        {
-          ...group,
-          expanded: group.ids.some((id) => expandedActivity.has(id)),
-        },
-      ]),
+    activity.map((group) => [
+      group.ids[0],
+      {
+        ...group,
+        expanded: group.ids.some((id) => expandedActivity.has(id)),
+      },
+    ]),
   );
   const containedOwnerCache = useRef(new Map<string, string | undefined>());
   const nextContainedOwners = new Map(
     activity
-      .filter(
-        (group) =>
-          (!group.hidden || group.retained) &&
-          group.ids.some((id) => expandedActivity.has(id)),
-      )
+      .filter((group) => group.ids.some((id) => expandedActivity.has(id)))
       .flatMap((group) => group.ids.map((id) => [id, group.ids[0]] as const)),
   );
   // Profile/status refreshes can rebuild the projection without moving rows.
@@ -905,8 +880,16 @@ function Timeline({
     () => intent.current === targetIntent.current,
     [],
   );
+  // The visit last revealed or returned to. A relay rebind brings it back with
+  // a new signal, and a thread visit leaves it shown; neither moves the reader.
+  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
+    undefined,
+  );
   const prepareTarget = useCallback(() => {
     if (!handle.current) return;
+    // A reveal moves the reader off the visit last presented, even an inline
+    // one that presents none, so a return to that visit restores its place.
+    presentedVisit.current = undefined;
     targetIntent.current = ++intent.current;
     follow.current = false;
     upwardGesture.current = false;
@@ -945,11 +928,6 @@ function Timeline({
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
   // The row the last reveal focused; a return may take focus back from it.
   const revealedRow = useRef<string | undefined>(undefined);
-  // The visit last revealed or returned to. A relay rebind brings it back with
-  // a new signal, and a thread visit leaves it shown; neither moves the reader.
-  const presentedVisit = useRef<{ entryId: string; signal: AbortSignal }>(
-    undefined,
-  );
   // The attempt that presented it; leaving records that visit's place.
   const [presented, setPresented] = useState<AbortSignal>();
   const present = useCallback((visit: PageNavigation) => {
@@ -978,14 +956,15 @@ function Timeline({
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
   }, [navigation, targetId, targetSignal, present]);
-  // A covering Members dialog owns focus.
+  // A covering Members dialog owns focus, and hides the target's mark.
   const focusesTarget = !(
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members"
   );
   useMessageReveal({
     scroller,
-    focus: focusesTarget,
+    focus: focusesTarget && inlineTarget?.focus !== false,
+    mark: focusesTarget,
     settled,
     messageId: targetId,
     signal: targetSignal,

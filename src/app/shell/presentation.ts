@@ -7,7 +7,6 @@ import {
   GearIcon,
   LightningIcon,
   RobotIcon,
-  SendIcon,
 } from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 
@@ -23,7 +22,6 @@ export const shellPresentation = {
 const bundledOrder = [
   "buzz.channels/channels",
   "buzz.inbox/inbox",
-  "buzz.drafts-sent/drafts-sent",
   "buzz.reminders/reminders",
   "buzz.bestie/bestie",
 ];
@@ -55,7 +53,6 @@ export function orderPages(
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
-  ["buzz.drafts-sent/drafts-sent", SendIcon],
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],

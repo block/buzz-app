@@ -239,6 +239,9 @@ export function createIdentity() {
         automatic,
         unlessSaved,
       }),
+    /** Whether this device confirmed a stored backup of `pubkey`, under any account. */
+    backedUp: (pubkey: string) =>
+      invoke<boolean>("nsec_backup_confirmed", { pubkey }),
     /** Why this build can't wipe, if it can't; `sign_out` enforces it either way. */
     wipeRefusal: () => invoke<string | null>("sign_out_wipe_refusal"),
     /** Stops agents and restarts; the key (and data, with wipe) goes on next launch. */

@@ -1,5 +1,8 @@
 import { ProfilePanel } from "../profiles/ProfilePanel";
-import { createRelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import {
   profileActivityViewTarget,
   profileTarget,
@@ -36,7 +39,10 @@ import type {
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
-import { setDefaultAgent } from "../../features/solo/default-agent";
+import {
+  chooseDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import { readView, writeView } from "../../shared/view-state";
 import type { RelayData } from "../../features/relay/service";
 import type { CommunityReader } from "../../features/communities/service";
@@ -53,7 +59,6 @@ import { registerNavigationShortcuts } from "../../app/shortcuts";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import { AgentsPage } from "./AgentsPage";
-import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -3679,7 +3684,7 @@ it("opens the owned agent provider Activity tab for the originating conversation
   }
 });
 
-it("opens a turn's thread or channel from its label on the Agents page Activity tab", async () => {
+it("lets an Activity tab open a thread or channel through the host", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const open = vi.fn(async () => ({ status: "opened" as const }));
@@ -3697,27 +3702,18 @@ it("opens a turn's thread or channel from its label on the Agents page Activity 
   };
   const relay = { ...view.relay, snapshot: () => snapshot };
   const root = "c".repeat(64);
-  const turn = (turnId: string, threadRootId: string | null) => ({
-    turnId,
-    channelId: "channel-a",
-    threadRootId,
-    triggeringEventIds: [],
-    newSession: false,
-    config: [],
-    startedAt: Date.parse("2026-10-20T12:00:00Z"),
-    endedAt: Date.parse("2026-10-20T12:01:00Z"),
-    partial: false,
-    items: [],
-  });
-  const transcript = { turns: [turn("thread", root), turn("channel", null)] };
-  // Like a harness's Activity tab: it hands the host's opener to the transcript.
   const Activity = ({ openConversation }: AgentViewProps) => (
-    <ActivityTranscript
-      transcript={transcript}
-      agentName="Ada"
-      state={() => "ended"}
-      openConversation={openConversation}
-    />
+    <>
+      <button
+        type="button"
+        onClick={() => openConversation?.("channel-a", root)}
+      >
+        Thread cccccccc
+      </button>
+      <button type="button" onClick={() => openConversation?.("channel-a")}>
+        Channel
+      </button>
+    </>
   );
   const echo = view.agents.types()[0];
   if (!echo) throw new Error("Missing fixture type");
@@ -4610,6 +4606,10 @@ it("announces the Bestie on its card without repeating it in actions", async () 
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(within(menu).queryByText("Bestie")).toBeNull();
+  // Without an account to save none to, it can't be removed here.
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Remove as bestie" }),
+  ).toBeNull();
   // Right-click carries the same ordinary actions as the card's "..." menu.
   expect(
     within(menu).getByRole("menuitem", { name: "Copy public key" }),
@@ -4760,6 +4760,158 @@ it("offers Make my bestie for a remote agent, asking first, and Cancel saves not
   await vi.waitFor(() =>
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
+});
+
+it("removes a Bestie on another device from its card, asking first", async () => {
+  const user = userEvent.setup();
+  const ada: Agent = { ...agent("Ada", 1), place: "elsewhere" };
+  const view = setup([ada]);
+  const rows = [{ pubkey: ada.pubkey, name: ada.name, managed: true }];
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remove-remote-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  const ask = async () => {
+    await user.click(
+      within(card).getByRole("button", { name: "Actions for Ada" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove as bestie" }),
+    );
+    return screen.findByRole("alertdialog", {
+      name: "Remove Ada as your Bestie?",
+    });
+  };
+  // Cancel saves nothing; its settings are on the device it runs on.
+  let dialog = await ask();
+  expect(dialog).toHaveTextContent(
+    "turn them off in its Former Bestie tab on the device it runs on.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(mainAgent.write).not.toHaveBeenCalled();
+  // A failed save says so and keeps the Bestie.
+  mainAgent.write.mockRejectedValueOnce(new Error("offline"));
+  dialog = await ask();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Removing your Bestie couldn't be saved to your account. Try again.",
+  );
+  // The open dialog hides the page from the accessibility tree.
+  expect(
+    screen.getByRole("gridcell", { name: "Ada, Bestie", hidden: true }),
+  ).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  expect(mainAgent.write).toHaveBeenLastCalledWith(null);
+  expect(await screen.findByRole("gridcell", { name: "Ada" })).toBeVisible();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  // No longer Bestie, it is offered again instead.
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(
+    within(menu).getByRole("menuitem", { name: "Make my bestie" }),
+  ).toBeVisible();
+  expect(
+    within(menu).queryByRole("menuitem", { name: "Remove as bestie" }),
+  ).toBeNull();
+});
+
+it("keeps a Bestie chosen elsewhere while its removal is being asked about", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const rows = [ada, bea].map((each) => ({
+    pubkey: each.pubkey,
+    name: each.name,
+    managed: true,
+  }));
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const connection = {
+    status: "ready",
+    scope: "remove-superseded-bestie",
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  await user.click(
+    within(card).getByRole("button", { name: "Actions for Ada" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Remove as bestie" }),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Remove Ada as your Bestie?",
+  });
+  // Another surface makes Bea Bestie while the question is open.
+  await act(() =>
+    chooseDefaultAgent(
+      connection.session as unknown as RelaySession,
+      connection.scope,
+      bea.pubkey,
+    ),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+  );
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(mainAgent.write).toHaveBeenCalledTimes(1);
+  expect(mainAgent.write).toHaveBeenLastCalledWith(bea.pubkey);
+  expect(screen.getByRole("gridcell", { name: "Bea, Bestie" })).toBeVisible();
 });
 
 it("keeps a failed Bestie replacement visible and retries the account save", async () => {

@@ -703,6 +703,13 @@ state. It retains shared focus, loading, and disabled behavior. Reduced
 transparency, forced colors, and missing backdrop-filter support use an opaque
 panel fill. Use it over artwork, not on ordinary neutral profile headers.
 
+Proposed for bright brand surfaces: `Button variant="glass-clear"` uses the
+most translucent glass fill with the primary blur and rim, so the backdrop stays
+visible. Hover and press step up to the primary glass fills. Use it for a
+secondary action beside a `prominent` one, such as the onboarding welcome.
+Reduced transparency, forced colors, and missing backdrop-filter support use an
+opaque panel fill with a boundary.
+
 ### Match controls to their surface
 
 The shell uses a vertical `Tabs variant="dock"` rail on the left, ordered

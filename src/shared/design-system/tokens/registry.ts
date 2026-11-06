@@ -584,7 +584,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-danger",
         variable: "--text-danger",
-        pointsAt: "red-12 light / red-12 dark",
+        pointsAt: "red-text light / red-12 dark",
         use: "Error text and destructive action labels.",
         status: "core",
       },
@@ -606,7 +606,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-success",
         variable: "--text-success",
-        pointsAt: "green-12 light / green-12 dark",
+        pointsAt: "green-text light / green-12 dark",
         use: "Success text.",
         status: "core",
       },
@@ -1192,6 +1192,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-warning",
         pointsAt: "amber-3 light / amber-3 dark",
         use: "A warning fill.",
+        status: "core",
+      },
+      {
+        token: "surface-status-success",
+        variable: "--surface-status-success",
+        pointsAt: "citrus step 9",
+        use: "Completed task fill, paired with text-on-status-success.",
+        status: "core",
+      },
+      {
+        token: "surface-status-danger",
+        variable: "--surface-status-danger",
+        pointsAt: "red light step 11",
+        use: "Failed task fill, paired with text-on-status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status-success",
+        variable: "--text-on-status-success",
+        pointsAt: "citrus ink",
+        use: "Foreground on solid Citrus completed task status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status",
+        variable: "--text-on-status",
+        pointsAt: "white",
+        use: "Foreground on solid failed task status.",
         status: "core",
       },
       {

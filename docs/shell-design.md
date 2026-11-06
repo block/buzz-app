@@ -433,7 +433,8 @@ On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected
 closable tab in the focused pane. If focus is in the permanent main conversation,
 it closes the selected tab in the visible side pane instead. A selected closable
 main-pane tab takes priority over that fallback. Hidden tabs remain untouched;
-with nothing to close the shortcut does nothing and never closes the window.
+With nothing to close, Cmd+W on macOS closes the window while keeping Buzz and
+running agents alive; Ctrl+W on Windows/Linux does nothing.
 The macOS native Close menu uses the same action, including when an embedded
 browser owns focus (embedded browsing is currently macOS-only). On macOS,
 Cmd+Shift+W and the native **Close All Tabs** menu item close all tabs in the current channel,
@@ -465,7 +466,9 @@ detail tab, such as an agent log, the tab that owns it stays instead, without
 its details.
 A tab for another conversation, or for one of its threads, also offers
 **Open in channel**, which opens that conversation in Channels; a thread opens
-there at the same message. The current channel's own threads do not offer it.
+there at the same message, beside its root, which the channel timeline reveals
+and marks even beyond its newest page. The current channel's own threads do not
+offer it.
 A thread that offers it also names its conversation above its original message,
 as Inbox rows do (`#channel` or `DM · names`); that name is a link that does
 the same.

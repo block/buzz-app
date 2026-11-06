@@ -1,6 +1,11 @@
 import { ActivityGroupPreview } from "../../features/messages/ActivityGroupPreview";
 // @vitest-environment jsdom
-import { activityPresentation } from "../../features/messages/activity-presentation";
+import {
+  activityPresentation,
+  useActivityPresentation,
+} from "../../features/messages/activity-presentation";
+import { MessageRow } from "../../features/messages/MessageRow";
+import { createRelaySession } from "../../features/relay/session";
 import { createLocalAgentActivity } from "../../features/agents/local-activity";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -477,7 +482,7 @@ it("makes the compact avatar and tool preview one action, retaining the popup wh
   }
 });
 
-it("keeps main's unassociated work visible, replacing it only for a linked message in this thread", () => {
+it("keeps conversation dots visible alongside message-linked activity", () => {
   const f = fixture();
   const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
   const session = {
@@ -512,8 +517,8 @@ it("keeps main's unassociated work visible, replacing it only for a linked messa
       }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Activity: Blossom working" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeInTheDocument();
     view.rerender(ui(false));
     expect(
       screen.getByRole("button", { name: "Activity: Blossom working" }),
@@ -556,7 +561,7 @@ it("shows local receipt and failure without requiring an ACP transcript, and ope
       "View agent activity: Blossom, Reading notes.txt",
     );
     expect(bubble).toHaveTextContent("Reading notes.txt");
-    expect(bubble.querySelector('[data-state="working"]')).toBeNull();
+    expect(bubble.querySelector('[data-state="working"]')).not.toBeNull();
     act(() => work.finish({ ok: false, error: "Provider unavailable" }));
     expect(screen.getByText("Couldn’t finish")).toBeInTheDocument();
     const details = screen.getByRole("button", {
@@ -1637,9 +1642,14 @@ it("shows nothing later when a stopped hosted turn ends before its 30 seconds", 
   }
 });
 
-it.each([false, true])(
-  "retains request controls after a reply when stoppable: %s",
-  async (stoppable) => {
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "shows one step label through handoff (stoppable=%s, thinking=%s)",
+  async (stoppable, thinking) => {
     const local = createLocalAgentActivity();
     const f = fixture(local);
     const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
@@ -1664,23 +1674,28 @@ it.each([false, true])(
       messageId: root,
       threadRootId: root,
     });
-    work.step("Read", "notes.txt");
+    const label = thinking ? "Thinking" : "Reading notes.txt";
+    work.step(
+      thinking ? "Thinking" : "Read",
+      thinking ? undefined : "notes.txt",
+    );
     const stop = vi.fn(async () => {});
     if (stoppable) work.interruptible(stop);
     const view = render(ui([]));
     try {
       expect(
         screen.getByRole("button", {
-          name: "View agent activity: Blossom, Reading notes.txt",
+          name: `View agent activity: Blossom, ${label}`,
         }),
       ).toBeVisible();
       expect(
-        screen.queryByRole("button", { name: "Reading notes.txt" }),
-      ).toBeNull();
+        screen.getByRole("button", { name: "Activity: Blossom working" }),
+      ).toBeVisible();
+      expect(screen.getAllByText(label)).toHaveLength(1);
       view.rerender(ui([A]));
       expect(
         screen.getByRole("button", {
-          name: "View agent activity: Blossom, Reading notes.txt",
+          name: `View agent activity: Blossom, ${label}`,
         }),
       ).toBeVisible();
       expect(
@@ -1758,6 +1773,124 @@ it.each([false, true])(
     }
   },
 );
+
+it("shows thinking once across the live bubble, recorded history and conversation indicator", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const owner = createRelaySession(null);
+  const session = { ...owner.session, ...f.props.session };
+  const work = local.begin({
+    scope: "test",
+    agent: A,
+    channelId: "c",
+    messageId: root,
+    threadRootId: root,
+    thread: true,
+  });
+  work.step("Thinking");
+  const row = {
+    ...f.props.message,
+    id: "thinking-step",
+    authorId: A,
+    threadRootId: root,
+    replyParentId: root,
+    audience: "agents" as const,
+    content: "Thinking",
+  };
+  const rows = [row];
+  const empty: typeof rows = [];
+  const agents = new Set([A]);
+  function Flow({
+    recorded,
+    expanded,
+  }: {
+    recorded: boolean;
+    expanded: boolean;
+  }) {
+    const presentation = useActivityPresentation(
+      recorded ? rows : empty,
+      session.agentActivity,
+      agents,
+      root,
+    );
+    const group = presentation.groups[0];
+    return (
+      <>
+        <ActivityAccessory
+          {...f.props}
+          session={session}
+          messageLayout="thread"
+        />
+        {group && (
+          <ActivityGroupPreview
+            session={session}
+            group={group}
+            profiles={f.profiles}
+            media={() => undefined}
+            expanded={expanded}
+            onToggle={() => {}}
+            renderHistory={(entry) => {
+              const activity = presentation.byRow.get(entry.id);
+              if (!activity) throw new Error("Missing recorded activity");
+              return (
+                <MessageRow
+                  row={entry}
+                  session={session}
+                  profile={f.profiles.get(A)}
+                  media={() => undefined}
+                  onOpenLink={f.props.open}
+                  day={false}
+                  retry={undefined}
+                  recordedActivity={{
+                    ...activity,
+                    container: "history",
+                  }}
+                />
+              );
+            }}
+          />
+        )}
+        <TypingIndicator
+          session={session}
+          channelId="c"
+          threadRootId={root}
+          inFlow
+        />
+      </>
+    );
+  }
+  const ui = (recorded: boolean, expanded = false) => (
+    <ActivityIndicatorPresentation>
+      <Flow recorded={recorded} expanded={expanded} />
+    </ActivityIndicatorPresentation>
+  );
+  const view = render(ui(false));
+  try {
+    expect(screen.getAllByText("Thinking")).toHaveLength(1);
+    view.rerender(ui(true));
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+    expect(screen.getAllByText("Thinking")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeVisible();
+    view.rerender(ui(true, true));
+    expect(screen.getAllByText("Thinking")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeVisible();
+    act(() => work.finish({ ok: true }));
+    expect(screen.getByText("Thinking")).not.toHaveAttribute("data-active");
+    expect(
+      screen.queryByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeNull();
+  } finally {
+    view.unmount();
+    owner.dispose();
+    f.dispose();
+  }
+});
 
 it("hands live work to only the latest history for each agent and keeps Stop and transcript there", async () => {
   const local = createLocalAgentActivity();

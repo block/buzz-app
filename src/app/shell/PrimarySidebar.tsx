@@ -171,9 +171,11 @@ function ScopedSidebar({
     ? target.kind === "conversation"
       ? listedDestination
       : target.kind === "page" && target.pluginId === "buzz.channels"
-        ? soloDraft(target.route?.params)
-          ? "solo"
-          : "team"
+        ? target.route?.params === "drafts-sent"
+          ? undefined
+          : soloDraft(target.route?.params)
+            ? "solo"
+            : "team"
         : undefined
     : undefined;
   const location = destination ? targetKey(target) : undefined;

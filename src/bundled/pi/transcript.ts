@@ -94,13 +94,14 @@ function prompt(
   // An older steer wraps a whole turn.
   if (steer && !readEventBody(steer.body))
     sections = promptSections(steer.body);
-  const { text, author } = promptMessage(sections, name);
+  const { text, author, authorPubkey } = promptMessage(sections, name);
   return {
     id,
     at,
     type: "prompt",
     text: text || raw,
     ...(author ? { author } : {}),
+    ...(authorPubkey ? { authorPubkey } : {}),
     sections,
     steer: !!steer,
   };

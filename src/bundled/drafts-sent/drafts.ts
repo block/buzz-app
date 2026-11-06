@@ -140,9 +140,9 @@ export function readDrafts(
   };
 }
 
-/** Erases one saved draft and its files, as emptying its composer would. A mounted
- * composer reloads the empty draft, or keeps unsaved edits as a conflict. Throws
- * when storage could not forget it, before discarding any files. */
+/** Erases one saved draft and this window's files for it. A mounted composer
+ * reloads the empty draft, or keeps unsaved edits as a conflict. Throws when
+ * storage could not forget it, before discarding any files. */
 export function clearDraft(session: Session, key: string) {
   clearView(session.scope, key);
   clearAttachmentDraft(

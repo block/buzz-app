@@ -1464,9 +1464,13 @@ function Composer({
     setStorageFailed(result === "failed");
     return result;
   }
-  /** Keeps the open edit's text for a remount or another composer. */
+  /** Keeps the open edit's text for a remount or another composer. A queued
+   * follow-up's edit belongs to its queue lease, so it leaves the record of a
+   * sent message's edit alone. */
   function keepEdit(draft = valueRef.current) {
-    if (editing.target) keptEdit.keep(editing.target.id, editing.base(), draft);
+    const target = editing.target;
+    if (target && !("saveDraft" in target))
+      keptEdit.keep(target.id, editing.base(), draft);
   }
   // A plain message replaces any report, and with it a discard it named.
   const [report, setError] = useReducer(

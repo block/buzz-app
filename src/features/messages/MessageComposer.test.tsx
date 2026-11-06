@@ -11047,6 +11047,123 @@ it("keeps a kept edit closed in a waiting composer once a new message elsewhere 
   expect(waiting.input()).toHaveValue("Rewritten reply");
 });
 
+it.each(["cancelled", "saved"] as const)(
+  "keeps a kept rewrite of a sent message while a queued follow-up's edit is %s",
+  async (finish) => {
+    const sent = editableMessage({ authorId: "viewer" });
+    const key = "edit:channel";
+    const kept = {
+      id: sent.id,
+      base: "Original message",
+      draft: { text: "Rewritten message" },
+    };
+    const earlier = mount({}, undefined, "viewer");
+    earlier.setRows([sent]);
+    fireEvent.keyDown(earlier.input(), { key: "ArrowUp" });
+    earlier.fill("Rewritten message");
+    earlier.unmount();
+    expect(readView("scope", key, null)).toMatchObject(kept);
+
+    // Back in the chat before its history has the message, a new follow-up
+    // keeps the rewrite closed and queues behind the working agent.
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const h = mount();
+    h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+    const activity = {
+      status: "unavailable",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state: "working",
+          scope: "scope",
+          threadRootId: "",
+          startedAt: 1,
+        },
+      ],
+    };
+    const channelList = {
+      status: "ready",
+      channels: [{ id: "channel", channelType: "solo", creator: "viewer" }],
+    };
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        viewer: "viewer",
+        channels: { ...h.session.channels, list: () => channelList },
+        channelWrites: {
+          refreshMembership: async () => ({
+            id: "channel",
+            members: [first.pubkey],
+          }),
+          addAgents: vi.fn(),
+        },
+        agentActivity: {
+          activate: () => () => {},
+          snapshot: () => activity,
+          subscribe: () => () => {},
+        },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertText("Follow up");
+    });
+    await choicesLoaded();
+    h.submit();
+    const queue = await screen.findByRole("region", {
+      name: "Queued follow-ups",
+    });
+    expect(readView("scope", key, null)).toMatchObject({
+      ...kept,
+      resume: false,
+    });
+
+    fireEvent.click(
+      within(queue).getByRole("button", { name: "Edit queued message" }),
+    );
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    h.fill("Edited follow up");
+    if (finish === "cancelled")
+      fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+    else {
+      h.submit();
+      await waitFor(() =>
+        expect(
+          within(queue).getByRole("button", { name: "Edited follow up" }),
+        ).toBeVisible(),
+      );
+    }
+    await waitFor(() =>
+      expect(h.input()).toHaveAccessibleName("Message #General"),
+    );
+    expect(readView("scope", key, null)).toMatchObject({
+      ...kept,
+      resume: false,
+    });
+
+    // Edit chosen on the sent message opens its rewrite, which saves against
+    // the text it opened from.
+    h.setRows([sent]);
+    h.fill("");
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    expect(h.input()).toHaveValue("Rewritten message");
+    h.submit();
+    expect(h.messages.edit).toHaveBeenCalledOnce();
+    expect(h.messages.edit.mock.calls[0]?.slice(0, 2)).toEqual([
+      sent.id,
+      "Rewritten message",
+    ]);
+  },
+);
+
 it.each(["cancel", "submitted"])(
   "restores rich draft history and mention provenance after an edit is %s",
   async (finish) => {

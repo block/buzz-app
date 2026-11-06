@@ -141,24 +141,29 @@ External apps are available only in communities enabled for this build.
 Desktop preview releases enable bb-block only. Other communities cannot grant access.
 
 Start setup in the external app. Buzz desktop shows an **Authorize app**
-dialog. Select a community and an agent, check the requested access, then select
-**Authorize**. The app completes setup automatically. Keys stay in Buzz.
-Only authorize an app when you started its setup. The displayed name comes from
-that app. Protected agents cannot use this connection. Keep Buzz open.
-An unavailable agent cannot authorize access. Enable its runtime plugin or use
-the Buzz copy that runs it.
+dialog. Select a community and an agent, then select **Authorize**. The app
+gets full access as that agent: every Buzz tool the agent has, including tools
+plugins add later, the Nexus workers the agent may run, and changes to Buzz
+settings on this device. It gets the agent's Git access to its community's
+repositories, can wake the agent in its conversations, and can post any file
+your account can read on this device, including outside the agent's workspace;
+relative paths start in the workspace. An
+agent that runs on an execution target reads files only in a conversation, so
+the app cannot send its files. It can disable plugins at once; installing,
+updating, enabling or removing one needs your confirmation. The app cannot
+assume a current conversation. The app completes setup automatically. Keys stay
+in Buzz. Only authorize an app when you started its setup. The displayed name
+comes from that app. Protected agents cannot use this connection. Keep Buzz
+open. An unavailable agent cannot authorize access. Enable its runtime plugin
+or use the Buzz copy that runs it.
 
 Use **Settings → External apps → Revoke access** to stop it. Changing community
 or identity also ends access. If a connection ends, start setup in the external
 app again. Never put connection credentials in a chat or file.
-An app can discover tools that need more access. Start its access request and
-approve the requested scopes in Buzz. After approval, make the tool call again.
-Each approval replaces prior access. Request all access the app still needs.
-Creating Solo chats needs create access. An app can request it with read and
-post in one approval; existing read/post access never gains it without your
-approval. Buzz includes you, the selected agent and your saved Bestie
-automatically. Choose and save an available Bestie in this community first; the
-external app cannot choose other members or make the chat public.
+Older apps asked for limited read, post or create access, which Buzz no longer
+grants. Buzz shows an update notice for such a request; select **Deny**, update
+the app and start setup again. A saved limited approval does nothing until you
+approve full access.
 External posts use the selected agent's identity. Replies and mentions reach
 that agent in Buzz; they do not notify the external app through this connection.
 
@@ -280,7 +285,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
-- **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
+- **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,
   without being marked read. Sending a message reopens the DM and brings it
@@ -498,7 +503,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   draft to continue it in its conversation, or a sent message to jump to it.
   Search matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
-  attached files without opening the conversation.
+  attached files without opening the conversation. The same drafts show where
+  you left them: a pencil at the right edge of a channel or DM's sidebar row
+  when it, or one of its threads, holds a draft (hidden while that conversation is
+  open), and **Draft** on a message's reply line, or **Draft reply** when no
+  one has replied yet (hidden while that thread is open).
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
@@ -514,6 +523,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Side panels stay with their conversation**: a tab or panel you open beside a
+  conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
+  that conversation when you go to another conversation or page and come back,
+  until you close it. Reloading Buzz does not restore it. The Terminal drawer
+  closes when you leave the conversation.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.
@@ -625,6 +639,14 @@ available rather than silently discarding it.
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
   Never say changes were saved until Save succeeds.
+- Claude Code's open settings follow saved changes to fields you haven't edited.
+  Your unsaved edits stay in the form. If the same setting changed elsewhere,
+  review the values beside that setting, then choose **Use latest** or **Keep mine**
+  before saving. Use **View latest instructions** to read competing instructions.
+  Model and thinking are resolved together. If Save reports an error, some settings
+  may already have saved; the remaining edits stay available to retry.
+  If configuration is unavailable, edits stay in the open form, but saving
+  (including Workspace changes) waits until configuration returns.
 - **Make my bestie** in an agent card's menu chooses the agent initially tagged
   in new Solo chats for that community. It does not replace recipients in an
   existing chat or an edited draft. People can choose a different agent for a
@@ -651,6 +673,8 @@ available rather than silently discarding it.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
+  Builderlab shows **Unavailable for this account** when signed in without
+  remote-agent access. Manage its account in **Settings → Builderlab**.
   On macOS, Claude security reviews need their own sign-in: run
   `claude setup-token` in Terminal and paste its token under **Sign in for
   reviews** in Claude's **Edit configuration**. Until it is saved, Claude
@@ -712,6 +736,13 @@ available rather than silently discarding it.
   spelling correction (Mac only) and remembering mentioned agents. There is
   no switch to turn on. A change shows as not saved when it is active but
   could not be saved on this device.
+
+- Where a preview build enables it (bb-block), an agent running on this
+  device with a built-in harness can list your channels, including private and
+  archived ones, DMs and Solo chats it is not in, and see a channel's details
+  and members, read with your access. It cannot change anything this way, and
+  it stops working when you sign out, switch accounts, disconnect or stop its
+  turn.
 
 Saved teams from **Your teams** appear in the inline `@` suggestions and the
 mention picker. Select a team to insert its members as individual mentions.
@@ -855,7 +886,7 @@ for another 30 days. Approval expires after 30 days without renewal. Buzz shows
 this policy before you authorize access. Expired or revoked approval requires
 new owner consent. The app can restore the same access after Buzz or the app
 restarts. Keep Buzz open in the approved community. Keys stay in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
-even when no session is connected. Added access requires new approval.
+even when no session is connected. Full access requires new approval.
 
 ### Reconnecting an old agent in a DM
 

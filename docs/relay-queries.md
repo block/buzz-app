@@ -93,6 +93,9 @@ state for their shared load/preflight/confirmation reads; the member dialog's
 separate display-roster load remains replica-eligible. Channel-write membership
 preflights (including session sends and canvas saves) also use the writer, so a
 just-added member does not fail the next operation.
+`owner_channel_get` reads a channel's records from the writer once and judges
+its archive state and lifecycle rights, including an owned agent's grant, from
+those records.
 Template setup also confirms exact Canvas/member events and selected Canvas heads
 against the writer without replaying accepted commands. Agent deletion discovers
 member channels and confirms each removal with writer-backed rosters; unreadable

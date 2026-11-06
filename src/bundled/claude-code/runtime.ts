@@ -160,8 +160,8 @@ const where = ({ workspace, model, effort }: Config) => ({
 /** How Claude lists the session tools: in full up front only those marked
  * `alwaysLoad`, and the rest by name until its tool search loads them, with
  * the server's instructions saying what they are. */
-const listing = (added: readonly AddedTool[]): Listing => ({
-  instructions: sessionHint(added),
+const listing = (added: readonly AddedTool[], owner = false): Listing => ({
+  instructions: sessionHint(added, owner),
   tool: ({ load, ...tool }) =>
     load === "always"
       ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
@@ -466,6 +466,20 @@ export class ClaudeRuntime {
     const remote = !!(this.target || (await this.inspect?.(agent)));
     if (remote) this.confirmedRemote.add(agent);
     return remote;
+  }
+  /** A file as the agent's processes read one here: in its saved workspace.
+   * On an execution target only a conversation's session can read it. */
+  async workspaceFile(agent: Agent, path: string, signal: AbortSignal) {
+    if (await this.isRemote(agent.key))
+      throw new Error(
+        `This agent reads files only in a conversation on its execution target, not ${path}`,
+      );
+    return readFile(
+      this.spawn,
+      this.resolveConfig(agent.config).workspace,
+      path,
+      signal,
+    );
   }
 
   /** The models the agent's next turn can run on, with their effort levels.
@@ -1344,7 +1358,7 @@ export class ClaudeRuntime {
           context,
           message,
           this.added(),
-          listing(this.added()),
+          listing(this.added(), !!client?.ownerAccess),
         );
       };
     const saved = this.savedSessions(agent);

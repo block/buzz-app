@@ -1892,6 +1892,7 @@ async function mountUploadComposer(
     requireMention?: boolean;
     /** The channel is a generated huddle room, as a legacy room's metadata shows. */
     huddle?: boolean;
+    onHeld?: (held: boolean) => void;
   } = {},
 ) {
   vi.stubGlobal(
@@ -1998,6 +1999,7 @@ async function mountUploadComposer(
           channelName="General"
           defaultMention={options.defaultMention}
           requireMention={options.requireMention}
+          {...(options.onHeld ? { onHeld: options.onHeld } : {})}
           {...(options.extensions ? { extensions: options.extensions } : {})}
           {...(options.threadRootId
             ? { threadRootId: options.threadRootId }
@@ -12108,6 +12110,74 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("holds a voice note being captured as unsent work until it is cancelled or lands in the draft", async () => {
+  const empty: readonly never[] = [];
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "capture",
+      key: "test/capture",
+      pluginId: "test",
+      revision: "1",
+      title: "Capture",
+      component: ({ capture }) => (
+        <button
+          type="button"
+          onClick={() =>
+            capture?.(({ accept, cancel }) => (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    accept({
+                      file: new File([new Uint8Array(100)], "voice-note.wav", {
+                        type: "audio/wav",
+                      }),
+                      duration: 1,
+                      waveform: [0.5],
+                    })
+                  }
+                >
+                  Finish recording
+                </button>
+                <button type="button" onClick={cancel}>
+                  Discard recording
+                </button>
+              </>
+            ))
+          }
+        >
+          Start recording
+        </button>
+      ),
+    },
+  ];
+  const onHeld = vi.fn();
+  const h = await mountUploadComposer({
+    onHeld,
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => empty, subscribe: () => () => {} },
+      completions: { snapshot: () => empty, subscribe: () => () => {} },
+    },
+  });
+  expect(onHeld).toHaveBeenLastCalledWith(false);
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  expect(onHeld).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "Discard recording" }));
+  expect(onHeld).toHaveBeenLastCalledWith(false);
+  fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+  expect(onHeld).toHaveBeenLastCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "Finish recording" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Remove voice-note.wav" }),
+    ).toBeVisible(),
+  );
+  // Landed in the attachment draft: the draft, not the capture, now holds it.
+  expect(onHeld).toHaveBeenLastCalledWith(false);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
 });
 
 it.each([false, true])(

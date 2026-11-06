@@ -469,6 +469,20 @@ thread companion.
   authorized exit-guard and tab-action host work (~550 lines) the checkpoint
   listed as owners to reuse rather than build.
 
+- 2026-11-05 menu parity (F2) reviews: groups 1–2 (read state, follow,
+  report, own edit/delete/send-to-channel, verified agent-owner delete) closed
+  at `a5d8664`; group 3 (plugin actions, View activity) closed at `16f794b`
+  after three rounds: handoff is an action-opening request in main bound to
+  the exact contribution instance and the originating session object (not
+  scope string), menu contributions activated through their own item inside
+  the requesting bar's popup, activity panel opened only after the navigation
+  reported `opened` in the same session, native row bounds enforced in the
+  projection. Group 4 (voice): recorder tool offered to the pop-out host only
+  (never the Huddle), microphone permission extended to `popout-*` labels on
+  the app origin (non-macOS hook), active capture counted as unsent work for
+  the close guard, contribution removal cancels the capture. Native acceptance
+  of F1–F2 by jaw remains open.
+
 ## 10. S1 scope checkpoint (per `AGENTS.md` "Engineering standard")
 
 Approved by jaw 2026-11-04 (design, parity, approach B, slicing, core-only,

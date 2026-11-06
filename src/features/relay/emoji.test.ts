@@ -83,11 +83,12 @@ it("normalizes first-wins scheme-agnostic emoji tags and leaves URL fragments ou
     ),
   ).toEqual(["party", "other"]);
 });
-it("tags a shortcode after a bare link that ends at CJK punctuation, but not inside links", () => {
+it("tags a shortcode after a link and CJK punctuation, but not inside links", () => {
   const entries = [{ shortcode: "party", url }];
   for (const content of [
     "看这个 https://example.com，:party:",
     "https://example.com/a。:party:",
+    "[a](HTTPS://example.com)，:party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([
       ["emoji", "party", url],
@@ -96,9 +97,10 @@ it("tags a shortcode after a bare link that ends at CJK punctuation, but not ins
   }
   for (const content of [
     "https://example.com/a:party:",
-    "HTTPS://example.com/a:party:",
     "<https://example.com/a，:party:>",
     "[a](https://example.com/a，:party:)",
+    "[a]( https://example.com/a，:party:)",
+    String.raw`[a]\(https://example.com/a，:party:\)`,
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([]);
     expect(referencedEmoji(content)).toEqual([]);

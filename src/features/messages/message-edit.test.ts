@@ -84,15 +84,15 @@ describe("message edit round trips", () => {
     '[a](https://example.com\n "See @Sam")',
     "[hello\n@Sam](https://example.com)",
     ">     @Sam",
-  ])("does not manufacture mentions in literal Markdown: %s", (literal) => {
-    const content = `Hello @Sam\n\n${literal}`;
+  ])("links a name beside literal Markdown, not inside it: %s", (literal) => {
+    const content = `<b>@Sam</b>\n\n${literal}`;
     const tags = [
       ["h", "room"],
       ["p", person],
     ];
     expect(
       messageEditText(firstRow([{ ...original, content, tags }]), profiles),
-    ).toBe(`Hello [@Sam](${profileTarget(person)})\n\n${literal}`);
+    ).toBe(`<b>[@Sam](${profileTarget(person)})</b>\n\n${literal}`);
   });
 });
 

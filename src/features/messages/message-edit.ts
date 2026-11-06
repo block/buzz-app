@@ -34,12 +34,13 @@ export function messageEditText(
   const content = row.sourceContent ?? row.content;
   const ranges = literalRanges(scanMarkdown(content).tree, true);
   let offset = 0;
+  let next = 0;
   return profileMentionParts({ ...source, content }, profiles, agents)
     .map(({ text, target }) => {
       const start = offset;
       offset += text.length;
-      return target &&
-        !ranges.some((range) => start < range.end && offset > range.start)
+      while ((ranges[next]?.end ?? Infinity) <= start) next++;
+      return target && (ranges[next]?.start ?? Infinity) >= offset
         ? profileMentionLink(text, target)
         : text;
     })

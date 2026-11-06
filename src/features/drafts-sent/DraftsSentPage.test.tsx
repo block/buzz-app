@@ -273,7 +273,7 @@ it("lists drafts first and opens a thread draft from its preview at its root", a
   expect(within(list).getByText(/#launch-room/)).toBeInTheDocument();
   expect(within(list).getByText(/Thread/)).toBeInTheDocument();
   expect(within(list).getByText("Sam Okafor")).toBeInTheDocument();
-  expect(within(list).getAllByText("You")).toHaveLength(2);
+  expect(within(list).queryByText("You")).toBeNull();
   fireEvent.click(
     screen.getByRole("button", {
       name: /Continue draft in #launch-room, thread/,
@@ -467,7 +467,7 @@ it("clears identity-scoped content and releases the views on unmount", async () 
   ).toBe(true);
 });
 
-it("shows participants with new-reply and you're-last status", () => {
+it("shows destination rows with reply status and no participant stack", () => {
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
   const h = harness();
   const Page = h.page.component;
@@ -520,15 +520,10 @@ it("shows participants with new-reply and you're-last status", () => {
   expect(thread.getAttribute("aria-label")).toMatch(
     /2 replies after yours, latest from Sam Okafor/,
   );
-  expect(thread.getAttribute("aria-label")).toMatch(/With Sam Okafor, Scout/);
-  expect(
-    thread.querySelectorAll("[data-avatar-stack] > [data-avatar-shape]"),
-  ).toHaveLength(2);
-  expect(
-    thread.querySelector(
-      '[data-avatar-stack] > [data-avatar-shape="squircle"]',
-    ),
-  ).toBeTruthy();
+  expect(thread.getAttribute("aria-label")).not.toMatch(
+    /With Sam Okafor, Scout/,
+  );
+  expect(thread.querySelector("[data-avatar-stack]")).toBeNull();
   const solo = screen.getByRole("button", {
     name: /View message in Research helper: Hi helper/,
   });

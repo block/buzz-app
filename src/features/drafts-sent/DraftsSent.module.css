@@ -194,3 +194,17 @@
     padding-inline: var(--space-panel-inset);
   }
 }
+
+.destinationName {
+  font-weight: var(--type-weight-medium);
+}
+@media (hover: hover) {
+  .row .clear {
+    opacity: 0;
+  }
+  .row:hover .clear,
+  .row:focus-within .clear,
+  .row:has([data-selected]) .clear {
+    opacity: 1;
+  }
+}

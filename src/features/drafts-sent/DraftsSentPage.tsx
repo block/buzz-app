@@ -30,7 +30,6 @@ import {
   TrashIcon,
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
@@ -541,41 +540,13 @@ function ScopedPage({
     (neighbor ?? searchInput.current)?.focus();
   }
 
-  function stack(activity: Activity | undefined, place: Place) {
-    // A one-to-one DM already shows its person as the row's avatar.
-    const keys = activity?.people ?? place.members;
-    const shown = place.kind === "dm" && keys.length <= 1 ? [] : keys;
-    if (!shown.length) return null;
-    return (
-      <AvatarStack
-        size="mini"
-        items={shown.map((key) => {
-          const profile = profiles.get(key);
-          return {
-            id: key,
-            name: nameOf(key),
-            src: avatarMedia(profile?.picture, session.media),
-            shape: profile?.isAgent ? "squircle" : "circle",
-          };
-        })}
-      />
-    );
-  }
-
   function row(item: Row, draft: boolean) {
-    const { entry, place, activity, status } = item;
-    const destinationIcon = !draft && place.kind !== "dm";
-    const person =
-      !draft && place.kind === "dm" ? (place.members[0] ?? viewer) : viewer;
+    const { entry, place, status } = item;
+    const destinationIcon = place.kind !== "dm";
+    const person = place.kind === "dm" ? (place.members[0] ?? viewer) : viewer;
     const profile = profiles.get(person);
     const Icon = channelIcon(byId.get(entry.channelId));
-    const context = [
-      draft ? place.title : place.kind === "dm" ? "Direct message" : undefined,
-      entry.threadRootId ? "Thread" : undefined,
-      place.kind === "solo" ? "Solo" : undefined,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    const context = entry.threadRootId ? "· Thread" : undefined;
     const line = text(item);
     const time = entry.createdAt
       ? draft
@@ -583,15 +554,9 @@ function ScopedPage({
         : clockTime(entry.createdAt)
       : "";
     const where = `${place.title}${entry.threadRootId ? ", thread" : ""}`;
-    const involved = (activity?.people ?? place.members)
-      .slice(0, 5)
-      .map((key) => nameOf(key));
     const label = [
       `${draft ? "Continue draft" : "View message"} in ${where}: ${line}`,
       status?.detail,
-      involved.length && place.kind !== "dm"
-        ? `With ${involved.join(", ")}`
-        : undefined,
     ]
       .filter(Boolean)
       .join(". ");
@@ -633,7 +598,7 @@ function ScopedPage({
           <Avatar
             size="fill"
             alt=""
-            fallback={draft ? "You" : place.title}
+            fallback={place.title}
             src={
               destinationIcon
                 ? undefined
@@ -643,11 +608,10 @@ function ScopedPage({
             shape={destinationIcon || profile?.isAgent ? "squircle" : "circle"}
           />
         }
-        sender={draft ? "You" : place.title}
+        sender={<span className={styles.destinationName}>{place.title}</span>}
         source={context}
         time={
           <span className={styles.rowMeta}>
-            {stack(activity, place)}
             <span className={styles.deliveryMeta}>
               {status && (
                 <span

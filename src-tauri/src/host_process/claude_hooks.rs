@@ -182,7 +182,10 @@ mod tests {
     use super::*;
     use std::os::unix::process::CommandExt;
     fn request(id: &str) -> Vec<u8> {
-        format!("{}\n",serde_json::json!({"type":"control_request","request_id":id,"request":{"subtype":"hook_callback","callback_id":"security-tool"}})).into_bytes()
+        callback_request(id, "security-tool")
+    }
+    fn callback_request(id: &str, callback: &str) -> Vec<u8> {
+        format!("{}\n",serde_json::json!({"type":"control_request","request_id":id,"request":{"subtype":"hook_callback","callback_id":callback}})).into_bytes()
     }
     fn response(id: &str, subtype: &str) -> Vec<u8> {
         format!("{}\n",serde_json::json!({"type":"control_response","response":{"request_id":id,"subtype":subtype,"response":{}}})).into_bytes()
@@ -240,15 +243,26 @@ mod tests {
     }
     #[tokio::test]
     async fn native_timeout_needs_no_frontend_response() {
-        let mut child = worker();
-        let guard = ClaudeHooks::new(child.id().unwrap());
-        guard
-            .observe_at(&request("stalled"), true, Instant::now() - DEADLINE)
-            .unwrap();
-        assert!(!tokio::time::timeout(Duration::from_secs(5), child.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .success());
+        // PostToolUse's `security-incoming` fails open on the CLI's timeout.
+        for callback in [
+            "security-tool",
+            "security-incoming",
+            "security-incomplete",
+            "security-session",
+        ] {
+            let mut child = worker();
+            let guard = ClaudeHooks::new(child.id().unwrap());
+            guard
+                .observe_at(
+                    &callback_request("stalled", callback),
+                    true,
+                    Instant::now() - DEADLINE,
+                )
+                .unwrap();
+            let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+                .await
+                .unwrap_or_else(|_| panic!("{callback} did not stop its worker"));
+            assert!(!status.unwrap().success());
+        }
     }
 }

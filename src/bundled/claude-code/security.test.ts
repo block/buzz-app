@@ -271,8 +271,10 @@ it.each([
   ["Darwin x86_64", "claude-protected-x64"],
   ["Linux x86_64", undefined],
 ])("picks the pinned release declared for %s", async (platform, id) => {
+  let asked = 0;
   const spawn: Spawn = async (process, options) => {
     expect(process).toBe("platform");
+    asked++;
     options?.onStdout?.(`${platform}\n`);
     return {
       write: async () => {},
@@ -281,11 +283,14 @@ it.each([
       exited: Promise.resolve(0),
     };
   };
-  if (id) await expect(protectedRuntime(spawn)).resolves.toBe(id);
-  else
-    await expect(protectedRuntime(spawn)).rejects.toThrow(
-      "Protected Claude needs a Mac",
-    );
+  for (const _ of [1, 2])
+    if (id) await expect(protectedRuntime(spawn)).resolves.toBe(id);
+    else
+      await expect(protectedRuntime(spawn)).rejects.toThrow(
+        "Protected Claude needs a Mac",
+      );
+  // An answer is remembered for its spawn; a failure is not.
+  expect(asked).toBe(id ? 1 : 2);
 });
 
 it("requires hook registration acknowledgment before returning a protected process", async () => {
@@ -492,6 +497,56 @@ it("settles a protected turn its owner stopped as stopped, not failed", async ()
   await expect(sent).resolves.toEqual({ ok: true, stopped: true });
 });
 
+it("checks a prompt once though its transcript rows and stream event repeat it", async () => {
+  const f = fixture();
+  const prompt = { role: "user", content: "authorized task" };
+  Object.assign(f.protection, {
+    history: async () => [
+      { type: "user", uuid: "row", message: prompt },
+      {
+        type: "queue-operation",
+        operation: "enqueue",
+        sessionId: "native",
+        content: prompt.content,
+      },
+    ],
+  });
+  const process = await ClaudeProcess.start(f.spawn, f.launch);
+  const worker = f.processes[0];
+  if (!worker) throw new Error("Claude did not start");
+  worker.emit({ type: "user", session_id: "native", message: prompt });
+  worker.emit({
+    type: "control_request",
+    request_id: "incoming-review",
+    request: {
+      subtype: "hook_callback",
+      callback_id: "security-incoming",
+      input: {
+        session_id: "native",
+        transcript_path: "/native/transcript",
+        hook_event_name: "PostToolUse",
+        tool_response: { stdout: "output" },
+      },
+    },
+  });
+  try {
+    await vi.waitFor(() =>
+      expect(worker.received.some((m) => m.type === "control_response")).toBe(
+        true,
+      ),
+    );
+    const messages = f.check.mock.calls.filter(
+      ([action]) =>
+        (action.content as { source?: string }).source === "message",
+    );
+    expect(messages.map(([action]) => action.content)).toEqual([
+      { source: "message", value: prompt },
+    ]);
+  } finally {
+    await process.kill();
+  }
+});
+
 it("checks a long history four at a time and a denial cancels the rest", async () => {
   const f = fixture();
   Object.assign(f.protection, {
@@ -537,6 +592,67 @@ it("checks a long history four at a time and a denial cancels the rest", async (
     await process.kill();
   }
 });
+
+it.each(["transcript read", "check"])(
+  "ends a review stalled in its %s with its reason before the native watchdog",
+  async (stage) => {
+    const f = fixture();
+    const held: AbortSignal[] = [];
+    // As the transcript reader and the protection service do, a stalled step
+    // rejects with its signal's reason.
+    const stall = (signal: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        held.push(signal);
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    if (stage === "check")
+      f.check.mockImplementation((_action, signal) => stall(signal));
+    else
+      Object.assign(f.protection, {
+        history: (_path: string, signal: AbortSignal) => stall(signal),
+      });
+    const process = await ClaudeProcess.start(f.spawn, f.launch);
+    const worker = f.processes[0];
+    if (!worker) throw new Error("Claude did not start");
+    worker.hold = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const turn = process.send("authorized task");
+      worker.emit({
+        type: "control_request",
+        request_id: "stalled-review",
+        request: {
+          subtype: "hook_callback",
+          callback_id: "security-incoming",
+          input: {
+            hook_event_name: "PostToolUse",
+            transcript_path: "/native/transcript",
+            tool_response: { stdout: "output" },
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(329_999);
+      expect(held.length).toBeGreaterThan(0);
+      expect(worker.killed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(worker.killed).toBe(true);
+      await expect(turn).resolves.toEqual({
+        ok: false,
+        error: "The security review did not finish in time",
+      });
+      expect(held.every((signal) => signal.aborted)).toBe(true);
+      // Never released: the worker is killed instead.
+      expect(worker.received.some((m) => m.type === "control_response")).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+      await process.kill();
+    }
+  },
+);
 
 it("Stop revokes a pending approval and never releases its callback", async () => {
   const f = fixture();
@@ -596,15 +712,21 @@ it("keeps protected metadata discovery pinned, contained and free of workspace t
   expect(worker.options.protection?.readOnlyPaths).toContain(
     "~/Library/Application Support/Buzz/claude-code",
   );
-  expect(worker.received[0]).toMatchObject({
-    request: {
+  // Claude's hook timer counts sleep, so it must outlast the native watchdog's
+  // 350 awake seconds; its milliseconds must still fit a JavaScript timer.
+  const hook = (id: string) => [{ hookCallbackIds: [id], timeout: 604_800 }];
+  expect(worker.received[0]?.request).toEqual(
+    expect.objectContaining({
       hooks: {
-        PreToolUse: [{ hookCallbackIds: ["security-tool"], timeout: 600 }],
-        PostToolBatch: [
-          { hookCallbackIds: ["security-incoming"], timeout: 600 },
-        ],
+        PreToolUse: hook("security-tool"),
+        PreCompact: hook("security-incomplete"),
+        SessionStart: hook("security-session"),
+        UserPromptSubmit: hook("security-incoming"),
+        PostToolBatch: hook("security-incoming"),
+        PostToolUseFailure: hook("security-incoming"),
+        PostToolUse: hook("security-incoming"),
       },
-    },
-  });
+    }),
+  );
   expect(worker.killed).toBe(true);
 });

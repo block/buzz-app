@@ -831,6 +831,74 @@ it("installs the pinned release before a review that needs it", async () => {
   expect(calls.filter((call) => call.includes("stream-json"))).toEqual([]);
 });
 
+it("skips the pinned copy's preflight after it passed, until a review's launch fails", async () => {
+  const f = fakeSpawn();
+  const calls: string[] = [];
+  let refuse = false;
+  const spawn: Spawn = async (id, options) => {
+    const args = options?.args ?? [];
+    const launch = id === "claude-protected-arm64" && args[0] !== "--version";
+    calls.push(launch ? `${id} stream-json` : `${id} ${args.join(" ")}`.trim());
+    if (launch && refuse) {
+      refuse = false;
+      throw new Error("Artifact is unreadable");
+    }
+    const child = await f.spawn(id, options);
+    if (launch) {
+      const fake = f.processes.at(-1);
+      if (fake) fake.hold = true;
+    }
+    return child;
+  };
+  const signed = signedIn(spawn);
+  const setup = new ClaudeSetup((id, options) => {
+    if (id === "review") calls.push("review");
+    return signed(id, options);
+  }, vi.fn());
+  const review = async () => {
+    calls.length = 0;
+    const started = f.processes.length;
+    const reviewing = setup.review(
+      { id: "opus" },
+      { system: "Assess.", input: "{}" },
+      new AbortController().signal,
+    );
+    if (refuse) return reviewing;
+    await vi.waitFor(() => {
+      expect(f.processes.length).toBeGreaterThan(started);
+      expect(f.processes.at(-1)?.prompts).toEqual(["{}"]);
+    });
+    const fake = f.processes.at(-1);
+    if (!fake) throw new Error("Expected review worker");
+    fake.emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "ok",
+    });
+    sessionState(fake, "idle");
+    return reviewing;
+  };
+  await expect(review()).resolves.toMatchObject({ text: "ok" });
+  expect(calls).toEqual([
+    "review",
+    "platform",
+    "claude-protected-arm64 --version",
+    "claude-protected-arm64 stream-json",
+  ]);
+  await expect(review()).resolves.toMatchObject({ text: "ok" });
+  expect(calls).toEqual(["review", "claude-protected-arm64 stream-json"]);
+  refuse = true;
+  await expect(review()).rejects.toThrow("Artifact is unreadable");
+  expect(calls).toEqual(["review", "claude-protected-arm64 stream-json"]);
+  await expect(review()).resolves.toMatchObject({ text: "ok" });
+  expect(calls).toEqual([
+    "review",
+    "claude-protected-arm64 --version",
+    "claude-protected-arm64 stream-json",
+  ]);
+});
+
 /** `pinnedRelease`'s manifest, answered only once `release` is called. */
 function heldManifest(disk: ReturnType<typeof pinnedRelease>) {
   let release!: () => void;

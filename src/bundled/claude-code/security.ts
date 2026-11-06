@@ -161,10 +161,20 @@ const PROTECTED_PROCESSES: Readonly<Record<string, string>> = {
   "Darwin arm64": "claude-protected-arm64",
   "Darwin x86_64": "claude-protected-x64",
 };
+const runtimes = new WeakMap<Spawn, Promise<string>>();
 /** The declared process that runs the protected release on this computer.
  * The host checks its bytes against the manifest's pin and runs its own copy
- * of them, so a wrong `uname` answer only names a pin that fails. */
-export async function protectedRuntime(spawn: Spawn) {
+ * of them, so a wrong `uname` answer only names a pin that fails. Asked once
+ * per spawn; a failed answer is asked again. */
+export function protectedRuntime(spawn: Spawn) {
+  const known = runtimes.get(spawn);
+  if (known) return known;
+  const asked = platformRuntime(spawn);
+  runtimes.set(spawn, asked);
+  asked.catch(() => runtimes.delete(spawn));
+  return asked;
+}
+async function platformRuntime(spawn: Spawn) {
   let stdout = "";
   const process = await spawn("platform", {
     onStdout: (data) => {

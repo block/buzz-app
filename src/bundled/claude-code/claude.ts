@@ -104,6 +104,16 @@ export type Settled = Readonly<{
   stopped?: true;
 }>;
 
+/** Claude's hook timer counts macOS sleep, and most events fail open when it
+ * ends, while the native watchdog (claude_hooks.rs, 350 s) counts awake time:
+ * so the CLI waits a week and the watchdog always ends a stalled review first.
+ * Under 2_147_483 s, so its milliseconds still fit a JavaScript timer. */
+const PROTECTED_HOOK_TIMEOUT = 604_800;
+const protectedHook = (id: string) => [
+  { hookCallbackIds: [id], timeout: PROTECTED_HOOK_TIMEOUT },
+];
+/** One protected hook's review, below the native watchdog's 350 s. */
+const REVIEW_HOOK_MS = 330_000;
 const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
@@ -256,7 +266,8 @@ export class ClaudeProcess {
         // Settings files can set env, hooks and apiKeyHelper, and a contained
         // worker can write them: no pinned launch reads them. Claude still
         // reads its folder's sign-in and cached managed settings: a review's
-        // own folder (`review`), and `~/.claude` for protected runs.
+        // own folder (`review`), and `~/.claude` for protected runs, where the
+        // security plugin keeps both read-only for contained workers.
         ...(pinned ? ["--setting-sources", ""] : []),
         ...(security
           ? [
@@ -422,36 +433,12 @@ export class ClaudeProcess {
               hooks: {
                 ...(launch.protection
                   ? {
-                      PreToolUse: [
-                        { hookCallbackIds: ["security-tool"], timeout: 600 },
-                      ],
-                      PreCompact: [
-                        {
-                          hookCallbackIds: ["security-incomplete"],
-                          timeout: 600,
-                        },
-                      ],
-                      SessionStart: [
-                        { hookCallbackIds: ["security-session"], timeout: 600 },
-                      ],
-                      UserPromptSubmit: [
-                        {
-                          hookCallbackIds: ["security-incoming"],
-                          timeout: 600,
-                        },
-                      ],
-                      PostToolBatch: [
-                        {
-                          hookCallbackIds: ["security-incoming"],
-                          timeout: 600,
-                        },
-                      ],
-                      PostToolUseFailure: [
-                        {
-                          hookCallbackIds: ["security-incoming"],
-                          timeout: 600,
-                        },
-                      ],
+                      PreToolUse: protectedHook("security-tool"),
+                      PreCompact: protectedHook("security-incomplete"),
+                      SessionStart: protectedHook("security-session"),
+                      UserPromptSubmit: protectedHook("security-incoming"),
+                      PostToolBatch: protectedHook("security-incoming"),
+                      PostToolUseFailure: protectedHook("security-incoming"),
                     }
                   : Object.fromEntries(
                       CLAUDE_HOOK_EVENTS.map((event) => [
@@ -461,7 +448,7 @@ export class ClaudeProcess {
                     )),
                 PostToolUse: [
                   ...(launch.protection
-                    ? [{ hookCallbackIds: ["security-incoming"], timeout: 600 }]
+                    ? protectedHook("security-incoming")
                     : [{ hookCallbackIds: ["buzz:PostToolUse"] }]),
                   ...(launch.tools
                     ? [{ matcher: FINAL_TOOL, hookCallbackIds: ["final"] }]
@@ -866,6 +853,18 @@ export class ClaudeProcess {
         "security-session",
       ].includes(String(request.callback_id))
     ) {
+      // Ends a stalled review with its reason before the native watchdog
+      // kills the worker without one.
+      const late = new AbortController();
+      const deadline = setTimeout(
+        () =>
+          late.abort(new Error("The security review did not finish in time")),
+        REVIEW_HOOK_MS,
+      );
+      const review = AbortSignal.any([
+        this.protectionLifetime.signal,
+        late.signal,
+      ]);
       try {
         const input = request.input as Message;
         if (
@@ -917,7 +916,7 @@ export class ClaudeProcess {
         if (typeof input.transcript_path !== "string")
           throw new Error("Claude omitted the protected conversation");
         const history = await this.protection
-          .history(input.transcript_path, this.protectionLifetime.signal)
+          .history(input.transcript_path, review)
           .catch((error) => {
             if (
               input.hook_event_name === "UserPromptSubmit" &&
@@ -974,14 +973,16 @@ export class ClaudeProcess {
         // first denial cancels the rest before another can start.
         const session = this.sessionId ?? "initial";
         const denied = new AbortController();
-        const signal = AbortSignal.any([
-          this.protectionLifetime.signal,
-          denied.signal,
-        ]);
+        const signal = AbortSignal.any([review, denied.signal]);
         const { gate } = this.protection;
         const slot = limited(4);
+        // Identical sources, such as a stream event and its later transcript
+        // row, are identical checks.
+        const unique = new Map(
+          sources.map((source) => [JSON.stringify(source), source]),
+        );
         await Promise.all(
-          sources.map((source) =>
+          [...unique.values()].map((source) =>
             slot(async () => {
               signal.throwIfAborted();
               try {
@@ -1006,11 +1007,14 @@ export class ClaudeProcess {
         );
       } catch (error) {
         this.protectionLifetime.abort();
+        const reason = late.signal.aborted ? late.signal.reason : error;
         this.lastError =
-          error instanceof Error ? error.message : "Security review failed";
+          reason instanceof Error ? reason.message : "Security review failed";
         await this.process.kill();
         await this.exited;
         return;
+      } finally {
+        clearTimeout(deadline);
       }
     } else if (request.subtype === "can_use_tool")
       response = success({

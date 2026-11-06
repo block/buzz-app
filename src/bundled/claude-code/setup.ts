@@ -570,8 +570,10 @@ export class ClaudeSetup {
     // Signed in apart from `~/.claude`, which contained agents can write; and
     // without that sign-in, closed before any download or model.
     const review = await abortable(reviewSignIn(this.spawn), timeout);
-    // A verdict comes only from the release the host verified.
-    await this.protectedInstalled(timeout);
+    // A verdict comes only from the release the host verified. Its contained
+    // launch checks the bytes itself, so once a copy has passed, only a failed
+    // launch needs the preflight again.
+    if (!this.protectedReady) await this.protectedInstalled(timeout);
     const worker = await ClaudeProcess.start(this.spawn, {
       cwd: "~",
       systemPrompt: prompt.system,
@@ -580,6 +582,9 @@ export class ClaudeSetup {
       review,
       ...(prompt.outputSchema ? { outputSchema: prompt.outputSchema } : {}),
       ...(model.id ? { model: model.id } : {}),
+    }).catch((error) => {
+      this.protectedReady = false;
+      throw error;
     });
     const cancel = () => void worker.kill();
     timeout.addEventListener("abort", cancel, { once: true });
@@ -607,6 +612,8 @@ export class ClaudeSetup {
   }
 
   private protectedDownload: Promise<void> | undefined;
+  /** The host started the pinned copy since a review's launch last failed. */
+  private protectedReady = false;
   async protectedInstalled(signal: AbortSignal) {
     signal.throwIfAborted();
     const spawn = this.spawn;
@@ -621,6 +628,7 @@ export class ClaudeSetup {
         protection: { readOnlyPaths: [PROTECTED_CLAUDE_ROOT], hiddenPaths: [] },
       });
       await process.kill();
+      this.protectedReady = true;
     };
     try {
       await abortable(verified(), signal);

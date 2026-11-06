@@ -145,13 +145,12 @@ export function DraftPreview({
     channel &&
     (channel.readOnly || channel.members?.includes(session.viewer ?? ""));
   useEffect(() => {
-    if (!autoFocus || !writable) {
-      const control = back.current?.getClientRects().length
-        ? back.current
-        : close.current;
-      control?.focus();
-    }
-  }, [autoFocus, writable]);
+    const narrow = !!back.current?.getClientRects().length;
+    // Sent never autofocuses its composer; a narrow open hides the list row.
+    if (autoFocus && writable && (mode === "draft" || !narrow)) return;
+    if (region.current?.contains(document.activeElement)) return;
+    (narrow ? back.current : close.current)?.focus();
+  }, [autoFocus, writable, mode]);
   async function copy() {
     try {
       const text = mentionDraft(readView(session.scope, entry.id, "")).text;

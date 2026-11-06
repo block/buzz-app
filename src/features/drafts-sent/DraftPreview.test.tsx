@@ -1209,6 +1209,47 @@ it.each([
   },
 );
 
+it.each([
+  { narrow: false, thread: false },
+  { narrow: true, thread: false },
+  { narrow: true, thread: true },
+])(
+  "hands Sent keyboard selection to a visible control %j",
+  async ({ narrow, thread }) => {
+    const h = fixture();
+    const rects = HTMLElement.prototype.getClientRects;
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(
+      function (this: HTMLElement) {
+        return narrow && this.getAttribute("aria-label") === "Back to sent"
+          ? ([new DOMRect(0, 0, 32, 32)] as unknown as DOMRectList)
+          : rects.call(this);
+      },
+    );
+    h.seedSent(thread);
+    h.seedHistory(thread);
+    await act(async () => h.session.channels.ensure("room"));
+    h.render();
+    fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+    const row = await screen.findByRole("button", {
+      name: /View message.*Already sent/,
+    });
+    row.focus();
+    fireEvent.click(row);
+    const region = screen.getByRole("region", {
+      name: "Sent message in #Design",
+    });
+    const composer = await within(region).findByRole("textbox");
+    if (narrow)
+      await waitFor(() =>
+        expect(
+          within(region).getByRole("button", { name: "Back to sent" }),
+        ).toHaveFocus(),
+      );
+    else expect(row).toHaveFocus();
+    expect(composer).not.toHaveFocus();
+  },
+);
+
 it("keeps a new attachment-only draft open when the previous text send is delivered", async () => {
   let finishUpload!: (value: UploadedAttachment) => void;
   const upload = vi.fn(

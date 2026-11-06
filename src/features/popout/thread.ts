@@ -1,7 +1,13 @@
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
-import { type CompanionRow, projectCompanionRow } from "../companion/row";
+import {
+  type CompanionManagement,
+  type CompanionRow,
+  projectCompanionRow,
+} from "../companion/row";
+import type { MainOperation } from "../companion/operations";
+import { lastEditableMessage } from "../messages/useMessageEdit";
 
 /** What a pop-out window shows for one thread. Bounded like the native DTO. */
 export type PopoutThreadView = {
@@ -25,18 +31,17 @@ export type PopoutThreadView = {
   version: number;
   root?: CompanionRow | undefined;
   replies: CompanionRow[];
-  /** Main's in-flight or failed reaction operations on shown messages, so a
-   * companion shows real delivery state and retries the admitted event. */
-  reactionOperations: ReactionOperation[];
+  /** Main's outbox operations in this channel (reactions, removals, edits,
+   * sent-to-channel copies), every delivery state, so a companion mirrors
+   * real delivery and retries the admitted event even after its row is gone. */
+  operations: MainOperation[];
+  /** The viewer follows this thread. */
+  following: boolean;
+  /** A DM: no thread following. */
+  isDm: boolean;
 };
-export type ReactionOperation = {
-  id: string;
-  messageId: string;
-  kind: 7 | 5;
-  delivery: "sending" | "failed" | "unknown";
-  error?: string | undefined;
-};
-const MAX_REACTION_OPERATIONS = 64;
+export type { MainOperation };
+const MAX_OPERATIONS = 64;
 const MAX_REPLIES = 500;
 const visible = (rows: readonly ChannelMessage[]) =>
   rows.filter((row) => !row.membership && !row.huddle);
@@ -120,34 +125,50 @@ export function createPopoutThread(
         .slice(-MAX_REPLIES)
         .find((row) => row.id === id);
     },
-    /** Main's pending/failed/unknown reaction operations on shown messages:
-     * the whole collection, for admission; the view serializes a capped copy. */
-    reactionOperations(): ReactionOperation[] {
-      const shown = this.known();
+    /** Main's outbox operations in this channel: the whole collection, for
+     * admission and fences; the view serializes a capped copy. Operations are
+     * not dropped when their target row leaves the projection. */
+    operations(): MainOperation[] {
       return (session.outbox?.snapshot() ?? []).flatMap((item) => {
-        if (!["sending", "failed", "unknown"].includes(item.delivery))
+        const kind = item.event.kind;
+        if (kind !== 7 && kind !== 5 && kind !== 40003 && kind !== 9) return [];
+        if (
+          !item.event.tags.some(
+            ([name, value]) => name === "h" && value === channelId,
+          )
+        )
           return [];
-        if (item.event.kind !== 7 && item.event.kind !== 5) return [];
-        const messageId = session.messages.reactionTarget(item.event);
-        if (!messageId || !shown.has(messageId)) return [];
+        const messageId =
+          kind === 9
+            ? item.event.tags.find(([name]) => name === "buzz:copy-of")?.[1]
+            : kind === 40003
+              ? item.event.tags.find(([name]) => name === "e")?.[1]
+              : session.messages.reactionTarget(item.event);
+        // A plain message send is not an operation on another message.
+        if (kind === 9 && !messageId) return [];
         return [
           {
             id: item.event.id,
-            messageId,
-            kind: item.event.kind as 7 | 5,
-            delivery: item.delivery as ReactionOperation["delivery"],
+            ...(messageId ? { messageId } : {}),
+            kind,
+            delivery: item.delivery,
             ...(item.error ? { error: item.error.slice(0, 2048) } : {}),
           },
         ];
       });
     },
-    /** A reaction operation is still in flight or unresolved for this message. */
+    /** An unresolved reaction change is still in flight for this message. */
     reactionBusy(messageId: string) {
-      return this.reactionOperations().some((op) => op.messageId === messageId);
+      return this.operations().some(
+        (op) =>
+          op.messageId === messageId &&
+          (op.kind === 7 || op.kind === 5) &&
+          ["sending", "failed", "unknown"].includes(op.delivery),
+      );
     },
-    /** Retry main's own admitted reaction event, if it is one of this window's. */
-    retryReaction(id: string) {
-      if (!this.reactionOperations().some((op) => op.id === id)) return false;
+    /** Retry main's own event, if it is one of this channel's operations. */
+    retryOperation(id: string) {
+      if (!this.operations().some((op) => op.id === id)) return false;
       session.outbox?.retry(id, writable);
       return true;
     },
@@ -168,8 +189,54 @@ export function createPopoutThread(
       const snap = thread?.snapshot();
       const profiles = session.profiles.snapshot();
       const replies = snap ? visible(snap.replies) : [];
-      const project = (row: ChannelMessage) =>
-        projectCompanionRow(session, profiles, row, channelId);
+      const c = channel();
+      const joined =
+        !!c && !c.cached && (!c.readOnly || c.viewerRole === "guest");
+      const channelWritable = !!c && !c.readOnly && !c.cached;
+      const archived = !!c?.archived;
+      const project = (row: ChannelMessage) => {
+        const projected = projectCompanionRow(
+          session,
+          profiles,
+          row,
+          channelId,
+        );
+        const delivered =
+          !row.delivery || ["accepted", "seen"].includes(row.delivery);
+        if (!joined || row.membership || row.diff || !delivered)
+          return projected;
+        const own = row.authorId === session.viewer && !archived;
+        // The same single-row predicate the main menu uses.
+        const canEdit =
+          channelWritable && own && !!lastEditableMessage(session, [row]);
+        const attention = session.unread.attention(channelId, row.id);
+        return {
+          ...projected,
+          management: {
+            unread: attention.unread || attention.forced,
+            canEdit,
+            canDelete: channelWritable && own && !!session.outbox?.supports(5),
+            canSendToChannel:
+              channelWritable &&
+              own &&
+              !!row.threadRootId &&
+              !row.agentEnvelope &&
+              !row.diff &&
+              !!session.outbox?.supports(9),
+            canReport: !row.huddle && !!session.messages.report,
+          } satisfies CompanionManagement,
+          ...(canEdit
+            ? {
+                editable: {
+                  sourceContent: row.sourceContent ?? row.content,
+                  attachmentSourceId: row.attachmentSourceId ?? row.id,
+                },
+                // An edit needs the whole text, not the presentation slice.
+                text: row.content,
+              }
+            : {}),
+        };
+      };
       return {
         title: (channel()?.name ?? "Conversation").slice(0, 1000),
         scope: session.scope.slice(0, 4096),
@@ -188,10 +255,9 @@ export function createPopoutThread(
         version,
         root: snap?.root && available() ? project(snap.root) : undefined,
         replies: available() ? replies.slice(-MAX_REPLIES).map(project) : [],
-        reactionOperations: this.reactionOperations().slice(
-          0,
-          MAX_REACTION_OPERATIONS,
-        ),
+        operations: this.operations().slice(0, MAX_OPERATIONS),
+        following: session.unread.following(channelId, rootId),
+        isDm: c?.channelType === "dm",
       };
     },
     retry() {

@@ -14,6 +14,11 @@ import type {
   InlineRenderer,
 } from "../conversation/contracts";
 import { Button } from "../../shared/design-system/ui/Button";
+import {
+  CompanionManagementItems,
+  type CompanionManagementActions,
+  toMessage,
+} from "./CompanionManagementItems";
 
 /** Interactive capabilities a companion may add to its rows; without them the
  * rows show reactions read-only and offer only copy actions. */
@@ -30,6 +35,8 @@ export type CompanionRowCapabilities = {
   scope?: string | undefined;
   /** Reply to one message within the thread. */
   onReply?: ((messageId: string) => void) | undefined;
+  /** Main-admitted message management, driven by each row's projected policy. */
+  management?: CompanionManagementActions | undefined;
 };
 
 /** Projected rows in a companion window: the shared message renderer over
@@ -63,21 +70,10 @@ export function CompanionRows({
   return (
     <>
       {rows.map((row) => {
-        const message = {
-          id: row.id,
-          channelId: row.channelId,
-          authorId: row.authorId,
-          createdAt: row.time,
-          content: row.text,
-          attachments: row.attachments,
-          mentions: row.mentions ?? [],
-          ...(row.edited ? { edited: true as const } : {}),
-          attachmentSeams: row.attachmentSeams ?? [],
-          mentionReferences: row.mentionReferences ?? [],
-          reactions: row.reactions ?? [],
-          replyCount: 0,
-          participants: [],
-        };
+        // The row's own recovery line below reports delivery; the renderer's
+        // would duplicate it.
+        const { delivery: _delivery, ...message } = toMessage(row);
+        const management = capabilities?.management;
         const reactions = capabilities?.reactions;
         const scope = capabilities?.scope;
         const interactive =
@@ -103,6 +99,11 @@ export function CompanionRows({
                     inline={reactions.inline}
                     disabled={false}
                   />
+                ) : undefined
+              }
+              overflowItems={
+                management && row.management ? (
+                  <CompanionManagementItems row={row} actions={management} />
                 ) : undefined
               }
               reactionSlot={

@@ -91,6 +91,14 @@ function fixture() {
   const reply = vi.fn(() => "accepted-id");
   const react = vi.fn(() => "reaction-id");
   const remove = vi.fn(() => "removal-id");
+  const edit = vi.fn(() => "edit-id");
+  const sendToChannel = vi.fn(() => "copy-id");
+  const report = vi.fn(async () => {});
+  const markMessageRead = vi.fn(async () => ({}));
+  const markMessageUnread = vi.fn(async () => ({}));
+  const follow = vi.fn();
+  let following = false;
+  let unread = false;
   const outbox: { items: import("../relay/outbox").OutgoingEvent[] } = {
     items: [],
   };
@@ -108,7 +116,27 @@ function fixture() {
       retarget: async () => "selected" as const,
       dispose: () => {},
     }),
-    messages: { ...store.session.messages, reply, react, remove },
+    messages: {
+      ...store.session.messages,
+      reply,
+      react,
+      remove,
+      edit,
+      sendToChannel,
+      report,
+    },
+    unread: {
+      ...store.session.unread,
+      attention: () => ({ unread, forced: false }),
+      following: () => following,
+      follow: (c: string, r: string, v: boolean) => {
+        follow(c, r, v);
+        following = v;
+      },
+      markMessageRead,
+      markMessageUnread,
+      subscribe: () => () => {},
+    },
     outbox: {
       snapshot: () => outbox.items,
       subscribe: () => () => {},
@@ -126,10 +154,26 @@ function fixture() {
     reply,
     react,
     remove,
+    edit,
+    sendToChannel,
+    report,
+    markMessageRead,
+    markMessageUnread,
+    follow,
     outbox,
     retry,
+    setUnread: (value: boolean) => {
+      unread = value;
+    },
   };
 }
+const shownFor = (h: ReturnType<typeof fixture>) => ({
+  message: (id: string) => h.thread.shown(id),
+  reactionBusy: (id: string) => h.thread.reactionBusy(id),
+  retryOperation: (id: string) => h.thread.retryOperation(id),
+  version: () => h.thread.snapshot().version,
+  root: () => h.thread.shown(ROOT),
+});
 const OWN_EVENT = "c".repeat(64);
 const OTHER_EVENT = "d".repeat(64);
 
@@ -205,19 +249,15 @@ it("admits reactions only for shown messages and removes only the viewer's own",
     () => h.thread.rootVerified(),
     undefined,
     ROOT,
-    {
-      message: (id) => h.thread.shown(id),
-      reactionBusy: (id) => h.thread.reactionBusy(id),
-      retryReaction: (id) => h.thread.retryReaction(id),
-    },
+    shownFor(h),
   );
   clean.push(owner.dispose);
   const client = createHuddleComposerClient(owner.token);
   clean.push(client.dispose);
   await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
-  await expect(client.react({ messageId: ROOT, content: "🎉" })).resolves.toBe(
-    "reaction-id",
-  );
+  await expect(
+    client.react({ messageId: ROOT, content: "🎉" }),
+  ).resolves.toMatchObject({ id: "reaction-id" });
   expect(h.react).toHaveBeenCalledWith(ROOT, "🎉", undefined);
   await expect(
     client.react({ messageId: "f".repeat(64), content: "🎉" }),
@@ -227,7 +267,7 @@ it("admits reactions only for shown messages and removes only the viewer's own",
   ).rejects.toThrow(/Invalid reaction/);
   await expect(
     client.removeReactions({ messageId: ROOT, ids: [OWN_EVENT] }),
-  ).resolves.toBeUndefined();
+  ).resolves.toMatchObject({ id: "removal-id" });
   expect(h.remove).toHaveBeenCalledWith([OWN_EVENT]);
   await expect(
     client.removeReactions({ messageId: ROOT, ids: [OTHER_EVENT] }),
@@ -254,11 +294,7 @@ it("fences reactions while main still has one in flight, and retries only main's
     () => h.thread.rootVerified(),
     undefined,
     ROOT,
-    {
-      message: (id) => h.thread.shown(id),
-      reactionBusy: (id) => h.thread.reactionBusy(id),
-      retryReaction: (id) => h.thread.retryReaction(id),
-    },
+    shownFor(h),
   );
   clean.push(owner.dispose);
   const client = createHuddleComposerClient(owner.token);
@@ -282,7 +318,7 @@ it("fences reactions while main still has one in flight, and retries only main's
     },
   ];
   // Projected for the companion, and blocking another change meanwhile.
-  expect(h.thread.snapshot().reactionOperations).toEqual([
+  expect(h.thread.snapshot().operations).toEqual([
     { id: sending, messageId: ROOT, kind: 7, delivery: "sending" },
   ]);
   await expect(
@@ -290,15 +326,15 @@ it("fences reactions while main still has one in flight, and retries only main's
   ).rejects.toThrow(/still being sent/);
   expect(h.react).not.toHaveBeenCalled();
   // Retry is admitted only for main's own reaction event on a shown message.
-  await expect(client.retryReaction({ id: sending })).resolves.toBeUndefined();
+  await expect(client.retryOperation({ id: sending })).resolves.toBeUndefined();
   expect(h.retry).toHaveBeenCalledWith(sending, expect.any(Function));
-  await expect(client.retryReaction({ id: "8".repeat(64) })).rejects.toThrow(
+  await expect(client.retryOperation({ id: "8".repeat(64) })).rejects.toThrow(
     /no longer be retried/,
   );
   h.outbox.items = [];
-  await expect(client.react({ messageId: ROOT, content: "🎉" })).resolves.toBe(
-    "reaction-id",
-  );
+  await expect(
+    client.react({ messageId: ROOT, content: "🎉" }),
+  ).resolves.toMatchObject({ id: "reaction-id" });
 });
 
 it("fences and retries from the whole operation collection, capping only the presentation", async () => {
@@ -331,10 +367,108 @@ it("fences and retries from the whole operation collection, capping only the pre
     ...replies.map((reply, i) => sendingOn(reply.id, 100 + i)),
     sendingOn(ROOT, 999),
   ];
-  expect(h.thread.snapshot().reactionOperations).toHaveLength(64);
-  expect(h.thread.reactionOperations()).toHaveLength(65);
+  expect(h.thread.snapshot().operations).toHaveLength(64);
+  expect(h.thread.operations()).toHaveLength(65);
   expect(h.thread.reactionBusy(ROOT)).toBe(true);
-  expect(h.thread.retryReaction((999).toString(16).padStart(64, "0"))).toBe(
+  expect(h.thread.retryOperation((999).toString(16).padStart(64, "0"))).toBe(
     true,
   );
+});
+
+it("projects main's own management policy per row and admits each action by the same rules", async () => {
+  const h = fixture();
+  const owner = createHuddleComposerOwner(
+    h.session,
+    "channel",
+    "channel",
+    undefined,
+    () => true,
+    () => h.thread.rootVerified(),
+    undefined,
+    ROOT,
+    shownFor(h),
+  );
+  clean.push(owner.dispose);
+  const client = createHuddleComposerClient(owner.token);
+  clean.push(client.dispose);
+  await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
+  // The root is the viewer's own delivered message in a writable stream.
+  const root = h.thread.snapshot().root;
+  expect(root?.management).toEqual({
+    unread: false,
+    canEdit: true,
+    canDelete: true,
+    canSendToChannel: false,
+    canReport: true,
+  });
+  expect(root?.editable).toEqual({
+    sourceContent: "Root",
+    attachmentSourceId: ROOT,
+  });
+  expect(h.thread.snapshot().following).toBe(false);
+  // Delete: own only.
+  await expect(
+    client.deleteMessage({ messageId: ROOT }),
+  ).resolves.toMatchObject({
+    id: "removal-id",
+  });
+  expect(h.remove).toHaveBeenCalledWith([ROOT]);
+  const verified = h.snapshot.current;
+  if (!verified.root) throw new Error("root");
+  const theirs = { ...verified.root, authorId: "e".repeat(64) };
+  h.snapshot.current = { ...verified, root: theirs };
+  await expect(client.deleteMessage({ messageId: ROOT })).rejects.toThrow(
+    /Only your own messages can be deleted/,
+  );
+  expect(h.thread.snapshot().root?.management?.canDelete).toBe(false);
+  expect(h.thread.snapshot().root?.editable).toBeUndefined();
+  h.snapshot.current = verified;
+  // Edit: exact baseline, or main refuses rather than overwrite an unseen change.
+  await expect(
+    client.edit({
+      messageId: ROOT,
+      content: "Root!",
+      attachmentSourceId: ROOT,
+      baseline: "Root",
+    }),
+  ).resolves.toMatchObject({ id: "edit-id" });
+  expect(h.edit).toHaveBeenCalledWith(ROOT, "Root!", ROOT);
+  await expect(
+    client.edit({
+      messageId: ROOT,
+      content: "Root!",
+      attachmentSourceId: ROOT,
+      baseline: "older",
+    }),
+  ).rejects.toThrow(/changed while you were editing/);
+  // Send to channel: only own thread replies.
+  await expect(client.sendToChannel({ messageId: ROOT })).rejects.toThrow(
+    /thread replies/,
+  );
+  const reply = { ...verified.root, id: "d".repeat(64), threadRootId: ROOT };
+  h.snapshot.current = { ...verified, replies: [reply] };
+  expect(h.thread.snapshot().replies[0]?.management?.canSendToChannel).toBe(
+    true,
+  );
+  await expect(
+    client.sendToChannel({ messageId: reply.id }),
+  ).resolves.toMatchObject({
+    id: "copy-id",
+  });
+  expect(h.sendToChannel).toHaveBeenCalledWith(reply, verified.root);
+  // Read state and follow go through main's owners.
+  await client.markRead({ messageId: ROOT, unread: true });
+  expect(h.markMessageUnread).toHaveBeenCalledWith("channel", ROOT);
+  h.setUnread(true);
+  expect(h.thread.snapshot().root?.management?.unread).toBe(true);
+  await client.markRead({ messageId: ROOT, unread: false });
+  expect(h.markMessageRead).toHaveBeenCalledWith("channel", ROOT);
+  await client.follow({ following: true });
+  expect(h.follow).toHaveBeenCalledWith("channel", ROOT, true);
+  expect(h.thread.snapshot().following).toBe(true);
+  await client.report({ messageId: ROOT, type: "spam", note: "x" });
+  expect(h.report).toHaveBeenCalledWith(ROOT, "spam", "x");
+  await expect(
+    client.report({ messageId: "f".repeat(64), type: "spam", note: "" }),
+  ).rejects.toThrow(/not shown/);
 });

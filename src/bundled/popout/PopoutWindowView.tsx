@@ -10,7 +10,10 @@ import type { PopoutAction, PopoutView } from "../../features/popout/window";
 import { createReadingProxy } from "../../features/popout/reading-bridge";
 import { isBuzzLink } from "../../features/navigation/buzz-links";
 import { CompanionRows } from "../../features/companion/CompanionRows";
-import { createCompanionReactions } from "../../features/companion/reactions";
+import { createCompanionOperations } from "../../features/companion/operations";
+import { toMessage } from "../../features/companion/CompanionManagementItems";
+import type { CompanionRow } from "../../features/companion/row";
+import { ReportMessageDialog } from "../../features/messages/ReportMessageDialog";
 import { MessageEditScope } from "../../features/messages/MessageEditScope";
 import { Reading } from "../../features/messages/use-reading";
 import { useCompanionComposer } from "../huddles/HuddleComposer";
@@ -23,6 +26,8 @@ import styles from "./Popout.module.css";
 
 const noSubscription = () => () => {};
 const zero = () => 0;
+const none: readonly import("../../features/relay/outbox").OutgoingEvent[] = [];
+const noOperations = () => none;
 
 export function PopoutWindowView({
   view,
@@ -59,6 +64,13 @@ export function PopoutWindowView({
     if (closeRequested) setConfirming(closeRequested);
   }, [closeRequested]);
   const onHeld = useCallback((value: boolean) => setHeld(value), []);
+  const [operationsSession, setOperationsSession] =
+    useState<ReturnType<typeof createCompanionOperations>>();
+  // Editable rows carry main's exact baseline for the shared edit flow.
+  const editMessages = useMemo(
+    () => rows.filter((row) => row.editable).map(toMessage),
+    [rows],
+  );
   // Reply to one message within the thread; cleared when it leaves the view.
   const [replyParent, setReplyParent] = useState<string>();
   const replyTarget = rows.find((row) => row.id === replyParent);
@@ -79,6 +91,10 @@ export function PopoutWindowView({
       onHeld,
       replyParentId: replyTarget?.id,
       replyContext,
+      editMessages,
+      // The operations session is built from the client below; one render
+      // after it exists the editor adopts it (edits then follow one id).
+      session: operationsSession,
     },
   );
   // Reactions and the picker use the same bridge as the composer: one owner
@@ -93,16 +109,18 @@ export function PopoutWindowView({
   const toolKeys = JSON.stringify(client?.snapshot().data?.tools ?? []);
   const reactions = useMemo(() => {
     if (!client || !bridgeSession) return undefined;
-    const session = createCompanionReactions(
-      bridgeSession,
-      client,
-      (eventId) =>
+    const session = createCompanionOperations(bridgeSession, client, {
+      messageOf: (eventId) =>
         rowsRef.current.find((row) =>
           row.reactions?.some((group) =>
             group.events.some((event) => event.id === eventId),
           ),
         )?.id,
-    );
+      sourceOf: (messageId) => {
+        const row = rowsRef.current.find((row) => row.id === messageId);
+        return row?.editable?.sourceContent ?? row?.text;
+      },
+    });
     const extensions = huddleComposerExtensions({
       tools: JSON.parse(toolKeys) as string[],
       completions: [],
@@ -110,12 +128,77 @@ export function PopoutWindowView({
     });
     return { session, tools: extensions.tools, inline: extensions.inline };
   }, [client, bridgeSession, toolKeys]);
-  useEffect(() => () => reactions?.session.dispose(), [reactions]);
-  // Main's own reaction operations ride the view: delivery, failure, retry.
-  const mainOperations = view.reactionOperations;
   useEffect(() => {
-    reactions?.session.setMainOperations(mainOperations);
-  }, [reactions, mainOperations]);
+    setOperationsSession(reactions?.session);
+    return () => reactions?.session.dispose();
+  }, [reactions]);
+  // Main's own operations ride the view: delivery, failure, retry.
+  const mainOperations = view.operations;
+  const mainVersion = view.version;
+  useEffect(() => {
+    reactions?.session.setMainOperations(mainOperations, mainVersion);
+  }, [reactions, mainOperations, mainVersion]);
+  const operations = useSyncExternalStore(
+    reactions?.session.outbox?.subscribe ?? noSubscription,
+    reactions?.session.outbox?.snapshot ?? noOperations,
+  );
+  const [deleting, setDeleting] = useState<{
+    row: CompanionRow;
+    operationId?: string;
+  }>();
+  const [reporting, setReporting] = useState<CompanionRow>();
+  const [managementError, setManagementError] = useState<string>();
+  const ask = useCallback((work: () => Promise<unknown>) => {
+    setManagementError(undefined);
+    work().catch((cause: unknown) =>
+      setManagementError(
+        cause instanceof Error ? cause.message : "Couldn’t complete that.",
+      ),
+    );
+  }, []);
+  const management = useMemo(() => {
+    if (!client || !reactions) return undefined;
+    const session = reactions.session;
+    return {
+      following: view.following,
+      isDm: view.isDm,
+      busy: (messageId: string) =>
+        operations.some(
+          (item) =>
+            ["sending", "failed", "unknown"].includes(item.delivery) &&
+            session.messages.reactionTarget(item.event) === messageId &&
+            (item.event.kind === 5 || item.event.kind === 40003),
+        ),
+      deleteMessage: (row: CompanionRow) => setDeleting({ row }),
+      sendToChannel: (row: CompanionRow) => {
+        try {
+          session.messages.sendToChannel(row.id);
+        } catch (cause) {
+          setManagementError(
+            cause instanceof Error ? cause.message : "Couldn’t send.",
+          );
+        }
+      },
+      markRead: (row: CompanionRow, unread: boolean) =>
+        ask(() => client.markRead({ messageId: row.id, unread })),
+      follow: (following: boolean) => ask(() => client.follow({ following })),
+      report: (row: CompanionRow) => setReporting(row),
+    };
+  }, [client, reactions, view.following, view.isDm, operations, ask]);
+  const deleteOperation = deleting?.operationId
+    ? operations.find((item) => item.event.id === deleting.operationId)
+    : undefined;
+  useEffect(() => {
+    // Delivered (or gone from main after admission): the dialog's work is done.
+    if (
+      deleting?.operationId &&
+      (!deleteOperation ||
+        deleteOperation.delivery === "accepted" ||
+        deleteOperation.delivery === "seen")
+    )
+      setDeleting(undefined);
+  }, [deleting, deleteOperation]);
+
   const focusConversation = () => {
     const editor = composerHost.current?.querySelector<HTMLElement>(
       '[role="textbox"]:not([aria-disabled="true"]), textarea:not(:disabled)',
@@ -206,6 +289,7 @@ export function PopoutWindowView({
                 setReplyParent(messageId);
                 focusConversation();
               },
+              management,
             }}
             openLink={(url) => {
               // Buzz targets continue in main; the OS browser takes the rest.
@@ -246,6 +330,74 @@ export function PopoutWindowView({
                 : "Connecting to this thread…"}
             </p>
           )
+        )}
+        {managementError && (
+          <p role="alert" className={styles.notice}>
+            {managementError}
+          </p>
+        )}
+        {deleting && reactions && (
+          <AlertDialog
+            title="Delete message?"
+            description="This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
+            pending={deleteOperation?.delivery === "sending"}
+            onClose={() => setDeleting(undefined)}
+            actions={
+              <>
+                <Button
+                  disabled={deleteOperation?.delivery === "sending"}
+                  onClick={() => setDeleting(undefined)}
+                >
+                  {deleting.operationId ? "Close" : "Cancel"}
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={deleteOperation?.delivery === "sending"}
+                  onClick={() => {
+                    if (deleting.operationId) {
+                      reactions.session.outbox?.retry(deleting.operationId);
+                      return;
+                    }
+                    try {
+                      const operationId =
+                        reactions.session.messages.deleteMessage(
+                          deleting.row.id,
+                        );
+                      setDeleting({ row: deleting.row, operationId });
+                    } catch (cause) {
+                      setManagementError(
+                        cause instanceof Error
+                          ? cause.message
+                          : "Couldn’t delete.",
+                      );
+                      setDeleting(undefined);
+                    }
+                  }}
+                >
+                  {deleteOperation?.delivery === "sending"
+                    ? "Deleting…"
+                    : deleteOperation &&
+                        ["failed", "unknown"].includes(deleteOperation.delivery)
+                      ? "Retry"
+                      : "Delete"}
+                </Button>
+              </>
+            }
+          >
+            {deleteOperation?.error && (
+              <p role="alert" className="text-body-sm text-danger">
+                {deleteOperation.error}
+              </p>
+            )}
+          </AlertDialog>
+        )}
+        {reporting && client && (
+          <ReportMessageDialog
+            report={(type, note) =>
+              client.report({ messageId: reporting.id, type, note: note ?? "" })
+            }
+            close={() => setReporting(undefined)}
+          />
         )}
         {confirming > 0 && (
           <AlertDialog

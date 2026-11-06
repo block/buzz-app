@@ -80,27 +80,38 @@ pub(crate) struct View {
     #[serde(default)]
     root: Option<DiscussionRow>,
     replies: Vec<DiscussionRow>,
-    /// Main's unresolved reaction operations on shown messages.
+    /// Main's outbox operations in this channel: reactions, removals, edits
+    /// and sent-to-channel copies, in every delivery state.
     #[serde(default)]
-    reaction_operations: Vec<ReactionOperation>,
+    operations: Vec<MainOperation>,
+    /// The viewer follows this thread.
+    #[serde(default)]
+    following: bool,
+    /// A DM: no thread following offered.
+    #[serde(default)]
+    is_dm: bool,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ReactionOperation {
+pub(crate) struct MainOperation {
     id: String,
-    message_id: String,
-    kind: u8,
+    #[serde(default)]
+    message_id: Option<String>,
+    kind: u32,
     delivery: String,
     #[serde(default)]
     error: Option<String>,
 }
-impl ReactionOperation {
+impl MainOperation {
     fn valid(&self) -> bool {
         let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
         hex(&self.id)
-            && hex(&self.message_id)
-            && matches!(self.kind, 7 | 5)
-            && matches!(self.delivery.as_str(), "sending" | "failed" | "unknown")
+            && self.message_id.as_deref().is_none_or(hex)
+            && matches!(self.kind, 7 | 5 | 40003 | 9)
+            && matches!(
+                self.delivery.as_str(),
+                "sending" | "accepted" | "unknown" | "failed" | "seen"
+            )
             && self.error.as_ref().is_none_or(|e| e.len() <= 2048)
     }
 }
@@ -185,8 +196,8 @@ fn validate(view: &View) -> Result<()> {
                 .is_some_and(|t| uuid::Uuid::parse_str(t).is_err())
         })
         || view.replies.len() > 500
-        || view.reaction_operations.len() > 64
-        || view.reaction_operations.iter().any(|op| !op.valid())
+        || view.operations.len() > 64
+        || view.operations.iter().any(|op| !op.valid())
         || view
             .root
             .iter()
@@ -645,7 +656,9 @@ mod tests {
             detached: false,
             root: None,
             replies: vec![],
-            reaction_operations: vec![],
+            operations: vec![],
+            following: false,
+            is_dm: false,
         }
     }
     #[test]

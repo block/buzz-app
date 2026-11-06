@@ -2,6 +2,7 @@ import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
 import { readView, writeView } from "../../shared/view-state";
+import { lastEditableMessage } from "../messages/useMessageEdit";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
@@ -37,7 +38,10 @@ export function createHuddleComposerOwner(
       id: string,
     ): import("../relay/contracts").ChannelMessage | undefined;
     reactionBusy(messageId: string): boolean;
-    retryReaction(id: string): boolean;
+    retryOperation(id: string): boolean;
+    /** The projection version now, answered with each admission. */
+    version(): number;
+    root(): import("../relay/contracts").ChannelMessage | undefined;
   },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
@@ -326,10 +330,15 @@ export function createHuddleComposerOwner(
         return id;
       }
       case "react":
-      case "removeReactions": {
-        check(true);
+      case "removeReactions":
+      case "deleteMessage":
+      case "edit":
+      case "sendToChannel":
+      case "markRead":
+      case "report": {
+        check(request.op !== "markRead" && request.op !== "report");
         if (!thread || !shown)
-          throw new Error("Reactions are not available in a Huddle composer.");
+          throw new Error("This action is not available in a Huddle composer.");
         const { messageId } = request.args;
         const target =
           typeof messageId === "string" && /^[0-9a-f]{64}$/.test(messageId)
@@ -337,46 +346,139 @@ export function createHuddleComposerOwner(
             : undefined;
         if (!target || target.channelId !== room)
           throw new Error("This message is not shown in this window.");
-        // One reaction change at a time per message, through delivery: a
-        // companion's acknowledgment arrives before its row projection does.
-        if (shown.reactionBusy(messageId))
-          throw new Error("A reaction on this message is still being sent.");
-        if (request.op === "react") {
-          const { content, emoji } = request.args;
-          if (typeof content !== "string" || content.length > 512)
-            throw new Error("Invalid reaction.");
-          if (
-            emoji !== undefined &&
-            (typeof emoji !== "object" ||
-              !emoji ||
-              typeof emoji.shortcode !== "string" ||
-              typeof emoji.url !== "string" ||
-              emoji.shortcode.length > 64 ||
-              emoji.url.length > 8192)
-          )
-            throw new Error("Invalid custom emoji.");
-          return session.messages.react(messageId, content, emoji);
+        const admitted = (id: string) => ({ id, version: shown.version() });
+        const delivered =
+          !target.delivery || ["accepted", "seen"].includes(target.delivery);
+        const own = target.authorId === session.viewer;
+        switch (request.op) {
+          case "react": {
+            if (shown.reactionBusy(messageId))
+              throw new Error(
+                "A reaction on this message is still being sent.",
+              );
+            const { content, emoji } = request.args;
+            if (typeof content !== "string" || content.length > 512)
+              throw new Error("Invalid reaction.");
+            if (
+              emoji !== undefined &&
+              (typeof emoji !== "object" ||
+                !emoji ||
+                typeof emoji.shortcode !== "string" ||
+                typeof emoji.url !== "string" ||
+                emoji.shortcode.length > 64 ||
+                emoji.url.length > 8192)
+            )
+              throw new Error("Invalid custom emoji.");
+            return admitted(session.messages.react(messageId, content, emoji));
+          }
+          case "removeReactions": {
+            if (shown.reactionBusy(messageId))
+              throw new Error(
+                "A reaction on this message is still being sent.",
+              );
+            const ownEvents = new Set(
+              target.reactions.flatMap((group) =>
+                group.events
+                  .filter((event) => event.authorId === session.viewer)
+                  .map((event) => event.id),
+              ),
+            );
+            const ids = request.args.ids;
+            if (
+              !Array.isArray(ids) ||
+              !ids.length ||
+              ids.length > 100 ||
+              ids.some((id) => typeof id !== "string" || !ownEvents.has(id))
+            )
+              throw new Error("Only your own reactions can be removed here.");
+            return admitted(session.messages.remove(ids));
+          }
+          case "deleteMessage": {
+            // Own, delivered messages only here; agent-owner deletion needs
+            // main's verified evidence and stays in the main window.
+            if (!own || !delivered || !session.outbox?.supports(5))
+              throw new Error("Only your own messages can be deleted here.");
+            return admitted(session.messages.remove([messageId]));
+          }
+          case "edit": {
+            const { content, attachmentSourceId, baseline } = request.args;
+            if (
+              typeof content !== "string" ||
+              content.length > 65536 ||
+              typeof attachmentSourceId !== "string" ||
+              typeof baseline !== "string"
+            )
+              throw new Error("Invalid edit.");
+            if (!own || !delivered)
+              throw new Error("Only your own messages can be edited.");
+            // The same single-row predicate as the main menu, and the exact
+            // text the companion edited: a newer edit it has not seen wins.
+            if (!lastEditableMessage(session, [target]))
+              throw new Error("This message is no longer available to edit.");
+            if ((target.sourceContent ?? target.content) !== baseline)
+              throw new Error(
+                "This message changed while you were editing. Copy your changes, then cancel and reopen it.",
+              );
+            if (attachmentSourceId !== (target.attachmentSourceId ?? target.id))
+              throw new Error("This message's attachments changed.");
+            return admitted(
+              session.messages.edit(messageId, content, attachmentSourceId),
+            );
+          }
+          case "sendToChannel": {
+            if (
+              !own ||
+              !delivered ||
+              !target.threadRootId ||
+              target.agentEnvelope ||
+              target.diff ||
+              !session.outbox?.supports(9)
+            )
+              throw new Error(
+                "Only your own thread replies can be sent to the channel.",
+              );
+            return admitted(
+              session.messages.sendToChannel(target, shown.root()),
+            );
+          }
+          case "markRead": {
+            if (typeof request.args.unread !== "boolean")
+              throw new Error("Invalid read state.");
+            // Manual unread is main's: it also fences this window's reading leases.
+            await (request.args.unread
+              ? session.unread.markMessageUnread(room, messageId)
+              : session.unread.markMessageRead(room, messageId));
+            return;
+          }
+          case "report": {
+            const { type, note } = request.args;
+            if (!session.messages.report)
+              throw new Error("Reports are unavailable on this connection.");
+            if (
+              typeof type !== "string" ||
+              typeof note !== "string" ||
+              note.length > 4096
+            )
+              throw new Error("Invalid report.");
+            await session.messages.report(
+              messageId,
+              type as import("../relay/messages").ReportType,
+              note,
+            );
+            return;
+          }
         }
-        // Only the viewer's own reaction events on that message, as main sees them.
-        const own = new Set(
-          target.reactions.flatMap((group) =>
-            group.events
-              .filter((event) => event.authorId === session.viewer)
-              .map((event) => event.id),
-          ),
-        );
-        const ids = request.args.ids;
-        if (
-          !Array.isArray(ids) ||
-          !ids.length ||
-          ids.length > 100 ||
-          ids.some((id) => typeof id !== "string" || !own.has(id))
-        )
-          throw new Error("Only your own reactions can be removed here.");
-        session.messages.remove(ids);
         return;
       }
-      case "retryReaction": {
+      case "follow": {
+        check();
+        if (!thread) throw new Error("Not a thread.");
+        if (typeof request.args.following !== "boolean")
+          throw new Error("Invalid follow state.");
+        session.unread.follow(room, thread, request.args.following);
+        return;
+      }
+      case "retryOperation": {
         check(true);
         const id = request.args.id;
         if (
@@ -384,9 +486,9 @@ export function createHuddleComposerOwner(
           !shown ||
           typeof id !== "string" ||
           !/^[0-9a-f]{64}$/.test(id) ||
-          !shown.retryReaction(id)
+          !shown.retryOperation(id)
         )
-          throw new Error("This reaction can no longer be retried here.");
+          throw new Error("This change can no longer be retried here.");
         return;
       }
       case "release":

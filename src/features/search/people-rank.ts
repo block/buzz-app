@@ -30,10 +30,12 @@ export const personKey = (pubkey: string) => `person:${pubkey}`;
  * hidden agent or profile name ranks after every shown name, as `mentionMatch`
  * ranks hidden aliases.
  */
-export function personMatch(person: PersonCandidate, needle: string) {
+function personMatch(
+  person: PersonCandidate,
+  folded: readonly string[] | undefined,
+) {
   // Blank suggestions have no exact name; relationship and usage order them.
-  if (!needle.trim()) return 1;
-  const folded = [...normalizeName(needle)];
+  if (!folded) return 1;
   const tier = (name: string | undefined) =>
     name === undefined ? undefined : matchTier(name, folded);
   const shown = [
@@ -65,9 +67,11 @@ export function rankPeople<T extends PersonCandidate>(
 ) {
   // A pasted public key names its person exactly, though no name matches it.
   const key = typedPublicKey(needle);
+  // Fold the query once, not once per person.
+  const folded = needle.trim() ? [...normalizeName(needle)] : undefined;
   return people
     .flatMap((person) => {
-      const rank = person.pubkey === key ? 0 : personMatch(person, needle);
+      const rank = person.pubkey === key ? 0 : personMatch(person, folded);
       if (rank === undefined) return [];
       const row = {
         key: personKey(person.pubkey),

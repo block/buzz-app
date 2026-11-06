@@ -154,15 +154,13 @@ async function shellFits(page, width) {
     expect(bounds.x).toBeGreaterThanOrEqual(dock.x);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(dock.x + dock.width);
   }
-  // Sidebar pages, such as the bundled Drafts & sent, stay in the Messages
+  // Core destinations, such as Drafts & sent, stay in the Messages
   // sidebar instead of the dock. Its draft count may follow the label.
   const sidebar = page.getByRole("complementary", {
     name: "Sidebar",
     exact: true,
   });
-  const drafts = sidebar
-    .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: /^Drafts & sent/ });
+  const drafts = sidebar.getByRole("button", { name: /^Drafts & sent/ });
   await expect(drafts).toHaveText(/^Drafts & sent(?:\d+)?$/);
   await drafts.scrollIntoViewIfNeeded();
   const sidebarBounds = await box(sidebar);

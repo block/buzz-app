@@ -103,7 +103,7 @@ function fixture() {
     open: vi.fn(async () => ({ status: "opened" as const })),
   };
   const relay = { snapshot: () => ({ session: {} }) } as AppServices["relay"];
-  const mount = () =>
+  const mount = (extra?: React.ReactNode) =>
     render(
       <ToastProvider>
         <PluginUpdates
@@ -118,6 +118,7 @@ function fixture() {
               <PluginUpdatesMenu recommendations={0} onManage={vi.fn()} />
             </MenuPopup>
           </MenuRoot>
+          {extra}
         </PluginUpdates>
       </ToastProvider>,
     );
@@ -385,6 +386,55 @@ it("keeps Later updates in the Plugins menu and cancellation leaves the plugin r
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(f.installImport).not.toHaveBeenCalled();
   expect(f.manager.change).not.toHaveBeenCalled();
+});
+
+it("offers an available update from the plugin's actions menu", async () => {
+  const f = fixture();
+  f.mount(<PluginMenu plugin={f.plugin} plugins={f.manager} busy={false} />);
+  await screen.findByRole("button", { name: "Update and reload" });
+  fireEvent.click(screen.getByRole("button", { name: "More plugin actions" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Update" }));
+  await waitFor(() =>
+    expect(f.installImport).toHaveBeenCalledExactlyOnceWith(
+      "immutable-preview",
+      ".",
+    ),
+  );
+});
+
+it("returns focus to the plugin's actions after closing its update review", async () => {
+  const f = fixture();
+  f.freshCandidate.manifest = { ...f.plugin.manifest, host: { files: true } };
+  f.mount(<PluginMenu plugin={f.plugin} plugins={f.manager} busy={false} />);
+  await screen.findByRole("button", { name: "Update and reload" });
+  const trigger = screen.getByRole("button", { name: "More plugin actions" });
+  fireEvent.click(trigger);
+  const item = await screen.findByRole("menuitem", { name: "Update" });
+  item.focus();
+  fireEvent.click(item);
+  const dialog = await screen.findByRole("dialog", { name: "Update Notes" });
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Update" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(f.installImport).not.toHaveBeenCalled();
+});
+
+it("omits Update from the plugin's actions menu without an update", async () => {
+  const f = fixture();
+  f.imports.checkGit.mockResolvedValue({
+    ...f.discovered,
+    candidates: [{ ...f.candidate, revision: f.plugin.revision }],
+  });
+  f.mount(<PluginMenu plugin={f.plugin} plugins={f.manager} busy={false} />);
+  await act(async () => {});
+  expect(f.imports.checkGit).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "More plugin actions" }));
+  await screen.findByRole("menuitem", { name: "Review access" });
+  expect(screen.queryByRole("menuitem", { name: "Update" })).toBeNull();
 });
 
 it("can cancel while a fresh preview loads, then discards the late preview", async () => {

@@ -728,7 +728,8 @@ confirmation.
   Its Update, Later, and Dismiss controls keep their own actions.
   Save unfinished forms and stop active plugin workers before you update.
   **Later** hides the notice for this candidate until the next app run. The
-  update stays in the profile menu under **Plugins**. A newer candidate can show
+  update stays in the profile menu under **Plugins** and as **Update** in the
+  plugin's actions menu. A newer candidate can show
   a notice again. Failed checks offer **Retry**. If the updated plugin cannot
   start, use **Retry activation** or its recovery menu to **Roll back**, when
   available. Checks, review, Later, and cancellation keep plugin work running.

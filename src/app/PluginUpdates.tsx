@@ -40,7 +40,7 @@ const Context = createContext<{
   updates: readonly PluginUpdate[];
   recommended: readonly string[];
   busy: boolean;
-  open(update: PluginUpdate): void;
+  open(update: PluginUpdate, returnFocus?: HTMLElement | null): void;
 } | null>(null);
 const noSubscribe = () => () => {};
 const empty: readonly PluginUpdate[] = [];
@@ -101,9 +101,9 @@ export function PluginUpdates({
   const configuration = state.configuration;
   const catalog =
     configuration.status === "ready" ? configuration.catalog : undefined;
-  const open = (update: PluginUpdate) => {
+  const open = (update: PluginUpdate, target?: HTMLElement | null) => {
     if (state.busy || action) return;
-    returnFocus.current = document.activeElement as HTMLElement;
+    returnFocus.current = target ?? (document.activeElement as HTMLElement);
     setAction(update);
   };
   const installed =
@@ -249,6 +249,19 @@ export function PluginUpdates({
         })}
     </Context>
   );
+}
+
+/** The available shell update for one plugin, if any. */
+export function usePluginUpdate(id: string) {
+  const context = useContext(Context);
+  const update = context?.updates.find((u) => u.id === id && !u.error);
+  return context && update
+    ? {
+        busy: context.busy,
+        open: (returnFocus: HTMLElement | null) =>
+          context.open(update, returnFocus),
+      }
+    : undefined;
 }
 
 export function PluginUpdatesMenu({

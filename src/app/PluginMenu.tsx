@@ -14,6 +14,7 @@ import { Button } from "../shared/design-system/ui/Button";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { PluginAccessReview } from "./PluginAccessReview";
+import { usePluginUpdate } from "./PluginUpdates";
 
 export function PluginMenu({
   plugin,
@@ -42,6 +43,7 @@ export function PluginMenu({
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
   const [showAccess, setShowAccess] = useState(false);
+  const update = usePluginUpdate(plugin.manifest.id);
   if (plugin.source !== "external") return null;
   return (
     <>
@@ -71,6 +73,14 @@ export function PluginMenu({
               : deleteTrigger
           }
         >
+          {update && (
+            <MenuItem
+              disabled={busy || update.busy}
+              onClick={() => update.open(deleteTrigger.current)}
+            >
+              Update
+            </MenuItem>
+          )}
           <MenuItem onClick={() => setShowAccess(true)}>Review access</MenuItem>
           {plugin.manifest.updates &&
             plugin.updateSource &&

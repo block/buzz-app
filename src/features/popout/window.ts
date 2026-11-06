@@ -257,6 +257,7 @@ export function createPopoutWindows(
           entry.thread.admit(id, messageId, kind);
           sync(entry);
         },
+        authorization: (id) => entry.thread.authorization(id),
         acknowledge: (ids) => {
           // Retiring reports may let a capped presentation show others.
           if (entry.thread.acknowledge(ids)) sync(entry);

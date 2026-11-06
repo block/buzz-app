@@ -8,6 +8,7 @@ import {
 } from "../companion/row";
 import type { MainOperation } from "../companion/operations";
 import { lastEditableMessage } from "../messages/useMessageEdit";
+import { createAgentOwnerEvidence } from "../profiles/agent-owner-evidence";
 
 /** What a pop-out window shows for one thread. Bounded like the native DTO. */
 export type PopoutThreadView = {
@@ -71,6 +72,14 @@ export function createPopoutThread(
     { messageId: string | undefined; kind: MainOperation["kind"] }
   >();
   const MAX_ADMITTED = 256;
+  // Owner evidence for agent authors among shown rows: the same store the
+  // main menu renders, bounded; a message of an agent the viewer owns may be
+  // deleted here once that evidence is ready.
+  const evidence = new Map<
+    string,
+    ReturnType<typeof createAgentOwnerEvidence>
+  >();
+  const MAX_EVIDENCE = 32;
   let thread: ThreadView | undefined;
   try {
     thread = session.thread(channelId, rootId);
@@ -94,6 +103,22 @@ export function createPopoutThread(
   const channel = () =>
     session.channels.get?.(channelId) ??
     session.channels.list().channels.find((c) => c.id === channelId);
+  /** Observe owner evidence for an agent author shown here (bounded). */
+  function observeOwner(authorId: string) {
+    if (disposed || evidence.has(authorId)) return;
+    if (evidence.size >= MAX_EVIDENCE) return;
+    const store = createAgentOwnerEvidence(session, authorId);
+    evidence.set(authorId, store);
+    store.subscribe(notify);
+  }
+  /** Agent-owner deletion authority for a row, from verified evidence only. */
+  function authorization(row: ChannelMessage) {
+    if (!session.viewer || row.authorId === session.viewer) return undefined;
+    const proof = evidence.get(row.authorId)?.snapshot();
+    return proof?.status === "ready" && proof.owner === session.viewer
+      ? { agentId: row.authorId, ownerId: session.viewer }
+      : undefined;
+  }
   /** The channel is known and readable; says nothing about the root. */
   const available = () => {
     const c = channel();
@@ -124,6 +149,11 @@ export function createPopoutThread(
     available,
     rootVerified,
     writable,
+    /** Verified agent-owner authority for a shown message, or none. */
+    authorization(id: string) {
+      const row = this.shown(id);
+      return row ? authorization(row) : undefined;
+    },
     /** A shown message by id, with main's own reaction events, for admission. */
     shown(id: string): ChannelMessage | undefined {
       const snap = thread?.snapshot();
@@ -269,13 +299,23 @@ export function createPopoutThread(
         // The same single-row predicate the main menu uses.
         const canEdit =
           channelWritable && own && !!lastEditableMessage(session, [row]);
+        // Agent hints decide whether to observe; evidence decides authority.
+        if (
+          !own &&
+          !archived &&
+          (row.agentEnvelope || profiles.get(row.authorId)?.isAgent)
+        )
+          observeOwner(row.authorId);
+        const owned = !archived && !!authorization(row);
         const attention = session.unread.attention(channelId, row.id);
         return {
           ...projected,
           management: {
             unread: attention.unread || attention.forced,
             canEdit,
-            canDelete: channelWritable && own && !!session.outbox?.supports(5),
+            canDelete:
+              ((channelWritable && own) || owned) &&
+              !!session.outbox?.supports(5),
             canSendToChannel:
               channelWritable &&
               own &&
@@ -351,6 +391,8 @@ export function createPopoutThread(
     dispose() {
       disposed = true;
       for (const stop of stops) stop?.();
+      for (const store of evidence.values()) store.dispose();
+      evidence.clear();
       thread?.dispose();
     },
   };

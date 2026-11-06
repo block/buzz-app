@@ -176,6 +176,7 @@ const shownFor = (h: ReturnType<typeof fixture>) => ({
   admit: (id: string, messageId: string | undefined, kind: 7 | 5 | 40003 | 9) =>
     h.thread.admit(id, messageId, kind),
   acknowledge: (ids: readonly string[]) => h.thread.acknowledge(ids),
+  authorization: (id: string) => h.thread.authorization(id),
 });
 const OWN_EVENT = "c".repeat(64);
 const OTHER_EVENT = "d".repeat(64);
@@ -459,7 +460,7 @@ it("projects main's own management policy per row and admits each action by the 
   ).resolves.toMatchObject({
     id: "removal-id",
   });
-  expect(h.remove).toHaveBeenCalledWith([ROOT]);
+  expect(h.remove).toHaveBeenCalledWith([ROOT], undefined);
   const verified = h.snapshot.current;
   if (!verified.root) throw new Error("root");
   const theirs = { ...verified.root, authorId: "e".repeat(64) };

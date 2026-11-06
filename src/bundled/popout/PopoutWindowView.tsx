@@ -239,6 +239,15 @@ export function PopoutWindowView({
   return (
     <MessageEditScope>
       <div className={styles.window} data-reading-surface="">
+        {/* As Slack's pop-out: what this window is, and of which conversation. */}
+        <header className={styles.header}>
+          <h1 className={styles.title}>
+            <span className={styles.kind}>Thread</span>{" "}
+            <span className={styles.conversation}>
+              {view.isDm ? view.title : `#${view.title}`}
+            </span>
+          </h1>
+        </header>
         {view.detached && (
           <p role="status" className={styles.notice}>
             Buzz is reconnecting. This window shows what it last received.

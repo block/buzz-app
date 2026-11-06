@@ -1219,7 +1219,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   types give no reason.
 - **Pop-out windows** (desktop, on by default): a message's `⋯` menu offers
   **Open thread in new window** for messages that have a thread. The window
-  shows that thread with its reply box and stays open while the main window
+  is titled "Thread in #channel" and shows that thread with its reply box; it
+  stays open while the main window
   moves elsewhere; **Open in main window** brings the thread up in the main
   window without closing the pop-out. Main and pop-out share one draft per
   thread; reading in the pop-out counts as reading; links to other

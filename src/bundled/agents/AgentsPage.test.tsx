@@ -6295,3 +6295,151 @@ it("leaves the next team's draft alone when a closed editor's Save finishes", as
     host.dispose();
   }
 });
+
+describe("a team Save that finishes after its editor is gone", () => {
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const B = {
+    id: "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182",
+    name: "Crew B",
+    instructions: "Before",
+    members: [agent("Ada", 1).pubkey],
+    revision: "rB",
+  };
+  const visit = {
+    ...base,
+    route: { version: 1, params: { team: B.id } },
+  } as const;
+  async function fixture() {
+    const host = createNavigationController(createMemoryHistory(base));
+    const navigator = host.navigation;
+    const view = setup([agent("Ada", 1)], { teams: [B] });
+    function Host() {
+      const { entry, attempt } = useSyncExternalStore(
+        navigator.subscribe,
+        navigator.snapshot,
+      );
+      const navigation = useMemo(() => {
+        const request: PageNavigation = {
+          entryId: entry.id,
+          target: entry.target,
+          signal: attempt.signal,
+          position: () => undefined,
+          savePosition() {},
+          passThrough: () => () => {},
+          forSession: () => request,
+          resolve: () => true,
+          complete: () => true,
+        };
+        return request;
+      }, [entry, attempt]);
+      useEffect(() => {
+        host.complete(attempt, { status: "opened" });
+      }, [attempt]);
+      // App/PageView swaps the page subtree when the registered page changes.
+      return entry.target.kind === "page" &&
+        entry.target.pluginId === "buzz.agents" ? (
+        <AgentsPage
+          agents={view.agents}
+          relay={view.relay}
+          navigator={navigator}
+          navigation={navigation}
+        />
+      ) : (
+        <p>Other page</p>
+      );
+    }
+    let resolve!: () => void, reject!: () => void;
+    const pending = new Promise<typeof B>((r, j) => {
+      resolve = () => {
+        view.change({
+          teams: [
+            { ...B, instructions: "Submitted draft", revision: "rSaved" },
+          ],
+        });
+        r(B);
+      };
+      reject = () => j(new Error("Late refusal"));
+    });
+    vi.mocked(view.agents.saveTeam).mockReturnValueOnce(pending);
+    view.rerender(<Host />);
+    act(() => {
+      void navigator.open(visit);
+    });
+    const form = await screen.findByRole("form", { name: "Edit Crew B" });
+    fireEvent.change(
+      within(form).getByRole("textbox", { name: "Instructions" }),
+      { target: { value: "Submitted draft" } },
+    );
+    await userEvent
+      .setup()
+      .click(within(form).getByRole("button", { name: "Save" }));
+    expect(view.agents.saveTeam).toHaveBeenCalledOnce();
+    const visitId = navigator.snapshot().entry.id;
+    return {
+      view,
+      host,
+      navigator,
+      resolve,
+      reject,
+      visitId,
+      dispose() {
+        view.unmount();
+        host.dispose();
+      },
+    };
+  }
+  it("ends B's visits after leaving the Agents page entirely", async () => {
+    const f = await fixture();
+    try {
+      act(() => {
+        void f.navigator.open({
+          version: 1,
+          kind: "page",
+          pluginId: "test.other",
+          pageId: "other",
+        });
+      });
+      expect(screen.getByText("Other page")).toBeVisible();
+      await act(async () => f.resolve());
+      const retained = f.navigator
+        .snapshot()
+        .retainedVisits?.includes(f.visitId);
+      act(() => f.navigator.back());
+      const reopened = !!screen.queryByRole("form", { name: "Edit Crew B" });
+      expect(reopened, "Back must skip B's completed presentation").toBe(false);
+      expect(retained).toBe(false);
+    } finally {
+      f.dispose();
+    }
+  });
+  it("ends B's visits if B disappears while Save runs", async () => {
+    const f = await fixture();
+    try {
+      act(() => f.view.change({ teams: [] }));
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+      await act(async () => f.resolve());
+      expect(f.navigator.snapshot().retainedVisits).not.toContain(f.visitId);
+    } finally {
+      f.dispose();
+    }
+  });
+  it("ends B's visits after switching the internal section", async () => {
+    const f = await fixture();
+    try {
+      await userEvent
+        .setup()
+        .click(screen.getByRole("tab", { name: "Your agents" }));
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+      await act(async () => f.resolve());
+      expect(f.navigator.snapshot().retainedVisits).not.toContain(f.visitId);
+    } finally {
+      f.dispose();
+    }
+  });
+});

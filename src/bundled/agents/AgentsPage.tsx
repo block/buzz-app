@@ -437,12 +437,19 @@ export function AgentsPage({
     // team Back reached, if another, opens in its place.
     const closing = editingTeam ?? routedTeam;
     if (routedTeam !== closing) setEditingTeam(routedTeam);
-    if (!closing || closing === "new") return;
+    if (closing) endTeamVisits(closing);
+  };
+  // Ends a team's visits in this page's account and community, and nothing
+  // else: a Save that finishes after its editor went away still ends them.
+  const endTeamVisits = (id: string) => {
+    if (!navigator || navigation?.target.kind !== "page" || id === "new")
+      return;
+    const page = agentProviderTarget(navigation.target);
     const pageKey = targetKey(page);
     navigator.dismiss(
       (visit) =>
         visit.kind === "page" &&
-        teamRoute(visit.route?.params) === closing &&
+        teamRoute(visit.route?.params) === id &&
         targetKey(agentProviderTarget(visit)) === pageKey,
       page,
     );
@@ -759,6 +766,7 @@ export function AgentsPage({
               teams={teams}
               editing={editing}
               onEdit={editTeam}
+              onSaved={endTeamVisits}
               onBusy={onTeamBusy}
               historyPresentation={
                 editing && editing !== "new"
@@ -2384,6 +2392,7 @@ function Teams({
   teams,
   editing,
   onEdit,
+  onSaved,
   onBusy,
   historyPresentation,
   newTeam,
@@ -2394,6 +2403,7 @@ function Teams({
   /** A team's id while it is edited, or "new" for one being made. */
   editing: string | undefined;
   onEdit(id: string | undefined): void;
+  onSaved(id: string): void;
   onBusy(busy: boolean): void;
   historyPresentation?: HistoryPresentation | undefined;
   newTeam: ReactNode;
@@ -2408,6 +2418,7 @@ function Teams({
         {...(team ? { team } : {})}
         historyPresentation={historyPresentation}
         onBusy={onBusy}
+        onSaved={onSaved}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -2449,6 +2460,7 @@ function TeamEditor({
   team,
   historyPresentation,
   onBusy,
+  onSaved,
   onDone,
 }: {
   agents: Agents;
@@ -2456,6 +2468,8 @@ function TeamEditor({
   team?: Team;
   historyPresentation?: HistoryPresentation | undefined;
   onBusy(busy: boolean): void;
+  /** Ends the saved team's visits, even once this editor is gone. */
+  onSaved(id: string): void;
   onDone(): void;
 }) {
   // A saved revert, until the team shows its new version.
@@ -2478,8 +2492,8 @@ function TeamEditor({
   const [error, setError] = useState("");
   const done = useRef(onDone);
   done.current = onDone;
-  // Closing ended this editor and its visits, so a Save that finishes later
-  // leaves whatever editor replaced it alone.
+  // A Save that finishes after this editor is gone leaves whatever editor
+  // replaced it alone; its team's visits still end through `onSaved`.
   useEffect(
     () => () => {
       done.current = () => {};
@@ -2559,8 +2573,11 @@ function TeamEditor({
     if (pending) return;
     setPending(true);
     setError("");
+    const ended = onSaved;
+    const id = opened?.id;
     try {
       await work();
+      if (id) ended(id);
       // The latest, as Back may have moved on while it ran.
       done.current();
     } catch (reason) {

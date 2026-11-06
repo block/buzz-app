@@ -12,6 +12,8 @@ type Reading = {
   session: RelaySession;
   channelId: string;
   latestMessageId?: string | undefined;
+  /** The thread this list shows: its bottom catches up that thread, and its
+   * DM reads stop before unread messages it does not show. */
   rootId?: string | undefined;
   scroller: RefObject<HTMLElement | null>;
   settled: RefObject<boolean>;
@@ -200,7 +202,7 @@ export function useReading({
     }
     function acquire() {
       try {
-        return session.unread.reading(channelId);
+        return session.unread.reading(channelId, rootId);
       } catch {
         return undefined; // Membership may disappear between commit and observation.
       }
@@ -252,7 +254,7 @@ export function useReading({
           // A view-only lease keeps that evidence until the next cancellation.
           observed.view([], () => false);
           try {
-            handle = session.unread.reading(channelId);
+            handle = session.unread.reading(channelId, rootId);
             handle.view([...visible], viewing);
           } catch {
             handle = undefined;

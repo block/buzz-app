@@ -8,24 +8,30 @@ import type {
 import { type Restored, restoreKnown } from "./restore-communities";
 import type { Identity } from "./service";
 
-/** A step may pick where setup rests afterwards, overriding the caller's `then`. */
+/**
+ * A step may pick where setup rests afterwards, overriding the caller's
+ * `then`, or the steps that run next, ahead of the rest.
+ */
 export type SetupStep = Readonly<{
   label: string;
-  run: () => Promise<void> | Promise<Resting | undefined>;
+  run: () => Promise<void> | Promise<Resting | Next | undefined>;
   /** Links the key on this device to the account: skipping it leaves the key unlinked. */
   links?: boolean;
   /** Only backup steps may be continued when the deployment lacks support. */
   backup?: boolean;
 }>;
+/** Steps a step decided on once it ran, as an account check does. */
+export type Next = Readonly<{ next: readonly SetupStep[] }>;
 /**
- * Where setup rests for a decision: the connect choice for a found
- * community that is not Builderlab-hosted, the key choice, an import,
+ * Where setup rests for a decision: replacing another account's key that
+ * isn't backed up, the connect choice for a found
+ * community that is not Builderlab-hosted, an import,
  * or the returning-user pages (Welcome back, a restore from backup, the
  * start-over page for a lost key).
  */
 export type SetupPause =
+  | "replace-key"
   | "connect-choice"
-  | "key-choice"
   | "key-import"
   | "welcome-back"
   | "key-restore"
@@ -69,11 +75,45 @@ function saved(identity: Identity) {
   );
 }
 
+/**
+ * Native leaves a key already on this device in place, so creating or
+ * importing over it would "succeed" as that other key. Refuse first, before
+ * any account step (Start over's unlink) acts on the result.
+ */
+function vacant(identity: Identity) {
+  if (identity.snapshot().status === "ready")
+    throw new Error(
+      "This Mac already has a different Buzz key. Sign out of Buzz on this Mac first, or use a different account.",
+    );
+}
+
+/**
+ * The key for an account that has none: old Buzz's, when it was used on this
+ * device, so someone who used Buzz before stays the same person; otherwise a
+ * new one. Reading old Buzz's secure storage may bring up an OS prompt, and if
+ * it can't be read a new key is made rather than stopping setup.
+ */
+export function keyForAccount(identity: Identity): SetupStep {
+  return {
+    label: "Preparing your identity…",
+    run: async () => {
+      vacant(identity);
+      if (await identity.legacyAvailable().catch(() => false)) {
+        await identity.importLegacy();
+        if (identity.snapshot().status === "ready") return;
+      }
+      await identity.create();
+      saved(identity);
+    },
+  };
+}
+
 /** Creates a key on this device, which the account steps then act on. */
 export function createKey(identity: Identity): SetupStep {
   return {
     label: "Creating your key…",
     run: async () => {
+      vacant(identity);
       await identity.create();
       saved(identity);
     },
@@ -86,6 +126,7 @@ export function createKey(identity: Identity): SetupStep {
  * under the import page's field, not on the failed page.
  */
 export async function importKey(identity: Identity, nsec: string) {
+  vacant(identity);
   await identity.importKey(nsec);
   saved(identity);
 }
@@ -93,7 +134,7 @@ export async function importKey(identity: Identity, nsec: string) {
 /**
  * Real: the key bound to the signed-in account picks the lane. Binding is 1:1
  * and enforced, so a linked account must never be given a second key: it rests
- * on Welcome back instead of the key choice, and later steps still run. The
+ * on Welcome back instead of being set up, and later steps still run. The
  * destinations saved to the account are read alongside, under the same label;
  * that list never fails setup and is reported as `undefined` when it did.
  */
@@ -101,6 +142,8 @@ export function checkAccount(
   account: FirstRunAccount,
   onLinked: (pubkey: string) => void,
   onKnown: (known: readonly string[] | undefined) => void,
+  /** The key already on this device: when it is the linked one, nothing is left to choose. */
+  onDevice?: string,
 ): SetupStep {
   return {
     label: "Checking your account…",
@@ -112,7 +155,9 @@ export function checkAccount(
       onKnown(known);
       if (!pubkey) return undefined;
       onLinked(pubkey);
-      return { status: "paused", at: "welcome-back" };
+      return pubkey === onDevice
+        ? undefined
+        : { status: "paused", at: "welcome-back" };
     },
   };
 }
@@ -315,13 +360,17 @@ export function createSetup() {
     state = next;
     for (const listener of listeners) listener();
   };
-  async function run(steps: readonly SetupStep[], then: Resting) {
+  async function run(planned: readonly SetupStep[], then: Resting) {
     let rest = then;
-    for (const [index, step] of steps.entries()) {
+    const steps = [...planned];
+    for (let index = 0; index < steps.length; index++) {
+      const step = steps[index] as SetupStep;
       publish({ status: "running", label: step.label });
       try {
         const picked = await step.run();
-        if (picked) rest = picked;
+        if (picked && "next" in picked)
+          steps.splice(index + 1, 0, ...picked.next);
+        else if (picked) rest = picked;
       } catch (error) {
         const left = steps.slice(index);
         failed = { steps: left, rest };

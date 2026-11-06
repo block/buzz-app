@@ -584,7 +584,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-danger",
         variable: "--text-danger",
-        pointsAt: "red-12 light / red-12 dark",
+        pointsAt: "red-text light / red-12 dark",
         use: "Error text and destructive action labels.",
         status: "core",
       },
@@ -606,7 +606,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-success",
         variable: "--text-success",
-        pointsAt: "green-12 light / green-12 dark",
+        pointsAt: "green-text light / green-12 dark",
         use: "Success text.",
         status: "core",
       },

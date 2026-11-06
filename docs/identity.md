@@ -24,8 +24,8 @@ the installed application's owner. This screen does not expand external-app MCP
 scopes or grant remote callers access to signing.
 
 Native macOS, Windows and Linux without the live development broker open on a
-welcome screen when no human key exists on this device: **Buzz** — "Your people,
-your agents, your projects — all in one place." — with **Sign in with Builderlab**
+welcome screen when no human key exists on this device: **Buzz**, "Your people,
+your agents, one place.", with **Sign in with Builderlab**
 (the label the Buzz mobile client uses; first-run copy never names the sign-in
 provider) and a live **Community URL** field with **Continue** beside it (the
 same field and normalisation as Join a community below). Sign in is the one
@@ -138,9 +138,10 @@ existing key** opens **Enter your private key**. **Use a different account**
 signs out the shared native session first run signed in as, so the Builderlab
 plugin stops using it, and returns to the welcome screen. It leaves a newer
 session (from Settings or another copy) signed in, and a failed sign-out shows
-on the welcome screen. Cancel and Back do not sign out.
-The browser may retain its portal session. This choice page shows the signed-in
-email so the account can be checked before linking a key.
+on the welcome screen. Cancel and Back do not sign out. Until a sign-in
+completes, every sign-in from there asks the browser for credentials rather
+than continuing as the account it remembers. This choice page shows the
+signed-in email so the account can be checked before linking a key.
 
 Builderlab setup automatically backs up the created key after linking it to the
 signed-in account and waits for the uploader. The import screen discloses
@@ -158,6 +159,18 @@ discards the draft. A successful account-backed import links the key and automat
 unless that key already has a backup. An import without Builderlab
 sign-in skips linking and backup. Importing without a Builderlab account never uploads the key.
 
+**Another account's key on this device** (a relaunch sign-in as someone else)
+is signed out before the account's lane runs, as **Sign out of Buzz** does
+without erase. Buzz restarts and signs in again by itself (a one-time note
+honoured for two minutes), now on the lane for a device with no key. The key is
+signed out without asking only when this device has confirmed a stored backup
+of it (`nsec_backup_confirmed`: a backup record here, under any account, that
+the service receipted or a restore wrote). Otherwise **A different account is
+saved on this computer** asks first: **Replace** signs it out, and **Cancel**
+signs out of the new account and returns to the welcome screen with the
+device's key in place. Creating or importing a key still refuses while one is on
+the device.
+
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
@@ -170,8 +183,9 @@ is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
 device** is *Coming soon* (device pairing is its future entry). Last in the
 stack, **Use a different account** is the same exit as on Get started with Buzz: it
-signs the session out and returns to the welcome screen without importing,
-restoring or replacing the linked key. The imported
+signs the session out and returns to the welcome screen, where the next
+sign-in asks for credentials, without importing, restoring or replacing the
+linked key. The imported
 key is already the account's, so nothing is linked. Unless the lookup already
 lists it, a successful import automatically backs up the key as on a new
 account; a listed key continues without another upload.

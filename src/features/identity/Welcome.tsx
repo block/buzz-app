@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { launchVisible, setLaunchReady } from "../../app/launch";
 import { onboardingTransition } from "./onboarding-transition";
 import { npubEncode } from "nostr-tools/nip19";
 import {
@@ -30,7 +31,10 @@ import {
 } from "../communities/join";
 import { createJoinJournal, JournalError } from "../communities/join-journal";
 import type { Communities, PersonalProfile } from "../communities/service";
+import { SIGN_IN_TIMED_OUT } from "../federated-identity/CommunitySignIn";
+import type { SignInOptions } from "../federated-identity/service";
 import { readErrorKind } from "../relay/errors";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { BackupError } from "./backup";
 import { BackupConsent } from "./BackupConsent";
@@ -56,12 +60,16 @@ import { InviteCodeField } from "./InviteCodeField";
 import styles from "./IdentitySetup.module.css";
 import { parseFirstRunAccountSeed } from "./first-run-seed";
 import { JoinCommunity } from "./JoinCommunity";
-import { KeyChoice } from "./KeyChoice";
 import { KeyImport } from "./KeyImport";
 import { KeyLost } from "./KeyLost";
 import { KeyRestore } from "./KeyRestore";
 import { useLegacyIdentityOffer } from "./LegacyIdentityOffer";
 import { OnboardingScreen } from "./OnboardingScreen";
+import {
+  forgetBuilderlab,
+  rememberBuilderlab,
+  setUpWithBuilderlab,
+} from "./setup-route";
 import { OnboardingWordmark } from "./OnboardingWordmark";
 import { ProfileStep } from "./ProfileStep";
 import { PublicKeyPanel } from "./PublicKeyPanel";
@@ -73,6 +81,7 @@ import {
   checkBackup,
   checkCreation,
   createKey,
+  keyForAccount,
   createSetup,
   findCommunities,
   importKey,
@@ -81,11 +90,21 @@ import {
   type Resting,
   restoreCommunities,
   type SetupPause,
+  type SetupStep,
   unlinkKey,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
+import { signOutFailure } from "./SignOut";
+import {
+  onSignInRequest,
+  requestSignInAfterRestart,
+  takeSignInRequest,
+} from "./sign-in-requests";
 import { WelcomeBack } from "./WelcomeBack";
 import { WireframeScreen } from "./Wireframe";
+
+/** How long a replaced key's sign-out may take to restart Buzz before setup says so. */
+const RESTART_WAIT_MS = 30_000;
 
 /**
  * The signed-in account: the development seed when a dev server set one
@@ -116,7 +135,8 @@ export function Welcome({
   children,
   federatedIdentity,
   connect = federatedIdentity &&
-    ((signal) => firstRunCredential(signal, federatedIdentity)),
+    ((signal, options) =>
+      firstRunCredential(signal, federatedIdentity, options)),
   // Only the default `connect`, which needs `federatedIdentity`, signs in
   // without an `account`.
   account = (credential, identity) =>
@@ -151,7 +171,9 @@ export function Welcome({
    */
   federatedIdentity?: FirstRunIdentity | undefined;
   /** Builderlab sign-in; without it, first run offers none. */
-  connect?: ((signal: AbortSignal) => Promise<Credential>) | undefined;
+  connect?:
+    | ((signal: AbortSignal, options: SignInOptions) => Promise<Credential>)
+    | undefined;
   /** The account for a credential `connect` returned. */
   account?:
     | ((credential: Credential, identity: Identity) => FirstRunAccount)
@@ -160,13 +182,25 @@ export function Welcome({
   servers?: () => Promise<readonly SessionSnapshot[]>;
 }) {
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
+  // Whether the next sign-in opens the sign-up screen: set by the landing's
+  // Create account and taken by the sign-in it starts. A restart or a later
+  // sign-in usually follows the sign-up, so it signs in.
+  const signup = useRef(false);
+  // Whether sign-ins ask the browser for credentials over its session, which
+  // would finish them as the account just left: armed by Use a different
+  // account, kept by every restart, cleared once one completes.
+  const switching = useRef(false);
   const [login] = useState(() =>
     createFirstRunLogin(
-      connect ??
-        (() =>
-          Promise.reject(
-            new Error("This Buzz build has no Builderlab sign-in."),
-          )),
+      (signal) => {
+        const create = signup.current;
+        signup.current = false;
+        return connect
+          ? connect(signal, { signup: create, forceLogin: switching.current })
+          : Promise.reject(
+              new Error("This Buzz build has no Builderlab sign-in."),
+            );
+      },
       federatedIdentity &&
         ((held) => releaseFirstRunSession(federatedIdentity, held.revision)),
     ),
@@ -176,6 +210,10 @@ export function Welcome({
   const cancels = useRef(0);
   const auth = useSyncExternalStore(login.subscribe, login.snapshot);
   const [setup] = useState(createSetup);
+  // A device set up through Builderlab signs in again at launch, to check
+  // with the account before the app opens; it continues without signing in
+  // only when asked. Every other device opens straight to the app.
+  const [confirmed, setConfirmed] = useState(() => !setUpWithBuilderlab());
   const progress = useSyncExternalStore(setup.subscribe, setup.snapshot);
   // The signed-in account's reads, from sign-in until the landing is shown again.
   const reads = useRef<FirstRunAccount | undefined>(undefined);
@@ -236,6 +274,22 @@ export function Welcome({
   // gate lifts when it exits.
   const [profileStep, setProfileStep] = useState<ProfileStepState>();
   const viewer = state.status === "ready" ? state.viewer : undefined;
+  // A key on this device that still waits on the launch sign-in.
+  const relaunch = !!viewer && !confirmed;
+  const inApp =
+    state.status === "ready" && progress.status === "idle" && !relaunch;
+  // The launch mark covers the window until something is ready to show. The
+  // app clears it once it loads; a page here (the launch sign-in included) has
+  // to clear it itself.
+  useEffect(() => {
+    if (state.status !== "loading" && !inApp && launchVisible())
+      setLaunchReady(true);
+  }, [state.status, inApp]);
+  // A device with no key this session has nothing to check at launch: the
+  // key that arrives next came through this session's own setup.
+  useEffect(() => {
+    if (state.status === "missing") setConfirmed(true);
+  }, [state.status]);
   // The join owner's recovery record, as the Add-a-community dialog keeps it:
   // a relaunch resumes an unfinished join from there, through that dialog.
   const journal = useMemo(
@@ -262,6 +316,18 @@ export function Welcome({
     },
     [login],
   );
+  // "Open Buzz" after email verification (`sign-in-requests.ts`). Each render
+  // sets what a request does now; while it can't act yet, it stays queued.
+  const requestedSignIn = useRef<(() => void) | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the landing appearing lets a queued request act.
+  useEffect(() => {
+    const handle = () => {
+      const run = requestedSignIn.current;
+      if (run && takeSignInRequest()) run();
+    };
+    handle();
+    return onSignInRequest(handle);
+  }, [state.status]);
   const discovering = finding && auth.status === "signed-out";
   /**
    * The page rendered below, keyed in the order the JSX decides it, so a
@@ -275,13 +341,15 @@ export function Welcome({
       : state.status === "error"
         ? "error"
         : progress.status === "idle"
-          ? state.status === "ready"
+          ? state.status === "ready" && !relaunch
             ? undefined
-            : auth.error
-              ? "auth-error"
-              : discovering
-                ? "discover"
-                : "landing"
+            : auth.error === SIGN_IN_TIMED_OUT
+              ? "auth-timeout"
+              : auth.error
+                ? "auth-error"
+                : discovering
+                  ? "discover"
+                  : "landing"
           : progress.status === "done"
             ? profileStep
               ? "done:profile"
@@ -334,9 +402,13 @@ export function Welcome({
   }, [page]);
   const legacyOffer = useLegacyIdentityOffer(
     identity,
-    page === "landing" && auth.status !== "pending",
+    // Builderlab setup uses old Buzz's identity by itself, so only the
+    // self-hosted route, behind Other options, offers it.
+    otherOptions && !relaunch && auth.status !== "pending",
   );
-  if (state.status === "ready" && progress.status === "idle")
+  if (inApp) {
+    // Already in the app: a request has nothing to finish, so drop it.
+    requestedSignIn.current = () => {};
     return (
       <>
         {children}
@@ -347,53 +419,128 @@ export function Welcome({
         />
       </>
     );
+  }
   // The linked key is backed up: Welcome back offers a restore, and an
   // import of it skips another backup.
   const backedUp = !!linked && !!backups?.includes(linked);
   /**
    * Sign-in leads to the account check, which picks the lane: a linked key
-   * pauses on Welcome back, otherwise the key choice. The backed-up-key
+   * pauses on Welcome back, otherwise setup goes on by itself. The backed-up-key
    * lookup runs on both. Each choice below resumes setup with its own steps.
    */
-  const signIn = async () => {
+  const signIn = async (create = false) => {
+    signup.current = create;
     const attempt = cancels.current;
     // A canceled attempt still settles here, possibly after a later sign-in
     // succeeded; it must not read that one's credential.
     await login.signIn();
     if (attempt !== cancels.current || login.snapshot().status !== "signed-in")
       return;
+    switching.current = false;
+    rememberBuilderlab();
     const current = account(login.credential(), identity);
     reads.current = current;
     let checkedKey: string | undefined;
     let checkedBackups: readonly string[] | undefined;
-    void setup.start(
-      [
-        checkAccount(
-          current,
-          (key) => {
-            checkedKey = key;
-            setLinked(key);
-          },
-          (list) => {
-            known.current = list;
-          },
-        ),
-        checkBackup(current, (keys) => {
-          checkedBackups = keys;
-          setBackups(keys);
-        }),
-        {
-          label: "Preparing your identity…",
-          run: async () => {
-            if (!checkedKey || !checkedBackups?.includes(checkedKey)) return;
-            void current.recovery.beginRecovery();
-            return { status: "paused", at: "key-restore" };
-          },
+    const signedIn = identity.snapshot();
+    void setup.start([
+      checkAccount(
+        current,
+        (key) => {
+          checkedKey = key;
+          setLinked(key);
         },
-      ],
-      { status: "paused", at: "key-choice" },
-    );
+        (list) => {
+          known.current = list;
+        },
+        signedIn.status === "ready" ? signedIn.viewer : undefined,
+      ),
+      checkBackup(current, (keys) => {
+        checkedBackups = keys;
+        setBackups(keys);
+      }),
+      {
+        label: "Preparing your identity…",
+        run: async () => {
+          const here = identity.snapshot();
+          const onDevice = here.status === "ready" ? here.viewer : undefined;
+          // A device that already keeps communities opens on them once the
+          // account's are restored, rather than on Join a community.
+          const open: SetupStep[] =
+            onDevice && communities.snapshot().memberships.length > 0
+              ? [
+                  {
+                    label: "Opening Buzz…",
+                    run: async () => {
+                      enterApp();
+                      return { status: "idle" };
+                    },
+                  },
+                ]
+              : [];
+          // No key on the account: this device's key becomes the account's,
+          // then old Buzz's from this device, or a new one, with no choice to make.
+          if (!checkedKey)
+            return {
+              next: [
+                ...(onDevice ? [] : [keyForAccount(identity)]),
+                linkKey(identity, current),
+                backupKey(current),
+                ...finish(undefined),
+                ...open,
+              ],
+            };
+          // The account's key is already here: bring back its communities.
+          if (onDevice === checkedKey)
+            return { next: [...finish(checkedKey), ...open] };
+          // Another account's key is here. One with a confirmed backup can be
+          // signed back in to, so it is replaced without asking; otherwise
+          // replacing it is the user's call.
+          if (onDevice)
+            return (await identity.backedUp(onDevice).catch(() => false))
+              ? { next: [replaceKey] }
+              : { status: "paused", at: "replace-key" };
+          if (!checkedBackups?.includes(checkedKey)) return;
+          void current.recovery.beginRecovery();
+          return { status: "paused", at: "key-restore" };
+        },
+      },
+    ]);
   };
+  /**
+   * Signs this device's key out, which restarts Buzz; the next launch signs in
+   * again by itself and, with no key here, takes the account's lane. Setup
+   * stays on its progress page until the restart, or fails if none comes.
+   */
+  const replaceKey: SetupStep = {
+    label: "Signing in…",
+    run: async () => {
+      const withdraw = requestSignInAfterRestart();
+      try {
+        await identity.signOut({ wipe: false, removeAgents: false });
+      } catch (reason) {
+        withdraw();
+        throw new Error(signOutFailure(reason));
+      }
+      await new Promise((settle) => setTimeout(settle, RESTART_WAIT_MS));
+      throw new Error("Buzz didn’t restart. Quit and reopen Buzz to finish.");
+    },
+  };
+  /** Starts sign-in in a fresh browser tab, replacing one still waiting. */
+  const start = (create: boolean) => {
+    if (login.snapshot().status === "pending") {
+      cancels.current++;
+      login.cancel();
+    }
+    void signIn(create);
+  };
+  /**
+   * Picks up a sign-in the browser hasn't finished, as Sign in even after
+   * Create account: the browser remembers the account, so a verified one
+   * finishes without a password, and an unverified one returns to Verify
+   * your email.
+   */
+  const resumeSignIn = () => start(false);
   /** Between pauses nothing runs: no key exists until a choice resumes setup. */
   const pause = (at: SetupPause) =>
     void setup.start([], { status: "paused", at });
@@ -409,6 +556,7 @@ export function Welcome({
    */
   const enterApp = () => {
     const current = identity.snapshot();
+    setConfirmed(true);
     if (handoff.current && current.status === "ready")
       invites.open(
         { community: handoff.current, code: inviteCode },
@@ -466,8 +614,8 @@ export function Welcome({
    * community, beside whether it offers Create a community. Every lane that
    * finishes with `linked` holds that key, so its one list read answers both.
    */
-  const finish = () => [
-    ...(linked && reads.current
+  const finish = (key = linked) => [
+    ...(key && reads.current
       ? [
           findCommunities(
             reads.current,
@@ -535,8 +683,13 @@ export function Welcome({
     cancels.current++;
     login.cancel();
   };
-  /** "Use a different account": the landing, signed out of the rejected one. */
+  /**
+   * "Use a different account": the landing, signed out of the rejected one.
+   * Every sign-in from here asks the browser for credentials until one
+   * completes, so the browser's session can't finish it as that account.
+   */
   const switchAccount = () => {
+    switching.current = true;
     void login.signOut();
     backToLanding();
   };
@@ -729,19 +882,15 @@ export function Welcome({
               // Without a Builderlab sign-in, the found community led straight
               // here, so there is no connect choice to return to.
               if (!current && !connect) return backToLanding();
-              back(
-                !current
-                  ? "connect-choice"
-                  : linked
-                    ? "welcome-back"
-                    : "key-choice",
-                "import",
-              );
+              back(!current ? "connect-choice" : "welcome-back", "import");
             }}
             onImport={async (nsec) => {
               await importKey(identity, nsec);
-              if (!current) void setup.start([]);
-              else
+              // A key brought without an account is the self-hosted route.
+              if (!current) {
+                forgetBuilderlab();
+                void setup.start([]);
+              } else
                 void setup.start([
                   ...(!linked ? [linkKey(identity, current)] : []),
                   backedUp ? keepBackup(identity) : backupKey(current),
@@ -756,21 +905,28 @@ export function Welcome({
     const link = linkKey(identity, current);
     const backUpKey = backupKey(current);
     switch (at) {
-      case "key-choice":
+      case "replace-key":
+        // Cancel leaves this device as it was, signed out of the new account.
         return (
-          <KeyChoice
-            email={auth.account?.email}
-            onCreate={() => {
-              void setup.start([
-                createKey(identity),
-                link,
-                backUpKey,
-                ...finish(),
-              ]);
-            }}
-            onImport={() => pause("key-import")}
-            onSwitchAccount={switchAccount}
-          />
+          <>
+            <SetupProgress label="Signing in…" />
+            <AlertDialog
+              title="A different account is saved on this computer"
+              description="Replacing it removes that account from this computer to continue with the one you just signed in to. It may not be backed up. Buzz restarts to finish."
+              onClose={switchAccount}
+              actions={
+                <>
+                  <Button onClick={switchAccount}>Cancel</Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => void setup.start([replaceKey])}
+                  >
+                    Replace
+                  </Button>
+                </>
+              }
+            />
+          </>
         );
       case "welcome-back":
         return linked ? (
@@ -825,7 +981,7 @@ export function Welcome({
           />
         ) : null;
       case "key-lost":
-        // Starting over creates a new key, as Set me up does, and the old
+        // Starting over creates a new key, as first-run setup does, and the old
         // key's communities are not offered to it (so the lane ends with the
         // restore alone, not `finish`). The old key stays linked
         // until the new one exists, so the account is never left without a
@@ -851,6 +1007,18 @@ export function Welcome({
         ) : null;
     }
   };
+  // Restart sign-in in place of one waiting on an earlier browser tab: the
+  // browser's account session finishes it. Setup already under way, or a
+  // community-link lookup, has no sign-in to restart; one that timed out does.
+  requestedSignIn.current =
+    state.status === "loading" || state.status === "error"
+      ? undefined
+      : () => {
+          if (progress.status !== "idle" || (discovering && !auth.error))
+            return;
+          setOtherOptions(false);
+          resumeSignIn();
+        };
   if (state.status === "loading" || state.status === "error")
     return (
       <OnboardingScreen
@@ -924,8 +1092,12 @@ export function Welcome({
             }, true)
           }
         />
+        {legacyOffer}
       </OnboardingScreen>
     );
+  // A device set up through Builderlab before leads with Sign in; a new
+  // one with Create account, which opens the account page's sign-up form.
+  const returning = relaunch || setUpWithBuilderlab();
   if (progress.status === "idle" && !auth.error && !discovering)
     return (
       <OnboardingScreen
@@ -938,8 +1110,7 @@ export function Welcome({
               <OnboardingWordmark />
             </h1>
             <p className={styles.tagline}>
-              Your people, your agents, your projects —<br />
-              all in one place.
+              Your people, your agents, one place.
             </p>
           </>
         }
@@ -948,38 +1119,58 @@ export function Welcome({
           <Button
             variant="prominent"
             size="lg"
-            onClick={() => {
-              if (login.snapshot().status === "pending") {
-                cancels.current++;
-                login.cancel();
-              }
-              void signIn();
-            }}
+            onClick={() => start(!returning)}
           >
-            Sign in with Builderlab
+            {returning ? "Sign in" : "Create account"}
           </Button>
         )}
-        <Button
-          size="lg"
-          variant="ghost"
-          ref={(button) => {
-            if (button && returningFromOptions.current) {
-              returningFromOptions.current = false;
-              button.focus();
-            }
-          }}
-          onClick={() =>
-            onboardingTransition(() => {
+        {relaunch ? (
+          // A key is already here, so the app opens on what this device
+          // keeps; the account is checked at the next launch.
+          <Button
+            size="lg"
+            variant="ghost"
+            onClick={() => {
               cancels.current++;
               login.cancel();
-              setFinding(undefined);
-              setOtherOptions(true);
-            })
-          }
-        >
-          Other options
-        </Button>
-        {legacyOffer}
+              enterApp();
+            }}
+          >
+            Continue without signing in
+          </Button>
+        ) : (
+          <>
+            {connect && (
+              <Button
+                size="lg"
+                variant="glass-clear"
+                onClick={() => start(returning)}
+              >
+                {returning ? "Create account" : "Sign in"}
+              </Button>
+            )}
+            <Button
+              size="lg"
+              variant="ghost"
+              ref={(button) => {
+                if (button && returningFromOptions.current) {
+                  returningFromOptions.current = false;
+                  button.focus();
+                }
+              }}
+              onClick={() =>
+                onboardingTransition(() => {
+                  cancels.current++;
+                  login.cancel();
+                  setFinding(undefined);
+                  setOtherOptions(true);
+                })
+              }
+            >
+              Other options
+            </Button>
+          </>
+        )}
       </OnboardingScreen>
     );
   // The key pages and Join a community bring their own onboarding layouts;
@@ -987,7 +1178,7 @@ export function Welcome({
   // so the title bar and window controls stay.
   if (
     progress.status === "paused" &&
-    ["key-choice", "key-import", "key-restore"].includes(progress.at)
+    ["key-import", "key-restore"].includes(progress.at)
   )
     return paused(progress.at) ?? <WireframeScreen>{null}</WireframeScreen>;
   if (
@@ -1088,7 +1279,9 @@ export function Welcome({
                 ? "Your key is saved on this device."
                 : undefined
           }
-          onBack={failedAfterKey ? undefined : backToLanding}
+          // The launch sign-in may always return to the landing, which can
+          // open the app without it.
+          onBack={failedAfterKey && !relaunch ? undefined : backToLanding}
           onRetry={
             progress.unsupportedBackup ? undefined : () => void setup.retry()
           }
@@ -1098,6 +1291,8 @@ export function Welcome({
               : undefined
           }
         />
+      ) : auth.error === SIGN_IN_TIMED_OUT ? (
+        <FinishInBrowser onContinue={resumeSignIn} onBack={backToLanding} />
       ) : auth.error ? (
         <Failure
           title={auth.retrySignOut ? "Couldn’t sign out" : "Couldn’t sign in"}
@@ -1127,6 +1322,40 @@ export function Welcome({
         />
       ) : null}
     </WireframeScreen>
+  );
+}
+
+/**
+ * The app stopped waiting on the browser, though the person may still be
+ * signing up or verifying their email there: not a failure.
+ */
+function FinishInBrowser({
+  onContinue,
+  onBack,
+}: {
+  onContinue: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <h1
+        id="welcome-title"
+        tabIndex={-1}
+        className="text-heading text-standard"
+      >
+        Finish in your browser
+      </h1>
+      <p className="text-body text-subtle">
+        Finish signing in there, then come back and choose Continue.
+      </p>
+      {/* Footer order: secondary first, primary last. */}
+      <div data-onboarding-actions="">
+        <OnboardingBack onClick={onBack} aria-label="Back" />
+        <Button variant="prominent" size="lg" onClick={onContinue}>
+          Continue
+        </Button>
+      </div>
+    </>
   );
 }
 

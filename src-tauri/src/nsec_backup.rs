@@ -1190,6 +1190,18 @@ impl Api {
 pub(crate) fn nsec_backup_available(host: tauri::State<'_, NsecBackupHost>) -> bool {
     host.config.is_some()
 }
+/// Whether this device has confirmed that a backup of `pubkey` is stored, by any
+/// account: first-run sign-in replaces only a key that is safe to replace.
+#[tauri::command]
+pub(crate) fn nsec_backup_confirmed(
+    host: tauri::State<'_, NsecBackupHost>,
+    pubkey: String,
+) -> bool {
+    match (host.config.as_ref(), host.root.as_ref()) {
+        (Some(config), Some(root)) => persistence::confirmed(root, config, &pubkey),
+        _ => false,
+    }
+}
 /// The ticket of the pass this handoff starts, if any.
 #[tauri::command]
 pub(crate) fn nsec_backup_session(

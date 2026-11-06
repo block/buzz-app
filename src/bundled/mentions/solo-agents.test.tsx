@@ -2857,7 +2857,7 @@ it("scopes a retry to its query: later queries derive from a cached prefix page 
   expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
 });
 
-it("an empty partial-key search does not refute an exact-key lookup, and keys still match no choice", async () => {
+it("an empty partial-key search does not refute an exact-key lookup, which lists only the key's owner", async () => {
   const key = "9".repeat(64);
   const people = vi.fn(async (query: string) => ({
     people: query === key ? [{ pubkey: key, name: "Keyholder" }] : [],
@@ -2872,8 +2872,10 @@ it("an empty partial-key search does not refute an exact-key lookup, and keys st
   await waitFor(() =>
     expect(people).toHaveBeenLastCalledWith(key, 1, expect.any(AbortSignal)),
   );
-  // Choices still match names only, never public keys.
-  await waitFor(() => expect(last()?.items).toEqual([]));
+  // A complete key matches its owner; the partial key above matched no one.
+  await waitFor(() =>
+    expect(last()?.items.map((item) => item.label)).toEqual(["Keyholder"]),
+  );
 });
 
 it("a failed multi-word directory search keeps its error and retry", async () => {
@@ -3001,7 +3003,7 @@ it("uses base matches and visible lexical ties for Fizz in both chooser surfaces
   test.library.dispose();
 });
 
-it("does not complete public keys in either menu", async () => {
+it("completes a full public key only to its owner in either menu, never a partial key", async () => {
   const test = setup();
   const key =
     "150b20bdf6130418df9239dd1bd082c71612c8d653b47c277200365b9be215dc";
@@ -3040,7 +3042,7 @@ it("does not complete public keys in either menu", async () => {
   view.rerender(
     <MentionCompletion {...props} query={{ start: 0, end: 65, query: key }} />,
   );
-  expect(ids()).toEqual([]);
+  expect(ids()).toEqual([key]);
   view.rerender(
     <MentionCompletion {...props} query={{ start: 0, end: 4, query: "eee" }} />,
   );
@@ -3062,7 +3064,10 @@ it("does not complete public keys in either menu", async () => {
   expect(screen.getByRole("button", { name: rowName("Honey") })).toBeVisible();
   await user.clear(screen.getByRole("searchbox"));
   await user.type(screen.getByRole("searchbox"), key);
-  expect(screen.queryByRole("button", { name: /^Bad Janet/ })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: rowName("Bad Janet") }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: rowName("Honey") })).toBeNull();
   test.library.dispose();
 });
 
@@ -3605,7 +3610,7 @@ type DirectoryPage = {
 function spaceFixture(
   memberName: string,
   others: Record<string, string | null> = {},
-  options: { query?: string; dm?: boolean } = {},
+  options: { query?: string; dm?: boolean; teams?: readonly string[] } = {},
 ) {
   const h = setup();
   h.profiles.set(h.member, { name: memberName });
@@ -3639,9 +3644,39 @@ function spaceFixture(
   const publish = vi.fn();
   const result = () =>
     publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  // Legacy catalog teams with these names, each of the member alone.
+  const catalog = {
+    status: "ready" as const,
+    entries: (options.teams ?? []).map((name, index) => ({
+      eventId: `team-${index}`,
+      createdAt: 1,
+      record: {
+        version: 1 as const,
+        community: "fixture",
+        deleted: false,
+        value: {
+          type: "team" as const,
+          id: `team-${index}`,
+          name,
+          agents: [h.member],
+        },
+      },
+    })),
+  };
+  const channelKit: NonNullable<RelaySession["channelKit"]> = {
+    available: true,
+    snapshot: () => catalog,
+    subscribe: () => () => {},
+    ensure() {},
+    async refresh() {},
+    async save() {
+      return "head";
+    },
+  };
   const session = {
     ...h.session,
     names,
+    ...(options.teams ? { channelKit } : {}),
     channels: { ...h.session.channels, list: () => list },
     directMessages: { ...h.session.directMessages, people },
   } as unknown as RelaySession;
@@ -3750,6 +3785,66 @@ it("Space keeps a member's name when an identically named outside namesake is qu
     expect(h.result()?.spaceId).toBe(h.member);
     expect(h.canSpace(h.member)).toBe(true);
     expect(h.canSpace(outsideJose)).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});
+it("Space selects a member by a pasted npub beside a namesake, without waiting for the directory", async () => {
+  const query = npubEncode("a".repeat(64));
+  const h = spaceFixture("Jose", { [otherMember]: "Jose" }, { query });
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith(query, 1, expect.anything()),
+    );
+    // A key has no namesakes: only its owner is listed, and Space selects it.
+    await waitFor(() =>
+      expect(h.result()?.items.map((item) => item.id)).toEqual([h.member]),
+    );
+    expect(h.result()?.spaceId).toBe(h.member);
+    expect(h.canSpace(h.member)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+it.each([
+  { case: "that name", suffix: "" },
+  { case: "a longer name", suffix: " Crew" },
+])(
+  "Space selects a member by a pasted npub beside a saved team with $case",
+  async ({ suffix }) => {
+    const query = npubEncode("a".repeat(64));
+    const h = spaceFixture("Jose", {}, { query, teams: [query + suffix] });
+    try {
+      await waitFor(() =>
+        expect(h.people).toHaveBeenCalledWith(query, 1, expect.anything()),
+      );
+      // A key is not a name: the team neither matches it nor declines Space.
+      await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+      expect(h.result()?.items.map((item) => item.id)).toEqual([h.member]);
+      expect(h.canSpace(h.member)).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it("Space selects someone outside the channel by a pasted npub once the directory finds them", async () => {
+  const query = npubEncode(outsideJose);
+  const h = spaceFixture("Jose", {}, { query });
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith(query, 1, expect.anything()),
+    );
+    expect(h.result()?.items.some((item) => item.id === outsideJose)).toBe(
+      false,
+    );
+    expect(h.result()?.spaceId).toBeUndefined();
+    await h.finish({
+      people: [{ pubkey: outsideJose, name: "Jose" }],
+      hasMore: false,
+    });
+    await waitFor(() => expect(h.result()?.spaceId).toBe(outsideJose));
+    expect(h.result()?.items.map((item) => item.id)).toEqual([outsideJose]);
+    expect(h.canSpace(outsideJose)).toBe(true);
   } finally {
     h.dispose();
   }

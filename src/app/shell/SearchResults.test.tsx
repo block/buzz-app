@@ -399,7 +399,7 @@ it("previews and opens the newest unread reply of a channel unread only through 
     larry = keypair();
   const discovery = [
     profile(larry, { name: "Larry" }),
-    ...["team", "blank", "mixed"].flatMap((id) => [
+    ...["team", "blank", "mixed", "marked"].flatMap((id) => [
       metadata(relay, id, id),
       roster(relay, id, [viewer.pubkey, larry.pubkey]),
     ]),
@@ -453,6 +453,11 @@ it("previews and opens the newest unread reply of a channel unread only through 
   );
   const blankRoot = message(viewer, "blank", "attachment thread", 10);
   const mixedRoot = message(viewer, "mixed", "mixed thread", 10);
+  const markedRoot = message(viewer, "marked", "marked thread", 10);
+  const newerRoot = message(viewer, "team", "newer thread", 15);
+  const oldest = reply(root, "Draft PR is up", 11);
+  const older = reply(root, "CI is green now", 12);
+  const newest = reply(newerRoot, "Newest thread reply", 16);
   const open = vi.fn();
   const rowsOf = (group: string) =>
     within(screen.getByRole("group", { name: group })).getAllByRole("option");
@@ -469,41 +474,65 @@ it("previews and opens the newest unread reply of a channel unread only through 
         openConversation={open}
       />,
     );
-    await waitFor(() => expect(rowsOf("Recent activity")).toHaveLength(3));
+    await waitFor(() => expect(rowsOf("Recent activity")).toHaveLength(4));
     assert(live);
     const callbacks = live;
     act(() =>
       callbacks.receive([
         root,
-        reply(root, "Draft PR is up", 11),
-        reply(root, "CI is green now", 12),
+        oldest,
+        older,
+        newerRoot,
+        newest,
         blankRoot,
         reply(blankRoot, "", 13),
         mixedRoot,
         reply(mixedRoot, "mixed reply", 14),
         message(larry, "mixed", "new top-level message", 15),
+        markedRoot,
+        reply(markedRoot, "marked reply", 17),
       ]),
     );
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(3));
-    // The newest unread reply, by its author, not the thread's root.
+    await act(async () => {
+      await owner.session.unread.markUnreadLocal({
+        kind: "channel",
+        channelId: "marked",
+      });
+    });
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(4));
+    // The newest unread reply of the newest thread, by its author, not a root.
     await waitFor(() =>
-      expect(row("team")).toHaveTextContent("Larry: CI is green now"),
+      expect(row("team")).toHaveTextContent("Larry: Newest thread reply"),
     );
-    expect(row("team")).not.toHaveTextContent("audio");
     expect(row("blank")).toHaveTextContent("Larry replied in a thread");
     // Unread channel messages keep the channel's own preview and destination.
     expect(row("mixed")).not.toHaveTextContent("Larry:");
     fireEvent.click(row("mixed") as HTMLElement);
     expect(open).toHaveBeenLastCalledWith("mixed");
+    // So does a channel marked unread, whatever its threads hold.
+    expect(row("marked")).not.toHaveTextContent("Larry:");
+    fireEvent.click(row("marked") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("marked");
+    // The row opens the reply it previews, in its thread.
     fireEvent.click(row("team") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("team", root.id, root.id);
-    // Reading the thread takes the channel out of Unread.
-    await act(async () => {
-      await owner.session.unread.markThrough(
-        { kind: "thread", channelId: "team", rootId: root.id },
-        owner.session.unread.activity("team").items?.[0]?.latestMessageId ?? "",
-      );
-    });
+    expect(open).toHaveBeenLastCalledWith("team", newest.id, newerRoot.id);
+    // Reading that thread previews the other one's newest reply.
+    const read = (rootId: string, messageId: string) =>
+      act(async () => {
+        await owner.session.unread.markThrough(
+          { kind: "thread", channelId: "team", rootId },
+          messageId,
+        );
+      });
+    await read(newerRoot.id, newest.id);
+    await waitFor(() =>
+      expect(row("team")).toHaveTextContent("Larry: CI is green now"),
+    );
+    expect(row("team")).not.toHaveTextContent("audio");
+    fireEvent.click(row("team") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("team", older.id, root.id);
+    // Reading every thread takes the channel out of Unread.
+    await read(root.id, older.id);
     await waitFor(() => expect(row("team")).toBeUndefined());
   } finally {
     cleanup();

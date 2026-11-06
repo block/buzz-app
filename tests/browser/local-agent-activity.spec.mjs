@@ -92,6 +92,22 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   ).toHaveCount(0);
   await page.evaluate((id) => window.localAgentFixture.handover(id), second.id);
   await expect(waiting).toContainText("Reading notes.txt");
+  // The real thread tail keeps dots when a message owns the tool details,
+  // including without shimmer. jsdom cannot prove CSS visibility.
+  const liveStep = thread.getByRole("button", {
+    name: "Activity: Local tester working",
+    exact: true,
+  });
+  const dots = liveStep.locator('[data-state="working"] > span');
+  await expect(liveStep).toBeVisible();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(dots).toHaveCount(3);
+  await expect(dots.first()).toBeVisible();
+  await expect(dots.first()).toHaveCSS("animation-name", "none");
+  await page.screenshot({
+    path: testInfo.outputPath("local-working-reduced-motion.png"),
+  });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   // Work remains after run() returns; only actual completion settles it.
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, false),
@@ -101,6 +117,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
     secondRow.getByText("Couldn’t finish", { exact: true }),
   ).toBeVisible();
   await expect(waiting).toHaveText("Details");
+  await expect(liveStep).toHaveCount(0);
   await expect(waiting).toHaveAccessibleName(
     /Local tester, Fixture provider unavailable/,
   );
@@ -385,6 +402,22 @@ test("Stop in a channel response activity stops its work", async ({
   await expect(
     page.getByRole("button", { name: "View transcript", exact: true }),
   ).toBeVisible();
+  app.relay.publish(
+    "primary",
+    app.sign({
+      kind: 9,
+      content: "Keep going while I check the result",
+      created_at: request.created_at + 3,
+      tags: [["h", "alpha"]],
+    }),
+  );
+  await expect(
+    page.getByText("Keep going while I check the result", { exact: true }),
+  ).toBeVisible();
+  const live = page.locator(
+    "[data-channel-timeline] [data-conversation-activity]",
+  );
+  await expect(live.getByText("Local tester", { exact: true })).toBeVisible();
   await stop.click();
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
@@ -688,7 +721,8 @@ test("finishing a channel response hands focus back only when it owns focus", as
     });
     await expect(summary).toBeVisible();
     if (focusOn === "popup") {
-      await summary.hover();
+      // Pin the popup open: this case checks focus handoff, not hover intent.
+      await summary.click();
       await popup
         .getByRole("button", { name: "View activity for Local tester" })
         .focus();
@@ -760,8 +794,65 @@ test("the published-activity tab shows turns its agent published", async ({
     page.getByRole("tab", { name: "Activity", selected: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Published reply", { exact: true }),
+    page.locator("summary").getByText("Published reply", { exact: true }),
   ).toBeVisible();
+  // Real browser layout is required: jsdom cannot catch flex min-content collapse.
+  const path = "src/features/agents/ActivityTranscript.tsx";
+  app.observer(
+    frame("acp_read", {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "S",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "layout-tool",
+          kind: "read",
+          title: path,
+          status: "completed",
+          rawInput: { path },
+        },
+      },
+    }),
+    key,
+  );
+  const toolSummary = page.locator("summary").filter({ hasText: path });
+  await toolSummary.click();
+  for (const width of [390, 360]) {
+    await page.setViewportSize({ width, height: 950 });
+    for (const size of ["150%", "200%"]) {
+      await page.evaluate((value) => {
+        document.documentElement.style.fontSize = value;
+      }, size);
+      await expect
+        .poll(async () => {
+          const label = await toolSummary
+            .getByText(path, { exact: true })
+            .boundingBox();
+          return label?.width ?? 0;
+        })
+        .toBeGreaterThan(100);
+      await expect
+        .poll(async () => (await toolSummary.boundingBox())?.height ?? Infinity)
+        .toBeLessThan(300);
+      // The host inset, hero, and footer must agree after the dock narrows it.
+      await expect
+        .poll(() =>
+          toolSummary.evaluate((summary) => {
+            let host = summary.parentElement;
+            while (host && getComputedStyle(host).overflowY !== "auto")
+              host = host.parentElement;
+            if (!host) throw new Error("Missing activity scrollport");
+            return host.scrollWidth - host.clientWidth;
+          }),
+        )
+        .toBe(0);
+    }
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.removeProperty("font-size");
+  });
+  await page.setViewportSize({ width: 1280, height: 950 });
   // A turn's thread label opens that thread.
   const root = app.histories
     .get("primary/alpha")

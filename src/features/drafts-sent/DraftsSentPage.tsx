@@ -4,23 +4,23 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
-import type { ChannelSummary } from "../../features/relay/contracts";
+import type { PageNavigation } from "../navigation/service";
+import { PanelFrame } from "../panels/PanelFrame";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import { messageAuthor } from "../../features/relay/fold";
 import type { Navigation } from "../../features/navigation/controller";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { channelIcon } from "../../features/channels/channel-icon";
+import { channelIcon } from "../channels/channel-icon";
 import { avatarMedia } from "../../shared/avatar-source";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
   ArrowsClockwiseIcon,
   MessageReplyIcon,
-  PencilSimpleIcon,
   SendIcon,
-  SparklesIcon,
   CheckIcon,
   TrashIcon,
 } from "../../shared/design-system/icons/index";
@@ -29,13 +29,12 @@ import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import {
-  NavigationCard,
-  NavigationItem,
-} from "../../shared/design-system/ui/NavigationItem";
+import { NavigationCard } from "../../shared/design-system/ui/NavigationItem";
+import { MessageListRow } from "../messages/MessageListRow";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
+import { readView, writeView } from "../../shared/view-state";
 import {
   PanelHeader,
   PanelHeaderLabel,
@@ -70,12 +69,9 @@ const TICK_MS = 30_000;
 type Place = {
   title: string;
   kind: "channel" | "dm" | "solo" | "unknown";
-  /** The DM's other person, shown as the row's avatar. */
-  person?: string | undefined;
   /** Everyone else in a DM or Solo chat. */
   members: readonly string[];
   available: boolean;
-  channel: ChannelSummary | undefined;
 };
 type Status = {
   tone: "new" | "last" | "quiet";
@@ -114,14 +110,21 @@ function useNow() {
 export function DraftsSentPage({
   relay,
   navigator,
+  navigation,
+  companion,
 }: {
   relay: RelayData;
   navigator: Navigation;
+  navigation?: PageNavigation | undefined;
+  companion?: ReactNode;
 }) {
   const connection = useRelayConnection(relay);
   const scope = scopeOf(connection);
+  useEffect(() => {
+    navigation?.complete({ status: "opened" });
+  }, [navigation]);
   return (
-    <div className="h-full min-h-0">
+    <PanelFrame scope={connection.scope} companion={companion}>
       <FullPageSurface aria-label="Drafts & sent">
         {connection.status === "ready" && scope ? (
           <ScopedPage
@@ -144,7 +147,7 @@ export function DraftsSentPage({
           </div>
         )}
       </FullPageSurface>
-    </div>
+    </PanelFrame>
   );
 }
 
@@ -183,6 +186,11 @@ function ScopedPage({
   const resolveName = useIdentityNames(session.names);
   const now = useNow();
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"drafts" | "sent">(() =>
+    readView<unknown>(session.scope, "drafts-sent-tab", "drafts") === "sent"
+      ? "sent"
+      : "drafts",
+  );
   const [notice, setNotice] = useState<string>();
   const searchInput = useRef<HTMLInputElement>(null);
   const { sent, refresh: refreshSent } = useSent(session, viewer);
@@ -210,7 +218,6 @@ function ScopedPage({
         kind: "unknown",
         members: [],
         available: false,
-        channel,
       };
     const available = !channel.cached && !channel.pending;
     const members = [
@@ -221,10 +228,8 @@ function ScopedPage({
         return {
           title: "Notes to self",
           kind: "dm",
-          person: viewer,
           members,
           available,
-          channel,
         };
       const names = members.map((key) => nameOf(key, members));
       return {
@@ -232,20 +237,17 @@ function ScopedPage({
           names.slice(0, 3).join(", ") +
           (names.length > 3 ? ` +${names.length - 3}` : ""),
         kind: "dm",
-        person: members[0],
         members,
         available,
-        channel,
       };
     }
     if (channel.channelType === "solo")
-      return { title: channel.name, kind: "solo", members, available, channel };
+      return { title: channel.name, kind: "solo", members, available };
     return {
       title: channel.private ? channel.name : `#${channel.name}`,
       kind: "channel",
       members: [],
       available,
-      channel,
     };
   }
 
@@ -386,11 +388,6 @@ function ScopedPage({
     seen.add(conversation);
     return row;
   });
-  // A post and your reply in its thread are one conversation.
-  const waiting = new Set(
-    sentRows.filter((row) => row.status?.tone === "new").map(conversationOf),
-  ).size;
-
   // Everyone shown in a row, so their names and pictures load.
   const people = new Set<string>();
   for (const row of [...draftRows, ...sentRows])
@@ -460,28 +457,6 @@ function ScopedPage({
     (neighbor ?? searchInput.current)?.focus();
   }
 
-  function lead(place: Place) {
-    if (place.kind === "dm" && place.person) {
-      const profile = profiles.get(place.person);
-      return (
-        <Avatar
-          src={avatarMedia(profile?.picture, session.media)}
-          alt=""
-          fallback={place.title}
-          size="small"
-          shape={profile?.isAgent ? "squircle" : "circle"}
-        />
-      );
-    }
-    const Icon =
-      place.kind === "solo" ? SparklesIcon : channelIcon(place.channel);
-    return (
-      <span className={styles.tile} data-kind={place.kind} aria-hidden="true">
-        <Icon size={16} />
-      </span>
-    );
-  }
-
   function stack(activity: Activity | undefined, place: Place) {
     // A one-to-one DM already shows its person as the row's avatar.
     const keys = activity?.people ?? place.members;
@@ -505,6 +480,18 @@ function ScopedPage({
 
   function row(item: Row, draft: boolean) {
     const { entry, place, activity, status } = item;
+    const destinationIcon = !draft && place.kind !== "dm";
+    const person =
+      !draft && place.kind === "dm" ? (place.members[0] ?? viewer) : viewer;
+    const profile = profiles.get(person);
+    const Icon = channelIcon(byId.get(entry.channelId));
+    const context = [
+      draft ? place.title : place.kind === "dm" ? "Direct message" : undefined,
+      entry.threadRootId ? "Thread" : undefined,
+      place.kind === "solo" ? "Solo" : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ");
     const line = text(item);
     const time = entry.createdAt
       ? draft
@@ -525,8 +512,7 @@ function ScopedPage({
       .filter(Boolean)
       .join(". ");
     const destination = (
-      <NavigationItem
-        multiline
+      <MessageListRow
         aria-label={label}
         disabled={!place.available}
         title={
@@ -535,32 +521,26 @@ function ScopedPage({
             : "This conversation is not available right now"
         }
         onClick={() => void open(entry, draft)}
-        icon={<span className={styles.lead}>{lead(place)}</span>}
-        label={
-          <span className={styles.main}>
-            <span className={styles.head}>
-              <span className={`text-label-sm ${styles.name}`}>
-                {place.title}
-              </span>
-              {entry.threadRootId && (
-                <span className={`text-caption ${styles.chip}`}>
-                  <MessageReplyIcon size={12} />
-                  Thread
-                </span>
-              )}
-              {place.kind === "solo" && (
-                <span className={`text-caption ${styles.chip}`}>Solo</span>
-              )}
-            </span>
-            <span
-              className={`text-body-sm ${status?.tone === "new" ? "text-standard" : "text-subtle"} ${styles.preview}`}
-              data-placeholder={item.placeholder || undefined}
-            >
-              {draft && <span className={styles.draftMark}>Draft</span>}
-              {line}
-            </span>
-            <span className={styles.context}>
-              {stack(activity, place)}
+        avatar={
+          <Avatar
+            size="fill"
+            alt=""
+            fallback={draft ? "You" : place.title}
+            src={
+              destinationIcon
+                ? undefined
+                : avatarMedia(profile?.picture, session.media)
+            }
+            fallbackContent={destinationIcon ? <Icon size={16} /> : undefined}
+            shape={destinationIcon || profile?.isAgent ? "squircle" : "circle"}
+          />
+        }
+        sender={draft ? "You" : place.title}
+        source={context}
+        time={
+          <span className={styles.rowMeta}>
+            {stack(activity, place)}
+            <span className={styles.deliveryMeta}>
               {status && (
                 <span
                   className={`text-caption ${styles.pill}`}
@@ -577,20 +557,18 @@ function ScopedPage({
                   {status.label}
                 </span>
               )}
+              {time && entry.createdAt !== undefined && (
+                <time
+                  dateTime={new Date(entry.createdAt * 1000).toISOString()}
+                  title={fullTime(entry.createdAt)}
+                >
+                  {time}
+                </time>
+              )}
             </span>
           </span>
         }
-        trailing={
-          time && entry.createdAt !== undefined ? (
-            <time
-              className={`text-caption ${styles.time}`}
-              dateTime={new Date(entry.createdAt * 1000).toISOString()}
-              title={fullTime(entry.createdAt)}
-            >
-              {time}
-            </time>
-          ) : undefined
-        }
+        preview={line}
       />
     );
     return (
@@ -643,6 +621,33 @@ function ScopedPage({
           />
         }
       />
+      <div className={styles.tabsToolbar}>
+        <div className={styles.typeTabs}>
+          <Tabs
+            label="Drafts and sent"
+            variant="panel"
+            size="sm"
+            value={view}
+            items={[
+              {
+                value: "drafts",
+                label: "Drafts",
+                panelId: "drafts-view",
+                trailing: shownDrafts.length ? (
+                  <span className="text-caption text-subtle">
+                    {shownDrafts.length}
+                  </span>
+                ) : undefined,
+              },
+              { value: "sent", label: "Sent", panelId: "sent-view" },
+            ]}
+            onValueChange={(next) => {
+              setView(next);
+              writeView(session.scope, "drafts-sent-tab", next);
+            }}
+          />
+        </div>
+      </div>
       <div className={styles.toolbar}>
         <SearchField
           variant="capsule"
@@ -660,25 +665,17 @@ function ScopedPage({
       )}
       <div className={styles.sections}>
         <section
-          aria-labelledby="drafts-sent-drafts"
+          role="tabpanel"
+          id="drafts-view"
+          aria-labelledby="drafts-view-tab"
+          hidden={view !== "drafts"}
           className={styles.section}
         >
-          <InlineHeader
-            id="drafts-sent-drafts"
-            icon={<PencilSimpleIcon size={16} />}
-            title={
-              <span className={styles.groupHeading}>
-                Drafts
-                {shownDrafts.length ? (
-                  <span className="text-caption text-subtle">
-                    {shownDrafts.length}
-                  </span>
-                ) : null}
-              </span>
-            }
-          />
           {drafts.unavailable && (
-            <p role="alert" className="text-body-sm text-subtle">
+            <p
+              role="alert"
+              className={`text-body-sm text-subtle ${styles.sectionCopy}`}
+            >
               Some saved drafts could not be read. They are unchanged.
             </p>
           )}
@@ -687,49 +684,53 @@ function ScopedPage({
               {visibleDrafts.map((item) => row(item, true))}
             </ul>
           ) : (
-            <p className="text-body-sm text-subtle">
+            <p className={`text-body-sm text-subtle ${styles.sectionCopy}`}>
               {search && shownDrafts.length
                 ? `No drafts match “${search.trim()}”.`
                 : "No drafts. Messages you start and don’t send wait here."}
             </p>
           )}
           {drafts.limited && (
-            <p className="text-caption text-subtle">Showing 500 drafts.</p>
+            <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
+              Showing 500 drafts.
+            </p>
           )}
         </section>
-        <section aria-labelledby="drafts-sent-sent" className={styles.section}>
-          <InlineHeader
-            id="drafts-sent-sent"
-            icon={<SendIcon size={16} />}
-            title="Sent"
-            actions={
-              waiting ? (
-                <span
-                  className={`text-caption ${styles.pill}`}
-                  data-tone="new"
-                  title={`${plural(waiting, "conversation")} with replies after yours`}
-                >
-                  <span className={styles.dot} />
-                  {waiting} with replies after yours
-                </span>
-              ) : undefined
-            }
-          />
+        <section
+          role="tabpanel"
+          id="sent-view"
+          aria-labelledby="sent-view-tab"
+          hidden={view !== "sent"}
+          className={styles.section}
+        >
           {sent.status === "error" && (
-            <div role="alert" className={styles.notice}>
+            <div
+              role="alert"
+              className={`${styles.notice} ${styles.sectionCopy}`}
+            >
               <p>Sent messages could not be loaded.</p>
               <Button size="sm" onClick={() => refreshSent.current()}>
                 Retry
               </Button>
             </div>
           )}
-          <LoadingRegion pending={sentLoading} label="Loading sent messages…">
+          <LoadingRegion
+            pending={sentLoading}
+            label="Loading sent messages…"
+            statusVisibility={
+              sentLoading && !groups.length ? "visible" : "screen-reader"
+            }
+          >
             {groups.length ? (
               groups.map((group) => (
-                <section key={group.label} aria-label={group.label}>
-                  <p className={`text-caption text-subtle ${styles.day}`}>
+                <section
+                  key={group.label}
+                  aria-label={group.label}
+                  className={styles.dayGroup}
+                >
+                  <h3 className={`text-caption text-subtle ${styles.day}`}>
                     {group.label}
-                  </p>
+                  </h3>
                   <ul className={styles.list}>
                     {group.rows.map((item) => row(item, false))}
                   </ul>
@@ -761,7 +762,7 @@ function ScopedPage({
             )}
           </LoadingRegion>
           {sentRows.length >= SENT_LIMIT && (
-            <p className="text-caption text-subtle">
+            <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
               Showing your latest {SENT_LIMIT} messages.
             </p>
           )}

@@ -5,7 +5,6 @@ import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
   activityPresentation,
-  activityDisplayRows,
   useChannelActivitySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
@@ -645,20 +644,6 @@ function ThreadMessages({
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const [pinnedActivity, setPinnedActivity] = useState<
-    ReadonlyMap<string, number>
-  >(() => new Map());
-  const keepActivityMounted = useCallback((id: string) => {
-    setPinnedActivity((ids) => new Map(ids).set(id, (ids.get(id) ?? 0) + 1));
-    return () =>
-      setPinnedActivity((ids) => {
-        const next = new Map(ids);
-        const count = (ids.get(id) ?? 0) - 1;
-        if (count > 0) next.set(id, count);
-        else next.delete(id);
-        return next;
-      });
-  }, []);
   const activityVisit = useRef<unknown[]>([]);
   useLayoutEffect(() => {
     const request = [messageId, navigation?.signal, revealRequest];
@@ -1477,25 +1462,15 @@ function ThreadMessages({
       activitySnapshot,
       agentPubkeys,
       parent ?? rootId,
-      pinnedActivity,
     );
     const groups = presentation.groups.filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
     );
-    const siblings = activityDisplayRows(
-      chronologicalSiblings,
-      groups,
-      messageId,
-    );
-    const activeGroups = groups.filter(
-      (group) => !group.hidden || group.retained,
-    );
-    const groupsByFirst = new Map(
-      activeGroups.map((group) => [group.ids[0], group]),
-    );
-    const groupedIds = new Set(activeGroups.flatMap((group) => group.ids));
+    const siblings = chronologicalSiblings;
+    const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
+    const groupedIds = new Set(groups.flatMap((group) => group.ids));
     const hidden = new Set(
-      activeGroups.flatMap((group) =>
+      groups.flatMap((group) =>
         expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
       ),
     );
@@ -1536,7 +1511,6 @@ function ThreadMessages({
         const requestId = presentation.replyRequests.get(row.id);
         return (
           <MessageRow
-            keepMounted={keepActivityMounted}
             representedAgents={stableActivity.agents(
               row.id,
               presentation.representedAgents.get(row.id),
@@ -1766,7 +1740,10 @@ function ThreadMessages({
         channelId={channelId}
         scroller={scroller}
         settled={readingSettled}
-        rootId={snapshot.root?.id}
+        // The thread opened bounds DM reads even before its root resolves. An
+        // exact reply under an unavailable original shows alone, so it, not
+        // its signed root, is the thread: its hidden siblings stay unread.
+        rootId={snapshot.root?.id ?? messageId}
         // A visible exact reply can outlive its unavailable root. Until resolved,
         // observe rows individually; an absent root must not mean channel catch-up.
         latestMessageId={

@@ -1705,7 +1705,8 @@ Escape and Option+Arrow for the shell.
   are already applied; rows in a collapsed section or the inactive pane are skipped. A
   row is unread when it shows the unread or thread-activity marker that
   `SidebarUnread` also reads. The open conversation is the row marked `aria-current`.
-  Stepping does not wrap, and at either end it does nothing. When the open
+  Plain stepping does not wrap, and at either end it does nothing; unread stepping
+  wraps around to the nearest unread row from the other end. When the open
   conversation is not among the rows, next starts from the top and previous from the
   bottom. A conversation listed in two sections is stepped over once. The shortcuts
   are unavailable, leaving the key alone, while the sidebar renders no rows (for

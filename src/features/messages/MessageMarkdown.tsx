@@ -54,6 +54,8 @@ import styles from "./Messages.module.css";
 import { profileMentionNames, profileMentionParts } from "./profile-mentions";
 import {
   isLiteralMarkdownContext,
+  isPlainProse,
+  plainProseTree,
   prepareMarkdown,
   type LiteralRange,
   type PreparedMarkdown,
@@ -872,6 +874,11 @@ const parsedBodies = recentResults<ReactElement>(
   (key, body) => 2 + elementCount(body) + Math.ceil(key.length / 500),
 );
 
+/** Plain prose skips micromark: the same tree, then the same plugins. */
+function remarkPlainProse(this: { parser?: unknown }) {
+  this.parser = plainProseTree;
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
@@ -887,6 +894,9 @@ const MarkdownBody = memo(function MarkdownBody({
     () =>
       Markdown({
         remarkPlugins: [
+          // Protection only inserts placeholders isPlainProse rejects, so this
+          // agrees with prepareMarkdown's check on the raw content.
+          ...(isPlainProse(protectedContent.content) ? [remarkPlainProse] : []),
           remarkGfm,
           [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,

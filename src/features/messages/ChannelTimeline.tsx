@@ -15,7 +15,6 @@ import {
   withoutStartingAgents,
 } from "./membership-rows";
 import {
-  activityDisplayRows,
   useActivityPresentation,
   useStableRowActivity,
 } from "./activity-presentation";
@@ -560,8 +559,6 @@ function Timeline({
     chronologicalRows,
     queries.agentActivity,
     agentPubkeys,
-    undefined,
-    pinnedIds,
   );
   const activity = presentation.groups;
   const stableActivity = useStableRowActivity();
@@ -592,24 +589,7 @@ function Timeline({
     (navigation?.target.kind === "conversation" && !returning
       ? navigation.target.messageId
       : undefined);
-  // Activity updates rebuild the hidden-row filter without changing its
-  // result; keep the same rows so positioning effects keyed on them stay idle.
-  const displayedRows = useRef(chronologicalRows);
-  const rows = useMemo(() => {
-    const next = activityDisplayRows(
-      chronologicalRows,
-      activity,
-      targetId ?? revealMessageId,
-    );
-    const prior = displayedRows.current;
-    if (
-      next.length === prior.length &&
-      next.every((row, index) => row === prior[index])
-    )
-      return prior;
-    displayedRows.current = next;
-    return next;
-  }, [chronologicalRows, activity, targetId, revealMessageId]);
+  const rows = chronologicalRows;
   const lastPublicMessage = publicMessageNeighbor(rows, rows.length, -1);
   const intent = useRef(0);
   // Keep expansion pending with scroll restoration until the saved row arrives.
@@ -629,24 +609,18 @@ function Timeline({
     }
   }
   const disclosures = new Map(
-    activity
-      .filter((group) => !group.hidden || group.retained)
-      .map((group) => [
-        group.ids[0],
-        {
-          ...group,
-          expanded: group.ids.some((id) => expandedActivity.has(id)),
-        },
-      ]),
+    activity.map((group) => [
+      group.ids[0],
+      {
+        ...group,
+        expanded: group.ids.some((id) => expandedActivity.has(id)),
+      },
+    ]),
   );
   const containedOwnerCache = useRef(new Map<string, string | undefined>());
   const nextContainedOwners = new Map(
     activity
-      .filter(
-        (group) =>
-          (!group.hidden || group.retained) &&
-          group.ids.some((id) => expandedActivity.has(id)),
-      )
+      .filter((group) => group.ids.some((id) => expandedActivity.has(id)))
       .flatMap((group) => group.ids.map((id) => [id, group.ids[0]] as const)),
   );
   // Profile/status refreshes can rebuild the projection without moving rows.

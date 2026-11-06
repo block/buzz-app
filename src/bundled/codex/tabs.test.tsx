@@ -323,15 +323,21 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
     ] as HTMLElement;
   expect(await screen.findByTitle("general · thread eeeeeeee")).toBeVisible();
   fireEvent.click(viewButton(0));
-  expect(await screen.findByText("what changed?")).toBeVisible();
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Refresh transcript" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Refresh transcript" }),
     ).not.toHaveAttribute("data-loading"),
   );
-  expect(screen.getByText("Two files.")).toBeVisible();
+  expect(
+    screen.getByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Back to profile" }));
   fireEvent.click(viewButton(1));
   expect(
@@ -465,7 +471,9 @@ it("opens a channel's thread transcript when opened from one of its threads' act
       initialTranscript={{ opening: 1, done }}
     />,
   );
-  expect(await screen.findByText("Two files.")).toBeVisible();
+  expect(
+    await screen.findByText("Two files.", { selector: "summary span" }),
+  ).toBeVisible();
   expect(done).toHaveBeenCalledTimes(1);
 });
 
@@ -619,7 +627,9 @@ it("finds the thread's Codex session another build started", async () => {
   fireEvent.click(
     await within(opened).findByRole("button", { name: /^View transcript/ }),
   );
-  expect(await screen.findByText("what changed?")).toBeVisible();
+  expect(
+    await screen.findByText("what changed?", { selector: "summary span" }),
+  ).toBeVisible();
 });
 
 it("shows the channel's current kind for a session another build started", async () => {

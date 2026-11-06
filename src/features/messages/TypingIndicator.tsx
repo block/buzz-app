@@ -97,7 +97,6 @@ export function useLiveConversationAgents(
   threadRootId: string | undefined,
   includeThreads = true,
 ): readonly string[] {
-  const replaced = useReplacedTypers(session, channelId, threadRootId);
   const watchChannel = !threadRootId && !includeThreads;
   const subscribe = useCallback(
     (listener: () => void) => {
@@ -131,10 +130,7 @@ export function useLiveConversationAgents(
       includeThreads,
       threadRootsOf(channelRowsOf(session, channelId, watchChannel)),
     );
-    return [...details.keys()]
-      .filter((key) => !replaced.has(key))
-      .sort()
-      .join(",");
+    return [...details.keys()].sort().join(",");
   };
   const key = useSyncExternalStore(subscribe, getKey, getKey);
   return useMemo(() => (key ? key.split(",") : []), [key]);
@@ -200,7 +196,8 @@ export function useConversationAgents(
     getDetails,
     getDetails,
   );
-  const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
+  // A message may own the step details, but the conversation keeps its busy cue.
+  const agents = [...details.keys()].sort();
   return {
     activity: (session.agentActivity?.snapshot ?? noActivity)(),
     details,
@@ -444,6 +441,7 @@ export function TypingIndicator({
     : "";
   const firstStep = firstAgent ? details.get(firstAgent)?.label : undefined;
   const previewText =
+    (firstAgent && replaced.has(firstAgent)) ||
     firstStep === "Working" ||
     firstStep === "Received · waiting to start" ||
     firstStep === "Starting"

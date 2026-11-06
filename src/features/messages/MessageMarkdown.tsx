@@ -30,6 +30,8 @@ import {
 } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
+import { formatFullTimestamp } from "../../shared/datetime";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
@@ -526,7 +528,7 @@ export function MessageMarkdown({
     return (
       <div className={styles.plainText}>
         {prepared.content}
-        {edited && <EditedMarker />}
+        {edited && <EditedMarker at={row.editedAt} />}
       </div>
     );
   return (
@@ -550,8 +552,21 @@ export function MessageMarkdown({
 }
 
 /** Metadata, not prose: selection copy omits it like the byline's clock. */
-export function EditedMarker() {
-  return <span className={`${styles.edited} select-none`}> (edited)</span>;
+export function EditedMarker({ at }: { at?: number | undefined }) {
+  const className = `${styles.edited} select-none`;
+  if (at === undefined) return <span className={className}> (edited)</span>;
+  return (
+    <Tooltip content={formatFullTimestamp(at)} disableHoverablePopup>
+      <span
+        className={className}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need access to the edit time in the tooltip.
+        tabIndex={0}
+      >
+        {" "}
+        (edited)
+      </span>
+    </Tooltip>
+  );
 }
 
 function PreparedMessageMarkdown({
@@ -765,7 +780,8 @@ function PreparedMessageMarkdown({
     img: ({ node: _node, alt }) =>
       alt ? <span className={styles.imageAlt}>{alt}</span> : null,
     span: ({ node: _node, children, ...props }) => {
-      if ("data-edited-slot" in props) return edited ? <EditedMarker /> : null;
+      if ("data-edited-slot" in props)
+        return edited ? <EditedMarker at={row.editedAt} /> : null;
       if ((props as Record<string, unknown>)["data-spoiler"] === "true")
         return (
           <MessageSpoiler key={row.content} interactive={interactive}>

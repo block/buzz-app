@@ -1255,7 +1255,9 @@ function MessageRowContent({
                   ) : (
                     body
                   )}
-                  {editedInBubble && shown.edited && <EditedMarker />}
+                  {editedInBubble && shown.edited && (
+                    <EditedMarker at={shown.editedAt} />
+                  )}
                   {reactionsInBubble && reactionContent}
                 </div>
               )}
@@ -1473,7 +1475,7 @@ function MessageRowContent({
                 </div>
               )}
               {!editedInBody && !editedInBubble && shown.edited && (
-                <EditedMarker />
+                <EditedMarker at={shown.editedAt} />
               )}
             </MessageTimestampHint>
           </div>

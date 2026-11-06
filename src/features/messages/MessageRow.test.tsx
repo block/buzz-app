@@ -34,6 +34,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
 import { setClockPreference } from "../../shared/clock-preference";
+import { formatFullTimestamp } from "../../shared/datetime";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -4562,7 +4563,11 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
   const render = (content: string, edited: boolean) =>
     renderDom(
       <MessageRow
-        row={{ ...row, content, ...(edited ? { edited: true as const } : {}) }}
+        row={{
+          ...row,
+          content,
+          ...(edited ? { edited: true as const, editedAt: 2 } : {}),
+        }}
         profile={undefined}
         media={() => undefined}
         onOpenLink={() => false}
@@ -4715,6 +4720,59 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     render("Hi how are ya.", false);
     expect(screen.queryByText("(edited)")).toBeNull();
   } finally {
+    cleanup();
+  }
+});
+
+it("dates the edit in the edited marker's hint on hover and keyboard focus", async () => {
+  const user = userEvent.setup();
+  const editedAt = new Date(2026, 9, 2, 15, 5, 9).getTime() / 1000;
+  const file = { url: "https://example.com/notes.txt", kind: "file" as const };
+  try {
+    // After the body's last line, and after a captionless row's attachments.
+    for (const patch of [
+      { content: "Hi" },
+      { content: "", attachments: [file] },
+    ]) {
+      renderMessage({
+        row: { ...row, ...patch, edited: true, editedAt },
+        media: (url) => url,
+      });
+      const marker = screen.getByText("(edited)");
+      const hint = formatFullTimestamp(editedAt);
+      await user.hover(marker);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(hint);
+      await user.unhover(marker);
+      await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+      expect(marker).toHaveAttribute("tabindex", "0");
+      act(() => marker.focus());
+      await waitFor(() => expect(marker).toHaveAccessibleDescription(hint));
+      // An open hint follows the clock settings, as the byline's does.
+      act(() => setClockPreference({ hourCycle: "h23" }));
+      expect(formatFullTimestamp(editedAt)).not.toBe(hint);
+      expect(screen.getByRole("tooltip")).toHaveTextContent(
+        formatFullTimestamp(editedAt),
+      );
+      setClockPreference({ hourCycle: "system" });
+      cleanup();
+    }
+    // A collapsed agents line is one button; its marker stays out of the Tab order.
+    renderMessage({
+      row: {
+        ...row,
+        content: "Done",
+        edited: true,
+        editedAt,
+        audience: "agents",
+      },
+      profile: { name: "Morgarita" },
+    });
+    const line = screen.getByRole("button", {
+      name: "Morgarita: Done (edited)",
+    });
+    expect(within(line).getByText("(edited)")).not.toHaveAttribute("tabindex");
+  } finally {
+    setClockPreference({ hourCycle: "system" });
     cleanup();
   }
 });

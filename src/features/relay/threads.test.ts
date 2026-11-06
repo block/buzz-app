@@ -80,6 +80,7 @@ const rowValue = (): ChannelMessage => ({
   agentEnvelope: true,
   membership,
   edited: true,
+  editedAt: 1,
   attachmentSeams: [1],
   mentions: [viewer.pubkey],
   attachments: [attachment],
@@ -147,6 +148,7 @@ it("drops shared row identity when any compared field changes", () => {
         return changed;
       },
     ],
+    ["editedAt", (row) => ({ ...row, editedAt: 2 })],
     [
       "attachmentSeams",
       (row) => {

@@ -690,3 +690,55 @@ impl Drop for Closing<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, OnceLock, TryLockError};
+
+    /// A request is asked under the state lock that removal and admission
+    /// take, so neither can come between its pending check and its Ask.
+    #[tokio::test]
+    async fn a_request_is_asked_under_the_state_lock() {
+        let pairings: Arc<OnceLock<Arc<Pairings>>> = Arc::default();
+        let (asked_send, asked) = std::sync::mpsc::channel();
+        let notify: Notify = {
+            let pairings = pairings.clone();
+            Arc::new(move |notice| {
+                if let Notice::Ask(request) = notice {
+                    let held = matches!(
+                        pairings.get().unwrap().state.try_lock(),
+                        Err(TryLockError::WouldBlock)
+                    );
+                    asked_send.send((request.id, held)).unwrap();
+                }
+            })
+        };
+        let keychain = Arc::new(super::super::keychain::Memory::default());
+        let made = Arc::new(Pairings::new(Arc::new(keychain), notify));
+        pairings.set(made.clone()).ok();
+        let relay = "wss://relay.example";
+        made.set_communities(vec![relay.into()]).await;
+        let pairing = tokio::spawn({
+            let made = made.clone();
+            async move {
+                let human = || async {
+                    Human::Ready(Approver {
+                        pubkey: "a".repeat(64),
+                        store_account: "account".into(),
+                        fi_account: None,
+                    })
+                };
+                made.pair("buzz-cli", relay, || async { None }, human)
+                    .await
+                    .map(|_| ())
+            }
+        });
+        let (id, held) = tokio::task::spawn_blocking(move || asked.recv().unwrap())
+            .await
+            .unwrap();
+        assert!(held, "Ask was emitted without the state lock");
+        made.answer(&id, false);
+        assert_eq!(pairing.await.unwrap().err().unwrap().code, "denied");
+    }
+}

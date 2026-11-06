@@ -28,6 +28,7 @@ import {
   offeredElsewhere,
 } from "./mention-candidates";
 import { useListedChannel } from "../../features/relay/listed-channel";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import { useNamesRevision } from "../../features/identity-names/react";
 import {
   useVerifiedNames,
@@ -369,6 +370,9 @@ export function useMentionChoices(
       ...carried.filter((person) => !known.has(person.pubkey)),
     ];
   }, [searched, carried]);
+  // Of the owner's agents from other communities, only an exact public key
+  // changes which are offered, so other keystrokes keep the choice set.
+  const typedKey = typedPublicKey(query);
   const current = useCallback(
     () =>
       namedCandidates(
@@ -378,9 +382,9 @@ export function useMentionChoices(
         roster,
         selected,
         people,
-        offeredElsewhere(session, community?.joinable()),
+        offeredElsewhere(session, community?.joinable(), typedKey),
       ),
-    [session, channelId, invite, roster, selected, people, community],
+    [session, channelId, invite, roster, selected, people, community, typedKey],
   );
   // Keys known without the directory search: members and agent choices.
   const localKeys = useCallback(() => {
@@ -390,14 +394,14 @@ export function useMentionChoices(
       invite,
       roster,
       undefined,
-      offeredElsewhere(session, community?.joinable()),
+      offeredElsewhere(session, community?.joinable(), typedKey),
     );
     const cached = keySets.get(local);
     if (cached) return cached;
     const keys = new Set(local.map((c) => c.recipient.pubkey));
     keySets.set(local, keys);
     return keys;
-  }, [session, channelId, invite, roster, community]);
+  }, [session, channelId, invite, roster, community, typedKey]);
   const { candidates, local } = useMemo(() => {
     // Source revisions invalidate the projection; selection reads them again synchronously.
     void profiles;

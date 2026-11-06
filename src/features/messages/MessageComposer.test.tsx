@@ -15770,6 +15770,62 @@ it("shows the owner's agent from another community for its key once their agents
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+// One of the owner's agents here is named like their agent from another
+// community, which name queries therefore never offer.
+const jitterHere = { pubkey: "f".repeat(64), name: "Jitter" };
+
+it("shows the owner's agent from another community for its key although one of theirs here has its name, and Space tags it", async () => {
+  const h = mountDirectoryMention({
+    agents: elsewhereAgent({ pubkey: rocketKey, name: "Jitter" }),
+    channel: { channelType: "stream" },
+  });
+  h.setLibrary([jitterHere]);
+  await h.user.type(h.input(), `@${rocketKey}`);
+  // A key has no namesakes, so the name rule does not hide it.
+  await screen.findByRole("option", { name: /In oss\.example\.com/ });
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  await h.user.keyboard(" ");
+  expect(h.input()).toHaveValue("@Jitter ");
+  expect(h.chip(rocketKey)).toBeNull();
+  expect(h.recipients()).toHaveLength(1);
+  h.submit();
+  // Not "Jitter is not in this channel.": the agent here is not the recipient.
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    /Bring Jitter into/,
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["hex key", rocketKey],
+  ["npub", npubEncode(rocketKey)],
+  ["nostr:npub", `nostr:${npubEncode(rocketKey)}`],
+])(
+  "settles a pending mention of the %s of the owner's agent from another community into it once their agents here load, although one of those has its name",
+  async (_, typed) => {
+    const h = mountDirectoryMention({
+      agents: elsewhereAgent({ pubkey: rocketKey, name: "Jitter" }),
+      channel: { channelType: "stream" },
+    });
+    h.setLibrary([], "loading");
+    await h.user.type(h.input(), `@${typed}`);
+    await screen.findByText("Loading recipients…");
+    await waitFor(() => expect(h.people).toHaveBeenCalled());
+    await h.release({ people: [], hasMore: false });
+    await h.user.keyboard(" ");
+    expect(h.chip(typed)).toHaveAttribute("aria-busy", "true");
+    h.setLibrary([jitterHere]);
+    await waitFor(() => expect(h.input()).toHaveValue("@Jitter "));
+    expect(h.chip(typed)).toBeNull();
+    expect(h.recipients()).toHaveLength(1);
+    h.submit();
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      /Bring Jitter into/,
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
 it("settles a pending mention into the owner's agent from another community that is archived here, as Tab would", async () => {
   const rocket = { pubkey: "e".repeat(64), name: "Rocket" };
   const archives = { status: "ready" as const, archived: [rocket.pubkey] };

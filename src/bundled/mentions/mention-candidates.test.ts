@@ -4,6 +4,7 @@ import {
   directoryChanges,
   elsewhereMatches,
   mentionCandidates,
+  offeredElsewhere,
 } from "./mention-candidates";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import {
@@ -273,4 +274,30 @@ it("holds an agent from another community for every name its row has without the
     expect(
       elsewhereMatches(session, "c", false, undefined, elsewhere, typed),
     ).toBe(false);
+});
+
+it("offers an agent from another community named like one of the owner's agents here only for its exact key, after a complete read", () => {
+  const namesake = {
+    pubkey: key(8),
+    name: " helper ",
+    relay: "wss://o.example",
+  };
+  const listed = [...elsewhere, namesake];
+  let complete = true;
+  const session = fresh();
+  Object.assign(session, {
+    agentChoices: { snapshot: () => ({ identities: agents, complete }) },
+  });
+  const offered = (query?: string) =>
+    offeredElsewhere(session, listed, query)?.map((agent) => agent.pubkey);
+  // "Helper" here already has the name.
+  for (const query of [undefined, "", "helper", "Helper", key(7)])
+    expect(offered(query)).toEqual([key(7)]);
+  // A key has no namesakes: it names only its owner.
+  const npub = npubEncode(key(8));
+  for (const typed of [key(8), key(8).toUpperCase(), npub, `nostr:${npub}`])
+    expect(offered(typed)).toEqual([key(7), key(8)]);
+  // A failed or partial read may omit the agent here that has its key.
+  complete = false;
+  expect(offered(key(8))).toEqual([]);
 });

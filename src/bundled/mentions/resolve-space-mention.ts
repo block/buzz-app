@@ -175,7 +175,7 @@ async function resolve(
       return null;
     // Read when deciding, as the chooser does on each render: a library read
     // that lands during the directory lookup offers its agents here too.
-    const offered = offeredElsewhere(session, elsewhere);
+    const offered = offeredElsewhere(session, elsewhere, query);
     const local = new Set(
       mentionCandidates(
         session,

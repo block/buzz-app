@@ -75,15 +75,18 @@ type ElsewhereAgent = Pick<Agent, "pubkey" | "name" | "relay">;
 const none: readonly never[] = [];
 
 /**
- * The owner's agents from their other communities that the chooser offers by
- * name (README section 1): none named like one of the owner's unarchived
- * agents here, which already has that name. Teams still reach them by key.
+ * The owner's agents from their other communities that the chooser offers for
+ * `query` (README section 1): none named like one of the owner's unarchived
+ * agents here, which already has that name, except the one whose exact public
+ * key `query` is: a key names only its owner. Teams still reach them by key.
  * None until a complete read lists the owner's agents here (`elsewhereMatches`):
- * a failed or partial one may omit the agent that has the name.
+ * a failed or partial one may omit the agent here that has the name, or the
+ * key, which then takes its row here.
  */
 export function offeredElsewhere(
   session: ComposerSession,
   elsewhere: readonly ElsewhereAgent[] | undefined,
+  query = "",
 ) {
   if (!elsewhere?.length) return elsewhere;
   const agents = session.agentChoices.snapshot();
@@ -93,7 +96,10 @@ export function offeredElsewhere(
       .filter((agent) => !archivedMention(session, agent.pubkey))
       .map((agent) => normalizeName(agent.name)),
   );
-  return elsewhere.filter((agent) => !here.has(normalizeName(agent.name)));
+  const key = typedPublicKey(query);
+  return elsewhere.filter(
+    (agent) => agent.pubkey === key || !here.has(normalizeName(agent.name)),
+  );
 }
 
 /**

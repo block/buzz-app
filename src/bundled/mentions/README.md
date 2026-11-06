@@ -77,7 +77,9 @@ archived and not read-only, the choice set is:
 3. the viewer's own agents from their other communities, which the client can
    bring into this one (section 7), except one whose name equals, after
    normalization (section 3), the name of one of the viewer's unarchived agents
-   in this community: that agent already has the name here; and
+   in this community: that agent already has the name here. A query that is
+   the exact public key (Terms) of such an agent still includes it, because a
+   key has no namesakes (section 5); and
 4. people and agents found by a community directory search for the current query.
 
 Solo chats MUST NOT add directory people or agents from other communities. This
@@ -343,8 +345,10 @@ These rules keep a row from moving under the user's pointer or keyboard.
   still show before directory people. Its names are the ones its row has
   without the directory search, including aliases cached in this community,
   such as the profile name of an agent archived here; its exact public key
-  (Terms) holds it too. While the read runs, the agent list is still loading
-  (section 5). Once it fails, the full choice set stays unknown
+  (Terms) holds it too, even when the name exception leaves it out of name
+  queries: only that read shows whether the key is one of the viewer's agents
+  here, which then has its row here. While the read runs, the agent list is
+  still loading (section 5). Once it fails, the full choice set stays unknown
   for that query: only the local step of section 5 applies, over the local
   choices the client has, and a retry reads again. A client SHOULD start
   loading the viewer's agents here when a composer that offers such agents

@@ -1524,6 +1524,26 @@
         }
       ],
       "expected": null
+    },
+    {
+      "name": "exact_public_key_selects_an_agent_from_another_community_beside_its_namesake_here",
+      "query": "npub1hwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwasxw04hu",
+      "choices": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Jitter",
+          "member": true
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Jitter",
+          "member": false,
+          "agent": true,
+          "owned": true,
+          "elsewhere": "other.example.com"
+        }
+      ],
+      "expected": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   ],
   "query": [

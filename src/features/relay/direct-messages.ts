@@ -5,7 +5,9 @@ import type { ReadTransport } from "./transport";
 import type { RelayReader } from "./reader";
 import type { Outbox } from "./outbox";
 import type { ProfileSearch } from "./profile-search";
+import type { ProfileQueries } from "./profile-directory";
 import { newer, type RelayEvent } from "./events";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import {
   verifiedProfile,
   verifiedProfileFilter,
@@ -28,6 +30,9 @@ export function createDirectMessages(
   directoryReader: RelayReader,
   searchProfiles: ProfileSearch,
   verifiedAuthority: () => VerifiedProfileAuthority | undefined,
+  /** The shared profile cache. A first message reads its 1:1 partner's
+   * agent flag from it, and the people directory stays outside it. */
+  profiles?: Pick<ProfileQueries, "ensure">,
 ) {
   const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
   const opened = new Set<(id: string) => void>();
@@ -50,7 +55,7 @@ export function createDirectMessages(
       // small; the second browse page overlaps the preview and is deduplicated.
       const value = query.trim();
       const browsing = !value;
-      const exactKey = /^[0-9a-f]{64}$/.test(value);
+      const exactKey = typedPublicKey(value);
       const limit = browsing && page === 1 ? 15 : 30;
       const relayPage = browsing && page > 1 ? page - 1 : page;
       const priority = page === 1 ? "foreground" : "background";
@@ -67,7 +72,7 @@ export function createDirectMessages(
                   kinds: [0],
                   limit,
                   page: relayPage,
-                  ...(exactKey ? { authors: [value] } : {}),
+                  ...(exactKey ? { authors: [exactKey] } : {}),
                 },
               ],
               { signal: active, priority },
@@ -135,6 +140,11 @@ export function createDirectMessages(
       );
       return { authority, profiles };
     },
+    /** Whether a search has answered for `pubkey` since `verified` last read
+     * it: a lookup that read nothing earlier is out of date. */
+    searched(pubkey: string, authority: VerifiedProfileAuthority) {
+      return searchProfiles.answered(pubkey, authority);
+    },
     async open(pubkeys: readonly string[], signal: AbortSignal) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot start direct messages.");
@@ -169,6 +179,14 @@ export function createDirectMessages(
         throw new Error(
           "The conversation’s participants could not be confirmed. Try again.",
         );
+      // A 1:1 DM's agent partner is woken only by a `p` tag, which `send`
+      // adds from the shared profile cache. The people directory leaves that
+      // cache empty, so load the partner before the first message is sent.
+      // A failed read still opens the DM: it only loses the wake tag, as
+      // before this read existed.
+      if (pubkeys.length === 1)
+        await profiles?.ensure(pubkeys, "foreground").catch(() => {});
+      active.throwIfAborted();
       for (const listener of [...opened]) listener(id);
       return id;
     },

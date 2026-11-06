@@ -60,6 +60,9 @@ export type ChannelSummary = Readonly<{
   ttlSeconds?: number;
   /** Exact members from the relay-signed roster; absent means unknown. */
   members?: readonly string[];
+  /** Members the signed roster marks as owners. Offers lifecycle actions;
+   * the relay authorizes each command. */
+  owners?: readonly string[];
   /** Relay-published NIP-CL labels. Any channel admin can set them: grouping, never trust. */
   labels?: readonly string[];
   /** Relay-written creator (NIP-CL `P`): the kind:9007 signer. Ownership can move later. */
@@ -131,6 +134,8 @@ export type ChannelMessage = Readonly<{
   /** Signed `audience` tag of the original event: `agents` is coordination
    * between agents, shown quietly. Absent means everyone; unknown values too. */
   audience?: "agents";
+  /** Signed display metadata for an automatic execution-failure reply. */
+  notice?: "execution-failure";
   /** Original kind 40008. Untrusted display metadata; content stays a raw patch. */
   diff?: Readonly<{
     filePath?: string | undefined;

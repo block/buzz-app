@@ -1,7 +1,16 @@
-import { useContext, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { readView, subscribeView, writeView } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { XIcon } from "../../shared/design-system/icons";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Select } from "../../shared/design-system/ui/Select";
 import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
@@ -73,6 +82,32 @@ export function AgentConnectionSetup({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  // Only sends made while this conversation is open can offer channel setup.
+  // Receipt/verified echo confirms delivery; loading history never captures intent.
+  const [sent, setSent] = useState<ReadonlySet<string>>(new Set());
+  const channelId = channel?.id;
+  useEffect(() => {
+    setSent(new Set());
+    let active = true;
+    const stop = session.outbox?.observeSend((event) => {
+      if (
+        event.kind !== 9 ||
+        event.pubkey !== session.viewer ||
+        !event.tags.some(
+          ([name, value]) => name === "h" && value === channelId,
+        ) ||
+        !event.tags.some(([name]) => name === "p")
+      )
+        return;
+      return () => {
+        if (active) setSent((previous) => new Set([...previous, event.id]));
+      };
+    });
+    return () => {
+      active = false;
+      stop?.();
+    };
+  }, [session, channelId]);
   const isAgent = (key: string) => profiles.get(key)?.isAgent === true;
   // Only a DM has a peer; a channel can have thousands of members.
   const members =
@@ -124,7 +159,12 @@ export function AgentConnectionSetup({
   ) {
     return (
       <>
-        {[...connectionMentions(rows, session.viewer)]
+        {[
+          ...connectionMentions(
+            rows.filter((row) => sent.has(row.id)),
+            session.viewer,
+          ),
+        ]
           .filter(([key]) => isAgent(key))
           .map(([mentioned, message]) => (
             <Candidate
@@ -132,19 +172,21 @@ export function AgentConnectionSetup({
               agents={agents}
               session={session}
               peer={mentioned}
+              channelId={channel.id}
               message={message}
             />
           ))}
       </>
     );
   }
-  if (!peer || !isAgent(peer)) return null;
+  if (!channel || !peer || !isAgent(peer)) return null;
   return (
     <Candidate
-      key={`${session.scope}:${peer}`}
+      key={`${session.scope}:${channel.id}:${peer}`}
       agents={agents}
       session={session}
       peer={peer}
+      channelId={channel.id}
     />
   );
 }
@@ -153,14 +195,21 @@ function Candidate({
   agents,
   session,
   peer,
+  channelId,
   message,
 }: {
   agents: Agents;
   session: RelaySession;
   peer: string;
+  channelId: string;
   message?: ChannelMessage;
 }) {
   const notify = useToastNotification();
+  const dismissalKey = `agent-connection-dismissed:${JSON.stringify([channelId, peer])}`;
+  const dismissed = useSyncExternalStore(
+    (listener) => subscribeView(session.scope, listener),
+    () => readView<unknown>(session.scope, dismissalKey, false) === true,
+  );
   const owned = useAgentOwnerEvidence(session, peer);
   const existing = useAgent(agents, peer)?.agent.key;
   const choices = useSyncExternalStore(
@@ -174,7 +223,12 @@ function Candidate({
   const [candidate, setCandidate] = useState<PortableAgent>();
   const [phase, setPhase] = useState<"idle" | "pending" | "done">("idle");
   useEffect(() => {
-    if (owned.status !== "ready" || owned.owner !== session.viewer || existing)
+    if (
+      dismissed ||
+      owned.status !== "ready" ||
+      owned.owner !== session.viewer ||
+      existing
+    )
       return;
     let active = true;
     void agents
@@ -194,14 +248,24 @@ function Candidate({
     return () => {
       active = false;
     };
-  }, [agents, peer, owned.status, owned.owner, session.viewer, existing]);
+  }, [
+    agents,
+    peer,
+    owned.status,
+    owned.owner,
+    session.viewer,
+    existing,
+    dismissed,
+  ]);
   // Retain in-flight UI and successful results through inventory changes.
   // A failed attempt returns to live eligibility checks before offering retry.
   if (
+    dismissed ||
     !candidate ||
     (phase === "idle" &&
       (!choices.complete ||
         existing ||
+        choices.archives.archived.includes(peer) ||
         owned.status !== "ready" ||
         owned.owner !== session.viewer ||
         presence === "online" ||
@@ -217,6 +281,10 @@ function Candidate({
       agents={agents}
       candidate={candidate}
       scope={session.scope}
+      onDismiss={() => {
+        if (!writeView(session.scope, dismissalKey, true))
+          notify("Could not save dismissal. Try again.", "error");
+      }}
       onStart={() => setPhase("pending")}
       onFinish={(success, error) => {
         if (error)
@@ -251,6 +319,7 @@ export function AgentConnectionForm({
   agents,
   candidate,
   scope,
+  onDismiss,
   onStart,
   onFinish,
   preview = false,
@@ -259,12 +328,16 @@ export function AgentConnectionForm({
   agents: Agents;
   candidate: PortableAgent;
   scope: string;
+  onDismiss?: () => void;
   onStart?: () => void;
   onFinish?: (success: boolean, error?: string) => void;
   preview?: boolean;
   onSendAgain?: (() => Promise<void>) | undefined;
 }) {
-  const { types } = useAgents(agents);
+  const { types: installedTypes } = useAgents(agents);
+  const types = installedTypes.filter(
+    (type) => !type.CreateModel || type.createModelReportsReadiness,
+  );
   const [draft, setDraft] = useState(() => connectionDraft(candidate, types));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -280,8 +353,21 @@ export function AgentConnectionForm({
     void Promise.resolve(provider?.check()).catch(() => {});
   }, [provider]);
   const Model = type?.CreateModel;
+  const [modelReadiness, setModelReadiness] = useState<{
+    draft: typeof draft;
+    ready: boolean;
+  }>();
+  const onModelReady = useCallback(
+    (ready: boolean) => {
+      setModelReadiness({ draft, ready });
+    },
+    [draft],
+  );
+  const configurationReady =
+    !Model || (modelReadiness?.draft === draft && modelReadiness?.ready);
+
   const connect = async () => {
-    if (!type || !draft || pending) return;
+    if (!type || !draft || pending || !configurationReady) return;
     if (preview) {
       setError("Preview only. No agent was imported.");
       return;
@@ -328,14 +414,26 @@ export function AgentConnectionForm({
           <div className="w-full max-w-xl">
             <div className={messages.messageBubble}>
               <div className="flex flex-col gap-4 py-2">
-                <div className="size-12">
-                  <Avatar
-                    src={candidate.picture}
-                    fallback={candidate.name}
-                    alt=""
-                    shape="squircle"
-                    size="fill"
-                  />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="size-12">
+                    <Avatar
+                      src={candidate.picture}
+                      fallback={candidate.name}
+                      alt=""
+                      shape="squircle"
+                      size="fill"
+                    />
+                  </div>
+                  {onDismiss && (
+                    <IconButton
+                      size="sm"
+                      variant="ghost"
+                      disabled={pending}
+                      aria-label={`Dismiss connection setup for ${candidate.name}`}
+                      icon={<XIcon size={18} aria-hidden="true" />}
+                      onClick={onDismiss}
+                    />
+                  )}
                 </div>
                 <div className="flex flex-col gap-1">
                   <h3 className="m-0 text-label">
@@ -350,9 +448,9 @@ export function AgentConnectionForm({
                         ? onSendAgain
                           ? `Send “Please respond to my message above.” to ${candidate.name} in your original message’s thread.`
                           : "Send a message to continue your conversation."
-                        : draft
+                        : type
                           ? "Review the settings to import this agent and continue your conversation."
-                          : "Choose a harness for this agent. Its previous harness is not available here."}
+                          : "Choose a harness to continue."}
                     {!done &&
                       " Stop this agent in old Buzz before connecting, so only one app replies."}
                   </p>
@@ -395,6 +493,8 @@ export function AgentConnectionForm({
                       />
                       {Model && draft && (
                         <Model
+                          key={type?.key}
+                          onReadyChange={onModelReady}
                           modelAppearance="inverted"
                           showEffort={false}
                           config={draft.config}
@@ -410,6 +510,7 @@ export function AgentConnectionForm({
                         disabled={
                           pending ||
                           !type ||
+                          !configurationReady ||
                           (!!provider && state?.readiness !== "ready")
                         }
                         onClick={() => void connect()}

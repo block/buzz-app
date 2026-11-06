@@ -300,6 +300,108 @@ test("emoji picker load failure fits above the footer and retries on reopen", as
   await expect(alert).toHaveCount(0);
 });
 
+// Refocus on each poll so the scroll applies once the panel settles.
+const focusedSliderClearsFooter = (done) =>
+  done.evaluate((button) => {
+    const slider = button
+      .closest("fieldset")
+      .querySelector('input[type="range"]');
+    slider.blur();
+    slider.focus();
+    const footer = button.parentElement.parentElement;
+    return (
+      slider.getBoundingClientRect().bottom <=
+      footer.getBoundingClientRect().top
+    );
+  });
+
+test("a short avatar popup keeps Done in view on the Emoji tab", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/profile-settings.html");
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  const done = page.getByRole("button", { name: "Done", exact: true });
+  // The popup scrolls beneath its sticky footer instead of hiding Done
+  // below the emoji grid, and the picker's own layers stay under it.
+  await expect
+    .poll(() =>
+      done.evaluate((button) => {
+        const popup = button.closest(".popover-surface");
+        const bounds = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          bounds.left + bounds.width / 2,
+          bounds.top + bounds.height / 2,
+        );
+        return (
+          popup.scrollHeight > popup.clientHeight &&
+          bounds.bottom <= popup.getBoundingClientRect().bottom &&
+          button.contains(hit)
+        );
+      }),
+    )
+    .toBe(true);
+  // The action row, not the grid beneath it, owns the gap between actions.
+  const remove = page.getByRole("button", {
+    name: "Remove avatar",
+    exact: true,
+  });
+  expect(
+    await done.evaluate(
+      (button, removeBox) => {
+        const doneBox = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          (removeBox.x + removeBox.width + doneBox.left) / 2,
+          doneBox.top + doneBox.height / 2,
+        );
+        return button.parentElement.contains(hit);
+      },
+      await remove.boundingBox(),
+    ),
+  ).toBe(true);
+  // Focus scrolling keeps a control clear of the footer that covers the end.
+  await expect.poll(() => focusedSliderClearsFooter(done)).toBe(true);
+});
+
+test("a wrapped avatar footer at enlarged text still clears focused controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 480, height: 600 });
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/profile-settings.html");
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  await page
+    .getByRole("button", { name: "Edit human profile", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit avatar", exact: true }).click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  const done = page.getByRole("button", { name: "Done", exact: true });
+  const remove = page.getByRole("button", {
+    name: "Remove avatar",
+    exact: true,
+  });
+  // The actions wrap onto two rows, so the footer is taller than one control.
+  await expect
+    .poll(
+      async () => (await done.boundingBox()).y > (await remove.boundingBox()).y,
+    )
+    .toBe(true);
+  await expect.poll(() => focusedSliderClearsFooter(done)).toBe(true);
+});
+
 test("custom color and footer resize together without reversing direction", async ({
   page,
 }) => {

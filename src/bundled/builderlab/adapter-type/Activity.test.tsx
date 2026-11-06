@@ -138,7 +138,34 @@ function fakeActivity(overrides: Partial<Snapshot> = {}) {
   return { activity, update };
 }
 
-it("shows this agent's published turns, leaving the feed's lease to the plugin", () => {
+it.each([
+  ["ended", "Completed"],
+  ["error", "Failed"],
+  ["stopped", "Stopped"],
+] as const)(
+  "shows readback outcome %s without inventing a terminal frame",
+  (outcome, label) => {
+    const { activity } = fakeActivity({
+      records: [record("t1", "Partial response")],
+      turns: [
+        {
+          agent: pubkey,
+          turnId: "t1",
+          channelId: "alpha",
+          timestamp: Date.now(),
+          state: "ended",
+          outcome,
+        },
+      ],
+    });
+    render(<ActivityPanel agent={agent} activity={activity} />);
+    expect(screen.getByText(label, { exact: true })).toBeVisible();
+    expect(
+      screen.getByText("Partial response", { selector: "summary span" }),
+    ).toBeVisible();
+  },
+);
+it("shows this agent's published turns, leaving the feed's lease to the plugin", async () => {
   const { activity } = fakeActivity({
     records: [
       record("t1", "Deployed the fix"),
@@ -154,10 +181,24 @@ it("shows this agent's published turns, leaving the feed's lease to the plugin",
       },
     ],
   });
-  render(<ActivityPanel agent={agent} activity={activity} />);
-  expect(screen.getByText("Deployed the fix")).toBeInTheDocument();
+  const openConversation = vi.fn();
+  render(
+    <ActivityPanel
+      agent={agent}
+      activity={activity}
+      openConversation={openConversation}
+    />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: `Thread ${root.slice(0, 8)}` }),
+  );
+  expect(openConversation).toHaveBeenCalledExactlyOnceWith("alpha", root);
+  expect(
+    screen.getByText("Deployed the fix", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(screen.queryByText("Someone else's work")).not.toBeInTheDocument();
   expect(screen.getByText("Working")).toBeInTheDocument();
+  expect(screen.queryByText(/Remote workspace/)).not.toBeInTheDocument();
   expect(activity.activate).not.toHaveBeenCalled();
 });
 
@@ -200,8 +241,12 @@ it("shows every conversation's turns, wherever it was opened from", () => {
     ] as unknown as Snapshot["records"],
   });
   render(<ActivityPanel agent={agent} activity={activity} />);
-  expect(screen.getByText("In the thread")).toBeInTheDocument();
-  expect(screen.getByText("In beta")).toBeInTheDocument();
+  expect(
+    screen.getByText("In the thread", { selector: "summary span" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText("In beta", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
 
@@ -225,5 +270,7 @@ it("names the person whose message prompted a turn", () => {
   } as unknown as IdentityNameView;
   render(<ActivityPanel agent={agent} activity={activity} names={names} />);
   expect(screen.getByText("Salman")).toBeInTheDocument();
-  expect(screen.getByText("go")).toBeInTheDocument();
+  expect(
+    screen.getByText("go", { selector: "summary span" }),
+  ).toBeInTheDocument();
 });

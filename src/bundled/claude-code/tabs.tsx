@@ -131,6 +131,34 @@ const effortsFor = (model: string, models: readonly ClaudeModel[]) => {
     listed ? effortLevels(listed) : models.flatMap(effortLevels),
   );
 };
+/** New agents only offer levels Claude lists for the effective model. */
+const createEffortsFor = (model: string, models: readonly ClaudeModel[]) => {
+  const id = model || "default";
+  const listed = models.find(
+    (candidate) => candidate.value === id || candidate.resolvedModel === id,
+  );
+  return effortChoices(listed ? effortLevels(listed) : []);
+};
+const thinkingOptions = (
+  efforts: ReturnType<typeof effortChoices>,
+  models: readonly ClaudeModel[],
+  effort: string,
+) => {
+  return [
+    { value: "", label: "Automatic · Default" },
+    ...(effort && !efforts.some((level) => level.id === effort)
+      ? [
+          {
+            value: effort,
+            label: models.length
+              ? `${effortLabel(effort)} (unavailable)`
+              : effortLabel(effort),
+          },
+        ]
+      : []),
+    ...efforts.map(({ id, label }) => ({ value: id, label })),
+  ];
+};
 const SCOPES = options([
   ["thread", "One session per thread"],
   ["channel", "One session per channel"],
@@ -330,30 +358,62 @@ export function createTabs({
   defaults: ClaudeDefaults;
   runtime: ClaudeRuntime;
 }>) {
-  function useSetupCatalog() {
+  function useRemote(agent: AgentViewProps<Config>["agent"]) {
+    const key = agent.key;
+    const selection = JSON.stringify(agent.executionBinding ?? null);
+    const [state, setState] = useState<{
+      agent: string;
+      selection: string;
+      remote?: boolean;
+      error?: string;
+    }>();
+    useEffect(() => {
+      let current = true;
+      void runtime.isRemote(key).then(
+        (remote) => {
+          if (current) setState({ agent: key, selection, remote });
+        },
+        (error) => {
+          if (current)
+            setState({ agent: key, selection, error: message(error) });
+        },
+      );
+      return () => {
+        current = false;
+      };
+    }, [key, selection]);
+    return state?.agent === key && state.selection === selection
+      ? state
+      : undefined;
+  }
+  function useSetupCatalog(enabled = true) {
     const state = useSyncExternalStore(
       setup.subscribe,
       setup.snapshot,
       setup.snapshot,
     );
     useEffect(() => {
-      if (!state.status && !state.checking) void setup.check();
-    }, [state.status, state.checking]);
+      if (enabled && !state.status && !state.checking) void setup.check();
+    }, [enabled, state.status, state.checking]);
     // Once per change of readiness: a failed load waits for Try again.
     useEffect(() => {
       if (
+        enabled &&
         !state.checking &&
         state.status?.state === "ready" &&
         state.models.length === 0
       )
         void setup.loadModels();
-    }, [state.status, state.checking, state.models.length]);
-    return state;
+    }, [enabled, state.status, state.checking, state.models.length]);
+    return enabled
+      ? state
+      : { ...state, models: [], modelsChecking: false, modelsError: "" };
   }
 
   function CreateModel({
     config,
     onChange,
+    onReadyChange,
     ...props
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
@@ -362,6 +422,16 @@ export function createTabs({
       defaults.subscribe,
       defaults.snapshot,
     );
+    const ready =
+      state.status?.state === "ready" &&
+      !state.running &&
+      !state.modelsChecking &&
+      !state.modelsError &&
+      !!providerDefaultModel(
+        current.model || providerDefaults.model,
+        state.models,
+      )?.trim();
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     if (!state.status)
       return (
         <span role="status" className="text-body-sm text-secondary">
@@ -388,7 +458,7 @@ export function createTabs({
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
         onChange={(model) => {
-          const efforts = effortsFor(
+          const efforts = createEffortsFor(
             model || providerDefaults.model,
             state.models,
           );
@@ -402,6 +472,79 @@ export function createTabs({
                 : "",
           });
         }}
+      />
+    );
+  }
+
+  function CreateThinking({
+    agent,
+    config,
+    onChange,
+    disabled,
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    const { effort, model } = current;
+    const state = useSetupCatalog();
+    const providerDefaults = useSyncExternalStore(
+      defaults.subscribe,
+      defaults.snapshot,
+    );
+    useEffect(() => {
+      if (
+        agent ||
+        disabled ||
+        state.checking ||
+        state.status?.state !== "ready" ||
+        state.running ||
+        state.modelsChecking ||
+        state.modelsError ||
+        !state.models.length ||
+        !effort
+      )
+        return;
+      const efforts = createEffortsFor(
+        model || providerDefaults.model,
+        state.models,
+      );
+      if (!efforts.some((level) => level.id === effort))
+        onChange(readConfig({ ...config, effort: "" }));
+    }, [
+      agent,
+      config,
+      disabled,
+      effort,
+      model,
+      onChange,
+      providerDefaults.model,
+      state.checking,
+      state.models,
+      state.modelsChecking,
+      state.modelsError,
+      state.running,
+      state.status?.state,
+    ]);
+    const effortOptions = thinkingOptions(
+      createEffortsFor(model || providerDefaults.model, state.models),
+      state.models,
+      current.effort,
+    );
+    return (
+      <Select
+        label="Thinking"
+        valueLabel={current.effort ? undefined : "Automatic"}
+        valueSuffix={current.effort ? undefined : " · Default"}
+        variant="compact"
+        value={current.effort}
+        groups={[{ label: "", options: effortOptions }]}
+        disabled={
+          disabled ||
+          state.status?.state !== "ready" ||
+          Boolean(state.running) ||
+          state.modelsChecking ||
+          Boolean(state.modelsError) ||
+          state.models.length === 0
+        }
+        onValueChange={(effort) => onChange({ ...current, effort })}
       />
     );
   }
@@ -704,12 +847,10 @@ export function createTabs({
     agent,
     conversation,
     working,
-    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation: SavedConversation;
     working: boolean;
-    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
     const workspace = readConfig(agent.config).workspace;
     const [read, setRead] = useState<Read>();
@@ -773,7 +914,9 @@ export function createTabs({
           <ActivityTranscript
             transcript={read.transcript}
             agentName={agent.name}
-            openConversation={openConversation}
+            agentKey={agent.key}
+            agentPicture={agent.picture}
+            community={agent.relay}
             state={() => (working ? "working" : undefined)}
             before={
               <>
@@ -808,13 +951,11 @@ export function createTabs({
     conversation,
     initialTranscript,
     close,
-    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
     close?: AgentViewProps<Config>["close"];
-    openConversation?: AgentViewProps<Config>["openConversation"];
   }) {
     useClockFormat();
     const sessions = useSyncExternalStore(
@@ -927,7 +1068,6 @@ export function createTabs({
               agent={agent}
               conversation={open}
               working={busy.get(open.key) ?? false}
-              openConversation={openConversation}
             />
           </PanelSubview>
         )}
@@ -945,7 +1085,9 @@ export function createTabs({
   }: AgentViewProps<Config>) {
     const form = useId();
     const saved = readConfig(agent.config);
-    const setupState = useSetupCatalog();
+    const execution = useRemote(agent);
+    const remote = execution?.remote === true;
+    const setupState = useSetupCatalog(execution?.remote === false);
     const providerDefaults = useSyncExternalStore(
       defaults.subscribe,
       defaults.snapshot,
@@ -974,40 +1116,35 @@ export function createTabs({
         setSaving(false);
       }
     };
-    const efforts = effortsFor(
-      draft.model || providerDefaults.model,
+    const effortOptions = thinkingOptions(
+      effortsFor(
+        draft.model || (remote ? "" : providerDefaults.model),
+        setupState.models,
+      ),
       setupState.models,
+      draft.effort,
     );
-    const effortOptions = [
-      { value: "", label: "Automatic · Default" },
-      // A saved level the model does not list; without Claude's list, it may.
-      ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
-        ? [
-            {
-              value: draft.effort,
-              label: setupState.models.length
-                ? `${effortLabel(draft.effort)} (unavailable)`
-                : effortLabel(draft.effort),
-            },
-          ]
-        : []),
-      ...efforts.map(({ id, label }) => ({ value: id, label })),
-    ];
     const modelControl = (
       <>
         <ModelPicker
           allowCustomModel
           models={modelChoices(setupState.models)}
           value={draft.model}
-          defaultModel={providerDefaultModel(
-            providerDefaults.model,
-            setupState.models,
-          )}
-          defaultLabel={providerDefaultLabel(
-            providerDefaults.model,
-            setupState.models,
-          )}
-          defaultDescription="Following the provider's model default"
+          defaultModel={
+            remote
+              ? undefined
+              : providerDefaultModel(providerDefaults.model, setupState.models)
+          }
+          defaultLabel={
+            remote
+              ? "Target default"
+              : providerDefaultLabel(providerDefaults.model, setupState.models)
+          }
+          defaultDescription={
+            remote
+              ? "Use the model configured on the target"
+              : "Following the provider's model default"
+          }
           loading={setupState.modelsChecking}
           onChange={(model) => {
             // An effort the new model does not list goes back to the default;
@@ -1047,6 +1184,11 @@ export function createTabs({
           void submit();
         }}
       >
+        {execution?.error && (
+          <p role="alert" className="buzz-field-error">
+            {execution.error}
+          </p>
+        )}
         {error && (
           <p
             ref={saveErrorRef}
@@ -1074,10 +1216,15 @@ export function createTabs({
           <>
             <Field
               label="Workspace"
-              description="The folder Claude works in. Use ~/ for your home folder."
+              description={
+                remote
+                  ? "The execution provider sets the remote workspace."
+                  : "The folder Claude works in. Use ~/ for your home folder."
+              }
             >
               <Input
                 value={draft.workspace}
+                disabled={execution?.remote !== false}
                 onValueChange={(workspace) => setDraft({ ...draft, workspace })}
               />
             </Field>
@@ -1095,7 +1242,11 @@ export function createTabs({
             />
           </>
         )}
-        <AgentSaveButton form={form} saving={saving} disabled={!changed} />
+        <AgentSaveButton
+          form={form}
+          saving={saving}
+          disabled={!changed || execution?.remote === undefined}
+        />
         {settingsSection !== "identity" && settingsContent}
       </form>
     );
@@ -1103,6 +1254,7 @@ export function createTabs({
 
   return {
     CreateModel,
+    CreateThinking,
     Create,
     ProviderDialogBody,
     DefaultControl,

@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import { createRelaySession } from "./session";
 import { createDirectMessages } from "./direct-messages";
 import type { RelayReader } from "./reader";
@@ -10,7 +11,12 @@ import type { RelayWriter } from "./transport";
 
 const id = "11111111-1111-4111-8111-111111111111";
 function setup(
-  options: { badRoster?: boolean; untrusted?: boolean; lagging?: boolean } = {},
+  options: {
+    badRoster?: boolean;
+    untrusted?: boolean;
+    lagging?: boolean;
+    human?: boolean;
+  } = {},
 ) {
   const viewer = keypair(),
     other = keypair(),
@@ -36,21 +42,25 @@ function setup(
     if (filters.some((f) => f.kinds?.includes(0)))
       return [
         profile(viewer, { name: "Me" }),
-        signed(other, {
-          kind: 0,
-          content: JSON.stringify({
-            name: "Other",
-            picture: "https://example.com/avatar.png",
-            is_agent: true,
-            about: "Unused biography",
-          }),
-          tags: [["auth", agentOwner.pubkey, "", "a".repeat(128)]],
-        }),
+        options.human
+          ? profile(other, { name: "Other" })
+          : signed(other, {
+              kind: 0,
+              content: JSON.stringify({
+                name: "Other",
+                picture: "https://example.com/avatar.png",
+                is_agent: true,
+                about: "Unused biography",
+              }),
+              tags: [["auth", agentOwner.pubkey, "", "a".repeat(128)]],
+            }),
       ];
     return options.lagging &&
       !filters.every((filter) => filter.consistency === "strong")
       ? []
-      : discovery;
+      : discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        );
   });
   const publish = vi.fn<RelayWriter["publish"]>(async () => {});
   const openDirectMessage = vi.fn(async () => id);
@@ -113,6 +123,30 @@ it("opens using signed exact membership, then confirms the regular outbox messag
     t.owner.dispose();
   }
 });
+it.each([
+  { human: false, tagged: true },
+  { human: true, tagged: false },
+])(
+  "a first plain message to a fresh 1:1 DM wakes only an agent partner: %j",
+  async ({ human, tagged }) => {
+    // New Message reads people outside the shared profile cache, so open is
+    // the first point that can classify the partner before the first send.
+    const t = setup({ human });
+    try {
+      expect(t.owner.session.profiles.snapshot().has(t.other.pubkey)).toBe(
+        false,
+      );
+      await t.dm.open([t.other.pubkey], new AbortController().signal);
+      t.owner.session.messages.send(id, "hello", []);
+      await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
+      const tags = t.publish.mock.calls[0]?.[0].tags ?? [];
+      expect(tags.some(([name]) => name === "p")).toBe(tagged);
+      if (tagged) expect(tags).toContainEqual(["p", t.other.pubkey]);
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
 it("opens a DM before its signed discovery reaches the replica", async () => {
   const t = setup({ lagging: true });
   try {
@@ -122,7 +156,7 @@ it("opens a DM before its signed discovery reaches the replica", async () => {
     expect(t.owner.session.channels.get?.(id)?.members).toEqual(
       [t.viewer.pubkey, t.other.pubkey].sort(),
     );
-    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+    expect(t.query.mock.calls.map(([filters]) => filters)).toContainEqual([
       expect.objectContaining({ consistency: "strong", "#d": [id] }),
     ]);
   } finally {
@@ -218,29 +252,42 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
   }
 });
 
-it("reads an exact public-key profile without widening directory search", async () => {
-  const t = setup();
-  try {
-    const result = await t.dm.people(
-      t.other.pubkey,
-      1,
-      new AbortController().signal,
-    );
-    expect(result.people).toEqual([
-      expect.objectContaining({ pubkey: t.other.pubkey, name: "Other" }),
-    ]);
-    expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
-      {
-        kinds: [0],
-        authors: [t.other.pubkey],
-        limit: 30,
-        page: 1,
-      },
-    ]);
-  } finally {
-    t.owner.dispose();
-  }
-});
+it.each([
+  ["hex", (pubkey: string) => pubkey],
+  ["uppercase hex", (pubkey: string) => pubkey.toUpperCase()],
+  ["an npub", (pubkey: string) => npubEncode(pubkey)],
+  ["a nostr: npub", (pubkey: string) => `nostr:${npubEncode(pubkey)}`],
+])(
+  "reads an exact public-key profile from %s without widening directory search",
+  async (_case, typed) => {
+    const t = setup();
+    try {
+      const result = await t.dm.people(
+        typed(t.other.pubkey),
+        1,
+        new AbortController().signal,
+      );
+      expect(result.people).toEqual([
+        expect.objectContaining({ pubkey: t.other.pubkey, name: "Other" }),
+      ]);
+      expect(t.query.mock.calls.at(-1)?.[0]).toEqual([
+        {
+          kinds: [0],
+          authors: [t.other.pubkey],
+          limit: 30,
+          page: 1,
+        },
+      ]);
+      expect(
+        t.query.mock.calls.some(([filters]) =>
+          filters.some((filter) => filter.search !== undefined),
+        ),
+      ).toBe(false);
+    } finally {
+      t.owner.dispose();
+    }
+  },
+);
 
 it.each(["", "C"])(
   "keeps large-profile pages within the read budget without skipping matches: %s",

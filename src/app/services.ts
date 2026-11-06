@@ -40,9 +40,13 @@ import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { createInviteIntent } from "../features/communities/invite-intent";
 import type { InviteLink } from "../features/communities/invite-link";
-import { connectNativeTransport } from "../features/relay/native";
+import {
+  connectNativeTransport,
+  verifyNativeStored,
+} from "../features/relay/native";
 import { createUpdates } from "../features/updates/updates";
 import { PanelsService } from "../features/panels/service";
+import { BackdropsService } from "../features/backdrops/service";
 import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
@@ -103,6 +107,7 @@ export function createServices() {
   const sidebarScope = new SidebarScopeService(ctx);
   const sidebarRows = new SidebarRowsService(ctx);
   const panels = new PanelsService(ctx);
+  const backdrops = new BackdropsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
@@ -117,6 +122,7 @@ export function createServices() {
     identity?.ready,
     identity ? connectNativeTransport : undefined,
     localActivity.reader,
+    identity ? verifyNativeStored : undefined,
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
@@ -271,6 +277,7 @@ export function createServices() {
     sidebarScope,
     sidebarRows,
     panels,
+    backdrops,
     plugins,
     federatedIdentity,
     firstRunFederatedIdentity,

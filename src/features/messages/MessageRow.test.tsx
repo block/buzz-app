@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import {
+  createLocalAgentActivity,
+  REPLY_CORRELATION_MS,
+} from "../agents/local-activity";
 import { StrictMode } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -18,7 +22,12 @@ import {
 import userEvent from "@testing-library/user-event";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
-import { profileTarget, profileActivityViewTarget } from "../profiles/target";
+import {
+  profileTarget,
+  profileActivityViewTarget,
+  profileTranscriptRequest,
+  claimProfileTranscript,
+} from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
 import { eventDto } from "../relay/events";
@@ -37,7 +46,7 @@ import { setClockPreference } from "../../shared/clock-preference";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { attestedOwner } from "../agents/owner-attestation";
@@ -60,6 +69,88 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 23,
 };
+
+it("discloses an automatic failure reply while keeping its original text available", () => {
+  const content =
+    "Sorry, I couldn’t complete this request. Please try again in a new thread, or try a different model.";
+  const props = {
+    row: { ...row, content, notice: "execution-failure" as const },
+    profile: { name: "Spongebob", isAgent: true as const },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const view = renderDom(<MessageRow {...props} />);
+    const details = screen.getByRole("button", {
+      name: "Spongebob: Couldn’t finish · Details",
+    });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(content)).not.toBeInTheDocument();
+    fireEvent.click(details);
+    expect(screen.getByText(content)).toBeVisible();
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(details).toHaveAccessibleName(
+      "Spongebob: Couldn’t finish · Hide details",
+    );
+    fireEvent.click(details);
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    view.rerender(
+      <MessageRow
+        {...props}
+        row={{
+          ...props.row,
+          edited: true,
+          content: "Here is the useful result.",
+        }}
+      />,
+    );
+    expect(screen.getByText("Here is the useful result.")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Couldn’t finish · Details/ }),
+    ).not.toBeInTheDocument();
+    view.rerender(<MessageRow {...props} row={{ ...row, content }} />);
+    expect(screen.getByText(content)).toBeVisible();
+  } finally {
+    cleanup();
+  }
+});
+
+it("aligns a failure caption with its request rather than the agent author", () => {
+  const request = { ...row, id: "request", authorId: "viewer" };
+  const props = {
+    row: { ...row, notice: "execution-failure" as const },
+    stoppedRequest: request,
+    viewer: "viewer",
+    profile: { name: "Spongebob", isAgent: true as const },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const view = renderDom(<MessageRow {...props} />);
+    const caption = () =>
+      screen
+        .getByRole("button", {
+          name: "Spongebob: Couldn’t finish · Details",
+        })
+        .closest("[data-message-notice]");
+    expect(caption()).toHaveAttribute("data-viewer-message");
+    view.rerender(
+      <MessageRow
+        {...props}
+        stoppedRequest={{ ...request, authorId: "another-human" }}
+      />,
+    );
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+    view.rerender(<MessageRow {...props} stoppedRequest={undefined} />);
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+  } finally {
+    cleanup();
+  }
+});
 
 it.each([false, true])(
   "previews human and agent identities and preserves avatar navigation: %s",
@@ -388,7 +479,9 @@ it("keeps plain agent presence without avatar activity, and omits human presence
   ).toHaveAccessibleDescription("Presence: online");
   expect(document.querySelector(".agent-motion-avatar")).toBeNull();
   expect(document.querySelector('[data-status="online"]')).toBeInTheDocument();
-  expect(activityListeners.size).toBe(0);
+  expect(
+    screen.queryByRole("button", { name: /^View activity$/ }),
+  ).not.toBeInTheDocument();
   act(() => {
     working = false;
     for (const listener of activityListeners) listener();
@@ -1807,10 +1900,36 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
     const links = screen.getAllByRole("link", {
       name: "Open image attachment",
     });
-    expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
+    expect(media.mock.calls).toEqual([
+      ["https://safe.test/a.png"],
+      ["https://safe.test/a.png", "small"],
+    ]);
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
     expect(view.container.innerHTML).not.toContain("unsafe.test");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([
+  ["jpg", "small:.jpg"],
+  ["png", ".thumb.webp"],
+  ["gif", ".thumb.webp"],
+])("passes a %s image attachment its relay thumbnail", (extension, suffix) => {
+  const hash = "a".repeat(64);
+  const url = `https://relay.test/media/${hash}.${extension}`;
+  const view = renderMessage({
+    row: { ...row, attachments: [{ url, kind: "image" }] },
+    media: (value, size) => (size ? `small:${value}` : value),
+  });
+  try {
+    expect(view.container.querySelector("img[data-thumbnail]")).toHaveAttribute(
+      "src",
+      suffix.startsWith("small:")
+        ? `small:${url}`
+        : `https://relay.test/media/${hash}${suffix}`,
+    );
   } finally {
     view.unmount();
   }
@@ -2742,48 +2861,57 @@ it("contains a throwing plugin action icon and opened component", async () => {
   }
 });
 
-it("keeps a plugin action dialog closed when its plugin is reinstalled with the same key", async () => {
-  const listeners = new Set<() => void>();
-  const entry = () => ({
-    id: "remind",
-    title: "Remind",
-    key: "test.plugin/remind",
-    pluginId: "test.plugin",
-    revision: "one",
-    matches: () => true,
-    component: () => <span>action dialog</span>,
-  });
-  let actions = [entry()];
-  const swap = (next: typeof actions) => {
-    actions = next;
-    act(() => {
-      for (const listener of listeners) listener();
+it.each(["menu", "toolbar", "coordination"] as const)(
+  "retires a %s action when its contribution or session ends",
+  async (variant) => {
+    const placement = variant === "menu" ? undefined : "toolbar";
+    const listeners = new Set<() => void>();
+    const entry = () => ({
+      id: "remind",
+      title: "Remind",
+      key: "test.plugin/remind",
+      pluginId: "test.plugin",
+      revision: "one",
+      ...(placement ? { placement: "toolbar" as const } : {}),
+      matches: () => true,
+      component: () => <span>action dialog</span>,
     });
-  };
-  const none: never[] = [];
-  const empty = { snapshot: () => none, subscribe: () => () => {} };
-  const channelList = { channels: [], status: "ready" };
-  const session = {
-    viewer: "viewer",
-    presence: {
-      subscribe: () => () => {},
-      status: () => "unknown",
-      limited: () => false,
-    },
-    unread: {
-      subscribe: () => () => {},
-      subscribeSync: () => () => {},
-      snapshot: () => undefined,
-      following: () => false,
-    },
-    messages: { report: undefined },
-    channels: { subscribeList: () => () => {}, list: () => channelList },
-  } as unknown as RelaySession;
-  try {
-    renderDom(
+    let actions = [entry()];
+    const swap = (next: typeof actions) => {
+      actions = next;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    };
+    const none: never[] = [];
+    const empty = { snapshot: () => none, subscribe: () => () => {} };
+    const channelList = { channels: [], status: "ready" };
+    const session = {
+      viewer: "viewer",
+      presence: {
+        subscribe: () => () => {},
+        status: () => "unknown",
+        limited: () => false,
+      },
+      unread: {
+        subscribe: () => () => {},
+        subscribeSync: () => () => {},
+        snapshot: () => undefined,
+        following: () => false,
+      },
+      messages: { report: undefined },
+      channels: { subscribeList: () => () => {}, list: () => channelList },
+    } as unknown as RelaySession;
+    const draw = (currentSession = session) => (
       <MessageRow
-        row={{ ...row, replyCount: 0 }}
-        session={session}
+        row={{
+          ...row,
+          replyCount: 0,
+          ...(variant === "coordination"
+            ? { audience: "agents" as const }
+            : {}),
+        }}
+        session={currentSession}
         profile={undefined}
         media={() => undefined}
         onOpenLink={() => false}
@@ -2800,21 +2928,44 @@ it("keeps a plugin action dialog closed when its plugin is reinstalled with the 
             },
           },
         }}
-      />,
+      />
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "More message actions" }),
-    );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Remind" }));
-    expect(await screen.findByText("action dialog")).toBeInTheDocument();
-    swap([]);
-    expect(screen.queryByText("action dialog")).toBeNull();
-    swap([entry()]);
-    expect(screen.queryByText("action dialog")).toBeNull();
-  } finally {
-    cleanup();
-  }
-});
+    const activate = async () => {
+      if (variant === "coordination") {
+        fireEvent.contextMenu(screen.getByRole("button", { name: /Root/ }));
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: "Remind" }),
+        );
+      } else if (placement === "toolbar") {
+        const button = screen.getByRole("button", { name: "Remind" });
+        button.focus();
+        await userEvent.setup().keyboard("{Enter}");
+      } else {
+        fireEvent.click(
+          screen.getByRole("button", { name: "More message actions" }),
+        );
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: "Remind" }),
+        );
+      }
+    };
+    try {
+      const view = renderDom(draw());
+      await activate();
+      expect(await screen.findByText("action dialog")).toBeInTheDocument();
+      swap([]);
+      expect(screen.queryByText("action dialog")).toBeNull();
+      swap([entry()]);
+      expect(screen.queryByText("action dialog")).toBeNull();
+      await activate();
+      expect(await screen.findByText("action dialog")).toBeInTheDocument();
+      view.rerender(draw({ ...session }));
+      expect(screen.queryByText("action dialog")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  },
+);
 
 it.each(["timeline", "thread", "continuation"] as const)(
   "right-aligns own %s rows and keeps only the last grouped avatar",
@@ -2854,6 +3005,57 @@ it.each(["timeline", "thread", "continuation"] as const)(
       rerender(<MessageRow {...props} viewer={undefined} />);
       expect(container.querySelector("[data-viewer-message]")).toBeNull();
     } finally {
+      cleanup();
+    }
+  },
+);
+
+it.each(["timeline", "thread", "continuation"] as const)(
+  "lists own %s rows unaligned in compact density, with the first grouped avatar",
+  async (layout) => {
+    const props = {
+      layout,
+      row: { ...row, authorId: "ab".repeat(32) },
+      viewer: "ab".repeat(32),
+      profile: { name: "author" },
+      media: () => undefined,
+      onOpenLink: () => true,
+      canOpenLink: () => true,
+      day: false,
+      retry: undefined,
+    };
+    const root = document.documentElement;
+    root.dataset.messageDensity = "compact";
+    try {
+      // The first row of a group, which is the one a flat list gives an avatar.
+      const { container, rerender } = renderDom(
+        <MessageRow {...props} stackPrevious={false} stackNext />,
+      );
+      expect(container.querySelector("[data-own]")).toBeNull();
+      expect(container.querySelector("[data-viewer-message]")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "View author profile" }),
+      ).toBeInTheDocument();
+      rerender(<MessageRow {...props} stackPrevious />);
+      expect(
+        screen.queryByRole("button", { name: "View author profile" }),
+      ).toBeNull();
+      // Choosing Default while mounted restores bubbles without a remount.
+      rerender(<MessageRow {...props} stackPrevious={false} />);
+      act(() => {
+        root.dataset.messageDensity = "default";
+      });
+      await waitFor(() =>
+        expect(
+          container.querySelector("[data-viewer-message]"),
+        ).toHaveTextContent("Root"),
+      );
+      expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+      expect(
+        screen.getByRole("button", { name: "View author profile" }),
+      ).toBeInTheDocument();
+    } finally {
+      delete root.dataset.messageDensity;
       cleanup();
     }
   },
@@ -3071,6 +3273,60 @@ it("keeps the timestamp seek action beside a detached session card", () => {
         .getByRole("link", { name: "Open Chat: Fix" })
         .closest("[class*=messageBubble]"),
     ).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("marks remote activity steps and animates only while active", () => {
+  const subscribe = () => () => {};
+  const profiles = new Map();
+  const choices = {
+    identities: [{ pubkey: row.authorId, execution: "remote" }],
+  };
+  const session = {
+    viewer: "owner",
+    channels: { list: () => listed, subscribeList: subscribe },
+    messages: {},
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => choices, subscribe },
+  } as unknown as RelaySession;
+  const props = {
+    row: { ...row, audience: "agents" as const, replyCount: 0 },
+    profile: { name: "Agent" },
+    session,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    recordedActivity: {
+      requestId: row.id,
+      active: true,
+      ownsLive: false,
+      container: "standalone" as const,
+    },
+  };
+  const view = renderDom(<MessageRow {...props} />);
+  try {
+    const trigger = screen.getByRole("button", { name: "Agent: Root" });
+    const cloud = () => trigger.querySelector(".tabler-icon-cloud");
+    expect(cloud()).toHaveAttribute("data-active", "true");
+    expect(cloud()).toHaveAttribute("aria-hidden", "true");
+    expect(trigger).not.toHaveTextContent("Remote");
+    view.rerender(
+      <MessageRow
+        {...props}
+        recordedActivity={{ ...props.recordedActivity, active: false }}
+      />,
+    );
+    expect(cloud()).not.toBeNull();
+    expect(cloud()).not.toHaveAttribute("data-active");
+    fireEvent.click(trigger);
+    expect(cloud()).toBeNull();
+    fireEvent.click(trigger);
+    expect(cloud()).not.toBeNull();
+    view.rerender(<MessageRow {...props} viewer="someone-else" />);
+    expect(cloud()).toBeNull();
   } finally {
     cleanup();
   }
@@ -4088,7 +4344,7 @@ it.each([
     viewer: undefined,
     label: "Logan’s agent",
   },
-  // The viewer's own agent shows only the mark.
+  // The viewer's own agent omits the owner attribution.
   { case: "viewer's agent", forged: false, viewer: "owner", label: undefined },
   { case: "forged owner", forged: true, viewer: undefined, label: undefined },
 ])(
@@ -4181,6 +4437,112 @@ it.each([
     } finally {
       view.unmount();
       directory.dispose();
+    }
+  },
+);
+
+it.each(["timeline", "thread", "continuation"] as const)(
+  "shows a reactive remote byline hint only to the agent's owner in %s",
+  async (layout) => {
+    const authorId = "a".repeat(64);
+    const ownerId = "b".repeat(64);
+    const user = userEvent.setup();
+    const subscribe = () => () => {};
+    const listeners = new Set<() => void>();
+    const profiles = new Map();
+    let choices: {
+      identities: {
+        pubkey: string;
+        execution: "remote" | "local" | undefined;
+        runtime?: string;
+      }[];
+    } = { identities: [] };
+    const session = {
+      viewer: ownerId,
+      channels: { list: () => listed, subscribeList: subscribe },
+      messages: {},
+      profiles: { snapshot: () => profiles, subscribe },
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe(listener: () => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    } as unknown as RelaySession;
+    const props = {
+      layout,
+      row: { ...row, authorId, agentEnvelope: true as const, replyCount: 0 },
+      profile: { name: "Quinn" },
+      session,
+      stackPrevious: false,
+    };
+    const view = renderMessage(props);
+    const execution = (value?: "remote" | "local", runtime?: string) => {
+      act(() => {
+        choices = {
+          identities: [
+            {
+              pubkey: authorId,
+              execution: value,
+              ...(runtime ? { runtime } : {}),
+            },
+          ],
+        };
+        for (const listener of listeners) listener();
+      });
+    };
+    const rerender = (
+      patch: Partial<import("./MessageRow").MessageRowProps> = {},
+    ) =>
+      view.rerender(
+        <MessageRow
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+          {...props}
+          {...patch}
+        />,
+      );
+    try {
+      expect(screen.queryByText("Remote")).toBeNull();
+      execution("remote", "block.builderlab/builderlab");
+      const hint = screen.getByText("Remote");
+      expect(hint).toBeVisible();
+      expect(hint.closest("strong")).toBeNull();
+      expect(hint).toHaveAttribute("tabindex", "0");
+      await user.hover(hint);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Runs remotely on Builderlab",
+      );
+      await user.unhover(hint);
+      await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+      act(() => hint.focus());
+      await waitFor(() =>
+        expect(hint).toHaveAccessibleDescription(/Runs remotely on Builderlab/),
+      );
+      execution("remote", "another/provider");
+      expect(screen.getByRole("tooltip")).toHaveTextContent(
+        "Runs on a remote machine",
+      );
+      execution("local");
+      expect(screen.queryByText("Remote")).toBeNull();
+      execution();
+      expect(screen.queryByText("Remote")).toBeNull();
+      execution("remote");
+      rerender({ viewer: "c".repeat(64) });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender({ stackPrevious: true });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender({ row: { ...props.row, workflowOwnerId: ownerId } });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender({ row: { ...row, authorId, replyCount: 0 } });
+      expect(screen.queryByText("Remote")).toBeNull();
+      rerender();
+      expect(screen.getByText("Remote")).toBeVisible();
+    } finally {
+      view.unmount();
     }
   },
 );
@@ -4367,3 +4729,231 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     cleanup();
   }
 });
+
+it.each([
+  "agent",
+  "failed",
+  "failed publishing",
+  "stopped",
+  "superseded",
+  "human",
+  "disabled",
+  "retired",
+  "coordination",
+  "working",
+  "waiting",
+  "unknown",
+  "helper working",
+  "publishing",
+  "unlinked",
+])("opens the message conversation transcript from its byline: %s", (mode) => {
+  const author = "ab".repeat(32);
+  const target = profileActivityViewTarget(author);
+  if (!target) throw new Error("Invalid fixture author");
+  const rootId = "cd".repeat(32);
+  const open = vi.fn(() => true);
+  let available = mode !== "disabled";
+  const owner = createRelaySession(null);
+  const listeners = new Set<() => void>();
+  const request = "request";
+  const local = {
+    scope: "test",
+    agent: author,
+    channelId: row.channelId,
+    messageId: request,
+    threadRootId: rootId,
+    startedAt: 1,
+    state: mode === "waiting" ? ("waiting" as const) : ("working" as const),
+    publishedMessageIds: mode === "unlinked" ? [] : [row.id],
+  };
+  let snapshot = {
+    status: "listening",
+    records: [],
+    turns: [],
+    trimmed: 0,
+    typing: [],
+    local: [local],
+  } as ReturnType<RelaySession["agentActivity"]["snapshot"]>;
+  const session = {
+    ...owner.session,
+    agentActivity: {
+      ...owner.session.agentActivity,
+      snapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  };
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          authorId: author,
+          threadRootId: rootId,
+          ...(mode !== "human" ? { agentEnvelope: true as const } : {}),
+          ...(mode === "coordination" ? { audience: "agents" as const } : {}),
+        }}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={open}
+        canOpenLink={() => available}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /^View activity$/ }),
+    ).not.toBeInTheDocument();
+    act(() => {
+      if (!["working", "waiting"].includes(mode))
+        snapshot = {
+          ...snapshot,
+          local:
+            mode === "unknown"
+              ? []
+              : [
+                  {
+                    ...local,
+                    state: mode.startsWith("failed")
+                      ? "error"
+                      : mode === "stopped" || mode === "superseded"
+                        ? mode
+                        : "done",
+                    ...(mode.includes("publishing") ? { publishing: 1 } : {}),
+                  },
+                  ...(mode === "helper working"
+                    ? [{ ...local, agent: "ef".repeat(32) }]
+                    : []),
+                ],
+        };
+      for (const listener of listeners) listener();
+    });
+    const link = screen.queryByRole("button", {
+      name: /^View activity$/,
+    });
+    if (
+      [
+        "human",
+        "disabled",
+        "coordination",
+        "working",
+        "waiting",
+        "unknown",
+        "helper working",
+        "publishing",
+        "failed publishing",
+        "unlinked",
+      ].includes(mode)
+    ) {
+      expect(link).not.toBeInTheDocument();
+      return;
+    }
+    if (!link) throw new Error("Missing byline activity link");
+    expect(link).toBeVisible();
+    expect(
+      link.parentElement?.parentElement?.querySelector("time"),
+    ).not.toBeNull();
+    available = mode !== "retired";
+    fireEvent.click(link);
+    if (mode === "retired") expect(open).not.toHaveBeenCalled();
+    else {
+      expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId });
+      expect(profileTranscriptRequest(target)).toBeDefined();
+    }
+  } finally {
+    cleanup();
+    claimProfileTranscript(target);
+    owner.dispose();
+  }
+});
+
+it.each([false, true])(
+  "keeps completion evidence after notification expiry (nested=%s)",
+  (nested) => {
+    vi.useFakeTimers();
+    const local = createLocalAgentActivity();
+    const owner = createRelaySession(null);
+    const author = "ab".repeat(32);
+    const rootId = "cd".repeat(32);
+    const input = {
+      scope: "test",
+      agent: author,
+      channelId: row.channelId,
+      threadRootId: rootId,
+    };
+    local.begin({ ...input, messageId: rootId }).finish({ ok: true });
+    const work = local.begin({ ...input, messageId: "actual-request" });
+    work.started();
+    work.reply(row.id);
+    let snapshot = {
+      ...owner.session.agentActivity.snapshot(),
+      local: local.reader.work(),
+    };
+    const unsubscribe = local.reader.subscribeWork(() => {
+      snapshot = { ...snapshot, local: local.reader.work() };
+    });
+    const session = {
+      ...owner.session,
+      agentActivity: {
+        ...owner.session.agentActivity,
+        snapshot: () => snapshot,
+        subscribe: local.reader.subscribeWork,
+      },
+    };
+    try {
+      const show = () => (
+        <MessageRow
+          row={{
+            ...row,
+            authorId: author,
+            agentEnvelope: true,
+            threadRootId: rootId,
+            ...(nested ? { replyParentId: rootId } : {}),
+          }}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => true}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />
+      );
+      renderDom(show());
+      act(() => vi.advanceTimersByTime(REPLY_CORRELATION_MS + 1));
+      expect(
+        screen.queryByRole("button", { name: /^View activity$/ }),
+      ).not.toBeInTheDocument();
+      act(() => work.finish({ ok: true }));
+      expect(
+        screen.getByRole("button", { name: /^View activity$/ }),
+      ).toBeVisible();
+      cleanup();
+      renderDom(show());
+      expect(
+        screen.getByRole("button", { name: /^View activity$/ }),
+      ).toBeVisible();
+      let retry: ReturnType<typeof local.begin>;
+      act(() => {
+        retry = local.begin({ ...input, messageId: "actual-request" });
+      });
+      expect(
+        screen.queryByRole("button", { name: /^View activity$/ }),
+      ).not.toBeInTheDocument();
+      act(() => retry.finish({ ok: true }));
+      expect(
+        screen.getByRole("button", { name: /^View activity$/ }),
+      ).toBeVisible();
+    } finally {
+      cleanup();
+      unsubscribe();
+      owner.dispose();
+      vi.useRealTimers();
+    }
+  },
+);

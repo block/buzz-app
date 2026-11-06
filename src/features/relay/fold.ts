@@ -22,7 +22,11 @@ import {
   safeMessageUrl,
 } from "./message-content";
 
-import { channelRowKind, membershipChange } from "./membership";
+import {
+  channelRowChannel,
+  channelRowKind,
+  membershipChange,
+} from "./membership";
 import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -282,7 +286,7 @@ export function foldMessages(
       if (
         rootId &&
         pendingReplies?.has(event.id) &&
-        event.tags.some((entry) => entry[0] === "h" && entry[1] === channelId)
+        channelRowChannel(event) === channelId
       ) {
         const list = replies.get(rootId) ?? [];
         list.push(event);
@@ -319,8 +323,7 @@ export function foldMessages(
   const rows: ChannelMessage[] = [];
   for (const event of events) {
     if (!channelRowKind(event.kind)) continue;
-    if (!event.tags.some((entry) => entry[0] === "h" && entry[1] === channelId))
-      continue;
+    if (channelRowChannel(event) !== channelId) continue;
     if (
       !includeReplies &&
       event.tags.some((entry) => entry[0] === "e" && entry[3] === "reply") &&
@@ -449,6 +452,15 @@ export function foldMessages(
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
+        ...(event.kind === 9 &&
+        event.tags.some(
+          (tag) =>
+            tag.length === 2 &&
+            tag[0] === "buzz:notice" &&
+            tag[1] === "execution-failure",
+        )
+          ? { notice: "execution-failure" as const }
+          : {}),
         ...(pluginRequest ? { pluginRequest: { id: pluginRequest } } : {}),
         ...(event.kind === 40008
           ? {

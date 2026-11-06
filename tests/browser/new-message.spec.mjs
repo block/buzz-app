@@ -15,6 +15,7 @@ import { watchPageErrors } from "./page-errors.mjs";
 const test = base.extend({
   developmentReact: [false, { scope: "worker" }],
   builderlabLogin: [false, { scope: "worker" }],
+  federatedIdentity: [false, { scope: "worker" }],
   pluginFixtures: [false, { scope: "worker" }],
   companionFixture: [false, { scope: "worker" }],
   pairingFixture: [false, { scope: "worker" }],
@@ -317,6 +318,7 @@ const test = base.extend({
   },
 });
 async function startNewMessage(page) {
+  await openPage(page, "Messages");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const messages = sidebar.locator('[data-sidebar-section="dms"] summary');
   await messages.hover();

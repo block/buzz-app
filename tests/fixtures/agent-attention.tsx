@@ -1,4 +1,5 @@
 // The production tab and shared controls, with only the host data boundary replaced.
+import { Panel } from "../../src/shared/design-system/ui/Panel";
 import { createRoot } from "react-dom/client";
 import type { Context } from "../../src/plugins/author";
 import { presentPull } from "../../src/bundled/github/attention";
@@ -218,4 +219,8 @@ const Tab = createTab({
 } as unknown as Context);
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
-createRoot(root).render(<Tab agent={{ key: "membership-a" }} />);
+createRoot(root).render(
+  <Panel joined>
+    <Tab agent={{ key: "membership-a" }} />
+  </Panel>,
+);

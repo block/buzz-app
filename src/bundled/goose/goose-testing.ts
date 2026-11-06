@@ -28,6 +28,8 @@ export type FakeTurn = {
 export type FakeGoose = {
   id: string;
   options: HostProcessOptions;
+  /** The agent its credential was bound to, if any. */
+  actedAs?: Readonly<{ pubkey: string; relay: string }>;
   /** Every message written to its stdin. */
   received: Message[];
   /** Each `session/new`'s params. */
@@ -113,9 +115,13 @@ export function fakeSpawn(
     /** Requests each process never answers. */
     silent?: readonly string[];
     /** The thinking levels a session lists on each model, `""` being the
-     * one it opens on; one not here lists none. */
+     * one it opens on; one not here lists none. `grouped` lists them in one
+     * ACP option group. */
     thinking?: Readonly<
-      Record<string, Readonly<{ current: string; levels: readonly string[] }>>
+      Record<
+        string,
+        Readonly<{ current: string; levels: readonly string[]; grouped?: true }>
+      >
     >;
   }> = {},
 ) {
@@ -168,19 +174,21 @@ export function fakeSpawn(
     const models = new Map<string, string>();
     const configOptions = (sessionId: string) => {
       const thinking = options.thinking?.[models.get(sessionId) ?? ""];
-      return thinking
-        ? [
-            {
-              id: "thinking_effort",
-              category: "thought_level",
-              currentValue: thinking.current,
-              options: thinking.levels.map((level) => ({
-                value: level,
-                name: level,
-              })),
-            },
-          ]
-        : [];
+      if (!thinking) return [];
+      const levels = thinking.levels.map((level) => ({
+        value: level,
+        name: level,
+      }));
+      return [
+        {
+          id: "thinking_effort",
+          category: "thought_level",
+          currentValue: thinking.current,
+          options: thinking.grouped
+            ? [{ group: "levels", name: "Levels", options: levels }]
+            : levels,
+        },
+      ];
     };
     const answers = new Map<number | string, (message: Message) => void>();
     const send = (message: Message) =>
@@ -252,7 +260,10 @@ export function fakeSpawn(
       const sessionId = String(params.sessionId ?? "");
       switch (method) {
         case "_buzz/security/capabilities":
-          return reply(id, { version: 2 });
+          return reply(id, {
+            version: 2,
+            enabled: fake.env.BUZZ_SECURITY_URL != null,
+          });
         case "initialize":
           return reply(id, {
             protocolVersion: 1,
@@ -469,6 +480,11 @@ export function fakeSpawn(
         fake.killed = true;
         fake.exit(null);
       },
+      ...(process.agentCredential && {
+        actAs: async (agent: Readonly<{ pubkey: string; relay: string }>) => {
+          fake.actedAs = agent;
+        },
+      }),
       exited,
     };
   };

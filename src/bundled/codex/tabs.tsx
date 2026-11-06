@@ -301,13 +301,50 @@ const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
   return resolved ? effortName(resolved) : "Automatic";
 };
-/** A model's choice also resets the effort to that model's default. */
-const modelChange = (model: string, data?: Catalog) => ({
-  model,
-  effort:
-    data?.models.find((candidate) => candidate.model === model)
-      ?.defaultReasoningEffort ?? "",
-});
+const thinkingOptions = (
+  effort: string,
+  effectiveEffort: string,
+  selected?: Model,
+  catalog?: Catalog,
+  showUnavailableWithoutCatalog = false,
+) => {
+  const supported = selected?.supportedReasoningEfforts ?? [];
+  return [
+    {
+      value: "",
+      label: `${codexDefaultEffortLabel(effectiveEffort, selected)} · Default`,
+    },
+    ...(effort &&
+    !supported.some((candidate) => candidate.reasoningEffort === effort)
+      ? [
+          {
+            value: effort,
+            label:
+              catalog || showUnavailableWithoutCatalog
+                ? `${effortName(effort)} (unavailable)`
+                : effortName(effort),
+          },
+        ]
+      : []),
+    ...supported.map((candidate) => ({
+      value: candidate.reasoningEffort,
+      label: effortName(candidate.reasoningEffort),
+    })),
+  ];
+};
+/** A model's choice also resets to its default when the catalog supports it. */
+const modelChange = (model: string, data?: Catalog) => {
+  const selected = data?.models.find((candidate) => candidate.model === model);
+  const effort = selected?.defaultReasoningEffort ?? "";
+  return {
+    model,
+    effort: selected?.supportedReasoningEfforts.some(
+      (choice) => choice.reasoningEffort === effort,
+    )
+      ? effort
+      : "",
+  };
+};
 
 function CodexSignIn({
   login,
@@ -526,6 +563,7 @@ export function createTabs(
     openSettings,
     config,
     onChange,
+    onReadyChange,
     ...props
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
@@ -553,6 +591,12 @@ export function createTabs(
         : status?.state === "signed-out" || error === SIGN_IN_ERROR
           ? "login"
           : undefined;
+    const ready =
+      !step &&
+      !checking &&
+      !error &&
+      !!catalogModel(current.model || providerDefaults.model, data);
+    useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const field = useRef<HTMLDivElement>(null);
     const hadStep = useRef(false);
     const handoff = useRef(false);
@@ -608,7 +652,78 @@ export function createTabs(
             onChange(readConfig({ ...current, ...modelChange(model, data) }))
           }
         />
+        {onReadyChange &&
+          !checking &&
+          !error &&
+          data &&
+          current.model &&
+          !catalogModel(current.model, data) && (
+            <p role="status" className="m-0 text-body-sm text-subtle">
+              This model isn’t available. Choose another model to continue.
+            </p>
+          )}
       </div>
+    );
+  }
+
+  function CreateThinking({
+    agent,
+    config,
+    onChange,
+    disabled,
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    const { data, checking, bound } = useProvider(agent);
+    const { effort } = current;
+    const effective = provider.resolve({ ...current, effort: "" }, !!bound);
+    const selected = catalogModel(effective.model, data);
+    const previousModel = useRef(current.model);
+    useEffect(() => {
+      const modelChanged = previousModel.current !== current.model;
+      previousModel.current = current.model;
+      // modelChange validates the selection; this effect handles later catalog changes.
+      if (modelChanged) return;
+      if (agent || disabled || checking || !data || !effort || !selected)
+        return;
+      if (
+        !selected.supportedReasoningEfforts.some(
+          (choice) => choice.reasoningEffort === effort,
+        )
+      )
+        onChange(readConfig({ ...config, effort: "" }));
+    }, [
+      agent,
+      checking,
+      config,
+      current.model,
+      data,
+      disabled,
+      effort,
+      onChange,
+      selected,
+    ]);
+    const efforts = thinkingOptions(
+      current.effort,
+      effective.effort,
+      selected,
+      data,
+    );
+    return (
+      <Select
+        key={current.model || "inherited"}
+        label="Thinking"
+        valueLabel={
+          current.effort
+            ? undefined
+            : codexDefaultEffortLabel(effective.effort, selected)
+        }
+        valueSuffix={current.effort ? undefined : " · Default"}
+        variant="compact"
+        value={current.effort}
+        groups={[{ label: "", options: efforts }]}
+        disabled={disabled || checking || !selected}
+        onValueChange={(effort) => onChange(readConfig({ ...current, effort }))}
+      />
     );
   }
 
@@ -862,11 +977,9 @@ export function createTabs(
   function TranscriptView({
     agent,
     conversation,
-    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation: SavedConversation;
-    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
     const [read, setRead] = useState<Read>();
     const [loading, setLoading] = useState(true);
@@ -945,7 +1058,9 @@ export function createTabs(
           <ActivityTranscript
             transcript={read.transcript}
             agentName={agent.name}
-            openConversation={openConversation}
+            agentKey={agent.key}
+            agentPicture={agent.picture}
+            community={agent.relay}
             state={() => (read.transcript.working ? "working" : undefined)}
             before={
               read.transcript.more && (
@@ -1004,14 +1119,12 @@ export function createTabs(
     conversation,
     initialTranscript,
     close,
-    openConversation,
     listed,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
     close?: AgentViewProps<Config>["close"];
-    openConversation?: AgentViewProps<Config>["openConversation"];
     listed?: SavedConversation[];
   }) {
     useClockFormat();
@@ -1140,12 +1253,7 @@ export function createTabs(
             backLabel="Back to profile"
             onBack={back}
           >
-            <TranscriptView
-              key={open.key}
-              agent={agent}
-              conversation={open}
-              openConversation={openConversation}
-            />
+            <TranscriptView key={open.key} agent={agent} conversation={open} />
           </PanelSubview>
         )}
       </div>
@@ -1182,26 +1290,13 @@ export function createTabs(
     }, [agent.config]);
     const effective = provider.resolve({ ...draft, effort: "" }, !!bound);
     const selected = catalogModel(effective.model, data);
-    const supported = selected?.supportedReasoningEfforts ?? [];
-    const efforts = [
-      {
-        value: "",
-        label: `${codexDefaultEffortLabel(effective.effort, selected)} · Default`,
-      },
-      ...(draft.effort &&
-      !supported.some((effort) => effort.reasoningEffort === draft.effort)
-        ? [
-            {
-              value: draft.effort,
-              label: `${effortName(draft.effort)} (unavailable)`,
-            },
-          ]
-        : []),
-      ...supported.map((effort) => ({
-        value: effort.reasoningEffort,
-        label: effortName(effort.reasoningEffort),
-      })),
-    ];
+    const efforts = thinkingOptions(
+      draft.effort,
+      effective.effort,
+      selected,
+      data,
+      true,
+    );
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
@@ -1350,6 +1445,7 @@ export function createTabs(
 
   return {
     CreateModel,
+    CreateThinking,
     Create,
     ProviderDialogBody,
     DefaultControl,

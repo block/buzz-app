@@ -32,11 +32,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import Markdown, {
-  type Components,
-  type ExtraProps,
-  type UrlTransform,
-} from "react-markdown";
+import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
@@ -55,9 +51,11 @@ import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
 import { safeLinkUrl, visibleHtmlSource } from "../relay/message-content";
 import styles from "./Messages.module.css";
-import { profileMentionParts } from "./profile-mentions";
+import { profileMentionNames, profileMentionParts } from "./profile-mentions";
 import {
   isLiteralMarkdownContext,
+  isPlainProse,
+  plainProseTree,
   prepareMarkdown,
   type LiteralRange,
   type PreparedMarkdown,
@@ -240,7 +238,10 @@ function inlineProtectionKey(
   agents: typeof emptyReferenceDirectory.agents,
 ) {
   const identities = [...row.mentions, ...(row.mentionReferences ?? [])];
-  const mentions = identities.map((id) => [id, profiles?.get(id)?.name]);
+  const mentions = identities.map((id) => [
+    id,
+    ...profileMentionNames(profiles?.get(id)),
+  ]);
   const mentioned = new Set(identities);
   const agentNames = agents
     .filter((agent) => mentioned.has(agent.pubkey))
@@ -341,6 +342,33 @@ function rehypeEditedSlot() {
   };
 }
 
+/** GFM ends a bare URL only at whitespace. End it where bare message links end;
+ * `<url>` and `[url](url)` keep their destination. */
+function remarkBareLinkEnd(content: string) {
+  return function visit(parent: MarkdownNode) {
+    if (!parent.children) return;
+    parent.children = parent.children.flatMap((child) => {
+      const text = child.url;
+      const { start, end } = child.position ?? {};
+      if (
+        child.type !== "link" ||
+        !text ||
+        child.children?.[0]?.value !== text ||
+        (start && content.slice(start.offset, end?.offset) !== text)
+      ) {
+        visit(child);
+        return [child];
+      }
+      const parts = messageLinkParts(text).filter((part) => part.text);
+      if (parts.length < 2) return [child];
+      return parts.map(({ text: value, url }) => {
+        const node = { type: "text", value };
+        return url ? { type: "link", url, children: [node] } : node;
+      });
+    });
+  };
+}
+
 /** Offer only Markdown prose to profile controls and inline plugins. */
 function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
@@ -410,9 +438,6 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
     visit(tree);
   };
 }
-
-const transformUrl: UrlTransform = (value) =>
-  parseBuzzLink(value) || profileKey(value) ? value : safeLinkUrl(value);
 
 type MessageComponents = {
   [Tag in "p" | "a" | "img" | "span" | "pre"]: (
@@ -563,6 +588,7 @@ function PreparedMessageMarkdown({
         directoryLabel={channelLinkLabel(url, directory.channels)}
         registry={extensions?.links}
         onOpenLink={onOpenLink}
+        canOpenLink={canOpenLink}
         session={session}
         scope={scope}
         interactive={interactive}
@@ -708,7 +734,16 @@ function PreparedMessageMarkdown({
         />
       );
     },
-    a: ({ href, children }) => {
+    a: ({ href: target, children }) => {
+      const href =
+        target &&
+        (parseBuzzLink(target) ||
+        profileKey(target) ||
+        (interactive &&
+          !/^(?:https?|buzz|nostr):/i.test(target) &&
+          canOpenLink?.(target))
+          ? target
+          : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
         if (!interactive || !canOpenLink?.(href))
@@ -839,6 +874,11 @@ const parsedBodies = recentResults<ReactElement>(
   (key, body) => 2 + elementCount(body) + Math.ceil(key.length / 500),
 );
 
+/** Plain prose skips micromark: the same tree, then the same plugins. */
+function remarkPlainProse(this: { parser?: unknown }) {
+  this.parser = plainProseTree;
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
@@ -854,7 +894,11 @@ const MarkdownBody = memo(function MarkdownBody({
     () =>
       Markdown({
         remarkPlugins: [
+          // Protection only inserts placeholders isPlainProse rejects, so this
+          // agrees with prepareMarkdown's check on the raw content.
+          ...(isPlainProse(protectedContent.content) ? [remarkPlainProse] : []),
           remarkGfm,
+          [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
           [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
           [remarkInlineContent, protectedContent],
@@ -863,7 +907,9 @@ const MarkdownBody = memo(function MarkdownBody({
         rehypePlugins: [rehypeEditedSlot],
         components: markdownComponents,
         skipHtml: true,
-        urlTransform: transformUrl,
+        // The live anchor renderer validates URLs. Cached parsing cannot decide
+        // whether a panel contribution is still registered.
+        urlTransform: (value) => value,
         children: protectedContent.content,
       }),
   );

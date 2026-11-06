@@ -1,0 +1,29 @@
+.icon {
+  display: inline-flex;
+  margin-right: calc(var(--space-half) * 1.5);
+  vertical-align: -0.1875em;
+}
+.preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.identity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--type-weight-semibold);
+}
+.kind {
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  font-weight: var(--text-body-sm--font-weight);
+  color: var(--text-subtle);
+}

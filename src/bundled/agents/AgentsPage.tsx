@@ -2478,6 +2478,14 @@ function TeamEditor({
   const [error, setError] = useState("");
   const done = useRef(onDone);
   done.current = onDone;
+  // Closing ended this editor and its visits, so a Save that finishes later
+  // leaves whatever editor replaced it alone.
+  useEffect(
+    () => () => {
+      done.current = () => {};
+    },
+    [],
+  );
   // What a synced Save revises, and a new team's id for every retry.
   const [opened, setOpened] = useState(team);
   const nameEdited = !!opened && name !== opened.name;

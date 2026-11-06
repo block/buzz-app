@@ -23,7 +23,13 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Context } from "@deepseek-ai/cordis";
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -6164,4 +6170,128 @@ describe("team editor visits", () => {
       expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull(),
     );
   });
+});
+
+it("leaves the next team's draft alone when a closed editor's Save finishes", async () => {
+  const A = {
+    id: "1a2b3c4d-5e6f-4a70-8b9c-0d1e2f3a4b5c",
+    name: "Crew A",
+    instructions: "A",
+    members: [agent("Ada", 1).pubkey],
+    revision: "rA",
+  };
+  const B = {
+    ...A,
+    id: "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182",
+    name: "Crew B",
+    instructions: "B",
+    revision: "rB",
+  };
+  const C = {
+    ...A,
+    id: "3b3c4d5e-6f70-4a81-9b2c-3d4e5f607182",
+    name: "Crew C",
+    instructions: "C",
+    revision: "rC",
+  };
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const host = createNavigationController(createMemoryHistory(base));
+  const navigator = host.navigation;
+  function Host({ agents, relay }: { agents: Agents; relay: RelayData }) {
+    const { entry, attempt } = useSyncExternalStore(
+      navigator.subscribe,
+      navigator.snapshot,
+    );
+    const navigation = useMemo(() => {
+      const request: PageNavigation = {
+        entryId: entry.id,
+        target: entry.target,
+        signal: attempt.signal,
+        position: () => undefined,
+        savePosition() {},
+        passThrough: () => () => {},
+        forSession: () => request,
+        resolve: () => true,
+        complete: () => true,
+      };
+      return request;
+    }, [entry, attempt]);
+    useEffect(() => {
+      host.complete(attempt, { status: "opened" });
+    }, [attempt]);
+    return (
+      <AgentsPage
+        agents={agents}
+        relay={relay}
+        navigator={navigator}
+        navigation={navigation}
+      />
+    );
+  }
+  const view = setup([agent("Ada", 1)], { teams: [A, B, C] });
+  let finish!: () => void;
+  const pending = new Promise<typeof B>((resolve) => {
+    finish = () => resolve(B);
+  });
+  vi.mocked(view.agents.saveTeam).mockReturnValueOnce(pending);
+  try {
+    view.rerender(<Host agents={view.agents} relay={view.relay} />);
+    act(() => {
+      void navigator.open({
+        ...base,
+        route: { version: 1, params: { team: A.id } },
+      });
+    });
+    await screen.findByRole("form", { name: "Edit Crew A" });
+    act(() => {
+      void navigator.open({
+        ...base,
+        route: { version: 1, params: { team: B.id } },
+      });
+    });
+    await userEvent
+      .setup()
+      .click(
+        within(
+          await screen.findByRole("form", { name: "Edit Crew B" }),
+        ).getByRole("button", { name: "Save" }),
+      );
+    expect(view.agents.saveTeam).toHaveBeenCalledOnce();
+    act(() => navigator.back());
+    await userEvent
+      .setup()
+      .click(
+        within(screen.getByRole("form", { name: "Edit Crew B" })).getByRole(
+          "button",
+          { name: "Close" },
+        ),
+      );
+    const name = within(
+      await screen.findByRole("form", { name: "Edit Crew A" }),
+    ).getByRole("textbox", { name: "Name" });
+    fireEvent.change(name, { target: { value: "Unsaved A" } });
+    act(() => {
+      void navigator.open({
+        ...base,
+        route: { version: 1, params: { team: C.id } },
+      });
+    });
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Unsaved A",
+    );
+    await act(async () => finish());
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Unsaved A",
+    );
+  } finally {
+    finish();
+    view.unmount();
+    host.dispose();
+  }
 });

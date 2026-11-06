@@ -1,3 +1,4 @@
+import { threadBinding } from "../relay/thread-window";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -110,18 +111,57 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
       relayAuthor: relayKey.pubkey,
       scope: "https://relay.test",
       query: async (filters) =>
-        filters.flatMap((filter) => {
-          const found = events.filter((event) => matchesEvent(event, filter));
-          return filter.top_level && filter["#h"]?.[0]
-            ? [
-                ...found,
-                bounds(relayKey, filter["#h"][0], "head", {
-                  has_more: false,
-                  next_cursor: null,
-                }),
-              ]
-            : found;
-        }),
+        (
+          await Promise.all(
+            filters.map(async (filter) => {
+              const found = events.filter(
+                (event) =>
+                  matchesEvent(event, filter) &&
+                  (filter.thread_cursor === undefined ||
+                    event.created_at > filter.thread_cursor ||
+                    (event.created_at === filter.thread_cursor &&
+                      event.id > (filter.thread_cursor_id ?? ""))),
+              );
+              const channelId = filter["#h"]?.[0];
+              const rootId = filter["#e"]?.[0];
+              if (filter.thread_window && channelId && rootId)
+                return [
+                  ...found,
+                  signed(relayKey, {
+                    kind: 39007,
+                    created_at: 30,
+                    tags: [
+                      [
+                        "d",
+                        await threadBinding(
+                          filter,
+                          "https://relay.test",
+                          viewer.pubkey,
+                        ),
+                      ],
+                      ["h", channelId],
+                      ["e", rootId],
+                    ],
+                    content: JSON.stringify({
+                      version: 1,
+                      direction: "older",
+                      has_more: false,
+                      next_cursor: null,
+                    }),
+                  }),
+                ];
+              return filter.top_level && filter["#h"]?.[0]
+                ? [
+                    ...found,
+                    bounds(relayKey, filter["#h"][0], "head", {
+                      has_more: false,
+                      next_cursor: null,
+                    }),
+                  ]
+                : found;
+            }),
+          )
+        ).flat(),
       media: () => undefined,
       ...(upload ? { uploadAttachment: upload } : {}),
       writer: {
@@ -745,6 +785,7 @@ it.each([false, true])(
         region.querySelector(`[data-message-id="${sent.id}"]`),
       ).toBeInTheDocument(),
     );
+    expect(within(region).queryByText("This thread didn’t load.")).toBeNull();
     expect(h.open).not.toHaveBeenCalled();
     expect(screen.getByLabelText("1 draft")).toBeInTheDocument();
     fireEvent.click(

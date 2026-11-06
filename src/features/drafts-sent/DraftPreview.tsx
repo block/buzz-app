@@ -252,11 +252,16 @@ function DraftChannel({
   const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
   const [seekError, setSeekError] = useState(false);
+  const [reveal, setReveal] = useState<{
+    messageId: string;
+    signal: AbortSignal;
+  }>();
   useEffect(() => {
     if (!target) return;
     if (window.status !== "ready") return;
     const request = new AbortController();
     setSeekError(false);
+    setReveal({ messageId: target.id, signal: request.signal });
     void session.channels
       .seek?.(channelId, target.createdAt ?? 0, request.signal)
       .then(() => {
@@ -291,7 +296,7 @@ function DraftChannel({
             <ConversationTimeline
               window={window}
               transient
-              revealMessageId={target?.id}
+              inlineTarget={reveal}
             />
           )}
           {window.status === "error" || window.error ? (

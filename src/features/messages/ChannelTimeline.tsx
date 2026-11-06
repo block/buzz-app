@@ -263,7 +263,7 @@ export type ChannelTimelineProps = {
   /** One inline exact visit: focus the verified mounted row, without a page
    * navigation. `focus: false` marks it beside a reader that owns focus. */
   inlineTarget?:
-    | Readonly<{ messageId: string; signal: AbortSignal; focus?: false }>
+    | Readonly<{ messageId: string; signal: AbortSignal; focus?: boolean }>
     | undefined;
   /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
   transient?: boolean | undefined;

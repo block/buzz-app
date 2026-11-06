@@ -330,6 +330,8 @@ it("animates Connecting only while a connection is actually under way", async ()
 // tab's "In DM" link from Activity, belong to Bestie's page instead.
 async function bestieHandoff(
   visit: Partial<Extract<OpenTarget, { kind: "conversation" }>>,
+  /** Settle the visit, then open Settings over it, before Messages renders. */
+  underSettings = false,
 ) {
   const { Context } = await import("@deepseek-ai/cordis");
   const { provideNavigation } = await import(
@@ -362,6 +364,10 @@ async function bestieHandoff(
     valid: () => true,
     subscribe: () => () => {},
   }).request;
+  if (underSettings) {
+    navigation.complete({ status: "opened" });
+    void host.navigation.open({ version: 1, kind: "settings" });
+  }
   const page = renderHook(
     () =>
       ChannelsPage({
@@ -448,6 +454,18 @@ it.each([
   const h = await bestieHandoff(visit);
   try {
     expect(h.navigation.snapshot().entry.target).toEqual(h.target);
+    expect(h.workspace()?.props.navigation).toBeDefined();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("keeps a settled visit to the promoted DM while Settings opens over it", async () => {
+  const h = await bestieHandoff({}, true);
+  try {
+    // Only this page's pending visit is handed off; another opening keeps
+    // the Messages visit it will return to.
+    expect(h.navigation.snapshot().status).toBe("opening");
     expect(h.workspace()?.props.navigation).toBeDefined();
   } finally {
     await h.dispose();

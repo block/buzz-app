@@ -134,6 +134,9 @@ async function fixture({
   archived = false,
   withReply = false,
   hasOlder = false,
+  holdHead = false,
+  holdThread = false,
+  withLink = false,
 } = {}) {
   // jsdom has no native scrolling; thread reveals still use this DOM boundary.
   HTMLElement.prototype.scrollIntoView = vi.fn();
@@ -176,10 +179,19 @@ async function fixture({
     1_700_000_001,
     [["e", root.id, "", "reply"]],
   );
+  // A later message linking to the root, as a reply quote or a copied link does.
+  const link = message(
+    keypair(),
+    pollenDM,
+    `see buzz://channel/${pollenDM}/${root.id}`,
+    1_700_000_002,
+  );
   const gate = deferred();
   const olderGate = deferred();
   const olderStarted = vi.fn();
   disposals.push(olderGate.resolve);
+  // Hold the DM's head read or its thread read, to order their reveals.
+  const reads = { head: deferred(), thread: deferred() };
   if (existing) dm(pollen);
   const open = vi.fn(async (keys: readonly string[], _signal: AbortSignal) => {
     if (hold && keys[0] === pollen) await gate.promise;
@@ -226,9 +238,11 @@ async function fixture({
             ),
           ];
         }
-        if (withReply && history)
+        if (withReply && history) {
+          if (holdHead) await reads.head.promise;
           return [
             root,
+            ...(withLink ? [link] : []),
             summary(relayKey, pollenDM, root.id, {
               reply_count: 1,
               participants: [response.pubkey],
@@ -240,6 +254,7 @@ async function fixture({
                 : null,
             }),
           ];
+        }
         if (
           withReply &&
           filters.some(
@@ -248,8 +263,10 @@ async function fixture({
               f.ids?.includes(response.id) ||
               f["#e"]?.includes(root.id),
           )
-        )
+        ) {
+          if (holdThread) await reads.thread.promise;
           return [root, response];
+        }
         if (history)
           return [
             bounds(relayKey, history["#h"]?.[0] ?? pollenDM, "head", {
@@ -439,6 +456,7 @@ async function fixture({
     ),
     rootId: root.id,
     replyId: response.id,
+    release: { head: reads.head.resolve, thread: reads.thread.resolve },
     mount: () =>
       render(
         <ToastProvider>
@@ -638,8 +656,9 @@ async function linkedVisit(
     messageId: string;
     threadRootId?: string;
   },
+  hold: { holdHead?: boolean; holdThread?: boolean } = {},
 ) {
-  const f = await fixture({ existing: true, withReply: true });
+  const f = await fixture({ existing: true, withReply: true, ...hold });
   // Rows revealed in the chat history or a thread, in order.
   const scrolled: HTMLElement[] = [];
   HTMLElement.prototype.scrollIntoView = vi.fn(function (this: HTMLElement) {
@@ -779,6 +798,118 @@ it("opens a reply linked without its thread as its thread in Bestie's page", asy
   bestieVisit(h, { messageId: h.f.replyId });
 });
 
+// The linked reply keeps focus whichever reveal finishes last; the root in the
+// chat history is context, shown without taking focus.
+it("keeps focus in the thread when its root is revealed first", async () => {
+  const h = await linkedVisit(
+    ({ rootId, replyId }) => ({ messageId: replyId, threadRootId: rootId }),
+    { holdThread: true },
+  );
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
+  const thread = await screen.findByLabelText("Thread");
+  await act(async () => h.f.release.thread());
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  await waitFor(() => expect(inThreadPane()).toBe(true));
+});
+
+/** Whether focus is in the side pane that holds the thread. */
+const inThreadPane = () =>
+  !!document.activeElement?.closest('[aria-label="Bestie panel tabs"]');
+
+it("keeps focus in the thread when its root is revealed last", async () => {
+  const h = await linkedVisit(
+    ({ rootId, replyId }) => ({ messageId: replyId, threadRootId: rootId }),
+    { holdHead: true },
+  );
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  await waitFor(() => expect(inThreadPane()).toBe(true));
+  await act(async () => h.f.release.head());
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(inThreadPane()).toBe(true);
+  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
+});
+
+it("leaves the chat history in place for View thread and for Back and Forward", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender } = f;
+  const row = (await screen.findByText("Are you there?")).closest(
+    "[data-message-id]",
+  );
+  expect(row).not.toBeNull();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View thread: 1 reply" }),
+  );
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  expect(row).toBeInTheDocument();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+  act(() => navigator.back());
+  rerender();
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).toBeVisible();
+  act(() => navigator.forward());
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  expect(row).toBeInTheDocument();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+});
+
+it("keeps a message visit that showed the chat when its View thread tab closes", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender, bestie } = f;
+  const message = {
+    ...bestie,
+    route: {
+      version: 1,
+      params: { channelId: pollenDM, messageId: f.rootId },
+    },
+  } as const;
+  void navigator.open(message);
+  rerender();
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).toBeVisible();
+  expect(screen.queryByLabelText("Thread")).toBeNull();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View thread: 1 reply" }),
+  );
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Close Are you there? tab" }),
+  );
+  rerender();
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+  // Close retires the thread's visit only; the message visit remains a stop.
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(message);
+});
+
+it("opens a chat link into this DM as its own visit, without a Messages stop", async () => {
+  const f = await threadHistoryFixture(true);
+  const { navigator, rerender, bestie } = f;
+  // The chat link renders under the DM's name.
+  await userEvent.click(await screen.findByRole("link", { name: "Pollen" }));
+  rerender();
+  expect(navigator.snapshot().entry.target).toEqual({
+    ...bestie,
+    scope: { viewer: f.viewer, communityOrigin: "https://test.example" },
+    route: {
+      version: 1,
+      params: { channelId: pollenDM, messageId: f.rootId },
+    },
+  });
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+});
+
 it("follows a bestie changed elsewhere without carrying the old DM draft or modifying the Solo draft", async () => {
   const f = await fixture();
   const user = userEvent.setup();
@@ -871,8 +1002,8 @@ it("keeps a failed DM retry focused and announces another failure", async () => 
   expect(retry).toHaveFocus();
 });
 
-async function threadHistoryFixture() {
-  const f = await fixture({ existing: true, withReply: true });
+async function threadHistoryFixture(withLink = false) {
+  const f = await fixture({ existing: true, withReply: true, withLink });
   f.choose(pollen);
   const previous = {
     version: 1,
@@ -897,6 +1028,7 @@ async function threadHistoryFixture() {
       target: entry.target,
       signal: attempt.signal,
       ...(attempt.focus ? { focus: attempt.focus } : {}),
+      ...(attempt.traversal ? { traversal: true } : {}),
       position: () => undefined,
       savePosition() {},
       passThrough: () => () => {},

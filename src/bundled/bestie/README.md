@@ -44,12 +44,20 @@ ordinary row and clears any old device-local hidden-DM intent. A Messages visit
 to the DM, one of its threads or one of its messages, such as a thread tab's
 **In DM** link or **Open in channel** in Activity, a notification, a permalink,
 or the DM or a message chosen in search, resolves in place to this page's visit
-before Messages presents it. A thread visit opens the thread in its pane and
-shows the thread's root in the chat history, scrolled to and marked; a message
-visit shows that message the same way, reading older history to find it, or
-opens its thread when it is a reply or isn't in history. A visit to Forward or
+before Messages presents it. On its first presentation, a thread visit opens
+the thread in its pane, which keeps focus, and marks the thread's root in the
+chat history once it is loaded or found in older history, without hiding the
+history or moving focus; a message visit holds the history until that message
+is found, then scrolls to and focuses it, or opens its thread when it is a
+reply or isn't in history. Threads opened here with **View thread**, and
+Back/Forward returns, leave the history where the reader left it. Links in the
+chat into this DM open as this page's own visits. A visit to Forward or
 Members has no Bestie route and stays in Messages, as does a visit that
-Messages had already opened before the promotion was known. Replacing or
+Messages had already opened before the promotion was known. The handed-off
+history entry is this page's address from then on: if the plugin is later
+turned off, Back to it reports it unavailable, and if the Bestie changes, it
+is retired like this page's own thread visits rather than reopening the
+now-ordinary DM in Messages. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the
 exact roster match releases the promotion and restores the ordinary DM row.
 

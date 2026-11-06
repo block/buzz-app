@@ -77,6 +77,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type BestieRoute,
   bestieBaseTarget,
+  bestieConversationTarget,
   bestieRoute,
   bestieMessageRoute,
   bestieThreadTarget,
@@ -184,26 +185,47 @@ export function BestieConversation({
       ? bestieInlineRoute(navigation.target.route?.params)
       : undefined;
   const addressed = routed ?? exact ?? detail ?? inline;
-  // A thread visit shows its root in the chat history beside the thread; a
-  // message visit shows that message, or opens its thread when it is a reply
-  // or isn't in history. Each visit seeks and reveals once.
+  // A visit handed off from Messages shows its message in the chat history on
+  // its first presentation: a thread visit's root beside the thread, once it
+  // is loaded or found in older history; a message visit's message, or its
+  // thread when it is a reply or isn't in history. Threads Bestie opens itself
+  // and Back/Forward leave the history where the reader left it.
+  const opened = useRef<{ target: string; entryId?: string }>(undefined);
+  const own = opened.current;
+  if (navigation && own) {
+    if (!own.entryId && targetKey(navigation.target) === own.target)
+      own.entryId = navigation.entryId;
+    else if (own.entryId !== navigation.entryId) opened.current = undefined;
+  }
+  const handedOff =
+    !!navigation &&
+    !navigation.traversal &&
+    !preserveNavigation &&
+    opened.current?.entryId !== navigation.entryId &&
+    addressed?.channelId === channel.id;
   const visits = useRef(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new visit asks again for the same message.
   const visit = useMemo(() => ++visits.current, [navigation?.entryId]);
-  const sought =
-    !preserveNavigation && addressed?.channelId === channel.id
-      ? (routed?.threadRootId ?? exact?.messageId)
-      : undefined;
+  const sought = handedOff
+    ? (routed?.threadRootId ?? exact?.messageId)
+    : undefined;
   const inTimeline = useMessageOpening(
     session.channels,
     channel.id,
     sought,
     visit,
   );
+  // A message visit that opened as a thread returns to that thread.
+  const resolved = useRef(new Map<string, BestieRoute>());
+  if (navigation && exact && inTimeline === false)
+    resolved.current.set(navigation.entryId, {
+      ...exact,
+      threadRootId: exact.messageId,
+    });
   const thread =
     routed ??
-    (exact && inTimeline === false
-      ? { ...exact, threadRootId: exact.messageId }
+    (navigation && exact
+      ? resolved.current.get(navigation.entryId)
       : undefined);
   const revealKey =
     sought && inTimeline ? JSON.stringify([sought, visit]) : undefined;
@@ -305,6 +327,8 @@ export function BestieConversation({
         bestieRoute(target.route?.params) ??
         bestieMessageRoute(target.route?.params);
       const panel = bestieDetailRoute(target.route?.params);
+      // A message visit showed a thread only when its message was a reply:
+      // the closing tab's root differs from it. Otherwise it showed the chat.
       return (
         !!(
           thread &&
@@ -312,8 +336,11 @@ export function BestieConversation({
             (tab) =>
               tab.kind === "thread" &&
               tab.channelId === thread.channelId &&
-              (rootOfTab(tab) === thread.threadRootId ||
-                tab.messageId === thread.messageId),
+              (thread.threadRootId
+                ? rootOfTab(tab) === thread.threadRootId ||
+                  tab.messageId === thread.messageId
+                : tab.messageId === thread.messageId &&
+                  rootOfTab(tab) !== thread.messageId),
           )
         ) ||
         !!(
@@ -350,7 +377,12 @@ export function BestieConversation({
       communityOrigin: scope.slice(0, -65),
     });
     if (!target || !ownsCurrentVisit()) return false;
-    openFromTab(navigator, target, pane);
+    // A link into this DM is this page's own visit, not a Messages round trip.
+    const here =
+      target.kind === "conversation" && target.channelId === channel.id
+        ? bestieConversationTarget(target)
+        : undefined;
+    openFromTab(navigator, here ?? target, pane);
     return true;
   };
   const secondary = useConversationTabs({
@@ -489,14 +521,15 @@ export function BestieConversation({
     }
     state.leaveVisit();
     state.openThreadTab(channel.id, messageId, rootId, intent);
-    if (navigation?.target.kind === "page")
-      void navigator.open(
-        bestieThreadTarget(navigation.target, {
-          channelId: channel.id,
-          messageId,
-          threadRootId: rootId,
-        }),
-      );
+    if (navigation?.target.kind === "page") {
+      const target = bestieThreadTarget(navigation.target, {
+        channelId: channel.id,
+        messageId,
+        threadRootId: rootId,
+      });
+      opened.current = { target: targetKey(target) };
+      void navigator.open(target);
+    }
   };
   const inlineThread =
     inline?.channelId === channel.id && composes && !hasThreadTab(inline.inline)
@@ -775,8 +808,14 @@ export function BestieConversation({
                                   viewer={session.viewer}
                                   cached={!!channel.cached}
                                   revealMessageId={sent}
-                                  // Mount the list once, at the message, not while it is sought.
-                                  holding={!!sought && inTimeline === undefined}
+                                  // Mount the list once, at the message, not while it
+                                  // is sought. A thread's root is context: the list
+                                  // stays, and the thread keeps focus.
+                                  holding={
+                                    !!exact &&
+                                    !!sought &&
+                                    inTimeline === undefined
+                                  }
                                   inlineTarget={
                                     sought &&
                                     reveal &&
@@ -785,6 +824,9 @@ export function BestieConversation({
                                       ? {
                                           messageId: sought,
                                           signal: reveal.signal,
+                                          focus:
+                                            !routed &&
+                                            navigation?.focus !== "preserve",
                                         }
                                       : undefined
                                   }

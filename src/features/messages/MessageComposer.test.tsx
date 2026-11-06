@@ -4987,7 +4987,8 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     screen.getByRole("button", { name: "Model for Honey's next run" });
   // Writes the message and mentions an agent before any pick is made.
   const write = async (name: string, text: string) => {
-    await h.user.type(h.input(), text);
+    await h.user.click(h.input());
+    await h.user.paste(text);
     await h.user.click(screen.getByRole("button", { name }));
   };
   const send = async () => {

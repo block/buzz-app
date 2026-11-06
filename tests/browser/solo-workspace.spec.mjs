@@ -377,6 +377,94 @@ test.describe("Share access profiles", () => {
     await expect(agent).toHaveCount(0);
     await expect(share).toBeFocused();
   });
+  test("a profile reopened from Share access before its close returns keeps its opener", async ({
+    page,
+    app,
+  }) => {
+    app.serveProfile(teammate, { name: "Sam Rivera" });
+    await page.goto(app.origin);
+    await newChat(page);
+    await page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .locator(`[data-solo-channel-id="${id}"]`)
+      .click();
+    const conversation = page.getByRole("article", { name: "Conversation" });
+    const share = conversation.getByRole("button", {
+      name: /^Share access to /,
+    });
+    const actions = conversation.getByRole("button", {
+      name: "Chat actions",
+      exact: true,
+    });
+    const dialog = page.getByRole("dialog", {
+      name: "Share access",
+      exact: true,
+    });
+    const name = dialog.getByRole("button", {
+      name: /^Open profile for Sam Rivera/,
+    });
+    const tab = page.getByRole("tab", { name: "Sam Rivera", exact: true });
+    const entry = () =>
+      page.evaluate(() => history.state.buzzNavigationV1.entry);
+    const shareFromActions = async () => {
+      await actions.click();
+      await page
+        .getByRole("menuitem", { name: "Share access", exact: true })
+        .click();
+    };
+    for (const [openDialog, opener] of [
+      [() => share.click(), share],
+      [shareFromActions, actions],
+    ]) {
+      await openDialog();
+      await name.press("Enter");
+      await expect(tab).toBeFocused();
+      const closed = await entry();
+      // The close's native return lands a task or more later. Hold it so the
+      // reopen is queued while the navigator still shows the closed visit.
+      await page.evaluate(() => {
+        const go = history.go.bind(history);
+        const held = [];
+        history.go = (delta) => held.push(delta);
+        window.releaseReturn = () => {
+          history.go = go;
+          for (const delta of held) go(delta);
+          return held.length;
+        };
+      });
+      let held;
+      try {
+        await tab.press("Escape");
+        await expect(tab).toHaveCount(0);
+        await openDialog();
+        await name.press("Enter");
+        await expect(dialog).toHaveCount(0);
+        await expect(tab).toBeFocused();
+        expect((await entry()).id).toBe(closed.id);
+      } finally {
+        held = await page.evaluate(() => window.releaseReturn());
+      }
+      expect(held).toBe(1);
+      // The reopened profile takes a fresh visit and keeps its selection and
+      // focus, rather than the closed one's opener taking focus.
+      await expect
+        .poll(async () => {
+          const shown = await entry();
+          return shown.id !== closed.id && shown.target.detail?.target;
+        })
+        .toBe(closed.target.detail.target);
+      await expect(tab).toHaveAttribute("aria-selected", "true");
+      await expect(tab).toBeFocused();
+      // Closing it returns focus to the opener that reopened it.
+      const header = await opener.elementHandle();
+      await tab.press("Escape");
+      await expect(tab).toHaveCount(0);
+      await expect
+        .poll(() => header.evaluate((el) => el.isConnected))
+        .toBe(false);
+      await expect(opener).toBeFocused();
+    }
+  });
   test("a profile restored by Back or Forward returns focus only to its own opener", async ({
     page,
     app,

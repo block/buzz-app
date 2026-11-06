@@ -1666,7 +1666,18 @@ function ChannelWorkspace({
         } else navigation.complete({ status: "failed", reason: "unavailable" });
       }
       // Reselect it over the restored selection and give it its own visit.
-      if (reopen) open(reopen);
+      // A Solo opener that queued it recorded the retiring visit, so it takes
+      // the fresh one instead.
+      if (reopen && returned) {
+        open(reopen);
+        const opener = soloOpener.current;
+        if (opener?.visits.includes(returned.from)) {
+          const fresh = navigator.snapshot().entry.id;
+          opener.visits = opener.visits.map((visit) =>
+            visit === returned.from ? fresh : visit,
+          );
+        }
+      }
       if (pending && navigation.entryId !== pending.from) {
         dismissalReturn.current = undefined;
         if (targetKey(navigation.target) === pending.target) {
@@ -1760,6 +1771,7 @@ function ChannelWorkspace({
     currentId,
     panels,
     panelTrigger,
+    navigator,
   ]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
@@ -1997,7 +2009,9 @@ function ChannelWorkspace({
           select(channelId);
         open(next, fromThread);
         // Record the visit now showing the panel. Reopening the panel already
-        // shown pushes none, so the opener takes over the current visit.
+        // shown pushes none, so the opener takes over the current visit. A
+        // reopen queued behind a close's return holds the retiring visit until
+        // the return gives the panel its own.
         soloOpener.current =
           trigger && header && navigator && historyPanel(next)
             ? {

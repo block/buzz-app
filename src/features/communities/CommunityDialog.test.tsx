@@ -994,3 +994,52 @@ it("keeps a cancelled lookup's late profile refusal off the corrected address", 
   expect(await screen.findByText("https://open.example")).toBeVisible();
   expect(screen.queryByLabelText("Invite code")).not.toBeInTheDocument();
 });
+
+it.each([
+  [502, "Relay unreachable", true],
+  [500, "Local relay broker failed", true],
+  [503, "Community discovery failed", true],
+  [400, "Destination rejected", false],
+  [401, "Sign in required", false],
+  [403, "Membership required", false],
+])(
+  "preserves broker HTTP %s classification through the destination lookup",
+  async (status, message, transient) => {
+    let failed = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const route = String(url).split("/").at(-1);
+        if (route === "register") return Response.json({});
+        if (route === "info")
+          return failed
+            ? Response.json({ error: message }, { status })
+            : Response.json({ name: "Fixture", membershipRequired: true });
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <CommunityDialog
+        communities={lookupCommunities}
+        mode="join"
+        close={() => {}}
+      />,
+    );
+    const field = screen.getByLabelText("Community URL");
+    await user.type(field, "wss://quiet.example");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() =>
+      expect(field).toHaveAccessibleDescription(
+        transient
+          ? "Couldn’t reach quiet.example. Check the address, or try again."
+          : message,
+      ),
+    );
+    expect(field).toHaveValue("wss://quiet.example");
+    expect(api.inspectProfile).not.toHaveBeenCalled();
+    failed = false;
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByLabelText("Invite code")).toBeVisible();
+  },
+);

@@ -1882,6 +1882,61 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
+  it("catches up a window whose last head read is older than the replay, though its replay was continuous", async () => {
+    // The relay drops a live frame when its send buffer is full, with no
+    // notice. The replay starts 16 minutes before the drop, so it holds only
+    // what a head read in the last 15 minutes cannot have missed.
+    let clock = 1_700_000_000_000;
+    const h = reconnectHarness({ now: () => clock });
+    try {
+      const seen = message(h.alice, "c", "seen", 10);
+      await h.reconnect(seen);
+      h.read().respond(h.page("head", [seen], seen));
+      await flush();
+      expect(h.window().freshness).toBe("verified");
+      const lost = message(h.alice, "c", "frame the relay dropped", 20);
+      clock += 15 * 60_000 + 1;
+      await h.drop();
+      h.queries.length = 0;
+      await resume(h, [], true);
+      expect(h.window().freshness).toBe("cached");
+      h.read().respond(h.page("head", [lost, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, lost.id]);
+      expect(h.window().freshness).toBe("verified");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("a live batch refresh re-reads the head, so a later continuous reconnect needs no read", async () => {
+    let clock = 1_700_000_000_000;
+    const h = reconnectHarness({ now: () => clock });
+    try {
+      const seen = message(h.alice, "c", "seen", 10);
+      await h.reconnect(seen);
+      h.read().respond(h.page("head", [seen], seen));
+      await flush();
+      const lost = message(h.alice, "c", "frame the relay dropped", 20);
+      // The refresh re-sends the batch live-only: it reports nothing continuous.
+      clock += 15 * 60_000;
+      h.live.established("c");
+      await flush();
+      h.read().respond(h.page("head", [lost, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, lost.id]);
+      clock += 10 * 60_000;
+      await h.drop();
+      h.queries.length = 0;
+      await resume(h, [], true);
+      expect(channelReads(h)).toEqual([]);
+      expect(h.reads()).toHaveLength(0);
+      expect(h.window().freshness).toBe("verified");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
   it("catches up a window read before the first connection, though its replay was continuous", async () => {
     // Its rows never reached a live stream, so no replay can join them to it.
     const h = reconnectHarness();

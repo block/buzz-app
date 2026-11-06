@@ -1026,9 +1026,19 @@ top-level message and a membership notice keep it continuous. The broker
 reports no channel of a batch continuous when one of its channels is no longer
 current, because it drops that batch's untagged traffic.
 
-A retained window that was verified when the stream dropped, and a thread view
-that was settled then, skip the head, page and thread reads for such a
-channel: the replay already delivered every channel event since the drop,
+A batch of more than 10 channels sends its REQ live-only and replays through
+separate history routes, so at its EOSE it establishes only the channels no
+history route still replays. Each other channel establishes when its replay
+ends, with that replay's continuity: a combined replay counts a channel
+continuous only on the page where its paging ends below the limit, a split one
+by its own filter's count, and the same repairs apply. A replay that fails or
+is stopped establishes its channels at once with nothing continuous, so they
+catch up. A connection that drops before a channel's replay ends sets no cursor
+for it: the next connection resumes from the older cursor.
+
+A retained window that was verified when the stream dropped, with a head read
+started at most 15 minutes before the drop, and a thread view that was settled
+then, skip the head, page and thread reads for such a channel: the replay already delivered every channel event since the drop,
 including ones backdated within the resume lag, and the live stream had
 delivered everything before it. The window becomes verified at once, and a
 membership notice read that failed or was cut before the drop resumes (it reads
@@ -1052,8 +1062,14 @@ so a replay the limit cut can arrive with fewer events than the limit; and
 the relay drops a live frame without notice when the connection's send buffer
 is full (`try_send_ws_message`, `BUZZ_SEND_BUFFER`), most likely while batch
 replays fill it, so the live stream before a drop can have a gap that no replay
-covers. The live connection has that same gap with no reconnect at all; the fix
-belongs in the relay (end the subscription when it drops a frame). The count
+covers. The 15-minute head read age bounds that gap: a frame dropped before the
+latest head read is in that read, and one dropped after it is newer than the
+replay's start, unless its author backdated it by more than a minute. The live
+batch refresh re-sends each batch every 15 minutes with nothing continuous, so
+its head reads keep most windows within that age, and a reconnect then reads
+nothing. The live connection has that same gap between refreshes with no
+reconnect at all; the fix belongs in the relay (end the subscription when it
+drops a frame). The count
 also requires a relay that sends `CLOSED`, not `EOSE`, after a failed history
 read (block/buzz #8692).
 

@@ -91,9 +91,10 @@ type WindowState = {
    * replays its last minutes before catch-up; those rows are newer than any
    * gap, not overlap with it. */
   kept?: Set<string> | undefined;
-  /** The window was verified when the stream dropped and `kept` was taken:
-   * its rows reached the live stream then. A continuous replay of the channel
-   * closes the gap from them, so `resume` needs no read. */
+  /** The window was verified when the stream dropped and `kept` was taken,
+   * and a head read started at most `RESUME_READ_AGE` before: its rows reached
+   * the live stream then. A continuous replay of the channel closes the gap
+   * from them, so `resume` needs no read. */
   keptLive?: boolean | undefined;
   /** Relay membership notices, read apart from the pages (see `fillNotices`). */
   notices: Map<string, RelayEvent>;
@@ -148,6 +149,15 @@ const sameKeys = (a?: readonly string[], b?: readonly string[]) =>
     (a ?? []).every((key, index) => key === b?.[index]));
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
+/** A continuous replay starts `LIVE_RESUME_LAG` (16 minutes) before the drop,
+ * so it closes the gap only back to then. A live frame the relay dropped
+ * earlier (a full send buffer drops it without a notice) is not in it; only a
+ * head read after that frame brings it back. The live batch refresh reads each
+ * caught-up head about every 15 minutes. So a window resumes with no read only
+ * when a head read started at most this long before the drop; any other
+ * window catches up. The minute under the lag absorbs read latency and clock
+ * skew. */
+const RESUME_READ_AGE = 15 * 60_000;
 /** Channels one creator-proof filter names. Each has one creation, so a limit
  * of twice this, the relay's maximum, leaves room for strays; a filter that
  * reaches it proves only the channels whose creation arrived. */
@@ -310,6 +320,8 @@ export function createChannelStore(
   // Full cache clears. Profiles outlive access purges (which move `epoch`),
   // so only a clear or disposal fences a profile restore.
   let cleared = 0;
+  /** When the latest head read of each channel started (see `RESUME_READ_AGE`). */
+  const headReads = new Map<string, number>();
   let listAgain = false;
   // Epoch of the latest access revocation. When that revocation is what made a
   // full read stale, it interrupted rather than failed it: a pass is still owed.
@@ -959,9 +971,11 @@ export function createChannelStore(
       });
     // Head reads belong to session recovery; only manual pagination needs a
     // finite retry owner here.
+    const startedAt = now();
     const events = cursor
       ? await retryRead(read, settings.signal ?? new AbortController().signal)
       : await read();
+    if (!cursor) headReads.set(channelId, startedAt);
     return {
       events,
       page: parseWindow(channelId, cursor, transport.relayAuthor, events),
@@ -4256,7 +4270,10 @@ export function createChannelStore(
       for (const state of windows.values()) {
         if (!state.kept) {
           state.kept = rowIds(state);
-          state.keptLive = state.snapshot.freshness === "verified";
+          state.keptLive =
+            state.snapshot.freshness === "verified" &&
+            now() - (headReads.get(state.channelId) ?? -Infinity) <=
+              RESUME_READ_AGE;
         }
         setWindow(state, {
           freshness: "cached",

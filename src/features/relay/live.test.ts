@@ -1957,6 +1957,192 @@ it("resumes large live batches and their separate replay from the established cu
   }
 });
 
+describe("a joined batch over the replay batch size", () => {
+  const ids = Array.from({ length: 11 }, (_, i) => `channel-${i}`).sort();
+  const isReplay = (request: WireRequest) =>
+    scopeOf(request).length > 0 && request[2].limit === 500;
+  const channels = (h: ReturnType<typeof setup>) =>
+    h.callbacks.established.mock.calls.flatMap((call) =>
+      call[0] === undefined ? [] : [call],
+    );
+  async function eoseAll(socket: Socket) {
+    for (let i = 0; i < socket.requests().length; i++) {
+      const request = socket.requests()[i];
+      assert.exists(request);
+      await socket.receive(["EOSE", request[1]]);
+    }
+  }
+  /** The second connection with its live batch at EOSE, replay still open. */
+  async function reconnected(h: ReturnType<typeof setup>) {
+    age();
+    h.owner.update(ids, ids);
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    await eoseAll(h.first);
+    h.first.close();
+    const next = await rebuilt(h);
+    h.callbacks.established.mockClear();
+    for (const request of [...next.requests()])
+      if (!isReplay(request)) await next.receive(["EOSE", request[1]]);
+    const replay = next.requests().find(isReplay);
+    assert.exists(replay);
+    return { next, replay };
+  }
+
+  it("establishes each channel when its replay ends, with that replay's continuity", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      const { next, replay } = await reconnected(h);
+      expect(scopeOf(replay)).toEqual(ids);
+      // The live batch replays nothing, so its channels wait for the replay.
+      expect(channels(h)).toEqual([]);
+      await next.receive([
+        "EVENT",
+        replay[1],
+        message(h.key, "channel-1", "a reply", 1_700_002_000, [
+          ["e", "root", "", "reply"],
+        ]),
+      ]);
+      await next.receive([
+        "EVENT",
+        replay[1],
+        message(h.key, "channel-2", "a top-level message", 1_700_002_000),
+      ]);
+      await next.receive(["EOSE", replay[1]]);
+      expect(channels(h)).toEqual([
+        [ids, undefined, ids.filter((id) => id !== "channel-1")],
+      ]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("reports a combined replay continuous only for channels it finished on a page below the limit", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      const { next, replay } = await reconnected(h);
+      const now = Math.floor(Date.now() / 1000);
+      const author = keypair();
+      const held = message(
+        author,
+        "channel-2",
+        "sent in the outage",
+        now - 300,
+      );
+      // Newest first: the reaction is on this page, its target on the next.
+      await next.receive([
+        "EVENT",
+        replay[1],
+        signed(author, {
+          kind: 7,
+          content: "+",
+          created_at: now - 1,
+          tags: [
+            ["h", "channel-2"],
+            ["e", held.id],
+          ],
+        }),
+      ]);
+      for (let i = 0; i < 499; i++)
+        await next.receive([
+          "EVENT",
+          replay[1],
+          message(
+            author,
+            "channel-0",
+            `busy ${i}`,
+            now - 2 - Math.floor(i / 4),
+          ),
+        ]);
+      await next.receive(["EOSE", replay[1]]);
+      // channel-0 has 499 of the page's 500: its replay continues too.
+      const page = next.requests().find((r) => isReplay(r) && r[2].until);
+      assert.exists(page);
+      expect(channels(h)).toEqual([]);
+      await next.receive(["EVENT", page[1], held]);
+      await next.receive(["EOSE", page[1]]);
+      expect(channels(h)).toEqual([
+        [ids, undefined, ids.filter((id) => id !== "channel-2")],
+      ]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("does not report a channel continuous when the limit cut its replay", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      const { next, replay } = await reconnected(h);
+      const now = Math.floor(Date.now() / 1000);
+      for (let i = 0; i < 500; i++)
+        await next.receive([
+          "EVENT",
+          replay[1],
+          message(h.key, "channel-0", `busy ${i}`, now - 1 - Math.floor(i / 4)),
+        ]);
+      await next.receive(["EOSE", replay[1]]);
+      expect(channels(h)).toEqual([[["channel-0"]]]);
+      const page = next.requests().find((r) => isReplay(r) && r[2].until);
+      assert.exists(page);
+      await next.receive(["EOSE", page[1]]);
+      const rest = ids.slice(1);
+      expect(channels(h)).toEqual([[["channel-0"]], [rest, undefined, rest]]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("establishes a channel whose replay failed at once, to catch up", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      const { next, replay } = await reconnected(h);
+      await next.receive(["CLOSED", replay[1], "error: replay unavailable"]);
+      expect(channels(h)).toEqual([[ids]]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
+  it("keeps the earlier cursor of a channel whose replay a drop interrupted", async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    const h = setup([], undefined, 2048, () => 0.5);
+    try {
+      age();
+      h.owner.update(ids, ids);
+      await h.first.auth();
+      await vi.advanceTimersByTimeAsync(750);
+      await eoseAll(h.first);
+      const heard = Math.floor(Date.now() / 1000);
+      h.first.close();
+      const second = await rebuilt(h);
+      for (const request of [...second.requests()])
+        if (!isReplay(request)) await second.receive(["EOSE", request[1]]);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      // The drop comes before the replay's EOSE: this connection proved no gap.
+      second.close();
+      await vi.advanceTimersByTimeAsync(5000);
+      const third = h.sockets[2];
+      assert.exists(third);
+      await third.auth();
+      await vi.advanceTimersByTimeAsync(750);
+      for (const request of [...third.requests()])
+        if (!isReplay(request)) await third.receive(["EOSE", request[1]]);
+      const replay = third.requests().find(isReplay);
+      assert.exists(replay);
+      expect(replay[2]).toMatchObject({ since: heard - 960 });
+      h.callbacks.established.mockClear();
+      await third.receive(["EOSE", replay[1]]);
+      expect(channels(h)).toEqual([[ids, undefined, ids]]);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+});
+
 it("resumes a joined batch closed during its renewal from the source it kept", async () => {
   vi.useFakeTimers({ now: 1_700_000_000_000 });
   const h = setup([], undefined, undefined, () => 0.5);
@@ -5713,12 +5899,12 @@ it("catches up a live-only batch after a planned renewal", async () => {
     expect(h.callbacks.state.mock.calls.map(([state]) => state.status)).toEqual(
       ["connected", "connecting", "connected"],
     );
-    expect(h.callbacks.established).toHaveBeenCalledWith(
-      expect.arrayContaining(ids),
-    );
-    expect(h.callbacks.established).toHaveBeenCalledTimes(3);
+    // The batch's channels establish when their history replay ends.
+    expect(h.callbacks.established).toHaveBeenCalledTimes(2);
     for (let i = 0; i < second.requests().length; i++)
       await second.receive(["EOSE", second.requests()[i]?.[1]]);
+    expect(h.callbacks.established).toHaveBeenCalledTimes(3);
+    expect(h.callbacks.established).toHaveBeenLastCalledWith([...ids].sort());
   } finally {
     h.owner.dispose();
   }

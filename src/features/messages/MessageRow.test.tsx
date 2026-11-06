@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "../../../tests/popover-dom";
 import { StrictMode } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";

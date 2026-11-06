@@ -10,6 +10,7 @@ beforeEach(() => {
   );
   Object.defineProperty(HTMLElement.prototype, "showPopover", {
     configurable: true,
+    writable: true,
     value(this: HTMLElement) {
       this.style.display = "block";
     },

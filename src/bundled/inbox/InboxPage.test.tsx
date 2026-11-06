@@ -1,6 +1,7 @@
 const emptyPanels: never[] = [];
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 // @vitest-environment jsdom
+import "../../../tests/popover-dom";
 import "@testing-library/jest-dom/vitest";
 import { cloneElement, StrictMode, type ReactElement } from "react";
 import {

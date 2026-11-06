@@ -2286,6 +2286,9 @@ methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conve
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
+A tool registered with `placement: "send"` renders just before Send instead of
+in the tool row, and is hidden while a sent message is edited; any other
+`placement` fails registration.
 `conversation.format` returns the host's date labels, so plugin text reads like
 the message list: `itemTimestamp(seconds, { withTime })` for bylines ("9:05 AM",
 "Yesterday at 9:05 AM"), `dayGroupLabel(seconds)` for day dividers ("Today",

@@ -888,6 +888,13 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   macOS (inside the app's installed name, such as `Buzz Foundation.app`), with
   no setup or token. Without such a plugin there are no tools to
   offer; do not promise them.
+- **Settings → Plugins → Usage → Show today’s spend beside Send** adds your
+  agents’ estimated spend since local midnight next to Send. It counts the
+  sessions your agents ran on this computer, at published API prices unless a
+  harness records its own cost, and shows — for an agent whose cost isn’t
+  known. Hover or select it to see each agent; select an agent to open its
+  latest conversation. It starts off, only you see it, and it is saved on this
+  device. It is an estimate, not your bill.
 - **Settings → Plugins → GitHub → Links → Open GitHub links in Buzz** controls
   whether supported GitHub links and the linked-PR shortcut open in a side
   panel or your browser. It starts on and is saved on this device across all

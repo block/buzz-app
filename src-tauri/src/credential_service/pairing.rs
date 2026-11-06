@@ -438,23 +438,28 @@ impl Pairings {
         // Whatever ends the wait, even the caller hanging up, closes the prompt.
         let mut closing = Closing(self, id.clone(), false);
         let process = process().await;
-        // A removal during the lookup cancelled it: nothing was asked.
-        if !self
-            .state()
-            .pending
-            .as_ref()
-            .is_some_and(|(pending, ..)| *pending == id)
         {
-            return Err(unsaved());
+            // Asked under the lock removal and admission take, so no later
+            // request's Ask can precede this one's. `notify` only tells the
+            // page, never back into the pairings.
+            let state = self.state();
+            // A removal during the lookup cancelled it: nothing was asked.
+            if !state
+                .pending
+                .as_ref()
+                .is_some_and(|(pending, ..)| *pending == id)
+            {
+                return Err(unsaved());
+            }
+            closing.2 = true;
+            (self.notify)(Notice::Ask(Request {
+                id: id.clone(),
+                client: client.into(),
+                relay: relay.into(),
+                process,
+                expires_in: APPROVAL.as_secs(),
+            }));
         }
-        closing.2 = true;
-        (self.notify)(Notice::Ask(Request {
-            id: id.clone(),
-            client: client.into(),
-            relay: relay.into(),
-            process,
-            expires_in: APPROVAL.as_secs(),
-        }));
         match tokio::time::timeout(APPROVAL, answer).await {
             Ok(Ok(true)) => {}
             Ok(_) if !self.saved(relay)? => return Err(unsaved()),

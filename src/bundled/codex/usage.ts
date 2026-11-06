@@ -225,8 +225,12 @@ export async function readUsage(
   signal: AbortSignal,
 ): Promise<SessionUsage[]> {
   const { spawn } = host;
+  /** Threads last updated before `since`, still listed. */
+  const older = new Set<string>();
   const queue = await withServer(spawn, signal, async (rpc) => {
     const named = await list(rpc, { searchTerm: `· ${agent.name}` });
+    for (const thread of named)
+      if (thread.updatedAt * 1000 < since) older.add(thread.id);
     return Promise.all(
       named
         .filter((thread) => thread.updatedAt * 1000 >= since)
@@ -284,6 +288,12 @@ export async function readUsage(
     }
   };
   await Promise.all(Array.from({ length: READERS }, worker));
+  // A read from later, such as today's spend beside Send, keeps what one
+  // reaching further back, such as the Usage page's, found before it.
+  for (const id of older) {
+    const read = earlier.get(id);
+    if (read && !reads.has(id)) reads.set(id, read);
+  }
   agents.set(agent.key, reads);
   return found.sort((a, b) => b.lastAt - a.lastAt);
 }

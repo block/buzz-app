@@ -7,3 +7,4 @@ Estimates what your agents' Claude Code, Codex and goose sessions on this comput
 1. Open **Settings → Usage**, under Plugins.
 2. Choose **Last 7 days** or **Last 30 days**, and an agent or harness to narrow it down.
 3. Select a session to open its conversation, or an agent to open it in Agents.
+4. To keep an eye on it while you work, turn on **Show today’s spend beside Send**. Hover or select the amount to see each agent’s spend since midnight. Agents hosted by a provider or running on another device aren’t counted; the card says how many it leaves out.

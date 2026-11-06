@@ -13,6 +13,7 @@ import { AgentsContext } from "./react";
 import type { Agents } from "./service";
 import {
   LIVE_READ_MS,
+  STEP_READ_MS,
   TranscriptPanel,
   useLiveTranscript,
   withLatest,
@@ -144,15 +145,28 @@ it("never overlaps reads, and reads once more after one asked during it", async 
   expect(view.result.current.loading).toBe(false);
 });
 
-it("reads at once when the agent reports a step, only while working", async () => {
+it("reads for the agent's steps a second after a read, only while working", async () => {
   const { calls, view, steps, step } = setup();
   await settle(nth(calls, 0), "a");
   expect(steps.size).toBe(0);
   view.rerender({ key: "a", working: true });
-  await settle(nth(calls, 1), "b");
+  // A step during a slow read waits a second after it finishes.
   step();
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS));
+  await settle(nth(calls, 1), "b");
+  // Steps inside that second make one read.
+  step();
+  act(() => vi.advanceTimersByTime(STEP_READ_MS - 1));
+  step();
+  expect(calls).toHaveLength(2);
+  act(() => vi.advanceTimersByTime(1));
   expect(calls).toHaveLength(3);
   await settle(nth(calls, 2), "c");
+  // Well after a read, a step reads at once.
+  act(() => vi.advanceTimersByTime(STEP_READ_MS));
+  step();
+  expect(calls).toHaveLength(4);
+  await settle(nth(calls, 3), "d");
   view.rerender({ key: "a", working: false });
   expect(steps.size).toBe(0);
 });
@@ -189,6 +203,7 @@ it("waits while hidden to run a read queued during another", async () => {
   step();
   const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
   await settle(nth(calls, 0), "a");
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS * 3));
   expect(calls).toHaveLength(1);
   expect(view.result.current.loading).toBe(false);
   hidden.mockReturnValue(false);
@@ -295,11 +310,21 @@ it("swaps the latest turns over the end of the held transcript", () => {
   expect(withLatest(held, [])).toBe(held);
   // A turn it doesn't hold can't be placed.
   expect(withLatest(held, [turn("9")])).toBeUndefined();
+  // Nor can turns that would cut another session's.
+  const sessions = (id: string, sessionId: string) => ({
+    ...turn(id),
+    sessionId,
+  });
+  const two = { turns: [sessions("1", "A"), sessions("2", "B")] };
+  expect(withLatest(two, [sessions("1", "A")])).toBeUndefined();
+  expect(withLatest(two, [sessions("2", "B"), sessions("3", "B")])).toEqual({
+    turns: [sessions("1", "A"), sessions("2", "B"), sessions("3", "B")],
+  });
 });
 
 it("reads only the latest turns while working, and in full when they don't fit", async () => {
   const full: ((value: Transcript) => void)[] = [];
-  const latest: ((value: readonly TranscriptTurn[]) => void)[] = [];
+  const latest: ((value: readonly TranscriptTurn[] | undefined) => void)[] = [];
   const view = renderHook(
     ({ working }: { working: boolean }) =>
       useLiveTranscript({
@@ -334,4 +359,16 @@ it("reads only the latest turns while working, and in full when they don't fit",
   expect(full).toHaveLength(2);
   await act(async () => full[1]?.({ turns: [turn("9")] }));
   expect(view.result.current.shown.transcript?.turns).toEqual([turn("9")]);
+  // An unmatched latest read while hidden reads in full once shown.
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS));
+  expect(latest).toHaveLength(3);
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  await act(async () => latest[2]?.(undefined));
+  act(() => vi.advanceTimersByTime(LIVE_READ_MS * 3));
+  expect(full).toHaveLength(2);
+  expect(view.result.current.loading).toBe(false);
+  hidden.mockReturnValue(false);
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(full).toHaveLength(3);
+  expect(latest).toHaveLength(3);
 });

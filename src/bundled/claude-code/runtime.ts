@@ -22,6 +22,7 @@ import {
   unverifiedSynced,
 } from "../../features/agents/agent-config";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
@@ -621,12 +622,14 @@ export class ClaudeRuntime {
     );
   }
   /** The latest whole turns of a conversation's saved session, or undefined
-   * when it has none to read that way. */
+   * when it has none to read that way. Its sessions' prompts are shown
+   * once: not again on a session whose earlier turns `held` keeps. */
   async latestTurns(
     conversation: Conversation,
     workspace: string,
     working: boolean,
     signal: AbortSignal,
+    held: readonly TranscriptTurn[],
   ) {
     if (await this.inspect?.(conversation.agent)) return undefined;
     const turns = await readLatestTurns(
@@ -637,7 +640,16 @@ export class ClaudeRuntime {
       signal,
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
     );
-    return turns && this.prompts(conversation.agent).shown(turns);
+    if (!turns) return undefined;
+    const at = held.findIndex((turn) => turn.turnId === turns[0]?.turnId);
+    const kept = new Set(
+      held.slice(0, Math.max(at, 0)).map((t) => t.sessionId),
+    );
+    return this.prompts(conversation.agent)
+      .shown(turns)
+      .map((turn, index) =>
+        kept.has(turn.sessionId) ? (turns[index] ?? turn) : turn,
+      );
   }
   /** What each of the agent's sessions started with. */
   private prompts(agent: AgentKey) {

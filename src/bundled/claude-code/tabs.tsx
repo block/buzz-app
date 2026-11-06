@@ -856,10 +856,11 @@ export function createTabs({
         read={(signal) =>
           runtime.transcript(conversation, workspace, working, signal)
         }
-        readLatest={(signal) =>
-          runtime.latestTurns(conversation, workspace, working, signal)
+        readLatest={(signal, held) =>
+          runtime.latestTurns(conversation, workspace, working, signal, held)
         }
         readKey={`${conversation.key}\u0000${workspace}`}
+        readAgain={conversation.sessionId ?? ""}
         working={working}
         reading="Reading the Claude session…"
         failed="Could not read the Claude session"
@@ -1015,7 +1016,9 @@ export function createTabs({
             <TranscriptView
               key={open.key}
               agent={agent}
-              conversation={open}
+              conversation={
+                conversations.find((item) => item.key === open.key) ?? open
+              }
               working={busy.get(open.key) ?? false}
             />
           </PanelSubview>

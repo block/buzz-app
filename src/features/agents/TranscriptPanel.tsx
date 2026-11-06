@@ -19,6 +19,8 @@ import type { AgentViewProps } from "./service";
 /** How long after a read an open transcript is read again while its agent
  * works. */
 export const LIVE_READ_MS = 2500;
+/** How long after a read a step the agent reports reads again. */
+export const STEP_READ_MS = 1000;
 
 type Shown<T> = Readonly<{
   key: string;
@@ -32,7 +34,8 @@ const either = (a: Kind | undefined, b: Kind): Kind =>
   a === "full" || b === "full" ? "full" : "latest";
 
 /** `held` with `turns` over its end, from the held turn the first of them
- * is; undefined when it holds no such turn. */
+ * is; undefined when it holds no such turn, or the turns it would replace
+ * hold a session `turns` don't. */
 export function withLatest<T extends Transcript>(
   held: T,
   turns: readonly TranscriptTurn[],
@@ -40,15 +43,17 @@ export function withLatest<T extends Transcript>(
   const first = turns[0];
   if (!first) return held;
   const at = held.turns.findIndex((turn) => turn.turnId === first.turnId);
-  return at < 0
-    ? undefined
-    : { ...held, turns: [...held.turns.slice(0, at), ...turns] };
+  if (at < 0) return undefined;
+  const sessions = new Set(turns.map((turn) => turn.sessionId));
+  return held.turns.slice(at).every((turn) => sessions.has(turn.sessionId))
+    ? { ...held, turns: [...held.turns.slice(0, at), ...turns] }
+    : undefined;
 }
 
 /** `read` for `key`: in full on open, on `refresh`, and when `again` or
  * `working` changes; while working, `readLatest` (or `read` without it)
- * {@link LIVE_READ_MS} after each read finishes and on each step the agent
- * reports. Latest turns that don't continue the held transcript read it in
+ * {@link LIVE_READ_MS} after each read finishes, and on the steps the agent
+ * reports, no sooner than {@link STEP_READ_MS} after one. Latest turns that don't continue the held transcript read it in
  * full. Automatic reads wait while the window is hidden and run once it
  * shows. One read runs at a time; asking during one reads once more after
  * it, and a change of `again` replaces it. The last result for `key` stays
@@ -63,7 +68,10 @@ export function useLiveTranscript<T extends Transcript>({
 }: {
   read: (signal: AbortSignal) => Promise<T | undefined>;
   readLatest?:
-    | ((signal: AbortSignal) => Promise<readonly TranscriptTurn[] | undefined>)
+    | ((
+        signal: AbortSignal,
+        held: readonly TranscriptTurn[],
+      ) => Promise<readonly TranscriptTurn[] | undefined>)
     | undefined;
   key: string;
   again: string;
@@ -80,66 +88,101 @@ export function useLiveTranscript<T extends Transcript>({
     { key: string; again: string; abort: AbortController } | undefined
   >(undefined);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const stepTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** When the last read finished. */
+  const finished = useRef(Number.NEGATIVE_INFINITY);
+  /** A step was reported during the running read. */
+  const stepped = useRef(false);
   /** Asked for during the running read. */
   const queued = useRef<Kind>(undefined);
   /** Asked for while the window was hidden. */
   const owed = useRef<Kind>(undefined);
   /** Starts a read, or queues one; `auto` waits for the window to show.
    * Returns whether a read started. */
-  const request = useCallback((auto: boolean, kind: Kind = "full"): boolean => {
-    if (auto && document.hidden) {
-      owed.current = either(owed.current, kind);
-      return false;
-    }
-    const { read, readLatest, key, again } = latest.current;
-    const current = running.current;
-    if (current?.key === key && current.again === again) {
-      queued.current = either(queued.current, kind);
-      return false;
-    }
-    current?.abort.abort();
-    clearTimeout(timer.current);
-    const abort = new AbortController();
-    running.current = { key, again, abort };
-    queued.current = undefined;
-    setLoading(true);
-    const prior =
-      held.current.key === key ? held.current.transcript : undefined;
-    const reading =
-      kind === "latest" && readLatest && prior
-        ? readLatest(abort.signal).then((turns) =>
-            turns ? withLatest(prior, turns) : undefined,
-          )
-        : read(abort.signal).then((transcript) => transcript ?? null);
-    const settle = (next: Omit<Shown<T>, "key">) => {
-      if (abort.signal.aborted) return;
-      running.current = undefined;
-      const before = held.current;
-      held.current =
-        next.error !== undefined && before.key === key
-          ? { ...before, error: next.error }
-          : { key, ...next };
-      setShown(held.current);
-      if (queued.current && request(true, queued.current)) return;
-      setLoading(false);
-      if (latest.current.working)
-        timer.current = setTimeout(() => request(true, "latest"), LIVE_READ_MS);
-    };
-    reading.then(
-      (transcript) => {
+  const request = useCallback(
+    (auto: boolean, kind: Kind | "step" = "full"): boolean => {
+      /** A reported step reads the latest turns, combining steps until
+       * {@link STEP_READ_MS} after the last read finished. */
+      const step = () => {
+        if (running.current) {
+          stepped.current = true;
+          return;
+        }
+        stepped.current = false;
+        const wait = finished.current + STEP_READ_MS - Date.now();
+        if (wait <= 0) return void request(true, "latest");
+        stepTimer.current ??= setTimeout(() => {
+          stepTimer.current = undefined;
+          request(true, "latest");
+        }, wait);
+      };
+      if (kind === "step") {
+        step();
+        return false;
+      }
+      if (auto && document.hidden) {
+        owed.current = either(owed.current, kind);
+        return false;
+      }
+      const { read, readLatest, key, again } = latest.current;
+      const current = running.current;
+      if (current?.key === key && current.again === again) {
+        queued.current = either(queued.current, kind);
+        return false;
+      }
+      current?.abort.abort();
+      clearTimeout(timer.current);
+      clearTimeout(stepTimer.current);
+      stepTimer.current = undefined;
+      stepped.current = false;
+      const abort = new AbortController();
+      running.current = { key, again, abort };
+      queued.current = undefined;
+      setLoading(true);
+      const prior =
+        held.current.key === key ? held.current.transcript : undefined;
+      const reading =
+        kind === "latest" && readLatest && prior
+          ? readLatest(abort.signal, prior.turns).then((turns) =>
+              turns ? withLatest(prior, turns) : undefined,
+            )
+          : read(abort.signal).then((transcript) => transcript ?? null);
+      const settle = (next: Omit<Shown<T>, "key">) => {
         if (abort.signal.aborted) return;
-        if (transcript !== undefined) return settle({ transcript });
-        // The latest turns don't continue what it holds.
         running.current = undefined;
-        request(false);
-      },
-      (error: unknown) =>
-        settle({
-          error: error instanceof Error ? error.message : String(error),
-        }),
-    );
-    return true;
-  }, []);
+        finished.current = Date.now();
+        const before = held.current;
+        held.current =
+          next.error !== undefined && before.key === key
+            ? { ...before, error: next.error }
+            : { key, ...next };
+        setShown(held.current);
+        if (queued.current && request(true, queued.current)) return;
+        setLoading(false);
+        if (stepped.current) step();
+        if (latest.current.working)
+          timer.current = setTimeout(
+            () => request(true, "latest"),
+            LIVE_READ_MS,
+          );
+      };
+      reading.then(
+        (transcript) => {
+          if (abort.signal.aborted) return;
+          if (transcript !== undefined) return settle({ transcript });
+          // The latest turns don't continue what it holds.
+          running.current = undefined;
+          if (!request(true)) setLoading(false);
+        },
+        (error: unknown) =>
+          settle({
+            error: error instanceof Error ? error.message : String(error),
+          }),
+      );
+      return true;
+    },
+    [],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new key, new read inputs, or a turn starting or ending reads again.
   useEffect(() => void request(true), [key, again, working]);
   useEffect(() => {
@@ -153,13 +196,19 @@ export function useLiveTranscript<T extends Transcript>({
     return () => {
       document.removeEventListener("visibilitychange", shows);
       clearTimeout(timer.current);
+      clearTimeout(stepTimer.current);
       running.current?.abort.abort();
       running.current = undefined;
     };
   }, [request]);
   useEffect(() => {
-    if (!working) return clearTimeout(timer.current);
-    return agents?.subscribeSteps(agentKey, () => request(true, "latest"));
+    if (!working) {
+      clearTimeout(timer.current);
+      clearTimeout(stepTimer.current);
+      stepTimer.current = undefined;
+      return;
+    }
+    return agents?.subscribeSteps(agentKey, () => request(true, "step"));
   }, [working, agents, agentKey, request]);
   return {
     shown: shown.key === key ? shown : ({ key } as Shown<T>),
@@ -189,6 +238,7 @@ export function TranscriptPanel<T extends Transcript>({
    * works; undefined when it can't. Without it, those read in full. */
   readLatest?: (
     signal: AbortSignal,
+    held: readonly TranscriptTurn[],
   ) => Promise<readonly TranscriptTurn[] | undefined>;
   /** What `read` reads; another key never shows this one's result. */
   readKey: string;

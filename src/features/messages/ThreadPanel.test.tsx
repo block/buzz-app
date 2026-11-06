@@ -996,7 +996,7 @@ it("does not count an own nested reply sent while reading above as a new message
   h.snapshot.replies = [
     parent,
     own,
-    { ...row, id: "live", content: "live", createdAt: 4 },
+    { ...row, id: "live", content: "live", authorId: viewer, createdAt: 4 },
   ];
   h.render();
   expect(screen.getByRole("button", { name: "1 new message" })).toBeVisible();

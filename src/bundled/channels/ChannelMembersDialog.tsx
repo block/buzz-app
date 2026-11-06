@@ -1,4 +1,5 @@
 import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
+import { useHeaderChannel } from "../../features/relay/listed-channel";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -447,14 +448,7 @@ export function ChannelMembersButton({
   const open = presentation ? presentation.open : localOpen;
   const setOpen = presentation ? presentation.onOpenChange : setLocalOpen;
   const trigger = useRef<HTMLButtonElement>(null);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
-  );
-  const channel =
-    list.channels.find((item) => item.id === channelId) ??
-    session.channels.get?.(channelId);
+  const access = useHeaderChannel(session.channels, channelId, memberAccess);
   return (
     <>
       {conversationName !== undefined ? (
@@ -463,7 +457,7 @@ export function ChannelMembersButton({
           session={session}
           channelId={channelId}
           name={conversationName}
-          access={memberAccess(channel)}
+          access={access}
           detail={owner && soloOwnerLabel(owner)}
           aria-expanded={open}
           onClick={() => setOpen(true)}

@@ -6,6 +6,7 @@ import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockPreference } from "../../shared/clock-preference";
+import { messageActionRequests } from "./action-requests";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -486,6 +487,33 @@ function MessageRowContent({
     actions.includes(openAction.action)
       ? openAction.action
       : undefined;
+  // A handed-off action (from a pop-out window) for this exact row: the exact
+  // contribution instance opens as if chosen here; a menu item's menu opens.
+  const [menuOpenRequest, setMenuOpenRequest] = useState(0);
+  const handedOff = useSyncExternalStore(
+    messageActionRequests.subscribe,
+    messageActionRequests.snapshot,
+    () => undefined,
+  );
+  useEffect(() => {
+    if (
+      !handedOff ||
+      !scope ||
+      handedOff.scope !== scope ||
+      handedOff.channelId !== row.channelId ||
+      handedOff.messageId !== row.id
+    )
+      return;
+    const action = actions.find(
+      (entry) =>
+        entry.key === handedOff.key && entry.revision === handedOff.revision,
+    );
+    const taken = messageActionRequests.take(scope, row.channelId, row.id);
+    if (!taken || !action) return;
+    if (action.placement === "menu") setMenuOpenRequest((n) => n + 1);
+    else if (session)
+      setOpenAction({ action, session, messageId: row.id });
+  }, [handedOff, scope, session, row.channelId, row.id, actions]);
   useEffect(() => {
     if (openAction && !opened) setOpenAction(undefined);
   }, [openAction, opened]);
@@ -774,6 +802,7 @@ function MessageRowContent({
     <MessageActionBar
       rowRef={rowRef}
       menuTriggerRef={menuTrigger}
+      openRequest={menuOpenRequest}
       messageId={row.id}
       onForward={forward ? () => forward(row) : undefined}
       onReply={

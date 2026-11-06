@@ -2,6 +2,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -57,6 +58,8 @@ type Props = {
   /** Menu items rendered above the built-in actions. */
   leadingItems?: ReactNode;
   overflowItems?: ReactNode;
+  /** Increment to open the menu from outside, as a handed-off action does. */
+  openRequest?: number | undefined;
 };
 
 export function MessageActionBar(props: Props) {
@@ -103,8 +106,12 @@ function MessageActionBarControls({
   messageId,
   menuTriggerRef,
   rowRef,
+  openRequest,
 }: Props) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (openRequest) setOpen(true);
+  }, [openRequest]);
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingActionBar(

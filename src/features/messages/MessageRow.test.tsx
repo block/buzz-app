@@ -43,6 +43,8 @@ import {
 } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
+import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { messageActionRequests } from "./action-requests";
 import { MessageRow } from "./MessageRow";
 import { ReplySummary } from "./ReplySummary";
 import { setClockPreference } from "../../shared/clock-preference";
@@ -2969,6 +2971,117 @@ it.each(["menu", "toolbar", "coordination"] as const)(
     }
   },
 );
+
+it("opens a handed-off plugin action on the row that shows that message: a dialog directly, a menu action's menu", async () => {
+  const dialog = {
+    id: "remind",
+    title: "Remind",
+    key: "test.plugin/remind",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    component: () => <span>action dialog</span>,
+  };
+  const menu = {
+    ...dialog,
+    id: "solo",
+    title: "Start Solo chat",
+    key: "test.plugin/solo",
+    placement: "menu" as const,
+    component: () => <MenuItem>Start Solo chat</MenuItem>,
+  };
+  const actions = [dialog, menu];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+    emoji: { snapshot: () => none, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const scope = "wss://relay:viewer";
+  try {
+    renderDom(
+      <MessageRow
+        row={{ ...row, replyCount: 0 }}
+        session={session}
+        scope={scope}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: empty,
+          inline: empty,
+          actions: { snapshot: () => actions, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    const base = { scope, channelId: row.channelId, messageId: row.id };
+    // Another connection's or message's request is not this row's.
+    act(() =>
+      messageActionRequests.request({
+        ...base,
+        scope: "other",
+        key: dialog.key,
+        revision: "one",
+      }),
+    );
+    expect(screen.queryByText("action dialog")).toBeNull();
+    expect(messageActionRequests.snapshot()).toBeDefined();
+    messageActionRequests.clear();
+    // A stale revision is consumed without opening anything.
+    act(() =>
+      messageActionRequests.request({
+        ...base,
+        key: dialog.key,
+        revision: "two",
+      }),
+    );
+    expect(screen.queryByText("action dialog")).toBeNull();
+    expect(messageActionRequests.snapshot()).toBeUndefined();
+    act(() =>
+      messageActionRequests.request({
+        ...base,
+        key: menu.key,
+        revision: "one",
+      }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+    ).toBeInTheDocument();
+    expect(messageActionRequests.snapshot()).toBeUndefined();
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    act(() =>
+      messageActionRequests.request({
+        ...base,
+        key: dialog.key,
+        revision: "one",
+      }),
+    );
+    expect(await screen.findByText("action dialog")).toBeInTheDocument();
+    expect(messageActionRequests.snapshot()).toBeUndefined();
+  } finally {
+    messageActionRequests.clear();
+    cleanup();
+  }
+});
 
 it.each(["timeline", "thread", "continuation"] as const)(
   "right-aligns own %s rows and keeps only the last grouped avatar",

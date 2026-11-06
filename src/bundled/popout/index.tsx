@@ -7,6 +7,7 @@ import {
   type PopoutWindows,
 } from "../../features/popout/window";
 import type { ChannelMessage } from "../../features/relay/contracts";
+import { messageActionRequests } from "../../features/messages/action-requests";
 import { ArrowSquareOutIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
@@ -71,24 +72,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
     openLink,
     agents: ctx.agents,
     actions: ctx.conversation.actions,
-    // Interim handoff: main shows the message and names the action to pick
-    // there; the companion never runs a plugin action itself.
+    // Handoff: main shows the message, then that row opens the exact action
+    // instance (a dialog action opens; a menu action's menu opens with it).
+    // The companion never runs a plugin action itself.
     handoff: (target, messageId, action) => {
       const open = messageTarget(target, messageId);
-      if (!open) return;
+      const scope = ctx.relay.snapshot().scope;
+      if (!open || !scope) return;
       void ctx.navigation.open(open).then((result) => {
-        if (result.status === "opened")
-          windows.notices.push(
-            `Choose “${action.title}” from this message's menu.`,
-          );
+        if (result.status !== "opened") return;
+        if (ctx.relay.snapshot().scope !== scope) return;
+        messageActionRequests.request({
+          scope,
+          channelId: target.channelId,
+          messageId,
+          key: action.key,
+          revision: action.revision,
+        });
       });
     },
     // The agent's activity view opens beside the conversation once main
     // shows it, through the existing panel opener with this channel context.
     openActivity: (activityTarget, target) => {
       const open = messageTarget(target, target.threadRootId);
-      if (!open) return;
-      void ctx.navigation.open(open).then(() => {
+      const scope = ctx.relay.snapshot().scope;
+      if (!open || !scope) return;
+      void ctx.navigation.open(open).then((result) => {
+        // Only a navigation that opened, in the same connection it started
+        // from, continues into the panel; a failure or a switch does not.
+        if (result.status !== "opened") return;
+        if (ctx.relay.snapshot().scope !== scope) return;
         ctx.panels.requestOpen({
           target: activityTarget,
           channelId: target.channelId,

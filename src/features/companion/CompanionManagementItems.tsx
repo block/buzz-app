@@ -98,7 +98,7 @@ export function CompanionManagementItems({
           <MenuIcon>
             <ArrowSquareOutIcon size={14} />
           </MenuIcon>
-          {action.title} in main window
+          {action.title}
         </MenuItem>
       ))}
       {management.canReport && (

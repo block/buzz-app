@@ -88,7 +88,9 @@ export function createPopoutWindows(
     handoff?: (
       target: PopoutTarget,
       messageId: string,
-      action: import("../conversation/contracts").MessageAction,
+      action: import("../../plugins/contributions").Contribution<
+        import("../conversation/contracts").MessageAction
+      >,
     ) => void;
     /** Open an agent's activity view beside this conversation in main. */
     openActivity?: (activityTarget: string, target: PopoutTarget) => void;

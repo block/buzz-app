@@ -5,7 +5,9 @@ import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { MinusIcon, PlusIcon } from "../../shared/design-system/icons";
 import styles from "./ChannelDurationField.module.css";
 
-const durations = [86400, 604800, 1209600];
+/** The temporary lifetimes a person can choose, shortest first. */
+export const CHANNEL_DURATIONS = [86400, 604800, 1209600];
+const durations = CHANNEL_DURATIONS;
 
 /** Exact temporary lifetime in its largest whole unit, such as "7 days". */
 export function channelDurationLabel(ttlSeconds: number) {
@@ -29,7 +31,6 @@ export function ChannelDurationField({
   disabled = false,
   error,
   label: fieldLabel,
-  description,
   onChange,
 }: {
   temporary: boolean;
@@ -37,7 +38,6 @@ export function ChannelDurationField({
   disabled?: boolean;
   error?: string | undefined;
   label?: string;
-  description?: string;
   onChange(ttlSeconds: number | undefined): void;
 }) {
   const reduceMotion = useReducedMotion();
@@ -56,7 +56,6 @@ export function ChannelDurationField({
     <Field
       label={fieldLabel ?? "Duration"}
       labelVisibility={fieldLabel ? "visible" : "hidden"}
-      description={description}
       error={error}
     >
       <RadioGroup

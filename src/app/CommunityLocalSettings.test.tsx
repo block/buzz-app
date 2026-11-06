@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { useSyncExternalStore } from "react";
 import { Context } from "@deepseek-ai/cordis";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
@@ -160,20 +160,47 @@ it("copies the exact community URL, keeps it selectable on clipboard failure, an
 it("saves the lifetime new Solo chats start with for this community and account only", async () => {
   const { user } = await setup();
   const scope = `${origin}:${viewer}`;
-  const lifetime = screen.getByRole("radiogroup", { name: "New Solo chats" });
-  expect(
-    within(lifetime).getByRole("radio", { name: /^Ongoing/ }),
-  ).toBeChecked();
-  await user.click(within(lifetime).getByRole("radio", { name: /^Temporary/ }));
+  const lifetime = () =>
+    screen.getByRole("combobox", { name: "New Solo chats" });
+  const choose = async (name: RegExp) => {
+    await user.click(lifetime());
+    await user.click(await screen.findByRole("option", { name }));
+  };
+  expect(lifetime()).toHaveTextContent("Ongoing");
+  await choose(/^Temporary, 7 days/);
   expect(readDefaultLifetime(scope)).toBe(604800);
+  expect(lifetime()).toHaveTextContent("Temporary, 7 days");
   expect(readDefaultLifetime(`${origin}:${"b".repeat(64)}`)).toBeUndefined();
-  await user.click(
-    within(lifetime).getByRole("button", { name: "Increase duration" }),
-  );
+  await choose(/^Temporary, 2 weeks/);
   expect(readDefaultLifetime(scope)).toBe(1209600);
-  await user.click(within(lifetime).getByRole("radio", { name: /^Ongoing/ }));
+  await choose(/^Ongoing/);
   expect(readDefaultLifetime(scope)).toBeUndefined();
-  // Back to Temporary keeps the duration chosen before.
-  await user.click(within(lifetime).getByRole("radio", { name: /^Temporary/ }));
-  expect(readDefaultLifetime(scope)).toBe(1209600);
+});
+
+it("says so when this device can't save the lifetime, and keeps the saved one", async () => {
+  const { user } = await setup();
+  const scope = `${origin}:${viewer}`;
+  const setItem = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("quota");
+    });
+  await user.click(screen.getByRole("combobox", { name: "New Solo chats" }));
+  await user.click(
+    await screen.findByRole("option", { name: /^Temporary, 1 day/ }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn’t save this on this device. Try again.",
+  );
+  expect(readDefaultLifetime(scope)).toBeUndefined();
+  expect(
+    screen.getByRole("combobox", { name: "New Solo chats" }),
+  ).toHaveTextContent("Ongoing");
+  setItem.mockRestore();
+  await user.click(screen.getByRole("combobox", { name: "New Solo chats" }));
+  await user.click(
+    await screen.findByRole("option", { name: /^Temporary, 1 day/ }),
+  );
+  expect(readDefaultLifetime(scope)).toBe(86400);
+  expect(screen.queryByRole("alert")).toBeNull();
 });

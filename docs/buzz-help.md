@@ -276,6 +276,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   notice ends this recovery option.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.
+  New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
+  which archives the chat after a set time without activity. To start every new
+  chat temporary, open the community's **Settings → Local settings** and choose
+  a lifetime under **New Solo chats**: Ongoing, or Temporary after 1 day, 7
+  days or 2 weeks. It saves at once and applies on this device to this
+  community and account only. It covers chats started with **New chat**; a
+  chat's own settings can still choose another lifetime, and existing chats do
+  not change.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or

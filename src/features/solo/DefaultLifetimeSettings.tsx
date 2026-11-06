@@ -1,29 +1,53 @@
 import { useState } from "react";
-import { ChannelDurationField } from "../../bundled/channels/ChannelDurationField";
-import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/channel-writes";
+import {
+  CHANNEL_DURATIONS,
+  channelDurationLabel,
+} from "../../bundled/channels/ChannelDurationField";
+import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { useDefaultLifetime, writeDefaultLifetime } from "./default-lifetime";
 
-/** The lifetime new Solo chats start with, saved as soon as it changes. */
+/** The lifetime New chat starts Solo chats with, saved as soon as it
+ * changes. The same choices as a chat's own lifetime setting. */
 export function DefaultLifetimeSettings({ scope }: { scope: string }) {
   const ttlSeconds = useDefaultLifetime(scope);
-  // The duration shown while Ongoing, so switching back keeps it.
-  const [duration, setDuration] = useState(
-    ttlSeconds ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
-  );
   const [error, setError] = useState("");
   return (
-    <SettingsGroup layout="form">
-      <ChannelDurationField
+    <SettingsGroup>
+      <Select
+        variant="preference"
         label="New Solo chats"
-        description="Each chat you start begins with this lifetime. Change one chat’s lifetime in its settings."
-        temporary={ttlSeconds !== undefined}
-        ttlSeconds={ttlSeconds ?? duration}
+        description="Chats you start with New chat in this community begin with this lifetime. You can change it in a chat’s settings."
+        value={ttlSeconds === undefined ? "ongoing" : String(ttlSeconds)}
+        valueLabel={
+          ttlSeconds === undefined
+            ? "Ongoing"
+            : `Temporary, ${channelDurationLabel(ttlSeconds)}`
+        }
         error={error || undefined}
-        onChange={(next) => {
-          if (next !== undefined) setDuration(next);
+        groups={[
+          {
+            label: "",
+            options: [
+              {
+                value: "ongoing",
+                label: "Ongoing",
+                description: "No automatic archive.",
+              },
+              ...CHANNEL_DURATIONS.map((seconds) => ({
+                value: String(seconds),
+                label: `Temporary, ${channelDurationLabel(seconds)}`,
+                description: `Archives after ${channelDurationLabel(seconds)} without activity.`,
+              })),
+            ],
+          },
+        ]}
+        onValueChange={(value) => {
           setError(
-            writeDefaultLifetime(scope, next)
+            writeDefaultLifetime(
+              scope,
+              value === "ongoing" ? undefined : Number(value),
+            )
               ? ""
               : "Couldn’t save this on this device. Try again.",
           );

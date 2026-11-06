@@ -712,7 +712,6 @@ it("a refused start leaves New chat alone while its settings are being edited", 
     expect(readView("test", "solo:settings", null)).toEqual({
       canvas: "",
       name: "",
-      ttlSeconds: null,
     }),
   );
   expect(screen.getByRole("textbox")).not.toHaveTextContent("Audit the flow");
@@ -1154,20 +1153,27 @@ it("a new Solo chat starts with the default lifetime unless its settings chose a
   expect(
     screen.getByText("after 1 day", { selector: "strong" }),
   ).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  // Following the default saves no choice in the draft.
-  expect(readView("test", "solo:settings", null)).toBeNull();
+  // Saving other settings with the lifetime unchanged keeps following the
+  // default, even after it changes.
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(readView("test", "solo:settings", null)).not.toHaveProperty(
+    "ttlSeconds",
+  );
+  writeDefaultLifetime("test", 604800);
   await user.type(screen.getByRole("textbox"), "First");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  expect(f.channelWrites.create.mock.calls[0]?.[2]).toBe(86400);
+  expect(f.channelWrites.create.mock.calls[0]?.[2]).toBe(604800);
   mounted.unmount();
   render(<SoloDraft session={f.session} scope="test" onStarted={started} />);
   await user.click(screen.getByRole("button", { name: "Chat settings" }));
   await user.click(await screen.findByRole("radio", { name: /^Ongoing/ }));
   await user.click(screen.getByRole("button", { name: "Save changes" }));
-  expect(readView("test", "solo:settings", null)).toMatchObject({
-    ttlSeconds: null,
+  // A chosen Ongoing saves no lifetime, which older builds read as Ongoing.
+  expect(readView("test", "solo:settings", null)).toEqual({
+    canvas: "",
+    name: "",
+    lifetimeChosen: true,
   });
   await user.type(screen.getByRole("textbox"), "Second");
   await user.click(screen.getByRole("button", { name: "Send message" }));

@@ -1,21 +1,16 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { detailsDraftErrors } from "../relay/channel-details-protocol";
+import { CHANNEL_DURATIONS } from "../../bundled/channels/ChannelDurationField";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
 
 // Saved on this device for the account and community (the view scope).
 const KEY = "solo:default-lifetime";
 
 /** The lifetime new Solo chats start with: seconds without activity before
- * the chat archives, or undefined for ongoing. A malformed value is ongoing. */
+ * the chat archives, or undefined for ongoing. Only the durations a person
+ * can choose are read; anything else is ongoing. */
 export function readDefaultLifetime(scope: string): number | undefined {
   const saved = readView<unknown>(scope, KEY, null);
-  return typeof saved === "number" &&
-    !detailsDraftErrors({
-      name: "Chat",
-      description: "",
-      visibility: "private",
-      ttlSeconds: saved,
-    }).lifetime
+  return typeof saved === "number" && CHANNEL_DURATIONS.includes(saved)
     ? saved
     : undefined;
 }
@@ -29,15 +24,14 @@ export function writeDefaultLifetime(
   return writeView(scope, KEY, ttlSeconds ?? null);
 }
 
-/** A draft's lifetime. A draft saves `null` for a chosen Ongoing; with no
- * choice saved it follows the default. */
+/** A draft's lifetime: the one its settings chose, else the default. */
 export function draftLifetime(
   scope: string,
-  saved: number | null | undefined,
+  settings: { ttlSeconds?: number | undefined; lifetimeChosen?: true },
 ): number | undefined {
-  return saved === undefined
-    ? readDefaultLifetime(scope)
-    : (saved ?? undefined);
+  return settings.ttlSeconds !== undefined || settings.lifetimeChosen
+    ? settings.ttlSeconds
+    : readDefaultLifetime(scope);
 }
 
 export function useDefaultLifetime(scope: string) {

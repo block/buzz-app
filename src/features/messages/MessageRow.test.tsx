@@ -108,6 +108,41 @@ it("discloses an automatic failure reply while keeping its original text availab
   }
 });
 
+it("aligns a failure caption with its request rather than the agent author", () => {
+  const request = { ...row, id: "request", authorId: "viewer" };
+  const props = {
+    row: { ...row, notice: "execution-failure" as const },
+    stoppedRequest: request,
+    viewer: "viewer",
+    profile: { name: "Spongebob", isAgent: true as const },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const view = renderDom(<MessageRow {...props} />);
+    const caption = () =>
+      screen
+        .getByRole("button", {
+          name: "Spongebob: Couldn’t finish · Details",
+        })
+        .closest("[data-message-notice]");
+    expect(caption()).toHaveAttribute("data-viewer-message");
+    view.rerender(
+      <MessageRow
+        {...props}
+        stoppedRequest={{ ...request, authorId: "another-human" }}
+      />,
+    );
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+    view.rerender(<MessageRow {...props} stoppedRequest={undefined} />);
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+  } finally {
+    cleanup();
+  }
+});
+
 it.each([false, true])(
   "previews human and agent identities and preserves avatar navigation: %s",
   async (agentEnvelope) => {

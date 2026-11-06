@@ -3902,6 +3902,18 @@ html[data-keyboard-navigation] .activityExpansion {
   font-weight: var(--text-message--font-weight);
 }
 
+.audienceRow[data-message-notice][data-viewer-message] .audienceEntry {
+  inline-size: fit-content;
+  max-inline-size: calc(100% - var(--size-control-sm) - var(--activity-gap));
+  margin-inline-start: auto;
+  margin-inline-end: calc(var(--size-control-sm) + var(--activity-gap));
+}
+.audienceRow[data-message-notice][data-viewer-message] .audienceLine {
+  align-self: flex-end;
+  max-inline-size: 100%;
+  margin-inline-start: 0;
+}
+
 /* Keep a working team inside the same footprint as one message avatar. */
 .agentAvatarGroup {
   position: relative;

@@ -584,8 +584,9 @@ available rather than silently discarding it.
   final result is available yet, or after a temporary lookup failure, while you
   stay signed in and connected. Requests sent to several agents keep each
   agent's stopped outcome visible alongside another agent's failure.
-- Automatic failure replies use a compact status line; **Details** expands the
-  explanation inline. Failures of channel requests also appear in the channel.
+- Automatic failure replies appear below their request as a compact status line;
+  **Details** expands the explanation inline. Failures of channel requests also
+  appear in the channel.
 - For agents running on this device, **Details** can offer **Retry** to ask again
   and **Dismiss** to hide the failure.
 - Any agent running on this device can read and change some Buzz settings

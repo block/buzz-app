@@ -1605,11 +1605,14 @@ function ThreadMessages({
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
-          {!parent && row.replyParentId && row.replyParentId !== rootId && (
-            <p className={styles.threadNote}>
-              Earlier reply unavailable in loaded history.
-            </p>
-          )}
+          {!parent &&
+            row.replyParentId &&
+            row.replyParentId !== rootId &&
+            !requestRows.has(row.replyParentId) && (
+              <p className={styles.threadNote}>
+                Earlier reply unavailable in loaded history.
+              </p>
+            )}
 
           {group && (
             <>

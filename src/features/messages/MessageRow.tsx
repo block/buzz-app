@@ -1569,6 +1569,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     activity?.requestId,
   );
   const active = live || (activity?.active ?? false);
+  const alignmentRow = failure ? (props.stoppedRequest ?? row) : row;
   const keepMounted = props.keepMounted;
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
@@ -1649,8 +1650,8 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
           data-viewer-message={
             !flat &&
             (props.alignViewer ?? true) &&
-            !row.workflowOwnerId &&
-            row.authorId === (props.viewer ?? session?.viewer)
+            !alignmentRow.workflowOwnerId &&
+            alignmentRow.authorId === (props.viewer ?? session?.viewer)
               ? ""
               : undefined
           }

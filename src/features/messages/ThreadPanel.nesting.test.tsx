@@ -201,6 +201,26 @@ it("keeps a stopped note on the agent's latest reply that a collapsed branch can
   expect(article("aside")).not.toHaveAttribute("data-stopped-request");
   expect(article("answer")).toHaveAttribute("data-stopped-request", "root");
 });
+it("shows automatic failure captions beside their request while ordinary replies stay nested", () => {
+  const h = setup();
+  const failure: ChannelMessage = {
+    ...row("failure", "parent"),
+    notice: "execution-failure",
+  };
+  h.update([row("parent", "root"), failure, row("child", "parent")]);
+  expect(screen.getByText("failure")).toBeVisible();
+  expect(
+    screen.queryByText("Earlier reply unavailable in loaded history."),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("failure").closest("article")).not.toHaveAttribute(
+    "data-compact-avatar",
+    "true",
+  );
+  expect(screen.queryByText("child")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
+  expect(screen.getByText("child")).toBeVisible();
+  expect(screen.getByText("failure")).toBeVisible();
+});
 it("moves a follow-up outcome to its latest reply within an expanded branch", () => {
   const h = setup();
   const agent = "b".repeat(64);

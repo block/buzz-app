@@ -157,7 +157,7 @@ export function createOwnerAccess(
       id,
       relayAuthor,
     ) as RelayEvent;
-    return { rights, metadata };
+    return { events, rights, metadata };
   };
   /** Channel `id` as the owner's session knows it; never a system channel,
    * which `list()` never shows either. */
@@ -195,7 +195,11 @@ export function createOwnerAccess(
     channel: (id: string, signal?: AbortSignal) =>
       run(signal, async (binding, bound) => {
         const summary = known(binding.session, channelId(id));
-        const { rights, metadata } = await authority(binding, id, bound);
+        const { events, rights, metadata } = await authority(
+          binding,
+          id,
+          bound,
+        );
         const { viewer } = binding;
         const role = rights.roles[viewer];
         // Type, archive state and lifecycle rights from the records just read,
@@ -208,9 +212,10 @@ export function createOwnerAccess(
               ? tag
               : "unknown";
         // The session's lifecycle owner also grants a member who owns the
-        // channel's owner-role agent, as the relay does.
+        // channel's owner-role agent, as the relay does. It judges the same
+        // writer-backed records, never a replica that may lag them.
         const offer = role
-          ? await binding.session.channelLifecycle.load(id, bound)
+          ? await binding.session.channelLifecycle.load(id, bound, events)
           : undefined;
         bound.throwIfAborted();
         return {

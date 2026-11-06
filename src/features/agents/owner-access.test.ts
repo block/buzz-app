@@ -78,12 +78,17 @@ function fakeSession(
   );
   const ensureList = vi.fn();
   const ensure = vi.fn(async () => {});
-  const load = vi.fn(async (id: string, signal?: AbortSignal) => {
-    signal?.throwIfAborted();
-    if (lifecycle) return lifecycle(id);
-    const read = await readRemote.mock.results.at(-1)?.value;
-    return lifecycleSettings(read ?? events(), id, owner, relayAuthor);
-  });
+  const load = vi.fn(
+    async (
+      id: string,
+      signal?: AbortSignal,
+      records?: readonly RelayEvent[],
+    ) => {
+      signal?.throwIfAborted();
+      if (lifecycle) return lifecycle(id);
+      return lifecycleSettings(records ?? events(), id, owner, relayAuthor);
+    },
+  );
   const target = {
     relayAuthor,
     channels: {
@@ -325,9 +330,18 @@ describe("owner access", () => {
         delete: true,
       },
     });
+    // It judges the writer-backed records just read, not a replica's.
+    expect(fake.readRemote).toHaveBeenCalledOnce();
+    const [filters] = fake.readRemote.mock.calls[0] ?? [];
+    expect(filters).toEqual(
+      [39000, 39001, 39002].map((kind) =>
+        expect.objectContaining({ kinds: [kind], consistency: "strong" }),
+      ),
+    );
     expect(fake.load).toHaveBeenCalledExactlyOnceWith(
       joined,
       expect.any(AbortSignal),
+      await fake.readRemote.mock.results[0]?.value,
     );
   });
 

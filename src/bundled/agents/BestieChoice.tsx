@@ -243,26 +243,26 @@ export function RemoteBestieConfirm({
   onConfirm(): void;
   onClose(): void;
 }) {
-  const proceed = useRef<HTMLButtonElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog
       title={`Use ${name} as your bestie?`}
       description={REMOTE_BESTIE_WARNING}
-      initialFocus={proceed}
+      initialFocus={cancel}
       pending={pending}
       onClose={onClose}
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button disabled={pending} onClick={onClose}>
+          <Button
+            ref={cancel}
+            variant="prominent"
+            disabled={pending}
+            onClick={onClose}
+          >
             Cancel
           </Button>
-          <Button
-            ref={proceed}
-            variant="prominent"
-            loading={pending}
-            onClick={onConfirm}
-          >
+          <Button loading={pending} onClick={onConfirm}>
             Use as bestie
           </Button>
         </>
@@ -287,23 +287,26 @@ function RemoveBestie({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const proceed = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog
       title={`Remove ${name} as your Bestie?`}
       description={`${name} stays in Agents, with your chats in your DMs. Its check-ins stop. Its memory rules and private channels stay; turn them off in its Former Bestie tab${remote ? " on the device it runs on" : ""}.`}
-      initialFocus={proceed}
+      initialFocus={keep}
       pending={pending}
       onClose={onClose}
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button disabled={pending} onClick={onClose}>
+          <Button
+            ref={keep}
+            variant="prominent"
+            disabled={pending}
+            onClick={onClose}
+          >
             Cancel
           </Button>
           <Button
-            ref={proceed}
-            variant="prominent"
             loading={pending}
             onClick={() => {
               setPending(true);

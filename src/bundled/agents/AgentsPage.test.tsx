@@ -4809,8 +4809,12 @@ it("removes a Bestie on another device from its card, asking first", async () =>
       name: "Remove Ada as your Bestie?",
     });
   };
-  // Cancel saves nothing; its settings are on the device it runs on.
+  // Removal starts on the highlighted Cancel, which saves nothing; its
+  // settings are on the device it runs on.
   let dialog = await ask();
+  const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+  expect(cancel).toHaveAttribute("data-variant", "prominent");
+  await waitFor(() => expect(cancel).toHaveFocus());
   expect(dialog).toHaveTextContent(
     "turn them off in its Former Bestie tab on the device it runs on.",
   );

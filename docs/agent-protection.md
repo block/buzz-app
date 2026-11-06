@@ -199,8 +199,10 @@ folder of their own that Buzz Security hides from contained agents
 (`~/Library/Application Support/Buzz/claude-code-review-home`), with the
 Anthropic API key saved in **Settings → Agent setup → Harness defaults →
 Claude → Edit configuration**, and no other credentials or API endpoint from
-the environment. The key file is kept in that hidden folder too, not in the
-download folder protected agents can read. Until a key is saved, and once
+the environment. The key is not in a file: Buzz keeps it in the OS credential
+store (Keychain on macOS, readable without a prompt only by Buzz itself), and
+native code sets it as `ANTHROPIC_API_KEY` only in the Claude processes the
+Claude plugin starts (`claude_key.rs`). Until a key is saved, and once
 Anthropic rejects it, Claude reviews fail closed; save a working key or choose
 another review model. A review's 60-second budget includes
 waiting for Buzz to download that release the first time; a longer download

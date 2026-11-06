@@ -409,82 +409,30 @@ it("refuses a checksum that is not 64 hex digits before reusing or downloading",
   );
 });
 
-/** claude.sh's key and review steps in a new home: `save` sends a key on
- * stdin, as Buzz does. */
-async function keyHome() {
-  const { home, dir } = await disk([]);
-  const steps = (args: string[], input?: string) => {
-    const running = run("bash", ["-c", script, "claude.sh", ...args], {
-      env: { PATH: process.env.PATH ?? "", HOME: home },
-    });
-    running.child.stdin?.end(input);
-    return running as Promise<{ stdout: string; stderr: string }>;
-  };
+/** claude.sh's review step in a new home. */
+async function reviewHome() {
+  const { home } = await disk([]);
   const review = join(
     home,
     "Library/Application Support/Buzz/claude-code-review-home",
   );
   return {
     home,
-    dir,
     review,
-    // Hidden from contained agents with reviews' folder on macOS.
-    keys: process.platform === "darwin" ? review : dir,
-    save: (key: string) => steps(["save-key"], `${key}\n`),
-    read: () => steps(["key"]),
-    reviewFolder: () => steps(["review"]),
+    reviewFolder: () => {
+      const running = run("bash", ["-c", script, "claude.sh", "review"], {
+        env: { PATH: process.env.PATH ?? "", HOME: home },
+      });
+      running.child.stdin?.end();
+      return running as Promise<{ stdout: string; stderr: string }>;
+    },
   };
 }
-const KEY = "sk-ant-api03-Abc_123-xyz";
-
-it("saves the API key from stdin, privately, and only `key` prints it", async () => {
-  const { keys, save, read } = await keyHome();
-  // Nothing saved yet: nothing, so turns fail closed.
-  await expect(read()).resolves.toEqual({ stdout: "", stderr: "" });
-  await expect(save(KEY)).resolves.toEqual({
-    stdout: "Saved the Anthropic API key.\n",
-    stderr: "",
-  });
-  expect((await lstat(join(keys, "api-key"))).mode & 0o777).toBe(0o600);
-  await expect(read()).resolves.toEqual({ stdout: `${KEY}\n`, stderr: "" });
-  // A link in the key's place is replaced, not written through.
-  const target = join(keys, "elsewhere");
-  await rm(join(keys, "api-key"));
-  await symlink(target, join(keys, "api-key"));
-  await save(`${KEY}2`);
-  expect((await lstat(join(keys, "api-key"))).isSymbolicLink()).toBe(false);
-  await expect(lstat(target)).rejects.toThrow("ENOENT");
-  await expect(read()).resolves.toEqual({ stdout: `${KEY}2\n`, stderr: "" });
-});
-
-it("refuses what is not an API key without printing it", async () => {
-  const { keys, save } = await keyHome();
-  for (const pasted of ["", "sk-ant-", `${KEY} more`, `x${KEY}`, `${KEY}é`]) {
-    const saving = save(pasted);
-    await expect(saving).rejects.toThrow("That is not an Anthropic API key");
-    await saving.catch((error: { stdout: string; stderr: string }) => {
-      expect(error.stdout).toBe("");
-      expect(error.stderr).toBe(
-        "That is not an Anthropic API key. Create one at console.anthropic.com and paste it here.\n",
-      );
-    });
-  }
-  await expect(lstat(join(keys, "api-key"))).rejects.toThrow("ENOENT");
-});
-
-it("reads no key through a link in its place", async () => {
-  const { home, keys, read } = await keyHome();
-  await mkdir(keys, { recursive: true });
-  const target = join(home, "elsewhere");
-  await writeFile(target, `${KEY}\n`);
-  await symlink(target, join(keys, "api-key"));
-  await expect(read()).resolves.toEqual({ stdout: "", stderr: "" });
-});
 
 it.skipIf(process.platform !== "darwin")(
   "makes reviews' own folder privately on first use and prints it",
   async () => {
-    const { review, reviewFolder } = await keyHome();
+    const { review, reviewFolder } = await reviewHome();
     await expect(reviewFolder()).resolves.toEqual({
       stdout: `${review}\n`,
       stderr: "",
@@ -500,7 +448,7 @@ it.skipIf(process.platform !== "darwin")(
 it.skipIf(process.platform !== "darwin")(
   "refuses a review folder that is a link",
   async () => {
-    const { home, review, reviewFolder, save } = await keyHome();
+    const { home, review, reviewFolder } = await reviewHome();
     const target = join(home, "elsewhere");
     await mkdir(target);
     await mkdir(dirname(review), { recursive: true });
@@ -512,21 +460,5 @@ it.skipIf(process.platform !== "darwin")(
     await reading.catch((error: { stdout: string }) =>
       expect(error.stdout).toBe(""),
     );
-    // Nor saves the key through it.
-    await expect(save(KEY)).rejects.toThrow(
-      "The Claude review folder is not a folder",
-    );
-    await expect(lstat(join(target, "api-key"))).rejects.toThrow("ENOENT");
-  },
-);
-
-it.skipIf(process.platform !== "darwin")(
-  "keeps the key out of the download folder protected agents can read",
-  async () => {
-    const { dir, review, save } = await keyHome();
-    await save(KEY);
-    expect((await lstat(review)).mode & 0o777).toBe(0o700);
-    expect((await lstat(join(review, "api-key"))).mode & 0o777).toBe(0o600);
-    await expect(lstat(join(dir, "api-key"))).rejects.toThrow("ENOENT");
   },
 );

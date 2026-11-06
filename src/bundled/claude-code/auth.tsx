@@ -1,10 +1,12 @@
 // How Buzz's Claude authenticates: with an Anthropic API key, pasted in
-// setup, saved beside Buzz's copy of Claude (`claude.sh save-key`) and given
-// to every `claude` as `ANTHROPIC_API_KEY`, never as an argument.
+// setup and kept by native code in the OS credential store (`claude_key.rs`),
+// which gives it to every `claude` as `ANTHROPIC_API_KEY`, never as an
+// argument, and never back to the app.
 //
 // Builds can replace this one file with another way to sign in, so the rest
 // of the plugin reaches authentication only through its exports: keep their
 // names and shapes when changing it.
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -30,14 +32,8 @@ export type Step = (
 ) => Promise<void>;
 type Env = Readonly<Record<string, string | null>>;
 
-/** Runs a `claude.sh` step with `input` on stdin, stopped if `signal`
- * aborts; its output, or throws what it printed. */
-async function output(
-  spawn: Spawn,
-  id: string,
-  input = "",
-  signal?: AbortSignal,
-) {
+/** Runs a `claude.sh` step; its output, or throws what it printed. */
+async function output(spawn: Spawn, id: string) {
   let stdout = "";
   let stderr = "";
   const process = await spawn(id, {
@@ -48,19 +44,29 @@ async function output(
       stderr += text;
     },
   });
-  const stop = () => void process.kill();
-  signal?.addEventListener("abort", stop, { once: true });
-  if (signal?.aborted) stop();
-  try {
-    await (input ? process.end(input) : process.end());
-    const code = await process.exited;
-    if (code !== 0)
-      throw new Error(stderr.trim() || `${id} ended (${code ?? "stopped"}).`);
-    return stdout;
-  } finally {
-    signal?.removeEventListener("abort", stop);
-  }
+  await process.end();
+  const code = await process.exited;
+  if (code !== 0)
+    throw new Error(stderr.trim() || `${id} ended (${code ?? "stopped"}).`);
+  return stdout;
 }
+
+/** The key's native store (`claude_key.rs`): the OS credential store,
+ * which hands the key to the processes that ask for it and never back. */
+const nativeStore = ():
+  | Readonly<{
+      /** Whether a key is saved. */
+      status(): Promise<boolean>;
+      /** Saves the key; it is never read back. */
+      save(key: string): Promise<void>;
+    }>
+  | undefined =>
+  isTauri()
+    ? {
+        status: async () => (await invoke("claude_api_key_status")) === true,
+        save: (value) => invoke("claude_api_key_set", { value }),
+      }
+    : undefined;
 
 /** Claude's credentials on this computer. */
 export class ClaudeAuth {
@@ -72,10 +78,14 @@ export class ClaudeAuth {
   readonly needs = "needs an Anthropic API key";
   /** An interactive sign-in setup runs as its step, when there is one. */
   readonly signIn: ((step: Step) => Promise<void>) | undefined = undefined;
-  private key: Promise<string> | undefined;
+  private saved: Promise<boolean> | undefined;
   private readonly listeners = new Set<() => void>();
 
-  constructor(private readonly spawn: Spawn | undefined) {}
+  private readonly store;
+
+  constructor(private readonly spawn: Spawn | undefined) {
+    this.store = spawn ? nativeStore() : undefined;
+  }
 
   /** Told when the credentials change, so running sessions start again. */
   subscribe = (listener: () => void) => {
@@ -85,77 +95,72 @@ export class ClaudeAuth {
     };
   };
 
-  /** The saved key, read once until it is saved again or checked; no key
-   * is read again each time. */
-  private read() {
-    const spawn = this.spawn;
-    if (!spawn) return Promise.resolve("");
-    if (this.key) return this.key;
-    const reading = output(spawn, "key").then((text) => text.trim());
-    this.key = reading;
-    // Only a key is kept: another Buzz on this computer may save one.
+  /** Whether a key is saved, asked once until it is saved again or checked;
+   * no key is asked again each time. */
+  private has() {
+    const store = this.store;
+    if (!store) return Promise.resolve(false);
+    if (this.saved) return this.saved;
+    const asking = store.status();
+    this.saved = asking;
+    // Only a saved key is kept: another Buzz on this computer may save one.
     const forget = () => {
-      if (this.key === reading) this.key = undefined;
+      if (this.saved === asking) this.saved = undefined;
     };
-    reading.then((text) => text || forget(), forget);
-    return reading;
+    asking.then((saved) => saved || forget(), forget);
+    return asking;
   }
 
   /** Whether Claude can run turns: an account to show, or undefined. */
   async check(): Promise<Readonly<{ account?: string }> | undefined> {
-    this.key = undefined;
-    return (await this.read()) ? {} : undefined;
+    this.saved = undefined;
+    return (await this.has()) ? {} : undefined;
   }
 
-  /** Saves `key` for every `claude` started from now on; the step's line. */
+  /** Saves `key` for every `claude` started from now on; what to say. A
+   * save can't be stopped once it reaches the store, so `signal` only
+   * stops one that hasn't. */
   async save(key: string, signal?: AbortSignal) {
-    const spawn = this.spawn;
-    if (!spawn) throw new Error("Claude runs only in the desktop app");
-    const changed = () => {
-      this.key = undefined;
-      for (const listener of this.listeners) listener();
-    };
+    const store = this.store;
+    if (!store) throw new Error("Claude runs only in the desktop app");
+    signal?.throwIfAborted();
     try {
-      const saved = await output(spawn, "save-key", `${key}\n`, signal);
-      changed();
-      return saved.trim();
-    } catch (error) {
-      // A stopped save may have replaced the key all the same.
-      if (signal?.aborted) changed();
-      throw error;
+      await store.save(key);
+    } finally {
+      // A refused save leaves the key as it was; anything else may not.
+      this.saved = undefined;
     }
+    for (const listener of this.listeners) listener();
+    return "Saved the Anthropic API key.";
   }
 
-  /** `spawn`, starting each `claude` with the saved key. `required` refuses
-   * to start one without a key, so no turn falls back on an account sign-in
-   * that `~/.claude` may hold. */
+  /** `spawn`, starting each `claude` with the saved key, which native code
+   * sets itself. `required` refuses to start one without a key, so no turn
+   * falls back on an account sign-in that `~/.claude` may hold. */
   authorize(spawn: Spawn, required = false): Spawn {
     return async (id, options) => {
       // Buzz's copy, and the protected release (`claude-protected-*`).
       if (id !== "claude" && !id.startsWith("claude-protected-"))
         return spawn(id, options);
-      const key = await this.read();
-      if (!key && required) throw new Error(NO_KEY);
-      return spawn(
-        id,
-        key
-          ? { ...options, env: { ...options?.env, ANTHROPIC_API_KEY: key } }
-          : options,
-      );
+      if (required && !(await this.has())) throw new Error(NO_KEY);
+      return spawn(id, {
+        ...options,
+        secrets: [...(options?.secrets ?? []), "anthropic-api-key"],
+      });
     };
   }
 
   /** Security reviews' own Claude folder (absolute), which contained agents
-   * cannot write, and what they authenticate with. */
+   * cannot write, and what they authenticate with: the key, which
+   * `authorize` asks native code for. */
   async review(): Promise<Readonly<{ home: string; env: Env }>> {
     const spawn = this.spawn;
     if (!spawn) throw new Error("Claude reviews need the desktop app");
-    const key = await this.read();
-    if (!key) throw new Error(NO_KEY);
+    if (!(await this.has())) throw new Error(NO_KEY);
     const home = (await output(spawn, "review")).trim();
     if (!home.startsWith("/"))
       throw new Error("Claude's review folder is unreadable");
-    return { home, env: { ANTHROPIC_API_KEY: key } };
+    return { home, env: {} };
   }
 
   /** A failed review's error, as the person can act on it. */

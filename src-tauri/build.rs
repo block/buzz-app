@@ -212,6 +212,8 @@ fn main() {
             "app_agent_remember",
             "app_agent_claim",
             "app_agent_release",
+            "claude_api_key_status",
+            "claude_api_key_set",
             "jev_classifier_status",
             "jev_classifier_set_key",
             "jev_classifier_clear_key",

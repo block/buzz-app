@@ -724,7 +724,8 @@ available rather than silently discarding it.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there (or when creating a Claude agent); Buzz keeps it on this computer and
+  there (or when creating a Claude agent), once for every Claude agent. Buzz
+  keeps it in the system's secure credential store (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Until a key is
   saved, Claude agents don't answer and Claude reviews fail closed.
   Codex security reviews for protected agents need a ChatGPT sign-in made

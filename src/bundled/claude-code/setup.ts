@@ -46,8 +46,6 @@ const STEPS: Readonly<Record<string, string>> = {
   claude: "run",
   install: "install",
   use: "use",
-  "save-key": "save-key",
-  key: "key",
   review: "review",
 };
 /** Starts `claude` and its other steps as steps of `claude.sh`, which the

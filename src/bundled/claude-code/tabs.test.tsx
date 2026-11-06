@@ -47,9 +47,29 @@ import { ClaudeSetup } from "./setup";
 import { ClaudeDefaults } from "./defaults";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
+/** Native's Claude key store (`claude_key.rs`), which a test sets up. */
+const nativeKey = vi.hoisted(() => {
+  /** Refuses what is not one `sk-ant-` word, as native does, with its line. */
+  const check = async (value: string) => {
+    if (!/^sk-ant-[A-Za-z0-9_-]+$/.test(value.trim()))
+      throw "That is not an Anthropic API key. Create one at console.anthropic.com and paste it here.";
+  };
+  return { saved: true, saves: [] as string[], check, save: check };
+});
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => desktop.tauri,
-  invoke: async () => null,
+  invoke: async (command: string, args?: { value?: string }) => {
+    // An IPC round trip, as the host's process steps answer after a turn.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (command === "claude_api_key_status") return nativeKey.saved;
+    if (command === "claude_api_key_set") {
+      const value = args?.value ?? "";
+      nativeKey.saves.push(value);
+      await nativeKey.save(value);
+      nativeKey.saved = true;
+    }
+    return null;
+  },
 }));
 const dialogMotion = vi.hoisted(() => ({ reduced: false }));
 vi.mock("motion/react", async (actual) => ({
@@ -165,7 +185,9 @@ function applied({
   catalog?: { listed: boolean; ready?: Promise<void>; models?: typeof CATALOG };
 } = {}) {
   let type: AgentType<Config> | undefined;
-  let saved = keySaved;
+  nativeKey.saved = keySaved;
+  nativeKey.saves = [];
+  nativeKey.save = nativeKey.check;
   const home = mkdtempSync(join(tmpdir(), "claude-tabs-"));
   homes.push(home);
   for (const [path, content] of Object.entries(files)) {
@@ -214,7 +236,6 @@ function applied({
       if (name === "install" || streaming) kill = () => resolve(null);
       else setTimeout(() => resolve(missing ? 127 : 0), 0);
     });
-    if (name === "save-key") saved = true;
     queueMicrotask(() =>
       options.onStdout?.(
         missing
@@ -225,13 +246,7 @@ function applied({
               ? "Darwin arm64\n"
               : args === "--version"
                 ? `${version} (Claude Code)\n`
-                : name === "key"
-                  ? saved
-                    ? "sk-ant-api03-saved\n"
-                    : ""
-                  : name === "save-key"
-                    ? "Saved the Anthropic API key.\n"
-                    : "",
+                : "",
       ),
     );
     return {
@@ -989,10 +1004,9 @@ it("asks for an API key and is ready once one is saved", async () => {
     await screen.findByText("Claude runs with your Anthropic API key."),
   ).toBeVisible();
   expect(type.provider?.snapshot()).toEqual({ readiness: "ready" });
-  const save = spawn.mock.calls.find(
-    ([, options]) => options?.args?.[2] === "save-key",
-  );
-  expect(save?.[1]?.args?.slice(1)).toEqual(["claude.sh", "save-key"]);
+  // Native keeps the key; no process is given it to save.
+  expect(nativeKey.saves).toEqual(["sk-ant-api03-pasted"]);
+  expect(JSON.stringify(spawn.mock.calls)).not.toContain("sk-ant-api03-pasted");
   // The key is all the dialog edits, so saving it closes the dialog.
   expect(onClose).toHaveBeenCalledTimes(1);
 });
@@ -1011,7 +1025,7 @@ it("closes the configuration once a replacement key is saved", async () => {
 });
 
 it("saves the key with Enter without submitting the form it sits in", async () => {
-  const { type, spawn } = installed({ keySaved: false });
+  const { type } = installed({ keySaved: false });
   const Setup = providerSetup(type);
   const outer = vi.fn((event: { preventDefault(): void }) =>
     event.preventDefault(),
@@ -1030,9 +1044,7 @@ it("saves the key with Enter without submitting the form it sits in", async () =
   expect(
     await screen.findByText("Claude runs with your Anthropic API key."),
   ).toBeVisible();
-  expect(
-    spawn.mock.calls.filter(([, options]) => options?.args?.[2] === "save-key"),
-  ).toHaveLength(1);
+  expect(nativeKey.saves).toEqual(["sk-ant-api03-pasted"]);
   expect(outer).not.toHaveBeenCalled();
 });
 
@@ -2096,136 +2108,94 @@ it("clears unsupported saved effort when changing the creation model", async () 
   });
 });
 
-it("replaces the key through stdin and keeps the result", async () => {
-  const { steps, field, save } = await heldKeySaves();
+it("replaces the key through native code and keeps the result", async () => {
+  const { saves, field, save, onClose } = await heldKeySaves();
   expect(field()).toHaveAttribute("type", "password");
   expect(save()).toHaveAttribute("aria-disabled", "true");
   const user = userEvent.setup();
   const key = "sk-ant-api03-secret";
   await user.type(field(), key);
   await user.click(save());
-  await waitFor(() => expect(steps).toHaveLength(1));
-  const [first] = steps;
-  if (!first) throw new Error("Expected the save step");
-  expect(first.options.args?.slice(1)).toEqual(["claude.sh", "save-key"]);
-  expect(first.options.args?.join(" ")).not.toContain(key);
-  await waitFor(() => expect(first.stdin).toEqual([`${key}\n`]));
-  act(() => {
-    first.options.onStdout?.("Saved the Anthropic API key.\n");
-    first.exit(0);
-  });
+  await waitFor(() => expect(saves).toHaveLength(1));
+  expect(nativeKey.saves).toEqual([key]);
+  act(() => saves[0]?.settle());
   expect(await screen.findByText("Saved the Anthropic API key.")).toBeVisible();
   expect(field()).toHaveValue("");
-  expect(await screen.findByRole("button", { name: "Done" })).toBeVisible();
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 
   // A refused key's fixed line stays, with the pasted value kept to fix.
   await user.type(field(), "not-a-key");
   await user.click(save());
-  await waitFor(() => expect(steps).toHaveLength(2));
-  act(() => {
-    steps[1]?.options.onStderr?.("That is not an Anthropic API key.\n");
-    steps[1]?.exit(1);
-  });
+  await waitFor(() => expect(saves).toHaveLength(2));
+  act(() => saves[1]?.settle("That is not an Anthropic API key."));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "That is not an Anthropic API key.",
   );
   expect(field()).toHaveValue("not-a-key");
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
 
-// Holds each save-key step until the test ends it.
+// Holds each native save until the test settles it.
 async function heldKeySaves() {
-  const { type, spawn } = installed();
+  const { type } = installed();
   const Setup = providerSetup(type);
-  const steps: {
-    options: HostProcessOptions;
-    stdin: string[];
-    exit(code: number | null): void;
-    killed: boolean;
-  }[] = [];
-  const answer = spawn.getMockImplementation();
-  if (!answer) throw new Error("Expected the host spawn");
-  spawn.mockImplementation(async (id, options = {}) => {
-    if (options.args?.[2] !== "save-key") return answer(id, options);
-    let exit!: (code: number | null) => void;
-    const exited = new Promise<number | null>((resolve) => {
-      exit = resolve;
+  const saves: { settle(refusal?: string): void }[] = [];
+  nativeKey.save = (value) =>
+    new Promise<void>((resolve, reject) => {
+      saves.push({
+        settle: (refusal) => (refusal ? reject(refusal) : resolve()),
+      });
+      void value;
     });
-    const step = { options, stdin: [] as string[], exit, killed: false };
-    steps.push(step);
-    return {
-      write: async (text: string) => void step.stdin.push(text),
-      end: async (text = "") => void step.stdin.push(text),
-      kill: async () => {
-        step.killed = true;
-        exit(null);
-      },
-      exited,
-    };
-  });
-  const view = render(<Setup onClose={vi.fn()} />);
+  const onClose = vi.fn();
+  const view = render(<Setup onClose={onClose} />);
   expect(
     await screen.findByText("Claude runs with your Anthropic API key."),
   ).toBeVisible();
   return {
     view,
-    steps,
+    saves,
+    onClose,
     field: () => screen.getByLabelText("Replace API key"),
     save: () => screen.getByRole("button", { name: "Save key" }),
   };
 }
 
 it("keeps focus in the field through a save started there", async () => {
-  const { steps, field } = await heldKeySaves();
+  const { saves, field } = await heldKeySaves();
   const user = userEvent.setup();
   await user.type(field(), "not-a-key");
   await user.keyboard("{Enter}");
-  await waitFor(() => expect(steps).toHaveLength(1));
+  await waitFor(() => expect(saves).toHaveLength(1));
   // Natively disabled, a browser would drop its focus; jsdom does not.
   expect(field()).not.toBeDisabled();
   expect(field()).toHaveAttribute("readonly");
   expect(field()).toHaveAttribute("aria-disabled", "true");
   // A second Enter while saving starts nothing.
   await user.keyboard("{Enter}");
-  act(() => {
-    steps[0]?.options.onStderr?.("That is not an Anthropic API key.\n");
-    steps[0]?.exit(1);
-  });
+  act(() => saves[0]?.settle("That is not an Anthropic API key."));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "That is not an Anthropic API key.",
   );
-  expect(steps).toHaveLength(1);
+  expect(saves).toHaveLength(1);
   expect(document.activeElement).toBe(field());
 });
 
 it("keeps focus on Save after a keyboard save clears the field", async () => {
-  const { steps, field, save } = await heldKeySaves();
+  const { saves, field, save } = await heldKeySaves();
   const user = userEvent.setup();
   await user.type(field(), "sk-ant-api03-secret");
   await user.tab();
   expect(document.activeElement).toBe(save());
   await user.keyboard("{Enter}");
-  await waitFor(() => expect(steps).toHaveLength(1));
-  act(() => {
-    steps[0]?.options.onStdout?.("Saved the Anthropic API key.\n");
-    steps[0]?.exit(0);
-  });
+  await waitFor(() => expect(saves).toHaveLength(1));
+  act(() => saves[0]?.settle());
   expect(await screen.findByText("Saved the Anthropic API key.")).toBeVisible();
   expect(field()).toHaveValue("");
   // Empty again, Save stays focusable: a browser drops a disabled one's focus.
   expect(save()).not.toBeDisabled();
   expect(save()).toHaveAttribute("aria-disabled", "true");
   expect(document.activeElement).toBe(save());
-});
-
-it("cancels a pending save when the dialog closes", async () => {
-  const { view, steps, field, save } = await heldKeySaves();
-  const user = userEvent.setup();
-  await user.type(field(), "sk-ant-api03-secret");
-  await user.click(save());
-  await waitFor(() => expect(steps).toHaveLength(1));
-  expect(steps[0]?.killed).toBe(false);
-  view.unmount();
-  expect(steps[0]?.killed).toBe(true);
 });
 
 it("uses target model settings for remote Claude without a local catalog or a target allocation", async () => {

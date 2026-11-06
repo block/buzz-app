@@ -99,6 +99,10 @@ export type HostProcessOptions = Readonly<{
   /** Set by agent protection: the agent a protected engine is launched for.
    * Native checks that the agent's saved protection names this plugin. */
   protectedAgent?: Readonly<{ pubkey: string; relay: string }>;
+  /** Secrets native code holds, set in its environment after `env`; one that
+   * is not saved is left unset. Each is only for the processes it belongs
+   * to: `anthropic-api-key` (`ANTHROPIC_API_KEY`) for Buzz's Claude. */
+  secrets?: readonly "anthropic-api-key"[];
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;
@@ -370,6 +374,7 @@ export class HostService extends Service implements Host {
       protection: options.protection ?? null,
       agentCredential: options.agentCredential ?? false,
       protectedAgent: options.protectedAgent ?? null,
+      ...(options.secrets?.length && { secrets: options.secrets }),
       onEvent,
     });
     // The host takes at most 1 MiB a write, so a longer one goes in pieces,

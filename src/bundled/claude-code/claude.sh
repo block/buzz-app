@@ -6,24 +6,20 @@
 #   install VERSION PLATFORM SHA256  downloads a release, unless it is already
 #                                    downloaded, and checks it
 #   use VERSION                      makes a downloaded release the one in use
-#   save-key                         saves the Anthropic API key from stdin
-#   key                              prints the saved API key
 #   review                           makes security reviews' folder and
 #                                    prints it
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
 # Security reviews keep their own Claude folder beside it (macOS only), which
-# Buzz Security hides from contained agents. The API key lives there too:
-# protected agents can read the download folder.
+# Buzz Security hides from contained agents. The API key is not here: native
+# code keeps it in the OS credential store (`claude_key.rs`).
 review=""
 if [ "$(uname)" = Darwin ]; then
   dir="$HOME/Library/Application Support/Buzz/claude-code"
   review="$HOME/Library/Application Support/Buzz/claude-code-review-home"
-  keys="$review"
 else
   dir="${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-code"
-  keys="$dir"
 fi
 
 # Refuses a review folder that is a link or not a folder.
@@ -138,41 +134,6 @@ use)
     [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] || [ "$folder" = "2.1.305" ] ||
       newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
   done
-  ;;
-save-key)
-  # An Anthropic API key, read from stdin so it is never an argument, and
-  # never printed: only these fixed lines are.
-  key=""
-  IFS= read -r key || true
-  # Loosely, as its exact form is Anthropic's: one `sk-ant-` word.
-  LC_ALL=C
-  case "$key" in
-  sk-ant-?*) ;;
-  *) key="" ;;
-  esac
-  case "$key" in "" | *[!A-Za-z0-9_-]*)
-    echo "That is not an Anthropic API key. Create one at console.anthropic.com and paste it here." >&2
-    exit 1
-    ;;
-  esac
-  if [ -n "$review" ]; then make_review; else mkdir -p "$keys"; fi
-  umask 077
-  # A new file only, then a rename over the old one, so no link is followed.
-  part="$keys/api-key.$$"
-  trap 'rm -f "$part"' EXIT
-  (set -C && printf '%s\n' "$key" >"$part")
-  if [ "$(uname)" = Darwin ]; then
-    mv -f -h "$part" "$keys/api-key"
-  else
-    mv -f -T "$part" "$keys/api-key"
-  fi
-  echo "Saved the Anthropic API key."
-  ;;
-key)
-  # Nothing until a key is saved, and never through a link.
-  if [ -f "$keys/api-key" ] && [ ! -h "$keys/api-key" ]; then
-    cat "$keys/api-key"
-  fi
   ;;
 review)
   # Reviews' own Claude folder, made on first use, which Buzz Security hides

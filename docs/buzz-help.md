@@ -181,6 +181,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   starts playing.
 - Long message bubbles use the available conversation width, stopping 32px
   before the opposite speaker’s avatar column. Short messages hug their text.
+- A message with replies shows who replied, how many replies there are and when
+  the latest one arrived, such as “Last reply 5 minutes ago”. Replies to a reply
+  don't update that time. Select the summary to open the thread.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
   copy its link, forward it, or open More. **Copy message** is in More. Keyboard
   focus also reveals these actions; touch layouts keep actions inline.

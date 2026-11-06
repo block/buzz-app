@@ -520,6 +520,45 @@ describe("message fold", () => {
       ),
     ).toEqual([[2, [relay.pubkey]]]);
   });
+  it("dates the newest direct reply from the summary body or a later pending one", () => {
+    const root = message(alice, channel, "root", 10);
+    const own = message(bob, channel, "re", 40, [["e", root.id, "", "reply"]]);
+    const nested = message(bob, channel, "re", 45, [
+      ["e", root.id, "", "root"],
+      ["e", own.id, "", "reply"],
+    ]);
+    // The relay signs a summary when it answers, so its created_at is not a reply time.
+    const fold = (body: Record<string, unknown>, pending: string[] = []) =>
+      foldMessages(
+        channel,
+        relay.pubkey,
+        [root, own, nested, summary(relay, channel, root.id, body)],
+        { pendingReplies: new Set(pending) },
+      );
+    const lastReplyAt = (body: Record<string, unknown>, pending?: string[]) =>
+      fold({ descendant_count: 1, participants: [], ...body }, pending)[0]
+        ?.lastReplyAt;
+    expect(lastReplyAt({ last_reply_at: 30 })).toBe(30);
+    expect(lastReplyAt({ last_reply_at: 30 }, [own.id])).toBe(40);
+    expect(lastReplyAt({ last_reply_at: 50 }, [own.id])).toBe(50);
+    for (const invalid of [null, 0, -1, 1.5, "30"]) {
+      expect(lastReplyAt({ last_reply_at: invalid })).toBeUndefined();
+      expect(lastReplyAt({ last_reply_at: invalid }, [own.id])).toBe(40);
+    }
+    // The relay moves last_reply_at for direct replies only, so a pending reply
+    // to a reply keeps the time it will still have once counted.
+    const sending = fold(
+      { descendant_count: 1, last_reply_at: 30, participants: [carol.pubkey] },
+      [nested.id],
+    );
+    const counted = fold({
+      descendant_count: 2,
+      last_reply_at: 30,
+      participants: [bob.pubkey, carol.pubkey],
+    });
+    expect(sending[0]?.lastReplyAt).toBe(30);
+    expect(shareMessageRows(sending, counted)).toBe(sending);
+  });
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
       alice,

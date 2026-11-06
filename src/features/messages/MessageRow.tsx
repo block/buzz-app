@@ -5,6 +5,7 @@ import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockPreference } from "../../shared/clock-preference";
+import { useRelativeTimestamp } from "../../shared/use-relative-timestamp";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -234,6 +235,9 @@ function MessageRowContent({
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
+  );
+  const lastReply = useRelativeTimestamp(
+    row.replyCount > 0 && onOpenThread ? row.lastReplyAt : undefined,
   );
   const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
     onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
@@ -889,7 +893,7 @@ function MessageRowContent({
             type="button"
             aria-label={
               row.replyCount > 0
-                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
+                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${lastReply ? `. Last reply ${lastReply}` : ""}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
                 : `View thread: ${activity ? [remainingWorkingLabel, activity.label].filter(Boolean).join(". ") : threadWorkingLabel}`
             }
             onClick={(event) => {
@@ -906,6 +910,7 @@ function MessageRowContent({
               resolveName={resolveName}
               media={media}
               unreadLabel={unreadLabel}
+              lastReply={lastReply}
               workingParticipants={[
                 ...threadAgents.map((agent) => agent.pubkey),
                 ...(activity?.participants ?? []),

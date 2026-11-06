@@ -87,6 +87,7 @@ const rowValue = (): ChannelMessage => ({
   reactions: [reaction],
   threadRootId: root.id,
   replyCount: 1,
+  lastReplyAt: 1,
   participants: [alice.pubkey],
 });
 const reply = (text: string, time: number, parent = root.id) =>
@@ -309,6 +310,7 @@ it("drops shared row identity when any compared field changes", () => {
     ["threadRootId", (row) => ({ ...row, threadRootId: replacementId })],
     ["replyParentId", (row) => ({ ...row, replyParentId: replacementId })],
     ["replyCount", (row) => ({ ...row, replyCount: 2 })],
+    ["lastReplyAt", (row) => ({ ...row, lastReplyAt: 2 })],
     ["participants", (row) => ({ ...row, participants: [replacementId] })],
   ];
 

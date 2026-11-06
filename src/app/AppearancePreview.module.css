@@ -79,10 +79,17 @@
   gap: var(--space-3);
   padding-block: var(--space-4);
 }
-.received {
+.received,
+.sent {
   display: flex;
   align-items: flex-end;
   gap: var(--space-2);
+}
+.sent {
+  justify-content: flex-end;
+}
+.sent .avatar {
+  display: none;
 }
 .bubble {
   display: flex;
@@ -106,6 +113,25 @@
   width: 55%;
   background: var(--surface-message-own);
   color: var(--text-message-own);
+}
+.messageColumn[data-message-density="compact"] .messages {
+  gap: var(--space-2);
+}
+.messageColumn[data-message-density="compact"] :is(.received, .sent) {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.messageColumn[data-message-density="compact"] .avatar {
+  display: block;
+}
+.messageColumn[data-message-density="compact"] .bubble {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-standard);
 }
 .composer {
   display: flex;

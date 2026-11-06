@@ -608,49 +608,152 @@ test("compiled host preserves compatibility utility meanings", async ({
   }
 });
 
-test("Message width defaults to Narrow, widens the conversation by 50%, and restores", async ({
-  page,
-  app,
-}) => {
-  await page.setViewportSize({ width: 2000, height: 1000 });
-  await open(page, app);
-  const row = page
-    .locator(
-      '[data-channel-timeline="alpha"] [data-message-id] > [data-layout]',
-    )
-    .first();
-  const rowWidth = () =>
-    row.evaluate((node) => node.getBoundingClientRect().width);
-  const narrow = await rowWidth();
-  await settings(page);
-  const choice = page.getByRole("combobox", {
-    name: "Message width",
-    exact: true,
-  });
-  await expect(choice).toHaveText("Narrow");
-  const previewColumn = page
-    .getByRole("figure", { name: "Appearance preview" })
-    .locator("[data-message-width]");
-  const previewWidth = () =>
-    previewColumn.evaluate((node) => node.getBoundingClientRect().width);
-  const narrowPreview = await previewWidth();
-  await choice.click();
-  await page.getByRole("option", { name: "Wide", exact: true }).click();
-  await expect(choice).toHaveText("Wide");
-  await expect.poll(previewWidth).toBeCloseTo(narrowPreview * 1.5, 0);
-  await closeSettings(page);
-  await expect.poll(rowWidth).toBe(narrow * 1.5);
-  await page.reload();
-  await expect(row).toBeVisible();
-  await expect.poll(rowWidth).toBe(narrow * 1.5);
-  await settings(page);
-  await expect(choice).toHaveText("Wide");
-  await closeSettings(page);
-  await page.setViewportSize({ width: 480, height: 900 });
-  await expect.poll(rowWidth).toBeLessThanOrEqual(480);
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
-    .toBeLessThanOrEqual(480);
+test.describe("message width and density", () => {
+  test.use({ productionBroker: true, readState: true, threadUnread: true });
+  for (const density of ["Default", "Compact"]) {
+    test(`Message width defaults to Narrow, widens the conversation by 50%, and restores (${density} density)`, async ({
+      page,
+      app,
+    }, testInfo) => {
+      await page.setViewportSize({ width: 2000, height: 1000 });
+      await open(page, app);
+      await settings(page);
+      await page
+        .getByRole("combobox", { name: "Message density", exact: true })
+        .click();
+      await page.getByRole("option", { name: density, exact: true }).click();
+      await closeSettings(page);
+      const row = page
+        .locator(
+          '[data-channel-timeline="alpha"] [data-message-id] > [data-layout]',
+        )
+        .first();
+      const rowWidth = () =>
+        row.evaluate((node) => node.getBoundingClientRect().width);
+      const narrow = await rowWidth();
+      expect(narrow).toBe(52 * 16);
+      const composer = page.getByRole("form", {
+        name: "Send a message to Alpha",
+      });
+      await expect(composer).toHaveCSS("width", `${narrow}px`);
+      const typing = page.locator(
+        '[data-conversation-activity][data-audience="humans"]',
+      );
+      app.activity();
+      await expect(typing).toHaveCSS("width", `${narrow}px`);
+      await settings(page);
+      const choice = page.getByRole("combobox", {
+        name: "Message width",
+        exact: true,
+      });
+      await expect(choice).toHaveText("Narrow");
+      const previewColumn = page
+        .getByRole("figure", { name: "Appearance preview" })
+        .locator("[data-message-width]");
+      const previewWidth = () =>
+        previewColumn.evaluate((node) => node.getBoundingClientRect().width);
+      const narrowPreview = await previewWidth();
+      const previewBubble = previewColumn.locator("[data-own]");
+      const densityChoice = page.getByRole("combobox", {
+        name: "Message density",
+        exact: true,
+      });
+      await densityChoice.click();
+      await page.getByRole("option", { name: "Compact", exact: true }).click();
+      await expect(previewBubble).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+      await expect(previewBubble).toHaveCSS("padding", "0px");
+      await expect(page.getByRole("listbox")).toBeHidden();
+      await densityChoice.focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(page.getByRole("listbox")).toBeVisible();
+      await page.keyboard.press("Home");
+      await expect(
+        page.getByRole("option", { name: "Default", exact: true }),
+      ).toHaveAttribute("data-highlighted", "");
+      await page.keyboard.press("Enter");
+      await expect(densityChoice).toHaveText("Default");
+      await expect(previewBubble).not.toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+      await densityChoice.click();
+      await page.getByRole("option", { name: density, exact: true }).click();
+      await page
+        .getByRole("figure", { name: "Appearance preview" })
+        .screenshot({
+          path: testInfo.outputPath("density-preview-light.png"),
+        });
+      await choice.click();
+      await page.getByRole("option", { name: "Wide", exact: true }).click();
+      await expect(choice).toHaveText("Wide");
+      await expect.poll(previewWidth).toBeCloseTo(narrowPreview * 1.5, 0);
+      await closeSettings(page);
+      await expect.poll(rowWidth).toBe(narrow * 1.5);
+      await expect(composer).toHaveCSS("width", `${narrow * 1.5}px`);
+      app.activity();
+      await expect(typing).toHaveCSS("width", `${narrow * 1.5}px`);
+      await page.reload();
+      await expect(row).toBeVisible();
+      await expect.poll(rowWidth).toBe(narrow * 1.5);
+      await settings(page);
+      await expect(choice).toHaveText("Wide");
+      await chooseColorMode(page, "Dark");
+      await page
+        .getByRole("figure", { name: "Appearance preview" })
+        .screenshot({
+          path: testInfo.outputPath("density-preview-dark.png"),
+        });
+      await closeSettings(page);
+      const root = app.histories
+        .get("primary/alpha")
+        .find((event) => event.content === "Thread root 0");
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const sideTab = page.locator(
+        '[data-panel-workspace] [role="tab"][data-tab-value^="thread:"]',
+      );
+      await sideTab.focus();
+      await page.keyboard.press("Alt+Shift+ArrowLeft");
+      const thread = page.getByRole("region", {
+        name: "Thread messages",
+        exact: true,
+      });
+      const threadRows = thread.locator("[data-thread-rows]");
+      await expect(threadRows).toHaveCSS("width", `${narrow * 1.5}px`);
+      await settings(page);
+      await choice.click();
+      await page.getByRole("option", { name: "Narrow", exact: true }).click();
+      await closeSettings(page);
+      await expect(threadRows).toHaveCSS("width", `${narrow}px`);
+      const mainTab = page.locator(
+        '[data-main-workspace] [role="tab"][data-tab-value^="thread:"]',
+      );
+      await mainTab.focus();
+      await page.keyboard.press("Alt+Shift+ArrowRight");
+
+      await page.setViewportSize({ width: 480, height: 900 });
+      await expect.poll(rowWidth).toBeLessThanOrEqual(480);
+      await page.screenshot({
+        path: testInfo.outputPath("density-narrow-dark.png"),
+      });
+      await settings(page);
+      await page
+        .getByRole("button", { name: "Increase interface size", exact: true })
+        .click();
+      await page.screenshot({
+        path: testInfo.outputPath("density-preview-narrow-enlarged.png"),
+      });
+      await closeSettings(page);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(480);
+    });
+  }
 });
 
 test.describe("message width reading position", () => {

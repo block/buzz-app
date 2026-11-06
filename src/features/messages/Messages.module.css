@@ -723,10 +723,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composer[data-chat-presentation] {
   margin-bottom: var(--space-3);
 }
-/* The composer spans the same full width as a compact list. */
-:where(html[data-message-density="compact"]) .composer {
-  width: calc(100% - 2 * var(--space-4));
-}
 .empty {
   padding: var(--space-8) var(--space-4);
   color: var(--text-subtle);
@@ -964,10 +960,6 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   /* Older-history corrections hide overflow for a task (scroll-correction.ts). */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-}
-/* Compact gives conversations the window's full width, as list layouts do. */
-:where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
-  --timeline-measure: 100%;
 }
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */

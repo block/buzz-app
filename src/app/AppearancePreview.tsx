@@ -1,11 +1,13 @@
-import type { MessageWidth } from "../shared/theme/service";
+import type { MessageDensity, MessageWidth } from "../shared/theme/service";
 import styles from "./AppearancePreview.module.css";
 
 /** Decorative app sketch using the same semantic colors as the live interface. */
 export function AppearancePreview({
   messageWidth,
+  density,
 }: {
   messageWidth: MessageWidth;
+  density: MessageDensity;
 }) {
   return (
     <figure className={styles.preview} aria-label="Appearance preview">
@@ -32,6 +34,7 @@ export function AppearancePreview({
           <div
             className={styles.messageColumn}
             data-message-width={messageWidth}
+            data-message-density={density}
           >
             <div className={styles.messages}>
               <div className={styles.received}>
@@ -42,9 +45,12 @@ export function AppearancePreview({
                   <span className={styles.link} />
                 </div>
               </div>
-              <div className={styles.bubble} data-own>
-                <span />
-                <span />
+              <div className={styles.sent}>
+                <i className={styles.avatar} />
+                <div className={styles.bubble} data-own>
+                  <span />
+                  <span />
+                </div>
               </div>
             </div>
             <div className={styles.composer}>
@@ -55,8 +61,8 @@ export function AppearancePreview({
         </div>
       </div>
       <figcaption className="sr-only">
-        Illustrated preview of your current mode, accent, contrast, and{" "}
-        {messageWidth} message width.
+        Illustrated preview of your current mode, accent, contrast,{" "}
+        {messageWidth} message width, and {density} message density.
       </figcaption>
     </figure>
   );

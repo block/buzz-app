@@ -488,10 +488,14 @@ it("switches message density, restores it, and retries a failed save", async () 
   );
   const user = userEvent.setup();
   const density = screen.getByRole("combobox", { name: "Message density" });
+  const preview = screen.getByRole("figure", { name: "Appearance preview" });
+  const previewColumn = () => preview.querySelector("[data-message-density]");
   expect(density).toHaveTextContent("Default");
+  expect(previewColumn()).toHaveAttribute("data-message-density", "default");
   await user.click(density);
   await user.click(await screen.findByRole("option", { name: "Compact" }));
   expect(document.documentElement.dataset.messageDensity).toBe("compact");
+  expect(previewColumn()).toHaveAttribute("data-message-density", "compact");
   expect(localStorage.getItem("buzz-message-density.v1")).toBe("compact");
   const restored = createAppearance();
   expect(restored.snapshot().density).toBe("compact");
@@ -505,6 +509,7 @@ it("switches message density, restores it, and retries a failed save", async () 
   await user.click(density);
   await user.click(await screen.findByRole("option", { name: "Default" }));
   expect(document.documentElement.dataset.messageDensity).toBe("default");
+  expect(previewColumn()).toHaveAttribute("data-message-density", "default");
   expect(localStorage.getItem("buzz-message-density.v1")).toBe("compact");
   await user.click(
     await screen.findByRole("button", { name: "Retry saving message density" }),

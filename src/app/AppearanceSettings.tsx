@@ -116,7 +116,7 @@ export function AppearanceSettings({
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
-      <AppearancePreview messageWidth={messageWidth} />
+      <AppearancePreview messageWidth={messageWidth} density={density} />
       <div>
         <InlineHeader title="Interface" />
         <SettingsGroup>

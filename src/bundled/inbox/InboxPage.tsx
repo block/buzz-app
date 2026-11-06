@@ -391,13 +391,30 @@ function InboxList({
   const listRef = useRef<HTMLUListElement | null>(null);
   const retryFocus = useRef(false);
   const retiredFocus = useRef(false);
+  // The alert's Retry and the notice's Refresh are recovery controls that
+  // leave with the state they recover from; each records whether it owned
+  // focus as it leaves, so the handoff below can give focus a destination.
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
     if (!button) return;
     // Capture ownership before removal, not after focus has fallen to body.
+    // A ref is also released when its control re-renders with new props, so
+    // ownership is only ever claimed here; the handoff below releases it.
     return () => {
-      retryFocus.current = document.activeElement === button;
+      if (document.activeElement === button) retryFocus.current = true;
     };
   }, []);
+  const alertRetry = useRef<HTMLButtonElement | null>(null);
+  const alertButton = useCallback(
+    (button: HTMLButtonElement | null) => {
+      alertRetry.current = button;
+      const release = retryButton(button);
+      return () => {
+        alertRetry.current = null;
+        release?.();
+      };
+    },
+    [retryButton],
+  );
 
   const [pending, setPending] = useState(false);
   const [refreshAfterRoster, setRefreshAfterRoster] = useState(false);
@@ -482,12 +499,17 @@ function InboxList({
       channel.id === selectedTarget?.channelId &&
       (channel.archived || channel.huddle || channel.metadataPending),
   );
+  // A restored selection may still be in a window the repair has not read.
+  const observing = inbox.freshness === "observing";
   useEffect(() => {
     if (
       selectedTarget &&
       (selectedRetired ||
         !showing ||
-        (!selected && !selectedReaction && inbox.status !== "loading"))
+        (!selected &&
+          !selectedReaction &&
+          inbox.status !== "loading" &&
+          !observing))
     ) {
       // Restoring the channel does not reopen its conversation.
       if (selectedRetired && opened && closeTab(opened))
@@ -509,6 +531,7 @@ function InboxList({
     opened,
     closeTab,
     inbox.status,
+    observing,
   ]);
   useLayoutEffect(() => {
     if (!retiredFocus.current) return;
@@ -918,6 +941,7 @@ function InboxList({
     list.status === "idle" ||
     list.status === "loading" ||
     inbox.status === "loading" ||
+    observing ||
     feed.status === "loading";
   const failure =
     reactionFeed.error ??
@@ -926,12 +950,18 @@ function InboxList({
     inbox.error ??
     feed.error ??
     sync.error;
+  const notice = (inbox.freshness === "stale" || inbox.partial) && !failure;
   useLayoutEffect(() => {
-    if (!retryFocus.current) return;
+    // A recovery control that owned focus has left: once its operation
+    // settles, focus moves to the alert's Retry when that operation failed,
+    // otherwise to a stable Inbox control — unless the person moved it.
+    void notice;
+    if (!retryFocus.current || pending) return;
     retryFocus.current = false;
-    if (failure || pending || document.activeElement !== document.body) return;
-    focusToolbar();
-  }, [failure, pending, focusToolbar]);
+    if (document.activeElement !== document.body) return;
+    if (failure) alertRetry.current?.focus({ preventScroll: true });
+    else focusToolbar();
+  }, [failure, pending, notice, focusToolbar]);
   const filtered =
     activity !== "all" || senderFilter !== "everyone" || unreadOnly;
   // Nothing unread anywhere: say so, rather than suggest a filter hid it.
@@ -975,7 +1005,7 @@ function InboxList({
       {failure && (
         <div className={styles.notice} role="alert">
           <p className="text-body">{failure}</p>
-          <Button ref={retryButton} size="sm" loading={pending} onClick={retry}>
+          <Button ref={alertButton} size="sm" loading={pending} onClick={retry}>
             Retry activity
           </Button>
         </div>
@@ -1000,12 +1030,15 @@ function InboxList({
               });
             }}
           >
-            {inbox.freshness === "stale" && !failure && (
+            {notice && (
               <div className={styles.notice} role="status">
                 <span className="text-body text-subtle">
-                  Showing retained activity.
+                  {inbox.freshness === "stale"
+                    ? "Showing retained activity."
+                    : "Some recent activity could not be checked."}
                 </span>
                 <Button
+                  ref={retryButton}
                   size="sm"
                   variant="ghost"
                   loading={pending}

@@ -208,6 +208,32 @@ test("edits admit one exact target without new notification recipients or arbitr
   assert.equal(validMessageTemplate({ ...edit, content: " " }), false);
 });
 
+test("unread repair batches may exceed four filters: windows, the authored page, thread reads and root IDs, 128 at most", () => {
+  const kinds = [9, 40002, 40008];
+  const root = "a".repeat(64);
+  const batch = [
+    { kinds, authors: ["b".repeat(64)], include_aux: true, limit: 100 },
+    ...Array.from({ length: 125 }, (_, i) => ({
+      kinds,
+      "#h": [`room-${i}`],
+      since: 1000,
+      include_aux: true,
+      limit: 24,
+    })),
+    { kinds, "#h": ["room-200"], "#e": [root], include_aux: true, limit: 200 },
+    { kinds, ids: [root], include_aux: true, limit: 1 },
+  ];
+  assert.equal(validFilters(batch), true);
+  // The shapes are unread-window-batch.test.ts's; the broker hands a batch
+  // over four filters to that rule, not to its length alone: a second
+  // authored page within 128 filters is refused as 129 filters are.
+  for (const invalid of [
+    [...batch, { ...batch[1], "#h": ["room-300"] }],
+    [...batch.slice(0, 127), batch[0]],
+  ])
+    assert.equal(validFilters(invalid), false);
+});
+
 test("workflow list batches alone may exceed four filters, with 128 unique channels at most", () => {
   const batch = Array.from({ length: 128 }, (_, i) => ({
     kinds: [30620],

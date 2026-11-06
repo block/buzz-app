@@ -5,6 +5,7 @@ export const THEMES = [
   "utmost",
   "troupe",
   "cacophony",
+  "cable",
 ] as const;
 export type Theme = (typeof THEMES)[number];
 export const DEFAULT_THEME: Theme = "buzz";
@@ -64,6 +65,14 @@ export const THEME_DEFINITIONS: Readonly<Record<Theme, ThemeDefinition>> = {
     frame: { light: "light", dark: "dark" },
     accentFamily: "iris",
     accentName: "Iris",
+  },
+  cable: {
+    id: "cable",
+    label: "Cable",
+    description: "Airy sky blue with fresh green replies.",
+    frame: { light: "light", dark: "dark" },
+    accentFamily: "cable",
+    accentName: "Sky",
   },
 };
 

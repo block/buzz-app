@@ -583,6 +583,7 @@ it.each([
   "utmost",
   "troupe",
   "cacophony",
+  "cable",
 ])("bootstrap and service agree on stored theme %j", (value) => {
   const b = browser();
   if (value !== null) b.values.set(THEME_KEY, value);

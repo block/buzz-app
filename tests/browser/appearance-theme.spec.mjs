@@ -96,7 +96,7 @@ const FRAMED_THEMES = [
     },
   },
 ];
-const UNFRAMED_THEMES = ["troupe", "cacophony"];
+const UNFRAMED_THEMES = ["troupe", "cacophony", "cable"];
 const THEME_COUNT = 1 + FRAMED_THEMES.length + UNFRAMED_THEMES.length;
 
 for (const [index, theme] of FRAMED_THEMES.entries()) {
@@ -123,24 +123,25 @@ for (const [index, theme] of FRAMED_THEMES.entries()) {
     ).toHaveAccessibleDescription(description);
     await expect(group.locator("svg:not([aria-hidden='true'])")).toHaveCount(0);
 
-    const cardSidebar = (themeId) =>
-      group
-        .locator(`svg[data-theme="${themeId}"]`)
-        .evaluate((node) =>
-          getComputedStyle(node).getPropertyValue("--surface-sidebar"),
-        );
+    const cardLook = (themeId) =>
+      group.locator(`svg[data-theme="${themeId}"]`).evaluate((node) => {
+        const style = getComputedStyle(node);
+        return ["--surface-sidebar", "--surface-message-own"]
+          .map((slot) => style.getPropertyValue(slot))
+          .join(" ");
+      });
     const previews = async () =>
       Object.fromEntries(
         await Promise.all(
           ["buzz", ...FRAMED_THEMES.map((t) => t.id), ...UNFRAMED_THEMES].map(
-            async (themeId) => [themeId, await cardSidebar(themeId)],
+            async (themeId) => [themeId, await cardLook(themeId)],
           ),
         ),
       );
     const cards = await previews();
     expect(
       new Set(Object.values(cards)).size,
-      "every card previews a different sidebar",
+      "every card previews a different sidebar and own-message fill",
     ).toBe(THEME_COUNT);
 
     await group.getByRole("radio", { name: /^Buzz/ }).focus();
@@ -374,4 +375,48 @@ test("Cacophony keeps its frame in the page mode and stacks three distinct dark 
     await background(page.locator("#shell-navigation .panel[data-sidebar]")),
   ).toBe(layers.sidebar);
   expect(await resolved(page, "--accent-9", "body")).toBe("rgb(95, 85, 250)");
+});
+
+test("Cable fills own bubbles with green under the Theme accent and yields to a manual accent", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await appearance(page);
+  const group = page.getByRole("radiogroup", { name: "Theme", exact: true });
+  await expect(group.getByRole("radio", { name: /^Cable/ })).not.toBeChecked();
+  await expect(
+    group.getByRole("radio", { name: /^Cable/ }),
+  ).toHaveAccessibleDescription("Airy sky blue with fresh green replies.");
+  await group.getByText("Cable", { exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "cable");
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "theme");
+  await expectFramed(page, false);
+
+  const ownBubble = async () => ({
+    fill: await resolved(page, "--surface-message-own"),
+    text: await resolved(page, "--text-message-own"),
+  });
+  expect(await ownBubble()).toEqual({
+    fill: "rgb(232, 247, 219)",
+    text: "rgb(31, 51, 19)",
+  });
+  expect(await resolved(page, "--accent-9")).toBe("rgb(16, 123, 187)");
+
+  await chooseColorMode(page, "Dark");
+  expect(await ownBubble()).toEqual({
+    fill: "rgb(42, 78, 114)",
+    text: "rgb(238, 245, 252)",
+  });
+  await chooseColorMode(page, "Light");
+
+  await page.getByRole("button", { name: "Cobalt accent color" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "cobalt");
+  const accentBubble = await ownBubble();
+  expect(accentBubble.fill).toBe(await resolved(page, "--accent-4"));
+  expect(accentBubble.fill).not.toBe("rgb(232, 247, 219)");
+
+  await page.getByRole("button", { name: "Theme accent color" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-accent", "theme");
+  expect((await ownBubble()).fill).toBe("rgb(232, 247, 219)");
 });

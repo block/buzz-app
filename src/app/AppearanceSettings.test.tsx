@@ -345,6 +345,9 @@ it("chooses a theme by pointer and keyboard, saves only the theme, and recovers 
   ).toHaveAccessibleDescription(
     "Stacked slate panels with an electric violet glow.",
   );
+  expect(
+    within(group).getByRole("radio", { name: "Cable" }),
+  ).toHaveAccessibleDescription("Airy sky blue with fresh green replies.");
   expect(buzz).toBeChecked();
   expect(relax).toHaveAccessibleDescription(
     "Deep plum frame around a bright, open workspace.",

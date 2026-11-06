@@ -1553,6 +1553,23 @@ it("reopens a query at the same offset after Escape with no carried rows", () =>
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("opens an @ query after CJK punctuation and sends the pick as a recipient", async () => {
+  const h = mountTypeahead();
+  const input = h.input();
+  input.focus();
+  h.fill("你好，@honey");
+  expect(h.rows()).toEqual(["Honey honey"]);
+  expect(fireEvent.keyDown(input, { key: " " })).toBe(false);
+  expect(input).toHaveValue("你好，@Honey ");
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "你好，@Honey ",
+    [first.pubkey],
+  ]);
+});
+
 it("still closes the popup when the query closes, on Escape, and on a Space that selects", () => {
   const h = mountTypeahead();
   const input = h.input();

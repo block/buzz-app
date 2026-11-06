@@ -1253,6 +1253,16 @@
       }
     },
     {
+      "name": "after_fullwidth_punctuation",
+      "text": "你好，@Ho",
+      "caret": 6,
+      "expected": {
+        "start": 3,
+        "end": 6,
+        "query": "Ho"
+      }
+    },
+    {
       "name": "after_newline",
       "text": "@x\n@y",
       "caret": 5,

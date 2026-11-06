@@ -97,7 +97,9 @@ export function profileMentionParts(
 }
 
 const urlScheme = /^(?:[a-z][a-z\d+.-]*:\/\/|mailto:|nostr:)/.source;
-/** Bare URLs end where rendered ones do; `<url>` and `](url)` keep CJK punctuation. */
+/** Bare URLs end where rendered ones do. A URL after `<`, or after `](` or a
+ * pasted `]\(` and any whitespace, keeps CJK punctuation. */
+const wrapped = /(?<=<|\]\\?\(\s*)/y;
 const wrappedUrl = new RegExp(urlScheme + /[^\s<>`]+/.source, "i");
 const bareUrl = new RegExp(urlScheme + BARE_URL_REST, "i");
 
@@ -138,7 +140,7 @@ function protectedTextEnd(text: string, start: number): number {
     const link = /^!?\[[^\]\n]*\](?:\([^\n]*?\)|\[[^\]\n]*\])/.exec(rest)?.[0];
     if (link) return start + link.length;
   }
-  const wrapped = text[start - 1] === "<" || text.endsWith("](", start);
-  const url = (wrapped ? wrappedUrl : bareUrl).exec(rest)?.[0];
+  wrapped.lastIndex = start;
+  const url = (wrapped.test(text) ? wrappedUrl : bareUrl).exec(rest)?.[0];
   return url ? start + url.length : start;
 }

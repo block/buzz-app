@@ -63,6 +63,8 @@ it("binds a mention after a bare link that ends at CJK punctuation, but not insi
     "https://example.test/文档?to=@Mic",
     "<https://example.test/a，@Mic>",
     "[[a]](https://example.test/a，@Mic)",
+    "[a](\nhttps://example.test/a，@Mic)",
+    String.raw`[a]\(https://example.test/a，@Mic\)`,
   ])
     expect(parts(content)).toEqual([{ text: content }]);
 });

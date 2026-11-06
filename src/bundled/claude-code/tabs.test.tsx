@@ -1,3 +1,4 @@
+import "../../../tests/sonner-dom";
 import {
   chmodSync,
   mkdirSync,
@@ -39,6 +40,7 @@ import type { HostProcessOptions } from "../../features/host/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AgentCreateDialog } from "../agents/AgentCreateDialog";
 import { manifestProcesses } from "./claude-testing";
 import { apply, inject } from "./index";
@@ -1687,7 +1689,81 @@ it("shares one customization-free discovery across cards and workspace changes",
   expect(probes[0]?.[1]?.args).not.toContain("bypassPermissions");
 });
 
-it("asks for the key in place of Model where an agent is created, then offers its models", async () => {
+it("asks for the key in Set up Claude when Claude is picked, then offers its models", async () => {
+  const { type, navigation } = installed({ keySaved: false });
+  const claude = {
+    ...type,
+    key: "buzz.claude-code/claude-code",
+    pluginId: "buzz.claude-code",
+    revision: "r1",
+  } as unknown as RegisteredAgentType;
+  const other = {
+    key: "buzz.codex/codex",
+    pluginId: "buzz.codex",
+    revision: "r1",
+    title: "Codex",
+    defaults: () => ({ config: {} }),
+  } as unknown as RegisteredAgentType;
+  render(
+    <ToastProvider>
+      <AgentCreateDialog
+        agents={{} as Agents}
+        types={[other, claude]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+      />
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Name"), "Nova");
+  await choose("Harness", "Claude");
+  const setupDialog = await screen.findByRole("dialog", {
+    name: "Set up Claude",
+  });
+  expect(
+    within(setupDialog).getByText(
+      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.",
+    ),
+  ).toBeVisible();
+  // Turning setup down returns to the harness the person left.
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent(
+      "Codex",
+    ),
+  );
+  expect(screen.queryByRole("dialog", { name: "Set up Claude" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Create agent" })).toBeEnabled();
+
+  await choose("Harness", "Claude");
+  const again = await screen.findByRole("dialog", { name: "Set up Claude" });
+  await user.type(
+    within(again).getByLabelText("Anthropic API key"),
+    "sk-ant-api03-pasted{Enter}",
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Set up Claude" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent(
+    "Claude",
+  );
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
+  expect(await screen.findByText("Claude API key added")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Manage in Settings" }));
+  expect(navigation.open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "buzz.claude-code/claude-code",
+  });
+});
+
+it("keeps Claude's missing key as a row in the Harness group when Claude starts selected", async () => {
   const { type } = installed({ keySaved: false });
   const Configuration = type.CreateConfiguration;
   if (!Configuration) throw new Error("Missing creation configuration");
@@ -1702,22 +1778,24 @@ it("asks for the key in place of Model where an agent is created, then offers it
     />,
   );
   const user = userEvent.setup();
-  const field = await screen.findByLabelText("Anthropic API key");
+  const add = await screen.findByRole("button", { name: "Add Claude API key" });
   expect(screen.getByText("Harness row")).toBeVisible();
-  expect(
-    screen.getByText(
-      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.",
-    ),
-  ).toBeVisible();
+  expect(screen.getByText("Claude needs an Anthropic API key")).toBeVisible();
+  // Nothing opens by itself: no harness was left to return to.
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByText("Model")).toBeNull();
   expect(onReadyChange).toHaveBeenLastCalledWith(false);
-  await user.type(field, "sk-ant-api03-pasted");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
+  await user.click(add);
+  const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
+  await user.type(
+    within(dialog).getByLabelText("Anthropic API key"),
+    "sk-ant-api03-pasted",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Save key" }));
   expect(
     await screen.findByRole("combobox", { name: "Model" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
-  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Set up Claude" })).toBeNull();
   expect(onReadyChange).toHaveBeenLastCalledWith(true);
 });
 

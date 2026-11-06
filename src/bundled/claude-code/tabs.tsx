@@ -20,6 +20,7 @@ import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
@@ -555,30 +556,60 @@ export function createTabs({
     );
   }
 
-  /** New agent's Harness, Model and Thinking. While Claude needs its
-   * credentials, they take Model's and Thinking's place, full width, and the
-   * agent waits for them. */
+  /** New agent's Harness, Model and Thinking. While Claude needs its key,
+   * a row in their place opens Set up Claude, which also opens on its own
+   * when the person picks Claude; turning it down returns them to the
+   * harness they left. The agent waits for the key. */
   function CreateConfiguration({
     harnessControl,
     onReadyChange,
+    onDecline,
     agent,
     ...props
   }: AgentCreateProps<Config> & {
     harnessControl: ReactNode;
     onReadyChange?: (ready: boolean) => void;
+    onDecline?: () => void;
   }) {
     const state = useSetupCatalog();
+    const notify = useToastNotification();
     const signedOut =
       state.status?.state === "signed-out" && state.running !== "install";
     // Only missing credentials hold creation: an agent made before Claude is
     // installed waits for the download, as it did with the Model row alone.
     const ready = !!state.status && !signedOut;
     useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
+    const [asking, setAsking] = useState(false);
+    // Once per arrival: after a key is saved, a later sign-out asks in the row.
+    const asked = useRef(false);
+    useEffect(() => {
+      if (!signedOut || !onDecline || asked.current) return;
+      asked.current = true;
+      setAsking(true);
+    }, [signedOut, onDecline]);
+    // Credentials that arrive any way close the ask for good.
+    useEffect(() => {
+      if (!signedOut) setAsking(false);
+    }, [signedOut]);
     return (
-      <div className="grid gap-4">
+      <>
         <SettingsGroup>
           {harnessControl}
-          {!signedOut && (
+          {signedOut ? (
+            <PreferenceRow
+              title={`Claude ${setup.auth.needs}`}
+              trailing={
+                <Button
+                  size="sm"
+                  variant="prominent"
+                  disabled={props.disabled}
+                  onClick={() => setAsking(true)}
+                >
+                  {setup.auth.attentionLabel}
+                </Button>
+              }
+            />
+          ) : (
             <>
               <PreferenceRow
                 title="Model"
@@ -593,10 +624,34 @@ export function createTabs({
             </>
           )}
         </SettingsGroup>
-        {signedOut && (
-          <SignIn setup={setup} disabled={props.disabled} variant="compact" />
-        )}
-      </div>
+        <Dialog
+          open={asking && signedOut}
+          title="Set up Claude"
+          onOpenChange={(next) => {
+            if (next) return;
+            setAsking(false);
+            // Only the person closes it this way: saving closes it through
+            // `signedOut`. Closing without a key turns Claude down.
+            onDecline?.();
+          }}
+        >
+          <SignIn
+            setup={setup}
+            disabled={props.disabled}
+            onSaved={() => {
+              setAsking(false);
+              notify(
+                "Claude API key added",
+                "success",
+                openSetup && {
+                  label: "Manage in Settings",
+                  onClick: openSetup,
+                },
+              );
+            }}
+          />
+        </Dialog>
+      </>
     );
   }
 

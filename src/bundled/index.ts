@@ -197,14 +197,16 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: watching,
     enabledByDefault: true,
   },
-  {
-    manifest: { ...claudeCodeManifest, apiVersion: 1 },
-    module: claudeCode,
-    enabledByDefault: true,
-  },
+  // Codex leads the Harness list and is new agents' default: Claude asks
+  // for an API key before its first agent.
   {
     manifest: { ...codexManifest, apiVersion: 1 },
     module: codex,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...claudeCodeManifest, apiVersion: 1 },
+    module: claudeCode,
     enabledByDefault: true,
   },
   {

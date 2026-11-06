@@ -26,12 +26,13 @@
   letter-spacing: var(--text-heading--letter-spacing);
 }
 .kind {
-  font-weight: 700;
+  font-weight: var(--type-weight-medium);
 }
 .conversation {
   margin-left: var(--space-2);
   font-size: var(--text-body);
-  font-weight: 400;
+  line-height: var(--text-body--line-height);
+  font-weight: var(--type-weight-normal);
   color: var(--text-secondary);
 }
 .messages {

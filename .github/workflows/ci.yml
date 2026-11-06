@@ -102,7 +102,9 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     name: Rust and tool integration
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # A Cargo.lock change rebuilds most crates from a cold cache, and only a
+    # finished main push saves a warm one, so leave room for that cold run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -177,9 +179,9 @@ jobs:
           key: windows-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native lint including Windows backend
-        run: cargo clippy -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --all-targets -- -D warnings
+        run: cargo clippy -p Buzz -p buzz-agent-controller -p buzz-credential-store -p buzz-mesh-compute --locked --all-targets -- -D warnings
       - name: All native package tests
-        run: cargo test -p Buzz -p buzz-agent-controller -p buzz-credential-store --locked --no-fail-fast
+        run: cargo test -p Buzz -p buzz-agent-controller -p buzz-credential-store -p buzz-mesh-compute --locked --no-fail-fast
 
   measurements:
     if: github.event_name != 'workflow_dispatch'

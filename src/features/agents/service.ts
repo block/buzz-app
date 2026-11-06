@@ -14,6 +14,7 @@ import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
 import type { ExternalScope } from "./external-connection";
 import { externalMcpEnabled } from "./external-connection";
+import { createOwnerAccess, ownerMcpEnabled } from "./owner-access";
 import { connectMcp } from "../../buzz-mcp/connection";
 import { type HarnessKit, harnessKit } from "../agent-harness/kit";
 import { repositoriesContext } from "../communities/repositories";
@@ -24,7 +25,7 @@ import type {
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
-import { sourceCompleted, sourceSignature } from "./attention";
+import { interestPaused, sourceCompleted, sourceSignature } from "./attention";
 import {
   AgentProtectionService,
   type AgentProtection,
@@ -191,6 +192,7 @@ import {
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import type { OwnerAccess } from "../../buzz-mcp/client";
 import { nameSoloChat } from "./solo-chat-name";
 import {
   clearDeletedDefaultAgent,
@@ -256,6 +258,8 @@ export type AgentChange<Config = unknown> = Readonly<{
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
+  /** Rejects an Attention edit if any displayed object changed before saving. */
+  attentionExpected?: Readonly<Record<string, AttentionObject>>;
   /** Sets only a watch's enabled state, if the displayed object is still current. */
   watchEnabled?: Readonly<
     Record<string, Readonly<{ enabled: boolean; expected: AttentionObject }>>
@@ -303,8 +307,10 @@ export type AgentViewProps<Config = unknown> = {
   openConversation?: (channelId: string, threadRootId?: string) => void;
   /** Replaces the type's whole config. Spread `agent.config` to change one
    * field, or tabs that each save a part will erase each other's fields. A
-   * hosted type's tabs save to its provider instead; for them this rejects. */
-  save(config: Config): Promise<void>;
+   * hosted type's tabs save to its provider instead; for them this rejects.
+   * A tab that reconciles incoming config can supply its matching configBase;
+   * otherwise the host retains the last revision it opened or saved. */
+  save(config: Config, options?: { base: ConfigBase }): Promise<void>;
   /** Host identity/retype framing for a Settings tab. Other surfaces omit it. */
   settingsHost?: AgentSettingsHost;
   /** Optional presentation split for providers that declare splitSettings. */
@@ -339,6 +345,9 @@ export type AgentTab<Config = unknown> = Readonly<{
   role?: "settings" | "activity";
   /** Supports separate identity and runtime settings presentations. */
   splitSettings?: boolean;
+  /** Reconciles incoming config and supplies its matching save base. Keeps
+   * this editor mounted through config unavailability to preserve drafts. */
+  reconcilesConfig?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** A tab a plugin adds to the settings of every agent shown on this device,
@@ -429,8 +438,11 @@ export type AgentWake = Readonly<{
   text: string;
 }>;
 /** The conversation a self-handoff came from: no channel for a watch's or
- * timer's standalone turn. */
-export type HandoffSource = Readonly<{ channel?: string; root?: string }>;
+ * timer's standalone turn. `external` for an external app acting as the
+ * agent, which has no conversation of its own. */
+export type HandoffSource = Readonly<
+  { channel?: string; root?: string } | { external: true }
+>;
 /** A wake the agent sends itself, `from` another of its conversations. */
 export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
@@ -498,6 +510,9 @@ export type AgentHandle = Readonly<{
   tabs(): ReturnType<typeof channelTabs> | undefined;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
+  /** On a bundled harness's run handle only, where the build enables owner
+   * tools for its community: reads with the owner's access. */
+  ownerAccess?: OwnerAccess;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
@@ -716,8 +731,10 @@ export type Models = Readonly<{
 }>;
 export type AgentProviderSnapshot = Readonly<{
   readiness: "checking" | "ready" | "attention";
-  /** Action-oriented menu copy for direct recovery or recovery guidance. */
-  attentionLabel?: string;
+  /** Action copy; null keeps Harness defaults status-only, undefined uses setup copy. */
+  attentionLabel?: string | null;
+  /** Supporting status text, separate from the attention action. */
+  attentionDescription?: string;
   /** Installation and sign-in work must be cancelled before its dialog closes. */
   blocking?: boolean;
 }>;
@@ -739,7 +756,43 @@ export type ConfigBinding = Readonly<{
   instructions?: Readonly<{ mode: Mode; subject: Subject }>;
 }>;
 
+/** A room audio pipe, not authorization to run tools. The harness obtains its
+ * own AgentHandle and applies its ordinary per-turn authorization. */
+export type AgentVoiceSeat<Config = unknown> = Readonly<
+  {
+    agent: Agent<Config>;
+    /** Always channel-scoped, regardless of the harness setting; never invent a root. */
+    conversation: Readonly<{ channelId: string }>;
+    signal: AbortSignal;
+    /** Final lines only: h-tag-only agent posts; own events never trigger this agent. */
+    transcript(speaker: "owner" | "agent", text: string): Promise<void>;
+    /** 48 kHz mono; native accepts exactly 960 finite samples with |s| <= 1,
+     * dropping frames when its capacity-5 queue is full. */
+    output(samples: number[]): Promise<void>;
+    /** Idempotent disconnect notification, ignored after signal aborts. */
+    ended(error?: Error): void;
+  } & Pick<Delivery<Config>, "config" | "revisions" | "synced" | "team">
+>;
+
+/** Host pipe before the agents service resolves launch settings and transcript policy. */
+export type AgentVoicePipe = Omit<
+  AgentVoiceSeat,
+  "config" | "revisions" | "synced" | "team" | "transcript"
+>;
+type HostedAgentType = Omit<AgentType, "voice"> & {
+  voice?(seat: AgentVoicePipe): Promise<AgentVoiceConnection>;
+};
+export type AgentVoiceConnection = Readonly<{
+  /** Owner-only 48 kHz mono frames of up to 5760 samples (native plays out 10 ms frames). Borrowed for this call. */
+  input(samples: number[]): void;
+  /** Host aborts signal, then awaits close to finish teardown. Idempotent. */
+  close(): void | Promise<void>;
+}>;
+
 export type AgentType<Config = unknown> = {
+  /** Huddles supplies a running agent owned by the current viewer.
+   * Full-duplex voice on the existing room conversation; abort closes the pipe. */
+  voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
   /** Native callback events this harness exposes to plugins. */
   hooks?: Readonly<{ events: readonly string[] }>;
   id: string;
@@ -879,6 +932,15 @@ export type AgentType<Config = unknown> = {
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
   runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
+  /** Reads a file for an unprotected agent outside its turns, as its tools
+   * read one they send: relative to its saved workspace, where it runs.
+   * Rejects where only a conversation's session has a place to read it, as
+   * on an execution target. Without it, its agents read none there. */
+  readFile?(
+    agent: Agent<Config>,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<Uint8Array>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Its turns run in this page, so closing or reloading the app stops them.
@@ -979,7 +1041,7 @@ export type HostedInstructions = Readonly<{
 /** A hosted agent's instructions changed since the caller read them. */
 export const HOSTED_INSTRUCTIONS_CHANGED =
   "Its instructions were changed elsewhere. Check the latest, then try again.";
-export type RegisteredAgentType = Contribution<AgentType>;
+export type RegisteredAgentType = Contribution<HostedAgentType>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
   config: unknown;
@@ -1219,7 +1281,7 @@ export type Agents = {
     agent: AgentKey,
     signal: AbortSignal,
     connected: () => void,
-    scopes?: readonly ExternalScope[],
+    scopes: readonly ExternalScope[],
   ): Promise<HostMcpServer>;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
@@ -1425,6 +1487,12 @@ const ownRecord = (
 /** `record` with the owner's `change` to its settings; throws when the
  * change is not valid for it. */
 function changed(record: AgentRecord, change: AgentChange): AgentRecord {
+  for (const [slug, expected] of Object.entries(
+    change.attentionExpected ?? {},
+  )) {
+    if (JSON.stringify(record.attention[slug]) !== JSON.stringify(expected))
+      throw new Error("Attention changed. Review it and try again.");
+  }
   let next = record;
   if (change.config !== undefined) next = { ...next, config: change.config };
   if (change.attentionEnabled !== undefined) {
@@ -1838,7 +1906,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
-    this.contributions = createContributions<AgentType>(ctx);
+    this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
@@ -2156,6 +2224,22 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       settings: () => this.deviceSettings,
+      ownerAccess: (agent) =>
+        ownerMcpEnabled(agent.relay)
+          ? createOwnerAccess(agent, () => {
+              const binding = this.bindingOf(agent);
+              return binding &&
+                ownerMcpEnabled(binding.origin) &&
+                this.communities.snapshot().viewer === agent.owner
+                ? {
+                    viewer: binding.viewer,
+                    origin: binding.origin,
+                    session: binding.session,
+                    signal: binding.controller.signal,
+                  }
+                : undefined;
+            })
+          : undefined,
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
@@ -2343,7 +2427,9 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A hosted agent type has provision, activate, profile and remove, and no run, models or timeoutMs",
       );
+    const voice = (type as unknown as AgentType).voice;
     const models = type.models;
+    const pluginId = this.ctx.pluginOwner?.id;
     this.contributions.register(this.ctx, {
       ...type,
       ...(models && {
@@ -2352,7 +2438,13 @@ export class AgentsService extends Service implements Agents {
           return models(agent);
         },
       }),
-    } as unknown as AgentType);
+      ...(voice
+        ? {
+            voice: (seat: AgentVoicePipe) =>
+              this.runners.openVoice(seat, voice, pluginId),
+          }
+        : {}),
+    } as unknown as HostedAgentType);
   }
   types = () => this.contributions.snapshot();
   registerTab(tab: AgentAddedTab) {
@@ -2385,6 +2477,8 @@ export class AgentsService extends Service implements Agents {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
       BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
+      // The owner_ prefix is reserved for tools that run with the owner's access.
+      tool.name.startsWith("owner_") ||
       !tool.description ||
       tool.inputSchema?.type !== "object" ||
       !serializable(tool.inputSchema) ||
@@ -2679,7 +2773,8 @@ export class AgentsService extends Service implements Agents {
           if (
             !agent?.attentionEnabled ||
             agent.attention[object.slug] !== object ||
-            !object.value.enabled
+            !object.value.enabled ||
+            interestPaused(agent.attention, object.value.interest_id)
           )
             throw new Error("This source watch is no longer enabled");
           // Output keeps its end, where a failure is summarised.
@@ -2785,16 +2880,27 @@ export class AgentsService extends Service implements Agents {
     key: AgentKey,
     signal: AbortSignal,
     connected: () => void,
-    scopes: readonly ExternalScope[] = ["read", "post"],
+    scopes: readonly ExternalScope[],
   ) {
     if (this.ctx.pluginOwner?.id !== "buzz.agents")
       throw new Error("Authorize external apps in Buzz.");
     const host = this.ctx.host;
     if (!host?.serveMcp)
       throw new Error("External connections require Buzz desktop.");
-    const handle = this.runners.handle(key);
-    if (!handle)
+    // A run's handle: the app acts as the agent itself, with its settings,
+    // plugin requests and handoff, not as a plugin acting through it. Its
+    // wakes say they came from the app, not from the agent's conversations.
+    const run = this.runners.handle(key, undefined, true);
+    if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
+    const { handoff } = run;
+    const handle: AgentHandle = {
+      ...run,
+      ...(handoff && {
+        handoff: ({ from: _, ...wake }: AgentHandoff) =>
+          handoff({ ...wake, from: { external: true } }),
+      }),
+    };
     if (handle.protection)
       throw new Error("Protected agents cannot use external connections.");
     const relay = this.relay(key);
@@ -2862,60 +2968,28 @@ export class AgentsService extends Service implements Agents {
             check,
             relayAuthor: source.relayAuthor?.(),
             signingAuthority: source.workflowAuthority(),
-            read: async () => {
-              throw new Error("External connections cannot read files.");
+            // Where the agent's type reads them outside its turns, if it can.
+            read: async (path) => {
+              const current = this.agent(key);
+              const read =
+                current &&
+                !current.protection &&
+                this.types().find((type) => type.key === current.type)
+                  ?.readFile;
+              if (!read) throw new Error(`This agent cannot read ${path}`);
+              const bytes = await read(current, path, signal);
+              if (this.agent(key)?.protection)
+                throw new Error(
+                  "Protected agents cannot use external connections.",
+                );
+              return bytes;
             },
-            memories: async () => {
-              throw new Error("External connections cannot read memory.");
-            },
+            memories: (slug) => source.memoryListing(signal, slug),
           });
           return (message) => {
             check();
-            return respondExternal(
-              client,
-              message,
-              connected,
-              scopes,
-              async () => {
-                check();
-                if (!session.mainAgent)
-                  throw new Error(
-                    "Your saved Bestie is unavailable in this copy of Buzz.",
-                  );
-                let worker: string | null | undefined;
-                try {
-                  worker = await session.mainAgent.read();
-                } catch {
-                  check();
-                  throw new Error(
-                    "Your saved Bestie could not be read. Check the community connection and try again.",
-                  );
-                }
-                check();
-                if (!worker || !/^[0-9a-f]{64}$/.test(worker))
-                  throw new Error(
-                    "Choose and save a Bestie in Buzz, then try again.",
-                  );
-                const unavailable =
-                  "Your saved Bestie could not be checked. Check the community connection and try again.";
-                try {
-                  await session.agentChoices.refresh(true, { fresh: true });
-                } catch {
-                  check();
-                  throw new Error(unavailable);
-                }
-                check();
-                const choices = session.agentChoices.snapshot();
-                if (
-                  !choices.selectable.some((agent) => agent.pubkey === worker)
-                )
-                  throw new Error(
-                    choices.complete
-                      ? "Your saved Bestie is not available in this community. Choose another in Buzz, then try again."
-                      : unavailable,
-                  );
-                return worker;
-              },
+            return respondExternal(client, message, connected, scopes, () =>
+              this.addedTools.snapshot(),
             );
           };
         },

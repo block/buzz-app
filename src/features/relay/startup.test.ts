@@ -5,7 +5,17 @@ import { byteSize } from "./budget";
 import { DiscoveryState } from "./discovery";
 import { ReadError } from "./errors";
 import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
-import { bounds, keypair, message, metadata, roster, profile } from "./testing";
+import {
+  bounds,
+  hostSigner,
+  keypair,
+  message,
+  metadata,
+  nativeSignatureChecks,
+  roster,
+  profile,
+} from "./testing";
+import { connectSignedTransport } from "./transport";
 import type { RelayEvent } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
 import { readJournal, type ReadJournal } from "./read-state-storage";
@@ -448,6 +458,50 @@ describe("device-local startup", () => {
     expect(
       next.owner.session.profiles.snapshot().get(stranger.pubkey)?.name,
     ).toBe("Stranger");
+  });
+
+  it.each([
+    ["accepts every record", "accepts"],
+    ["rejects a forged signature", "rejects"],
+    ["fails", "fails"],
+  ])("restores names when the native check %s", async (_, mode) => {
+    const [first, second, third] = [0, 1, 2].map((index) =>
+      profile(keypair(), { name: `Saved ${index}` }),
+    ) as [RelayEvent, RelayEvent, RelayEvent];
+    const check = vi.fn(async (claims: readonly { sig: string }[]) => {
+      if (mode === "fails") throw new Error("host unavailable");
+      if (mode === "accepts") return claims.map(() => true);
+      return nativeSignatureChecks({ claims });
+    });
+    const transport = await connectSignedTransport(
+      { ...hostSigner(viewer), verifySignatures: check },
+      "https://restore.test",
+      relay.pubkey,
+    );
+    const storage = disk();
+    // Right id, wrong signature: only the host's answer decides it.
+    const forged = { ...second, sig: third.sig };
+    await storage.writeProfiles?.([first, forged, third]);
+    const owner = createRelaySession(transport, {
+      persistence: storage,
+      prepared: true,
+      cachedOnly: true,
+    });
+    owners.push(owner);
+    await owner.restore();
+    const names = owner.session.profiles.snapshot();
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(check.mock.calls[0]?.[0]).toHaveLength(3);
+    expect(names.get(first.pubkey)?.name).toBe("Saved 0");
+    // A host that accepts the record is trusted: the JS check never ran.
+    expect(names.get(second.pubkey)?.name).toBe(
+      mode === "accepts" ? "Saved 1" : undefined,
+    );
+    expect(names.get(third.pubkey)?.name).toBe("Saved 2");
+    // The saved copy survives the restore.
+    expect(await storage.readProfiles?.()).toHaveLength(
+      mode === "accepts" ? 3 : 2,
+    );
   });
 
   it("restores a multi-batch mirror when the shorter roster restores first", async () => {

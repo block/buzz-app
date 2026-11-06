@@ -60,19 +60,10 @@ pub(crate) struct Approval {
 }
 
 impl Approval {
+    // New approvals grant full agent access only. Saved narrow approvals still load and renew, but
+    // grant no tools, so they never widen without new consent.
     fn valid_scopes(&self) -> bool {
-        !self.scopes.is_empty()
-            && self.scopes.len() <= 3
-            && self
-                .scopes
-                .iter()
-                .all(|scope| scope == "read" || scope == "post" || scope == "create")
-            && self
-                .scopes
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-                == self.scopes.len()
+        self.scopes == ["agent"]
     }
 }
 
@@ -423,27 +414,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn approval_scopes_accept_create_without_widening_access() {
+    fn new_approvals_grant_only_full_agent_access() {
         let mut approval = grant().approval;
-        for scopes in [
-            vec!["read"],
-            vec!["post"],
-            vec!["read", "post"],
-            vec!["create"],
-            vec!["read", "create"],
-            vec!["post", "create"],
-            vec!["create", "post", "read"],
-        ] {
-            approval.scopes = scopes.iter().map(|scope| (*scope).into()).collect();
-            assert!(approval.valid_scopes(), "{scopes:?}");
-        }
+        approval.scopes = vec!["agent".into()];
+        assert!(approval.valid_scopes());
         for scopes in [
             vec![],
+            vec!["read"],
+            vec!["read", "post"],
+            vec!["create"],
+            vec!["read", "post", "create"],
+            vec!["agent", "read"],
+            vec!["agent", "agent"],
             vec!["manage"],
-            vec!["create", "manage"],
-            vec!["read", "read"],
-            vec!["create", "create"],
-            vec!["read", "post", "create", "read"],
         ] {
             approval.scopes = scopes.iter().map(|scope| (*scope).into()).collect();
             assert!(!approval.valid_scopes(), "{scopes:?}");

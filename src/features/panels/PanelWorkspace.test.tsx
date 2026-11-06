@@ -608,7 +608,7 @@ test("stale guest requests and guest shortcuts under a modal leave both panes al
   render(<NativePanes close={close} select={select} />);
   screen.getByRole("textbox", { name: "side one draft" }).focus();
   act(() => {
-    expect(requestClose("buzz:close-active-tab", "retired")).toBe("unhandled");
+    expect(requestClose("buzz:close-active-tab", "retired")).toBe("handled");
     switchTab("buzz:next-tab", "retired");
   });
   const dialog = document.createElement("dialog");

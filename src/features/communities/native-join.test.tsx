@@ -191,8 +191,9 @@ async function start(user: ReturnType<typeof userEvent.setup>) {
 async function expectWriteLocked(
   user: ReturnType<typeof userEvent.setup>,
   close: () => void,
+  action: string,
 ) {
-  expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: action })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
   await user.keyboard("{Escape}");
@@ -483,7 +484,7 @@ it.each(["current", "unmounted", "replaced"])(
     );
     try {
       await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
-      await expectWriteLocked(user, app.close);
+      await expectWriteLocked(user, app.close, "Publishing…");
       expect(app.communities.snapshot().memberships).toEqual([]);
       expect(journal().get(community)?.profile?.name).toBe("Submitted");
       if (state === "unmounted") await app.stop();
@@ -579,7 +580,7 @@ it("fences a late claim completion after the dialog is replaced", async () => {
     expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(true),
   );
   try {
-    await expectWriteLocked(user, first.close);
+    await expectWriteLocked(user, first.close, "Joining…");
     await first.stop();
     await open();
     await user.click(screen.getByRole("button", { name: "Continue" }));
@@ -680,7 +681,7 @@ it("leaves a native lookup the relay never answers, then names a relay it couldn
   await user.type(field, community);
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => expect(discovered).toBe(1));
-  expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Connecting…" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(field).toHaveFocus();
   expect(field).toHaveValue(community);

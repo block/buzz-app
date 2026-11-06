@@ -61,6 +61,23 @@ does. Change requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
+## Owner tools
+
+In communities the build flag `BUZZ_OWNER_MCP_COMMUNITIES` enables, an agent's
+runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get` and
+`owner_member_list`. They read the owner's channels, one channel's details and
+the owner's rights in it, and its roster, through the owner's own signed-in
+session, including private and archived channels, DMs and Solo chats the agent
+is not in. They write nothing. The app decides the agent, owner and community;
+answers name them in `executedAs`. Each call needs the agent's owner signed in
+to that community now and fails, returning nothing, when the account, community
+or connection changes during it or the turn ends or is stopped, including while
+protection reviews its result. Installed harness plugins, plugins' tools, plugin
+MCP connections and external apps never get this access, and a plugin cannot add
+a tool whose name starts with `owner_`. Protection reviews these calls and their
+results as it does other Buzz tools. See
+[configuration](configuration.md#owner-mcp-community-flag).
+
 ## External app authorization
 
 The build flag `BUZZ_EXTERNAL_MCP_COMMUNITIES` lists the allowed community
@@ -76,8 +93,7 @@ permission. **Settings > External apps** shows the connection and **Revoke acces
 Keys stay in Buzz. Closing Settings keeps access active.
 
 Version 1 links contain `version=1`, the requesting `client` display name,
-`callback`, random `state`, `scope` (a space-separated selection of `read`, `post`,
-and `create`), `code_challenge`,
+`callback`, random `state`, `scope` (`agent`), `code_challenge`,
 and `code_challenge_method=S256`. The callback must be exactly
 `http://127.0.0.1:<port>/buzz/authorize`, with a port from 1024 through 65535.
 State and challenge each encode 32 bytes as unpadded base64url. The client name
@@ -103,52 +119,45 @@ identity change, or the end of the owning agent runtime, plugin, or app also
 stops it. A version 1 client needs new setup after its session ends. Version 2
 can use saved approval to create another session.
 
-The read scope allows `channel_list`, `channel_get`, and `read`. The post scope
-allows `send` and `reply_in_subthread`. The create scope allows only
-`channel_create({name})`: a private Solo with the authenticated owner, connected
-agent and the owner's account-saved Bestie. Buzz derives these identities and
-deduplicates them; the creating agent is an implicit member. A missing, invalid,
-unreadable or unavailable saved Bestie fails before creation with a corrective
-message. It never substitutes an automatic device fallback. The exact saved key
-must be selectable through the session's shared agent choices in this community;
-it need not run on this device. Caller-supplied members, identities, visibility,
-templates and lifecycle operations are not allowed. Publication and confirmation
-use the existing native Solo-create handler and its unconfirmed-result messages.
-Buzz classifies each built-in tool through
-its trusted external-access policy. Unclassified tools cannot run. Runtime plugin
-tools cannot enroll in this policy.
+The only scope Buzz grants is `agent`: full access as the selected agent. The
+app lists and calls the same tools that agent's sessions get, with the same
+schemas, handler and client authority: the Buzz tools, attention, Solo worker
+and plugin tools, the settings tools, and every tool an enabled plugin adds.
+A plugin's tools appear and disappear as it is enabled, disabled or removed;
+new built-in tools appear without a contract change. The agent's own refusals,
+relay permissions, owner confirmations (plugin requests, agent creation and
+updates) and plugin isolation apply unchanged; `plugin_disable` acts at once,
+as it does for the agent. `self_handoff` wakes the agent as its own does, but
+the trigger's `from` is `{ external: true }` and the turn shows an `<app-wake>`
+section saying an external app the owner approved sent it, not a message, a
+watch or another of the agent's conversations. Memory reads use the agent's
+own memory. There is no current conversation, so tools that default to one
+need explicit channel, thread or message IDs. File reads (`path`, `files`) go
+to the agent type's `readFile`: Claude, Codex, Pi and goose read relative to
+the agent's saved workspace on this device, as their sessions do. A Claude or
+Codex agent on an execution target refuses, since only a conversation's session
+opens that target, and a type without `readFile` refuses as it does natively.
+Protected agents cannot connect. Connection credentials must stay out of logs
+and messages.
 
-`tools/list` returns all classified tools in one page. It rejects a supplied
-`cursor`. Each tool has `_meta["buzz/requiredScopes"]`. The list result has
-`_meta["buzz/grantedScopes"]` and `_meta["buzz/supportedScopes"]`; the supported
-set is `read`, `post`, and `create`. One authorization can request all three.
-Buzz never widens an existing grant: a read/post grant permits creation only after
-the owner approves a request that includes `create`. Tool discovery does not grant
-access. Each call checks
-the grant against the trusted policy. A missing scope returns `isError: true`
-and `_meta["buzz/error"]: {code: "authorization_required", required_scopes: [...]}`.
-`required_scopes` lists the missing scopes. Each approval replaces the previous
-grant. The external app must request all scopes it still needs, including scopes
-it already has. For example, an app with `read` that needs `post` requests
-`scope=read post`. Use `buzz/grantedScopes` from discovery to retain current access.
-The app must not retry the call automatically after approval. New classified tools
-use this same contract.
+`tools/list` returns the whole catalog in one page and rejects a supplied
+`cursor`. Each tool is listed as a session lists it, plus
+`_meta["buzz/requiredScopes"]: ["agent"]`. The list result has
+`_meta["buzz/grantedScopes"]` (`["agent"]`, or `[]` for an older approval) and
+`_meta["buzz/supportedScopes"]: ["agent"]`. A call without full access returns
+`isError: true` and
+`_meta["buzz/error"]: {code: "authorization_required", required_scopes: ["agent"]}`
+before any tool runs. Request `scope=agent`, then call again; never retry
+automatically after approval.
 
-External clients must accept `create` in `buzz/grantedScopes`,
-`buzz/supportedScopes` and per-tool `buzz/requiredScopes` before this catalog is
-advertised. Older Nexus clients that accept only read/post reject an unknown
-supported scope even when their grant still contains only read/post.
-
-The shared schemas apply with explicit
-targets: `read` needs `channel`, `thread`, or `message_url`. A `message_url` uses
-the linked message's channel and thread; it cannot combine with `channel` or
-`thread`. Searches with `q` need `channel` or `message_url`;
-`channel_get` needs `channel`; `channel_create` accepts only `name`;
-`send` needs `channel`, `text`, and `audience`;
-`reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
-`mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
-Unknown fields are rejected. File access, commands, Git credentials, and plugin
-tools are unavailable. Connection credentials must stay out of logs and messages.
+Older approvals and links used `read`, `post` and `create`. Buzz never widens
+them. A saved older approval still restores and renews, but grants no tools
+until the owner approves `scope=agent`. A new link that asks for older scopes
+shows an update notice whose only action is Deny, which sends the normal
+denial callback. `agent` cannot combine with other scopes. Clients that
+accept only `read`, `post` and `create` reject this catalog's supported scopes;
+they must request `agent` and accept it in `buzz/grantedScopes`,
+`buzz/supportedScopes` and each tool's `buzz/requiredScopes`.
 
 ### Durable external approval
 
@@ -255,7 +264,7 @@ older app or remote host.
 
 ## Agent Attention
 
-Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Each Interest can be paused without changing its watches’ enabled settings. Deleting an Interest with watches asks for confirmation, then removes them together. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
@@ -316,16 +325,16 @@ Attention command processes on macOS and Linux stop when their app process exits
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
-attention tools. How to use the attention tools is in their own descriptions,
+Attention tools. How to use the Attention tools is in their own descriptions,
 not `BUZZ_PROMPT`. Every session gets the
-same list and prompt, whether attention is on or off, so turning attention on or off never
+same list and prompt, whether Attention is on or off, so turning Attention on or off never
 restarts a session or invalidates its prompt cache. `turnNote` gives the text
-to add at the end of each turn: the attention review when attention is on and
+to add at the end of each turn: the Attention review when Attention is on and
 the agent has Interests, a line that it has none when it has none, and a note
 that it is off when it is off.
 
 `sessionTools` lists every tool under one `buzz` server, each with a `load`
-of `always` or `search`. The Buzz tools load up front and the attention tools on
+of `always` or `search`. The Buzz tools load up front and the Attention tools on
 search. Only the Buzz tools choose: tools plugins add always load on search, so
 installing plugins never grows what every turn carries. `sessionHint` says what
 the searchable tools are. `respond` stays harness-neutral: a harness passes a
@@ -536,6 +545,9 @@ Agents host owns the rows, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
 dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
+Providers can supply `attentionDescription` as supporting status text in Harness
+defaults, separate from the action named by `attentionLabel`. A null
+`attentionLabel` leaves only the status; omitting it keeps the default setup action.
 
 Goose's Settings → Harness defaults contribution reads and writes Goose's own
 configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
@@ -1279,17 +1291,29 @@ tasks unknown.
 
 ### Activity updates in the conversation
 
-Conversation visibility is separate from execution status. Activity updates use
-explicit immediate reply IDs and activity message IDs to select request lifecycle
-evidence; a nearby human message or a shared thread root is not proof of a turn.
-Consecutive updates from different requests or threads remain separate groups.
-Known waiting, working, failed, or uncertain work stays visible even after a public
-reply. Once every represented agent has settled successfully, stopped, or been
-superseded, the updates leave the conversation flow. History and exact message
-links remain available.
+The live conversation indicator remains visible while agents work, even when
+recorded activity is collapsed or expanded. It keeps dots beside current tool
+labels; reduced motion leaves the dots static. Activity text may shimmer too,
+but does not replace that persistent working cue.
+When local request evidence is available, old activity does not inherit the
+working/thinking state of a different request in the same thread.
+
+Agent-to-agent coordination messages remain in the conversation as collapsed,
+expandable history, including after completion, stopping, steering, or reload.
+A dispatch remains readable while its recipient starts work, even if its sender
+has finished. A public reply never removes that history. Expanding a group keeps
+its messages in their original order; exact message links open the matching group.
+
+Live work is separate from this history. Explicit immediate reply IDs and activity
+message IDs select request lifecycle evidence; a nearby human message or shared
+thread root is not proof of a turn. Finishing a request retires its live treatment,
+not its messages. When lifecycle evidence is missing, a related public reply can
+retire the old live treatment without claiming that execution completed. Current
+work continues to appear in the conversation indicator.
 
 A public reply alone does not replace the request's live indicator. Mounted
-update history can take over that indicator and its controls. When public replies
+update history can own the current step and request controls while the live
+conversation indicator remains available. When public replies
 split one request's updates into several runs, only the latest run for each agent
 owns its live shimmer and Stop control; earlier runs remain readable history.
 Other agents and requests retain their own live presentation.
@@ -1297,13 +1321,11 @@ Codex transfers live activity to an accepted follow-up in the same conversation.
 Top-level DM messages share that presentation scope; actual DM threads remain
 independent, even when they share a harness session.
 
-When lifecycle evidence is missing (including historical conversations after a
-reload), the next public reply can retire older updates from the same request
-if its author participated in the exchange or received the helper's last update.
-This is a display fallback, not a claim that execution completed. It never
-overrides available pending, failed, or uncertain lifecycle evidence. Durable
-cross-host completion would require retained request/turn relationships and
-terminal events; the current live-only feed does not provide that guarantee.
+The historical-reply fallback requires the reply author to have participated in
+the exchange or received the helper’s last update. It never overrides available
+pending, failed, or uncertain lifecycle evidence. Durable cross-host completion
+would require retained request/turn relationships and terminal events; the
+current live-only feed does not provide that guarantee.
 
 ### Try with an existing owner account
 

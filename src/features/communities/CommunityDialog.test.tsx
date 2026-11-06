@@ -825,7 +825,7 @@ it("lets Cancel, Close and Escape leave a lookup the host never answers", async 
   await user.type(field, "wss://quiet.example");
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => expect(lookups).toHaveLength(1));
-  expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Connecting…" })).toBeDisabled();
   expect(field).toBeDisabled();
   expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -988,7 +988,7 @@ it("keeps a cancelled lookup's late profile refusal off the corrected address", 
   await waitFor(() => expect(refusals).toHaveLength(2));
   // The closed community refuses the abandoned profile read only now.
   await act(async () => refusals[0]?.(new Error("Relay read failed (403)")));
-  expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Connecting…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
   await act(async () => refusals[1]?.(new Error("Relay read failed (403)")));
   expect(await screen.findByText("https://open.example")).toBeVisible();

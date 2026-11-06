@@ -186,6 +186,11 @@ function fixture() {
           }
           relay={relay}
           panels={{
+            ui: {
+              Workspace: () => null,
+              useSplit: vi.fn(),
+              useTabTitle: vi.fn(),
+            },
             ...contribution,
             register() {},
             resolve: () => undefined,

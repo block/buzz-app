@@ -223,6 +223,11 @@ it.each([false, true])(
               createNavigationController(createMemoryHistory()).navigation
             }
             panels={{
+              ui: {
+                Workspace: () => null,
+                useSplit: vi.fn(),
+                useTabTitle: vi.fn(),
+              },
               snapshot: () => empty,
               subscribe: () => () => {},
               register() {},

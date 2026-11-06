@@ -41,6 +41,8 @@ function sessions(
     launched: Promise<void>;
     /** Holds each process's `initialize` write, as a stalled pipe would. */
     initialized: Promise<void>;
+    /** Every process stops answering, as a stuck Claude would. */
+    mute: boolean;
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
@@ -57,6 +59,7 @@ function sessions(
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
+    if (options.mute && started) started.emit = () => {};
     const { initialized } = options;
     if (!initialized) return process;
     return process.then((host) => ({
@@ -983,6 +986,23 @@ it("shares a temporary metadata lookup, releases its process, and refreshes afte
   pool.reconfigure();
   expect((await pool.metadata()).model).toBe("claude-haiku-5-5");
   expect(live()).toHaveLength(0);
+  pool.dispose();
+});
+
+it("stops a metadata lookup its caller gave up on, and starts the next one afresh", async () => {
+  const { pool, claudes, live } = sessions({ mute: true });
+  const deadline = new AbortController();
+  const result = pool.metadata(deadline.signal);
+  await flush();
+  expect(live()).toHaveLength(1);
+  const stopped = expect(result).rejects.toThrow("deadline");
+  deadline.abort(new Error("The turn ran past its deadline"));
+  await flush();
+  expect(live()).toHaveLength(0);
+  await stopped;
+  void pool.metadata();
+  await flush();
+  expect(claudes()).toHaveLength(2);
   pool.dispose();
 });
 

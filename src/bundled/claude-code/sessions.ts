@@ -158,7 +158,7 @@ export class AgentSessions {
   }
 
   /** Read defaults without assigning the shared spare to this agent. */
-  async metadata() {
+  async metadata(signal?: AbortSignal) {
     const fingerprint = this.options.fingerprint();
     const read = async (process: ClaudeProcess) => {
       const [models, model, effort] = await Promise.all([
@@ -180,7 +180,7 @@ export class AgentSessions {
     if (this.disposed)
       return { models: [], model: undefined, effort: undefined };
     if (this.discovery?.fingerprint === fingerprint)
-      return this.discovery.result;
+      return this.discovered(this.discovery.result, signal);
     this.clearDiscovery();
     const discovery: NonNullable<AgentSessions["discovery"]> = {
       fingerprint,
@@ -212,7 +212,16 @@ export class AgentSessions {
     void discovery.result.catch(() => {
       if (this.discovery === discovery) this.discovery = undefined;
     });
-    return discovery.result;
+    return this.discovered(discovery.result, signal);
+  }
+  /** A lookup's `result`, unless its caller gives up first: then the lookup
+   * stops, as its process stopped answering, and the next starts afresh. */
+  private discovered<T>(result: Promise<T>, signal?: AbortSignal) {
+    return abortable(result, signal).catch((error: unknown) => {
+      if (signal?.aborted && this.discovery?.result === result)
+        this.clearDiscovery();
+      throw error;
+    });
   }
   private clearDiscovery() {
     void this.discovery?.process?.kill();

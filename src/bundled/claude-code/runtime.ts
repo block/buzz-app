@@ -487,14 +487,14 @@ export class ClaudeRuntime {
   }
 
   /** `models`, saying whether Claude itself lists the current model. */
-  private async catalog(agent: AgentKey) {
+  private async catalog(agent: AgentKey, signal?: AbortSignal) {
     const entry = this.agents.get(agent);
     const configured = entry?.config.model.trim();
     const {
       models: listed,
       model: reported,
       effort,
-    } = (await entry?.sessions.metadata()) ?? { models: [] };
+    } = (await entry?.sessions.metadata(signal)) ?? { models: [] };
     // A turn without a pick keeps the session's effort on any model.
     const resting = (efforts: readonly Effort[]) =>
       effort && efforts.some((level) => level.id === effort) ? { effort } : {};
@@ -1083,7 +1083,7 @@ export class ClaudeRuntime {
     signal,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
-    const { agent, team } = delivery;
+    const { agent, team, synced } = delivery;
     if (await this.inspect?.(agent.key)) {
       const conversation = `once:${crypto.randomUUID()}`;
       const record = this.executionKey(agent.key, conversation);
@@ -1103,7 +1103,7 @@ export class ClaudeRuntime {
     const entry = this.entry(agent, this.resolveConfig(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
-    const refused = await this.refusal(agent.key, delivery.synced?.effort);
+    const refused = await this.refusal(agent.key, synced?.effort, signal);
     if (refused) return { ok: false, error: refused };
     const done = entry.sessions.runOnce(key, prompt, signal);
     this.notify();
@@ -1112,9 +1112,9 @@ export class ClaudeRuntime {
 
   /** Why a new process can't run a synced effort, which is the agent's on
    * every device and never swapped for a default (NIP-AP). */
-  private async refusal(agent: AgentKey, kept: string | undefined) {
+  private async refusal(agent: AgentKey, kept?: string, signal?: AbortSignal) {
     if (!kept) return undefined;
-    const { current, models, listed } = await this.catalog(agent);
+    const { current, models, listed } = await this.catalog(agent, signal);
     const own = models.find((model) => model.id === current);
     // A model Claude doesn't list has no levels to check the effort against.
     if (!listed || !own)

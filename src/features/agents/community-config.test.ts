@@ -704,6 +704,65 @@ describe("a team roster changed elsewhere", () => {
   });
 });
 
+describe("team history", () => {
+  it("lists a discovered team's instructions and reverts them online", async () => {
+    const id = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+    const teamChannel = "2c8e7a1d-5b4f-4e3a-9d2c-7f6e5d4c3b2a";
+    const d = await artifactD("buzz.team", teamChannel);
+    const head = sign(
+      artifactTemplate({
+        channel: teamChannel,
+        type: "buzz.team",
+        d,
+        op: "create",
+        title: "Team",
+        content: JSON.stringify({ version: 1, name: "Crew", instructions: "" }),
+      }),
+    );
+    head.tags.push(["team", id]);
+    const team = {
+      id,
+      channel: teamChannel,
+      head,
+      members: ["o", agent.pubkey],
+    };
+    const f = setup({
+      realSync: true,
+      team,
+      beforePublish: (event) => {
+        team.head = event;
+      },
+    });
+    expect(f.configs.teamHistory(id)).toBeUndefined();
+    await f.configs.reconnected();
+    await vi.waitFor(() =>
+      expect(f.configs.teamHistory(id)).toMatchObject({
+        side: "instructions",
+        expected: { channel: teamChannel, type: "buzz.team", d, team: id },
+        head: { id: head.id },
+      }),
+    );
+    expect(f.configs.teamHistory("another")).toBeUndefined();
+    const revert = artifactTemplate({
+      channel: teamChannel,
+      type: "buzz.team",
+      d,
+      op: "update",
+      prev: head.id,
+      title: "Team",
+      content: JSON.stringify({
+        version: 1,
+        name: "Crew",
+        instructions: "old",
+      }),
+    });
+    revert.tags.push(["team", id]);
+    f.heads.set(d, head);
+    expect((await f.configs.reviseTeam(id, revert)).status).toBe("saved");
+    expect(f.heads.get(d)?.content).toContain('"instructions":"old"');
+  });
+});
+
 describe("deleting an agent", () => {
   it("archives its config channel and stops syncing it", async () => {
     const f = setup();

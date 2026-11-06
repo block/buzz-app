@@ -1275,6 +1275,9 @@ export type Agents = {
   /** The History of each of the agent's synced config sides; undefined while
    * none syncs here. */
   configHistory(agent: AgentKey): ConfigHistory | undefined;
+  /** The History of a synced team's name and instructions; undefined for a
+   * team kept only on this device. */
+  teamHistory(id: string): ConfigHistory | undefined;
   /** Previews the destination config and transferable settings the same
    * migration used by `retype` will produce, without changing the agent. */
   previewRetype(agent: AgentKey, type: string): RetypePreview;
@@ -3740,15 +3743,23 @@ export class AgentsService extends Service implements Agents {
         // As a save: a revert can't put this type back over another's.
         const problem = side === "settings" && this.otherType(agent);
         if (problem) return { status: "refused", message: problem };
-        const result = await config.revise(pubkey, side, template);
-        switch (result.status) {
-          case "saved":
-          case "accepted-unavailable":
-            return { status: "accepted" };
-          case "unknown":
-            return { status: "uncertain", message: result.message };
-          default:
-            return { status: "refused", message: saveProblem(result) };
+        return revertOutcome(await config.revise(pubkey, side, template));
+      },
+    };
+  };
+  teamHistory = (id: string): ConfigHistory | undefined => {
+    const community = this.teamHome(id, undefined);
+    const config = community ? this.communityConfigs.get(community) : undefined;
+    const side = config?.teamHistory(id);
+    if (!config || !side) return undefined;
+    return {
+      read: config.read,
+      sides: [side],
+      revise: async (_side, template) => {
+        try {
+          return revertOutcome(await config.reviseTeam(id, template));
+        } catch (error) {
+          return { status: "refused", message: message(error) };
         }
       },
     };
@@ -6198,6 +6209,18 @@ async function unarchive(
   return true;
 }
 
+/** What History says of a revert's save. */
+function revertOutcome(result: Saved): RevertOutcome {
+  switch (result.status) {
+    case "saved":
+    case "accepted-unavailable":
+      return { status: "accepted" };
+    case "unknown":
+      return { status: "uncertain", message: result.message };
+    default:
+      return { status: "refused", message: saveProblem(result) };
+  }
+}
 /** What a synced side's Save that didn't save tells the editor. */
 function saveProblem(result: Saved) {
   switch (result.status) {

@@ -4,8 +4,16 @@ import {
   agentHistoryActive,
   agentHistoryRoute,
   agentHistoryTarget,
+  historyActive,
+  historyRoute,
+  historyTarget,
+  teamRoute,
 } from "./routes";
-import { historyPresentation } from "../../features/agents/history-presentation";
+import {
+  historyPresentation,
+  type HistoryPresentation,
+} from "../../features/agents/history-presentation";
+import { ConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
 import { communityDestination } from "../../features/communities/destination";
@@ -377,6 +385,18 @@ export function AgentsPage({
       ? navigation.target.route?.params
       : undefined;
   const routedEntry = navigation?.entryId;
+  // Opened for one of your teams, such as from a version link.
+  const routedTeam =
+    routed && navigation.target.kind === "page"
+      ? teamRoute(navigation.target.route?.params)
+      : undefined;
+  useEffect(() => {
+    if (!routedTeam || !routedEntry) return;
+    setSelectedKey(undefined);
+    setSharedSelection(undefined);
+    setTab("teams");
+    setEditingTeam(routedTeam);
+  }, [routedTeam, routedEntry]);
   useEffect(() => {
     if (!routedAgent || !routedEntry) return;
     setEditingTeam(undefined);
@@ -678,6 +698,38 @@ export function AgentsPage({
               teams={teams}
               editing={editing}
               onEdit={setEditingTeam}
+              historyPresentation={
+                editing &&
+                navigation &&
+                navigator &&
+                !navigation.signal.aborted &&
+                navigator.snapshot().entry.id === navigation.entryId &&
+                navigation.target.kind === "page"
+                  ? historyPresentation(
+                      navigator,
+                      routedTeam === editing
+                        ? historyRoute(
+                            navigation.target.route?.params,
+                            teamRoute,
+                          )
+                        : undefined,
+                      (selection) =>
+                        historyTarget(
+                          navigation.target as Extract<
+                            OpenTarget,
+                            { kind: "page" }
+                          >,
+                          { team: editing },
+                          selection,
+                        ),
+                      routedTeam === editing &&
+                        historyActive(
+                          navigation.target.route?.params,
+                          teamRoute,
+                        ),
+                    )
+                  : undefined
+              }
               newTeam={!toolbarAction && newTeamMenu}
             />
           )}
@@ -2297,6 +2349,7 @@ function Teams({
   teams,
   editing,
   onEdit,
+  historyPresentation,
   newTeam,
 }: {
   agents: Agents;
@@ -2305,16 +2358,21 @@ function Teams({
   /** A team's id while it is edited, or "new" for one being made. */
   editing: string | undefined;
   onEdit(id: string | undefined): void;
+  historyPresentation?: HistoryPresentation | undefined;
   newTeam: ReactNode;
 }) {
+  // A revert opens the editor again on the version it saved.
+  const [reverts, setReverts] = useState(0);
   const team = teams.find((item) => item.id === editing);
   if (editing === "new" || team)
     return (
       <TeamEditor
-        key={editing}
+        key={`${editing}/${reverts}`}
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
+        historyPresentation={historyPresentation}
+        onReverted={() => setReverts((count) => count + 1)}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -2351,13 +2409,26 @@ function TeamEditor({
   agents,
   saved,
   team,
+  historyPresentation,
+  onReverted,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
+  historyPresentation?: HistoryPresentation | undefined;
+  onReverted(): void;
   onDone(): void;
 }) {
+  const synced = team && agents.teamHistory(team.id);
+  const history = synced && {
+    ...synced,
+    revise: async (...args: Parameters<typeof synced.revise>) => {
+      const outcome = await synced.revise(...args);
+      if (outcome.status === "accepted") onReverted();
+      return outcome;
+    },
+  };
   const [name, setName] = useState(team?.name ?? "");
   const [instructions, setInstructions] = useState(team?.instructions ?? "");
   const [members, setMembers] = useState<readonly string[]>(
@@ -2482,6 +2553,12 @@ function TeamEditor({
           onChange={(event) => setInstructions(event.target.value)}
         />
       </Field>
+      {history && (
+        <ConfigHistoryRow
+          history={history}
+          presentation={historyPresentation}
+        />
+      )}
       <Section title="Members">
         {choices.length ? (
           <div className="grid gap-2">

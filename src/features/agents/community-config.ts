@@ -235,6 +235,8 @@ export function agentConfigs(
   const versions = new Map<string, number>();
   let disposed = false;
   const ops = teamOps({ ...input, signal });
+  /** Each discovered team's History side, by team id. */
+  const teamSides = new Map<string, WriteSide>();
   /** The discovery running, and whether another is due after it. */
   let discovering: Promise<void> | undefined;
   let again = false;
@@ -256,6 +258,14 @@ export function agentConfigs(
         );
         if (disposed) return;
         if (found) {
+          // History's sides, made once per team: their `d` is async.
+          for (const team of found)
+            if (!team.archived && !team.unproven && !teamSides.has(team.id))
+              teamSides.set(
+                team.id,
+                await ops.side(team.id, team.channel, team.id),
+              );
+          if (disposed) return;
           input.teams.set(owner, community, found);
           input.changed();
         }
@@ -561,6 +571,37 @@ export function agentConfigs(
           },
         ];
       });
+    },
+    /** The team's synced instructions, for History; undefined while it
+     * isn't a listed team here. */
+    teamHistory(id: string) {
+      const team = input.teams
+        .get(owner, community)
+        ?.find((entry) => entry.id === id && !entry.archived);
+      const local = teamSides.get(id);
+      if (!team || team.unproven || local?.expected.channel !== team.channel)
+        return undefined;
+      const { expected, subject } = local;
+      return {
+        side: "instructions" as const,
+        expected,
+        head: store.state(subject).head,
+        version: versions.get(`${expected.channel} ${expected.d}`) ?? 0,
+      };
+    },
+    /** Saves a team History revert, online, then shows what the relay has. */
+    async reviseTeam(
+      id: string,
+      template: ReturnType<typeof artifactTemplate>,
+    ) {
+      const local = teamSides.get(id);
+      const prev = template.tags.find(([name]) => name === "prev")?.[1];
+      if (!local || !prev) throw new Error("This team isn't synced here");
+      try {
+        return await ops.revise(local, template, prev);
+      } finally {
+        await refreshTeams();
+      }
     },
     /** Reads history pages from the config channel. */
     read: input.read,

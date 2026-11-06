@@ -6722,12 +6722,12 @@ describe("a team Save that finishes after its editor is gone", () => {
   it("closes the editor once its Save succeeds, before the saved team arrives", async () => {
     const f = await fixture({ refresh: false, nativeHistory: true });
     try {
-      await act(async () => {
-        f.resolve();
-        await new Promise((r) => setTimeout(r, 10));
-      });
+      await act(async () => f.resolve());
+      // The dismissal lands on a later task; wait for it, then check the form.
+      await waitFor(() =>
+        expect(f.navigator.snapshot().entry.target).toEqual(base),
+      );
       expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
-      expect(f.navigator.snapshot().entry.target).toEqual(base);
     } finally {
       f.dispose();
     }

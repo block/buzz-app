@@ -609,7 +609,7 @@ test.describe("dialog origin retirement", () => {
     // Choosing channels from the sidebar keeps the tab the same way.
     await page.locator('button[data-channel-id="beta"]').click();
     await expect(
-      page.getByRole("tab", { name: "Beta", exact: true }),
+      page.getByRole("button", { name: "Manage members of Beta", exact: true }),
     ).toBeVisible();
     await expect(canvas).toHaveCount(0);
     await page.locator(`button[data-channel-id="${channelId}"]`).click();
@@ -623,11 +623,14 @@ test.describe("dialog origin retirement", () => {
     // Close is the end: returning to the channel does not reopen it.
     await page.locator('button[data-channel-id="beta"]').click();
     await expect(
-      page.getByRole("tab", { name: "Beta", exact: true }),
+      page.getByRole("button", { name: "Manage members of Beta", exact: true }),
     ).toBeVisible();
     await page.locator(`button[data-channel-id="${channelId}"]`).click();
     await expect(
-      page.getByRole("tab", { name: channelName, exact: true }),
+      page.getByRole("button", {
+        name: `Manage members of ${channelName}`,
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(canvas).toHaveCount(0);
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);

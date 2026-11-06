@@ -420,6 +420,9 @@ function setup(
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
     teamHistory: () => undefined,
+    teamUpdateRequests: () => [],
+    dismissTeamUpdate: vi.fn(),
+    approveTeamUpdate: vi.fn(async () => {}),
     addedTabs: () =>
       linkTab
         ? [

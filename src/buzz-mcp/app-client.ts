@@ -218,6 +218,24 @@ export function appClient(
         throw new Error("Agent changes are unavailable on this host");
       return agent.updateAgent(input);
     },
+    readAgents: async (target) => {
+      check();
+      if (!agent.readAgents)
+        throw new Error("Agent reads are unavailable on this host");
+      return agent.readAgents(target);
+    },
+    readTeams: async (target) => {
+      check();
+      if (!agent.readTeams)
+        throw new Error("Team reads are unavailable on this host");
+      return agent.readTeams(target);
+    },
+    updateTeam: async (input) => {
+      check();
+      if (!agent.updateTeam)
+        throw new Error("Team changes are unavailable on this host");
+      return agent.updateTeam(input);
+    },
     ...(plugins && {
       plugins: {
         list: () => {

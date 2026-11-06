@@ -743,6 +743,15 @@ available rather than silently discarding it.
   the feed; the dialog identifies it in words and offers no restore action.
   **Load older** fetches more history. Reverting one track saves
   a new revision without changing the other track.
+- **Agents → Your teams → Previous versions**, in a team's editor, lists the
+  saved versions of a team that syncs to a community, the same way. Reverting
+  restores its instructions and keeps its current name; members are not
+  versioned. Teams kept only on this Mac have no versions.
+- Your agents can read your agents and teams here (`agent_read`,
+  `team_read`) and propose a team's new name or instructions
+  (`team_update`). A proposal opens a review: nothing changes until you save
+  it, members never change this way, and Save is refused if the team changed
+  since the proposal.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.

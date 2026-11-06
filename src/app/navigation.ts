@@ -16,7 +16,11 @@ import type {
   NavigationOpenOptions,
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
-import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
+import {
+  linkedPage,
+  linkedPageTarget,
+  pluginLinkProblem,
+} from "../features/pages/plugin-link";
 
 const channelsKey = "buzz.channels/channels";
 /** Presentation-only lease for an already-confirmed Settings departure. */
@@ -241,6 +245,10 @@ export function useAppNavigation(
     linked,
     failure,
   ]);
+  const linkProblem =
+    pluginLink && failure === "unavailable"
+      ? pluginLinkProblem(pluginLink, plugins.configuration, plugins.activation)
+      : undefined;
   const owner = useMemo(
     () => ({ attempt: state.attempt, page, waiting, failure }),
     [state.attempt, page, waiting, failure],
@@ -435,6 +443,7 @@ export function useAppNavigation(
     select,
     waiting,
     failure,
+    linkProblem,
     selected: pageKey ?? target.kind,
     /** The connection is down, including a settled refusal. */
     offline: !failure && offline,

@@ -317,6 +317,14 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   box-shadow: inset 0 0 0 1px
     var(--reaction-self-border, var(--border-reaction-self));
 }
+/* Forced colors drop the shadow and replace the tint, so a system-color
+   outline keeps the same inset ring. */
+@media (forced-colors: active) {
+  .reactionItem[data-mine] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+}
 .reactionGlyph {
   display: inline-flex;
   align-items: center;

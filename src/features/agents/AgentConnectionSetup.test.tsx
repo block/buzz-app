@@ -128,8 +128,13 @@ it.each(["dm", "stream", "forum"] as const)(
     const view = { status: "ready", events: [profile] };
     let choices: {
       complete: boolean;
+      archives: { status: "ready"; archived: string[] };
       identities: { pubkey: string; managed: boolean; messageable: boolean }[];
-    } = { complete: false, identities: [] };
+    } = {
+      complete: false,
+      identities: [],
+      archives: { status: "ready", archived: [] },
+    };
     const profiles = new Map([
       [candidate.pubkey, { name: candidate.name, isAgent: true }],
     ]);
@@ -142,7 +147,22 @@ it.each(["dm", "stream", "forum"] as const)(
       subscribe: noop,
       dispose: () => {},
     }));
+    const sendObservers = new Set<
+      Parameters<import("../relay/outbox").Outbox["observeSend"]>[0]
+    >();
     const session = {
+      outbox: {
+        observeSend: (
+          listener: Parameters<
+            import("../relay/outbox").Outbox["observeSend"]
+          >[0],
+        ) => {
+          sendObservers.add(listener);
+          return () => {
+            sendObservers.delete(listener);
+          };
+        },
+      },
       messages: { reply },
       scope: "scope",
       viewer,
@@ -224,12 +244,55 @@ it.each(["dm", "stream", "forum"] as const)(
         </AgentsContext.Provider>
       </ToastProvider>
     );
+    const sendMention = (
+      kind = 9,
+      author = viewer,
+      destination = channel.id,
+    ) => {
+      const event = {
+        id: "b".repeat(64),
+        kind,
+        pubkey: author,
+        created_at: 1,
+        content: "Hello",
+        tags: [
+          ["h", destination],
+          ["p", candidate.pubkey],
+        ],
+      };
+      return [...sendObservers].map((observer) =>
+        observer(event, new AbortController().signal),
+      );
+    };
+    const deliverMention = (destination = channel.id) => {
+      act(() => {
+        for (const delivered of sendMention(9, viewer, destination))
+          delivered?.([]);
+      });
+    };
     let mounted = render(setup());
+    if (channelType !== "dm") {
+      // History hydration alone does not even start candidate discovery.
+      expect(portable).not.toHaveBeenCalled();
+      for (const args of [
+        [40003, viewer, channel.id],
+        [9, "other", channel.id],
+        [9, viewer, "elsewhere"],
+      ] as const) {
+        expect(sendMention(args[0], args[1], args[2])).toEqual([undefined]);
+      }
+      const pending = sendMention();
+      expect(portable).not.toHaveBeenCalled();
+      act(() => {
+        for (const delivered of pending) delivered?.([]);
+      });
+    }
     await waitFor(() => expect(portable).toHaveBeenCalledOnce());
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     act(() => {
       choices = {
         complete: true,
+        archives: { status: "ready", archived: [] },
         identities: [
           { pubkey: candidate.pubkey, managed: false, messageable: true },
         ],
@@ -238,7 +301,16 @@ it.each(["dm", "stream", "forum"] as const)(
     });
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     act(() => {
-      choices = { complete: true, identities: [] };
+      choices = {
+        complete: true,
+        identities: [],
+        archives: { status: "ready", archived: [candidate.pubkey] },
+      };
+      for (const listener of [...listeners]) listener();
+    });
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    act(() => {
+      choices = { ...choices, archives: { status: "ready", archived: [] } };
       for (const listener of [...listeners]) listener();
     });
     expect(
@@ -276,15 +348,19 @@ it.each(["dm", "stream", "forum"] as const)(
     expect(reply).not.toHaveBeenCalled();
     // Navigation to another channel remains eligible; returning retains dismissal.
     mounted.rerender(setup(session, { ...channel, id: "other-channel" }));
+    deliverMention("other-channel");
     await screen.findByRole("button", { name: "Connect" });
     mounted.rerender(setup());
+    deliverMention();
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     // A fresh mount reads durable state, as after reload. A new scope is independent.
     mounted.unmount();
     mounted = render(setup());
+    deliverMention();
     await waitFor(() => expect(observe).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     mounted.rerender(setup({ ...session, scope: "other-viewer-community" }));
+    deliverMention();
     await user.click(await screen.findByRole("button", { name: "Connect" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Import interrupted",

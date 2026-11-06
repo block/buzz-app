@@ -3,6 +3,8 @@ import { readView, subscribeView, writeView } from "../../shared/view-state";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { XIcon } from "../../shared/design-system/icons";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Select } from "../../shared/design-system/ui/Select";
 import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
@@ -74,6 +76,32 @@ export function AgentConnectionSetup({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  // Only sends made while this conversation is open can offer channel setup.
+  // Receipt/verified echo confirms delivery; loading history never captures intent.
+  const [sent, setSent] = useState<ReadonlySet<string>>(new Set());
+  const channelId = channel?.id;
+  useEffect(() => {
+    setSent(new Set());
+    let active = true;
+    const stop = session.outbox?.observeSend((event) => {
+      if (
+        event.kind !== 9 ||
+        event.pubkey !== session.viewer ||
+        !event.tags.some(
+          ([name, value]) => name === "h" && value === channelId,
+        ) ||
+        !event.tags.some(([name]) => name === "p")
+      )
+        return;
+      return () => {
+        if (active) setSent((previous) => new Set([...previous, event.id]));
+      };
+    });
+    return () => {
+      active = false;
+      stop?.();
+    };
+  }, [session, channelId]);
   const isAgent = (key: string) => profiles.get(key)?.isAgent === true;
   // Only a DM has a peer; a channel can have thousands of members.
   const members =
@@ -125,7 +153,12 @@ export function AgentConnectionSetup({
   ) {
     return (
       <>
-        {[...connectionMentions(rows, session.viewer)]
+        {[
+          ...connectionMentions(
+            rows.filter((row) => sent.has(row.id)),
+            session.viewer,
+          ),
+        ]
           .filter(([key]) => isAgent(key))
           .map(([mentioned, message]) => (
             <Candidate
@@ -226,6 +259,7 @@ function Candidate({
     (phase === "idle" &&
       (!choices.complete ||
         existing ||
+        choices.archives.archived.includes(peer) ||
         owned.status !== "ready" ||
         owned.owner !== session.viewer ||
         presence === "online" ||
@@ -369,15 +403,14 @@ export function AgentConnectionForm({
                     />
                   </div>
                   {onDismiss && (
-                    <Button
+                    <IconButton
                       size="sm"
-                      variant="subtle"
+                      variant="ghost"
                       disabled={pending}
                       aria-label={`Dismiss connection setup for ${candidate.name}`}
+                      icon={<XIcon size={18} aria-hidden="true" />}
                       onClick={onDismiss}
-                    >
-                      Dismiss
-                    </Button>
+                    />
                   )}
                 </div>
                 <div className="flex flex-col gap-1">

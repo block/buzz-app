@@ -229,7 +229,10 @@ can switch the tracked branch even when the code is unchanged. Review and
 confirm the update to save the new source; no reinstall is needed.
 
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
-one only if you trust its author with your account and your computer.
+one only if you trust its author with your account and your computer. An optional
+[plugin trust file](plugin-trust.md) restricts external plugins to trusted
+publishers and can include plugins you sign with your own Buzz identity. Manage
+the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the reason.
 
 ## Docs
 

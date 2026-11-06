@@ -325,16 +325,16 @@ Attention command processes on macOS and Linux stop when their app process exits
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
-attention tools. How to use the attention tools is in their own descriptions,
+Attention tools. How to use the Attention tools is in their own descriptions,
 not `BUZZ_PROMPT`. Every session gets the
-same list and prompt, whether attention is on or off, so turning attention on or off never
+same list and prompt, whether Attention is on or off, so turning Attention on or off never
 restarts a session or invalidates its prompt cache. `turnNote` gives the text
-to add at the end of each turn: the attention review when attention is on and
+to add at the end of each turn: the Attention review when Attention is on and
 the agent has Interests, a line that it has none when it has none, and a note
 that it is off when it is off.
 
 `sessionTools` lists every tool under one `buzz` server, each with a `load`
-of `always` or `search`. The Buzz tools load up front and the attention tools on
+of `always` or `search`. The Buzz tools load up front and the Attention tools on
 search. Only the Buzz tools choose: tools plugins add always load on search, so
 installing plugins never grows what every turn carries. `sessionHint` says what
 the searchable tools are. `respond` stays harness-neutral: a harness passes a

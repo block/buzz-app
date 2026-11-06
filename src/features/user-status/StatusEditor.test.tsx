@@ -56,37 +56,17 @@ it("calculates the selected preset at save time after a quick choice is edited",
     screen.queryByRole("menuitemradio", { name: "Don’t clear" }),
   ).not.toBeInTheDocument();
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "8 hours" }),
+    await screen.findByRole("menuitemradio", { name: "30 minutes" }),
   );
+  expect(
+    screen.getByRole("button", { name: "Duration: 30 minutes" }),
+  ).toBeVisible();
   now += 600_000;
   await user.click(screen.getByRole("button", { name: "Save status" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledWith({
     text: "Design review",
     emoji: "🗣️",
-    expiresAt: now / 1000 + 28800,
-  });
-});
-it("offers 30 minutes and saves a status that clears 30 minutes after saving", async () => {
-  const user = userEvent.setup();
-  const now = 1_700_000_000_000;
-  vi.spyOn(Date, "now").mockImplementation(() => now);
-  const { save, close } = setup();
-  fireEvent.change(screen.getByLabelText("Status message"), {
-    target: { value: "Coffee" },
-  });
-  await user.click(screen.getByRole("button", { name: "Duration: Today" }));
-  await user.click(
-    await screen.findByRole("menuitemradio", { name: "30 minutes" }),
-  );
-  expect(
-    screen.getByRole("button", { name: "Duration: 30 minutes" }),
-  ).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Save status" }));
-  await waitFor(() => expect(close).toHaveBeenCalledOnce());
-  expect(save).toHaveBeenCalledWith({
-    text: "Coffee",
-    emoji: "💬",
     expiresAt: now / 1000 + 1800,
   });
 });

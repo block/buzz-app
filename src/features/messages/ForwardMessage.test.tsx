@@ -327,6 +327,36 @@ it("forwards a note and permalink through the chosen person's DM and retires the
   expect(messages.send).toHaveBeenCalledTimes(1);
 });
 
+it("opens the forwarded message in the DM from the success notice, with the source behind it", async () => {
+  const user = userEvent.setup();
+  const { navigation } = setup();
+  const source = navigation.snapshot().entry.target;
+  await choose(user);
+  await user.click(screen.getByRole("button", { name: "Forward" }));
+  await screen.findByText("Message forwarded to Avery Chen");
+  // Forwarding leaves you where you were; the notice is the way on.
+  expect(navigation.snapshot().entry.target).toEqual(source);
+  await user.click(
+    screen.getByRole("button", { name: "Open your DM with Avery Chen" }),
+  );
+  await waitFor(() =>
+    expect(navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: "https://relay.example" },
+      channelId: destination,
+      messageId: "e".repeat(64),
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Message forwarded to Avery Chen"),
+    ).not.toBeInTheDocument(),
+  );
+  act(() => navigation.back());
+  expect(navigation.snapshot().entry.target).toEqual(source);
+});
+
 it("preserves the selection and note across Back/Forward; Cancel retires the visit", async () => {
   const user = userEvent.setup();
   const { navigation, messages } = setup();
@@ -392,7 +422,7 @@ it("keeps an uncertain send locked and retries its exact event without another D
 
 it("restores a saved forward after reload and confirms its exact event instead of sending again", async () => {
   const user = userEvent.setup();
-  const { directMessages, messages, outbox, operations } = setup({
+  const { navigation, directMessages, messages, outbox, operations } = setup({
     saved: [pendingForward()],
   });
   await user.click(screen.getByRole("button", { name: "Forward source" }));
@@ -421,6 +451,16 @@ it("restores a saved forward after reload and confirms its exact event instead o
   );
   expect(outbox.acknowledge).toHaveBeenCalledWith("9".repeat(64));
   expect(operations()).toEqual([]);
+  // The notice opens the restored event's DM, named by its outbox tag.
+  await user.click(
+    await screen.findByRole("button", { name: "Open your DM with Avery Chen" }),
+  );
+  await waitFor(() =>
+    expect(navigation.snapshot().entry.target).toMatchObject({
+      channelId: destination,
+      messageId: "9".repeat(64),
+    }),
+  );
 });
 
 it("blocks another forward while a saved one is pending and offers to review it", async () => {

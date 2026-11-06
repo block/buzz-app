@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentProps,
   type ReactNode,
   type Ref,
@@ -29,6 +30,7 @@ import { ProfileButton } from "./ProfileButton";
 import { CommunityShortcuts } from "./CommunityShortcuts";
 import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
 import type { Appearance } from "../../shared/theme/service";
+import { frameScope } from "../../shared/theme/themes";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { BestieNavigationProvider } from "./BestieNavigation";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
@@ -39,6 +41,10 @@ import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
+const DARK_FRAME = {
+  "data-color-mode": "dark",
+  "data-theme-frame": "",
+} as const;
 
 export function AppShell(props: ComponentProps<typeof AppShellContent>) {
   return (
@@ -171,6 +177,10 @@ function AppShellContent({
     };
   }, []);
   const fillsWorkspace = workspace || selected === "settings";
+  const framed = useSyncExternalStore(appearance.subscribe, () => {
+    const { theme, mode } = appearance.snapshot();
+    return frameScope(theme, mode) === "dark";
+  });
   const [creationContainer, setCreationContainer] =
     useState<HTMLDivElement | null>(null);
   const [creationOpen, setCreationOpen] = useState(false);
@@ -297,7 +307,8 @@ function AppShellContent({
         }
         data-tauri-drag-region={macDesktop ? undefined : true}
         {...titleBarDragProps}
-        className={`shell-header ${macDesktop ? "shell-header-mac" : ""}`}
+        {...(framed ? DARK_FRAME : undefined)}
+        className={`shell-header ${macDesktop ? "shell-header-mac" : ""} ${framed ? "dark" : ""}`}
       >
         <div
           ref={historyRef}
@@ -350,7 +361,11 @@ function AppShellContent({
       </header>
 
       <div className="shell-workspace">
-        <nav className="shell-side-dock" aria-label="Apps dock">
+        <nav
+          {...(framed ? DARK_FRAME : undefined)}
+          className={`shell-side-dock ${framed ? "dark" : ""}`}
+          aria-label="Apps dock"
+        >
           <div className="shell-dock-pages">
             <PageNavigation
               pages={dockPages}
@@ -396,7 +411,8 @@ function AppShellContent({
                 <div
                   id="shell-navigation"
                   hidden={!hasNavigation}
-                  className="shell-navigation"
+                  {...(framed ? DARK_FRAME : undefined)}
+                  className={`shell-navigation ${framed ? "dark" : ""}`}
                   data-sidebar-collapsible={
                     (collapsibleSidebar && !narrow) || undefined
                   }

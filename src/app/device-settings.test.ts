@@ -24,7 +24,7 @@ it("offers appearance and the message and agent preferences, and nothing else", 
   ).toEqual([
     { key: "appearance.mode", value: "system", saved: true },
     { key: "appearance.interface_size", value: 100, saved: true },
-    { key: "appearance.accent", value: "citrus", saved: true },
+    { key: "appearance.accent", value: "theme", saved: true },
     { key: "appearance.vibe", value: "low", saved: true },
     { key: "conversations.message_density", value: "default", saved: true },
     { key: "conversations.thread_placement", value: "side", saved: true },
@@ -73,6 +73,17 @@ it("changes appearance as its own controls do: live, saved and announced", () =>
   next.dispose();
 });
 
+it("returns the accent to the theme's own family", () => {
+  const appearance = createAppearance(window);
+  const settings = deviceSettings(appearance);
+  set(settings, "appearance.accent", "cobalt");
+  expect(set(settings, "appearance.accent", "theme")).toMatchObject({
+    value: "theme",
+    saved: true,
+  });
+  appearance.dispose();
+});
+
 it("refuses an accent's legacy alias rather than mapping it", () => {
   const appearance = createAppearance(window);
   const settings = deviceSettings(appearance);
@@ -80,7 +91,7 @@ it("refuses an accent's legacy alias rather than mapping it", () => {
     expect(() => set(settings, "appearance.accent", value)).toThrow(
       /appearance.accent takes/,
     );
-  expect(appearance.snapshot().accent).toBe("citrus");
+  expect(appearance.snapshot().accent).toBe("theme");
   appearance.dispose();
 });
 

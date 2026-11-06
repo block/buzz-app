@@ -297,47 +297,80 @@ const TINT_PAIRS = [
 ];
 
 const css = readFileSync(TOKENS, "utf8");
+/** The theme accent resolves to Citrus under the Buzz theme, so Citrus is the baseline. */
 const DEFAULT_ACCENT = "citrus";
+const DEFAULT_THEME = "buzz";
 /** Exceptions are approved against the neutral role layer. */
 const BASELINE_LEVEL = "neutral";
+
+const BLOCKS = [
+  ...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g),
+].map(([, selector, body]) => ({
+  selector,
+  owner: selector.trim().split(/,\s*/).at(-1),
+  family: /\[data-accent="([a-z]+)"\]/.exec(selector)?.[1],
+  theme: /\[data-theme="([a-z]+)"\]/.exec(selector)?.[1],
+  frame: selector.includes("[data-theme-frame]"),
+  levels: [...selector.matchAll(/\[data-color-level="([a-z]+)"\]/g)].map(
+    (match) => match[1],
+  ),
+  declarations: [...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map(
+    ([, name, value]) => [name, value.trim()],
+  ),
+}));
+
+/** Themes the stylesheet defines. Buzz is the unthemed baseline and has no block. */
+const THEME_BLOCKS = new Map(
+  BLOCKS.filter((block) => block.theme).map((block) => [block.theme, block]),
+);
+/** A theme with a dark frame over a light page defines its frame slots. */
+const hasDarkFrame = (theme) =>
+  THEME_BLOCKS.get(theme)?.declarations.some(([name]) =>
+    name.startsWith("--theme-frame-"),
+  ) ?? false;
 
 /**
  * Collects declarations per mode, honouring source order so a later block wins
  * exactly as the cascade would. `.dark` inherits `:root` and overrides it, so
- * dark is light-then-dark rather than dark alone.
+ * dark is light-then-dark rather than dark alone. A theme block assigns slots
+ * on the root, so it applies to both modes. With `frame`, the dark map also
+ * takes the `.dark[data-theme-frame]` block last whatever its source position,
+ * because it declares on a descendant of the root and beats inheritance.
  */
 function declarationsByMode(
-  source = css,
   accent = DEFAULT_ACCENT,
   level = BASELINE_LEVEL,
+  theme = DEFAULT_THEME,
+  frame = false,
 ) {
   const light = new Map();
   const dark = new Map();
-  const text = source.replace(/\/\*[\s\S]*?\*\//g, "");
-  // Top-level mode owners in cascade order, plus the selected accent family
-  // and color level. The neutral level is the role layer without overrides.
-  for (const [, selector, body] of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const owner = selector.trim().split(/,\s*/).at(-1);
-    if (
-      owner !== ":root" &&
-      owner !== ".dark" &&
-      !/\[data-(?:accent|color-level)="/.test(selector)
-    )
+  const frameDeclarations = [];
+  for (const block of BLOCKS) {
+    const { owner, selector } = block;
+    const owned =
+      owner === ":root" ||
+      owner === ".dark" ||
+      (block.frame && frame) ||
+      /\[data-(?:accent|color-level|theme)="/.test(selector);
+    if (!owned) continue;
+    if (block.frame && !frame) continue;
+    if (block.family && block.family !== accent) continue;
+    if (block.theme && block.theme !== theme) continue;
+    if (block.levels.length && !block.levels.includes(level)) continue;
+    if (block.frame) {
+      frameDeclarations.push(...block.declarations);
       continue;
-    const family = /\[data-accent="([a-z]+)"\]/.exec(selector)?.[1];
-    if (family && family !== accent) continue;
-    const blockLevels = [
-      ...selector.matchAll(/\[data-color-level="([a-z]+)"\]/g),
-    ].map((match) => match[1]);
-    if (blockLevels.length && !blockLevels.includes(level)) continue;
+    }
     // Dark starts from the light value and is overridden by dark owners.
     const isDark =
       owner.endsWith(".dark") || selector.includes('[data-color-mode="dark"]');
-    for (const [, name, value] of body.matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
-      if (!isDark) light.set(name, value.trim());
-      dark.set(name, value.trim());
+    for (const [name, value] of block.declarations) {
+      if (!isDark) light.set(name, value);
+      dark.set(name, value);
     }
   }
+  for (const [name, value] of frameDeclarations) dark.set(name, value);
   return { light, dark };
 }
 
@@ -371,16 +404,32 @@ function channels(hex) {
 }
 
 /**
+ * Substitutes `var()` references as the browser does: a reference to a name
+ * nothing declares takes its fallback, and one with no fallback is invalid.
+ */
+function lookup(map, name, depth = 0) {
+  if (depth > 10) return undefined;
+  const value = map.get(name);
+  return value === undefined ? undefined : substitute(map, value, depth);
+}
+function substitute(map, value, depth) {
+  const reference = /^var\(\s*(--[\w-]+)\s*(?:,\s*([\s\S]+))?\)$/.exec(value);
+  if (!reference) return value;
+  const found = lookup(map, reference[1], depth + 1);
+  if (found !== undefined) return found;
+  return reference[2] === undefined
+    ? undefined
+    : substitute(map, reference[2].trim(), depth + 1);
+}
+
+/**
  * Follows a `var()` chain to its literal, or null if it is not a plain colour.
  * An `rgb(r g b / a%)` overlay resolves only for a role in `SITS_ON`, as the
  * flat colour it composites to over its surface.
  */
-function resolve(map, name, depth = 0, role = name) {
-  if (depth > 10) return null;
-  const value = map.get(name);
+function resolve(map, name, role = name) {
+  const value = lookup(map, name);
   if (!value) return null;
-  const single = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value);
-  if (single) return resolve(map, single[1], depth + 1, role);
   if (/^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(value)) return value;
   const overlay = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)%\s*\)$/.exec(
     value,
@@ -413,8 +462,34 @@ const claimedExceptions = new Set();
  * there only when it is no fainter than the faintest approved neutral pair.
  */
 const levelAwayMeasurements = new Map();
-function audit(mode, map, baseline) {
+const NO_SURFACES = new Set();
+/**
+ * A theme with a dark frame paints the canvas, sidebar and sidebar hover only
+ * inside the frame scope. The light page scope never sets text on them.
+ */
+const FRAME_ONLY_SURFACES = new Set([
+  "--bg-app",
+  "--surface-sidebar",
+  "--affordance-sidebar-hover",
+]);
+/**
+ * The frame holds the top bar and the sidebar. Popovers and toasts portal out
+ * to the page mode, and messages, mentions and charts live in the main pane,
+ * so none of them is ever drawn on frame values.
+ */
+const NOT_IN_FRAME = new Set([
+  "--surface-popover",
+  "--surface-message",
+  "--surface-message-own",
+  "--affordance-mention",
+  "--affordance-mention-own",
+]);
+const FRAME_SKIP = {
+  has: (name) => NOT_IN_FRAME.has(name) || name.startsWith("--chart-series-"),
+};
+function audit(mode, map, baseline, skip = NO_SURFACES) {
   const check = (textRole, surfaceRole) => {
+    if (skip.has(surfaceRole)) return;
     const text = resolve(map, textRole);
     const surface = resolve(map, surfaceRole);
     // A translucent or gradient value cannot be measured against one colour;
@@ -484,7 +559,9 @@ function audit(mode, map, baseline) {
               (surface) => surface !== "--surface-popover",
             )
           : BOUNDARY_SURFACES;
+    if (skip.has(role)) continue;
     for (const surface of surfaces) {
+      if (skip.has(surface)) continue;
       const borderColor = resolve(map, role);
       const surfaceColor = resolve(map, surface);
       const ratio =
@@ -518,6 +595,24 @@ function audit(mode, map, baseline) {
 for (const [mode, map] of Object.entries(declarationsByMode()))
   audit(mode, map, true);
 const approvedAwayFloor = Math.min(...acceptedAwayMeasurements.values());
+const THEMES = [DEFAULT_THEME, ...THEME_BLOCKS.keys()];
+/** Every scope a theme renders in: both page modes, and a dark frame if it has one. */
+function scopes(family, level, theme) {
+  const prefix = theme === DEFAULT_THEME ? "" : `${theme}/`;
+  const modes = Object.entries(declarationsByMode(family, level, theme));
+  if (hasDarkFrame(theme))
+    modes.push(["frame", declarationsByMode(family, level, theme, true).dark]);
+  const framed = hasDarkFrame(theme);
+  return modes.map(([mode, map]) => [
+    `${prefix}${family}/${level}/${mode}`,
+    map,
+    framed && mode === "light"
+      ? FRAME_ONLY_SURFACES
+      : mode === "frame"
+        ? FRAME_SKIP
+        : NO_SURFACES,
+  ]);
+}
 const LEVELS = [
   ...new Set(
     [...css.matchAll(/\[data-color-level="([a-z]+)"\]/g)].map((m) => m[1]),
@@ -532,11 +627,20 @@ const accentFamilies = [
     [...css.matchAll(/\[data-accent="([a-z]+)"\]/g)].map((match) => match[1]),
   ),
 ];
+/** The canvas and sidebar host focus rings and selections too. */
+const FRAME_SURFACES = [...BOUNDARY_SURFACES, "--surface-sidebar", "--bg-app"];
 const ACCENT_PAIRS = [
   ["--text-on-selection", "--surface-text-selection"],
   ["--text-on-selection-own", "--surface-text-selection-own"],
   ["--text-sidebar-selected", "--surface-sidebar-selected"],
   ["--text-sidebar-hover", "--affordance-sidebar-hover"],
+  ["--text-navigation", "--affordance-sidebar-hover"],
+  ["--text-navigation-unread", "--affordance-sidebar-hover"],
+  ["--text-sidebar-hover", "--surface-sidebar"],
+  ["--text-navigation", "--surface-sidebar"],
+  ["--text-navigation-unread", "--surface-sidebar"],
+  ["--text-metadata", "--surface-sidebar"],
+  ["--text-on-badge", "--surface-badge"],
   ["--text-message-link", "--surface-message"],
   ["--text-standard", "--surface-message"],
   ["--text-navigation-selected", "--surface-navigation-selected"],
@@ -561,110 +665,115 @@ const ACCENT_PAIRS = [
     surface,
   ]),
 ];
-for (const family of accentFamilies) {
-  for (const level of [BASELINE_LEVEL, ...LEVELS]) {
-    if (level !== BASELINE_LEVEL || family !== DEFAULT_ACCENT)
-      for (const [mode, map] of Object.entries(
-        declarationsByMode(css, family, level),
-      ))
-        audit(`${family}/${level}/${mode}`, map, false);
-    for (const [mode, map] of Object.entries(
-      declarationsByMode(css, family, level),
-    )) {
-      for (const [textRole, surfaceRole] of ACCENT_PAIRS) {
-        const text = resolve(map, textRole);
-        const surface = resolve(map, surfaceRole);
-        if (!text || !surface) {
-          boundaryFailures.push(
-            `${family}/${level}/${mode}: unresolved accent pair ${textRole} on ${surfaceRole}`,
-          );
-          continue;
-        }
-        const lc = Math.abs(apcaContrast(text, surface));
-        const target = META_ROLES.has(textRole) ? TARGET_META : TARGET_BODY;
-        const wcag = wcagRatio(text, surface);
-        if (lc < target || wcag < 4.5)
-          failures.push({
-            mode: `${family}/${level}/${mode}`,
-            textRole,
-            text,
-            surfaceRole,
-            surface,
-            lc,
-            target,
-            wcag,
-          });
-      }
-      for (const surfaceRole of [
-        ...BOUNDARY_SURFACES,
-        "--surface-message",
-        "--surface-message-own",
-        "--affordance-mention",
-        "--affordance-mention-own",
-      ]) {
-        const selectionRole = surfaceRole.endsWith("-own")
-          ? "--surface-text-selection-own"
-          : "--surface-text-selection";
-        const selection = resolve(map, selectionRole);
-        const surface = resolve(map, surfaceRole);
-        const ratio =
-          selection && surface ? wcagRatio(selection, surface) : null;
-        if (ratio === null || ratio < 3)
-          boundaryFailures.push(
-            `${family}/${level}/${mode}: ${selectionRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
-          );
-      }
-      for (const surfaceRole of BOUNDARY_SURFACES) {
-        const border = resolve(map, "--border-accent");
-        const surface = resolve(map, surfaceRole);
-        const ratio = border && surface ? wcagRatio(border, surface) : null;
-        if (ratio === null || ratio < 3)
-          boundaryFailures.push(
-            `${family}/${level}/${mode}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
-          );
-      }
-      // The ring is what marks a reaction as yours, so it clears 3:1 against
-      // both the tint inside it and the ground around it.
-      for (const [ringRole, grounds] of [
-        [
-          "--border-reaction-self",
-          [
-            ...BOUNDARY_SURFACES,
-            "--surface-message",
-            "--affordance-reaction-self",
-          ],
-        ],
-        [
-          "--border-reaction-self-own",
-          ["--surface-message-own", "--affordance-reaction-self-own"],
-        ],
-      ])
-        for (const surfaceRole of grounds) {
-          const ring = resolve(map, ringRole);
+for (const theme of THEMES)
+  for (const family of accentFamilies) {
+    for (const level of [BASELINE_LEVEL, ...LEVELS]) {
+      const measured = scopes(family, level, theme);
+      if (
+        theme !== DEFAULT_THEME ||
+        level !== BASELINE_LEVEL ||
+        family !== DEFAULT_ACCENT
+      )
+        for (const [label, map, skip] of measured)
+          audit(label, map, false, skip);
+      for (const [label, map, skip] of measured) {
+        for (const [textRole, surfaceRole] of ACCENT_PAIRS) {
+          if (skip.has(surfaceRole)) continue;
+          const text = resolve(map, textRole);
           const surface = resolve(map, surfaceRole);
-          const ratio = ring && surface ? wcagRatio(ring, surface) : null;
-          if (ratio === null || ratio < 3)
+          if (!text || !surface) {
             boundaryFailures.push(
-              `${family}/${level}/${mode}: ${ringRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+              `${label}: unresolved accent pair ${textRole} on ${surfaceRole}`,
             );
+            continue;
+          }
+          const lc = Math.abs(apcaContrast(text, surface));
+          const target = META_ROLES.has(textRole) ? TARGET_META : TARGET_BODY;
+          const wcag = wcagRatio(text, surface);
+          if (lc < target || wcag < 4.5)
+            failures.push({
+              mode: `${label}`,
+              textRole,
+              text,
+              surfaceRole,
+              surface,
+              lc,
+              target,
+              wcag,
+            });
         }
-      for (const baseRole of MESSAGE_ICON_ROLES) {
-        for (const [role, surfaceRole] of [
-          [baseRole, "--surface-message"],
-          [`${baseRole}-own`, "--surface-message-own"],
+        for (const surfaceRole of [
+          ...FRAME_SURFACES,
+          "--surface-message",
+          "--surface-message-own",
+          "--affordance-mention",
+          "--affordance-mention-own",
         ]) {
-          const icon = resolve(map, role);
+          if (skip.has(surfaceRole)) continue;
+          const selectionRole = surfaceRole.endsWith("-own")
+            ? "--surface-text-selection-own"
+            : "--surface-text-selection";
+          const selection = resolve(map, selectionRole);
           const surface = resolve(map, surfaceRole);
-          const ratio = icon && surface ? wcagRatio(icon, surface) : null;
+          const ratio =
+            selection && surface ? wcagRatio(selection, surface) : null;
           if (ratio === null || ratio < 3)
             boundaryFailures.push(
-              `${family}/${level}/${mode}: ${role} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+              `${label}: ${selectionRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
             );
+        }
+        for (const surfaceRole of FRAME_SURFACES) {
+          if (skip.has(surfaceRole)) continue;
+          const border = resolve(map, "--border-accent");
+          const surface = resolve(map, surfaceRole);
+          const ratio = border && surface ? wcagRatio(border, surface) : null;
+          if (ratio === null || ratio < 3)
+            boundaryFailures.push(
+              `${label}: --border-accent on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+            );
+        }
+        // The ring is what marks a reaction as yours, so it clears 3:1 against
+        // both the tint inside it and the ground around it.
+        for (const [ringRole, grounds] of [
+          [
+            "--border-reaction-self",
+            [
+              ...BOUNDARY_SURFACES,
+              "--surface-message",
+              "--affordance-reaction-self",
+            ],
+          ],
+          [
+            "--border-reaction-self-own",
+            ["--surface-message-own", "--affordance-reaction-self-own"],
+          ],
+        ])
+          for (const surfaceRole of grounds) {
+            const ring = resolve(map, ringRole);
+            const surface = resolve(map, surfaceRole);
+            const ratio = ring && surface ? wcagRatio(ring, surface) : null;
+            if (ratio === null || ratio < 3)
+              boundaryFailures.push(
+                `${label}: ${ringRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+              );
+          }
+        for (const baseRole of MESSAGE_ICON_ROLES) {
+          for (const [role, surfaceRole] of [
+            [baseRole, "--surface-message"],
+            [`${baseRole}-own`, "--surface-message-own"],
+          ]) {
+            const icon = resolve(map, role);
+            const surface = resolve(map, surfaceRole);
+            const ratio = icon && surface ? wcagRatio(icon, surface) : null;
+            if (ratio === null || ratio < 3)
+              boundaryFailures.push(
+                `${label}: ${role} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+              );
+          }
         }
       }
     }
   }
-}
 
 // Gray never sits on an accent ground. A role that stays gray while the
 // background beneath it turned accent is a missing color group, not a style
@@ -683,7 +792,32 @@ function oklch(hex) {
     chroma: Math.hypot(a, bb),
   };
 }
-const isAccent = (hex) => oklch(hex).chroma >= 0.02;
+const isAccent = (hex, tintedNeutralChroma = 0) => {
+  const { chroma } = oklch(hex);
+  return chroma >= 0.02 && chroma > tintedNeutralChroma;
+};
+/**
+ * A theme tints its own neutral ramps on purpose, so gray text on a ground that
+ * is no more saturated than those ramps is the theme's neutral on its neutral.
+ * The allowance is the most chromatic step the theme assigns to a neutral ramp,
+ * frame ramp included, measured rather than declared. The canvas, sidebar and
+ * selected slots are deliberately left out, so a ground more saturated than the
+ * ramps still counts as an accent ground. The unthemed baseline has no allowance.
+ */
+const TINTED_NEUTRAL_SLOT = /^--theme-(?:frame-)?neutral-\d+-(?:light|dark)$/;
+function tintedNeutralChroma(theme) {
+  const block = THEME_BLOCKS.get(theme);
+  if (!block) return 0;
+  const { light } = declarationsByMode(DEFAULT_ACCENT, BASELINE_LEVEL, theme);
+  return Math.max(
+    0,
+    ...block.declarations
+      .filter(([name]) => TINTED_NEUTRAL_SLOT.test(name))
+      .map(([name]) => resolve(light, name))
+      .filter(Boolean)
+      .map((hex) => oklch(hex).chroma),
+  );
+}
 // Black ink is allowed on accent fills, including the near-black unread ink
 // (#262626, lightness 0.27); mid grays from #525252 (0.44) up are not.
 const isGray = (hex) => {
@@ -781,19 +915,20 @@ const GROUNDED = [
   ),
 ];
 const grayOnAccent = [];
-for (const family of accentFamilies)
-  for (const level of [BASELINE_LEVEL, ...LEVELS])
-    for (const [mode, map] of Object.entries(
-      declarationsByMode(css, family, level),
-    ))
-      for (const [fgRole, groundRole] of GROUNDED) {
-        const fg = resolve(map, fgRole);
-        const ground = resolve(map, groundRole);
-        if (fg && ground && isAccent(ground) && isGray(fg))
-          grayOnAccent.push(
-            `${family}/${level}/${mode}: ${fgRole} ${fg} is gray on ${groundRole} ${ground}`,
-          );
-      }
+for (const theme of THEMES) {
+  const tinted = tintedNeutralChroma(theme);
+  for (const family of accentFamilies)
+    for (const level of [BASELINE_LEVEL, ...LEVELS])
+      for (const [label, map] of scopes(family, level, theme))
+        for (const [fgRole, groundRole] of GROUNDED) {
+          const fg = resolve(map, fgRole);
+          const ground = resolve(map, groundRole);
+          if (fg && ground && isAccent(ground, tinted) && isGray(fg))
+            grayOnAccent.push(
+              `${label}: ${fgRole} ${fg} is gray on ${groundRole} ${ground}`,
+            );
+        }
+}
 if (grayOnAccent.length)
   boundaryFailures.push(
     `Gray on an accent ground — move the role into the color group of its ground:\n    ${grayOnAccent.join("\n    ")}`,
@@ -828,7 +963,7 @@ for (const [pair, ratio] of acceptedAwayMeasurements) {
 if (levelAwayMeasurements.size) {
   const faintest = Math.min(...levelAwayMeasurements.values());
   console.log(
-    `  (Away at color levels) ${levelAwayMeasurements.size} pairs below 3:1 on accent surfaces, none fainter than the approved neutral floor (${faintest.toFixed(3)}:1 ≥ ${approvedAwayFloor.toFixed(3)}:1)`,
+    `  (Away at color levels and themes) ${levelAwayMeasurements.size} pairs below 3:1 on accent surfaces, none fainter than the approved neutral floor (${faintest.toFixed(3)}:1 ≥ ${approvedAwayFloor.toFixed(3)}:1)`,
   );
 }
 const staleAwayPairs = [...ACCEPTED_AWAY_PAIRS].filter(
@@ -860,21 +995,23 @@ if (failures.length > 0) {
   console.error(
     "\nRaise the ramp step the role points at, or add a documented exception\nin scripts/check-contrast.mjs with a reason. See DESIGN.md § Contrast.\n",
   );
-  process.exit(1);
+  process.exitCode = 1;
 }
 
-if (boundaryFailures.length > 0) process.exit(1);
-console.log(
-  "✓ Contrast: checked text and control/state boundaries in both modes; accepted exceptions are listed explicitly",
-);
-for (const [role, why] of EXCEPTIONS) {
-  console.log(`  (exception) ${role} — ${why.split(";")[0]}`);
-}
+if (boundaryFailures.length > 0) process.exitCode = 1;
+if (process.exitCode !== 1) {
+  console.log(
+    "✓ Contrast: checked text and control/state boundaries in both modes; accepted exceptions are listed explicitly",
+  );
+  for (const [role, why] of EXCEPTIONS) {
+    console.log(`  (exception) ${role} — ${why.split(";")[0]}`);
+  }
 
-const stale = [...EXCEPTIONS.keys()].filter(
-  (key) => key.includes(" on ") && !claimedExceptions.has(key),
-);
-if (stale.length > 0) {
-  console.log("\nℹ Pairing exceptions no longer needed — delete them:");
-  for (const key of stale) console.log(`  ${key}`);
+  const stale = [...EXCEPTIONS.keys()].filter(
+    (key) => key.includes(" on ") && !claimedExceptions.has(key),
+  );
+  if (stale.length > 0) {
+    console.log("\nℹ Pairing exceptions no longer needed — delete them:");
+    for (const key of stale) console.log(`  ${key}`);
+  }
 }

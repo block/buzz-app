@@ -16,7 +16,10 @@ const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const tokens = readFileSync(
   join(root, "src/shared/design-system/styles/tokens.css"),
   "utf8",
-);
+)
+  .replace(/\(\s*\n\s*/g, "(")
+  .replace(/,\s*\n\s*/g, ", ")
+  .replace(/\s*\n\s*\)/g, ")");
 
 // Exercise the real CLI against isolated stylesheet mutations. No repository
 // files are changed, and a green status proves the guard actually ran.
@@ -47,6 +50,14 @@ function check(css) {
   }
 }
 
+/** Replaces the selected sidebar ink in both modes' owners. */
+function mutateSelectedInk(declaration) {
+  const owners =
+    /--text-sidebar-selected: var\(--theme-sidebar-selected-text-(?:light|dark), var\(--accent-contrast\)\);/g;
+  expect(tokens).toMatch(owners);
+  return tokens.replace(owners, declaration);
+}
+
 describe("semantic contrast contract", () => {
   it("checks the current text and state-boundary pairs in both modes", () => {
     const result = check(tokens);
@@ -75,14 +86,14 @@ describe("semantic contrast contract", () => {
     ],
     [
       "light surface",
-      "--neutral-3: #e8e8e8;",
-      "--neutral-3: #999999;",
+      "--neutral-3: var(--theme-neutral-3-light, #e8e8e8);",
+      "--neutral-3: var(--theme-neutral-3-light, #999999);",
       "on --affordance-selected",
     ],
     [
       "dark surface",
-      "--neutral-raised: #282828;",
-      "--neutral-raised: #a4a4a4;",
+      "--neutral-raised: var(--theme-neutral-raised-dark, #282828);",
+      "--neutral-raised: var(--theme-neutral-raised-dark, #a4a4a4);",
       "on --surface-popover",
     ],
     [
@@ -99,8 +110,8 @@ describe("semantic contrast contract", () => {
     ],
     [
       "hover color",
-      "--neutral-quiet-hover: #f1f1f2;",
-      "--neutral-quiet-hover: #737373;",
+      "--neutral-quiet-hover: var(--theme-neutral-quiet-hover-light, #f1f1f2);",
+      "--neutral-quiet-hover: var(--theme-neutral-quiet-hover-light, #737373);",
       "on --affordance-link-hover",
     ],
   ])(
@@ -172,7 +183,8 @@ describe("semantic contrast contract", () => {
   });
 
   it("checks shared color groups at every applicable level", () => {
-    const from = "--text-sidebar-hover: var(--accent-12);";
+    const from =
+      "--text-sidebar-hover: var(--theme-sidebar-hover-text-light, var(--accent-12));";
     expect(tokens).toContain(from);
     const result = check(
       tokens.replaceAll(from, "--text-sidebar-hover: var(--accent-6);"),
@@ -185,10 +197,8 @@ describe("semantic contrast contract", () => {
   });
 
   it("rejects a gray role left on an accent ground", () => {
-    const from = "--text-sidebar-selected: var(--accent-contrast);";
-    expect(tokens).toContain(from);
     const result = check(
-      tokens.replaceAll(from, "--text-sidebar-selected: var(--neutral-10);"),
+      mutateSelectedInk("--text-sidebar-selected: var(--neutral-10);"),
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain(
@@ -203,10 +213,8 @@ describe("semantic contrast contract", () => {
   ])(
     "distinguishes black ink %s from gray on the brand-filled selection",
     (ink, gray) => {
-      const from = "--text-sidebar-selected: var(--accent-contrast);";
-      expect(tokens).toContain(from);
       const result = check(
-        tokens.replaceAll(from, `--text-sidebar-selected: ${ink};`),
+        mutateSelectedInk(`--text-sidebar-selected: ${ink};`),
       );
       if (gray) {
         expect(result.status, result.output).toBe(1);
@@ -226,7 +234,7 @@ describe("semantic contrast contract", () => {
   it("rejects a shell color that hides navigation text", () => {
     const result = check(
       tokens.replace(
-        "--bg-app: var(--neutral-quiet-hover);",
+        "--bg-app: var(--theme-canvas-light, var(--neutral-quiet-hover));",
         "--bg-app: var(--neutral-7);",
       ),
     );
@@ -250,8 +258,8 @@ describe("semantic contrast contract", () => {
   it.each([
     [
       "metadata",
-      "--neutral-9: #5f5f5f;",
-      "--neutral-9: #666666;",
+      "--neutral-9: var(--theme-neutral-9-light, #5f5f5f);",
+      "--neutral-9: var(--theme-neutral-9-light, #666666);",
       "--text-metadata",
     ],
     [
@@ -337,7 +345,10 @@ describe("semantic contrast contract", () => {
   ])("checks %s status on supported surfaces in both modes", (role, hue) => {
     const result = check(
       tokens.replaceAll(
-        new RegExp(`--status-${role}: var\\(--${hue}-\\d+\\);`, "g"),
+        new RegExp(
+          `--status-${role}: (?:var\\(--theme-status-${role}-(?:light|dark), )?var\\(--${hue}-\\d+\\)\\)?;`,
+          "g",
+        ),
         `--status-${role}: var(--${hue}-5);`,
       ),
     );
@@ -375,8 +386,8 @@ describe("semantic contrast contract", () => {
     ],
     [
       "surface",
-      "--neutral-4: #dadada;",
-      "--neutral-4: #dbdbdb;",
+      "--neutral-4: var(--theme-neutral-4-light, #dadada);",
+      "--neutral-4: var(--theme-neutral-4-light, #dbdbdb);",
       "light: --status-away on --neutral-4",
     ],
     [
@@ -465,4 +476,46 @@ describe("semantic contrast contract", () => {
       expect(result.output).toContain(pairing);
     },
   );
+
+  it.each([
+    [
+      "a light frame sidebar under light navigation text",
+      "--theme-frame-sidebar-light: var(--relax-frame-sidebar-light);",
+      "--theme-frame-sidebar-light: var(--relax-neutral-1-light);",
+      /relax\/theme\/neutral\/frame --text-navigation \(#\w+\) on --surface-sidebar \(/,
+    ],
+    [
+      "a light frame canvas under light page text",
+      "--theme-frame-canvas-light: var(--relax-frame-canvas-light);",
+      "--theme-frame-canvas-light: var(--relax-neutral-1-light);",
+      /relax\/theme\/neutral\/frame --text-standard \(#\w+\) on --bg-app \(/,
+    ],
+    [
+      "an unreadable badge pair",
+      "--theme-badge-text-light: var(--relax-badge-text-light);",
+      "--theme-badge-text-light: var(--relax-badge-light);",
+      /relax\/theme\/neutral\/light --text-on-badge \(#\w+\) on --surface-badge \(/,
+    ],
+    [
+      "an unreadable sidebar selection",
+      "--theme-sidebar-selected-text-dark: var(--relax-sidebar-selected-text-dark);",
+      "--theme-sidebar-selected-text-dark: var(--relax-sidebar-selected-dark);",
+      /relax\/theme\/neutral\/dark --text-sidebar-selected \(#\w+\) on --surface-sidebar-selected \(/,
+    ],
+  ])("measures a theme in its own scope: %s", (_name, from, to, pairing) => {
+    expect(tokens).toContain(from);
+    const result = check(tokens.replaceAll(from, to));
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toMatch(pairing);
+  });
+
+  it("keeps the tinted-neutral allowance to a theme's own neutrals", () => {
+    const from = "--theme-canvas-dark: var(--relax-frame-canvas-dark);";
+    expect(tokens).toContain(from);
+    const result = check(
+      tokens.replaceAll(from, "--theme-canvas-dark: var(--relax-9-dark);"),
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain("is gray on --bg-app");
+  });
 });

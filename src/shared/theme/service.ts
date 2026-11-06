@@ -9,6 +9,7 @@ import {
   parseLegacyBubbleColor,
   type Accent,
 } from "./accent";
+import { DEFAULT_THEME, THEME_KEY, parseTheme, type Theme } from "./themes";
 /** Host-owned, device-local appearance. Never depends on plugin/relay readiness. */
 export type ColorMode = "light" | "dark";
 export type ColorModePreference = ColorMode | "system";
@@ -55,6 +56,8 @@ export interface AppearanceSnapshot {
   readonly contrastError: string | null;
   readonly density: MessageDensity;
   readonly densityError: string | null;
+  readonly theme: Theme;
+  readonly themeError: string | null;
   readonly error: string | null;
 }
 
@@ -82,6 +85,8 @@ export function createAppearance(
     contrastError: null,
     density: "default",
     densityError: null,
+    theme: DEFAULT_THEME,
+    themeError: null,
   };
   let disposed = false;
   let paletteGuard = 0;
@@ -93,6 +98,7 @@ export function createAppearance(
       root.dataset.colorMode &&
       (root.dataset.colorMode !== state.mode ||
         root.dataset.accent !== state.accent ||
+        root.dataset.theme !== state.theme ||
         root.dataset.colorLevel !==
           (state.contrast === "low" ? "touch" : state.contrast));
     // A stylesheet removal rebuilds WebKit's style resolver; an attribute only restyles.
@@ -100,6 +106,7 @@ export function createAppearance(
     if (guard) root.dataset.paletteChanging = "";
     root.dataset.colorMode = state.mode;
     root.dataset.accent = state.accent;
+    root.dataset.theme = state.theme;
     // Preserve the existing soft-bubble selector for Chillin’.
     root.dataset.colorLevel =
       state.contrast === "low" ? "touch" : state.contrast;
@@ -245,6 +252,22 @@ export function createAppearance(
     }
     notify();
   };
+  const restoreTheme = () => {
+    try {
+      state = {
+        ...state,
+        theme: parseTheme(host?.localStorage.getItem(THEME_KEY)),
+        themeError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        themeError:
+          "Theme could not be restored. Choose a theme to try saving it again.",
+      };
+    }
+    notify();
+  };
   const onStorage = (event: StorageEvent) => {
     if (
       event.key !== APPEARANCE_KEY &&
@@ -253,6 +276,7 @@ export function createAppearance(
       event.key !== ACCENT_KEY &&
       event.key !== CONTRAST_KEY &&
       event.key !== DENSITY_KEY &&
+      event.key !== THEME_KEY &&
       event.key !== LEGACY_BUBBLE_KEY &&
       event.key !== null
     )
@@ -266,6 +290,7 @@ export function createAppearance(
         restoreMessageWidth();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
       if (event.key === null || event.key === DENSITY_KEY) restoreDensity();
+      if (event.key === null || event.key === THEME_KEY) restoreTheme();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
@@ -279,6 +304,7 @@ export function createAppearance(
         restoreMessageWidth();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
       if (event.key === null || event.key === DENSITY_KEY) restoreDensity();
+      if (event.key === null || event.key === THEME_KEY) restoreTheme();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
@@ -293,6 +319,7 @@ export function createAppearance(
   restoreAccent();
   restoreContrast();
   restoreDensity();
+  restoreTheme();
   host?.addEventListener("storage", onStorage);
   systemScheme?.addEventListener("change", onSystemSchemeChange);
   return {
@@ -393,6 +420,20 @@ export function createAppearance(
           "This message density is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, density, densityError };
+      notify();
+    },
+    setTheme(value: Theme) {
+      if (disposed) return;
+      const theme = parseTheme(value);
+      let themeError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        host.localStorage.setItem(THEME_KEY, theme);
+      } catch {
+        themeError =
+          "This theme is active, but could not be saved on this device. Try again.";
+      }
+      state = { ...state, theme, themeError };
       notify();
     },
     /** After `dispose`, setters change nothing. */

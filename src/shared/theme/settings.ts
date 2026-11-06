@@ -1,5 +1,5 @@
 import type { DeviceSetting } from "../device-settings";
-import { ACCENTS, type Accent, type Contrast } from "./accent";
+import { ACCENT_CHOICES, type Accent, type Contrast } from "./accent";
 import {
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
@@ -40,7 +40,7 @@ export function appearanceSettings(appearance: Appearance): DeviceSetting[] {
     {
       key: "appearance.accent",
       description: "Accent color for messages, send and selected rows.",
-      schema: { type: "string", enum: ACCENTS },
+      schema: { type: "string", enum: ACCENT_CHOICES },
       read: () => ({ value: now().accent, unsaved: now().accentError }),
       write: (value) => appearance.setAccent(value as Accent),
       live,

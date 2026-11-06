@@ -95,6 +95,56 @@ ctx.effect(() => {
 });
 ```
 
+## Controlled document editing
+
+`ctx.conversation.ui.DocumentEditor` reuses Buzz's editor, persistent formatting
+toolbar, link dialog and Markdown conversion. Inject `react` and `conversation`;
+no editor or React runtime imports are needed. The type-only author package
+exports `DocumentEditorProps`, `DocumentEditorHandle` and
+`DocumentEditorSelection`. Older hosts lack this entry; check its presence before
+offering editing when supporting those hosts.
+
+The plugin controls `value`/`onChange` (Markdown), `editing`, `source`/
+`onSourceChange`, and `linkOpen`/`onLinkOpenChange`. Supply `maxLength` as the
+serialized editing budget and `onSave` for Cmd/Ctrl+Enter. `disabled` locks editor
+and formatting actions while the plugin's save or access policy requires it.
+The component performs no relay writes and stores no drafts; saving, byte limits,
+conflicts, permissions and pending navigation remain the plugin's responsibility.
+
+```js
+const [value, onChange] = ctx.react.useState("A **document**.");
+const [source, onSourceChange] = ctx.react.useState(false);
+const [linkOpen, onLinkOpenChange] = ctx.react.useState(false);
+const editor = ctx.react.useRef(null);
+return ctx.react.createElement(ctx.conversation.ui.DocumentEditor, {
+  ref: editor,
+  value, onChange, source, onSourceChange, linkOpen, onLinkOpenChange,
+  editing: true,
+  disabled: saving,
+  maxLength: 32768,
+  onSave: saveDocument,
+  label: "Record body",
+  placeholder: "Write your record…",
+  destinations: [{ label: "Reference", href: "buzz://plugin?id=example.records&record=reference" }],
+});
+```
+
+Formatting is inline by default; `toolbarTarget` can portal it into the plugin's
+existing toolbar slot. The host supplies the controls and link dialog, so do not
+wrap those in another modal or reproduce their chrome. Optional `destinations`
+are loaded choices for the existing link dialog; their URLs still pass the host
+link validator. Read-mode `children` can render `conversation.ui.Markdown`.
+Supported formatting loads into the editor; unsupported syntax remains editable
+literal source. Switching to `source: true` exposes the controlled Markdown value.
+
+The optional ref has `focusEnd()`, `selection()` and `focusSelection(selection)`.
+`selection()` returns `{start, end, source}` only while the field has focus.
+Offsets refer to the current field's text: rich-mode offsets are projected text,
+and source-mode offsets are Markdown. They are not byte offsets. The plugin owns
+restoring the corresponding mode before restoring a selection. Key the editor
+by document identity when switching documents so internal selection, undo history
+and link-dialog intent belong to that document.
+
 ## Host access (`manifest.host`)
 
 Everything beyond the services above must be declared in `manifest.json`; the owner reviews it at install. Undeclared commands, origins, processes and file access are refused by the host. Limits: at most 16 each of `commands`, `processes`, `networkOrigins`, `agentHooks`. Program names are bare names (`[A-Za-z0-9._-]`, at most 80 bytes, no paths), at most 16 args of 1024 bytes each.

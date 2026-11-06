@@ -1800,6 +1800,62 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
   await expect(tab("Reference")).toHaveCount(0);
   await expect(draft("Guide")).toHaveValue("Retain this document");
 
+  // Native contenteditable, host formatting and the portal's link-dialog focus
+  // must work through the external Blob module, not just a type/DOM fixture.
+  await reader.getByRole("button", { name: "Edit Guide", exact: true }).click();
+  const richEditor = reader.getByRole("textbox", {
+    name: "Document body",
+    exact: true,
+  });
+  await richEditor.fill("Changed guide");
+  await richEditor.press("ControlOrMeta+a");
+  await reader.getByRole("button", { name: "Bold", exact: true }).click();
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  const markdownSource = reader.getByRole("textbox", {
+    name: "Markdown",
+    exact: true,
+  });
+  await expect(markdownSource).toHaveValue("**Changed guide**");
+  await markdownSource.fill("# Source heading\n\nKept literal source");
+  await markdownSource.press("ControlOrMeta+Enter");
+  await expect(reader.getByRole("status")).toContainText("Saved 1");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await expect(richEditor).toContainText("# Source heading");
+  await reader
+    .getByRole("button", { name: "Replace document", exact: true })
+    .click();
+  await expect(richEditor.locator("strong")).toHaveText("replacement");
+  await richEditor.press("ControlOrMeta+a");
+  await reader.getByRole("button", { name: "Link", exact: true }).click();
+  const linkDialog = page.getByRole("dialog", {
+    name: "Add link",
+    exact: true,
+  });
+  await linkDialog
+    .getByRole("textbox", { name: "URL", exact: true })
+    .fill("javascript:alert(1)");
+  await linkDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(linkDialog).toContainText(
+    "Use an HTTP(S) URL or a valid buzz:// link.",
+  );
+  const destination = linkDialog.getByRole("combobox", {
+    name: "Link destination",
+    exact: true,
+  });
+  await destination.fill("Reference");
+  await page
+    .getByRole("option", { name: "Reference document", exact: true })
+    .click();
+  await expect(
+    linkDialog.getByRole("textbox", { name: "URL", exact: true }),
+  ).toHaveValue("buzz://plugin?id=example.documents&document=reference");
+  await linkDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(linkDialog).toBeHidden();
+  await expect(richEditor).toBeFocused();
+  await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
+
   const handle = reader.getByRole("separator");
   await handle.focus();
   await page.keyboard.press("Home");
@@ -1826,9 +1882,19 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
     );
     await expect(tab("Guide")).toBeVisible();
     await expect(draft("Guide")).toBeVisible();
+    await reader
+      .getByRole("button", { name: "Edit Guide", exact: true })
+      .click();
+    await expect(richEditor).toBeVisible();
+    await expect(
+      reader.getByRole("button", { name: "Bold", exact: true }),
+    ).toBeVisible();
     const bounds = await reader.boundingBox();
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(480);
+    await reader
+      .getByRole("button", { name: "Read Guide", exact: true })
+      .click();
     await page.setViewportSize({ width: 1440, height: 950 });
     await page.evaluate(() =>
       document.documentElement.style.removeProperty("font-size"),

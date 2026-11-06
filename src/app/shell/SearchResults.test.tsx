@@ -396,12 +396,23 @@ it("shows the first six unread conversations ahead of the rest", async () => {
 it("previews and opens the newest unread reply of a channel unread only through threads", async () => {
   const relay = keypair(),
     viewer = keypair(),
-    larry = keypair();
+    larry = keypair(),
+    moe = keypair();
   const discovery = [
     profile(larry, { name: "Larry" }),
+    profile(moe, { name: "Moe" }),
     ...["team", "blank", "mixed", "marked"].flatMap((id) => [
       metadata(relay, id, id),
       roster(relay, id, [viewer.pubkey, larry.pubkey]),
+    ]),
+    ...(
+      [
+        ["solo", larry],
+        ["pair", moe],
+      ] as const
+    ).flatMap(([id, friend]) => [
+      metadata(relay, id, id, undefined, [["t", "dm"]]),
+      roster(relay, id, [viewer.pubkey, friend.pubkey]),
     ]),
   ];
   let live: LiveCallbacks | undefined;
@@ -437,9 +448,14 @@ it("previews and opens the newest unread reply of a channel unread only through 
       },
     },
   );
-  const reply = (root: RelayEvent, content: string, time: number) =>
+  const reply = (
+    root: RelayEvent,
+    content: string,
+    time: number,
+    author = larry,
+  ) =>
     message(
-      larry,
+      author,
       root.tags.find(([tag]) => tag === "h")?.[1] ?? "",
       content,
       time,
@@ -458,6 +474,12 @@ it("previews and opens the newest unread reply of a channel unread only through 
   const oldest = reply(root, "Draft PR is up", 11);
   const older = reply(root, "CI is green now", 12);
   const newest = reply(newerRoot, "Newest thread reply", 16);
+  const soloRoot = message(viewer, "solo", "solo thread", 10);
+  const soloReply = reply(soloRoot, "Only DM thread reply", 11);
+  const pairRoots = [
+    message(viewer, "pair", "first DM thread", 10),
+    message(viewer, "pair", "second DM thread", 10),
+  ] as const;
   const open = vi.fn();
   const rowsOf = (group: string) =>
     within(screen.getByRole("group", { name: group })).getAllByRole("option");
@@ -491,6 +513,11 @@ it("previews and opens the newest unread reply of a channel unread only through 
         message(larry, "mixed", "new top-level message", 15),
         markedRoot,
         reply(markedRoot, "marked reply", 17),
+        soloRoot,
+        soloReply,
+        ...pairRoots,
+        reply(pairRoots[0], "First DM reply", 11, moe),
+        reply(pairRoots[1], "Second DM reply", 12, moe),
       ]),
     );
     await act(async () => {
@@ -499,7 +526,7 @@ it("previews and opens the newest unread reply of a channel unread only through 
         channelId: "marked",
       });
     });
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(4));
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(6));
     // The newest unread reply of the newest thread, by its author, not a root.
     await waitFor(() =>
       expect(row("team")).toHaveTextContent(
@@ -516,6 +543,15 @@ it("previews and opens the newest unread reply of a channel unread only through 
     expect(row("marked")).not.toHaveTextContent("Larry:");
     fireEvent.click(row("marked") as HTMLElement);
     expect(open).toHaveBeenLastCalledWith("marked");
+    // A DM shares one read marker, so only a single unread thread leads it.
+    expect(row("Larry")).toHaveTextContent(
+      "Thread reply, Larry: Only DM thread reply",
+    );
+    fireEvent.click(row("Larry") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("solo", soloReply.id, soloRoot.id);
+    expect(row("Moe")).not.toHaveTextContent("Thread reply,");
+    fireEvent.click(row("Moe") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("pair");
     // The row opens the reply it previews, in its thread.
     fireEvent.click(row("team") as HTMLElement);
     expect(open).toHaveBeenLastCalledWith("team", newest.id, newerRoot.id);

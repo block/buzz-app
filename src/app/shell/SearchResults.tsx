@@ -1311,7 +1311,9 @@ export function SearchResults({
   // newest one, as its sidebar activity does.
   const unreadThreads = useUnreadThreadOnly(
     session.unread,
-    JSON.stringify(unreadChannels.map(({ id }) => id)),
+    JSON.stringify(
+      unreadChannels.map(({ id, channelType }) => [id, channelType === "dm"]),
+    ),
   );
   const threadAuthors = [
     ...new Set(

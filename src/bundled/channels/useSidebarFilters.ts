@@ -122,14 +122,18 @@ export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
   return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);
 }
 
-/** The newest unread thread reply of each channel among `ids` (a JSON id
- * array) whose unread is only thread replies: no manual mark and no unread
- * message outside the listed threads. */
-export function useUnreadThreadOnly(unread: UnreadCapability, ids: string) {
-  const channelIds = useMemo(() => JSON.parse(ids) as string[], [ids]);
+/** The newest unread thread reply of each channel among `targets` (a JSON
+ * array of `[id, dm]` pairs) whose unread is only thread replies: no manual
+ * mark and no unread message outside the listed threads. A DM shares one read
+ * marker across its threads, so it qualifies only with a single unread thread. */
+export function useUnreadThreadOnly(unread: UnreadCapability, targets: string) {
+  const channels = useMemo(
+    () => JSON.parse(targets) as [string, boolean][],
+    [targets],
+  );
   const subscribe = useCallback(
     (listener: () => void) => {
-      const stops = channelIds.flatMap((channelId) => [
+      const stops = channels.flatMap(([channelId]) => [
         unread.subscribe({ kind: "channel", channelId }, listener),
         unread.subscribeActivity(channelId, listener),
       ]);
@@ -137,12 +141,12 @@ export function useUnreadThreadOnly(unread: UnreadCapability, ids: string) {
         for (const stop of stops) stop();
       };
     },
-    [channelIds, unread],
+    [channels, unread],
   );
   const snapshot = useCallback(
     () =>
       JSON.stringify(
-        channelIds.flatMap((channelId) => {
+        channels.flatMap(([channelId, dm]) => {
           const items = unread.activity(channelId).items ?? [];
           const state = unread.snapshot({ kind: "channel", channelId });
           const replies = items.reduce(
@@ -150,13 +154,14 @@ export function useUnreadThreadOnly(unread: UnreadCapability, ids: string) {
             0,
           );
           return items[0] &&
+            (!dm || items.length === 1) &&
             state.manual === "none" &&
             (state.observedCount ?? 0) <= replies
             ? [items[0]]
             : [];
         }),
       ),
-    [channelIds, unread],
+    [channels, unread],
   );
   const threads = useSyncExternalStore(subscribe, snapshot, snapshot);
   return useMemo(

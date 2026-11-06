@@ -353,7 +353,7 @@ it("keeps the running turn's thread for its results when another thread steers i
   await flush();
   expect(process.prompts).toEqual([
     "first",
-    'steer\n\nThe reply target above is for the new message only. Results of the work you were already doing still go to `reply: "A"`.',
+    'steer\n\nThe reply target above is for the new message only. Ordinary replies about the work you were already doing still go to `reply: "A"`.',
     "again",
   ]);
   process.finish();

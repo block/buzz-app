@@ -237,4 +237,4 @@ export function steerPrompt(turn: string) {
 /** Follows a steer from another thread than the running turn's `root`, whose
  * results still belong in that turn's thread. */
 export const runningReply = (root: string) =>
-  `The reply target above is for the new message only. Results of the work you were already doing still go to \`reply: "${root}"\`.`;
+  `The reply target above is for the new message only. Ordinary replies about the work you were already doing still go to \`reply: "${root}"\`.`;

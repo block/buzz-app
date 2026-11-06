@@ -2691,7 +2691,7 @@ it("keeps a DM turn's results in its thread when a new top-level message steers 
   const steer = claude?.prompts[1] ?? "";
   expect(steer).toContain(`pass \`reply: "${mention("2").id}"\``);
   expect(steer).toContain(
-    `Results of the work you were already doing still go to \`reply: "${mention("1").id}"\`.`,
+    `Ordinary replies about the work you were already doing still go to \`reply: "${mention("1").id}"\`.`,
   );
   runtime.dispose();
 });

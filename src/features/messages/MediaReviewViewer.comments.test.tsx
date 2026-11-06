@@ -663,6 +663,40 @@ it("keeps thread timestamps noninteractive when a reply video conflicts with a r
   expect(openReview).not.toHaveBeenCalled();
 });
 
+it("keeps root-parented legacy timecodes visible across a reply-video gallery", async () => {
+  const { user } = await setupReview({
+    kind: "video",
+    attachmentInReply: true,
+    extraRootTags: [
+      ["imeta", "url https://fixture.test/other.mp4", "m video/mp4"],
+    ],
+    replies: (viewer, root) => [
+      message(viewer, "one", "⏱ 0:42 — legacy comment", 3, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ],
+  });
+  const dialog = await screen.findByRole("dialog", { name: "Video review" });
+  const firstVideo = dialog.querySelector("video");
+  assert.exists(firstVideo);
+  Object.defineProperty(firstVideo, "duration", {
+    configurable: true,
+    value: 60,
+  });
+  fireEvent.durationChange(firstVideo);
+  expect(within(dialog).getByRole("button", { name: "0:42" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Next media" }));
+  const secondVideo = dialog.querySelector("video");
+  assert.exists(secondVideo);
+  Object.defineProperty(secondVideo, "duration", {
+    configurable: true,
+    value: 60,
+  });
+  fireEvent.durationChange(secondVideo);
+  expect(within(dialog).getByRole("button", { name: "0:42" })).toBeVisible();
+});
+
 it.each([false, true])(
   "seeks the selected full-viewer video with multiple videos (thread entry: %s)",
   async (fromThread) => {

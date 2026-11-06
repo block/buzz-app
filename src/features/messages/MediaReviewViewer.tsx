@@ -309,6 +309,10 @@ function ReviewShell({
   const timecodeApplies = (row: ChannelMessage) => {
     if (row.mediaTargetUrl) return row.mediaTargetUrl === attachment.url;
     if (videoCount === 1) return true;
+    // Older timed replies were always rooted at the thread, so their exact
+    // gallery target cannot be recovered. Preserve their previous broad
+    // visibility instead of hiding them from reply-owned videos.
+    if (row.replyParentId === rootId) return true;
     return row.replyParentId === attachmentOwner?.id;
   };
   const markers = timecodesSeekable

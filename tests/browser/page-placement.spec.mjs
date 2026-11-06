@@ -1,5 +1,11 @@
 import { test, expect } from "./fixture.mjs";
-import { newChat, openPage } from "./navigation.mjs";
+import {
+  newChat,
+  openPage,
+  pageChoice,
+  selectCommunity,
+  selectPage,
+} from "./navigation.mjs";
 
 // Browser-only boundaries: painted focus, native insets, resize geometry, and
 // real App wiring between Messages and Solo chats. Contract matrices stay in RTL.
@@ -230,6 +236,10 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
 
   const sidebar = page.getByRole("complementary", { name: "Fixture sidebar" });
   await expect(sidebar).toContainText("Target: sidebar");
+  const drafts = sidebar
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Drafts & sent", exact: true });
+  await expect(drafts).toHaveCount(1);
   await expect(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   ).toHaveCount(0);
@@ -281,6 +291,10 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await expect(drafts).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath(`drafts-sidebar-${mode}.png`),
+    });
     const geometryAndColors = await sidebar.evaluate((element) => {
       const slot = element.parentElement.getBoundingClientRect();
       const action = element.querySelector("button").getBoundingClientRect();
@@ -394,6 +408,47 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
       element.contains(document.activeElement),
     ),
   ).toBe(false);
+  // Native focus and drawer handoff across a contributed sidebar cannot be
+  // established by the mounted App's route/slot coverage.
+  await selectCommunity(page, "Personal space");
+  await openPage(page, "Sidebar playground");
+  await showNavigation.click();
+  await drafts.focus();
+  await expect(drafts).toBeInViewport();
+  await drafts.press("Enter");
+  const draftsPage = page.getByRole("region", {
+    name: "Drafts & sent",
+    exact: true,
+  });
+  await expect(draftsPage).toBeVisible();
+  await expect(page.locator("#main-content")).toBeFocused();
+  await expect(shellNavigation).toHaveAttribute("aria-hidden", "true");
+  await showNavigation.click();
+  const coreDrafts = pages.getByRole("button", {
+    name: "Drafts & sent",
+    exact: true,
+  });
+  await expect(coreDrafts).toHaveCount(1);
+  await expect(coreDrafts).toHaveAttribute("aria-current", "page");
+  await destination.click();
+  await expect(
+    page.getByRole("heading", { name: "Sidebar playground", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  const input = search.getByRole("combobox", { name: "Search Buzz" });
+  await input.fill("drafts");
+  await expect(pageChoice(search, "Drafts & sent")).toHaveCount(1);
+  await selectPage(page, "Drafts & sent");
+  await expect(search).toHaveCount(0);
+  await expect(draftsPage).toBeVisible();
+  await expect(page.locator("#main-content")).toBeFocused();
+  await expect(
+    page.getByRole("button", {
+      name: "Community switcher: Personal space",
+      exact: true,
+    }),
+  ).toBeVisible();
 });
 
 test.describe("failed page sidebar recovery", () => {

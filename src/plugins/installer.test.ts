@@ -244,9 +244,14 @@ function setup({
   plugins?: PluginInfo[];
 } = {}) {
   let configuration: ConfigurationState = ready(plugins);
+  const managerListeners = new Set<() => void>();
   const manager = {
     imports: imports ?? undefined,
     snapshot: () => ({ configuration }),
+    subscribe(listener: () => void) {
+      managerListeners.add(listener);
+      return () => managerListeners.delete(listener);
+    },
   };
   const requests = createPluginInstallRequests();
   const core = createPluginInstallCore({
@@ -263,6 +268,7 @@ function setup({
     core,
     manager,
     open,
+    managerListenerCount: () => managerListeners.size,
     as(id: string) {
       let installer: PluginInstaller | undefined;
       const fiber = root
@@ -276,6 +282,7 @@ function setup({
     fibers,
     set(next: ConfigurationState) {
       configuration = next;
+      for (const listener of managerListeners) listener();
     },
   };
 }
@@ -283,6 +290,119 @@ const settleRequest = (
   requests: ReturnType<typeof createPluginInstallRequests>,
   outcome: "installed" | "updated" | "cancelled",
 ) => requests.settle(requests.snapshot()?.id ?? 0, outcome);
+
+it("checks installed ids even when disabled, source-backed, or contribution-free", async () => {
+  const folder = info("example.folder");
+  folder.enabled = false;
+  folder.updateSource = { root: "/plugins/example-folder", path: "." };
+  const git = info("example.git");
+  git.updateSource = {
+    repository: "https://example.com/plugins.git",
+    reference: "main",
+    path: "example-git",
+  };
+  const contributionFree = info("example.contributionless");
+  const { as } = setup({ plugins: [folder, git, contributionFree] });
+  const installer = await as("example.market");
+
+  expect(installer.getInstallationStatus("example.folder")).toBe("installed");
+  expect(installer.getInstallationStatus("example.git")).toBe("installed");
+  expect(installer.getInstallationStatus("example.contributionless")).toBe(
+    "installed",
+  );
+  expect(installer.getInstallationStatus("example.missing")).toBe("absent");
+});
+
+it("keeps unavailable configuration distinct from absence and emits presence changes", async () => {
+  const { as, set } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const changes: string[] = [];
+  const stop = installer.subscribeInstallationStatus(
+    "example.plugin",
+    (status) => {
+      changes.push(status);
+    },
+  );
+
+  expect(installer.getInstallationStatus("example.plugin")).toBe("absent");
+  set({ status: "loading" });
+  expect(installer.getInstallationStatus("example.plugin")).toBe("unavailable");
+  set({
+    status: "recovery",
+    reason: "settings need recovery",
+    canReset: false,
+  });
+  expect(installer.getInstallationStatus("example.plugin")).toBe("unavailable");
+
+  const installed = info("example.plugin");
+  installed.enabled = false;
+  set(ready([installed]));
+  expect(installer.getInstallationStatus("example.plugin")).toBe("installed");
+  set(ready([]));
+  expect(installer.getInstallationStatus("example.plugin")).toBe("absent");
+  expect(changes).toEqual(["unavailable", "installed", "absent"]);
+  stop();
+});
+
+it("stops notifying when a status subscription is explicitly removed", async () => {
+  const { as, set, managerListenerCount } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const listener = vi.fn();
+  const stop = installer.subscribeInstallationStatus(
+    "example.plugin",
+    listener,
+  );
+  expect(managerListenerCount()).toBe(1);
+
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+  stop();
+  expect(managerListenerCount()).toBe(0);
+  set(ready([]));
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+});
+
+it("stops notifying when the calling plugin is disposed", async () => {
+  const { as, set, fibers, managerListenerCount } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const listener = vi.fn();
+  const stop = installer.subscribeInstallationStatus(
+    "example.plugin",
+    listener,
+  );
+  expect(managerListenerCount()).toBe(1);
+
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+  await fibers[0]?.dispose();
+  expect(managerListenerCount()).toBe(0);
+  set(ready([]));
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+  stop();
+});
+
+it("keeps status listener errors from stopping other manager notifications", async () => {
+  const { as, set, manager } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const listener = vi.fn(() => {
+    throw new Error("listener failed");
+  });
+  const following = vi.fn();
+  const stopStatus = installer.subscribeInstallationStatus(
+    "example.plugin",
+    listener,
+  );
+  const stopFollowing = manager.subscribe(following);
+
+  expect(() => set(ready([info("example.plugin")]))).not.toThrow();
+  expect(listener).toHaveBeenCalledWith("installed");
+  expect(following).toHaveBeenCalledOnce();
+
+  stopStatus();
+  stopFollowing();
+});
 
 it("names the request after the calling plugin and resolves with the user's outcome", async () => {
   const { requests, open, as } = setup({

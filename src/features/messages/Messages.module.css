@@ -778,6 +778,29 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composer .composerInput [data-placeholder]::before {
   color: var(--text-metadata);
 }
+/* Stands in for the editor's text placeholder, and shows only while it would. */
+.channelPlaceholder {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+  pointer-events: none;
+}
+.channelPlaceholder::before {
+  content: attr(data-lead) " ";
+}
+.channelPlaceholder::after {
+  content: attr(data-name);
+}
+.composerInput:has(> .channelPlaceholder) [data-placeholder]::before {
+  visibility: hidden;
+}
+.composerInput:not(:has([data-placeholder])) > .channelPlaceholder {
+  display: none;
+}
 .composerActions {
   display: flex;
   flex-wrap: wrap;

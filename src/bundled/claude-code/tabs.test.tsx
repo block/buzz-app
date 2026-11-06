@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AgentTabs } from "../agents/AgentTabs";
+import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import type {
   Agents,
   NewAgent,
@@ -1010,11 +1011,10 @@ it("saves settings as one config", async () => {
   );
   await user.clear(screen.getByLabelText("Workspace"));
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(save).toHaveBeenCalledWith({
-    ...DEFAULT_CONFIG,
-    model: "sonnet",
-    workspace: "~/.buzz",
-  });
+  expect(save).toHaveBeenCalledWith(
+    { ...DEFAULT_CONFIG, model: "sonnet", workspace: "~/.buzz" },
+    { base: {} },
+  );
 });
 
 it("offers the model's thinking levels, dropping one the next model lacks", async () => {
@@ -1036,11 +1036,10 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(save).toHaveBeenCalledWith({
-    ...DEFAULT_CONFIG,
-    model: "haiku",
-    effort: "high",
-  });
+  expect(save).toHaveBeenCalledWith(
+    { ...DEFAULT_CONFIG, model: "haiku", effort: "high" },
+    { base: {} },
+  );
 });
 
 it("keeps a saved thinking level changeable without Claude's model list", async () => {
@@ -1062,7 +1061,7 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   );
   expect(thinking).toHaveTextContent("Automatic · Default");
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
+  expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG, { base: {} });
 });
 
 it("disables create-time Thinking when Claude model discovery fails", async () => {
@@ -1530,11 +1529,14 @@ it("edits a custom model and instructions in settings", async () => {
     target: { value: "Triage." },
   });
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(save).toHaveBeenCalledWith({
-    ...DEFAULT_CONFIG,
-    model: "claude-sonnet-custom",
-    instructions: "Triage.",
-  });
+  expect(save).toHaveBeenCalledWith(
+    {
+      ...DEFAULT_CONFIG,
+      model: "claude-sonnet-custom",
+      instructions: "Triage.",
+    },
+    { base: {} },
+  );
 });
 
 it("keeps settings editable while a provider change waits for Save", async () => {
@@ -1556,7 +1558,7 @@ it("keeps settings editable while a provider change waits for Save", async () =>
   expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled();
   expect(screen.getByRole("textbox", { name: "Workspace" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
+  expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG, { base: {} });
 });
 
 it("shares one customization-free discovery across cards and workspace changes", async () => {
@@ -1795,6 +1797,7 @@ it.each(["Identity", "Settings"])(
     expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(save).toHaveBeenLastCalledWith(savedAgent.pubkey, {
+      base: {},
       config: expect.objectContaining({
         [saveFrom === "Identity" ? "instructions" : "workspace"]: value,
       }),
@@ -2241,4 +2244,412 @@ it("reports Claude connection readiness after resolving the provider default", a
   );
   expect(onReadyChange).toHaveBeenCalledWith(false);
   await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
+});
+
+/** Exercise the real settings tab through the host's revision and discard gates. */
+function syncedSettings() {
+  const installedType = installed().type;
+  let source: Agent<Config> & {
+    configBase: { settings: string; instructions: string };
+  } = {
+    ...agent(),
+    place: "here" as const,
+    configBase: { settings: "s0", instructions: "i0" },
+  };
+  const save = vi.fn(async (_key: string, _change: unknown) => {});
+  const agents = {
+    save,
+    snapshot: () => ({ agents: [source] }),
+    configHistory: () => undefined,
+    addedTabs: () => [],
+    subscribe: () => () => {},
+    memberships: () => [],
+  } as unknown as Agents;
+  const type = {
+    tabs: installedType.tabs?.filter((tab) => tab.role === "settings"),
+  } as unknown as RegisteredAgentType;
+  let pendingSave: ((config?: unknown) => Promise<void>) | undefined;
+  const shown = () => (
+    <StrictMode>
+      <AgentTabs
+        agents={agents}
+        agent={source}
+        type={type}
+        settingsHost={pendingSave ? { pendingSave } : {}}
+        channels={[]}
+        memories={undefined}
+        settingsContent={<p>Details</p>}
+      />
+    </StrictMode>
+  );
+  const view = render(shown());
+  return {
+    save,
+    source: () => source,
+    update(config: Config, base = source.configBase, problem?: string) {
+      source = { ...source, config, configBase: base };
+      if (problem) source = { ...source, configProblem: problem };
+      else {
+        const { configProblem: _problem, ...usable } = source;
+        source = usable;
+      }
+      view.rerender(shown());
+    },
+    stage(save: (config?: unknown) => Promise<void>) {
+      pendingSave = save;
+      view.rerender(shown());
+    },
+  };
+}
+
+const editInstructions = (value: string) =>
+  fireEvent.change(screen.getByLabelText("Instructions"), {
+    target: { value },
+  });
+
+it("refreshes a clean Claude sidebar and saves unrelated edits against the merged revision", async () => {
+  const f = syncedSettings();
+  const config = { ...DEFAULT_CONFIG, model: "grid-model", effort: "low" };
+  f.update(config, { settings: "s1", instructions: "i0" });
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+    "grid-model",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  editInstructions("My edit");
+  f.update(
+    { ...config, model: "new-grid-model" },
+    { settings: "s2", instructions: "i0" },
+  );
+  expect(screen.getByLabelText("Instructions")).toHaveValue("My edit");
+  await userEvent.click(await screen.findByRole("button", { name: "Save" }));
+  expect(f.save).toHaveBeenCalledWith(f.source().key, {
+    config: { ...config, model: "new-grid-model", instructions: "My edit" },
+    base: { settings: "s2", instructions: "i0" },
+  });
+});
+
+it("blocks conflicting submission, preserves its discard guard, and keeps the explicit choice", async () => {
+  const f = syncedSettings();
+  editInstructions("Mine");
+  const config = { ...DEFAULT_CONFIG, instructions: "Theirs" };
+  f.update(config, { settings: "s0", instructions: "i1" });
+  f.update(
+    { ...config, model: "grid-model" },
+    { settings: "s1", instructions: "i1" },
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Instructions changed elsewhere",
+  );
+  const form = screen.getByLabelText("Instructions").closest("form");
+  if (!form) throw new Error("Missing form");
+  fireEvent.submit(form);
+  expect(f.save).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+    "unsaved changes",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+  await userEvent.click(screen.getByRole("button", { name: "Keep mine" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(f.save).toHaveBeenCalledWith(f.source().key, {
+    config: { ...config, model: "grid-model", instructions: "Mine" },
+    base: { settings: "s1", instructions: "i1" },
+  });
+});
+
+it("reconciles a partial failed save and preserves a newer edit through retry", async () => {
+  const f = syncedSettings();
+  let rejectSave!: (reason: Error) => void;
+  const pending = new Promise<void>((_resolve, reject) => {
+    rejectSave = reject;
+  });
+  f.save.mockImplementationOnce(() => pending);
+  await choose("Model", "Sonnet 5.5");
+  editInstructions("Submitted");
+  await userEvent.click(await screen.findByRole("button", { name: "Save" }));
+  expect(f.save).toHaveBeenCalledTimes(1);
+  try {
+    editInstructions("Newer edit");
+    f.update(
+      { ...DEFAULT_CONFIG, instructions: "Submitted" },
+      { settings: "s0", instructions: "i1" },
+    );
+    expect(screen.getByLabelText("Instructions")).toHaveValue("Newer edit");
+    expect(screen.queryByText(/changed elsewhere/)).not.toBeInTheDocument();
+  } finally {
+    await act(async () => rejectSave(new Error("Settings could not save")));
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Settings could not save",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(f.save).toHaveBeenLastCalledWith(f.source().key, {
+    config: { ...DEFAULT_CONFIG, model: "sonnet", instructions: "Newer edit" },
+    base: { settings: "s0", instructions: "i1" },
+  });
+});
+
+it("uses staged provider saving, retaining its draft after failure", async () => {
+  const f = syncedSettings();
+  const pendingSave = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Provider failed"))
+    .mockResolvedValue(undefined);
+  f.stage(pendingSave);
+  editInstructions("Staged edit");
+  await userEvent.click(await screen.findByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Provider failed");
+  // A new pendingSave callback from the host is not a new saved configuration.
+  f.stage((config) => pendingSave(config));
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Staged edit");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(pendingSave).toHaveBeenLastCalledWith({
+    ...DEFAULT_CONFIG,
+    instructions: "Staged edit",
+  });
+  expect(f.save).not.toHaveBeenCalled();
+});
+
+it("preserves settings through config unavailability and resumes against the recovered revision", async () => {
+  const f = syncedSettings();
+  f.update({ ...DEFAULT_CONFIG, model: "kept-model" });
+  editInstructions("Keep this draft");
+  f.update(
+    DEFAULT_CONFIG,
+    { settings: "s0", instructions: "i0" },
+    "Config unavailable",
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+    "kept-model",
+  );
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Keep this draft");
+  expect(screen.getByRole("alert")).toHaveTextContent("Config unavailable");
+  expect(
+    screen.getByText(/You can save them, including Workspace/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Save" }),
+  ).not.toBeInTheDocument();
+  f.update(
+    { ...DEFAULT_CONFIG, model: "recovered-model" },
+    { settings: "s2", instructions: "i0" },
+  );
+  expect(
+    screen.queryByText(/You can save them, including Workspace/),
+  ).not.toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: "Save" }));
+  expect(f.save).toHaveBeenLastCalledWith(f.source().key, {
+    config: {
+      ...DEFAULT_CONFIG,
+      model: "recovered-model",
+      instructions: "Keep this draft",
+    },
+    base: { settings: "s2", instructions: "i0" },
+  });
+});
+
+it("can stage Claude over an unavailable source config, retry, and discard through the real host", async () => {
+  const Settings = tab(installed().type, 0);
+  const sourceType: RegisteredAgentType = {
+    key: "fixture/source",
+    pluginId: "fixture",
+    revision: "1",
+    id: "source",
+    title: "Source",
+    defaults: () => ({ config: {} }),
+  };
+  const target = {
+    ...sourceType,
+    key: "fixture/claude",
+    id: "claude",
+    title: "Claude",
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: Settings,
+      },
+    ],
+  } as unknown as RegisteredAgentType;
+  const source: Agent = {
+    ...agent(),
+    place: "here",
+    type: sourceType.key,
+    configProblem: "Source settings are unavailable",
+  };
+  const retype = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Migration failed"))
+    .mockResolvedValue(undefined);
+  const save = vi.fn();
+  const agents = {
+    previewRetype: () => ({
+      config: DEFAULT_CONFIG,
+      moved: [],
+      dropped: [],
+      settings: [],
+    }),
+    retype,
+    save,
+    configHistory: () => undefined,
+    addedTabs: () => [],
+  } as unknown as Agents;
+  function Host() {
+    const host = useAgentSettingsHost({
+      agents,
+      agent: source,
+      type: sourceType,
+      types: [sourceType, target],
+    });
+    return (
+      <AgentTabs
+        agents={agents}
+        agent={host.agent}
+        type={host.type}
+        settingsHost={host.settingsHost}
+        onDiscard={host.discard}
+        channels={[]}
+        memories={undefined}
+        settingsContent={<p>Management</p>}
+      />
+    );
+  }
+  render(<Host />);
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Change harness from Source" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Claude" }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Continue" }));
+  editInstructions("Staged Claude instructions");
+  await user.click(await screen.findByRole("button", { name: "Save" }));
+  expect(await screen.findByText("Migration failed")).toBeVisible();
+  expect(screen.getByLabelText("Instructions")).toHaveValue(
+    "Staged Claude instructions",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(retype).toHaveBeenLastCalledWith(source.key, target.key, {
+    config: { ...DEFAULT_CONFIG, instructions: "Staged Claude instructions" },
+  });
+  expect(save).not.toHaveBeenCalled();
+
+  // Restage, then use the existing navigation guard to discard the destination.
+  await user.click(
+    screen.getByRole("button", { name: "Change harness from Source" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Claude" }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Continue" }));
+  editInstructions("Discard this");
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Discard changes" }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Identity" }));
+  expect(
+    screen.getByRole("button", { name: "Change harness from Source" }),
+  ).toBeVisible();
+  expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
+  expect(retype).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])(
+  "warns before navigation when reverting around uncertain settlement (revertAfter=%s)",
+  async (revertAfter) => {
+    const f = syncedSettings();
+    let rejectSave!: (reason: Error) => void;
+    const pending = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    f.save.mockImplementationOnce(() => pending);
+    editInstructions("Submitted");
+    await userEvent.click(await screen.findByRole("button", { name: "Save" }));
+    try {
+      expect(f.save).toHaveBeenCalledTimes(1);
+      if (!revertAfter) editInstructions("");
+    } finally {
+      await act(async () => rejectSave(new Error("Save outcome is unknown")));
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Save outcome is unknown",
+    );
+    if (revertAfter) editInstructions("");
+    // Retrying the original value may be a successful no-op against the local
+    // snapshot; it does not disprove the earlier uncertain publication.
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(f.save).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "unsaved changes",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    f.update({ ...DEFAULT_CONFIG, instructions: "Other device" });
+    expect(screen.getByLabelText("Instructions")).toHaveValue("");
+    expect(
+      screen.getByRole("group", { name: "Instructions conflict" }),
+    ).toHaveTextContent("Instructions changed elsewhere");
+  },
+);
+
+it("places separate conflict choices beside their fields and shows the competing values", async () => {
+  const f = syncedSettings();
+  await choose("Model", "Sonnet 5.5");
+  editInstructions("My instructions");
+  f.update({
+    ...DEFAULT_CONFIG,
+    model: "opus",
+    effort: "high",
+    instructions: "Latest instructions\nSecond line",
+  });
+  const modelConflict = screen.getByRole("group", {
+    name: "Model and thinking conflict",
+  });
+  expect(modelConflict).toHaveTextContent(/Latest:.*Opus.*High thinking/);
+  expect(modelConflict).toHaveTextContent(
+    /Yours:.*Sonnet 5.5.*Automatic thinking/,
+  );
+  expect(modelConflict.parentElement).toContainElement(
+    screen.getByRole("combobox", { name: "Model" }),
+  );
+  const instructionsConflict = screen.getByRole("group", {
+    name: "Instructions conflict",
+  });
+  expect(instructionsConflict.parentElement).toContainElement(
+    screen.getByLabelText("Instructions"),
+  );
+  await userEvent.click(
+    within(instructionsConflict).getByRole("button", {
+      name: "View latest instructions",
+    }),
+  );
+  expect(
+    within(instructionsConflict).getByText(/Latest instructions/),
+  ).toHaveTextContent("Second line");
+  await userEvent.click(
+    within(modelConflict).getByRole("button", { name: "Use latest" }),
+  );
+  expect(
+    screen.queryByRole("group", { name: "Model and thinking conflict" }),
+  ).not.toBeInTheDocument();
+  expect(instructionsConflict).toBeInTheDocument();
+  await userEvent.click(
+    within(instructionsConflict).getByRole("button", { name: "Keep mine" }),
+  );
+  expect(screen.getByLabelText("Instructions")).toHaveValue("My instructions");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(f.save).toHaveBeenLastCalledWith(f.source().key, {
+    config: {
+      ...DEFAULT_CONFIG,
+      model: "opus",
+      effort: "high",
+      instructions: "My instructions",
+    },
+    base: { settings: "s0", instructions: "i0" },
+  });
 });

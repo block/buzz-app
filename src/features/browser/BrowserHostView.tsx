@@ -399,7 +399,8 @@ export function BrowserHostView({
       delete element.dataset.browserSession;
       // A guest with kept storage waits a while for this page to come back,
       // say from another channel, so work in progress there survives.
-      if (sessionId) void sessions.detach(sessionId, park);
+      // A guest that failed to hide or go quiet is closed; no view is left to report it.
+      if (sessionId) sessions.detach(sessionId, park).catch(() => {});
     };
   }, [
     builderlab,

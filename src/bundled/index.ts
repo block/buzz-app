@@ -1,5 +1,8 @@
+import meshManifest from "./mesh-compute/manifest.json";
+import * as mesh from "./mesh-compute";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
+
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -44,8 +47,6 @@ import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
-import draftsSentManifest from "./drafts-sent/manifest.json";
-import * as draftsSent from "./drafts-sent";
 import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
@@ -70,6 +71,12 @@ import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...meshManifest, apiVersion: 1 },
+    module: mesh,
+    // Opt-in: it reads community membership in the background once enabled.
+    enabledByDefault: false,
+  },
   {
     manifest: { ...relayNotesManifest, apiVersion: 1 },
     module: relayNotes,
@@ -163,11 +170,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...inboxManifest, apiVersion: 1 },
     module: inbox,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...draftsSentManifest, apiVersion: 1 },
-    module: draftsSent,
     enabledByDefault: true,
   },
   {

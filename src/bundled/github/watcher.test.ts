@@ -723,6 +723,47 @@ describe("github_watch_pr", () => {
     next.dispose();
   });
 
+  it("keeps watching when its progress cannot be saved, as when storage is full", async () => {
+    const app = setup();
+    app.gh(answer({ checks: [{ name: "unit", conclusion: null }] }));
+    await app.call({ url });
+    const setItem = Storage.prototype.setItem;
+    const full = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (key === "buzz.github.attention-cursors.v1")
+          throw new DOMException(
+            "The quota has been exceeded.",
+            "QuotaExceededError",
+          );
+        setItem.call(this, key, value);
+      });
+    try {
+      app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      app.gh(
+        answer({
+          head: "2222222222",
+          checks: [{ name: "unit", conclusion: "SUCCESS" }],
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      app.gh(answer({ head: "2222222222", state: "MERGED" }));
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    } finally {
+      full.mockRestore();
+    }
+    expect(app.texts()).toEqual([
+      `CI passed on 111111111 for ${url}.`,
+      `CI passed on 222222222 for ${url}.`,
+      expect.stringMatching(
+        new RegExp(`^${url} was merged, so this watch has ended`),
+      ),
+    ]);
+    expect([...app.completed]).toHaveLength(1);
+    app.dispose();
+  });
+
   it("stops on request, when merged, and refuses unreadable pull requests", async () => {
     const app = setup();
     await app.call({ url });

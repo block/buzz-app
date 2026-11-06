@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BuzzClient, Memories } from "../../buzz-mcp/client";
+import type { BuzzClient, Memories, OwnerAccess } from "../../buzz-mcp/client";
 import { callTool, memoryVersion } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import {
@@ -837,6 +837,132 @@ describe("GooseRuntime", () => {
     await interruptible.mock.calls[0]?.[0]();
     await flush(100);
     expect(process?.cancelled).toEqual([process?.turns[0]?.sessionId]);
+  });
+
+  it("returns no owner read that the owner's Stop overtook", async () => {
+    const { agent, deliver, goose } = setup({ hold: true });
+    let release!: () => void;
+    let entered!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const channels = vi.fn<OwnerAccess["channels"]>(async () => {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return {
+        execution: { agent: self, owner: alice, community: "relay" },
+        channels: [
+          {
+            id: channel,
+            name: "Owner secrets",
+            type: "stream",
+            visibility: "private",
+            archived: false,
+          },
+        ],
+        partial: false,
+      };
+    });
+    const held = vi.fn<OwnerAccess["held"]>();
+    Object.assign(agent, { ownerAccess: { channels, held } });
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await deliver(message("1", "@Gander list my channels"), { interruptible });
+    await vi.waitFor(() => expect(goose()?.turns).toHaveLength(1));
+    const process = goose();
+    const sessionId = process?.turns[0]?.sessionId;
+    if (!process || !sessionId) throw new Error("Goose turn did not start");
+    const pending = process.mcp(sessionId, "tools/call", {
+      name: "owner_channel_list",
+      arguments: {},
+    });
+    await reading;
+    await interruptible.mock.calls[0]?.[0]();
+    release();
+    const reply = await pending;
+    expect(reply?.result).toMatchObject({ isError: true });
+    expect(JSON.stringify(reply)).not.toContain("Owner secrets");
+    expect(JSON.stringify(reply)).toContain("turn has ended");
+    expect(channels).toHaveBeenCalledOnce();
+  });
+
+  it("answers a watch's or timer's Buzz calls while it runs, and none once it is stopped", async () => {
+    const f = setup({
+      hold: true,
+      memoryRead: async (_pubkey, _signal, slug) => ({
+        entries: [{ slug: slug ?? "core", body: "core notes", createdAt: 1 }],
+        partial: false,
+      }),
+    });
+    const listing = {
+      execution: { agent: self, owner: alice, community: "relay" },
+      channels: [
+        {
+          id: channel,
+          name: "Owner secrets",
+          type: "stream" as const,
+          visibility: "private" as const,
+          archived: false,
+        },
+      ],
+      partial: false,
+    };
+    let release: (() => void) | undefined;
+    let entered!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const channels = vi.fn<OwnerAccess["channels"]>(async () => {
+      if (channels.mock.calls.length > 1) {
+        entered();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return listing;
+    });
+    Object.assign(f.agent, {
+      ownerAccess: { channels, held: vi.fn<OwnerAccess["held"]>() },
+    });
+    const stop = new AbortController();
+    const done = f.runtime.runOnce({
+      delivery: { agent: f.agent, channelId: channel, config: DEFAULT_CONFIG },
+      key: "timer/daily",
+      signal: stop.signal,
+      prompt: async () => "Check my channels.",
+    } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
+    try {
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const process = f.goose();
+      const sessionId = process?.turns[0]?.sessionId;
+      if (!process || !sessionId) throw new Error("Goose turn did not start");
+      const call = (name: string) =>
+        process.mcp(sessionId, "tools/call", {
+          name,
+          arguments: name === "mem_get" ? { slug: "core" } : {},
+        });
+      const memory = await call("mem_get");
+      expect(memory?.result).not.toMatchObject({ isError: true });
+      expect(JSON.stringify(memory)).toContain("core notes");
+      const owned = await call("owner_channel_list");
+      expect(owned?.result).not.toMatchObject({ isError: true });
+      expect(JSON.stringify(owned)).toContain("Owner secrets");
+
+      const pending = call("owner_channel_list");
+      await reading;
+      stop.abort(new Error("stopped"));
+      await done;
+      release?.();
+      const refused = await pending;
+      expect(refused?.result).toMatchObject({ isError: true });
+      expect(JSON.stringify(refused)).not.toContain("Owner secrets");
+      expect(JSON.stringify(refused)).toContain("turn has ended");
+    } finally {
+      release?.();
+      stop.abort();
+      await done;
+    }
   });
 
   it("posts nothing goose wrote without `send`", async () => {

@@ -10,9 +10,11 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentType } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { apply } from "./index";
+import { DraftsSentPage } from "./DraftsSentPage";
+import { DraftsSentBadge } from "./DraftsSentNavigation";
+import type { RelayData } from "../relay/service";
+import type { Navigation } from "../navigation/controller";
 import { dayLabel, type ReadEvent } from "./model";
 
 const viewer = "a".repeat(64);
@@ -73,7 +75,10 @@ function harness() {
       { id: "room", name: "Huddle", channelType: "stream", huddle: true },
     ],
   };
-  const profiles = new Map<string, { name: string; isAgent?: true }>([
+  const profiles = new Map<
+    string,
+    { name: string; isAgent?: true; picture?: string }
+  >([
     [friend, { name: "Sam Okafor" }],
     [scout, { name: "Scout", isAgent: true }],
   ]);
@@ -165,27 +170,19 @@ function harness() {
     origin,
     session,
   };
-  let page:
-    | { component: ComponentType; badge: ComponentType; title: string }
-    | undefined;
   const open = vi.fn(async () => ({ status: "opened" }));
-  const ctx = {
-    relay: {
-      snapshot: () => connection,
-      subscribe: (f: () => void) => {
-        relayListeners.add(f);
-        return () => relayListeners.delete(f);
-      },
+  const relayData = {
+    snapshot: () => connection,
+    subscribe: (f: () => void) => {
+      relayListeners.add(f);
+      return () => relayListeners.delete(f);
     },
-    navigation: { open },
-    pages: {
-      register: (p: typeof page) => {
-        page = p;
-      },
-    },
-  } as unknown as Parameters<typeof apply>[0];
-  void apply(ctx);
-  if (!page) throw new Error("expected a registered page");
+  } as unknown as RelayData;
+  const navigator = { open } as unknown as Navigation;
+  const page = {
+    component: () => <DraftsSentPage relay={relayData} navigator={navigator} />,
+    badge: () => <DraftsSentBadge relay={relayData} />,
+  };
   return {
     page,
     open,
@@ -216,17 +213,45 @@ function harness() {
   };
 }
 
-it("registers a sidebar page with a live draft count", () => {
+it("shows a live sidebar draft count", () => {
   saved(`draft:team:thread:${root}`, { text: "Finish launch reply" });
   saved("draft:room", "Huddle notes stay out");
   const h = harness();
-  expect(h.page.title).toBe("Drafts & sent");
   const Badge = h.page.badge;
   render(<Badge />);
   expect(screen.getByLabelText("1 draft").textContent).toBe("1");
   saved("draft:dm", "Second");
   act(() => window.dispatchEvent(new Event("focus")));
   expect(screen.getByLabelText("2 drafts")).toBeInTheDocument();
+});
+
+it("switches separate Drafts and Sent panels and remembers the community's selected tab", async () => {
+  saved("draft:team", "Finish the draft");
+  const h = harness();
+  const Page = h.page.component;
+  const mounted = render(<Page />);
+  expect(screen.getByRole("tab", { name: /Drafts/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tabpanel", { name: /^Drafts/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Continue draft/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /View message/ })).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  expect(
+    await screen.findByRole("button", {
+      name: /View message.*Recently shipped/,
+    }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Continue draft/ })).toBeNull();
+  expect(screen.getByRole("tabpanel", { name: "Sent" })).toBeVisible();
+  mounted.unmount();
+  render(<Page />);
+  expect(screen.getByRole("tab", { name: "Sent" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("tabpanel", { name: /^Drafts/ })).toBeNull();
 });
 
 it("lists drafts first and continues a thread draft at its root", async () => {
@@ -236,10 +261,10 @@ it("lists drafts first and continues a thread draft at its root", async () => {
   const Page = h.page.component;
   render(<Page />);
   const list = screen.getByRole("list", { name: "Drafts" });
-  expect(within(list).getByText("#launch-room")).toBeInTheDocument();
-  expect(within(list).getByText("Thread")).toBeInTheDocument();
+  expect(within(list).getByText(/#launch-room/)).toBeInTheDocument();
+  expect(within(list).getByText(/Thread/)).toBeInTheDocument();
   expect(within(list).getByText("Sam Okafor")).toBeInTheDocument();
-  expect(within(list).getAllByText("Draft")).toHaveLength(2);
+  expect(within(list).getAllByText("You")).toHaveLength(2);
   fireEvent.click(
     screen.getByRole("button", {
       name: /Continue draft in #launch-room, thread/,
@@ -260,7 +285,7 @@ it("lists drafts first and continues a thread draft at its root", async () => {
     target: { value: "missing" },
   });
   expect(screen.getByText("No drafts match “missing”.")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
   expect(screen.getByText("Finish launch reply")).toBeInTheDocument();
 });
 
@@ -281,7 +306,7 @@ it("clears only the chosen draft from the keyboard, without opening it", async (
   );
   const list = screen.getByRole("list", { name: "Drafts" });
   expect(screen.getByLabelText("4 drafts")).toBeInTheDocument();
-  expect(screen.getByText("Recently shipped")).toBeInTheDocument();
+  expect(screen.queryByText("Recently shipped")).not.toBeVisible();
 
   const thread = within(list).getByRole("button", {
     name: "Clear draft in #launch-room, thread: Thread reply",
@@ -316,10 +341,10 @@ it("clears only the chosen draft from the keyboard, without opening it", async (
   expect(screen.getByLabelText("2 drafts")).toBeInTheDocument();
   expect(h.open).not.toHaveBeenCalled();
   // Sent messages have nothing to clear.
-  expect(screen.getByText("Recently shipped")).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: /^Clear draft/ })).toHaveLength(
-    2,
-  );
+  await user.click(screen.getByRole("tab", { name: "Sent" }));
+  expect(screen.getByText("Recently shipped")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^Clear draft/ })).toBeNull();
+  await user.click(screen.getByRole("tab", { name: /^Drafts/ }));
 
   // The row itself still continues its draft.
   await user.click(
@@ -362,8 +387,17 @@ it("keeps a draft and says so when storage can't forget it", async () => {
 it("sent groups by day, updates live, and opens the exact message", async () => {
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
   const h = harness();
+  const recipientPicture = "https://pictures.invalid/recipient.jpg";
+  h.session.profiles
+    .snapshot()
+    .set(friend, { name: "Sam Okafor", picture: recipientPicture });
+  h.session.profiles.snapshot().set(viewer, {
+    name: "You",
+    picture: "https://pictures.invalid/viewer.jpg",
+  });
   const Page = h.page.component;
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(h.view.refresh).toHaveBeenCalled();
   expect(await screen.findByText("Recently shipped")).toBeInTheDocument();
   expect(
@@ -381,6 +415,11 @@ it("sent groups by day, updates live, and opens the exact message", async () => 
     ]),
   );
   expect(screen.getByText("Just sent")).toBeInTheDocument();
+  expect(
+    screen
+      .getByRole("button", { name: /View message in Sam Okafor: Just sent/ })
+      .querySelector("img"),
+  ).toHaveAttribute("src", recipientPicture);
   fireEvent.click(
     screen.getByRole("button", {
       name: /View message in #launch-room: Recently shipped/,
@@ -458,9 +497,9 @@ it("shows participants with new-reply and you're-last status", () => {
     }),
   ]);
   render(<Page />);
-  expect(
-    screen.getByText("No drafts. Messages you start and don’t send wait here."),
-  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  expect(screen.getByRole("tabpanel", { name: "Sent" })).toBeVisible();
+  expect(screen.queryByRole("tabpanel", { name: "Drafts" })).toBeNull();
   const thread = screen.getByRole("button", {
     name: /View message in #launch-room, thread: Thread reply/,
   });
@@ -481,7 +520,7 @@ it("shows participants with new-reply and you're-last status", () => {
     name: /View message in Research helper: Hi helper/,
   });
   expect(within(solo).getByText("You’re last")).toBeInTheDocument();
-  expect(screen.getByText("1 with replies after yours")).toBeInTheDocument();
+  expect(screen.queryByText(/with replies after yours/)).toBeNull();
   // A new reply arrives live.
   act(() =>
     h.replies([
@@ -532,6 +571,7 @@ it("keeps each conversation's status tied to a complete read of it while views r
   h.emit([mine]);
   h.replies(replies);
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   const first = () =>
     screen.getByRole("button", {
       name: /View message in #launch-room, thread: Thread reply/,
@@ -601,6 +641,7 @@ it("doesn't count a relay-signed reply in your name as someone else's", () => {
     }),
   ]);
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(
     within(screen.getByRole("button", { name: /Thread reply/ })).getByText(
       "You’re last",
@@ -635,6 +676,7 @@ it("keeps deletion reads running as replies arrive, and Refresh rereads them", (
   ]);
   h.replies([reply(1)]);
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(deletionViews()).toHaveLength(1);
   const first = deletionViews()[0];
   if (!first) throw new Error("expected a deletion view");
@@ -700,6 +742,7 @@ it("never says you're last when the host may have evicted older replies", () => 
     ),
   );
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(pill(screen.getByRole("button", { name: /Quiet thread/ }))).toBeNull();
   expect(
     within(screen.getByRole("button", { name: /Busy thread/ })).getByText(
@@ -708,7 +751,7 @@ it("never says you're last when the host may have evicted older replies", () => 
   ).toBeInTheDocument();
 });
 
-it("counts a post and your reply in its thread as one conversation awaiting you", () => {
+it("keeps a post's reply count and your follow-up's reply status", () => {
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
   const h = harness();
   const Page = h.page.component;
@@ -738,6 +781,7 @@ it("counts a post and your reply in its thread as one conversation awaiting you"
     }),
   ]);
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(
     within(screen.getByRole("button", { name: /Following up/ })).getByText(
       "1 after you",
@@ -748,7 +792,6 @@ it("counts a post and your reply in its thread as one conversation awaiting you"
       "1 reply",
     ),
   ).toBeInTheDocument();
-  expect(screen.getByText("1 with replies after yours")).toBeInTheDocument();
 });
 
 it("settles a post you answered in its thread: its reply count stays, but it isn't waiting on you", () => {
@@ -783,6 +826,7 @@ it("settles a post you answered in its thread: its reply count stays, but it isn
     answer,
   ]);
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(
     within(screen.getByRole("button", { name: /Thanks, done/ })).getByText(
       "You’re last",
@@ -822,6 +866,7 @@ it("stops counting a reply you deleted in its post's thread", () => {
   h.emit([mine, launch]);
   h.replies([reply, mine]);
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(
     within(screen.getByRole("button", { name: /Launch post/ })).getByText(
       "2 replies",
@@ -880,6 +925,7 @@ it("never says you're last when a capped read can't cover your message", () => {
   );
   h.replies(flood);
   render(<Page />);
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
   expect(pill(screen.getByRole("button", { name: /Quiet thread/ }))).toBeNull();
   // The busy thread's reply after yours is covered only partly: at least, not exactly.
   const busyRow = screen.getByRole("button", { name: /Busy thread/ });
@@ -903,20 +949,16 @@ it("never says you're last when a capped read can't cover your message", () => {
 
 it("asks for a community before showing anything", () => {
   const connecting = { status: "connecting", generation: 0, session: {} };
-  const Page = (() => {
-    let registered: { component: ComponentType } | undefined;
-    void apply({
-      relay: { snapshot: () => connecting, subscribe: () => () => {} },
-      navigation: {},
-      pages: {
-        register: (p: { component: ComponentType }) => {
-          registered = p;
-        },
-      },
-    } as unknown as Parameters<typeof apply>[0]);
-    if (!registered) throw new Error("expected a registered page");
-    return registered.component;
-  })();
-  render(<Page />);
+  render(
+    <DraftsSentPage
+      relay={
+        {
+          snapshot: () => connecting,
+          subscribe: () => () => {},
+        } as unknown as RelayData
+      }
+      navigator={{} as Navigation}
+    />,
+  );
   expect(screen.getByText("Choose a community")).toBeInTheDocument();
 });

@@ -79,10 +79,14 @@ import {
 } from "../solo/people";
 import {
   ArrowUpIcon,
+  ChatCircleIcon,
+  LockIcon,
   PaperclipIcon,
   PencilSimpleIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../channels/channel-icon";
+import { channelIconClass } from "../../shared/inline-reference";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
@@ -1239,10 +1243,18 @@ function Composer({
     threadRootId,
     active && !editingDisabled && !editing.target && !submission && !cached,
   );
-  const label = editing.target
-    ? "Edit message"
-    : (customLabel ??
-      (threadRootId ? "Reply to thread" : `Message #${channelName}`));
+  // The editor's placeholder is text, so a channel's own placeholder is drawn
+  // over it with its sidebar icon; DMs, threads and edits keep their text.
+  const ChannelIcon = useListedChannel(listed, channelId, channelIcon);
+  const channelLabel =
+    !editing.target && customLabel === undefined && !threadRootId;
+  const iconPlaceholder =
+    channelLabel && placeholder === undefined && ChannelIcon !== ChatCircleIcon;
+  const label = channelLabel
+    ? `Message ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`
+    : editing.target
+      ? "Edit message"
+      : (customLabel ?? "Reply to thread");
   const gifPreview = useGifDraftPreview(extensions?.tools);
   const attachments = useAttachmentDraft(
     session,
@@ -3560,6 +3572,18 @@ function Composer({
                 }
               }}
             />
+            {iconPlaceholder && (
+              // Its words are drawn by CSS, like the editor's own placeholder,
+              // so find-in-page and copying skip them.
+              <span
+                className={styles.channelPlaceholder}
+                aria-hidden="true"
+                data-lead="Message"
+                data-name={channelName}
+              >
+                <ChannelIcon className={channelIconClass(ChannelIcon)} />
+              </span>
+            )}
           </div>
         </div>
         {!editing.target &&

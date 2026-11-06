@@ -18,6 +18,8 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
+import rowStyles from "../../features/messages/MessageListRow.module.css";
+import { MessageListRow } from "../../features/messages/MessageListRow";
 
 type ResolveName = (
   key: string,
@@ -85,75 +87,45 @@ export function InboxRowButton({
 >) {
   const unread = hasUnread(item);
   return (
-    <NavigationItem
+    <MessageListRow
       {...props}
       aria-label={`Open ${sender} in ${context}`}
       aria-describedby={previewId}
-      icon={
-        <span className={styles.rowAvatar}>
-          <Avatar
-            size="fill"
-            alt=""
-            fallback={sender}
-            fallbackContent={
-              item.workflowOwnerId ? <LightningIcon size={20} /> : undefined
-            }
-            src={
-              item.workflowOwnerId
-                ? undefined
-                : avatarMedia(profile?.picture, media)
-            }
-            shape={
-              item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
-            }
-          />
-        </span>
+      avatar={
+        <Avatar
+          size="fill"
+          alt=""
+          fallback={sender}
+          fallbackContent={
+            item.workflowOwnerId ? <LightningIcon size={20} /> : undefined
+          }
+          src={
+            item.workflowOwnerId
+              ? undefined
+              : avatarMedia(profile?.picture, media)
+          }
+          shape={
+            item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
+          }
+        />
       }
-      label={
-        <span className={styles.content}>
-          <span className={styles.heading}>
-            <span className={styles.identity}>
-              <strong
-                className={`text-label-sm text-standard ${styles.sender}`}
-              >
-                {sender}
-              </strong>
-              <span
-                className={`text-caption ${styles.source}`}
-                data-inbox-source=""
-              >
-                {context}
-              </span>
-            </span>
-            <time
-              className={`text-caption text-subtle ${styles.rowDate}`}
-              dateTime={new Date(item.createdAt * 1000).toISOString()}
-            >
-              {time}
-            </time>
-          </span>
-          <span
-            id={previewId}
-            className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
-          >
-            {[item.previewMessageId, ...item.messageIds].some(
-              (id) => id !== undefined && feed.incomplete.includes(id),
-            )
-              ? feed.status === "error"
-                ? "Preview unavailable. Retry activity."
-                : "Preview updating…"
-              : messagePreview(item.preview)}
-          </span>
-        </span>
+      sender={sender}
+      source={context}
+      time={
+        <time dateTime={new Date(item.createdAt * 1000).toISOString()}>
+          {time}
+        </time>
       }
-      trailing={
-        unread ? (
-          <span className={styles.unreadSlot} role="img" aria-label="Unread">
-            <span className={styles.unreadDot} />
-          </span>
-        ) : (
-          <span className={styles.unreadSlot} aria-hidden="true" />
+      unread={unread}
+      previewId={previewId}
+      preview={
+        [item.previewMessageId, ...item.messageIds].some(
+          (id) => id !== undefined && feed.incomplete.includes(id),
         )
+          ? feed.status === "error"
+            ? "Preview unavailable. Retry activity."
+            : "Preview updating…"
+          : messagePreview(item.preview)
       }
     />
   );
@@ -224,14 +196,14 @@ export function ReactionRowButton({
           shape={profile?.isAgent ? "squircle" : "circle"}
         />
       }
-      trailing={<span className={styles.unreadSlot} aria-hidden="true" />}
+      trailing={<span className={rowStyles.unreadSlot} aria-hidden="true" />}
       label={
-        <span className={styles.content}>
-          <span className={styles.heading}>
-            <span className={styles.identity}>
+        <span className={rowStyles.content}>
+          <span className={rowStyles.heading}>
+            <span className={rowStyles.identity}>
               <span className={styles.reactionHeading}>
                 <strong
-                  className={`text-label-sm text-standard ${styles.sender}`}
+                  className={`text-label-sm text-standard ${rowStyles.sender}`}
                 >
                   {sender}
                 </strong>
@@ -253,7 +225,8 @@ export function ReactionRowButton({
               </span>
             </span>
             <time
-              className={`text-caption text-subtle ${styles.rowDate}`}
+              data-inbox-date=""
+              className={`text-caption text-subtle ${rowStyles.rowDate}`}
               dateTime={new Date(item.createdAt * 1000).toISOString()}
             >
               {time}
@@ -262,7 +235,9 @@ export function ReactionRowButton({
           <span className={`text-body text-subtle ${styles.reactionPreview}`}>
             {preview}
           </span>
-          <span className={`text-caption ${styles.source}`}>in {context}</span>
+          <span className={`text-caption ${rowStyles.source}`}>
+            in {context}
+          </span>
         </span>
       }
     />

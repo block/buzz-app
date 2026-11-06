@@ -14,7 +14,7 @@ mod browser_permissions_tests;
 mod pairing;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
-    browser_status,
+    browser_set_media_suspended, browser_status,
 };
 mod agent_state;
 mod app_agents;
@@ -39,6 +39,8 @@ mod host_files;
 mod host_mcp;
 mod host_process;
 mod host_request;
+mod mesh_compute;
+use mesh_compute::MeshHost;
 mod identity;
 mod native_mcp;
 mod nsec_backup;
@@ -954,6 +956,7 @@ pub fn run() {
             }
             tauri::async_runtime::spawn(host_command::load_login_shell_path());
             deep_links::setup(app.handle());
+            mesh_compute::setup(app.handle());
             app.manage(relay::Spools::new(
                 app.path()
                     .app_cache_dir()
@@ -1110,6 +1113,8 @@ pub fn run() {
     };
     builder
         .manage(clipboard::Clipboard::default())
+        .manage(mesh_compute::identity(identity.clone()))
+        .manage(MeshHost::default())
         .manage(keep_awake::KeepAwake::default())
         .manage(identity)
         .manage(archive::ArchiveHost::default())
@@ -1139,13 +1144,18 @@ pub fn run() {
             let browser_commands: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 browser_attach,
                 browser_set_bounds,
+                browser_set_media_suspended,
                 browser_detach,
                 browser_navigate,
                 browser_action,
                 browser_status
             ];
+            let mesh_commands = mesh_compute::commands();
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
+                if request.message.command().starts_with("mesh_compute_") {
+                    return mesh_commands(request);
+                }
                 if request.message.command().starts_with("browser_") {
                     browser_commands(request)
                 } else {
@@ -1205,6 +1215,14 @@ pub fn run() {
                 shut_down(app);
                 #[cfg(target_os = "macos")]
                 relaunch::on_exit(app);
+                // AppKit exits through libc exit(), whose C++ static destructors can
+                // abort in the embedded ggml/Metal runtime (block/buzz desktop
+                // `hard_exit_after_mesh_shutdown`). Only once Mesh has run.
+                #[cfg(target_os = "macos")]
+                if app.state::<MeshHost>().runtime_started() {
+                    // SAFETY: Buzz and Mesh shutdown have run; skip only global destructors.
+                    unsafe { libc::_exit(0) }
+                }
             }
         });
 }
@@ -1230,6 +1248,7 @@ fn credential_notice<R: tauri::Runtime>(
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
 pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<MeshHost>().shutdown();
     app.state::<NsecBackupHost>().close();
     if let Some(credentials) = app.try_state::<credential_service::CredentialService>() {
         credentials.stop();

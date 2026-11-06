@@ -22,6 +22,7 @@ export function useNonmemberMentions(
 ) {
   const [pending, setPending] = useState<Pending>();
   const adding = useRef(false);
+  const action = useRef<HTMLButtonElement>(null);
   const channel = session.channels
     .list()
     .channels.find((item) => item.id === channelId);
@@ -88,6 +89,8 @@ export function useNonmemberMentions(
         title="Mention people outside this channel?"
         description={pending && describe(pending.people, canAdd)}
         preventClose={!!pending?.busy}
+        // The expected continuation, not header Close, answers Enter.
+        initialFocus={canAdd ? action : undefined}
         finalFocus={() => {
           restoreFocus();
           return false;
@@ -106,8 +109,10 @@ export function useNonmemberMentions(
             {canAdd && (
               <Button
                 type="button"
+                ref={action}
                 variant="prominent"
-                disabled={pending?.busy}
+                // Loading, not disabled, so focus survives a failed invite.
+                loading={!!pending?.busy}
                 onClick={() => void add()}
               >
                 {pending?.busy ? "Inviting…" : "Invite"}

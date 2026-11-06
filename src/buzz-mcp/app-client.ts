@@ -236,6 +236,12 @@ export function appClient(
         throw new Error("Team changes are unavailable on this host");
       return agent.updateTeam(input);
     },
+    createTeam: async (input) => {
+      check();
+      if (!agent.createTeam)
+        throw new Error("Team creation is unavailable on this host");
+      return agent.createTeam(input);
+    },
     ...(plugins && {
       plugins: {
         list: () => {

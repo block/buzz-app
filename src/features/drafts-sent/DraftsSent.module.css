@@ -182,6 +182,9 @@
 .draftBack {
   display: none;
 }
+.draftClose {
+  display: contents;
+}
 @container drafts-sent (max-width: 48rem) {
   .draftWorkspace[data-selected] .draftList {
     display: none;
@@ -190,8 +193,10 @@
     border-inline-start: 0;
   }
   .draftBack {
-    display: block;
-    padding-inline: var(--space-panel-inset);
+    display: contents;
+  }
+  .draftClose {
+    display: none;
   }
 }
 
@@ -207,4 +212,14 @@
   .row:has([data-selected]) .clear {
     opacity: 1;
   }
+}
+
+.badge {
+  display: inline-grid;
+  margin-inline-end: var(--space-1);
+}
+
+.channelNotice {
+  position: relative;
+  flex: none;
 }

@@ -97,6 +97,8 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   let emit: (events: readonly RelayEvent[]) => void = () => {};
   let fail = false;
   let gate: Promise<void> | undefined;
+  let historyGate: Promise<void> | undefined;
+  let historyStarted = () => {};
   const published: RelayEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
     if (gate) await gate;
@@ -114,6 +116,15 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
         (
           await Promise.all(
             filters.map(async (filter) => {
+              if (
+                historyGate &&
+                (filter.top_level ||
+                  filter.thread_window ||
+                  filter["#e"]?.includes(root.id))
+              ) {
+                historyStarted();
+                await historyGate;
+              }
               const found = events.filter(
                 (event) =>
                   matchesEvent(event, filter) &&
@@ -222,6 +233,28 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   return {
     session,
     relay,
+    holdHistory: () => {
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        historyStarted = resolve;
+      });
+      historyGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return {
+        started,
+        release: () => {
+          historyGate = undefined;
+          release();
+        },
+      };
+    },
+    liveMessage: () => {
+      const next = message(other, "room", "New live message", 1000000);
+      events.push(next);
+      emit([next]);
+      return next;
+    },
     seedHistory: (thread: boolean) => {
       const history = Array.from({ length: 150 }, (_, i) =>
         message(
@@ -261,12 +294,17 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
       events.push(update);
       emit([update]);
     },
-    seedSent: (thread: boolean) => {
+    seedSent: (
+      thread: boolean,
+      channelId = "room",
+      text = "Already sent",
+      createdAt = 25,
+    ) => {
       const sent = message(
         viewer,
-        "room",
-        "Already sent",
-        25,
+        channelId,
+        text,
+        createdAt,
         thread
           ? [
               ["e", root.id, "", "root"],
@@ -770,9 +808,9 @@ it.each([
     const view = render(
       <DraftPreview {...props} channel={channel} loading={!channel} />,
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Loading conversation",
-    );
+    expect(
+      view.container.querySelector("[aria-busy=true]"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/can’t post/)).toBeNull();
     view.rerender(
       <DraftPreview
@@ -995,6 +1033,9 @@ it.each([false, true])(
     );
     expect(within(region).queryByRole("textbox")).toBeNull();
     expect(within(region).queryByText(/not available for replying/)).toBeNull();
+    expect(
+      within(region).getByText("This channel is archived"),
+    ).toBeInTheDocument();
   },
 );
 
@@ -1018,5 +1059,245 @@ it.each([false, true])(
       ).not.toBeNull(),
     );
     expect(within(region).queryByRole("textbox")).toBeNull();
+    expect(within(region).getByText("Read-only access")).toBeInTheDocument();
   },
 );
+
+it.each(["close", "selection", "tab"])(
+  "restores live channel history when an old Sent preview exits via %s",
+  async (exit) => {
+    const h = fixture();
+    h.seedSent(false);
+    h.seedSent(false, "other", "Other sent message");
+    h.seedHistory(false);
+    h.render();
+    fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /View message.*Already sent/ }),
+    );
+    await waitFor(() =>
+      expect(h.session.channels.window("room").hasNewer).toBe(true),
+    );
+    if (exit === "close")
+      fireEvent.click(
+        screen.getByRole("button", { name: "Close sent preview" }),
+      );
+    else if (exit === "tab")
+      fireEvent.click(screen.getByRole("tab", { name: /^Drafts/ }));
+    else {
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /View message.*Other sent message/,
+        }),
+      );
+    }
+    await waitFor(() =>
+      expect(h.session.channels.window("room").hasNewer).toBeFalsy(),
+    );
+    let next!: RelayEvent;
+    act(() => {
+      next = h.liveMessage();
+    });
+    await waitFor(() =>
+      expect(
+        h.session.channels
+          .window("room")
+          .rows.some((row) => row.id === next.id),
+      ).toBe(true),
+    );
+  },
+);
+
+it.each([false, true])(
+  "does not let an aborted seek detach history after unmount (thread=%s)",
+  async (thread) => {
+    const h = fixture();
+    const sent = h.seedSent(thread);
+    h.seedHistory(thread);
+    await act(async () => h.session.channels.ensure("room"));
+    const hold = h.holdHistory();
+    const mounted = render(
+      <DraftPreview
+        entry={{
+          id: sent.id,
+          channelId: "room",
+          text: sent.content,
+          createdAt: sent.created_at,
+          ...(thread ? { threadRootId: h.root.id } : {}),
+        }}
+        mode="sent"
+        title="#Design"
+        channel={h.session.channels.get?.("room")}
+        session={h.session}
+        host={h.host}
+        autoFocus={false}
+        onClose={() => {}}
+        onOpen={() => {}}
+        onSaved={() => {}}
+      />,
+    );
+    try {
+      await hold.started;
+      mounted.unmount();
+    } finally {
+      await act(async () => hold.release());
+    }
+    expect(h.session.channels.window("room").hasNewer).toBeFalsy();
+    let next!: RelayEvent;
+    act(() => {
+      next = h.liveMessage();
+    });
+    await waitFor(() =>
+      expect(
+        h.session.channels
+          .window("room")
+          .rows.some((row) => row.id === next.id),
+      ).toBe(true),
+    );
+  },
+);
+
+it.each([
+  { thread: false, touch: false, control: "search" },
+  { thread: true, touch: false, control: "search" },
+  { thread: false, touch: true, control: "search" },
+  { thread: true, touch: true, control: "search" },
+  { thread: false, touch: false, control: "composer" },
+])(
+  "preserves the chosen control focus during delayed Sent reveal %j",
+  async ({ thread, touch, control }) => {
+    const h = fixture();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 800, 600),
+    );
+    const sent = h.seedSent(thread);
+    h.seedHistory(thread);
+    await act(async () => h.session.channels.ensure("room"));
+    h.render();
+    fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+    const row = await screen.findByRole("button", {
+      name: /View message.*Already sent/,
+    });
+    const hold = h.holdHistory();
+    try {
+      const click = new MouseEvent("click", { bubbles: true });
+      if (touch)
+        Object.defineProperty(click, "pointerType", { value: "touch" });
+      fireEvent(row, click);
+      await hold.started;
+      const focus =
+        control === "search"
+          ? screen.getByRole("searchbox")
+          : await screen.findByRole("textbox");
+      focus.focus();
+    } finally {
+      await act(async () => hold.release());
+    }
+    const region = screen.getByRole("region", {
+      name: "Sent message in #Design",
+    });
+    await waitFor(() =>
+      expect(
+        region.querySelector(
+          `[data-message-id="${sent.id}"] [class*="messageHighlight"], [data-message-id="${sent.id}"][class*="messageHighlight"]`,
+        ),
+      ).not.toBeNull(),
+    );
+    expect(
+      screen.getByRole(control === "search" ? "searchbox" : "textbox"),
+    ).toHaveFocus();
+  },
+);
+
+it("keeps a new attachment-only draft open when the previous text send is delivered", async () => {
+  let finishUpload!: (value: UploadedAttachment) => void;
+  const upload = vi.fn(
+    () =>
+      new Promise<UploadedAttachment>((resolve) => {
+        finishUpload = resolve;
+      }),
+  );
+  const h = fixture(upload);
+  const deliver = h.hold();
+  writeView(h.session.scope, "draft:room", "First text send");
+  h.render();
+  try {
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Continue draft.*First text send/,
+      }),
+    );
+    await screen.findByRole("textbox");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(h.publish).toHaveBeenCalled());
+    const store = attachmentDraft(
+      h.session,
+      `${h.session.scope}:draft:room`,
+      "room",
+    );
+    act(() => {
+      store.add([new File(["next"], "next.txt", { type: "text/plain" })]);
+    });
+    await waitFor(() => expect(upload).toHaveBeenCalled());
+    await act(async () => deliver());
+    await waitFor(() => expect(h.published).toHaveLength(1));
+    expect(
+      screen.getByRole("region", { name: "Draft for #Design" }),
+    ).toBeInTheDocument();
+    expect(store.snapshot()[0]?.status).toBe("uploading");
+    expect(screen.getByRole("textbox")).toHaveTextContent("");
+  } finally {
+    await act(async () => {
+      deliver();
+      finishUpload?.({
+        name: "next.txt",
+        url: `https://relay.test/media/${"a".repeat(64)}.txt`,
+        type: "text/plain",
+        size: 4,
+        sha256: "a".repeat(64),
+      });
+    });
+  }
+  expect(
+    screen.getByRole("region", { name: "Draft for #Design" }),
+  ).toBeInTheDocument();
+});
+
+it("can select another older Sent message in the same channel after restoring its reader", async () => {
+  const h = fixture();
+  h.seedSent(false);
+  const second = h.seedSent(false, "room", "Second older message", 60);
+  h.seedHistory(false);
+  h.render();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /View message.*Already sent/ }),
+  );
+  await waitFor(() =>
+    expect(h.session.channels.window("room").hasNewer).toBe(true),
+  );
+  const hold = h.holdHistory();
+  try {
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /View message.*Second older message/,
+      }),
+    );
+    expect(h.session.channels.window("room").refreshing).toBe(true);
+    await hold.started;
+  } finally {
+    await act(async () => hold.release());
+  }
+  await waitFor(() =>
+    expect(h.session.channels.window("room").refreshing).toBeFalsy(),
+  );
+  const region = screen.getByRole("region", {
+    name: "Sent message in #Design",
+  });
+  await waitFor(() => {
+    expect(
+      region.querySelector(`[data-message-id="${second.id}"]`),
+    ).not.toBeNull();
+    expect(h.session.channels.window("room").hasNewer).toBe(true);
+  });
+});

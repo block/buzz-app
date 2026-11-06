@@ -93,6 +93,8 @@ export type ThreadPanelProps = {
   autoFocus?: MessageComposerProps["autoFocus"];
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
+  /** Reveal an inline target without taking focus from its host. */
+  revealFocus?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
   headerActions?: ReactNode | undefined;
@@ -421,6 +423,7 @@ function OwnedThreadPanel({
   autoFocus,
   active = true,
   revealSelected,
+  revealFocus,
   requireReadyRoot,
   onDraftSaved,
   onSend,
@@ -494,6 +497,7 @@ function OwnedThreadPanel({
       autoFocus={autoFocus}
       active={active}
       revealSelected={revealSelected}
+      revealFocus={revealFocus}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
       onSend={onSend}
@@ -524,6 +528,7 @@ function ThreadMessages({
   autoFocus,
   active,
   revealSelected,
+  revealFocus,
   revealRequest,
   requireReadyRoot,
   onDraftSaved,
@@ -554,6 +559,8 @@ function ThreadMessages({
   autoFocus?: ThreadPanelProps["autoFocus"];
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
+  /** Reveal an inline target without taking focus from its host. */
+  revealFocus?: boolean | undefined;
   revealRequest?: number | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
@@ -936,7 +943,13 @@ function ThreadMessages({
     inlineReveal ?? (positionedVisit ? undefined : navigation?.signal);
   const revealed = useMessageReveal({
     scroller,
-    focus: !(
+    focus:
+      revealFocus !== false &&
+      !(
+        navigation?.target.kind === "conversation" &&
+        navigation.target.panel === "members"
+      ),
+    mark: !(
       navigation?.target.kind === "conversation" &&
       navigation.target.panel === "members"
     ),

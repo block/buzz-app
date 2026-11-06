@@ -506,7 +506,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   sends stay in its message history with Retry. Select a sent message to preview
   it in context and reply in place; Sent previews stay open after sending. Both
   previews use the conversation’s saved draft, if one exists. Archived or read-only
-  Sent destinations show the conversation without a composer. The popout icon
+  Sent destinations show the conversation without a composer, with an archived
+  or read-only notice and Join when available. The popout icon
   opens the original conversation.
   Search above the list matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its

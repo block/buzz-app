@@ -5,6 +5,7 @@ import { useChannelList, useRelayConnection } from "../relay/react";
 import { CountBadge } from "../../shared/design-system/ui/CountBadge";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SendIcon } from "../../shared/design-system/icons";
+import styles from "./DraftsSent.module.css";
 import { useDrafts } from "./drafts";
 import { listed, scopeOf } from "./scope";
 
@@ -65,10 +66,12 @@ export function DraftsSentBadge({ relay }: { relay: RelayData }) {
         listed(channels.find((channel) => channel.id === entry.channelId)),
       ).length
     : 0;
-  return (
-    <CountBadge
-      count={count}
-      label={`${count} draft${count === 1 ? "" : "s"}`}
-    />
-  );
+  return count ? (
+    <span className={styles.badge}>
+      <CountBadge
+        count={count}
+        label={`${count} draft${count === 1 ? "" : "s"}`}
+      />
+    </span>
+  ) : null;
 }

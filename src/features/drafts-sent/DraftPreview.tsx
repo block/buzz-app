@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   ConversationChannel,
   ConversationComposer,
@@ -8,6 +14,11 @@ import {
 } from "../conversation/Conversation";
 import type { ConversationHostServices } from "../conversation/ConversationHost";
 import type { ConversationExtensions } from "../conversation/contracts";
+import {
+  attachmentDraftCount,
+  subscribeAttachmentDraftCounts,
+} from "../messages/attachment-draft";
+import { ChannelJoinNotice } from "../messages/ChannelJoinNotice";
 import { MessageEditScope } from "../messages/MessageEditScope";
 import { mentionDraft } from "../messages/mention-draft";
 import type { RelaySession } from "../relay/session";
@@ -21,8 +32,10 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import {
+  ArrowLeftIcon,
   ArrowSquareOutIcon,
   ChatCircleIcon,
   XIcon,
@@ -61,6 +74,13 @@ export function DraftPreview({
   const [sent, setSent] = useState<string>();
   const sending = useRef<string | undefined>(undefined);
   const [received, setReceived] = useState<string>();
+  const attachmentCount = useSyncExternalStore(
+    useCallback(
+      (notify) => subscribeAttachmentDraftCounts(session, notify),
+      [session],
+    ),
+    () => attachmentDraftCount(session, `${session.scope}:${entry.id}`),
+  );
   // Receipts include fast echoes already retired from the pending outbox.
   // Observe delivery only; the composer still owns saving and recovery.
   useEffect(() => {
@@ -82,13 +102,23 @@ export function DraftPreview({
       cleaned &&
       sent &&
       received === sent &&
+      attachmentCount === 0 &&
       viewRevision(session.scope, entry.id) === cleaned.revision
     )
       onSaved(
         document.activeElement === document.body ||
           !!region.current?.contains(document.activeElement),
       );
-  }, [cleaned, sent, received, session, entry.id, onSaved, mode]);
+  }, [
+    cleaned,
+    sent,
+    received,
+    session,
+    entry.id,
+    onSaved,
+    mode,
+    attachmentCount,
+  ]);
   const sentMessage = (id: string) => {
     sending.current = id;
     setSent(id);
@@ -96,6 +126,7 @@ export function DraftPreview({
   const draftSaved = () =>
     setCleaned({ revision: viewRevision(session.scope, entry.id) });
   const close = useRef<HTMLButtonElement>(null);
+  const back = useRef<HTMLButtonElement>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const waiting =
     loading ||
@@ -114,7 +145,12 @@ export function DraftPreview({
     channel &&
     (channel.readOnly || channel.members?.includes(session.viewer ?? ""));
   useEffect(() => {
-    if (!autoFocus || !writable) close.current?.focus();
+    if (!autoFocus || !writable) {
+      const control = back.current?.getClientRects().length
+        ? back.current
+        : close.current;
+      control?.focus();
+    }
   }, [autoFocus, writable]);
   async function copy() {
     try {
@@ -149,9 +185,20 @@ export function DraftPreview({
       }}
     >
       <PanelHeader
+        navigation={
+          <span className={styles.draftBack}>
+            <IconButton
+              ref={back}
+              size="sm"
+              aria-label={mode === "draft" ? "Back to drafts" : "Back to sent"}
+              icon={<ArrowLeftIcon size="1rem" />}
+              onClick={onClose}
+            />
+          </span>
+        }
         title={
           <PanelHeaderLabel
-            title={`${title}${entry.threadRootId ? " · Thread reply" : ""}`}
+            title={`${title}${entry.threadRootId ? " · Thread" : ""}`}
           />
         }
         actions={
@@ -164,27 +211,26 @@ export function DraftPreview({
               onClick={onOpen}
               disabled={!channel || channel.cached || channel.pending}
             />
-            <IconButton
-              ref={close}
-              size="sm"
-              aria-label={
-                mode === "draft" ? "Close draft preview" : "Close sent preview"
-              }
-              icon={<XIcon size="1rem" />}
-              onClick={onClose}
-            />
+            <span className={styles.draftClose}>
+              <IconButton
+                ref={close}
+                size="sm"
+                aria-label={
+                  mode === "draft"
+                    ? "Close draft preview"
+                    : "Close sent preview"
+                }
+                icon={<XIcon size="1rem" />}
+                onClick={onClose}
+              />
+            </span>
           </>
         }
       />
-      <div className={styles.draftBack}>
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          {mode === "draft" ? "Back to drafts" : "Back to sent"}
-        </Button>
-      </div>
       {waiting ? (
-        <p role="status" className="text-body-sm text-subtle">
-          Loading conversation…
-        </p>
+        <LoadingRegion pending label="Loading conversation…">
+          {null}
+        </LoadingRegion>
       ) : channel && (writable || (mode === "sent" && readable)) ? (
         <ConversationChannel
           session={session}
@@ -199,8 +245,9 @@ export function DraftPreview({
             <ConversationThread
               messageId={mode === "sent" ? entry.id : entry.threadRootId}
               revealSelected={mode === "sent"}
+              revealFocus={false}
               requireReadyRoot={mode === "draft"}
-              autoFocus={autoFocus}
+              autoFocus={autoFocus && mode === "draft"}
               onDraftSaved={draftSaved}
               onSend={sentMessage}
               active={mode === "sent"}
@@ -209,8 +256,9 @@ export function DraftPreview({
             <DraftChannel
               title={title}
               target={mode === "sent" ? entry : undefined}
+              channel={channel}
               writable={!!writable}
-              autoFocus={autoFocus}
+              autoFocus={autoFocus && mode === "draft"}
               onSaved={draftSaved}
               onSend={sentMessage}
             />
@@ -239,10 +287,11 @@ export function DraftPreview({
   );
 }
 
-/** Uses the canonical channel reader without changing its saved scroll position. */
+/** Borrows the shared channel reader, returning it to live history on exit. */
 function DraftChannel({
   title,
   target,
+  channel,
   writable,
   autoFocus,
   onSaved,
@@ -250,25 +299,32 @@ function DraftChannel({
 }: {
   title: string;
   target?: Entry | undefined;
+  channel: ChannelSummary;
   writable: boolean;
   autoFocus: boolean;
   onSaved(): void;
   onSend(id: string): void;
 }) {
   const { session, channelId } = useConversation();
-  const window = useChannelWindow(session.channels, channelId);
+  const channelWindow = useChannelWindow(session.channels, channelId);
   const [seekError, setSeekError] = useState(false);
+  const [noticeHeight, setNoticeHeight] = useState(0);
   const [outgoing, setOutgoing] = useState<string>();
   const [reveal, setReveal] = useState<{
     messageId: string;
     signal: AbortSignal;
+    focus: false;
   }>();
   useEffect(() => {
     if (!target) return;
-    if (window.status !== "ready") return;
+    if (channelWindow.status !== "ready" || channelWindow.refreshing) return;
     const request = new AbortController();
     setSeekError(false);
-    setReveal({ messageId: outgoing ?? target.id, signal: request.signal });
+    setReveal({
+      messageId: outgoing ?? target.id,
+      signal: request.signal,
+      focus: false,
+    });
     if (outgoing) {
       session.channels.attach?.(channelId);
       return () => request.abort();
@@ -286,14 +342,24 @@ function DraftChannel({
       .catch(() => {
         if (!request.signal.aborted) setSeekError(true);
       });
-    return () => request.abort();
-  }, [session, channelId, target, outgoing, window.status]);
+    return () => {
+      request.abort();
+      session.channels.attach?.(channelId);
+    };
+  }, [
+    session,
+    channelId,
+    target,
+    outgoing,
+    channelWindow.status,
+    channelWindow.refreshing,
+  ]);
   useEffect(() => {
     if (!target) session.channels.refresh?.(channelId);
   }, [session, channelId, target]);
   useEffect(() => {
-    if (window.status === "idle") session.channels.ensure(channelId);
-  }, [session, channelId, window.status]);
+    if (channelWindow.status === "idle") session.channels.ensure(channelId);
+  }, [session, channelId, channelWindow.status]);
   return (
     <MessageEditScope>
       <div className={styles.draftConversation}>
@@ -303,17 +369,17 @@ function DraftChannel({
               The selected message could not be found in this conversation.
             </p>
           )}
-          {!!window.rows.length && (
+          {!!channelWindow.rows.length && (
             <ConversationTimeline
-              window={window}
+              window={channelWindow}
               transient
               inlineTarget={reveal}
             />
           )}
-          {window.status === "error" || window.error ? (
+          {channelWindow.status === "error" || channelWindow.error ? (
             <div className={styles.draftUnavailable}>
               <p role="alert" className="text-body-sm">
-                {window.error ?? "Could not load conversation."}
+                {channelWindow.error ?? "Could not load conversation."}
               </p>
               <Button
                 size="sm"
@@ -323,23 +389,47 @@ function DraftChannel({
               </Button>
             </div>
           ) : (
-            !window.rows.length &&
-            (window.status === "ready" ? (
+            !channelWindow.rows.length &&
+            (channelWindow.status === "ready" ? (
               <EmptyState
                 icon={<ChatCircleIcon />}
                 title="No messages yet"
                 description="Start the conversation below."
               />
             ) : (
-              <p
-                role="status"
-                className={`text-body-sm text-subtle ${styles.sectionCopy}`}
-              >
-                Loading conversation…
-              </p>
+              <LoadingRegion pending label="Loading conversation…">
+                {null}
+              </LoadingRegion>
             ))
           )}
         </div>
+        {!writable && (
+          <div
+            className={styles.channelNotice}
+            style={{ height: noticeHeight }}
+          >
+            <ChannelJoinNotice
+              channelId={channelId}
+              ready={
+                channelWindow.status === "ready" || !!channelWindow.rows.length
+              }
+              archived={!!channel.archived}
+              guest={channel.viewerRole === "guest"}
+              joinRole={channel.joinRole}
+              place={channel.channelType === "solo" ? "chat" : "channel"}
+              lifecycle={session.channelLifecycle}
+              joinable={
+                !!channel.readOnly &&
+                (channel.channelType === "stream" ||
+                  channel.channelType === "forum" ||
+                  (channel.channelType === "solo" &&
+                    channel.joinRole === "guest"))
+              }
+              onJoin={() => {}}
+              onHeightChange={setNoticeHeight}
+            />
+          </div>
+        )}
         {writable && (
           <ConversationComposer
             label={`Message ${title}`}

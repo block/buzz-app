@@ -1908,7 +1908,6 @@
     flex-shrink: 0;
     min-inline-size: 1lh;
     block-size: 1lh;
-    margin-inline-end: var(--space-1);
     padding-inline: var(--space-1);
     border-radius: var(--radius-pill);
     background: var(--affordance-subtle);

@@ -1,7 +1,6 @@
 import { DraftPreview } from "./DraftPreview";
 import type { ConversationHostServices } from "../conversation/ConversationHost";
 import type { ConversationExtensions } from "../conversation/contracts";
-import { mentionDraft } from "../messages/mention-draft";
 import {
   useEffect,
   useLayoutEffect,
@@ -311,9 +310,7 @@ function ScopedPage({
   if (selected?.draft && currentIndex < 0)
     entries.splice(selectedIndex.current, 0, {
       ...selected.entry,
-      text:
-        mentionDraft(readView(session.scope, selected.entry.id, "")).text ||
-        "Empty draft",
+      text: "Empty draft",
       placeholder: true,
     });
   const shownDrafts = entries.filter((entry) =>

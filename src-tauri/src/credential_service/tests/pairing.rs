@@ -579,14 +579,23 @@ async fn an_approval_saved_during_a_community_removal_returns_no_token() {
         .await
         .unwrap();
     let service = fixture.service.clone();
-    let mut removing =
+    let removing =
         tokio::spawn(async move { service.0.pairings.set_communities(Vec::new()).await });
-    // The removal cannot complete while the save is paused.
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), &mut removing)
-            .await
-            .is_err()
-    );
+    // Wait until the removal has published its list; it cannot complete
+    // while the save is paused.
+    while fixture
+        .service
+        .0
+        .pairings
+        .communities
+        .lock()
+        .unwrap()
+        .as_ref()
+        != Some(&Vec::new())
+    {
+        tokio::task::yield_now().await;
+    }
+    assert!(!removing.is_finished());
     release.send(()).unwrap();
     removing.await.unwrap();
     // Once the removal completed, no token is saved.

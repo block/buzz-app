@@ -499,8 +499,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   Search matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation. The same drafts show where
-  you left them: a pencil after a channel or DM's name in the sidebar when it,
-  or one of its threads, holds a draft (hidden while that conversation is
+  you left them: a pencil at the right edge of a channel or DM's sidebar row
+  when it, or one of its threads, holds a draft (hidden while that conversation is
   open), and **Draft** on a message's reply line, or **Draft reply** when no
   one has replied yet (hidden while that thread is open).
 - **Activity preview**: with a mouse or trackpad, rest the pointer on

@@ -72,7 +72,7 @@ it("steps only while the sidebar renders rows, and not from a terminal", () => {
   expect(next.when()).toBe(false);
 });
 
-it("steps from the message composer but leaves Option+Arrow to other text fields", () => {
+it("stays available in the message composer but not in other text fields", () => {
   const next = registered().get("next-conversation");
   sidebar("a", "*b", "c");
   document.body.insertAdjacentHTML(

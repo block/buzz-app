@@ -472,7 +472,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation.
   A draft in an archived conversation stays listed and marked **Archived**, but
-  isn't counted, because it can't be sent until the conversation is unarchived.
+  isn't included in the sidebar number. Selecting it opens the conversation, where
+  the draft can't be edited unless the conversation is unarchived.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;

@@ -517,7 +517,7 @@ function ScopedPage({
       .slice(0, 5)
       .map((key) => nameOf(key));
     const label = [
-      `${draft ? "Continue draft" : "View message"} in ${where}: ${line}`,
+      `${draft ? (archived ? "Open conversation" : "Continue draft") : "View message"} in ${where}: ${line}`,
       status?.detail,
       involved.length && place.kind !== "dm"
         ? `With ${involved.join(", ")}`

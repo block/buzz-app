@@ -10,7 +10,7 @@ export const inject = ["pages", "relay", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
 
-  /** Sidebar count of unsent drafts the current community can still send. */
+  /** Sidebar count of unsent drafts in the current community, leaving out archived conversations. */
   function Badge() {
     const connection = useRelayConnection(relay);
     const session =

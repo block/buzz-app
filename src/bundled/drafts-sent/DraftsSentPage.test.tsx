@@ -251,6 +251,11 @@ it("lists an archived conversation's draft as clearable without counting it", as
   const list = screen.getByRole("list", { name: "Drafts" });
   expect(within(list).getByText("Stranded note")).toBeInTheDocument();
   expect(within(list).getByText("Archived")).toBeInTheDocument();
+  expect(
+    within(list).getByRole("button", {
+      name: "Open conversation in #Old plans, archived: Stranded note",
+    }),
+  ).toBeInTheDocument();
   await user.click(
     within(list).getByRole("button", {
       name: "Clear draft in #Old plans, archived: Stranded note",

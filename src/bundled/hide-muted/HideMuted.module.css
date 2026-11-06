@@ -1,0 +1,14 @@
+.mark {
+  position: relative;
+}
+.dot {
+  position: absolute;
+  inset-inline-end: var(--space-2);
+  top: 50%;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--affordance-prominent-mark);
+  transform: translateY(-50%);
+  pointer-events: none;
+}

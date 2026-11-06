@@ -35,12 +35,13 @@ import { ContributionBoundary } from "../../features/conversation/ContributionBo
 import {
   sidebarRow,
   type RegisteredSidebarRows,
+  type SidebarRowHiddenChange,
 } from "../../features/channel-navigation/sidebar-rows-service";
 import { avatarMedia } from "../../shared/avatar-source";
 
 type ItemProps = {
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
@@ -314,6 +315,7 @@ function ChannelSidebarItemCore({
         <ContributedChannelRow
           channel={channel}
           sectionKey={sectionKey}
+          selected={selected === channel.id}
           session={session}
           entries={rowContributions}
           onHiddenChange={onHiddenChange}
@@ -355,6 +357,7 @@ function ChannelSidebarItemCore({
 function ContributedChannelRow({
   channel,
   sectionKey,
+  selected,
   session,
   entries,
   children,
@@ -362,10 +365,11 @@ function ContributedChannelRow({
 }: {
   channel: ChannelSummary;
   sectionKey: string;
+  selected: boolean;
   session: RelaySession;
   entries: readonly RegisteredSidebarRows[];
   children: ReactElement;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
 }) {
   const target = useMemo(
     () => ({ kind: "channel" as const, channelId: channel.id }),
@@ -381,8 +385,8 @@ function ContributedChannelRow({
   );
   const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
   const row = useMemo(
-    () => sidebarRow(channel, sectionKey, unread),
-    [channel, sectionKey, unread],
+    () => sidebarRow(channel, sectionKey, unread, selected),
+    [channel, sectionKey, unread, selected],
   );
   return (
     <SidebarRowRenderer

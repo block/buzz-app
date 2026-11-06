@@ -63,6 +63,14 @@ export function createPopoutThread(
       changed();
     }
   };
+  // Operations main admitted for this window: always projected, whatever
+  // their delivery, until main has reported them delivered once; the only
+  // ids this window may retry. Absence from a bounded list proves nothing.
+  const admitted = new Map<
+    string,
+    { messageId: string | undefined; kind: MainOperation["kind"] }
+  >();
+  const MAX_ADMITTED = 256;
   let thread: ThreadView | undefined;
   try {
     thread = session.thread(channelId, rootId);
@@ -129,7 +137,10 @@ export function createPopoutThread(
      * admission and fences; the view serializes a capped copy. Operations are
      * not dropped when their target row leaves the projection. */
     operations(): MainOperation[] {
-      return (session.outbox?.snapshot() ?? []).flatMap((item) => {
+      const seen = new Set<string>();
+      const channelOps: MainOperation[] = (
+        session.outbox?.snapshot() ?? []
+      ).flatMap((item): MainOperation[] => {
         const kind = item.event.kind;
         if (kind !== 7 && kind !== 5 && kind !== 40003 && kind !== 9) return [];
         if (
@@ -138,14 +149,17 @@ export function createPopoutThread(
           )
         )
           return [];
+        const eTag = item.event.tags.find(([name]) => name === "e")?.[1];
+        // A removal of a reaction names the reacted message; a removal of a
+        // message names the message itself.
         const messageId =
           kind === 9
             ? item.event.tags.find(([name]) => name === "buzz:copy-of")?.[1]
             : kind === 40003
-              ? item.event.tags.find(([name]) => name === "e")?.[1]
-              : session.messages.reactionTarget(item.event);
-        // A plain message send is not an operation on another message.
+              ? eTag
+              : (session.messages.reactionTarget(item.event) ?? eTag);
         if (kind === 9 && !messageId) return [];
+        seen.add(item.event.id);
         return [
           {
             id: item.event.id,
@@ -156,6 +170,41 @@ export function createPopoutThread(
           },
         ];
       });
+      // Admitted here but no longer in main's outbox: delivered and dropped.
+      // Report that terminal state once, then stop tracking it.
+      const finished: MainOperation[] = [];
+      for (const [id, record] of admitted) {
+        if (seen.has(id)) continue;
+        finished.push({
+          id,
+          ...(record.messageId ? { messageId: record.messageId } : {}),
+          kind: record.kind,
+          delivery: "accepted",
+        });
+        admitted.delete(id);
+      }
+      for (const op of channelOps)
+        if (admitted.has(op.id) && ["accepted", "seen"].includes(op.delivery))
+          admitted.delete(op.id);
+      // This window's own first, so the capped presentation keeps them.
+      const own = channelOps.filter((op) => finishedOrAdmitted(op.id));
+      const others = channelOps.filter((op) => !finishedOrAdmitted(op.id));
+      return [...finished, ...own, ...others];
+      function finishedOrAdmitted(id: string) {
+        return admitted.has(id) || finished.some((op) => op.id === id);
+      }
+    },
+    /** Main admitted this operation for this window. */
+    admit(
+      id: string,
+      messageId: string | undefined,
+      kind: MainOperation["kind"],
+    ) {
+      if (admitted.size >= MAX_ADMITTED) {
+        const oldest = admitted.keys().next().value;
+        if (oldest) admitted.delete(oldest);
+      }
+      admitted.set(id, { messageId, kind });
     },
     /** An unresolved reaction change is still in flight for this message. */
     reactionBusy(messageId: string) {
@@ -166,9 +215,9 @@ export function createPopoutThread(
           ["sending", "failed", "unknown"].includes(op.delivery),
       );
     },
-    /** Retry main's own event, if it is one of this channel's operations. */
+    /** Retry an operation main admitted for this window; nothing else. */
     retryOperation(id: string) {
-      if (!this.operations().some((op) => op.id === id)) return false;
+      if (!admitted.has(id)) return false;
       session.outbox?.retry(id, writable);
       return true;
     },

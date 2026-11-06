@@ -500,7 +500,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   sidebar, and your latest 100 sent messages in this community, grouped by
   day. A sent message shows who replied after you ("2 after you") or that you
   were last ("You're last"); a channel post shows its reply count. Select a
-  draft to continue it in its conversation, or a sent message to jump to it.
+  draft to edit and send in a conversation preview beside the list; **Open
+  conversation** opens its original destination. Narrow windows show the preview
+  with **Back to drafts**. After confirmed delivery the preview closes; failed
+  sends stay in its message history with Retry. Select a sent message to jump to it.
   Search matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation.

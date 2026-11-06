@@ -17,6 +17,13 @@ import type { RelayData } from "../relay/service";
 import type { Navigation } from "../navigation/controller";
 import { dayLabel, type ReadEvent } from "./model";
 
+const emptyPanels: never[] = [];
+const panels = {
+  subscribe: () => () => {},
+  snapshot: () => emptyPanels,
+  resolve: () => undefined,
+} as unknown as import("../panels/service").Panels;
+
 const viewer = "a".repeat(64);
 const root = "b".repeat(64);
 const id = "c".repeat(64);
@@ -180,7 +187,9 @@ function harness() {
   } as unknown as RelayData;
   const navigator = { open } as unknown as Navigation;
   const page = {
-    component: () => <DraftsSentPage relay={relayData} navigator={navigator} />,
+    component: () => (
+      <DraftsSentPage panels={panels} relay={relayData} navigator={navigator} />
+    ),
     badge: () => <DraftsSentBadge relay={relayData} />,
   };
   return {
@@ -254,7 +263,7 @@ it("switches separate Drafts and Sent panels and remembers the community's selec
   expect(screen.queryByRole("tabpanel", { name: /^Drafts/ })).toBeNull();
 });
 
-it("lists drafts first and continues a thread draft at its root", async () => {
+it("lists drafts first and opens a thread draft from its preview at its root", async () => {
   saved(`draft:team:thread:${root}`, { text: "Finish launch reply" });
   saved("draft:dm", "Lunch tomorrow?");
   const h = harness();
@@ -270,6 +279,8 @@ it("lists drafts first and continues a thread draft at its root", async () => {
       name: /Continue draft in #launch-room, thread/,
     }),
   );
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Open conversation" }));
   await waitFor(() =>
     expect(h.open).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -328,10 +339,10 @@ it("clears only the chosen draft from the keyboard, without opening it", async (
     }),
   ).toHaveFocus();
 
-  // A draft whose conversation is gone can't be opened, but can be cleared.
+  // An unavailable draft can be inspected and copied, or cleared.
   expect(
     within(list).getByRole("button", { name: /Continue draft in Unavailable/ }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await user.click(
     within(list).getByRole("button", {
       name: "Clear draft in Unavailable conversation: Orphaned note",
@@ -352,6 +363,8 @@ it("clears only the chosen draft from the keyboard, without opening it", async (
       name: /Continue draft in #launch-room/,
     }),
   );
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Open conversation" }));
   await waitFor(() =>
     expect(h.open).toHaveBeenCalledWith(
       expect.objectContaining({ channelId: "team" }),
@@ -951,6 +964,7 @@ it("asks for a community before showing anything", () => {
   const connecting = { status: "connecting", generation: 0, session: {} };
   render(
     <DraftsSentPage
+      panels={panels}
       relay={
         {
           snapshot: () => connecting,

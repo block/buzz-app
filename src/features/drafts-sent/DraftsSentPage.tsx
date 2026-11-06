@@ -1,5 +1,10 @@
+import { DraftPreview } from "./DraftPreview";
+import type { ConversationHostServices } from "../conversation/ConversationHost";
+import type { ConversationExtensions } from "../conversation/contracts";
+import { mentionDraft } from "../messages/mention-draft";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -112,11 +117,15 @@ export function DraftsSentPage({
   navigator,
   navigation,
   companion,
+  panels,
+  extensions,
 }: {
   relay: RelayData;
   navigator: Navigation;
   navigation?: PageNavigation | undefined;
   companion?: ReactNode;
+  panels: ConversationHostServices["panels"];
+  extensions?: ConversationExtensions | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const scope = scopeOf(connection);
@@ -133,6 +142,8 @@ export function DraftsSentPage({
             viewer={scope.viewer}
             origin={scope.communityOrigin}
             navigator={navigator}
+            host={{ relay, navigation: navigator, panels }}
+            extensions={extensions}
           />
         ) : (
           <div data-buzz-ui="" className={styles.page}>
@@ -170,12 +181,36 @@ function ScopedPage({
   viewer,
   origin,
   navigator,
+  host,
+  extensions,
 }: {
   session: RelaySession;
   viewer: string;
   origin: string;
   navigator: Navigation;
+  host: ConversationHostServices;
+  extensions?: ConversationExtensions | undefined;
 }) {
+  type Visit = { entry: Entry; trigger: HTMLButtonElement; autoFocus: boolean };
+  const [selected, setSelected] = useState<Visit>();
+  const visit = useRef<Visit | undefined>(undefined);
+  const focusAfterClose = useRef<HTMLElement | null>(null);
+  const selectedIndex = useRef(0);
+  const neighborAfterClose = useRef<HTMLElement | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  useLayoutEffect(() => {
+    if (!selected && focusAfterClose.current) {
+      const target = focusAfterClose.current;
+      focusAfterClose.current = null;
+      (target.isConnected
+        ? target
+        : neighborAfterClose.current?.isConnected
+          ? neighborAfterClose.current
+          : searchInput.current
+      )?.focus();
+      neighborAfterClose.current = null;
+    }
+  }, [selected]);
   const drafts = useDrafts(session);
   const { channels } = useChannelList(session.channels);
   const profiles = useSyncExternalStore(
@@ -199,6 +234,14 @@ function ScopedPage({
     () => new Map(channels.map((channel) => [channel.id, channel])),
     [channels],
   );
+  const selectedExcluded =
+    selected && !listed(byId.get(selected.entry.channelId));
+  useLayoutEffect(() => {
+    if (!selectedExcluded) return;
+    visit.current = undefined;
+    setSelected(undefined);
+    searchInput.current?.focus();
+  }, [selectedExcluded]);
   const isRoom = (id: string) =>
     ["dm", "solo"].includes(byId.get(id)?.channelType ?? "");
   const nameOf = (key: string, candidates?: readonly string[]) =>
@@ -251,7 +294,23 @@ function ScopedPage({
     };
   }
 
-  const shownDrafts = drafts.entries.filter((entry) =>
+  // Keep an emptied editor in its last list position until it is closed.
+  const currentIndex = selected
+    ? drafts.entries.findIndex((entry) => entry.id === selected.entry.id)
+    : -1;
+  useLayoutEffect(() => {
+    if (currentIndex >= 0) selectedIndex.current = currentIndex;
+  }, [currentIndex]);
+  const entries: (Entry & { placeholder?: boolean })[] = [...drafts.entries];
+  if (selected && currentIndex < 0)
+    entries.splice(selectedIndex.current, 0, {
+      ...selected.entry,
+      text:
+        mentionDraft(readView(session.scope, selected.entry.id, "")).text ||
+        "Empty draft",
+      placeholder: true,
+    });
+  const shownDrafts = entries.filter((entry) =>
     listed(byId.get(entry.channelId)),
   );
   const sentList = useMemo(
@@ -366,7 +425,7 @@ function ScopedPage({
       entry,
       place: where,
       shape,
-      placeholder: entry.placeholder,
+      placeholder: "placeholder" in entry ? entry.placeholder : undefined,
       activity:
         shape === "post"
           ? undefined
@@ -440,6 +499,23 @@ function ScopedPage({
     }
   }
 
+  function closePreview(current: Visit, sent = false) {
+    if (visit.current !== current) return;
+    const row = current.trigger.closest("li");
+    const neighbor = (
+      row?.nextElementSibling ?? row?.previousElementSibling
+    )?.querySelector<HTMLElement>("[data-draft-row]");
+    neighborAfterClose.current = neighbor ?? null;
+    focusAfterClose.current =
+      !sent && current.trigger.isConnected
+        ? current.trigger
+        : (neighbor ?? searchInput.current);
+    visit.current = undefined;
+    setSelected(undefined);
+    if (sent)
+      setAnnouncement(`Sent to ${place(current.entry.channelId).title}.`);
+  }
+
   /** Clears one draft and keeps keyboard focus in the list: the next row's clear
    * action, else the previous one's, else search. */
   function clear(entry: Entry, button: HTMLElement) {
@@ -453,6 +529,11 @@ function ScopedPage({
     } catch {
       setNotice("This draft could not be cleared. Try again.");
       return;
+    }
+    if (visit.current?.entry.id === entry.id) {
+      visit.current = undefined;
+      setSelected(undefined);
+      focusAfterClose.current = neighbor ?? searchInput.current;
     }
     (neighbor ?? searchInput.current)?.focus();
   }
@@ -514,13 +595,33 @@ function ScopedPage({
     const destination = (
       <MessageListRow
         aria-label={label}
-        disabled={!place.available}
+        disabled={!draft && !place.available}
+        selected={draft && selected?.entry.id === entry.id}
+        data-draft-row={draft ? "" : undefined}
         title={
           place.available
             ? undefined
             : "This conversation is not available right now"
         }
-        onClick={() => void open(entry, draft)}
+        onClick={(event) => {
+          if (!draft) {
+            void open(entry, false);
+            return;
+          }
+          if (visit.current?.entry.id === entry.id) return;
+          const next = {
+            entry,
+            trigger: event.currentTarget,
+            autoFocus:
+              (event.nativeEvent as PointerEvent).pointerType !== "touch",
+          };
+          selectedIndex.current = drafts.entries.findIndex(
+            (draft) => draft.id === entry.id,
+          );
+          visit.current = next;
+          setSelected(next);
+          setNotice(undefined);
+        }}
         avatar={
           <Avatar
             size="fill"
@@ -642,6 +743,8 @@ function ScopedPage({
               { value: "sent", label: "Sent", panelId: "sent-view" },
             ]}
             onValueChange={(next) => {
+              visit.current = undefined;
+              setSelected(undefined);
               setView(next);
               writeView(session.scope, "drafts-sent-tab", next);
             }}
@@ -663,37 +766,77 @@ function ScopedPage({
           {notice}
         </p>
       )}
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
       <div className={styles.sections}>
         <section
           role="tabpanel"
           id="drafts-view"
           aria-labelledby="drafts-view-tab"
           hidden={view !== "drafts"}
-          className={styles.section}
+          className={styles.draftWorkspace}
+          data-selected={!!selected || undefined}
         >
-          {drafts.unavailable && (
-            <p
-              role="alert"
-              className={`text-body-sm text-subtle ${styles.sectionCopy}`}
-            >
-              Some saved drafts could not be read. They are unchanged.
-            </p>
-          )}
-          {visibleDrafts.length ? (
-            <ul className={styles.list} aria-label="Drafts">
-              {visibleDrafts.map((item) => row(item, true))}
-            </ul>
-          ) : (
-            <p className={`text-body-sm text-subtle ${styles.sectionCopy}`}>
-              {search && shownDrafts.length
-                ? `No drafts match “${search.trim()}”.`
-                : "No drafts. Messages you start and don’t send wait here."}
-            </p>
-          )}
-          {drafts.limited && (
-            <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
-              Showing 500 drafts.
-            </p>
+          <div className={`${styles.section} ${styles.draftList}`}>
+            {drafts.unavailable && (
+              <p
+                role="alert"
+                className={`text-body-sm text-subtle ${styles.sectionCopy}`}
+              >
+                Some saved drafts could not be read. They are unchanged.
+              </p>
+            )}
+            {visibleDrafts.length ? (
+              <ul className={styles.list} aria-label="Drafts">
+                {visibleDrafts.map((item) => row(item, true))}
+              </ul>
+            ) : (
+              <EmptyState
+                icon={<SendIcon size={24} />}
+                title={
+                  search ? `No drafts match “${search.trim()}”.` : "No drafts"
+                }
+                description={
+                  search
+                    ? undefined
+                    : "Messages you start and don’t send wait here."
+                }
+                action={
+                  search ? (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setSearch("");
+                        searchInput.current?.focus();
+                      }}
+                    >
+                      Clear search
+                    </Button>
+                  ) : undefined
+                }
+              />
+            )}
+            {drafts.limited && (
+              <p className={`text-caption text-subtle ${styles.sectionCopy}`}>
+                Showing 500 drafts.
+              </p>
+            )}
+          </div>
+          {selected && !selectedExcluded && view === "drafts" && (
+            <DraftPreview
+              key={selected.entry.id}
+              entry={selected.entry}
+              title={place(selected.entry.channelId).title}
+              channel={byId.get(selected.entry.channelId)}
+              session={session}
+              host={host}
+              extensions={extensions}
+              autoFocus={selected.autoFocus}
+              onClose={() => closePreview(selected)}
+              onOpen={() => void open(selected.entry, true)}
+              onSaved={() => closePreview(selected, true)}
+            />
           )}
         </section>
         <section

@@ -99,6 +99,8 @@ export type ThreadPanelProps = {
   /** Saved drafts may compose only against a verified matching root. */
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: (() => void) | undefined;
+  /** The hosting preview may track delivery of this exact outgoing message. */
+  onSend?: ((id: string) => void) | undefined;
   active?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
@@ -421,6 +423,7 @@ function OwnedThreadPanel({
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
+  onSend,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -493,6 +496,7 @@ function OwnedThreadPanel({
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
+      onSend={onSend}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -523,6 +527,7 @@ function ThreadMessages({
   revealRequest,
   requireReadyRoot,
   onDraftSaved,
+  onSend,
   selectionFailure,
   onResolvedRoot,
   routePending,
@@ -552,6 +557,7 @@ function ThreadMessages({
   revealRequest?: number | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
+  onSend?: ThreadPanelProps["onSend"];
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -2063,6 +2069,7 @@ function ThreadMessages({
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
+            onSend?.(id);
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

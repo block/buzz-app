@@ -9,6 +9,8 @@ export function MessagesPage(props: ComponentProps<typeof ChannelsPage>) {
     props.navigation.target.route?.params === "drafts-sent";
   return draftsSent ? (
     <DraftsSentPage
+      panels={props.panels}
+      extensions={props.extensions}
       relay={props.relay}
       navigator={props.navigator}
       navigation={props.navigation}

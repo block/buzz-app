@@ -137,3 +137,55 @@
   flex: none;
   align-self: center;
 }
+
+.draftWorkspace {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.draftWorkspace[hidden] {
+  display: none;
+}
+.draftWorkspace[data-selected] .draftList {
+  flex: 1;
+}
+.draftPreview {
+  display: flex;
+  flex-direction: column;
+  flex: 2;
+  min-width: 0;
+  min-height: 0;
+  border-inline-start: 1px solid var(--border-standard);
+}
+.draftConversation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.draftHistory {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.draftUnavailable {
+  padding: var(--space-panel-inset);
+}
+.draftBack {
+  display: none;
+}
+@container drafts-sent (max-width: 48rem) {
+  .draftWorkspace[data-selected] .draftList {
+    display: none;
+  }
+  .draftPreview {
+    border-inline-start: 0;
+  }
+  .draftBack {
+    display: block;
+    padding-inline: var(--space-panel-inset);
+  }
+}

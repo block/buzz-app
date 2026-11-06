@@ -19,6 +19,18 @@ export const lifecycleNoun = (
   channel: Readonly<{ channelType?: string | undefined }> | undefined,
 ): LifecycleNoun => (channel?.channelType === "solo" ? "chat" : "channel");
 
+/** Where focus goes when a lifecycle trigger is retired. Settings actions can
+ * remount after an archive-state or role change; the tab header lives outside
+ * the settings aside. */
+export const lifecycleFocusFallback = (trigger: HTMLElement) =>
+  trigger
+    .closest("[data-panel-workspace]")
+    ?.querySelector<HTMLElement>(
+      'button[aria-label="Close Channel settings tab"]',
+    ) ??
+  trigger.closest("aside")?.querySelector<HTMLElement>("button") ??
+  undefined;
+
 const details = {
   channel: {
     archive:

@@ -417,6 +417,7 @@ function workspace(
     lifecycle,
     handoff = false,
     replica,
+    hold,
   }: {
     membership?: CommunityMembership;
     lifecycle?: (event: RelayEvent) => Promise<void>;
@@ -424,6 +425,8 @@ function workspace(
     handoff?: boolean;
     /** What reads that are not strong see; `events` is the writer. */
     replica?: RelayEvent[];
+    /** Reads wait for a returned gate. */
+    hold?: () => Promise<void> | undefined;
   } = {},
 ) {
   const owner = createRelaySession(
@@ -431,8 +434,9 @@ function workspace(
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) =>
-        replica
+      query: async (filters) => {
+        await hold?.();
+        return replica
           ? [
               ...new Set(
                 filters.flatMap((filter) =>
@@ -444,7 +448,8 @@ function workspace(
             ]
           : events.filter((event) =>
               filters.some((filter) => matchesEvent(event, filter)),
-            ),
+            );
+      },
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},
@@ -598,7 +603,7 @@ it("hands the community roster to Channel settings and follows the republished f
   expect(control.closest("dd")?.querySelector("[role=alert]")).toBeNull();
 });
 
-it("a refreshed roster that demotes the viewer retires Archive and Delete in Channel settings", async () => {
+it("a refreshed roster that demotes the viewer retires Archive and Delete in Channel settings, keeping focus there", async () => {
   const viewer = keypair(),
     authority = keypair(),
     other = keypair();
@@ -631,7 +636,16 @@ it("a refreshed roster that demotes the viewer retires Archive and Delete in Cha
     ...roles("owner", 1_700_000_000),
   ];
   const publish = vi.fn(async () => {});
-  workspace(events, viewer, authority, { lifecycle: publish, handoff: true });
+  let gate: Promise<void> | undefined;
+  let held = 0;
+  workspace(events, viewer, authority, {
+    lifecycle: publish,
+    handoff: true,
+    hold: () => {
+      if (gate) held += 1;
+      return gate;
+    },
+  });
   await screen.findByRole("textbox", { name: "Message #Alpha" });
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Channel actions" }));
@@ -659,25 +673,45 @@ it("a refreshed roster that demotes the viewer retires Archive and Delete in Cha
   expect(toast).toHaveAccessibleDescription(
     "This action is no longer permitted. Refresh channels to see what you can do now.",
   );
-  fireEvent.click(
-    within(toast).getByRole("button", { name: "Refresh channels" }),
-  );
-  expect(
-    screen.queryByRole("dialog", { name: "Archive channel failed" }),
-  ).toBeNull();
-  // The refreshed role remounts the actions; Leave arrives with fresh permissions.
-  await vi.waitFor(() =>
+  const archive = within(settings).getByRole("button", {
+    name: "Archive channel",
+  });
+  await vi.waitFor(() => expect(archive).toHaveFocus());
+  const refresh = within(toast).getByRole("button", {
+    name: "Refresh channels",
+  });
+  act(() => refresh.focus());
+  let release = () => {};
+  gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(held).toBeGreaterThan(0));
     expect(
-      within(settings).queryByRole("button", { name: "Archive channel" }),
-    ).toBeNull(),
-  );
+      screen.queryByRole("dialog", { name: "Archive channel failed" }),
+    ).toBeNull();
+    // The refresh is held, so Settings still offers Archive.
+    expect(archive).toHaveFocus();
+  } finally {
+    gate = undefined;
+    release();
+  }
+  // The refreshed role remounts the actions; Leave arrives with fresh permissions.
   await within(settings).findByRole("button", { name: "Leave channel" });
+  expect(archive).not.toBeInTheDocument();
   expect(
     within(settings).queryByRole("button", { name: "Archive channel" }),
   ).toBeNull();
   expect(
     within(settings).queryByRole("button", { name: "Delete channel" }),
   ).toBeNull();
+  // The retired trigger hands focus to the Settings tab, not the document.
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Close Channel settings tab" }),
+    ).toHaveFocus(),
+  );
   expect(publish).not.toHaveBeenCalled();
 });
 

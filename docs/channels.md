@@ -619,6 +619,9 @@ permitted" toast shown when signed channel state no longer allows the action, of
 The permission check behind "no longer permitted", before signing and again before
 publishing, reads the writer, so a lagging replica cannot refuse an action Settings
 offers after a refresh. Settings' channel actions follow the refreshed channel state.
+Refresh channels returns focus to the failed action's control. If the refreshed
+permissions remove that Settings action, focus moves to the Settings-tab close control,
+unless the person has already moved focus elsewhere.
 After a failed Hide, Refresh channels also rereads DM visibility from the writer:
 whether a conversation is hidden is not part of the channel list.
 Other failures offer only Dismiss. Cancellation/cache clear/session replacement

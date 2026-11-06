@@ -322,7 +322,7 @@ export function createAttentionActivity(navigation: Context["navigation"]) {
           {"Activity"}
           <span className="attention-detail-preview">
             {history?.events?.length
-              ? `${history.events.length} events`
+              ? `${history.events.length} event${history.events.length === 1 ? "" : "s"}`
               : history?.output
                 ? "1 event"
                 : "No activity yet"}

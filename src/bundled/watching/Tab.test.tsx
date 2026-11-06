@@ -1368,6 +1368,74 @@ it("keeps spoilers hidden in activity summaries", () => {
   expect(row.textContent).not.toContain("private");
 });
 
+it("shows a fired timer's wake as activity", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a".repeat(64),
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attentionHistory: {
+      "watch/tick": {
+        lastWokeAt: 1,
+        events: [{ at: 1, text: "Check the **release**." }],
+      },
+    },
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        value: { type: "interest", instructions: "Follow releases." },
+      },
+      "watch/tick": {
+        slug: "watch/tick",
+        value: {
+          type: "timer",
+          interest_id: "release",
+          enabled: true,
+          prompt: "Check the **release**.",
+          armed_at: 1,
+          interval_secs: 3600,
+          max_occurrences: null,
+          expires_at: null,
+        },
+      },
+    },
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const list = { channels: [] };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: {
+      channels: {
+        ensureList() {},
+        subscribeList: () => () => {},
+        list: () => list,
+      },
+    },
+  };
+  const ctx = {
+    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Details for release" }));
+  const activity = screen.getByLabelText("Show activity for release");
+  expect(activity.querySelector(".attention-detail-preview")?.textContent).toBe(
+    "1 event",
+  );
+  fireEvent.click(activity);
+  expect(
+    within(
+      screen.getByRole("list", { name: "Activity for release" }),
+    ).getByLabelText("Open activity: Check the release."),
+  ).toBeTruthy();
+});
+
 it("does not repeat consecutive sonar messages across sweeps", () => {
   const random = vi.spyOn(Math, "random").mockReturnValue(0.25);
   try {

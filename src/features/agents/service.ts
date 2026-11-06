@@ -2181,10 +2181,12 @@ export class AgentsService extends Service implements Agents {
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
-      woke: (key, object, events) =>
+      woke: (key, object, events) => {
+        const at = Math.floor(Date.now() / 1000);
         this.history(
           key,
           object,
+          // A timer has no event, so its wake is what it was asked to do.
           events?.map((event) => ({
             id: event.id,
             at: event.created_at,
@@ -2199,9 +2201,13 @@ export class AgentsService extends Service implements Agents {
                 ? [tag[1]]
                 : [],
             ),
-          })),
-          Math.floor(Date.now() / 1000),
-        ),
+          })) ??
+            (object.value.type === "timer"
+              ? [{ at, text: object.value.prompt }]
+              : undefined),
+          at,
+        );
+      },
       finished: (key) => {
         void this.coreMemory.refresh(key);
         this.retakeType(key);

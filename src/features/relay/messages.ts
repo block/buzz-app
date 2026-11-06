@@ -440,7 +440,9 @@ export function createMessages(
     /** Supply the current folded attachmentSourceId, or the row ID for original media. */
     edit: (messageId: string, content: string, attachmentSourceId: string) =>
       edit(messageId, content, attachmentSourceId),
-    /** Verified owner edit. Empty text removes the message, as in the composer. */
+    /** Verified owner edit. Empty text removes the message, as in the composer.
+     * As a guest it signs only once `profiles.owner` names the viewer; an
+     * earlier call fails delivery as read-only, and `retry(id)` resends it. */
     async editOwnedAgent(
       messageId: string,
       content: string,

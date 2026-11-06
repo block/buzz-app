@@ -151,8 +151,14 @@ it.each([
     }
     if (action === "custody lost") {
       expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
-      await user.click(screen.getByRole("combobox", { name: "Agent" }));
-      await user.keyboard("{Home}{Enter}");
+      act(() => screen.getByRole("combobox", { name: "Agent" }).focus());
+      await user.keyboard("{ArrowDown}");
+      await waitFor(() =>
+        expect(
+          screen.getByRole("option", { name: "Test agent" }),
+        ).toHaveFocus(),
+      );
+      await user.keyboard("{Enter}");
       await waitFor(() =>
         expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute(
           "aria-expanded",
@@ -179,7 +185,13 @@ it.each([
       expect(connection.snapshot().pending).toBeDefined();
       expect(connect).not.toHaveBeenCalled();
       if (action === "custody lost") {
-        await user.keyboard("{End}{Enter}");
+        await user.keyboard("{End}");
+        await waitFor(() =>
+          expect(
+            screen.getByRole("option", { name: "Other agent" }),
+          ).toHaveFocus(),
+        );
+        await user.keyboard("{Enter}");
         await user.click(screen.getByRole("button", { name: "Authorize" }));
         await waitFor(() => expect(authorize).toHaveBeenCalledOnce());
         expect(connect).toHaveBeenCalledWith(

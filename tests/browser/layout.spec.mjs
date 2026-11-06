@@ -856,7 +856,9 @@ companionTest(
     });
     const resizedWidth = async () =>
       Number(await resize.getAttribute("aria-valuenow"));
-    const defaultWidth = await resizedWidth();
+    // Visibility can precede PanelFrame measurement; its initial minimum is 300.
+    const defaultWidth = 420;
+    await expect.poll(resizedWidth).toBe(defaultWidth);
     const composer = page.getByRole("textbox", {
       name: "Message #Alpha",
       exact: true,

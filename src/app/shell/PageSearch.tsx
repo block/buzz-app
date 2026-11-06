@@ -8,7 +8,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
+import {
+  MagnifyingGlassIcon,
+  SendIcon,
+} from "../../shared/design-system/icons/index";
+import { draftsSentTarget } from "../../features/drafts-sent/DraftsSentNavigation";
+import { scopeOf } from "../../features/drafts-sent/scope";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -210,13 +215,37 @@ export function PageSearch({
   // Every search surface reads pages from here, so rank and underline them
   // here too: the disconnected and personal-space views show this list as is.
   const needle = query.trim().toLowerCase();
-  const destinations: SearchDestination[] = [
-    ...orderPages(pages).map((page) => ({
-      key: page.key,
-      ...pagePresentation(page),
-    })),
-    { key: "settings", ...shellPresentation.settings },
-  ]
+  const searchPages: (Omit<SearchDestination, "run"> & { open: () => void })[] =
+    [
+      ...orderPages(pages).map((page) => ({
+        key: page.key,
+        ...pagePresentation(page),
+        open: () => onSelect(page.key),
+      })),
+      ...(services &&
+      pages.some((page) => page.key === "buzz.channels/channels")
+        ? [
+            {
+              key: "drafts-sent",
+              label: "Drafts & sent",
+              icon: SendIcon,
+              open: () => {
+                void services.navigation.open(
+                  draftsSentTarget(
+                    scopeOf(services.communities.relay.snapshot()),
+                  ),
+                );
+              },
+            },
+          ]
+        : []),
+      {
+        key: "settings",
+        ...shellPresentation.settings,
+        open: () => onSelect("settings"),
+      },
+    ];
+  const destinations: SearchDestination[] = searchPages
     .flatMap((page) => {
       if (!needle) return [{ page, rank: 0 }];
       const labelMatch = matchName(page.label, needle);
@@ -244,7 +273,7 @@ export function PageSearch({
       ...page,
       run: () => {
         returnFocus.current = document.getElementById("main-content");
-        onSelect(page.key);
+        page.open();
         setSearchOpen(false);
       },
     }));

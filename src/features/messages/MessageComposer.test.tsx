@@ -15489,16 +15489,7 @@ describe("message length count", () => {
     expect(count()).toHaveTextContent("16,000/16,000");
     // The paste error takes the count's place until the next accepted edit.
     h.fill("x".repeat(15000));
-    act(() => {
-      h.input().focus();
-      fireEvent.paste(h.input(), {
-        clipboardData: {
-          items: [],
-          getData: (type: string) =>
-            type === "text/plain" ? "x".repeat(1001) : "",
-        },
-      });
-    });
+    pasteText(h.input(), "x".repeat(1001));
     expect(count()).toBeNull();
     expect(h.input()).toHaveAccessibleDescription(
       /This paste would make your message too long/,

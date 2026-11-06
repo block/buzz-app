@@ -8,7 +8,7 @@ import {
   type ReadStateStorage,
 } from "./read-state-storage";
 import { eventDto, type RelayEvent } from "./events";
-import type { ThreadActivitySnapshot } from "./unread";
+import type { ThreadActivitySnapshot, UnreadCapability } from "./unread";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
@@ -2884,6 +2884,113 @@ it.each(["catchUp", "observe"] as const)(
     expect(frontier()).toBe(40);
   },
 );
+
+it("a DM thread reader matches replies by their marked root when the root is not retained", async () => {
+  const h = setup();
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const unread = h.session.unread;
+  const frontier = () => h.journal()?.state.frontiers.dm;
+  // The root is never retained, as when it is older than the evidence window.
+  const root = message(h.alice, "dm", "Alice's topic", 20);
+  const read = async (seen: RelayEvent) => {
+    const lease = unread.reading("dm", root.id);
+    await lease.observe([seen.id]);
+    lease.dispose();
+  };
+  const reply = (content: string, at: number) =>
+    message(h.alice, "dm", content, at, [["e", root.id, "", "reply"]]);
+  const first = reply("First reply", 22);
+  const second = reply("Second reply", 23);
+  h.emit([first, second]);
+  await read(second);
+  expect(frontier()).toBe(23);
+  expect(unread.attention("dm", first.id).unread).toBe(false);
+  // A top-level message is still outside the thread.
+  const top = message(h.alice, "dm", "Top level", 30);
+  const third = reply("Third reply", 31);
+  h.emit([top, third]);
+  await read(third);
+  expect(frontier()).toBe(29);
+  expect(unread.attention("dm", top.id).unread).toBe(true);
+});
+
+it.each([
+  [
+    "Mark unread",
+    (unread: UnreadCapability, id: string) =>
+      unread.markMessageUnread("dm", id),
+  ],
+  [
+    "a local message mark",
+    (unread: UnreadCapability, id: string) =>
+      unread.markUnreadLocal({
+        kind: "message",
+        channelId: "dm",
+        messageId: id,
+      }),
+  ],
+] as const)(
+  "a DM thread reader reads its replies past an earlier message kept unread by %s",
+  async (_, mark) => {
+    const h = setup();
+    h.grant("dm");
+    h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+    const unread = h.session.unread;
+    const frontier = () => h.journal()?.state.frontiers.dm;
+    // In Channels, the viewer reads the DM, then marks Alice's message unread.
+    await unread.enterChannel("dm");
+    const marked = message(h.alice, "dm", "Remember this", 20);
+    const topic = message(h.viewer, "dm", "My topic", 21);
+    h.emit([marked, topic]);
+    const whole = unread.reading("dm");
+    await whole.observe([topic.id]);
+    whole.dispose();
+    expect(frontier()).toBe(21);
+    await mark(unread, marked.id);
+    expect(unread.attention("dm", marked.id).unread).toBe(true);
+    // The thread pane then shows Alice's new reply to the viewer's topic.
+    const reply = message(h.alice, "dm", "A reply", 30, [
+      ["e", topic.id, "", "reply"],
+    ]);
+    h.emit([reply]);
+    const thread = unread.reading("dm", topic.id);
+    await thread.observe([reply.id]);
+    thread.dispose();
+    // Advancing the frontier leaves the marked message unread, so it does not
+    // stop the read.
+    expect(frontier()).toBe(30);
+    expect(unread.attention("dm", reply.id).unread).toBe(false);
+    expect(unread.attention("dm", marked.id).unread).toBe(true);
+  },
+);
+
+it("a DM thread's explicit read stops where its reader would", async () => {
+  const h = setup();
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const unread = h.session.unread;
+  const frontier = () => h.journal()?.state.frontiers.dm;
+  const topic = message(h.viewer, "dm", "My topic", 20);
+  const reply = message(h.alice, "dm", "A reply", 21, [
+    ["e", topic.id, "", "reply"],
+  ]);
+  h.emit([topic, reply]);
+  // Retained evidence bounds it, not the click time: a message delivered later
+  // was not shown.
+  await unread.prepareChannelRead("dm", topic.id)();
+  expect(frontier()).toBe(21);
+  // A top-level message retained before the click is outside the thread.
+  const top = message(h.alice, "dm", "Top level", 22);
+  h.emit([top]);
+  await unread.prepareChannelRead("dm", topic.id)();
+  expect(frontier()).toBe(21);
+  expect(unread.attention("dm", top.id).unread).toBe(true);
+  // The whole DM's explicit read covers it, through the click.
+  await unread.prepareChannelRead("dm")();
+  expect(frontier()).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 1);
+  expect(unread.attention("dm", top.id).unread).toBe(false);
+});
 
 it("inbox groups a Solo chat's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
   const h = setup();

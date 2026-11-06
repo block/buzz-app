@@ -144,8 +144,12 @@ export interface UnreadCapability {
   enterChannel(channelId: string): Promise<void>;
   /** Explicit channel prefix through retained verified evidence, including replies. */
   markChannelRead(channelId: string): Promise<ReadMutationResult>;
-  /** Capture one prefix/time cut; each invocation queues that same intent for retry. */
-  prepareChannelRead(channelId: string): () => Promise<ReadMutationResult>;
+  /** Capture one prefix/time cut; each invocation queues that same intent for
+   * retry. `rootId` names a DM thread shown alone: the cut is then its reader's. */
+  prepareChannelRead(
+    channelId: string,
+    rootId?: string,
+  ): () => Promise<ReadMutationResult>;
   /** `markChannelRead` serialised over every accessible listed channel that still
    * shows unread evidence or a local mark. Channels with nothing to clear are
    * skipped, so an already-read community costs no writes. One failing channel
@@ -2100,8 +2104,36 @@ export function createUnread({
       channelReadGenerations.get(channelId) === generation &&
       allowed(channelId);
   }
+  /** A DM read through retained evidence: its newest message. A reader that
+   * shows only the thread `rootId` stops one second before the earliest
+   * message outside it that the frontier still leaves unread (a top-level
+   * message or a reply in another thread): one frontier cannot skip that
+   * message, so the thread's later replies stay unread too. Per-message unread
+   * intent never stops it, since an advance leaves that message unread. */
+  function dmCut(channelId: string, rootId: string | undefined) {
+    indexEvidence();
+    const rows = byChannel.get(channelId) ?? [];
+    const state = reads.state();
+    return rows.reduce(
+      (cut, row) =>
+        rootId &&
+        row.event.id !== rootId &&
+        // The marked root names the thread even when its root is not retained.
+        (row.rootId ?? row.threadRootId) !== rootId &&
+        row.event.pubkey !== viewer &&
+        relevant(row, true) &&
+        afterFrontier(row, state, true)
+          ? Math.min(cut, row.event.created_at - 1)
+          : cut,
+      rows.reduce((newest, row) => Math.max(newest, row.event.created_at), -1),
+    );
+  }
   // Capture evidence and time once per click, including every channel in a sweep.
-  function channelReadIntent(channelId: string, clickedAt: number) {
+  function channelReadIntent(
+    channelId: string,
+    clickedAt: number,
+    rootId?: string,
+  ) {
     if (closed || !allowed(channelId))
       throw new Error("Read target unavailable");
     indexEvidence();
@@ -2111,11 +2143,15 @@ export function createUnread({
     // lets older activity arrive later and relight the channel. Snapshot it at
     // invocation, not after a queued storage write. Frontiers merge by maximum,
     // so a device clock running ahead also covers arrivals until real time
-    // passes it; automatic reading must never use the clock.
-    const cut = rows.reduce(
-      (newest, { event }) => Math.max(newest, event.created_at),
-      clickedAt,
-    );
+    // passes it; automatic reading must never use the clock. A DM thread shown
+    // alone reads as its reader does: a later arrival outside it was not shown.
+    const cut =
+      rootId && rows.length && isDm(channelId)
+        ? dmCut(channelId, rootId)
+        : rows.reduce(
+            (newest, { event }) => Math.max(newest, event.created_at),
+            clickedAt,
+          );
     const keys = new Set([channelId, messageForceKey(channelId)]);
     for (const { event, rootId } of rows) {
       keys.add(`msg:${event.id}`);
@@ -2236,12 +2272,10 @@ export function createUnread({
       handles.add(dispose);
       // Reading a DM reads all of it, through the newest retained message,
       // and ends a manual unread on it. A DM is all for the reader, so there
-      // is no backlog to keep. A thread reader shows only its thread, so its
-      // read stops just before the earliest unread message outside it: one
-      // frontier cannot skip that message, so the thread's later replies stay
-      // unread too. One lease is one earned dwell, so its catchUp and observe
-      // share the first cutoff: a message arriving between them waits for the
-      // next dwell. Returns undefined outside DMs.
+      // is no backlog to keep. A thread reader stops before unread messages it
+      // does not show (`dmCut`). One lease is one earned dwell, so its catchUp
+      // and observe share the first cutoff: a message arriving between them
+      // waits for the next dwell. Returns undefined outside DMs.
       let dmRead: Promise<unknown> | undefined;
       const readDm = (
         witnesses: readonly Readonly<{ target: ReadTarget; id: string }>[],
@@ -2255,23 +2289,10 @@ export function createUnread({
           } catch {
             continue;
           }
-          indexEvidence();
-          const rows = byChannel.get(channelId) ?? [];
-          const state = reads.state();
-          let cut = rows.reduce(
-            (newest, row) => Math.max(newest, row.event.created_at),
-            -1,
-          );
-          if (rootId)
-            for (const row of rows)
-              if (
-                row.event.id !== rootId &&
-                row.rootId !== rootId &&
-                isUnread(row, state, true)
-              )
-                cut = Math.min(cut, row.event.created_at - 1);
+          const cut = dmCut(channelId, rootId);
           dmRead =
-            (state.frontiers[channelId] ?? -1) < cut || manual(channelId)
+            (reads.state().frontiers[channelId] ?? -1) < cut ||
+            manual(channelId)
               ? reads.read(
                   channelId,
                   cut,
@@ -2630,8 +2651,12 @@ export function createUnread({
     async markChannelRead(channelId) {
       return capability.prepareChannelRead(channelId)();
     },
-    prepareChannelRead(channelId) {
-      const read = channelReadIntent(channelId, Math.floor(Date.now() / 1000));
+    prepareChannelRead(channelId, rootId) {
+      const read = channelReadIntent(
+        channelId,
+        Math.floor(Date.now() / 1000),
+        rootId,
+      );
       return () => serialize(channelId, read);
     },
     async markAllChannelsRead() {

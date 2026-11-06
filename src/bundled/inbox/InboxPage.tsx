@@ -121,9 +121,9 @@ const targetOf = (item: InboxItem) => ({
 });
 
 /** DMs, including their reactions, and a Solo chat's own messages open whole;
- * others open at their message. A DM row's read covers all of the DM, so the
- * row opens as its thread only when that thread alone shows its unread
- * messages. */
+ * others open at their message. A DM row opens as its thread only when that
+ * thread alone shows its unread messages; its read then stops before any
+ * message outside the thread. */
 const tabTarget = (
   item: Pick<
     InboxItem,
@@ -810,11 +810,13 @@ function InboxList({
     })();
   }
 
+  /** `threadId` is the thread an opened tab shows, which bounds a DM read. */
   function mutate(
     item: InboxItem,
     unread: boolean,
     onSuccess?: () => void,
     onFailure?: () => void,
+    threadId?: string,
   ) {
     // An open menu is not authority: recheck the current session at action entry.
     if (
@@ -867,7 +869,10 @@ function InboxList({
     const work = async () => {
       if (unread) await session.unread.markUnreadLocal(item.target);
       else if (item.target.kind === "channel") {
-        readChannel ??= session.unread.prepareChannelRead(item.channelId);
+        readChannel ??= session.unread.prepareChannelRead(
+          item.channelId,
+          threadId,
+        );
         await readChannel();
       } else if (item.timeline)
         await session.unread.markTimelineRead(item.channelId, item.messageIds);
@@ -1221,7 +1226,14 @@ function InboxList({
                             if (selectedId === item.id) return;
                             cancelRetry();
                             setSelectedTarget(targetOf(item));
-                            if (unread && canRead) mutate(item, false);
+                            if (unread && canRead)
+                              mutate(
+                                item,
+                                false,
+                                undefined,
+                                undefined,
+                                tabTarget(item, channel).threadId,
+                              );
                           }}
                         />
                         {readable && (

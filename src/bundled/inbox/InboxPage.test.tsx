@@ -4146,7 +4146,8 @@ function seedDm(
  * thread settles; the window stays unfocused, so nothing reads yet. The
  * returned `dwellIn` focuses the window and `reader`, then runs a controlled
  * clock until `read` holds: a thread still settling, or reflowed by the focus,
- * starts its 300 ms dwell a frame later. */
+ * starts its 300 ms dwell a frame later. The wait is bounded in fake time
+ * (2 s), not by how fast the runner checks. */
 function threadLayout() {
   const windowFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
   const box = new DOMRect(0, 0, 500, 500);
@@ -4177,7 +4178,15 @@ function threadLayout() {
     });
     try {
       await act(async () => reader.focus());
-      await act(() => vi.waitFor(read, { interval: 50, timeout: 2000 }));
+      for (let elapsed = 50; ; elapsed += 50) {
+        await act(() => vi.advanceTimersByTimeAsync(50));
+        try {
+          read();
+          break;
+        } catch (error) {
+          if (elapsed >= 2000) throw error;
+        }
+      }
     } finally {
       vi.useRealTimers();
     }
@@ -4372,6 +4381,39 @@ it.each([false, true])(
     await dmTabShows("whole");
   },
 );
+
+it("a DM row opened as its thread reads only up to a top-level message it never showed", async () => {
+  const h = fixture();
+  const root = message(h.viewer, "dm-room", "Our DM topic", 23);
+  const reply = message(h.alice, "dm-room", "A DM thread reply", 24, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const dm = seedDm(h, [root, reply]);
+  render(h.view);
+  const shown = () =>
+    rows().find((row) => row.textContent?.includes("DM · Alice"))?.textContent;
+  await waitFor(() => expect(shown()).toContain("A DM thread reply"));
+  expect(dm.row()?.threadOnly).toBe(true);
+  // Alice's top-level message reaches the unread owner after the row's last
+  // render, and the click comes before the next one: the row still opens as
+  // the thread.
+  const top = message(h.alice, "dm-room", "A new top-level message", 25);
+  h.addEvent(top);
+  act(() => {
+    h.emit([top]);
+    expect(dm.row()?.messageIds).toContain(top.id);
+    expect(dm.row()?.threadOnly).toBeUndefined();
+    expect(shown()).toContain("A DM thread reply");
+    dm.open();
+  });
+  await dmTabShows("thread");
+  // The click reads the thread, but stops just before `top`.
+  await waitFor(() => expect(h.journal()?.state.frontiers["dm-room"]).toBe(24));
+  expect(dm.row()).toMatchObject({ messageId: top.id, unreadCount: 1 });
+  // Re-clicking opens the whole DM, which shows it.
+  dm.open();
+  await dmTabShows("whole");
+});
 
 it.each([false, true])(
   "opening a conversation's tab preserves channel forced-unread intent (left channel: %s)",

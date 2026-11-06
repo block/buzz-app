@@ -1193,10 +1193,10 @@ test.describe("top-level mention activity", () => {
       undefined,
       [["p", app.viewer]],
     );
-    await openPage(page, "Inbox");
-    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    await openPage(page, "Activity");
+    const inbox = page.getByRole("region", { name: "Activity", exact: true });
     const row = inbox
-      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("list", { name: "Activity", exact: true })
       .getByRole("listitem")
       .filter({ has: page.getByRole("button", { name: / in #Beta$/ }) });
     await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
@@ -1231,7 +1231,7 @@ test.describe("top-level mention activity", () => {
         ),
       )
       .toBe(false);
-    await openPage(page, "Inbox");
+    await openPage(page, "Activity");
     await expect(row).toBeVisible();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   });
@@ -1262,10 +1262,10 @@ test.describe("top-level mention activity", () => {
     // bottom, whose catch-up would read it anyway.
     for (let index = 0; index < 40; index++)
       app.append("primary", "alpha", `Later update ${index}`, true, false);
-    await openPage(page, "Inbox");
+    await openPage(page, "Activity");
     const row = page
-      .getByRole("region", { name: "Inbox", exact: true })
-      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("region", { name: "Activity", exact: true })
+      .getByRole("list", { name: "Activity", exact: true })
       .getByRole("listitem")
       .filter({ hasText: "Can you sign off on Alpha?" });
     await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
@@ -1309,7 +1309,7 @@ test.describe("top-level mention activity", () => {
       popover.getByRole("region", { name: "Unread threads" }),
     ).toBeVisible();
     await expect(mentions).toHaveCount(0);
-    await openPage(page, "Inbox");
+    await openPage(page, "Activity");
     await expect(row).toBeVisible();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   });

@@ -1388,6 +1388,28 @@ it("stops counting an attended preview's saved grant once a read after a drop om
 });
 
 it("keeps an attended preview that newer metadata or a membership reaches while a later batch of the read after a drop is in flight", async () => {
+  // The viewer joins enough channels that a confirmation needs two batches.
+  // Signed once: the two cases share them.
+  const joined = Array.from({ length: 500 }, (_, i) => {
+    const id = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    return [
+      signed(relay, {
+        kind: 39000,
+        content: "",
+        created_at: 10,
+        tags: [["d", id], ["name", id.slice(-4)], ["public"]],
+      }),
+      signed(relay, {
+        kind: 39002,
+        content: "",
+        created_at: 10,
+        tags: [
+          ["d", id],
+          ["p", viewer.pubkey],
+        ],
+      }),
+    ];
+  }).flat() as RelayEvent[];
   for (const arrival of ["metadata", "membership"] as const) {
     const h = harness();
     const summary = () => h.owner.session.channels.get?.(OPEN);
@@ -1409,31 +1431,8 @@ it("keeps an attended preview that newer metadata or a membership reaches while 
       )[0]
       ?.respond(channel(OPEN, "public") as RelayEvent[]);
     await vi.waitFor(() => expect(summary()?.visibility).toBe("public"));
-    // The viewer joins enough channels that a confirmation needs two
-    // batches, with the preview, saved first, in the first.
-    const ids = Array.from(
-      { length: 500 },
-      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
-    );
-    h.receive(
-      ids.flatMap((id) => [
-        signed(relay, {
-          kind: 39000,
-          content: "",
-          created_at: 10,
-          tags: [["d", id], ["name", id.slice(-4)], ["public"]],
-        }),
-        signed(relay, {
-          kind: 39002,
-          content: "",
-          created_at: 10,
-          tags: [
-            ["d", id],
-            ["p", viewer.pubkey],
-          ],
-        }),
-      ]) as RelayEvent[],
-    );
+    // The preview, saved first, is in the first batch.
+    h.receive(joined);
     await flush();
     while (live(() => true) !== -1)
       h.wire.pending
@@ -1480,4 +1479,4 @@ it("keeps an attended preview that newer metadata or a membership reaches while 
     stop();
     h.owner.dispose();
   }
-});
+}, 15_000); // This case signs and applies 1,000 relay events.

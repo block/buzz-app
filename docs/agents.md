@@ -1443,8 +1443,13 @@ and also the host's saved Buzz library. The development broker's
 directory, leaving out an agent that is only in communities it was added to, and
 caps it at 8 MiB / 2000 records; the native host reads it and
 `agents/memberships.json` through their owner, `AppAgents`. A missing store is an empty local
-inventory; neither host falls back to retired stores. Deleted identities are
-omitted and identities configured in multiple communities are joined by public key.
+inventory; neither host falls back to retired stores. Both host reads filter saved
+rows by the signed-in owner and selected community before deduplicating public keys,
+so another account's or community's agents never become chooser candidates or supply
+that community's artwork. Deleted and joining identities are omitted. The native
+IPC requires a community and derives the owner from the native identity; the broker
+uses its captured identity and registered request destination, not caller-supplied
+owner data. Concurrent broker reads are shared only within the same community.
 The host read is read-only: it writes no configuration, migrates no identities,
 retrieves no credentials and manages no processes. Only identity
 public key/name and optional avatar artwork leave the host. Optional artwork

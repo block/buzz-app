@@ -683,8 +683,19 @@ available rather than silently discarding it.
   does not prove an agent is ready or running. **Remove as bestie** in the
   Bestie's card menu asks, then saves no Bestie to the account. On desktop it
   works on every device, including one where the agent doesn't run.
-- With the **Bestie** plugin on and no saved choice, **Choose your bestie agent**
-  offers a searchable agent picker and **Create agent**. Choosing a known remote
+- With the **Bestie** plugin on, open **Create an agent** in the left Apps dock
+  when you haven’t chosen a Bestie. You can create one or choose an existing agent.
+  The placeholder cycles through character avatars; reduced motion keeps it still.
+  If you have no eligible agents in this community, **Create your first agent**
+  offers **Create an agent**, which opens the usual form for name, avatar and
+  provider settings. Otherwise, **Choose your bestie agent** offers a searchable
+  picker and **Create agent**. Creating and choosing your Bestie opens its private DM;
+  merely opening setup does not create an agent or send a welcome message.
+  After creating your first agent here, the pinned DM shows a local welcome on
+  this device. It is not a sent message and does not start an agent response;
+  send a message when you’re ready to begin.
+  Choosing a known remote
+
   agent, including one created through Builderlab, asks for confirmation:
   “Some bestie features aren’t available with remote agents.” Cancel leaves the
   Bestie choice unchanged; it does not delete a newly created agent. A hosted

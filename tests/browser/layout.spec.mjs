@@ -53,11 +53,14 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // Global destinations live in the dock independently of the Messages sidebar.
-const destinationTitles = ["Bestie", "Activity"];
+const destinationTitles = ["Create an agent", "Activity"];
 const dockDestinations = (page, options = {}) =>
   page
     .getByRole("navigation", { name: "Apps dock", ...options })
-    .getByRole("tab", { name: /^(Bestie|Activity)$/, ...options });
+    .getByRole("tab", {
+      name: /^(Create an agent|Bestie|Activity)$/,
+      ...options,
+    });
 const companionReadingTest = readingTest.extend({ companionFixture: true });
 const box = async (locator) => {
   const bounds = await locator.boundingBox();
@@ -135,7 +138,7 @@ async function link(page, app, target) {
     );
   });
 }
-async function shellFits(page, width) {
+async function shellFits(page, width, bestieLabel = "Create an agent") {
   // The Workflows page renders no toggle at wide widths, so settle only when
   // the drawer is in play.
   if (width <= 650) await settleShellToggle(page);
@@ -145,7 +148,7 @@ async function shellFits(page, width) {
   // Settings is a modal with its own navigation; the shell is measured with
   // Settings closed.
   const destinations = dockDestinations(page);
-  await expect(destinations).toHaveText(destinationTitles);
+  await expect(destinations).toHaveText([bestieLabel, "Activity"]);
   const dock = await box(page.getByRole("navigation", { name: "Apps dock" }));
   for (const destination of [destinations.first(), destinations.last()]) {
     await destination.scrollIntoViewIfNeeded();
@@ -961,7 +964,7 @@ companionTest(
       [390, 400],
     ]) {
       await page.setViewportSize({ width, height });
-      await shellFits(page, width);
+      await shellFits(page, width, "Bestie");
       await expect(
         button(page, "Close Companion fixture panel"),
       ).toBeInViewport();

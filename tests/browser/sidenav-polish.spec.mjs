@@ -613,7 +613,12 @@ test.extend({ companionFixture: true })(
       await sidebar.getByRole("button", { name, exact: true }).click();
     };
     const openPage = async (name) => {
-      await pages.getByRole("tab", { name, exact: true }).click();
+      await pages
+        .getByRole("tab", {
+          name: name === "Bestie" ? "Create an agent" : name,
+          exact: true,
+        })
+        .click();
       const body = page.getByRole("region", { name, exact: true });
       await expect(
         name === "Activity"

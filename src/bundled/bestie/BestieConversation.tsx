@@ -58,6 +58,7 @@ import {
   bestieDetailRoute,
   bestieDetailTarget,
 } from "./routes";
+import { FirstAgentWelcome, useFirstAgentWelcome } from "./FirstAgentWelcome";
 import styles from "./PinnedBestie.module.css";
 
 /** Bestie owns its pinned destination; Messages owns conversation tabs and readers. */
@@ -69,7 +70,8 @@ export function BestieConversation({
   navigator,
   navigation,
   channel,
-  bestie,
+  agent,
+  community,
   icon,
 }: {
   session: RelaySession;
@@ -79,9 +81,12 @@ export function BestieConversation({
   navigator: Navigation;
   navigation?: PageNavigation | undefined;
   channel: ChannelSummary;
-  bestie: string;
+  agent: { pubkey: string; name: string; picture?: string | undefined };
+  community?: string | undefined;
   icon: ReactNode;
 }) {
+  const bestie = agent.name;
+  const welcome = useFirstAgentWelcome(scope, agent.pubkey, channel.id);
   const [sent, setSent] = useState<string>();
   const [composerFocus, focusComposer] = useState(0);
   const trigger = useRef<HTMLElement | null>(null);
@@ -482,6 +487,15 @@ export function BestieConversation({
                             >
                               <MessageManagementStatus />
                               <ChannelBody
+                                intro={
+                                  welcome ? (
+                                    <FirstAgentWelcome
+                                      name={bestie}
+                                      picture={agent.picture}
+                                      community={community}
+                                    />
+                                  ) : undefined
+                                }
                                 viewer={session.viewer}
                                 cached={!!channel.cached}
                                 revealMessageId={sent}

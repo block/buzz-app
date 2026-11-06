@@ -920,7 +920,7 @@ export function relayBrokerPlugin({
       let presenceFlight = false;
       let sidebarUploads = 0;
       let attachmentUploads = 0;
-      let libraryRead;
+      const libraryReads = new Map();
       const sidebarMutations = new Map();
       const streams = new Map();
       const admissions = createHostAdmission();
@@ -1541,13 +1541,20 @@ export function relayBrokerPlugin({
 
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
-              // Share concurrent reads, never retain the local snapshot after completion.
-              libraryRead ??= Promise.resolve()
-                .then(() => agentLibrary())
-                .finally(() => {
-                  libraryRead = undefined;
-                });
-              return json(res, 200, await libraryRead);
+              // Share only same-community reads; never retain a completed snapshot.
+              if (!libraryReads.has(relay))
+                libraryReads.set(
+                  relay,
+                  Promise.resolve()
+                    .then(() =>
+                      agentLibrary(undefined, {
+                        community: relay,
+                        owner: viewer,
+                      }),
+                    )
+                    .finally(() => libraryReads.delete(relay)),
+                );
+              return json(res, 200, await libraryReads.get(relay));
             } catch {
               return json(res, 503, {
                 error:

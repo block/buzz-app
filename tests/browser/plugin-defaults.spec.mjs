@@ -91,7 +91,11 @@ test("Bestie opts in without changing the other bundled defaults and survives re
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
-  await expect(button(page, "Bestie")).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Apps dock" })
+      .getByRole("tab", { name: "Create an agent", exact: true }),
+  ).toHaveCount(0);
   await plugins(page);
   const bestie = pluginAction(page, "Bestie");
   await expect(bestie).toHaveAccessibleName(/^Enable /);
@@ -108,20 +112,20 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await expect(
     page
       .locator(".shell-header")
-      .getByRole("button", { name: "Bestie", exact: true }),
+      .getByRole("button", { name: "Create an agent", exact: true }),
   ).toHaveCount(0);
   const destination = page
     .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Bestie", exact: true });
+    .getByRole("tab", { name: "Create an agent", exact: true });
   await expect(destination).toBeVisible();
   await destination.click();
   const bestiePage = page.getByRole("region", { name: "Bestie" });
   await expect(bestiePage).toBeVisible();
   await expect(
-    bestiePage.getByRole("heading", { name: "Choose your bestie agent" }),
+    bestiePage.getByRole("heading", { name: "Create your first agent" }),
   ).toBeVisible();
   const createAgent = bestiePage.getByRole("button", {
-    name: "Create agent",
+    name: "Create an agent",
   });
   await expect(createAgent).toBeVisible();
   await plugins(page);
@@ -131,7 +135,11 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await expect(bestie).toHaveAccessibleName(/^Enable /);
   // The workspace behind Settings is hidden from the accessibility tree.
   await closeSettings(page);
-  await expect(button(page, "Bestie")).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("navigation", { name: "Apps dock" })
+      .getByRole("tab", { name: "Create an agent", exact: true }),
+  ).toHaveCount(0);
 });
 
 // Browser startup must migrate a pre-snapshot profile before activating plugins.

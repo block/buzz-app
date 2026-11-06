@@ -153,9 +153,7 @@ it("opens Drafts & sent inside Messages and retains the sidebar through Back/For
   });
   await screen.findByRole("dialog", { name: "Settings" });
   expect(drafts).toHaveAttribute("aria-current", "page");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Close Settings", exact: true }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Close Settings" }));
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
   );

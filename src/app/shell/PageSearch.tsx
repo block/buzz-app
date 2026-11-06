@@ -215,34 +215,37 @@ export function PageSearch({
   // Every search surface reads pages from here, so rank and underline them
   // here too: the disconnected and personal-space views show this list as is.
   const needle = query.trim().toLowerCase();
-  const destinations: SearchDestination[] = [
-    ...orderPages(pages).map((page) => ({
-      key: page.key,
-      ...pagePresentation(page),
-      open: () => onSelect(page.key),
-    })),
-    ...(services && pages.some((page) => page.key === "buzz.channels/channels")
-      ? [
-          {
-            key: "drafts-sent",
-            label: "Drafts & sent",
-            icon: SendIcon,
-            open: () => {
-              void services.navigation.open(
-                draftsSentTarget(
-                  scopeOf(services.communities.relay.snapshot()),
-                ),
-              );
+  const searchPages: (Omit<SearchDestination, "run"> & { open: () => void })[] =
+    [
+      ...orderPages(pages).map((page) => ({
+        key: page.key,
+        ...pagePresentation(page),
+        open: () => onSelect(page.key),
+      })),
+      ...(services &&
+      pages.some((page) => page.key === "buzz.channels/channels")
+        ? [
+            {
+              key: "drafts-sent",
+              label: "Drafts & sent",
+              icon: SendIcon,
+              open: () => {
+                void services.navigation.open(
+                  draftsSentTarget(
+                    scopeOf(services.communities.relay.snapshot()),
+                  ),
+                );
+              },
             },
-          },
-        ]
-      : []),
-    {
-      key: "settings",
-      ...shellPresentation.settings,
-      open: () => onSelect("settings"),
-    },
-  ]
+          ]
+        : []),
+      {
+        key: "settings",
+        ...shellPresentation.settings,
+        open: () => onSelect("settings"),
+      },
+    ];
+  const destinations: SearchDestination[] = searchPages
     .flatMap((page) => {
       if (!needle) return [{ page, rank: 0 }];
       const labelMatch = matchName(page.label, needle);

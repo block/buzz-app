@@ -695,7 +695,7 @@ it("fails a transcript with an item over app-server's output frame", async () =>
   ).toEqual([50, 25, 13, 7, 4, 2, 1]);
 });
 
-it("refuses a remembered rollout that grew past a full read's limit, and forgets it", async () => {
+it("refuses a remembered rollout that grew past a full read's limit, without rereading it", async () => {
   const half = `${"x".repeat(30 * 1024 * 1024)}\n`;
   let file = half;
   const path = "/sessions/large.jsonl";
@@ -709,10 +709,17 @@ it("refuses a remembered rollout that grew past a full read's limit, and forgets
   const signal = new AbortController().signal;
   await readTranscript(spawn, lookupOne, signal);
   file = half + half;
-  const grown = await readTranscript(spawn, lookupOne, signal);
-  expect(JSON.stringify(grown?.turns)).toContain("larger than 50 MB");
-  // Forgotten, so the next read is a full one again.
-  await readTranscript(spawn, lookupOne, signal);
+  for (const more of ["", "y\n", ""]) {
+    file += more;
+    const grown = await readTranscript(spawn, lookupOne, signal);
+    expect(JSON.stringify(grown?.turns)).toContain("larger than 50 MB");
+    // Only what was appended is read, not the whole file again.
+    expect(spawn).toHaveBeenLastCalledWith("read-from", expect.anything());
+  }
+  // A file that shrank is read whole again.
+  file = '{"type":"event_msg"}\n';
+  const fresh = await readTranscript(spawn, lookupOne, signal);
+  expect(JSON.stringify(fresh?.turns)).not.toContain("larger than 50 MB");
   expect(spawn).toHaveBeenLastCalledWith(
     "read",
     expect.objectContaining({ args: [path] }),

@@ -435,7 +435,10 @@ export async function withServer<T>(
 
 /** Rollouts read before, by path, with the lines restoring tools reads,
  * so a read parses only what was appended since; Codex only appends. */
-const rollouts = new Map<string, { bytes: number; lines: Json[] }>();
+const rollouts = new Map<
+  string,
+  { bytes: number; lines: Json[]; oversized?: boolean }
+>();
 /** Rollouts remembered at most. */
 const ROLLOUT_LIMIT = 2;
 
@@ -462,19 +465,23 @@ async function rollout(
     known = undefined;
     added = await readFile(spawn, directory, path, signal);
   }
-  // Remembered lines are held to a full read's limit.
-  if ((known?.bytes ?? 0) + added.length > READ_LIMIT)
-    throw new Error(`${path} is larger than 50 MB`);
+  // Remembered lines are held to a full read's limit; past it only the
+  // size is kept, so later reads reject without reading it all again.
+  const total = (known?.bytes ?? 0) + added.length;
+  const oversized = known?.oversized || total > READ_LIMIT;
   // Only whole lines are kept, so no record or character is split.
-  const end = added.lastIndexOf(10) + 1;
+  const end = oversized ? added.length : added.lastIndexOf(10) + 1;
   const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
-  const lines = [
-    ...(known?.lines ?? []),
-    ...recordedLines(decode(added.subarray(0, end))),
-  ];
-  rollouts.set(path, { bytes: (known?.bytes ?? 0) + end, lines });
+  const lines = oversized
+    ? []
+    : [
+        ...(known?.lines ?? []),
+        ...recordedLines(decode(added.subarray(0, end))),
+      ];
+  rollouts.set(path, { bytes: (known?.bytes ?? 0) + end, lines, oversized });
   for (const old of rollouts.keys())
     if (rollouts.size > ROLLOUT_LIMIT) rollouts.delete(old);
+  if (oversized) throw new Error(`${path} is larger than 50 MB`);
   return [...lines, ...recordedLines(decode(added.subarray(end)))];
 }
 

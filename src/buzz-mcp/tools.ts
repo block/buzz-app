@@ -1528,8 +1528,11 @@ async function post(
   extra: readonly string[][] = [],
 ) {
   const files = await tools.attach(list(args.files));
-  const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
-  const mentions = await tools.mentions(channel, content, list(args.mentions));
+  const { content, mentions } = await tools.mentions(
+    channel,
+    `${(await tools.body(args, !files.links)) ?? ""}${files.links}`,
+    list(args.mentions),
+  );
   const event = await tools.client.publish({
     kind: 9,
     content,
@@ -2090,7 +2093,9 @@ class Tools {
   }
 
   /** Who `content` notifies: `mentions`, `nostr:npub…` links, and `@Name`
-   * for a channel member, as the CLI resolves them. Each must be a member. */
+   * for a channel member, as the CLI resolves them. Each must be a member.
+   * An `@Name` bound to one member becomes the link the app draws as a
+   * mention for every viewer, whichever of their names it shows. */
   async mentions(
     channel: string,
     content: string,
@@ -2099,27 +2104,40 @@ class Tools {
     const keys = new Set(explicit.map(pubkey));
     for (const match of content.matchAll(/nostr:(npub1[02-9ac-hj-np-z]{58})/g))
       keys.add(pubkey(match[1] as string));
+    // Masks keep offsets, so a match in `prose` is the same span in `content`.
+    const mask = (text: string) => text.replace(/[^\n]/g, " ");
     const prose = content
-      .replace(/^```[\s\S]*?^```/gm, " ")
-      .replace(/`[^`\n]*`/g, " ");
-    if (!prose.includes("@") && !keys.size) return [];
+      .replace(/^```[\s\S]*?^```/gm, mask)
+      .replace(/`[^`\n]*`/g, mask);
+    if (!prose.includes("@") && !keys.size) return { content, mentions: [] };
+    // A name inside a link's label still notifies, but a link cannot nest.
+    const unlinked = prose.replace(/!?\[[^\]\n]*\]\([^)\n]*\)/g, mask);
+    const links: { start: number; end: number; key: string }[] = [];
     const members = await this.members(channel);
     if (prose.includes("@")) {
       const byName = await this.aliases(members.map((member) => member.pubkey));
       const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
       const unknown: string[] = [];
       for (const match of prose.matchAll(/(^|\s)@/g)) {
-        const rest = prose
-          .slice((match.index ?? 0) + match[0].length)
-          .toLowerCase();
+        const start = (match.index ?? 0) + match[0].length - 1;
+        const rest = prose.slice(start + 1).toLowerCase();
         const name = longest.find(
           (candidate) =>
             rest.startsWith(candidate) &&
             /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
         );
         const found = name ? bestNamed(byName.get(name)) : [];
-        if (found.length === 1) keys.add(found[0] as string);
-        else {
+        if (found.length === 1) {
+          const key = found[0] as string;
+          keys.add(key);
+          const end = start + 1 + (name?.length ?? 0);
+          // Lowercasing can change a span's length; then leave it as written.
+          if (
+            unlinked[start] === "@" &&
+            content.slice(start + 1, end).toLowerCase() === name
+          )
+            links.push({ start, end, key });
+        } else {
           const token = name ?? rest.match(/^[a-z0-9._-]+/)?.[0];
           if (token)
             unknown.push(`@${token}${found.length ? " (ambiguous)" : ""}`);
@@ -2135,7 +2153,12 @@ class Tools {
     );
     if (outside.length)
       throw new Error(`Not in this channel: ${outside.join(", ")}`);
-    return [...keys].slice(0, 50);
+    let linked = content;
+    for (const { start, end, key } of links.reverse()) {
+      const label = linked.slice(start, end).replace(/[\\[\]]/g, "\\$&");
+      linked = `${linked.slice(0, start)}[${label}](nostr:${npubEncode(key)})${linked.slice(end)}`;
+    }
+    return { content: linked, mentions: [...keys].slice(0, 50) };
   }
 
   /** Uploads each file and returns its `imeta` tags and the links to append.

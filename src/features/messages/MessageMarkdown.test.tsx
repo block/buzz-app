@@ -1098,7 +1098,10 @@ it("keeps explicit profile identities visible but inert when Profiles is unavail
   );
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();
-  expect(view.container.textContent).toContain("Mic");
+  expect(view.container.textContent).toBe("Mic");
+  expect(
+    view.container.querySelector(`[data-profile-target="${target}"]`),
+  ).not.toBeNull();
 });
 
 it.each([

@@ -746,7 +746,9 @@ function PreparedMessageMarkdown({
           : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
-        if (!interactive || !canOpenLink?.(href))
+        // A read-only preview still draws the inert mention; only a live
+        // message whose profile cannot open shows the identity it names.
+        if (interactive && !canOpenLink?.(href))
           return (
             <span>
               {children} ({href})

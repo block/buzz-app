@@ -426,7 +426,7 @@ it("replies in the current thread and notifies the members it names", async () =
   expect(published).toEqual([
     {
       kind: 9,
-      content: "@Alice Smith see `@Bob`",
+      content: `[@Alice Smith](nostr:${npubEncode(alice)}) see \`@Bob\``,
       tags: [
         ["h", "chan"],
         ["e", root, "", "reply"],
@@ -434,6 +434,48 @@ it("replies in the current thread and notifies the members it names", async () =
       ],
     },
   ]);
+});
+
+it("links each name it binds, so the app shows it as a mention whatever name a viewer sees", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  const link = (label: string, key: string) =>
+    `[${label}](nostr:${npubEncode(key)})`;
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: [
+      "@alice smith, @Bob: see [notes for @Bob](https://example.com) and",
+      "```",
+      "@Bob",
+      "```",
+      `${link("@Bob", bob)} again`,
+    ].join("\n"),
+  });
+  expect(published.at(-1)?.content).toBe(
+    [
+      `${link("@alice smith", alice)}, ${link("@Bob", bob)}: see [notes for @Bob](https://example.com) and`,
+      "```",
+      "@Bob",
+      "```",
+      `${link("@Bob", bob)} again`,
+    ].join("\n"),
+  );
+  expect(published.at(-1)?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+    ["p", bob],
+    ["p", alice],
+  ]);
+  // Names it could not bind, and pubkeys given only in mentions, leave the
+  // text as written.
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: "@Bob and @Carol, or Alice Smith",
+    mentions: [alice],
+  });
+  expect(published.at(-1)?.content).toBe(
+    `${link("@Bob", bob)} and @Carol, or Alice Smith`,
+  );
 });
 
 it("tags a message for agents, and needs the audience said", async () => {

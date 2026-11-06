@@ -240,6 +240,8 @@ const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
 const noProviders: readonly RegisteredProvider[] = [];
 const noDecisionProviders = () => noProviders;
+/** The plugin whose details a Manage plugins visit shows, for Back/Forward. */
+const PLUGIN_DETAILS = "settings.pluginDetails";
 
 function restrictedPlugin(plugin: PluginInfo) {
   return (
@@ -907,8 +909,15 @@ export function Settings({
     } else if (addressedPlugin.current) {
       setSelectedPluginId(undefined);
       addressedPlugin.current = false;
+    } else if (navigation.traversal) {
+      const shown = navigation.position(PLUGIN_DETAILS);
+      if (typeof shown === "string") setSelectedPluginId(shown);
     }
-  }, [requestedPluginId, navigation?.entryId, selected]);
+  }, [requestedPluginId, navigation, selected]);
+  const showPluginDetails = (id: string | undefined) => {
+    setSelectedPluginId(id);
+    navigation?.savePosition(PLUGIN_DETAILS, id ?? null);
+  };
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -968,7 +977,7 @@ export function Settings({
     holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
-    setSelectedPluginId(undefined);
+    showPluginDetails(undefined);
     if (requestedPluginId) onPluginDetailsClosed?.();
   };
   useLayoutEffect(() => {
@@ -1136,7 +1145,7 @@ export function Settings({
                         pluginTrigger.current = event.currentTarget;
                         holdPluginRow(event.currentTarget);
                         if (!active) setActivationAttempt(undefined);
-                        setSelectedPluginId(active ? undefined : id);
+                        showPluginDetails(active ? undefined : id);
                       }}
                     >
                       {isEssentialPlugin(plugin) && (
@@ -1197,7 +1206,7 @@ export function Settings({
                           onClick={(event) => {
                             holdPluginRow(event.currentTarget);
                             setActivationAttempt(undefined);
-                            setSelectedPluginId(id);
+                            showPluginDetails(id);
                             setReviewPluginId(id);
                           }}
                         >
@@ -1542,7 +1551,7 @@ export function Settings({
                       ) ?? []),
                     ].find((button) => button.dataset.pluginId === id) ?? null;
                   setActivationAttempt(undefined);
-                  setSelectedPluginId(id);
+                  showPluginDetails(id);
                 }}
                 returnFocus={() => detailsClose.current ?? visibleReturn(null)}
               />

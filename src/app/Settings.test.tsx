@@ -189,6 +189,7 @@ it("opens the addressed plugin's update checkbox and keeps its action separate f
             pluginId: "example.notes",
           },
           complete: vi.fn(),
+          savePosition: vi.fn(),
         } as unknown as Parameters<typeof Settings>[0]["navigation"]
       }
       plugins={
@@ -1368,7 +1369,13 @@ function pluginSectionsFixture(
     dismissError: vi.fn(),
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
   const onSection = vi.fn();
-  const view = (section: string, communities = host.communities) => (
+  /** Per-visit positions, as the navigation service keeps them. */
+  const positions = new Map<string, unknown>();
+  const view = (
+    section: string,
+    communities = host.communities,
+    visit?: { entryId: string; traversal?: true },
+  ) => (
     <div id="settings-content" tabIndex={-1}>
       <Settings
         {...host}
@@ -1378,8 +1385,13 @@ function pluginSectionsFixture(
         decisions={decisions}
         navigation={
           {
+            ...visit,
             target: { version: 1, kind: "settings", section },
             complete: () => true,
+            position: (key: string) =>
+              positions.get(JSON.stringify([visit?.entryId, key])),
+            savePosition: (key: string, value: unknown) =>
+              positions.set(JSON.stringify([visit?.entryId, key]), value),
           } as never
         }
         onSection={onSection}
@@ -1396,7 +1408,7 @@ function pluginSectionsFixture(
     within(links(name) as HTMLElement)
       .getAllByRole("button")
       .map((button) => button.textContent);
-  return { onSection, view, links, linkNames };
+  return { onSection, view, links, linkNames, positions };
 }
 
 it("links a plugin's details to the Settings sections it adds", async () => {
@@ -1457,6 +1469,67 @@ it("links a plugin's details to the Settings sections it adds", async () => {
     screen.queryByRole("complementary", { name: "GitHub details" }),
   ).toBeNull();
   expect(document.getElementById("settings-content")).toHaveFocus();
+});
+
+it("reopens the details a Manage plugins visit showed on Back or Forward, not on a new visit", async () => {
+  const user = userEvent.setup();
+  const { cards } = registry([
+    {
+      ...card("authors", "GitHub comment authors", "Plugins"),
+      key: "buzz.github/authors",
+      pluginId: "buzz.github",
+    },
+  ]);
+  const { view, positions } = pluginSectionsFixture(cards);
+  const details = () =>
+    screen.queryByRole("complementary", { name: "GitHub details" });
+  const row = () => screen.getByRole("button", { name: "View GitHub details" });
+
+  const { rerender } = render(view("plugins", undefined, { entryId: "p1" }));
+  fireEvent.click(row());
+  await user.click(
+    screen.getByRole("button", { name: "GitHub comment authors" }),
+  );
+  rerender(view("buzz.github/authors", undefined, { entryId: "a2" }));
+  expect(details()).toBeNull();
+
+  // Back, then Forward and Back again, return to the details that visit showed.
+  for (const _pass of [1, 2]) {
+    rerender(view("plugins", undefined, { entryId: "p1", traversal: true }));
+    expect(details()).toBeVisible();
+    expect(row()).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("button", { name: "Close plugin details" }),
+    ).toHaveFocus();
+    rerender(
+      view("buzz.github/authors", undefined, {
+        entryId: "a2",
+        traversal: true,
+      }),
+    );
+  }
+
+  // Once closed, the visit comes back as the list.
+  rerender(view("plugins", undefined, { entryId: "p1", traversal: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
+  rerender(
+    view("buzz.github/authors", undefined, { entryId: "a2", traversal: true }),
+  );
+  rerender(view("plugins", undefined, { entryId: "p1", traversal: true }));
+  expect(details()).toBeNull();
+  expect(row()).toHaveAttribute("aria-expanded", "false");
+
+  // A new visit starts at the list, and a plugin removed since has no details.
+  fireEvent.click(row());
+  rerender(view("buzz.github/authors", undefined, { entryId: "a3" }));
+  rerender(view("plugins", undefined, { entryId: "p4" }));
+  expect(details()).toBeNull();
+  positions.set(
+    JSON.stringify(["p5", "settings.pluginDetails"]),
+    "buzz.removed",
+  );
+  rerender(view("plugins", undefined, { entryId: "p5", traversal: true }));
+  expect(screen.queryByRole("complementary")).toBeNull();
 });
 
 it("links a decision provider's details to Decisions API", async () => {

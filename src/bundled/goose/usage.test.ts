@@ -3,7 +3,7 @@ import type { EventData } from "../../features/relay/events";
 import { turnPrompt } from "../claude-code/prompt";
 import { REQUEST_TIMEOUT_MS } from "./goose";
 import { type FakeSession, fakeSpawn } from "./goose-testing";
-import { GooseHistory } from "./transcript";
+import { GooseHistory, marked } from "./transcript";
 import { readUsage, sessionUsage } from "./usage";
 
 const agent = "c".repeat(64);
@@ -98,6 +98,18 @@ it("observes each reply's tokens and goose's price", () => {
   expect(sessionUsage("s", [user("hi"), reply(start, tokens(1, 0, 0))])).toBe(
     undefined,
   );
+});
+
+it("titles a session by its first prompt without Buzz's turn mark", () => {
+  const session = sessionUsage("s", [
+    user(marked(ask(), "11111111-1111-4111-8111-111111111111")),
+    reply(start + 1, tokens(1, 0, 0)),
+  ]);
+  expect(session).toMatchObject({
+    channelId: "chan",
+    root: mention.id,
+    title: "@Grok fix the build",
+  });
 });
 
 it("reads the agent's sessions in its workspace through goose, every page", async () => {

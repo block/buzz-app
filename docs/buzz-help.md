@@ -511,7 +511,10 @@ available rather than silently discarding it.
   resends work already sent through the gateway without it. Don't say an agent
   uses the gateway's models unless its Settings shows Model gateway.
 - **Activity**, where the agent type provides it, shows sessions and their
-  transcripts in the agent's profile. A turn's **Thread** or **Channel** label
+  transcripts in the agent's profile. For a goose agent, a turn woken by a plugin,
+  watch or timer that ran without the agent gateway shows "Ran without the
+  agent gateway" beside its prompt only while the app keeps running; goose
+  compacting the conversation can remove the prompt and its note. A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
   conversation's transcript. Working indicators describe current work,

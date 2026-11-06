@@ -6,6 +6,8 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
+import { GatewayForwarding } from "../../features/agents/gateway/forwarding";
+import { upstreamFor } from "../../features/agents/gateway/route";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
 import { gooseRun } from "./run";
 import { GooseSetup, REVIEW_REFUSED } from "./setup";
@@ -14,6 +16,12 @@ import { GooseHistory } from "./transcript";
 import { readUsage } from "./usage";
 
 export const TYPE_ID = "goose";
+/** The harness goose declares to the gateway, its descriptor upstream key. */
+export const HARNESS = "goose";
+/** Whether goose declares its harness to the gateway, which forwards its
+ * agents' turns where their membership routes through it. Off until a pinned
+ * goose has run forwarded turns end to end. */
+const GATEWAY = false;
 
 export const inject = ["agents", "host", "agentProtection"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -29,6 +37,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     agents.storage,
+    // Without a goose upstream in this build, the runner sends every turn
+    // without the gateway, so nothing forwards.
+    GATEWAY && ctx.pluginOwner && upstreamFor(HARNESS)
+      ? new GatewayForwarding(ctx.pluginOwner, {
+          upstream: HARNESS,
+          native: "goose",
+        })
+      : undefined,
   );
   const desktop =
     host.spawn && host.resolveDirectory
@@ -92,6 +108,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    ...(GATEWAY ? { gateway: { harness: HARNESS } } : {}),
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,
     title: "Goose",

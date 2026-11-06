@@ -179,6 +179,7 @@ fn main() {
             "plugin_host_forward_admission",
             "plugin_host_forward_open",
             "plugin_host_forward_associate",
+            "plugin_host_forward_register_child",
             "plugin_host_forward_seal",
             "plugin_host_forward_close",
             "plugin_host_read_file",

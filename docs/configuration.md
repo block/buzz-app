@@ -148,7 +148,9 @@ gateway error or still checking), the harness runs with the user's own
 configuration and none of the Buzz request context, and the turn is noted
 "Ran without the agent gateway" with the reason: under the request for a
 mention, and in the harness's own turn activity for other turns, which receive
-it as `delivery.gatewayFallback`. That choice is made before dispatch; a turn
+it as `delivery.gatewayFallback`. A goose agent's wake shows that note beside
+its prompt in Activity only while the app that ran it keeps running; a reload,
+or goose compacting the prompt out of its history, drops it. That choice is made before dispatch; a turn
 whose gateway access is revoked after dispatch fails visibly and is never
 replayed. Memberships in other communities and hosted agents are unchanged.
 See `src/features/agents/gateway/` for the shared route, session and request

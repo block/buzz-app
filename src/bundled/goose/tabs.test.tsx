@@ -779,6 +779,7 @@ function activity(
     conversations: () => world.saved,
     channelLabel: (_: string, id: string) =>
       world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
+    notices: () => new Map(),
     prompts: () => ({
       shown: (turns: unknown) => turns,
       sessions: () =>
@@ -886,6 +887,34 @@ it("cancels reading goose's history when Activity is left", async () => {
   expect(signal?.aborted).toBe(false);
   unmount();
   expect(signal?.aborted).toBe(true);
+});
+
+it("reads a transcript with the agent's fallback notices", async () => {
+  const fake = gooseHistory();
+  const history = new GooseHistory(fake);
+  const transcript = vi.spyOn(history, "transcript");
+  const notices = new Map([["turn", "Ran without the agent gateway."]]);
+  activity(
+    fake,
+    {
+      saved: [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }],
+      runtime: { notices: () => notices },
+    },
+    history,
+  );
+  await userEvent.setup().click(
+    screen.getByRole("button", {
+      name: "View transcript: chan · thread 11111111",
+    }),
+  );
+  await waitFor(() =>
+    expect(transcript).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.any(Function),
+      notices,
+    ),
+  );
 });
 
 it("lists conversations by channel name, with running and standalone sessions, one row each", async () => {

@@ -3015,6 +3015,8 @@ function gateway(
         url: "http://127.0.0.1:9/h",
       };
     }),
+    associate: vi.fn(async () => {}),
+    register: vi.fn(async () => ({ type: "registered" }) as const),
     seal: vi.fn(async (_owner, id) => void calls.push(`seal ${id}`)),
     close: vi.fn(async (_owner, id) => {
       calls.push(`close ${id}`);

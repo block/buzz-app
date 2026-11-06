@@ -830,6 +830,7 @@ export function createTabs({
           },
           abort.signal,
           (pubkey) => runtime.name(agent.key, pubkey),
+          runtime.notices(agent.key),
         )
         .then(
           (transcript) =>

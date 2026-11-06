@@ -66,10 +66,13 @@ import { AgentSessions, localSessions, Spare, type Forward } from "./sessions";
 import { type ClaudeForwarding, UNAVAILABLE } from "./forwarding";
 import {
   bindSession,
-  isBuzzUuid,
-  isHex64,
   type TurnContext,
 } from "../../features/agents/gateway/contract";
+import {
+  compactRefusal,
+  controlTurn,
+  FORWARDING_PROTECTED,
+} from "../../features/agents/gateway/forwarding";
 import {
   type EligibleRoute,
   fallbackNotice,
@@ -78,9 +81,9 @@ import { protectionHistoryEntry } from "./security";
 import {
   readSessionTitle,
   readTranscript,
-  withNotices,
   type Conversation,
 } from "./transcript";
+import { withNotices } from "../../features/agents/activity-transcript";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 
 /** The effort levels Claude lists, which a session can switch to between
@@ -1223,21 +1226,5 @@ export function modelName(model: string) {
   return id ? `${name} ${id[2]}${id[3] ? `.${id[3]}` : ""}` : name;
 }
 
-/** A control's error for a fallback notice: it never runs unforwarded. */
-const compactRefusal = (notice: string) =>
-  notice.replace(
-    /^Ran without the agent gateway: /,
-    "Couldn't compact through the agent gateway: ",
-  );
-/** A session control's own context: its channel, and its thread only for a
- * thread's session; it carries no message. */
-const controlTurn = (place: SessionPlace, scope: string): TurnContext =>
-  Object.freeze({
-    channel_id: isBuzzUuid(place.channelId) ? place.channelId : null,
-    message_id: null,
-    thread_id: scope !== "channel" && isHex64(place.root) ? place.root : null,
-  });
-const FORWARDING_PROTECTED =
-  "Protected agents can't run through the agent gateway yet, so this turn didn't run.";
 const forwarded = (forward: Forward | undefined) =>
   forward ? { forward } : {};

@@ -61,11 +61,28 @@ type Pending = {
   reject: (error: Error) => void;
 };
 
+type AcpLaunch = Readonly<{
+  cwd: string;
+  systemPrompt: string;
+  title?: string;
+  named?: (title: string) => void;
+  tools?: ToolServer;
+  choice?: () => Choice;
+  /** The id of a saved session to resume with `session/load`. It keeps
+   * its name, so `title` and `named` are ignored. */
+  load?: string;
+  /** Given the session as soon as the harness has opened it, before it
+   * is set up, so a caller can close one whose open then fails. */
+  onSession?: (session: AcpSession) => void;
+}>;
+
 export class AcpProcess {
   readonly exited: Promise<number | null>;
   private readonly sessions = new Map<string, AcpSession>();
   /** Sessions whose close is in flight or failed, by id. */
   private readonly closing = new Map<string, Promise<Error | undefined>>();
+  /** Saved sessions being resumed, each by one `open` at a time. */
+  private readonly loading = new Set<string>();
   private readonly calls = new Map<number, Pending>();
   private requests = 0;
   private buffer = "";
@@ -221,28 +238,47 @@ export class AcpProcess {
    * `systemPrompt` appended. With `named`, the harness names it instead when
    * it names sessions, and `named` takes that name. `tools` answers its Buzz
    * tools; without them it has no tools at all. Each turn runs on the
-   * provider and model `choice` gives as it starts. */
-  async open(
-    launch: Readonly<{
-      cwd: string;
-      systemPrompt: string;
-      title?: string;
-      named?: (title: string) => void;
-      tools?: ToolServer;
-      choice?: () => Choice;
-      /** Given the session as soon as the harness has opened it, before it
-       * is set up, so a caller can close one whose open then fails. */
-      onSession?: (session: AcpSession) => void;
-    }>,
-  ): Promise<AcpSession> {
+   * provider and model `choice` gives as it starts. With `load`, it resumes
+   * that saved session instead, or fails: never a new one in its place. */
+  async open(launch: AcpLaunch): Promise<AcpSession> {
+    const { load } = launch;
+    if (load === undefined) return this.opening(launch);
+    const { label } = this.hooks;
+    if (this.capabilities.loadSession !== true)
+      throw new Error(`This ${label} cannot resume a session`);
+    // Whether a harness keeps a `session/new` system prompt is unknown.
+    if (
+      launch.systemPrompt &&
+      !this.hooks.systemPrompt &&
+      this.advertises("systemPrompt")
+    )
+      throw new Error(
+        `This ${label} cannot resume a session with its system prompt`,
+      );
+    if (this.sessions.has(load) || this.loading.has(load))
+      throw new Error(`This ${label} session is already open`);
+    // Including a close the harness never acknowledged.
+    if (this.closing.has(load))
+      throw new Error(`This ${label} session has not finished closing`);
+    this.loading.add(load);
+    try {
+      return await this.opening(launch);
+    } finally {
+      this.loading.delete(load);
+    }
+  }
+
+  private async opening(launch: AcpLaunch): Promise<AcpSession> {
     const { hooks } = this;
-    const named =
-      launch.named && (await this.names()) ? launch.named : undefined;
-    const title = named ? undefined : launch.title;
-    const provider = launch.choice?.().provider ?? "";
-    const { systemPrompt } = launch;
+    const { load, systemPrompt } = launch;
     const prompting = !!systemPrompt && !hooks.systemPrompt;
     const standard = prompting && this.advertises("systemPrompt");
+    const named =
+      load === undefined && launch.named && (await this.names())
+        ? launch.named
+        : undefined;
+    const title = named || load !== undefined ? undefined : launch.title;
+    const provider = launch.choice?.().provider ?? "";
     let server: HostMcpServer | undefined;
     // The harness connects while it opens the session, before it is known here.
     let session: AcpSession | undefined;
@@ -272,26 +308,36 @@ export class AcpProcess {
     let sessionId: string;
     let opened: ConfigOptions;
     try {
-      ({ sessionId, ...opened } = (await this.request(
-        "session/new",
-        {
-          cwd: launch.cwd,
-          mcpServers: buzz ? [buzz] : [],
-          ...(standard && {
-            systemPrompt: {
-              mode: "append",
-              content: [{ type: "text", text: systemPrompt }],
-            },
-          }),
-          ...(hooks.newSessionMeta && {
-            _meta: hooks.newSessionMeta(buzz, {
-              ...(title ? { title } : {}),
-              provider,
+      // Replayed history arrives before the answer, while the session is
+      // not yet in `sessions`, so none of it reaches the session.
+      if (load !== undefined) {
+        sessionId = load;
+        opened = (await this.request(
+          "session/load",
+          { sessionId, cwd: launch.cwd, mcpServers: buzz ? [buzz] : [] },
+          REQUEST_TIMEOUT_MS,
+        )) as ConfigOptions;
+      } else
+        ({ sessionId, ...opened } = (await this.request(
+          "session/new",
+          {
+            cwd: launch.cwd,
+            mcpServers: buzz ? [buzz] : [],
+            ...(standard && {
+              systemPrompt: {
+                mode: "append",
+                content: [{ type: "text", text: systemPrompt }],
+              },
             }),
-          }),
-        },
-        REQUEST_TIMEOUT_MS,
-      )) as ConfigOptions & { sessionId: string });
+            ...(hooks.newSessionMeta && {
+              _meta: hooks.newSessionMeta(buzz, {
+                ...(title ? { title } : {}),
+                provider,
+              }),
+            }),
+          },
+          REQUEST_TIMEOUT_MS,
+        )) as ConfigOptions & { sessionId: string });
     } catch (error) {
       void server?.close();
       throw error;
@@ -302,7 +348,8 @@ export class AcpProcess {
       server,
       launch.choice,
       { provider, model: "" },
-      prompting && !standard ? systemPrompt : "",
+      // A resumed conversation already opens with it.
+      prompting && !standard && load === undefined ? systemPrompt : "",
     );
     session.offer(opened);
     session.named = named;

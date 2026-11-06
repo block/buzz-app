@@ -586,7 +586,8 @@ export class AgentSessions {
         void spawned.kill();
         await spawned.exited.catch(() => undefined);
       }
-      await forwarded?.generation.close();
+      // Claude ends its turn the same either way; native drops it on reload.
+      await forwarded?.generation.close().catch(() => undefined);
       this.once.delete(key);
       this.options.onChange?.();
     }
@@ -658,6 +659,7 @@ export class AgentSessions {
       void exited
         .catch(() => undefined)
         .then(() => gate?.forwarded.generation.close())
+        .catch(() => undefined)
         .then(end);
     const started = gateway
       ? gateway().then(

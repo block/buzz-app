@@ -135,10 +135,10 @@ semantic tokens, UI authoring rules and the local component reference.
   focus to main once retry removes it, even if reconnect temporarily remounts
   the shell. A new opening or focus elsewhere cancels this
   handoff. A selected dock page is a separately focusable, labelled tabpanel.
-  Dock destinations retain exact selection; sidebar/default-placement pages and
-  missing destinations leave every dock tile unselected. Sidebar page links retain
-  their exact route and focus main content when selected. Dock destinations never
-  become companion launchers.
+  Dock destinations retain exact selection; sidebar-placed pages select Messages,
+  and non-primary or missing destinations leave every dock tile unselected.
+  Sidebar page links retain their exact route and focus main content when
+  selected. Dock destinations never become companion launchers.
   The shell owns one joined Panel around navigation and page content, with a
   panel-gap outer gutter beside the dock, at the right and below. Nested Panels
   keep their opaque fill and clipping but drop individual borders, radii, and shadows. Layout

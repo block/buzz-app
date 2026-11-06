@@ -262,8 +262,9 @@ point exporting
 `apply(ctx)`. `ctx` is a Cordis context. External JSX plugins export
 `inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
 `ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register
-several pages or none. Page IDs are unique within their plugin. Add `primary: true` for a
-row in the Messages sidebar's page navigation; every active page is listed in search.
+several pages or none. Page IDs are unique within their plugin. Add `primary: true` (with the
+default `placement`) for a row in the Messages sidebar's page navigation; every active page
+is listed in search.
 While that page is open, Messages stays selected in the app dock and the conversation
 sidebar stays visible, unless the page registers its own `sidebar`, which then
 replaces it. Buzz supplies React
@@ -544,8 +545,9 @@ A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
-navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
-(centered text destination), or `"toolbar"` (top-right full-page icon near search).
+navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"` or
+`"toolbar"`. Since the dock move in #2626, both `"topbar"` and `"toolbar"` make the page
+an app in the left dock.
 Pages without `primary: true` remain search/deep-link-only even with a placement.
 The host owns ordering, active state, responsive overflow and navigation history;
 plugins do not supply header React or a second navigation stack. Placement is fixed

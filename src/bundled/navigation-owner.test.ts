@@ -36,11 +36,12 @@ async function bundledPages() {
 it("gives every bundled page to the app whose navigation lists it", async () => {
   const pages = await bundledPages();
   const messages = "buzz.channels/channels";
-  expect(
-    Object.fromEntries(
-      pages.map(({ key }) => [key, navigationOwner(pages, key)]),
-    ),
-  ).toEqual({
+  const owners = Object.fromEntries(
+    pages.map(({ key }) => [key, navigationOwner(pages, key)]),
+  );
+  // Contract rows only, so adding or removing an unrelated bundled page
+  // leaves this test alone.
+  expect(owners).toMatchObject({
     // Channels, DMs, threads and Solo chats all open the Messages page.
     [messages]: messages,
     // Dock apps own themselves.

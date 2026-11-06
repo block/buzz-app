@@ -146,10 +146,14 @@ describe("navigation owner", () => {
     key: string,
     fields: Partial<RegisteredPage> = {},
   ): RegisteredPage => ({ ...page(key, key), primary: true, ...fields });
-  const entries = [
+  const listed = [
     primary("example.sidebar/main"),
     primary("example.listed/main", { placement: "sidebar" }),
     primary("example.own-sidebar/main", { sidebar: () => null }),
+  ];
+  const entries = [
+    primary(messages.key),
+    ...listed,
     primary("example.header/main", { placement: "topbar" }),
     primary("example.tools/main", { placement: "toolbar" }),
     primary("example.linked/main", { primary: false, placement: "sidebar" }),
@@ -170,4 +174,12 @@ describe("navigation owner", () => {
   ])("%s belongs to %s", (selected, owner) => {
     expect(navigationOwner(entries, selected)).toBe(owner);
   });
+  // Without Messages there is no app to keep selected.
+  test.each(listed.map(({ key }) => key))(
+    "%s owns itself when Messages is absent",
+    (selected) => {
+      const pages = entries.filter((page) => page.key !== messages.key);
+      expect(navigationOwner(pages, selected)).toBe(selected);
+    },
+  );
 });

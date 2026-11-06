@@ -151,6 +151,15 @@ it.each([true, false])(
         <AppShell
           pages={[
             {
+              id: "channels",
+              key: "buzz.channels/channels",
+              pluginId: "buzz.channels",
+              revision: "1",
+              title: "Channels",
+              component: () => null,
+              primary: true,
+            },
+            {
               id: "main",
               key: "example.plugin/main",
               pluginId: "example.plugin",
@@ -340,6 +349,10 @@ it.each([
   { creationInSidebar: true, selected: "buzz.channels/channels" },
   { creationInSidebar: false, selected: "buzz.channels/channels" },
   { creationInSidebar: true, selected: "inbox" },
+  // A page listed in the Messages sidebar keeps its New menu.
+  { creationInSidebar: true, selected: "example.listed/main" },
+  // App omits New from a page's own sidebar, which replaces Messages'.
+  { creationInSidebar: false, selected: "example.own-sidebar/main" },
 ])(
   "keeps New in its sidebar ($selected, sidebar placement: $creationInSidebar)",
   async ({ creationInSidebar, selected }) => {
@@ -351,7 +364,22 @@ it.each([
     render(
       <ToastProvider>
         <AppShell
-          pages={[]}
+          pages={[
+            { id: "channels", pluginId: "buzz.channels" },
+            { id: "main", pluginId: "example.listed" },
+            {
+              id: "main",
+              pluginId: "example.own-sidebar",
+              sidebar: () => null,
+            },
+          ].map((page) => ({
+            ...page,
+            key: `${page.pluginId}/${page.id}`,
+            title: page.pluginId,
+            revision: "one",
+            primary: true,
+            component: () => null,
+          }))}
           selected={selected}
           navigationAttempt="same-conversation"
           onSelect={select}
@@ -385,7 +413,7 @@ it.each([
         </AppShell>
       </ToastProvider>,
     );
-    if (selected === "buzz.channels/channels") {
+    if (selected !== "inbox") {
       await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
     }
     expect(

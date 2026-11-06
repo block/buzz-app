@@ -3119,14 +3119,17 @@ it("clears the send option as Send takes a draft whose files still upload", asyn
     />,
   );
   attachByPaste(h.input(), attachmentFile());
-  await waitFor(() => expect(h.send()).toBeEnabled());
-  fireEvent.click(h.send());
-  await waitFor(() => expect(clearSendOption).toHaveBeenCalledOnce());
-  expect(h.uploadCalls).toHaveLength(1);
-  expect(onSend).not.toHaveBeenCalled();
-  await act(async () => {
-    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
-  });
+  try {
+    await waitFor(() => expect(h.send()).toBeEnabled());
+    fireEvent.click(h.send());
+    await waitFor(() => expect(clearSendOption).toHaveBeenCalledOnce());
+    expect(h.uploadCalls).toHaveLength(1);
+    expect(onSend).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+    });
+  }
   await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
   expect(onSend).toHaveBeenCalledExactlyOnceWith(
     h.publish.mock.calls[0]?.[0].id,

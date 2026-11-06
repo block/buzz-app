@@ -208,6 +208,30 @@ it("does not show sibling thread work and reports lost freshness without pretend
     f.dispose();
   }
 });
+it("keeps a stopped agent visible beside another agent's persistent failure", () => {
+  const f = fixture();
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    f.send(A, "failed", 1, "turn_started", { triggeringEventIds: [root] });
+    f.send(B, "stopped", 1, "turn_started", { triggeringEventIds: [root] });
+    f.send(A, "failed", 2, "turn_completed", { outcome: "failed" });
+    f.send(B, "stopped", 2, "turn_completed", { outcome: "cancelled" });
+    expect(screen.getByText("Couldn’t finish")).toBeInTheDocument();
+    expect(screen.getByText("Bubbles · Stopped")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /View agent activity: Blossom, failed/,
+      }),
+    );
+    expect(screen.getByText("Bubbles · Stopped")).toBeInTheDocument();
+    expect(
+      screen.getByText(/This request ended before it could finish/),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
 it.each([
   ["failed", "Couldn’t finish"],
   ["terminated", "Couldn’t finish"],

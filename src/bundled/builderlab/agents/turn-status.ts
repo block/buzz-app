@@ -1,7 +1,7 @@
 import type { RelayData } from "../../../features/relay/service";
 import type { RelaySession } from "../../../features/relay/session";
 import type { BuilderlabSession, Credential } from "../session";
-import type { AgentClient } from "./client";
+import { type AgentClient, isRetryableAgentRead } from "./client";
 
 /** Recover missed terminals, backing off when a task has no saved outcome yet.
  * The client owns HTTP retries; this owner schedules later outcome lookups. */
@@ -49,7 +49,6 @@ export function startTurnStatusRecovery({
     if (!next) return;
     const activity = next.agentActivity;
     let running = false;
-    let halted = false;
     async function run() {
       if (disposed || current !== next || credential !== account) return;
       if (activity.snapshot().status !== "listening") {
@@ -57,10 +56,9 @@ export function startTurnStatusRecovery({
         controller?.abort();
         controller = undefined;
         attempted.clear();
-        halted = false;
         return;
       }
-      if (running || halted) return;
+      if (running) return;
       cancelRetry();
       controller ??= new AbortController();
       const active = controller;
@@ -99,28 +97,31 @@ export function startTurnStatusRecovery({
               delay: Math.min((attempted.get(key)?.delay ?? 15000) * 2, 300000),
             });
           }
-          const listed = await client.list(active.signal);
-          if (!listed.some((agent) => agent.pubkey === first.agent)) continue;
-          const outcomes = await client
-            .turnStatus(
+          let outcomes:
+            | Awaited<ReturnType<AgentClient["turnStatus"]>>
+            | undefined;
+          try {
+            const listed = await client.list(active.signal);
+            if (!listed.some((agent) => agent.pubkey === first.agent)) continue;
+            outcomes = await client.turnStatus(
               first.sessionId,
               group.map((turn) => turn.turnId),
               active.signal,
+            );
+          } catch (error) {
+            active.signal.throwIfAborted();
+            if (
+              error instanceof Error &&
+              "status" in error &&
+              error.status === 404
             )
-            .catch((error) => {
-              // A forgotten session must not prevent other sessions recovering.
-              if (
-                error instanceof Error &&
-                "status" in error &&
-                error.status === 404
-              )
-                return undefined;
-              throw error;
-            });
+              continue;
+            console.warn("Builderlab turn status lookup failed", error);
+            if (!isRetryableAgentRead(error)) continue;
+          }
           active.signal.throwIfAborted();
-          if (!outcomes) continue;
           for (const turn of group) {
-            const outcome = outcomes.get(turn.turnId);
+            const outcome = outcomes?.get(turn.turnId);
             if (outcome) activity.reconcile(turn, outcome);
             else {
               const key = `${turn.agent}:${turn.turnId}`;
@@ -135,11 +136,7 @@ export function startTurnStatusRecovery({
         }
       } catch (error) {
         if (!active.signal.aborted) {
-          halted = true;
-          console.warn(
-            "Builderlab turn status recovery failed; retrying after reconnect",
-            error,
-          );
+          console.warn("Builderlab turn status recovery failed", error);
         }
       } finally {
         running = false;
@@ -151,12 +148,7 @@ export function startTurnStatusRecovery({
           !disposed
         )
           void run();
-        else if (
-          !disposed &&
-          current === next &&
-          credential === account &&
-          !halted
-        ) {
+        else if (!disposed && current === next && credential === account) {
           const at = Math.min(
             ...activity
               .snapshot()

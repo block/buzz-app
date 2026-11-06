@@ -581,7 +581,9 @@ available rather than silently discarding it.
 - Failed requests show **Couldn’t finish**, cancelled requests **Stopped**, and
   unconfirmed outcomes **Status unavailable**. Choose **Details** for status
   information. For your remote agents, Buzz checks again automatically when no
-  final result is available yet while you stay signed in and connected.
+  final result is available yet, or after a temporary lookup failure, while you
+  stay signed in and connected. Requests sent to several agents keep each
+  agent's stopped outcome visible alongside another agent's failure.
 - Automatic failure replies use a compact status line; **Details** expands the
   explanation inline. Failures of channel requests also appear in the channel.
 - For agents running on this device, **Details** can offer **Retry** to ask again

@@ -102,6 +102,16 @@ const nativeOwner: OwnerIdentity = {
 
 class BuilderlabUnavailable extends Error {}
 
+export function isRetryableAgentRead(error: unknown): boolean {
+  return (
+    error instanceof BuilderlabUnavailable ||
+    (error instanceof Error &&
+      "status" in error &&
+      typeof error.status === "number" &&
+      transientStatus(error.status))
+  );
+}
+
 const LINK_ERRORS: Record<string, string> = {
   identity_already_bound:
     "This Builderlab account is linked to a different Buzz identity.",
@@ -193,12 +203,7 @@ export function createAgentClient(
         return request(path, body, signal);
       },
       signal,
-      (error) =>
-        error instanceof BuilderlabUnavailable ||
-        (error instanceof Error &&
-          "status" in error &&
-          typeof error.status === "number" &&
-          transientStatus(error.status)),
+      isRetryableAgentRead,
     );
   }
   /** Builderlab's identity routes answer failures with `{ error: { code } }`. */

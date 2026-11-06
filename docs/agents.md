@@ -1269,6 +1269,9 @@ or nonterminal tasks stay unknown and are checked again with jittered backoff:
 the first delay is 15–30 seconds, doubling to a five-minute ceiling. One timeout
 serves retained unknown tasks; completed tasks do not keep polling. A missing
 session or an agent outside the owner's inventory is skipped until reconnect.
+An exhausted transient read failure uses the same delayed retry for its batch;
+other sessions can continue recovering. Permanent read failures skip that batch
+until reconnect rather than stopping all recovery.
 Account/community changes, disable/reset and disposal cancel recovery; readback
 cannot replace a received terminal result. Recovery neither archives raw activity
 nor restores history after reload. Older servers without the endpoint leave

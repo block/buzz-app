@@ -35,7 +35,7 @@ async function fixture(
   let finalStatuses: object | undefined;
   let pubkeys = [agent];
   const started = deferred<void>();
-  const hostRequest = vi.fn(async (input: { url: string; body?: string }) => {
+  const respond = async (input: { url: string; body?: string }) => {
     if (input.url.endsWith("/list-agents"))
       return {
         status: 200,
@@ -62,7 +62,8 @@ async function fixture(
       );
     }
     return result.promise;
-  });
+  };
+  const hostRequest = vi.fn(respond);
   let subject = "owner";
   const session = createTestSession(
     async () => ({
@@ -119,6 +120,7 @@ async function fixture(
     payload: unknown = {},
     turnId = "task",
     pubkey = agent,
+    sessionId = "session",
   ) =>
     activity.receive(
       {
@@ -129,7 +131,7 @@ async function fixture(
           kind,
           seq,
           turnId,
-          sessionId: start === "resolve" ? null : "session",
+          sessionId: start === "resolve" ? null : sessionId,
           channelId: "channel",
           timestamp: new Date().toISOString(),
           payload,
@@ -149,6 +151,7 @@ async function fixture(
     result,
     started,
     hostRequest,
+    respond,
     setStatus(outcomes: object) {
       finalStatuses = outcomes;
     },
@@ -318,6 +321,91 @@ it("recovers a task that finishes after an empty read without reconnecting", asy
     f.dispose();
   }
 });
+
+it.each([
+  ["list-agents", "http"],
+  ["get-agent-turn-status", "http"],
+  ["list-agents", "network"],
+  ["get-agent-turn-status", "network"],
+])(
+  "continues other sessions and retries after %s exhausts its %s retries",
+  async (path, failure) => {
+    const f = await fixture();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    let failures = 4;
+    f.hostRequest.mockImplementation(async (input) => {
+      if (input.url.endsWith(`/${path}`) && failures-- > 0) {
+        if (failure === "network") throw new Error("Network unavailable");
+        return { status: 503, headers: {}, body: "Unavailable" };
+      }
+      return f.respond(input);
+    });
+    try {
+      f.send(
+        "turn_started",
+        1,
+        { triggeringEventIds: [request] },
+        "other",
+        agent,
+        "other-session",
+      );
+      f.setStatus({ task: "completed", other: "completed" });
+      await vi.advanceTimersByTimeAsync(38000);
+      const work = (id: string) =>
+        f.activity.queries.snapshot().turns.find((turn) => turn.turnId === id)
+          ?.state;
+      expect(work("other")).toBe("ended");
+      expect(work("task")).toBe("unknown");
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(work("task")).toBe("ended");
+      const reads = f.hostRequest.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(f.hostRequest.mock.calls).toHaveLength(reads);
+    } finally {
+      f.dispose();
+    }
+  },
+);
+
+it.each([403, 404, 200])(
+  "skips a session with a permanent HTTP %s or response error without blocking others",
+  async (status) => {
+    const f = await fixture();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    f.hostRequest.mockImplementation(async (input) => {
+      if (
+        input.url.endsWith("/get-agent-turn-status") &&
+        JSON.parse(input.body ?? "{}").session_id === "session"
+      )
+        return { status, headers: {}, body: "{}" };
+      return f.respond(input);
+    });
+    try {
+      f.send(
+        "turn_started",
+        1,
+        { triggeringEventIds: [request] },
+        "other",
+        agent,
+        "other-session",
+      );
+      f.setStatus({ task: "completed", other: "completed" });
+      await vi.advanceTimersByTimeAsync(31000);
+      expect(f.work()).toBe("unknown");
+      expect(
+        f.activity.queries
+          .snapshot()
+          .turns.find((turn) => turn.turnId === "other")?.state,
+      ).toBe("ended");
+      const reads = f.hostRequest.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(f.hostRequest.mock.calls).toHaveLength(reads);
+    } finally {
+      f.dispose();
+    }
+  },
+);
 
 it("backs off missing results to a five-minute ceiling without overlapping reads", async () => {
   vi.spyOn(Math, "random").mockReturnValue(1);

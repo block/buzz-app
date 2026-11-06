@@ -299,10 +299,13 @@ function MessageActivity(
       entry.state === "error" ||
       entry.state === "unknown",
   );
-  // Once its live bubble has left, a stopped request stays noted here. It sits
+  // Once its own live bubble has left, a stopped request stays noted here. It sits
   // in the incoming message frame without a gutter, so it starts at the reply
   // avatars' edge.
-  const noted = bubble.length ? [] : stopped.filter(visible);
+  const noted = stopped.filter(
+    (entry) =>
+      visible(entry) && !bubble.some((row) => row.agent === entry.agent),
+  );
   const note = noted.length ? (
     <div
       className={`${messageStyles.message} ${styles.outcome}`}
@@ -341,88 +344,94 @@ function MessageActivity(
   );
   if (compact)
     return (
+      <>
+        <section
+          ref={section}
+          className={`${messageStyles.message} ${styles.outcome}`}
+          data-layout={props.messageLayout ?? "timeline"}
+          data-activity-outcome=""
+          aria-label="Agent activity on this message"
+          aria-hidden={shown.length ? undefined : true}
+        >
+          {stoppedAgent && <div className={messageStyles.messageGutter} />}
+          <div
+            className={`${styles.root} ${styles.caption} text-caption text-subtle`}
+            aria-live="polite"
+          >
+            {!stoppedAgent && (
+              <>
+                <AvatarStack
+                  size="mini"
+                  items={bubble.map((entry) => ({
+                    id: entry.agent,
+                    name: entry.name,
+                    src: avatarMedia(entry.picture, session.media),
+                    shape: "squircle",
+                  }))}
+                />
+                <span>{bubble.map((entry) => entry.name).join(", ")} ·</span>
+              </>
+            )}
+            <ActivityBubble
+              {...props}
+              entries={bubble}
+              interactive={shown.length > 0}
+              onRetried={focusAfterRetry}
+              compact
+            />
+          </div>
+        </section>
+        {note}
+      </>
+    );
+  return (
+    <>
       <section
         ref={section}
-        className={`${messageStyles.message} ${styles.outcome}`}
-        data-layout={props.messageLayout ?? "timeline"}
-        data-activity-outcome=""
+        className={`${styles.root} buzz-arrive`}
+        data-message-activity=""
+        data-arrive="grow"
+        data-leaving={shown.length ? undefined : ""}
+        data-buzz-ui=""
         aria-label="Agent activity on this message"
         aria-hidden={shown.length ? undefined : true}
       >
-        {stoppedAgent && <div className={messageStyles.messageGutter} />}
-        <div
-          className={`${styles.root} ${styles.caption} text-caption text-subtle`}
-          aria-live="polite"
+        <AgentResponsePreview
+          name={primary.name}
+          bylineHint={
+            <RemoteAgentHint
+              session={session}
+              viewer={session.viewer}
+              pubkey={primary.agent}
+            />
+          }
+          participants={bubble.map((entry) => ({
+            id: entry.agent,
+            name: entry.name,
+            picture: avatarMedia(entry.picture, session.media),
+          }))}
+          picture={avatarMedia(primary.picture, session.media)}
+          layout={props.messageLayout}
         >
-          {!stoppedAgent && (
-            <>
-              <AvatarStack
-                size="mini"
-                items={bubble.map((entry) => ({
-                  id: entry.agent,
-                  name: entry.name,
-                  src: avatarMedia(entry.picture, session.media),
-                  shape: "squircle",
-                }))}
-              />
-              <span>{bubble.map((entry) => entry.name).join(", ")} ·</span>
-            </>
-          )}
+          {shown.map((entry) => (
+            <TypingReplacement
+              shared
+              key={entry.agent}
+              {...props}
+              agent={entry.agent}
+            />
+          ))}
           <ActivityBubble
+            key={`${channelId}:${message?.id ?? ""}`}
             {...props}
             entries={bubble}
             interactive={shown.length > 0}
             onRetried={focusAfterRetry}
-            compact
           />
-        </div>
+        </AgentResponsePreview>
       </section>
-    );
-  return (
-    <section
-      ref={section}
-      className={`${styles.root} buzz-arrive`}
-      data-message-activity=""
-      data-arrive="grow"
-      data-leaving={shown.length ? undefined : ""}
-      data-buzz-ui=""
-      aria-label="Agent activity on this message"
-      aria-hidden={shown.length ? undefined : true}
-    >
-      <AgentResponsePreview
-        name={primary.name}
-        bylineHint={
-          <RemoteAgentHint
-            session={session}
-            viewer={session.viewer}
-            pubkey={primary.agent}
-          />
-        }
-        participants={bubble.map((entry) => ({
-          id: entry.agent,
-          name: entry.name,
-          picture: avatarMedia(entry.picture, session.media),
-        }))}
-        picture={avatarMedia(primary.picture, session.media)}
-        layout={props.messageLayout}
-      >
-        {shown.map((entry) => (
-          <TypingReplacement
-            shared
-            key={entry.agent}
-            {...props}
-            agent={entry.agent}
-          />
-        ))}
-        <ActivityBubble
-          key={`${channelId}:${message?.id ?? ""}`}
-          {...props}
-          entries={bubble}
-          interactive={shown.length > 0}
-          onRetried={focusAfterRetry}
-        />
-      </AgentResponsePreview>
-    </section>
+      {note}
+    </>
   );
 }
 

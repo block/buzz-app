@@ -128,8 +128,11 @@ it("hides confirmed muted Team rows, keeps exceptions, and marks resurfaced atte
   if (!render_) throw new Error("missing render");
   const host = <button type="button">host</button>;
   expect(render_(row("beta"), host)).toBeNull();
-  expect(render_(row("alpha"), host)).toBe(host);
   expect(render_(row("person", { kind: "dm" }), host)).toBe(host);
+  expect(render_(row("beta", { selected: true }), null)).toBeNull();
+  expect(
+    render_(row("beta", { unread: { ...quiet, attentionCount: 1 } }), null),
+  ).toBeNull();
   const starred = render_(row("gamma", { sectionKey: "starred" }), host);
   const open = render_(row("beta", { selected: true }), host);
   const mentioned = render_(
@@ -153,7 +156,27 @@ it("hides confirmed muted Team rows, keeps exceptions, and marks resurfaced atte
   expect(marks(mentioned)).toBe(1);
   expect(marks(manual)).toBe(1);
   f.state.cached = true;
-  expect(render_(row("beta"), host)).toBe(host);
+  expect(render_(row("beta"), host)).not.toBeNull();
+});
+
+it("keeps the host row mounted as mute and attention change", () => {
+  const f = fakeSession("one");
+  const render_ = hideMutedRows(fakeRelay(f.session).relay).render;
+  if (!render_) throw new Error("missing render");
+  const host = <button type="button">host</button>;
+  const open = (unread = quiet) => (
+    <>{render_(row("beta", { selected: true, unread }), host)}</>
+  );
+  const view = render(open({ ...quiet, attentionCount: 1 }));
+  const button = view.getByRole("button", { name: "host" });
+  const dot = () => view.container.querySelector("[data-hide-muted-attention]");
+  expect(dot()).toBeInTheDocument();
+  view.rerender(open());
+  expect(dot()).toBeNull();
+  f.state.muted = [];
+  view.rerender(open({ ...quiet, attentionCount: 1 }));
+  expect(view.getByRole("button", { name: "host" })).toBe(button);
+  expect(dot()).toBeNull();
 });
 
 it("lists hidden muted channels and follows attention, mutes and sessions", () => {

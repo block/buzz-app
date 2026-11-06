@@ -48,14 +48,16 @@ export function hideMutedRows(relay: RelayData): SidebarRowContribution {
     version: 1,
     id: "hide-muted",
     render: (row, Default) => {
+      // An earlier contribution may already have hidden the row.
+      if (Default === null || row.kind !== "team") return Default;
       const muted = mutedIds(relay);
       if (hidesRow(row, muted)) return null;
-      // One wrapper for every visible muted Team row keeps the host element's
-      // tree position stable as attention comes and goes.
-      return row.kind === "team" && muted.has(row.id) ? (
-        <AttentionMark active={attention(row.unread)}>{Default}</AttentionMark>
-      ) : (
-        Default
+      // Every Team row keeps one wrapper so mute and attention changes toggle
+      // only the dot, never the host element's tree position.
+      return (
+        <AttentionMark active={muted.has(row.id) && attention(row.unread)}>
+          {Default}
+        </AttentionMark>
       );
     },
   };

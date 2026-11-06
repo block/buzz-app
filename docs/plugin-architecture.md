@@ -116,15 +116,21 @@ open 'buzz://plugin-install?repository=OWNER%2FPLUGINS&path=plugins%2Fone&commit
 `path` names the plugin folder inside the repository. It is relative and
 `/`-separated; absolute paths, `.` or `..` segments, empty segments, backslashes and
 control characters make the link invalid, and an empty value or `.` means the
-repository root. The review then offers only that folder instead of asking you to
-choose, and refuses a repository with no plugin there.
+repository root. Native Git import receives it and lists only that folder of the
+commit, so the 20,000-entry limit applies to the folder rather than the whole
+repository. Candidate paths stay relative to the repository root, and a folder that
+does not exist at the commit is an error. The review then offers only that folder
+instead of asking you to choose, and refuses a repository with no plugin there.
 
 `commit` is a full 40- or 64-digit hex commit. It pins the link the same way
-`requestInstall` pins a plugin's request: the import refuses a reference whose tip is
-any other commit, the review checks the fetched commit again, and nothing installs
-unless it matches. A link that carries `path` or `commit` locks the repository and
-reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
-`path` and `commit` may appear once; a repeated key makes the link invalid.
+`requestInstall` pins a plugin's request: the import fetches that commit directly and
+refuses it unless it is reachable from the named reference (the repository default
+branch when `ref` is omitted), so a commit older than the reference's tip installs
+while one from another branch does not. The review checks the fetched commit again, and
+nothing installs unless it matches. A link that carries `path` or `commit` locks the
+repository, reference and folder fields, so Find retries the same pinned source. Each of
+`repository`, `ref`, `path` and `commit` may appear once; a repeated key makes the link
+invalid.
 
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
@@ -211,7 +217,8 @@ rollback, and restart. A saved choice overrides the plugin default.
 
 The desktop shell checks eligible saved Git sources at startup and once per hour
 while Buzz is visible. `imports.checkGit` reads metadata without taking the import
-preview slot. Checks do not install, reload, or stop a plugin. Folder sources
+preview slot, limited to the saved folder and, for a managed source, read at its
+pinned commit. Checks do not install, reload, or stop a plugin. Folder sources
 keep their existing update flow.
 
 A shell notice offers **Update and reload** when access does not increase.
@@ -310,8 +317,8 @@ type PluginInstaller = {
   requestInstall(source: {
     repository: string; // https://, ssh:// or scp-style git URL
     reference: string; // branch or tag
-    path?: string; // relative folder inside the repository
-    commit?: string; // 40- or 64-hex; install exactly this commit
+    path?: string; // relative folder inside the repository; only it is read
+    commit?: string; // 40- or 64-hex; install exactly this commit, on `reference`
   }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
 };
 ```
@@ -340,9 +347,10 @@ including a local folder or an unknown one, is refused with a message naming bot
 sources; remove it first to install it from the new one. Dismissing the review of a
 plugin already at the requested revision resolves `cancelled`, because nothing was
 installed. The folder source is hidden while a request is open. When `commit` is
-given, the native Git import refuses a reference whose tip is any other commit, so a
-branch that moves after a catalog review cannot install unreviewed code, and the
-review checks the fetched commit again before offering to install.
+given, the native Git import fetches that commit and refuses it unless it is reachable
+from `reference`, so a branch that moves after a catalog review cannot install unreviewed
+code, a commit from another branch cannot be shown as on this one, and the review
+checks the fetched commit again before offering to install.
 
 ### Conversation sidebar sections
 
@@ -1862,8 +1870,10 @@ does not sandbox plugin code or make a publisher trustworthy.
 
 Desktop Settings → Plugins → Manage plugins loads a folder with the native folder picker, or an
 HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
-or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
-guidance rather than ambiguously splitting branch names and subfolders. Discovery
+or tag and an optional folder are separate from the repository URL; GitHub `tree` URLs
+are rejected with guidance rather than ambiguously splitting branch names and
+subfolders. With a folder, only that folder is listed (candidate paths stay relative to
+the repository root), which lets a very large repository import. Discovery
 lists built plugin folders by path, name and manifest ID, including nested `dist`
 folders. Choose one and explicitly install. An already-installed plugin offers
 Open in Buzz, which discards the preview and opens its installed details. Choosing
@@ -1929,8 +1939,8 @@ saved source keeps the entered URL. Other SSH sources use the desktop process's
 inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with interactive prompts and SSH
 config disabled. For another agent selected by `IdentityAgent` in SSH config, add a
 rule with that socket, or launch the app with it in `SSH_AUTH_SOCK`.
-Each check reads metadata from its own temporary clone; only Update retains an
-immutable installation preview. The source
+Each check reads metadata from its own temporary repository, limited to the saved
+folder; only Update retains an immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
 in Settings and consumes the previous revision: it cannot toggle forward again. The
 enabled/disabled choice is preserved; a later update establishes a new rollback target. Missing sources or changed
@@ -1957,20 +1967,32 @@ confine descendant path resolution. Files must be regular and non-symlink;
 manifests, modules, READMEs, signatures and candidate folder names must be UTF-8,
 while icons are validated as binary PNGs or JPEGs. Folder names are not lossily normalized.
 Discovery never evaluates modules. Git is a required local
-tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
-submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
+tool: a shallow, blobless, no-checkout repository reads committed blobs, without hooks,
+filters, submodules, LFS downloads or project scripts. Without a pinned commit it is a
+depth-1 clone of the reference tip. With one, Buzz initializes an empty repository and
+fetches only that commit and its trees, then fetches the reference's commit history
+without trees or blobs and requires `merge-base --is-ancestor` to succeed. A host that
+refuses to serve a commit by its ID falls back to the tip clone, and the pin must then
+equal the tip. Listing is limited to the requested folder with `ls-tree`, and the
+20,000-entry limit applies to that listing. The blobs Buzz needs are fetched together
+from the same remote on demand, and every Git process, including those lazy fetches,
+runs with the same disabled hooks, protocol allow list, authorization headers and SSH
+agent socket. The 256 MiB, 60 second and per-file limits cover all of it.
+
+Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
 SSH uses the selected agent and known hosts, not user SSH config; password entry, HTTPS
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
-A caller may require a commit: the import then refuses a reference that resolves to
-anything else, and records that commit in the saved source. An unpinned import records
+A caller may require a commit: the import then refuses a commit that is not reachable
+from the reference, and records that commit in the saved source. An unpinned import records
 no commit, so its registry stays readable by older versions.
 [Managed plugin sources](managed-plugins.md) use this.
 
 Git acquisition has a 60-second deadline (including blob discovery), an observed
-256 MiB repository limit and bounded command output; transport processes are killed
+256 MiB repository limit (the repository holds the fetched trees, commits and the
+blobs read, not a full checkout) and bounded command output; transport processes are killed
 on failure before temporary cleanup. These are polling limits, not hard OS quotas.
 Folder traversal checks a 60-second budget between directory reads (a hung filesystem
 syscall is not forcibly cancelled), 32 nesting levels and 20,000 entries. A preview

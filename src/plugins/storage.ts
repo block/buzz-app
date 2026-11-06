@@ -125,18 +125,21 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         previewFolder: (id) => invoke("plugin_update_preview", { id }),
         files: (source, files) =>
           invoke("plugin_import_folder", { upload: { source, files } }),
-        git: (repository, reference, authorization, commit) =>
+        git: (repository, reference, authorization, scope) =>
           invoke("plugin_import_git", {
             repository,
             reference,
             authorization,
-            commit,
+            commit: scope?.commit,
+            path: scope?.path,
           }),
-        checkGit: (repository, reference, authorization) =>
+        checkGit: (repository, reference, authorization, scope) =>
           invoke("plugin_import_git", {
             repository,
             reference,
             authorization,
+            commit: scope?.commit,
+            path: scope?.path,
             checkOnly: true,
           }),
         install: (token, path) =>

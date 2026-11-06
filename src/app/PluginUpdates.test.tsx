@@ -504,7 +504,7 @@ it.each([true, false])(
         f.source.repository,
         "main",
         undefined,
-        "a".repeat(40),
+        { commit: "a".repeat(40) },
       ),
     );
     if (matches)

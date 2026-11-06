@@ -23,17 +23,36 @@ export function buzzPin(manifest) {
   return { git: match[1], rev: match[2] };
 }
 
+// Replace the staged binary whole.
+function stage(root, file, name) {
+  const destination = join(root, "src-tauri/resources/bin");
+  mkdirSync(destination, { recursive: true });
+  const binary = join(destination, name);
+  copyFileSync(file, `${binary}.new`);
+  chmodSync(`${binary}.new`, 0o755);
+  renameSync(`${binary}.new`, binary);
+  return binary;
+}
+
 if (import.meta.main) {
   const root = fileURLToPath(new URL("../", import.meta.url));
-  const { git, rev } = buzzPin(
-    readFileSync(join(root, "src-tauri/Cargo.toml"), "utf8"),
-  );
   const triple = process.env.TAURI_ENV_TARGET_TRIPLE;
-  const dev = process.argv.includes("--dev");
   const windows = triple
     ? triple.includes("windows")
     : process.platform === "win32";
   const name = windows ? "buzz.exe" : "buzz";
+  // Distribution builds without network access build buzz themselves and pass
+  // it in BUZZ_CLI_BINARY; it is staged as is.
+  const prebuilt = process.env.BUZZ_CLI_BINARY;
+  if (prebuilt) {
+    const binary = stage(root, prebuilt, name);
+    console.log(`buzz staged at ${binary} from ${prebuilt}`);
+    process.exit(0);
+  }
+  const { git, rev } = buzzPin(
+    readFileSync(join(root, "src-tauri/Cargo.toml"), "utf8"),
+  );
+  const dev = process.argv.includes("--dev");
   const target = process.env.CARGO_TARGET_DIR || join(root, "target");
   // A separate prefix per revision, target and profile lets Cargo skip an
   // install that is already current without --force.
@@ -65,11 +84,6 @@ if (import.meta.main) {
   );
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
-  const destination = join(root, "src-tauri/resources/bin");
-  mkdirSync(destination, { recursive: true });
-  const binary = join(destination, name);
-  copyFileSync(join(prefix, "bin", name), `${binary}.new`);
-  chmodSync(`${binary}.new`, 0o755);
-  renameSync(`${binary}.new`, binary);
+  const binary = stage(root, join(prefix, "bin", name), name);
   console.log(`buzz ${rev.slice(0, 12)} staged at ${binary}`);
 }

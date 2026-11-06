@@ -788,6 +788,57 @@ it("keeps a return path for addressed plugin settings and retires it on Close", 
   ).not.toBeInTheDocument();
 });
 
+it("Close retires a plugin install link's Settings visit with the others", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).not.toBe("opening"),
+  );
+  const beneath = current.navigation.snapshot().entry;
+  const plugins = { version: 1, kind: "settings", section: "plugins" } as const;
+  void current.navigation.open(plugins);
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  // A buzz://plugin-install link opens this target. jsdom has no desktop
+  // importer, so its review dialog stays hidden, but the visit is recorded.
+  const link = {
+    ...plugins,
+    pluginImport: {
+      repository: "https://github.com/org/repo",
+      reference: "main",
+    },
+  };
+  void current.navigation.open(link);
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { target: link },
+    }),
+  );
+  current.navigation.back();
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toEqual(plugins),
+  );
+  fireEvent.keyDown(settings, { key: "Escape" });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  expect(current.navigation.snapshot().entry).toEqual(beneath);
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+});
+
 it("Back closes Settings onto the view beneath and Forward reopens it; other shortcuts stay blocked", async () => {
   vi.stubGlobal(
     "ResizeObserver",

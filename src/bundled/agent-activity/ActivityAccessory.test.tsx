@@ -1688,9 +1688,10 @@ it.each([
           name: `View agent activity: Blossom, ${label}`,
         }),
       ).toBeVisible();
+      // The message bubble is the agent's one working indicator here.
       expect(
-        screen.getByRole("button", { name: "Activity: Blossom working" }),
-      ).toBeVisible();
+        screen.queryByRole("button", { name: /Activity: .*working/ }),
+      ).toBeNull();
       expect(screen.getAllByText(label)).toHaveLength(1);
       view.rerender(ui([A]));
       expect(
@@ -1698,6 +1699,9 @@ it.each([
           name: `View agent activity: Blossom, ${label}`,
         }),
       ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: /Activity: .*working/ }),
+      ).toBeNull();
       expect(
         screen.queryByRole("button", { name: "Reading notes.txt" }),
       ).toBeNull();
@@ -1867,6 +1871,10 @@ it("shows thinking once across the live bubble, recorded history and conversatio
   const view = render(ui(false));
   try {
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
+    // Until history owns the work, the message bubble is its one indicator.
+    expect(
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
     view.rerender(ui(true));
     expect(
       screen.queryByLabelText("Agent activity on this message"),

@@ -721,7 +721,8 @@ available rather than silently discarding it.
   its speaker. Thread work appears inside its thread; the channel’s reply summary
   still shows when an agent is working there. Dots remain at the end of the
   conversation while agents work, alongside current step details when available.
-  With Reduce Motion enabled, the dots stay still. Open the live indicator or
+  While the activity under your message shows an agent working, it is that
+  agent's only working indicator. With Reduce Motion enabled, the dots stay still. Open the live indicator or
   expand recorded work to view the agent’s activity or **Stop** the running
   request. The live indicator keeps its controls while recorded updates are
   visible. Stop availability depends on the agent type.

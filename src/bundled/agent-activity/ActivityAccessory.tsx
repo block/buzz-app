@@ -416,6 +416,7 @@ function MessageActivity(
           {shown.map((entry) => (
             <TypingReplacement
               shared
+              presence={bubble.some((row) => row.agent === entry.agent)}
               key={entry.agent}
               {...props}
               agent={entry.agent}
@@ -878,9 +879,15 @@ function TypingReplacement({
   threadRootId,
   agent,
   shared = false,
-}: ComposerAccessoryProps & { agent: string; shared?: boolean }) {
+  presence = false,
+}: ComposerAccessoryProps & {
+  agent: string;
+  shared?: boolean;
+  /** This bubble shows the agent working, so the conversation shows no second cue. */
+  presence?: boolean;
+}) {
   useActivityTypingReplacement(
-    { session, channelId, threadRootId, pubkey: agent },
+    { session, channelId, threadRootId, pubkey: agent, presence },
     shared,
   );
   useTypingReplacement(

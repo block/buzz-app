@@ -465,6 +465,98 @@ test.describe("Share access profiles", () => {
       await expect(opener).toBeFocused();
     }
   });
+  test("another profile opened from Share access and closed before an earlier close returns keeps its opener", async ({
+    page,
+    app,
+  }) => {
+    app.serveProfile(teammate, { name: "Sam Rivera" });
+    app.serveProfile(scout, { name: "Scout", is_agent: true }, teammate);
+    await page.goto(app.origin);
+    await newChat(page);
+    await page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .locator(`[data-solo-channel-id="${id}"]`)
+      .click();
+    const conversation = page.getByRole("article", { name: "Conversation" });
+    const share = conversation.getByRole("button", {
+      name: /^Share access to /,
+    });
+    const actions = conversation.getByRole("button", {
+      name: "Chat actions",
+      exact: true,
+    });
+    const dialog = page.getByRole("dialog", {
+      name: "Share access",
+      exact: true,
+    });
+    const sam = page.getByRole("tab", { name: "Sam Rivera", exact: true });
+    const agent = page.getByRole("tab", { name: "Scout", exact: true });
+    const entry = () =>
+      page.evaluate(() => history.state.buzzNavigationV1.entry);
+    const shareFromActions = async () => {
+      await actions.click();
+      await page
+        .getByRole("menuitem", { name: "Share access", exact: true })
+        .click();
+    };
+    // The second profile's opener differs from the first's, so only its own
+    // control can take focus back.
+    for (const [openFirst, openSecond, opener] of [
+      [() => share.click(), shareFromActions, actions],
+      [shareFromActions, () => share.click(), share],
+    ]) {
+      await openFirst();
+      await dialog
+        .getByRole("button", { name: /^Open profile for Sam Rivera/ })
+        .press("Enter");
+      await expect(sam).toBeFocused();
+      const closed = await entry();
+      const header = await opener.elementHandle();
+      // Hold the close's native return so Scout's profile is queued, with no
+      // visit of its own, and closes while the navigator still shows Sam's.
+      await page.evaluate(() => {
+        const go = history.go.bind(history);
+        const held = [];
+        history.go = (delta) => held.push(delta);
+        window.releaseReturn = () => {
+          history.go = go;
+          for (const delta of held) go(delta);
+          return held.length;
+        };
+      });
+      let held;
+      try {
+        await sam.press("Escape");
+        await expect(sam).toHaveCount(0);
+        await openSecond();
+        await dialog
+          .getByRole("button", { name: /^Open profile for Scout\b/ })
+          .press("Enter");
+        await expect(dialog).toHaveCount(0);
+        await expect(agent).toBeFocused();
+        await agent.press("Escape");
+        await expect(agent).toHaveCount(0);
+        expect((await entry()).id).toBe(closed.id);
+      } finally {
+        held = await page.evaluate(() => window.releaseReturn());
+      }
+      expect(held).toBe(1);
+      // The return lands on the chat and remounts its header. Neither profile
+      // comes back, and the second one's opener takes focus.
+      await expect
+        .poll(async () => {
+          const shown = await entry();
+          return shown.id !== closed.id && !shown.target.detail;
+        })
+        .toBe(true);
+      await expect
+        .poll(() => header.evaluate((el) => el.isConnected))
+        .toBe(false);
+      await expect(sam).toHaveCount(0);
+      await expect(agent).toHaveCount(0);
+      await expect(opener).toBeFocused();
+    }
+  });
   test("a profile restored by Back or Forward returns focus only to its own opener", async ({
     page,
     app,

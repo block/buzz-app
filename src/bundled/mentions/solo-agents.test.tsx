@@ -3610,7 +3610,7 @@ type DirectoryPage = {
 function spaceFixture(
   memberName: string,
   others: Record<string, string | null> = {},
-  options: { query?: string; dm?: boolean } = {},
+  options: { query?: string; dm?: boolean; teams?: readonly string[] } = {},
 ) {
   const h = setup();
   h.profiles.set(h.member, { name: memberName });
@@ -3644,9 +3644,39 @@ function spaceFixture(
   const publish = vi.fn();
   const result = () =>
     publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  // Legacy catalog teams with these names, each of the member alone.
+  const catalog = {
+    status: "ready" as const,
+    entries: (options.teams ?? []).map((name, index) => ({
+      eventId: `team-${index}`,
+      createdAt: 1,
+      record: {
+        version: 1 as const,
+        community: "fixture",
+        deleted: false,
+        value: {
+          type: "team" as const,
+          id: `team-${index}`,
+          name,
+          agents: [h.member],
+        },
+      },
+    })),
+  };
+  const channelKit: NonNullable<RelaySession["channelKit"]> = {
+    available: true,
+    snapshot: () => catalog,
+    subscribe: () => () => {},
+    ensure() {},
+    async refresh() {},
+    async save() {
+      return "head";
+    },
+  };
   const session = {
     ...h.session,
     names,
+    ...(options.teams ? { channelKit } : {}),
     channels: { ...h.session.channels, list: () => list },
     directMessages: { ...h.session.directMessages, people },
   } as unknown as RelaySession;
@@ -3776,6 +3806,27 @@ it("Space selects a member by a pasted npub beside a namesake, without waiting f
     h.dispose();
   }
 });
+it.each([
+  { case: "that name", suffix: "" },
+  { case: "a longer name", suffix: " Crew" },
+])(
+  "Space selects a member by a pasted npub beside a saved team with $case",
+  async ({ suffix }) => {
+    const query = npubEncode("a".repeat(64));
+    const h = spaceFixture("Jose", {}, { query, teams: [query + suffix] });
+    try {
+      await waitFor(() =>
+        expect(h.people).toHaveBeenCalledWith(query, 1, expect.anything()),
+      );
+      // A key is not a name: the team neither matches it nor declines Space.
+      await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
+      expect(h.result()?.items.map((item) => item.id)).toEqual([h.member]);
+      expect(h.canSpace(h.member)).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 it("Space selects someone outside the channel by a pasted npub once the directory finds them", async () => {
   const query = npubEncode(outsideJose);
   const h = spaceFixture("Jose", {}, { query });

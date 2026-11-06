@@ -218,7 +218,8 @@ set of choices when all of these are true:
 
 An exact public key (Terms) is the exact name of the choice with that key, even
 one with no aliases, and of no other choice, and no name continues it: a key
-has no namesakes. The steps below then apply as for a name.
+has no namesakes. Nor does a saved team with the same or a longer name keep it
+from selecting. The steps below then apply as for a name.
 
 The **local** choices are the ones known without the directory search: the
 channel's members and the agents the client offers for mention (section 1, items

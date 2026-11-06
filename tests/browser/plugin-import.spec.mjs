@@ -904,7 +904,9 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       name: "Cancel",
       exact: true,
     });
-    await expect(cancel).toBeFocused();
+    await expect(
+      rollback.getByRole("button", { name: "Roll back", exact: true }),
+    ).toBeFocused();
     await expect(rollback).not.toContainText("enabled or disabled");
     const scrim = page.locator(".buzz-dialog-backdrop[data-alert-dialog]");
     await expect(scrim).toBeVisible();

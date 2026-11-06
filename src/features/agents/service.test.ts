@@ -12942,7 +12942,7 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
   const handle = plugin.agents.handle(bot);
   if (!handle?.readAgents || !handle.readTeams || !handle.updateTeam)
     throw new Error("Missing config handles");
-  expect(handle.readAgents()).toEqual([
+  expect(await handle.readAgents()).toEqual([
     expect.objectContaining({ pubkey: bot, name: "Parent" }),
     expect.objectContaining({ pubkey: sibling, name: "Child" }),
     {
@@ -12952,12 +12952,42 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
       unavailable: "Its provider keeps its config",
     },
   ]);
-  expect(handle.readAgents("Child")).toMatchObject({
+  expect(await handle.readAgents("Child")).toMatchObject({
     pubkey: sibling,
     type: "example/echo",
     synced: false,
   });
-  expect(() => handle.readAgents?.("Nobody")).toThrow("no agent");
+  await expect(handle.readAgents("Nobody")).rejects.toThrow("no agent");
+  // Synced config the owner can read is returned, read only.
+  const internals = service as unknown as {
+    callerOrigin(agent: unknown): string;
+    communityConfigs: Map<string, unknown>;
+  };
+  const origin = internals.callerOrigin(service.find(bot));
+  const before = internals.communityConfigs.get(origin);
+  const readInstructions = vi.fn(async () => ({
+    instructions: "Fly.",
+    revision: "r1",
+  }));
+  internals.communityConfigs.set(origin, {
+    binding: () => undefined,
+    ...(before as object),
+    readInstructions,
+  });
+  try {
+    expect(await handle.readAgents("Sky")).toEqual({
+      pubkey: hostedKey,
+      name: "Sky",
+      type: "example/cloud",
+      instructions: "Fly.",
+      revision: "r1",
+      synced: true,
+    });
+    expect(readInstructions).toHaveBeenCalledWith(hostedKey);
+  } finally {
+    if (before) internals.communityConfigs.set(origin, before);
+    else internals.communityConfigs.delete(origin);
+  }
   expect(handle.readTeams(team.id)).toEqual({
     id: team.id,
     name: "Crew",

@@ -11,6 +11,7 @@ import {
 import {
   type ArtifactType,
   artifactD,
+  artifactOp,
   type artifactTemplate,
   checkedHead,
   readHead,
@@ -646,6 +647,33 @@ export function agentConfigs(
         );
       }
       return results;
+    },
+    /** Another device's agent's synced instructions, read without creating
+     * or binding anything; undefined when there are none to read. */
+    async readInstructions(pubkey: string) {
+      const channel = await channels.find(
+        "agent-config",
+        agentSubject(pubkey),
+        signal,
+      );
+      if (!channel || channel.archived) return undefined;
+      const type = "buzz.agent.instructions";
+      const expected = {
+        channel: channel.id,
+        type,
+        d: await artifactD(type, channel.id),
+      } as const;
+      const head = await readHead(input.read, channel.id, expected.d, signal);
+      if (
+        !head ||
+        artifactOp(head) === "delete" ||
+        "problem" in checkedHead(head, expected)
+      )
+        return undefined;
+      return {
+        instructions: (JSON.parse(head.content) as { text: string }).text,
+        revision: head.id,
+      };
     },
     /** Archives the agent's config channel as its Delete's last relay step
      * (NIP-AP "Deleting an agent"). Online only: a failure throws, and the

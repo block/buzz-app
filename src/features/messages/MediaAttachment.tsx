@@ -43,6 +43,7 @@ type MediaAttachmentProps = {
   mode?: "inline" | "thread";
   imageDescription?: string;
   preload?: "auto" | "metadata" | "none";
+  loading?: "lazy" | "eager";
   seekTo?: number;
   seekRequest?: number;
   onPlayback?(playback: MediaPlayback): void;
@@ -88,6 +89,7 @@ export function MediaAttachment({
   mode = "inline",
   imageDescription = "Attachment preview",
   preload = "auto",
+  loading = "lazy",
   seekTo,
   seekRequest,
   onPlayback,
@@ -174,7 +176,7 @@ export function MediaAttachment({
             <img
               src={source}
               alt={imageDescription}
-              loading="lazy"
+              loading={loading}
               onLoad={(event) =>
                 setMeasuredDimensions({
                   width: event.currentTarget.naturalWidth,

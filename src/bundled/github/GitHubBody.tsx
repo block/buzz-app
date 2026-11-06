@@ -199,6 +199,7 @@ function EmbeddedAttachment({
   return (
     <div
       className={styles.attachment}
+      data-loaded={loaded ? "" : undefined}
       onLoadCapture={() => setLoaded(shown)}
       onLoadedDataCapture={() => setLoaded(shown)}
       onErrorCapture={() => {
@@ -260,6 +261,7 @@ function BodyMedia({
               ? { imageDescription: description }
               : {})}
             preload="metadata"
+            loading="eager"
           />
         )
       }

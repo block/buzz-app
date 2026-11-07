@@ -586,6 +586,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   that conversation when you go to another conversation or page and come back,
   until you close it. Reloading Buzz does not restore it. The Terminal drawer
   closes when you leave the conversation.
+- **Terminal font**: in **Settings → Plugins → Terminal**, pick a font from the
+  searchable **Font family** dropdown on macOS, or type an exact family name
+  where Buzz has no font list. Restart Buzz after installing a font. For Nerd
+  Font icons, choose a Nerd Font's Mono variant.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.

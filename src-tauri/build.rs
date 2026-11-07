@@ -236,6 +236,7 @@ fn main() {
             "terminal_resize",
             "terminal_close",
             "terminal_close_owner",
+            "terminal_font_families",
             "update_restart",
             "browser_attach",
             "browser_set_bounds",

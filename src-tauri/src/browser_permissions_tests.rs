@@ -221,6 +221,7 @@ fn native_command_permissions_isolate_webviews() {
         "terminal_resize",
         "terminal_close",
         "terminal_close_owner",
+        "terminal_font_families",
         "update_restart",
         "browser_attach",
         "browser_set_bounds",

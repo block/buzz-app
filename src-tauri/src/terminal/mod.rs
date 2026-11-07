@@ -365,3 +365,22 @@ pub(crate) async fn terminal_close_owner(
         .await
         .map_err(|e| e.to_string())?
 }
+
+/// Installed font families the terminal settings can offer. Synchronous, so
+/// Tauri runs it on the main thread AppKit requires. Other hosts offer none and
+/// keep the free-text field.
+#[tauri::command]
+pub(crate) fn terminal_font_families() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    if let Some(marker) = objc2::MainThreadMarker::new() {
+        let manager = objc2_app_kit::NSFontManager::sharedFontManager(marker);
+        let mut families: Vec<String> = manager
+            .availableFontFamilies()
+            .iter()
+            .map(|family| family.to_string())
+            .collect();
+        families.sort_by_key(|family| family.to_lowercase());
+        return families;
+    }
+    Vec::new()
+}

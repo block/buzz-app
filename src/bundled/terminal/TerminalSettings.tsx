@@ -1,8 +1,9 @@
-import { useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
@@ -41,14 +42,19 @@ export function createTerminalSettingsDraft() {
   };
 }
 
+const noFamilies = async (): Promise<readonly string[]> => [];
+
 export function TerminalSettings({
   font,
   drafts,
   active,
+  families = noFamilies,
 }: {
   font: TerminalFontPreference;
   drafts: ReturnType<typeof createTerminalSettingsDraft>;
   active(): boolean;
+  /** Installed families to choose from; with none, the family is typed. */
+  families?: () => Promise<readonly string[]>;
 }) {
   const { family, size, error } = useSyncExternalStore(
     font.subscribe,
@@ -60,6 +66,18 @@ export function TerminalSettings({
     blurredValue,
   } = useSyncExternalStore(drafts.subscribe, drafts.snapshot);
   const familyInput = useRef<HTMLInputElement>(null);
+  const [installed, setInstalled] = useState<readonly string[]>([]);
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    let current = true;
+    void families().then(
+      (list) => current && setInstalled(list),
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [families]);
   const value = draft ?? family ?? "";
   const parsed = parseFontFamily(value);
   const invalid = draft !== null && parsed === null;
@@ -74,6 +92,15 @@ export function TerminalSettings({
     (draft === null || blurredValue === value);
   const canApply =
     !invalid && (parsed === family || availability.status === "available");
+  const query = search.trim().toLowerCase();
+  const matches = installed.filter((name) =>
+    name.toLowerCase().includes(query),
+  );
+  const familyError = invalid
+    ? "Enter one font family name, up to 64 characters, without quotes, commas, or CSS syntax. Use default to clear this choice."
+    : unavailable
+      ? `Couldn’t load “${parsed}”. Check the font name or install it, then try again.`
+      : undefined;
   const sizeValue = sizeDraft ?? String(size);
   const parsedSize = parseFontSize(Number(sizeValue));
   const sizeInvalid = parsedSize === null;
@@ -97,31 +124,55 @@ export function TerminalSettings({
           }}
         >
           <div className="flex flex-col gap-4">
-            <Field
-              label="Font family"
-              description="Type an installed font family name. For Nerd Fonts, use a Mono variant for cell alignment."
-              error={
-                invalid
-                  ? "Enter one font family name, up to 64 characters, without quotes, commas, or CSS syntax. Use default to clear this choice."
-                  : unavailable
-                    ? `Couldn’t load “${parsed}”. Check the font name or install it, then try again.`
-                    : undefined
-              }
-            >
-              <Input
-                ref={familyInput}
-                value={value}
-                onValueChange={(next) => {
-                  drafts.update({ family: next, blurredValue: null });
+            {installed.length > 0 ? (
+              <Combobox.Root
+                items={installed}
+                filteredItems={matches}
+                inputValue={search}
+                onInputValueChange={setSearch}
+                onOpenChange={(open) => {
+                  if (open) setSearch("");
                 }}
-                onBlur={() => drafts.update({ blurredValue: value })}
-                aria-busy={availability.status === "checking"}
-                placeholder="JetBrains Mono"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-            </Field>
+                value={value || null}
+                onValueChange={(next: string | null) => {
+                  if (next) drafts.update({ family: next, blurredValue: next });
+                }}
+                autoHighlight
+              >
+                <Combobox.Trigger label="Font family" error={familyError}>
+                  {value || "JetBrains Mono (default)"}
+                </Combobox.Trigger>
+                <Combobox.Popup search empty="No matching installed fonts.">
+                  <Combobox.List>
+                    {(name: string) => (
+                      <Combobox.Item key={name} value={name}>
+                        {name}
+                      </Combobox.Item>
+                    )}
+                  </Combobox.List>
+                </Combobox.Popup>
+              </Combobox.Root>
+            ) : (
+              <Field
+                label="Font family"
+                description="Type an installed font family name. For Nerd Fonts, use a Mono variant for cell alignment."
+                error={familyError}
+              >
+                <Input
+                  ref={familyInput}
+                  value={value}
+                  onValueChange={(next) => {
+                    drafts.update({ family: next, blurredValue: null });
+                  }}
+                  onBlur={() => drafts.update({ blurredValue: value })}
+                  aria-busy={availability.status === "checking"}
+                  placeholder="JetBrains Mono"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+              </Field>
+            )}
             {unavailable && (
               <Button
                 type="button"

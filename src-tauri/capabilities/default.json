@@ -183,6 +183,7 @@
     "allow-terminal-resize",
     "allow-terminal-close",
     "allow-terminal-close-owner",
+    "allow-terminal-font-families",
     "allow-mesh-compute-catalog",
     "allow-mesh-compute-share",
     "allow-mesh-compute-inventory",

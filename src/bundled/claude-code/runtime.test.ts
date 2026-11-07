@@ -3309,3 +3309,36 @@ it("shows a new turn's history as the thread shows it now", async () => {
     f.runtime.dispose();
   }
 });
+
+it("runs a new turn without history when its edits cannot be read", async () => {
+  const root = message("1", "Use the red palette", { created_at: 50 });
+  const mention = message("2", "@Claude go", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const f = setup();
+  f.read.mockImplementation(async (filters) => {
+    if (filters.some((filter) => filter.kinds?.includes(40003)))
+      throw new Error("timed out");
+    return [root];
+  });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await f.deliver({ type: "mention", event: mention });
+    await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(1));
+    await f.workingUntil.mock.calls[0]?.[0];
+    const text =
+      f
+        .claudes()
+        .find((process) => process.prompts.length)
+        ?.prompts.at(-1) ?? "";
+    expect(text).toContain("@Claude go");
+    expect(text).not.toContain("Use the red palette");
+  } finally {
+    f.runtime.dispose();
+  }
+});

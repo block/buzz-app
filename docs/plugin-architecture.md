@@ -1862,10 +1862,12 @@ content in typed optional release-envelope fields, so the artifact hash and
 publisher signature cover them without changing plugin `apiVersion: 1`. Hosts
 continue to accept older `{ manifest, code }` artifacts. The catalog exposes only
 small content revisions for import/update comparison. `Manager::content` reads the
-integrity-checked content on demand; its native command and capability land with
-the first details surface that consumes them.
-Both icon formats may be packaged together and are returned independently; the
-client decides which format to prefer.
+integrity-checked content on demand through the `plugin_content` native command.
+Settings → Plugins uses it for an installed plugin's icon, only when the catalog
+reports an icon revision, and caches the result per plugin revision.
+Both icon formats may be packaged together and are returned independently; Settings
+prefers PNG, then JPEG, and falls back to the generic plugin icon if neither
+can be read or decoded.
 Header parsing and image decoding use a 16 MiB allocation budget; the underlying
 decoder may discard optional metadata that exceeds that budget. Validation does
 not certify later animation frames or reject trailing bytes after the image.

@@ -198,6 +198,14 @@ export type {
   SoloConversationLinkProps,
   SoloCardProps,
   SoloDisclosureProps,
+  TaskDraft,
+  TaskPrepareResult,
+  ParticipantPolicy,
+  SoloTaskMode,
+  TaskDraftControls,
+  TaskWorkspace,
+  TaskHeaderTitleProps,
+  TaskHeaderUI,
 } from "../features/channel-navigation/solo-navigation-contract";
 
 export type {

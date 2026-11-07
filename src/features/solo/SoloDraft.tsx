@@ -59,6 +59,8 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import { usePassThroughUntilDrafted } from "../messages/draft-visit";
 import type { PageNavigation } from "../navigation/service";
 import styles from "./Solo.module.css";
+import { TaskSoloDraft } from "./TaskSoloDraft";
+import type { SoloDraft as DraftRoute } from "../channel-navigation/routes";
 
 /** Starting a new chat from a project starts it in that project, even when an
  * earlier draft there was switched to another one. */
@@ -156,7 +158,33 @@ const openNewChats = new Set<{
  * that finds it still there can say so. */
 const restoredPrompts = new Map<string, string>();
 
-export function SoloDraft({
+export function SoloDraft(props: SoloDraftProps) {
+  return props.task ? (
+    <TaskSoloDraft {...props} route={props.task} />
+  ) : (
+    <PersonalSoloDraft {...props} />
+  );
+}
+
+type SoloDraftProps = {
+  task?: DraftRoute["task"] | undefined;
+  /** The visit presenting this draft, a Back stop only once drafted. */
+  visit?: PageNavigation | undefined;
+  linkedId?: string | undefined;
+  source?: LinkedChat | undefined;
+  agent?: string | undefined;
+  focusRequest?: number | AbortSignal;
+  extensions?: ConversationExtensions | undefined;
+  session: RelaySession;
+  scope: string;
+  onStarted: (id: string) => void;
+  onFailed?:
+    | ((id: string, message: string, retry?: () => Promise<void>) => void)
+    | undefined;
+  projectId?: string | undefined;
+};
+
+function PersonalSoloDraft({
   session,
   scope,
   onStarted,

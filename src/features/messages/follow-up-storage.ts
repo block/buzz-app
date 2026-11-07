@@ -185,6 +185,8 @@ function strings(value: unknown): value is string[] {
 function valid(value: unknown): value is SavedFollowUp {
   if (!value || typeof value !== "object") return false;
   const v = value as SavedFollowUp;
+  // Task details another build saved stay in storage; this build cannot send them.
+  if ("taskTokens" in v) return false;
   return (
     typeof v.id === "string" &&
     typeof v.channelId === "string" &&

@@ -4,6 +4,7 @@ import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "../relay/events";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import { foldMessages, messageAuthor } from "../relay/fold";
+import type { VisibleEvent } from "../relay/projection";
 
 /** These chat messages of one channel with the edits and deletions the
  * timeline applies, as Codex history does: a deleted message is left out and
@@ -24,7 +25,10 @@ export async function currentMessages(
           "#e": messages.map((message) => message.id),
           limit: 500,
         },
-      ])
+      ]).then((found) =>
+        // A local edit or deletion that failed to send changes nothing.
+        found.filter((change: VisibleEvent) => change.delivery !== "failed"),
+      )
     : [];
   if (!changes.length) return messages;
   // An agent's attested owner may edit its messages, as the timeline shows.

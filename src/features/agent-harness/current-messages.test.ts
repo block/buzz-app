@@ -73,6 +73,22 @@ it("applies the author's edits and deletions and ignores anyone else's", async (
   ]);
 });
 
+it("ignores an edit or deletion that failed to send", async () => {
+  const edited = message(owner, "c", "Use the red palette", 20);
+  const deleted = message(owner, "c", "Drop the staging tables", 21);
+  const result = await currentMessages("c", [edited, deleted], async () => [
+    {
+      ...change(owner, 40003, edited, "Use the blue palette"),
+      delivery: "failed",
+    },
+    { ...change(owner, 5, deleted), delivery: "failed" },
+  ]);
+  expect(result.map(({ content }) => content)).toEqual([
+    "Use the red palette",
+    "Drop the staging tables",
+  ]);
+});
+
 it("applies an agent's attested owner's edit of its message", async () => {
   const answer = message(agent, "c", "Whole answer", 20);
   const edit = change(owner, 40003, answer, "Spoken");

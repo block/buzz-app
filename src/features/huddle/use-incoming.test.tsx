@@ -92,6 +92,43 @@ it("observes a private conversation's remote call, honors signed ends, expires, 
   store.dispose();
 });
 
+it("discovers a slightly future-dated start when this clock catches up", () => {
+  vi.useFakeTimers({ now: Date.UTC(2026, 10, 5, 12, 0, 0, 500) });
+  const store = createRelaySession(null);
+  const events: EventData[] = [
+    {
+      id: "start",
+      pubkey: creator,
+      // The sender's clock is 1.5 seconds ahead of this client.
+      created_at: Math.floor((Date.now() + 1500) / 1000),
+      kind: 48100,
+      tags: [["h", parent]],
+      content: JSON.stringify({ ephemeral_channel_id: room }),
+    },
+  ];
+  const session = {
+    ...store.session,
+    relayAuthor: authority,
+    observe: () => ({
+      snapshot: () => ({ status: "ready" as const, events }),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      dispose() {},
+    }),
+  };
+  const { result, unmount } = renderHook(() =>
+    useIncomingHuddle(session, parent),
+  );
+  expect(result.current).toBeUndefined();
+  act(() => {
+    vi.advanceTimersByTime(1500);
+  });
+  expect(result.current).toEqual({ id: room, participants: 0 });
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  store.dispose();
+});
+
 it("uses verified live starts and ends after the initial discovery read fails", async () => {
   const relay = keypair(),
     viewer = keypair();

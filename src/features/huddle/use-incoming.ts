@@ -46,8 +46,20 @@ export function useIncomingHuddle(
           ).participants.length,
         },
       });
-      if (room)
-        timer = setTimeout(update, (room.startedAt + 3600 - now) * 1000);
+      // Recheck a start dated slightly ahead by the sender's clock.
+      const deadline = Math.min(
+        room ? room.startedAt + 3600 : Infinity,
+        ...snapshot.events
+          .filter(
+            (event) =>
+              event.kind === 48100 &&
+              event.created_at > now &&
+              event.created_at <= now + 30,
+          )
+          .map((event) => event.created_at),
+      );
+      if (deadline !== Infinity)
+        timer = setTimeout(update, (deadline - now) * 1000);
     };
     const stop = view.subscribe(update);
     update();

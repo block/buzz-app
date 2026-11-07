@@ -1390,6 +1390,9 @@
   .panel-header {
     border-block-end: 1px solid var(--border-standard);
     position: relative;
+    /* Header chrome, not content; a selection crossing it would paint its gaps. */
+    -webkit-user-select: none;
+    user-select: none;
     display: flex;
     min-height: var(--size-panel-header);
     width: 100%;

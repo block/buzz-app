@@ -243,6 +243,14 @@
     @apply flex w-full items-center gap-2 text-body-sm text-subtle;
   }
 
+  /* Chrome is not content: a selection running through it paints only WebKit's
+     gap fills. Inputs keep their own user-agent `user-select: text`. */
+  .shell-header,
+  .shell-side-dock,
+  .shell-navigation {
+    -webkit-user-select: none;
+    user-select: none;
+  }
   .shell-header {
     --interaction-hover: var(--affordance-backdrop-hover);
     --interaction-pressed: var(--affordance-backdrop-pressed);

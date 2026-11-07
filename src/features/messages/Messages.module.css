@@ -83,10 +83,14 @@
   margin: 0;
   padding: 0;
 }
-/* Center the list itself so coordination and membership rows share the measure. */
+/* Center the list itself so coordination and membership rows share the measure.
+   max-width, because Virtua sets an inline width; WebKit paints a selection
+   into the empty sides of rows wider than their content. */
 .feed > ol {
-  width: min(100%, var(--timeline-measure));
+  max-width: var(--timeline-measure);
   margin-inline: auto;
+  /* Like .messageBubble: no gap fill for hairlines between Virtua's rows. */
+  translate: 0 0;
 }
 .edge {
   width: min(100%, var(--timeline-measure));
@@ -115,16 +119,17 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
-  padding: var(--space-2) 0;
+  /* Padding, not margin: WebKit paints a selection across a row's margins. */
+  padding: calc(var(--space-2) + var(--space-5)) 0;
   color: var(--text-subtle);
   @apply text-caption;
-  margin: var(--space-5) auto;
+  margin-inline: auto;
 }
 /* Compact density tightens vertical rhythm only; Interface size owns text.
    :where() keeps each override at its default's specificity, so the layout
    and stacking rules that follow it still apply. */
 :where(html[data-message-density="compact"]) .day {
-  margin-block: var(--space-3);
+  padding-block: calc(var(--space-2) + var(--space-3));
 }
 .day::before,
 .day::after {
@@ -136,10 +141,10 @@
 }
 /* A notice under its day reads as that day's caption, not a new section. */
 [data-membership-row] > .day {
-  margin-block-end: 0;
+  padding-block-end: var(--space-2);
 }
 .feed[data-chat-presentation] ol > li:first-child .day {
-  margin-block-start: var(--space-2);
+  padding-block-start: var(--space-4);
 }
 .dayLabel {
   display: inline-flex;
@@ -712,6 +717,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   min-width: 0;
   align-self: stretch;
   position: relative;
+  /* Composer chrome is not content; .composerInput restores its text. */
+  -webkit-user-select: none;
+  user-select: none;
   border: 1px solid var(--border-standard);
   background: var(--surface-composer);
   /* Match the send control plus its inset, measured from the outer border. */
@@ -790,9 +798,22 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composerInput {
   box-sizing: border-box;
   position: relative;
+  /* Non-editable atoms such as mentions must stay selectable inside the editor. */
+  -webkit-user-select: text;
+  user-select: text;
   min-width: 0;
   width: 100%;
   padding-inline: var(--space-1);
+}
+/* Errors and status under the editor are content someone may need to copy. */
+.composer :is([role="alert"], [role="status"]) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* An empty editor has no text to select; a selection passing through from the
+   page would paint the empty line beside the placeholder. */
+.composerInput:has([data-placeholder]) ::selection {
+  background-color: transparent;
 }
 .composer .composerInput [data-placeholder]::before {
   color: var(--text-metadata);
@@ -1989,7 +2010,7 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   justify-content: center;
   gap: var(--space-2);
   /* Keep spacing inside the virtual row so its measured and visible tops agree.
-     A quiet caption, about as tall as the day divider. */
+     A quiet caption, about as tall as the day divider's label. */
   padding: var(--space-2) 0;
   color: var(--text-subtle);
   @apply text-caption;
@@ -3003,6 +3024,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   display: flex;
   justify-content: center;
   pointer-events: none;
+  /* A floating control, not content; a selection passing under it skips it. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 :is(.feed, .threadHistory) .jumpToLatest {
   top: calc(
@@ -3067,6 +3091,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
+  /* WebKit skips selection gap fill in transformed boxes (a known FIXME in its
+     painter), so a selection does not paint the padding under bubble text. */
+  translate: 0 0;
   --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(
@@ -3528,6 +3555,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin: var(--space-2) auto;
   color: var(--text-subtle);
   @apply text-caption;
+}
+/* A day divider below pads its own gap; its margin once collapsed with this
+   through the row wrapper. Agent rows pad their own top, so never collapsed. */
+.newMessages:has(+ [data-message-id] > .day:first-child) {
+  margin-block-end: 0;
 }
 .newMessages::before,
 .newMessages::after {

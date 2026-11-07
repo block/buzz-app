@@ -260,6 +260,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   message, attachments, and choices while this window stays open. Retry never
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
+  Open the composer’s agent chooser to change who you’re sending to. Already
+  selected agents appear first with checkmarks; click one to remove it (the last
+  agent stays selected). Rows stay in place while you toggle; reopen to refresh
+  their order. Search still filters the choices.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.
 - **Team** contains community channels and their threads. Use the **@** picker

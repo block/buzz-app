@@ -722,9 +722,7 @@ function PreparedMessageMarkdown({
         typeof element?.properties["data-profile-target"] === "string" ||
         (element?.tagName === "a" &&
           typeof href === "string" &&
-          !!profileKey(href) &&
-          interactive &&
-          !!canOpenLink?.(href));
+          !!profileKey(href));
       return (
         <p
           {...props}
@@ -746,12 +744,6 @@ function PreparedMessageMarkdown({
           : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
-        if (!interactive || !canOpenLink?.(href))
-          return (
-            <span>
-              {children} ({href})
-            </span>
-          );
         return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
       }
       return href ? (

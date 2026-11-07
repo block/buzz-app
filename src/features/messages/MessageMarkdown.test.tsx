@@ -1074,31 +1074,24 @@ describe("paragraph-leading profile capsules", () => {
   );
 });
 
-it("keeps explicit profile identities visible but inert when Profiles is unavailable", () => {
+it.each<[string, RenderOptions]>([
+  ["a refusing opener", { canOpenLink: () => false }],
+  ["no opener", { canOpenLink: undefined }],
+  ["a preview", { interactive: false }],
+])("renders explicit profile links as inert chips with %s", (_, options) => {
   const target = profileTarget(mic);
   const view = renderDom(
     <MessageMarkdown
-      {...props(`[@Mic](${target})`, {
-        patch: { mentions: [] },
-        canOpenLink: () => false,
-      })}
+      {...props(`[@Mic](${target})`, { patch: { mentions: [] }, ...options })}
     />,
   );
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();
-  expect(view.container.textContent).toContain(target);
-  expect(view.container.querySelector("[data-leading-mention]")).toBeNull();
-  view.rerender(
-    <MessageMarkdown
-      {...props(`[@Mic](${target})`, {
-        patch: { mentions: [] },
-        interactive: false,
-      })}
-    />,
-  );
-  expect(screen.queryByRole("button")).toBeNull();
-  expect(screen.queryByRole("link")).toBeNull();
-  expect(view.container.textContent).toContain("Mic");
+  const chip = view.container.querySelector("[data-mention-kind]");
+  expect(chip?.tagName).toBe("SPAN");
+  expect(chip).toHaveAttribute("data-profile-target", target);
+  expect(view.container.textContent).toBe("Mic");
+  expect(chip?.closest("p")).toHaveAttribute("data-leading-mention");
 });
 
 it.each([

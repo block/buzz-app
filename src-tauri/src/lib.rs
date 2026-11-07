@@ -838,9 +838,26 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         sign_out::sign_out_wipe_refusal
     ]
 }
+
+#[cfg(target_os = "macos")]
+fn register_spellcheck_default() {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSUserDefaults};
+    let enabled = NSNumber::numberWithBool(true);
+    let enabled: &AnyObject = &enabled;
+    let defaults = NSDictionary::from_slices(
+        &[ns_string!("WebContinuousSpellCheckingEnabled")],
+        &[enabled],
+    );
+    // SAFETY: the dictionary maps an NSString key to an NSNumber value.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     credential_service::drop_inherited();
+    #[cfg(target_os = "macos")]
+    register_spellcheck_default();
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(

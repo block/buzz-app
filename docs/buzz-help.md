@@ -413,8 +413,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   upload bar names the conversation they are going to, and **Cancel** stops the
   send it names. If a background send fails, its notice names that conversation
   and, when you are elsewhere, can open it (except a huddle). Your message and
-  files are back in that conversation's composer. Do not
-  promise support for every file type or size.
+  files are back in that conversation's composer. Do not promise support for
+  every file type or size. An image in a message or the viewer that can't load
+  shows "Couldn't load image" and **Retry**; small images show a round Retry
+  button. In a group of images, screen readers hear which image each Retry is
+  for, such as "Retry image 2 of 4".
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

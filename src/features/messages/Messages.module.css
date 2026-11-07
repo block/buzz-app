@@ -653,6 +653,63 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   place-items: center;
   padding: var(--space-1);
 }
+/* A failed original keeps its preview frame, growing only where the round Retry
+   would not fit. Extreme tall frames keep the preview's 320px height cap. */
+.attachmentImage[data-image-failed] {
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  max-height: 320px;
+  cursor: auto;
+}
+/* Recovery over a preview or the viewer canvas. Its own size picks the layout:
+   a round Retry, then icon and Retry, then icon, status and Retry. Thresholds
+   use rem so enlarged text steps down a layout instead of overflowing. */
+.imageLoadError {
+  container: image-load-error / size;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  color: var(--text-standard);
+}
+.imageLoadError::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  clip-path: var(--media-corner-clip, none);
+  background: var(--bg-scrim);
+}
+.imageLoadErrorContent {
+  @apply text-caption;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  text-align: center;
+}
+.imageLoadErrorContent > [role="status"] {
+  margin-bottom: var(--space-1);
+}
+@container image-load-error (width < 5.5rem) or (height < 4rem) {
+  .imageLoadErrorContent > :is(svg, [data-image-retry="label"]) {
+    display: none;
+  }
+}
+@container image-load-error (width >= 5.5rem) and (height >= 4rem) {
+  .imageLoadErrorContent > [data-image-retry="icon"] {
+    display: none;
+  }
+}
+@container image-load-error (width < 10rem) or (height < 6rem) {
+  .imageLoadErrorContent > [role="status"] {
+    @apply sr-only;
+  }
+}
 .imageGroup {
   min-width: 0;
   margin-top: var(--space-2);
@@ -1642,6 +1699,13 @@ button.mediaPreview {
   flex-shrink: 0;
   white-space: nowrap;
 }
+/* An unavailable control greys out at once, so it never looks usable for a
+   moment after its image fails or the gallery reaches a failed image. The
+   toolbar's own children already fade only their opacity. */
+.imageReviewSwitcher > [data-disabled],
+.imageReviewZoom > [data-disabled] {
+  transition: none;
+}
 @media (hover: hover) and (pointer: fine) {
   /* Programmatic gallery focus can remain :focus-visible after a mouse click. */
   html:not([data-keyboard-navigation])
@@ -1684,6 +1748,33 @@ button.mediaPreview {
     max-width: calc(100% - 1rem);
     bottom: var(--space-2);
     gap: var(--space-1) var(--space-2);
+  }
+}
+/* A failed image's recovery takes the stage above the toolbar, so the toolbar
+   never covers Retry however it wraps. The toolbar keeps its place, and an
+   image loading for Retry shares the recovery's area beneath it. */
+.imageReviewStage:has(> .imageLoadError) {
+  display: grid;
+  grid-template: minmax(0, 1fr) auto / minmax(0, 1fr);
+}
+.imageReviewStage > :is(img[data-review-media], .imageLoadError) {
+  grid-area: 1 / 1;
+}
+.imageReviewStage > .imageLoadError {
+  position: relative;
+}
+.imageReviewStage > .imageLoadError ~ .imageReviewToolbar {
+  grid-area: 2 / 1;
+  position: relative;
+  left: auto;
+  bottom: auto;
+  translate: none;
+  justify-self: center;
+  margin-bottom: var(--space-4);
+}
+@media (max-width: 40.625rem) {
+  .imageReviewStage > .imageLoadError ~ .imageReviewToolbar {
+    margin-bottom: var(--space-2);
   }
 }
 
@@ -2926,7 +3017,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   box-shadow: none;
 }
 .mediaPreview[data-smooth-corners] .mediaPreviewPixels,
-.attachmentImage[data-smooth-corners] .attachmentImagePixels {
+.attachmentImage[data-smooth-corners] .attachmentImagePixels,
+.attachmentImage[data-smooth-corners] .imageLoadError::before {
   border-radius: 0;
 }
 .imageOutline > path {

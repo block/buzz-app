@@ -1345,6 +1345,40 @@ it.each([
   },
 );
 
+it("names each failed image in a group by its position", () => {
+  const view = renderDom(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: ["one", "two", "three"].map((name) => ({
+          kind: "image" as const,
+          url: `https://fixture.test/${name}.png`,
+        })),
+      }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  for (const image of view.container.querySelectorAll(
+    "[data-media-preview] img",
+  ))
+    fireEvent.error(image);
+  for (const position of [1, 2, 3]) {
+    expect(
+      screen.getByRole("button", { name: `Retry image ${position} of 3` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: `Couldn't load image ${position} of 3. Retry`,
+      }),
+    ).toBeInTheDocument();
+  }
+  cleanup();
+});
+
 // The desktop opener's injected listener (tauri-plugin-opener 2.5.5) launches
 // the system browser for any unprevented left click on an HTTP(S) anchor that
 // targets `_blank` or carries Ctrl/Shift, skipping only Meta/Alt; a browser tab

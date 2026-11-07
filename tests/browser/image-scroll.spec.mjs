@@ -325,17 +325,26 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     await page
       .getByRole("button", { name: "Fail original", exact: true })
       .click();
-    await expect
-      .poll(() =>
-        frame(page)
-          .locator("img")
-          .evaluate((img) => img.complete),
-      )
-      .toBe(true);
+    // A failed original keeps its preview frame and offers Retry over it.
+    const failed = page.locator("[data-image-failed]");
+    await expect(failed.getByRole("status")).toHaveText("Couldn't load image");
+    await expect(frame(page)).toHaveCount(0);
     await releaseDecode(page, "next"); // late callback for a retired source
-    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
-    await expect(frame(page).locator("canvas")).toHaveCount(1);
-    expect(await frame(page).boundingBox()).toEqual(bounds);
+    await expect(failed.getByRole("status")).toHaveText("Couldn't load image");
+    await expect(failed.locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(failed.locator("canvas")).toHaveCount(1);
+    expect(await failed.boundingBox()).toEqual(bounds);
+    const failures = () =>
+      requests.filter((url) => url.endsWith("/failed.svg")).length;
+    const attempts = failures();
+    await failed.getByRole("button", { name: "Retry image" }).focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(failures).toBe(attempts + 1);
+    await expect(failed.getByRole("status")).toHaveText("Couldn't load image");
+    await expect(
+      failed.getByRole("button", { name: "Retry image" }),
+    ).toBeFocused();
+    expect(await failed.boundingBox()).toEqual(bounds);
     await page.getByRole("button", { name: "Retarget", exact: true }).click();
     await waiting(page, "next");
     await page
@@ -372,6 +381,106 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     }
   }
 });
+
+// The overlay's own size picks its layout, in rem so larger text steps down a
+// layout. Every frame keeps all of its recovery controls inside its bounds.
+const failureLayouts = {
+  "single preview": ["full", "compact"],
+  "short preview": ["compact", "round"],
+  "small square": ["compact", "round"],
+  "narrow square": ["round", "round"],
+  "tiny square": ["round", "round"],
+  "wide strip": ["round", "round"],
+  "tall strip": ["round", "round"],
+  grid: ["full", "full"],
+  "narrow grid": ["compact", "compact"],
+};
+for (const [index, scale] of [1, 2].entries()) {
+  test(`failed image recovery fits every message frame at ${scale}x text`, async ({
+    page,
+  }) => {
+    await routeOriginals(page, []);
+    const server = await fixtureServer();
+    try {
+      await server.listen();
+      await page.goto(
+        `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/attachment-image.html`,
+      );
+      await page.evaluate(
+        (scale) =>
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            String(scale),
+          ),
+        scale,
+      );
+      await page.getByRole("button", { name: "Failure sizes" }).click();
+      const failures = page.getByRole("region", { name: "Failure sizes" });
+      await expect(failures.getByRole("status")).toHaveText(
+        Array(15).fill("Couldn't load image"),
+      );
+      const frames = await failures
+        .locator("[data-failure-frame]")
+        .evaluateAll((frames) =>
+          frames.flatMap((frame) =>
+            [...frame.querySelectorAll("[data-image-failed]")].map((tile) => {
+              const bounds = tile.getBoundingClientRect();
+              const shown = (element) => element.getClientRects().length > 0;
+              const label = tile.querySelector('[data-image-retry="label"]');
+              const icon = tile.querySelector('[data-image-retry="icon"]');
+              const status = tile.querySelector('[role="status"]');
+              const parts = [
+                ...tile.querySelectorAll(
+                  "[data-image-retry], [role=status], svg",
+                ),
+              ].filter(shown);
+              return {
+                name: frame.dataset.failureFrame,
+                layout:
+                  shown(label) && status.getBoundingClientRect().width > 1
+                    ? "full"
+                    : shown(label)
+                      ? "compact"
+                      : shown(icon)
+                        ? "round"
+                        : "none",
+                buttons: [label, icon].filter(shown).length,
+                round: shown(icon) ? icon.getBoundingClientRect().width : 0,
+                size: Math.min(bounds.width, bounds.height),
+                inside: parts.every((part) => {
+                  const box = part.getBoundingClientRect();
+                  return (
+                    box.left >= bounds.left - 0.5 &&
+                    box.right <= bounds.right + 0.5 &&
+                    box.top >= bounds.top - 0.5 &&
+                    box.bottom <= bounds.bottom + 0.5
+                  );
+                }),
+              };
+            }),
+          ),
+        );
+      expect(frames).toHaveLength(15);
+      for (const frame of frames) {
+        expect(frame, frame.name).toMatchObject({
+          layout: failureLayouts[frame.name][index],
+          buttons: 1,
+          inside: true,
+        });
+        // Tiny frames grow to fit the round Retry with room around it.
+        expect(frame.size, frame.name).toBeGreaterThanOrEqual(40 * scale);
+        if (frame.layout === "round")
+          expect(frame.round, frame.name).toBeGreaterThanOrEqual(24);
+      }
+    } finally {
+      try {
+        await page.unrouteAll({ behavior: "wait" });
+      } finally {
+        await server.close();
+      }
+    }
+  });
+}
 
 test("original ready first cannot regress on late visibility; missing and invalid hashes still load", async ({
   page,

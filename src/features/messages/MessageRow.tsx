@@ -1463,6 +1463,11 @@ function MessageRowContent({
                                   ? `Open image ${index + 1} of ${group.length}`
                                   : "Open image attachment"
                             }
+                            name={
+                              group.length > 1
+                                ? `image ${index + 1} of ${group.length}`
+                                : undefined
+                            }
                             {...(onOpenMediaReview
                               ? {
                                   onOpenReview: (item, seconds) =>

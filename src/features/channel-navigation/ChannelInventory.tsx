@@ -67,6 +67,7 @@ import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkM
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
 import { ChannelSidebarRows } from "./ChannelSidebarRows";
 import { activeChannelRows } from "./active-channel-rows";
+import { CollapsedDmUnread } from "../../bundled/channels/UnreadBadge";
 import type { UnreadDmPreview } from "../../bundled/channels/SidebarUnread";
 import {
   ChannelSidebarDnd,
@@ -1398,6 +1399,14 @@ export function ChannelInventory({
               open={!sidebar.collapsed.includes(section.key)}
               onToggle={(open) => sidebar.toggle(section.key, open)}
               channelCount={section.allRows.length}
+              labelIndicator={
+                section.key === "dms" ? (
+                  <CollapsedDmUnread
+                    session={queries}
+                    channelIds={section.allRows.map(({ id }) => id)}
+                  />
+                ) : undefined
+              }
               filter={
                 preferences.data
                   ? {

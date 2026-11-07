@@ -23,6 +23,12 @@ export function safeMessageUrl(value: string): string | undefined {
   return url?.startsWith("https:") ? url : undefined;
 }
 
+/** A bare URL after `scheme://`. CJK punctuation ends it, except 。．｡ before
+ * a host label (URLs read them as dots). */
+export const BARE_URL_REST =
+  /(?:[^\s<>"`:/?#，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜]|[。．｡](?=[a-zA-Z\d-]+(?![a-zA-Z\d-]|:\/\/)))*(?:[:/?#][^\s<>"`，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜]*)?/
+    .source;
+
 type MarkdownNode = {
   type: string;
   value?: string;

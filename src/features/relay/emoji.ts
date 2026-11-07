@@ -1,4 +1,5 @@
 import type { EventData } from "./events.ts";
+import { BARE_URL_REST } from "./message-content.ts";
 
 export type CustomEmoji = Readonly<{ shortcode: string; url: string }>;
 export const EMOJI_SET = "buzz:custom-emoji";
@@ -78,9 +79,17 @@ export function emojiTags(event: {
   }
   return Object.freeze([...entries.values()]);
 }
-/** Share token boundaries with the renderer: never substitute inside HTTP(S) links. */
+/** Share token boundaries with the renderer: never substitute inside HTTP(S) links.
+ * Bare links end at the same CJK punctuation as rendered ones. Within a `<url>` or
+ * `](url)` destination, a URL ends only at whitespace or `<>"\``. */
+const destinations =
+  /<[a-zA-Z][a-zA-Z\d+.-]{1,31}:[^ \t\r\n<>]*|\]\\?\([ \t\r\n]*(?:<(?:\\[^\r\n]|[^<>\r\n\\])*|[^ \t\r\n]*)/
+    .source;
+const scheme = /https?:\/\/(?=[^\s<>"`])/.source;
+const links = new RegExp(`(${destinations}|${scheme}${BARE_URL_REST})`, "g");
+const runs = /(https?:\/\/[^\s<>"`]+)/;
 export const messageParts = (content: string) =>
-  content.split(/(https?:\/\/[^\s<>"`]+)/g);
+  content.split(links).flatMap((part) => part.split(runs));
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
 export function* emojiMatches(

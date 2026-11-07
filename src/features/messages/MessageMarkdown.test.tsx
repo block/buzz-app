@@ -922,6 +922,26 @@ describe("Markdown inline extensions", () => {
     );
   });
 
+  it("renders custom emoji after a bare link that ends at CJK punctuation", () => {
+    const html = render("看这个 https://example.com，:party_parrot:", {
+      emoji: [party],
+      extensions,
+      media: () => "https://media.test/emoji.png",
+    });
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.com/",
+    ]);
+    expect(html).toContain('alt=":party_parrot:"');
+    expect(html.replace(/<[^>]*>/g, "")).toBe("看这个 https://example.com，");
+    expect(
+      render("@Mic [x]: https://example.com，:party_parrot:", {
+        emoji: [party],
+        extensions,
+        media: () => "https://media.test/emoji.png",
+      }),
+    ).toContain('alt=":party_parrot:"');
+  });
+
   it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {
     const options = { emoji: [party], extensions, largeEmoji: true };
     const html = render(":party_parrot:", {

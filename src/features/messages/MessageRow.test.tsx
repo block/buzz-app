@@ -97,6 +97,9 @@ it("discloses an automatic failure reply while keeping its original text availab
     expect(details).toHaveAccessibleName(
       "Spongebob: Couldn’t finish · Hide details",
     );
+    // Option-click marks the message unread, so it leaves the details open.
+    fireEvent.click(screen.getByText(content), { altKey: true });
+    expect(details).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(details);
     expect(details).toHaveAttribute("aria-expanded", "false");
     view.rerender(

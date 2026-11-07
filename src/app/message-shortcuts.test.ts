@@ -78,6 +78,61 @@ it("deletes, marks unread and replies to the selected message with Slack's keys"
   expect(reply).toHaveBeenCalledTimes(2);
 });
 
+it("marks a message unread with Option-click, but not from its controls, media, code, day divider or a text selection", () => {
+  const { controller, reply } = setup(true);
+  (document.activeElement as HTMLElement | null)?.blur();
+  const row = document.querySelector<HTMLElement>("[data-message-id]");
+  row?.insertAdjacentHTML(
+    "afterbegin",
+    "<div><span data-day>Today</span></div>",
+  );
+  row
+    ?.querySelector("[data-layout]")
+    ?.insertAdjacentHTML(
+      "beforeend",
+      '<p>Text <a href="#one">link</a> <img data-copy-emoji=":wave:" alt=":wave:"></p>' +
+        '<img alt=""><pre>code</pre>' +
+        '<div role="group" aria-label="Reactions"><button>👍</button></div>',
+    );
+  const text = row?.querySelector("p");
+  const click = (selector: string, init: MouseEventInit = { altKey: true }) =>
+    row
+      ?.querySelector(selector)
+      ?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, ...init }),
+      );
+  click("p", {});
+  for (const modifier of ["shiftKey", "metaKey", "ctrlKey"])
+    click("p", { altKey: true, [modifier]: true });
+  for (const selector of [
+    "a",
+    "img:not([data-copy-emoji])",
+    "pre",
+    "[aria-label='Reactions']",
+    "[aria-label='Reply']",
+    "[data-day]",
+  ])
+    click(selector);
+  expect(reply).toHaveBeenCalledTimes(1);
+  // The end of a drag, including WebKit's Option-drag, leaves text selected.
+  const range = document.createRange();
+  if (text) range.selectNodeContents(text);
+  document.getSelection()?.addRange(range);
+  click("p");
+  document.getSelection()?.removeAllRanges();
+  text?.addEventListener("click", (event) => event.preventDefault(), {
+    once: true,
+  });
+  click("p");
+  vi.spyOn(controller, "canMarkUnread").mockReturnValueOnce(false);
+  click("p");
+  expect(controller.markUnread).not.toHaveBeenCalled();
+  // A custom emoji is part of the text, not media.
+  click("[data-copy-emoji]");
+  expect(controller.markUnread).toHaveBeenCalledExactlyOnceWith({ id: "one" });
+  expect(document.activeElement).toBe(document.body);
+});
+
 it("leaves Delete alone on someone else's message and without a selection", () => {
   const { controller } = setup(false);
   expect(press("Backspace")).toBe(false);

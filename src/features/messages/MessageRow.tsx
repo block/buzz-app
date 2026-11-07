@@ -1789,11 +1789,13 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
             // button: revealing an anchor takes it out of the Tab order.
             data-message-id={row.id}
             // Open, a click anywhere in the box folds it, except on its own
-            // controls and links or at the end of a text selection.
+            // controls and links, at the end of a text selection, or with
+            // Option, which is Mark unread's gesture (message-selection.ts).
             onClick={(event) => {
               const target = event.target as Element;
               if (
                 !open ||
+                event.altKey ||
                 !event.currentTarget.contains(target) ||
                 target.closest(
                   "a, button, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true']",

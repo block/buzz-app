@@ -433,7 +433,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   you change most of them and also shows the fixed message-formatting keys. In
   an empty composer, Up selects a message unless **Edit last message with Up Arrow**
   is on. With a message selected, E edits it, R reacts, T or → replies in thread,
-  U marks it unread, and Delete deletes your own message.
+  U marks it unread, and Delete deletes your own message. Option-click a message
+  (Alt-click on Windows and Linux) to mark it unread, selected or not.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →

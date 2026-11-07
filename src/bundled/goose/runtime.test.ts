@@ -2307,7 +2307,7 @@ it("shows a new turn's history as the thread shows it now", async () => {
     ),
   );
   await f.deliver(mention);
-  await flush(100);
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
   const text = f.goose()?.turns[0]?.text ?? "";
   expect(text).toContain('"content":"Plan"');
   expect(text).toContain("Use the blue palette");

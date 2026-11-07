@@ -2,9 +2,8 @@
 import type { AgentReads } from "../agents/reads";
 import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "../relay/events";
-import type { EventData, ReadFilter } from "../relay/events";
+import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import { foldMessages, messageAuthor } from "../relay/fold";
-import { readAuthorNames } from "./author-names";
 
 /** These chat messages of one channel with the edits and deletions the
  * timeline applies, as Codex history does: a deleted message is left out and
@@ -14,7 +13,7 @@ export async function currentMessages(
   channelId: string,
   messages: readonly EventData[],
   read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
-  profiles?: Pick<AgentReads, "profiles" | "profile" | "authorNames">,
+  profiles?: Pick<AgentReads, "profiles" | "profile">,
   signingAuthority?: string,
 ): Promise<readonly EventData[]> {
   const changes = messages.length
@@ -32,21 +31,27 @@ export async function currentMessages(
   const authors = [
     ...new Set(messages.map((item) => messageAuthor(item, signingAuthority))),
   ];
-  await readAuthorNames(profiles, messages, signingAuthority);
-  const owners = new Map<string, string>();
+  await profiles?.profiles(authors).catch(() => {});
+  const owners = new Map<string, { owner: string; profile: RelayEvent }>();
   await Promise.all(
     authors.map(async (author) => {
       const profile = profiles?.profile(author);
-      const owner =
-        profile && hasEventProof(profile) && (await attestedOwner(profile));
-      if (owner) owners.set(author, owner);
+      if (!profile || !hasEventProof(profile)) return;
+      const owner = await attestedOwner(profile);
+      if (owner && profiles?.profile(author) === profile)
+        owners.set(author, { owner, profile });
     }),
   );
   const rows = new Map(
     foldMessages(channelId, "", [...messages, ...changes], {
       includeReplies: true,
       signingAuthority,
-      agentOwner: (author) => owners.get(author),
+      agentOwner: (author) => {
+        const verified = owners.get(author);
+        return verified && profiles?.profile(author) === verified.profile
+          ? verified.owner
+          : undefined;
+      },
     }).map((row) => [row.id, row]),
   );
   return messages.flatMap((message) => {

@@ -4,6 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { expect, it, vi } from "vitest";
 import { eventDto, type EventData } from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
+import { AUTHOR_NAMES_TIMEOUT_MS } from "./author-names";
 import { currentMessages } from "./current-messages";
 
 const owner = keypair(),
@@ -78,7 +79,6 @@ it("applies an agent's attested owner's edit of its message", async () => {
   const profiles = {
     profiles: vi.fn(async () => {}),
     profile: () => attested,
-    authorNames: () => undefined,
   };
   expect(
     (await currentMessages("c", [answer], async () => [edit], profiles))[0]
@@ -95,12 +95,70 @@ it("applies an agent's attested owner's edit of its message", async () => {
   ).toBe("Whole answer");
 });
 
+it("waits for the owner's profile however long it takes to load", async () => {
+  vi.useFakeTimers();
+  try {
+    const answer = message(agent, "c", "Whole answer", 20);
+    let loaded = false;
+    let finish = () => {};
+    const profiles = {
+      profiles: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = () => {
+              loaded = true;
+              resolve();
+            };
+          }),
+      ),
+      profile: () => (loaded ? attested : undefined),
+    };
+    const result = currentMessages(
+      "c",
+      [answer],
+      async () => [change(owner, 40003, answer, "Spoken")],
+      profiles,
+    );
+    await vi.waitFor(() => expect(profiles.profiles).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(AUTHOR_NAMES_TIMEOUT_MS);
+    finish();
+    expect((await result)[0]?.content).toBe("Spoken");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("ignores an owner whose attesting profile was replaced while it was checked", async () => {
+  const answer = message(agent, "c", "Whole answer", 20);
+  const replaced = eventDto(
+    signed(agent, { kind: 0, created_at: 11, content: "{}", tags: [] }),
+  );
+  let current = attested;
+  const profiles = {
+    profiles: async () => {},
+    profile: () => {
+      const profile = current;
+      current = replaced;
+      return profile;
+    },
+  };
+  expect(
+    (
+      await currentMessages(
+        "c",
+        [answer],
+        async () => [change(owner, 40003, answer, "Spoken")],
+        profiles,
+      )
+    )[0]?.content,
+  ).toBe("Whole answer");
+});
+
 it("reads no profiles when nothing changed", async () => {
   const messages = [message(owner, "c", "Plan", 20)];
   const profiles = {
     profiles: vi.fn(async () => {}),
     profile: () => undefined,
-    authorNames: () => undefined,
   };
   expect(await currentMessages("c", messages, async () => [], profiles)).toBe(
     messages,

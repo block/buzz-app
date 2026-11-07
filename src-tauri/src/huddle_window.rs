@@ -16,6 +16,9 @@ pub(crate) struct View {
     muted: bool,
     level: f32,
     dark: bool,
+    /// The main window's applied appearance (mode, accent, contrast, text scale).
+    #[serde(default)]
+    appearance: Option<Appearance>,
     participants: Vec<Person>,
     #[serde(default)]
     audio_settings: Option<AudioSettings>,
@@ -224,6 +227,28 @@ impl DiscussionAttachment {
                 .is_none_or(|duration| duration.is_finite() && (0.0..=86400.0).contains(&duration))
     }
 }
+/// Appearance attributes a companion mirrors onto its document; bounded tokens.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Appearance {
+    color_mode: String,
+    #[serde(default)]
+    accent: Option<String>,
+    #[serde(default)]
+    color_level: Option<String>,
+    #[serde(default)]
+    font_scale: Option<f32>,
+}
+impl Appearance {
+    pub(crate) fn valid(&self) -> bool {
+        let token =
+            |s: &String| s.len() <= 32 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        matches!(self.color_mode.as_str(), "light" | "dark")
+            && self.accent.as_ref().is_none_or(token)
+            && self.color_level.as_ref().is_none_or(token)
+            && self.font_scale.is_none_or(|f| (0.5..=4.0).contains(&f))
+    }
+}
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Person {
@@ -306,6 +331,7 @@ fn validate(view: &View) -> Result<()> {
         )
         || !view.level.is_finite()
         || !(0.0..=1.0).contains(&view.level)
+        || view.appearance.as_ref().is_some_and(|a| !a.valid())
         || view.participants.len() > 256
         || view.audio_settings.as_ref().is_some_and(|a| {
             a.inputs.len() > 128
@@ -621,6 +647,7 @@ mod tests {
             muted: false,
             level: 0.0,
             dark: false,
+            appearance: None,
             participants: vec![],
             discussion: None,
             discussion_open: false,

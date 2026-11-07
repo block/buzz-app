@@ -258,3 +258,28 @@ it("routes an agent's activity view through the activity opener with this window
   h.control("openLink", "buzz://channel/other");
   expect(h.openLink).toHaveBeenCalledWith("buzz://channel/other");
 });
+
+it("projects the main window's applied appearance, not just a dark class, and follows its changes", async () => {
+  const root = document.documentElement;
+  root.dataset.colorMode = "dark";
+  root.dataset.accent = "bee";
+  try {
+    const h = harness();
+    await h.windows.open({ channelId: "channel", threadRootId: ROOT });
+    const opened = vi.mocked(h.bridge.open).mock.calls[0]?.[1];
+    expect(opened?.dark).toBe(true);
+    expect(opened?.appearance).toEqual({
+      colorMode: "dark",
+      accent: "bee",
+      colorLevel: undefined,
+    });
+    root.dataset.colorMode = "light";
+    await h.flush();
+    const latest = vi.mocked(h.bridge.update).mock.lastCall?.[1];
+    expect(latest?.dark).toBe(false);
+    expect(latest?.appearance?.colorMode).toBe("light");
+  } finally {
+    delete root.dataset.colorMode;
+    delete root.dataset.accent;
+  }
+});

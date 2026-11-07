@@ -55,6 +55,9 @@ pub(crate) struct View {
     #[serde(default)]
     scope: String,
     dark: bool,
+    /// The main window's applied appearance (mode, accent, contrast, text scale).
+    #[serde(default)]
+    appearance: Option<crate::huddle_window::Appearance>,
     status: String,
     #[serde(default)]
     error: Option<String>,
@@ -200,6 +203,7 @@ impl View {
 fn validate(view: &View) -> Result<()> {
     if view.title.len() > 4096
         || view.scope.len() > 4096
+        || view.appearance.as_ref().is_some_and(|a| !a.valid())
         || view.error.as_ref().is_some_and(|e| e.len() > 8192)
         || !matches!(view.status.as_str(), "loading" | "ready" | "error")
         || [&view.composer, &view.reading].iter().any(|t| {
@@ -656,6 +660,7 @@ mod tests {
             title: "Design".into(),
             scope: String::new(),
             dark: false,
+            appearance: None,
             status: "ready".into(),
             error: None,
             writable: true,

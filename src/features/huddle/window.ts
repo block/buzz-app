@@ -7,6 +7,11 @@ import type { RelayData } from "../relay/service";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import type { Huddles } from "./service";
 import { createHuddleDiscussion, type HuddleDiscussion } from "./discussion";
+import {
+  APPEARANCE_ATTRIBUTES,
+  type DocumentAppearance,
+  readDocumentAppearance,
+} from "../../shared/theme/document-appearance";
 
 export type HuddleView = {
   id: string;
@@ -16,6 +21,8 @@ export type HuddleView = {
   muted: boolean;
   level: number;
   dark: boolean;
+  /** The main window's applied appearance, mirrored by this window. */
+  appearance?: DocumentAppearance | undefined;
   discussion?: HuddleDiscussion | undefined;
   audioSettings?: AudioSettingsState | undefined;
   participants: {
@@ -151,7 +158,8 @@ export function createHuddleWindow(
       audioSettings:
         call.audioSettings && projectAudioSettings(call.audioSettings),
       level: call.level ?? 0,
-      dark: document.documentElement.classList.contains("dark"),
+      dark: readDocumentAppearance().colorMode === "dark",
+      appearance: readDocumentAppearance(),
       discussion: discussion
         ? { ...discussion.snapshot(), composer: composer?.token }
         : undefined,
@@ -260,7 +268,7 @@ export function createHuddleWindow(
   const theme = new MutationObserver(sync);
   theme.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["class"],
+    attributeFilter: APPEARANCE_ATTRIBUTES,
   });
   async function open() {
     if (disposed) return;

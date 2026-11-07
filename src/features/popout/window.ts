@@ -5,6 +5,11 @@ import type { ComposerReader } from "../huddle/composer-contract";
 import { createHuddleComposerOwner } from "../huddle/composer-owner";
 import { isBuzzLink } from "../navigation/buzz-links";
 import { profileActivityViewKey } from "../profiles/target";
+import {
+  APPEARANCE_ATTRIBUTES,
+  type DocumentAppearance,
+  readDocumentAppearance,
+} from "../../shared/theme/document-appearance";
 import { createReadingOwner } from "./reading-bridge";
 import { createPopoutThread, type PopoutThreadView } from "./thread";
 
@@ -16,6 +21,8 @@ export type PopoutBinding = PopoutTarget & {
 };
 export type PopoutView = PopoutThreadView & {
   dark: boolean;
+  /** The main window's applied appearance, mirrored by this window. */
+  appearance?: DocumentAppearance | undefined;
   closeRequested?: number;
   detached?: boolean;
 };
@@ -117,7 +124,7 @@ export function createPopoutWindows(
     for (const listener of noticeListeners) listener();
   };
   const holdListeners = new Set<() => void>();
-  const dark = () => document.documentElement.classList.contains("dark");
+  const appearance = () => readDocumentAppearance();
   const same = (a: PopoutTarget, b: PopoutTarget) =>
     a.channelId === b.channelId && a.threadRootId === b.threadRootId;
   function view(entry: Entry): PopoutView {
@@ -125,7 +132,8 @@ export function createPopoutWindows(
       ...entry.thread.snapshot(),
       composer: entry.thread.writable() ? entry.composer.token : undefined,
       reading: entry.reading.token,
-      dark: dark(),
+      dark: appearance().colorMode === "dark",
+      appearance: appearance(),
     };
   }
   function sync(entry: Entry) {
@@ -354,7 +362,7 @@ export function createPopoutWindows(
   });
   theme.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["class"],
+    attributeFilter: APPEARANCE_ATTRIBUTES,
   });
   return {
     open,

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { PopoutAction, PopoutView } from "../../features/popout/window";
 import { PopoutWindowView } from "./PopoutWindowView";
+import { applyDocumentAppearance } from "../../shared/theme/document-appearance";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 
 /** A remote view of one thread. Main owns the session; this window only asks. */
@@ -20,7 +21,9 @@ function Companion() {
     const updates = new Channel<PopoutView>();
     updates.onmessage = (next) => {
       if (!mounted) return;
-      document.documentElement.classList.toggle("dark", next.dark);
+      applyDocumentAppearance(
+        next.appearance ?? { colorMode: next.dark ? "dark" : "light" },
+      );
       setView(next);
     };
     void invoke("popout_window_watch", { updates }).catch(() => {

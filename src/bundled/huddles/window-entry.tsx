@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
 import { HuddleWindowView } from "./HuddleWindowView";
+import { applyDocumentAppearance } from "../../shared/theme/document-appearance";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 import { clearReactDevMeasures } from "../../features/developer/react-dev-timing";
 
@@ -23,7 +24,9 @@ function Companion() {
     const updates = new Channel<HuddleView & { discussionOpen: boolean }>();
     updates.onmessage = (next) => {
       if (!mounted) return;
-      document.documentElement.classList.toggle("dark", next.dark);
+      applyDocumentAppearance(
+        next.appearance ?? { colorMode: next.dark ? "dark" : "light" },
+      );
       setView((previous) => ({
         ...next,
         discussion: next.discussionOpen

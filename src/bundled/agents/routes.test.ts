@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import {
   agentCardRoute,
   agentProviderRoute,
@@ -9,7 +10,48 @@ import {
   historyRoute,
   historyTarget,
   teamRoute,
+  sharedAgentRoute,
+  sharedAgentLink,
+  sharedAgentTarget,
 } from "./routes";
+
+it("round-trips a shared catalog address and community through an existing page link", () => {
+  const id = `${"a".repeat(64)}:helper`;
+  const scope = {
+    viewer: "b".repeat(64),
+    communityOrigin: "https://relay.example",
+  };
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope,
+  } as const;
+  const target = sharedAgentTarget(base, id, "wss://Relay.Example/");
+  const parsed = buzzLinkTarget(
+    sharedAgentLink(id, "wss://Relay.Example/"),
+    scope,
+  );
+  expect(parsed?.kind).toBe("plugin");
+  expect(
+    parsed && "params" in parsed && sharedAgentRoute(parsed.params),
+  ).toEqual({ id, community: scope.communityOrigin });
+  expect(sharedAgentRoute(target.route?.params)).toEqual({
+    id,
+    community: scope.communityOrigin,
+  });
+  expect(availableAgentProviderRoute(target.route?.params ?? null)).toBe(true);
+  expect(agentProviderTarget(target)).toEqual(base);
+  for (const invalid of [
+    { shared: "Helper", community: scope.communityOrigin },
+    { shared: id },
+    { shared: id, community: "https://user:pass@relay.example" },
+    { shared: id, community: "https://relay.example/path" },
+    { shared: id, community: scope.communityOrigin, extra: true },
+  ])
+    expect(sharedAgentRoute(invalid)).toBeUndefined();
+});
 
 it("admits provider-shaped routes and preserves the Agents page scope", () => {
   const route = { provider: "test/echo" };

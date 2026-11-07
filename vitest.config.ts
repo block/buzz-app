@@ -22,6 +22,7 @@ export default defineConfig({
     maxWorkers,
     include: [
       "src/**/*.test.{ts,tsx,mjs}",
+      "examples/plugins/**/*.test.{ts,jsx}",
       "browser-host/**/*.test.mjs",
       "scripts/**/*.test.{ts,mjs}",
       "tests/browser/perf/**/*.test.mjs",

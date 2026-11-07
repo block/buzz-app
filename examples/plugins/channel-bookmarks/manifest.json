@@ -1,0 +1,6 @@
+{
+  "id": "local.channel-bookmarks",
+  "name": "Channel Bookmarks",
+  "apiVersion": 1,
+  "description": "Open and manage shared channel bookmarks from a channel-header button. Links are stored in Canvas."
+}

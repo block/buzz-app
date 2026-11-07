@@ -5,6 +5,8 @@ All example plugins live here with `manifest.json` and prebuilt `plugin.js` file
 - `counter` and `notes`: offline playgrounds.
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+G /
   Control+Shift+G increments through the injected host service. Requires `shortcuts`.
+- [`channel-bookmarks`](channel-bookmarks/README.md): shared links in a channel panel;
+  install its prebuilt `dist` folder. Uses the connected session and shared Canvas.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.
 
 ## Try the offline playgrounds

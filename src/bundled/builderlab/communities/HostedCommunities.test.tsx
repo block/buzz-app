@@ -760,6 +760,36 @@ it("does not write to the clipboard when create finishes after the card retires"
   expect(writeText).not.toHaveBeenCalled();
 });
 
+for (const ending of ["retires", "unmounts"] as const)
+  it(`does not open the join when create finishes after the card ${ending}`, async () => {
+    const create = hold();
+    let live = true;
+    routes["/api/builderlab/availability"] = () => ({ available: true });
+    routes["/api/builderlab/create"] = create.answer as Handler;
+    const join = vi.fn();
+    const { unmount } = render(
+      <HostedCommunities api={brokerApi} active={() => live} join={join} />,
+    );
+    await typeName("north");
+    await screen.findByText(
+      "That address is available.",
+      {},
+      { timeout: 2000 },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create community" }));
+    await waitFor(() =>
+      expect(calls.map(([url]) => url)).toContain("/api/builderlab/create"),
+    );
+    if (ending === "retires") live = false;
+    else unmount();
+    await act(async () =>
+      create.release({
+        community: { id: "c1", normalized_host: "north.communities.buzz.xyz" },
+      }),
+    );
+    expect(join).not.toHaveBeenCalled();
+  });
+
 it("keeps a created community's address when the following refresh fails", async () => {
   routes["/api/builderlab/availability"] = () => ({ available: true });
   routes["/api/builderlab/create"] = () => ({

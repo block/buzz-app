@@ -880,6 +880,8 @@ export function HostedCommunities({
             creating={action === "create"}
             onCreate={(name) =>
               run("create", async () => {
+                // `run` has just started this operation's generation.
+                const at = generation.current;
                 const reply = check(
                   await api.call("create", { name }),
                   "Could not create the community.",
@@ -887,12 +889,17 @@ export function HostedCommunities({
                 );
                 // Join or hand off the address before refreshing, so a failed
                 // refresh cannot lose it. The join dialog connects at once, as
-                // first run's Create community does.
+                // first run's Create community does. Like the clipboard, a
+                // retired or replaced card (another account) opens nothing.
                 const url = reply.community && relayUrl(reply.community);
-                if (url) {
-                  if (join) join(url);
-                  else await copy(url);
-                }
+                if (url && !join) await copy(url);
+                else if (
+                  url &&
+                  join &&
+                  activeRef.current() &&
+                  at === generation.current
+                )
+                  join(url);
                 await settle();
               })
             }

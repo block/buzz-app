@@ -25,7 +25,10 @@ const after =
 const image =
   "https://github.com/user-attachments/assets/cd0773ee-9861-46d9-8a0f-352ae951ec7f";
 const audio = "https://github.com/user-attachments/files/123/recording.wav";
-const metadata = `<details><summary>before.mp4</summary><video src="https://private-user-images.githubusercontent.com/1888043/659873452-81e77cff-0e61-4694-9a88-add0c1f997e4.mp4?jwt=expired"></video></details><video><source src="${after}" /></video>`;
+const signed = (jwt: string) =>
+  `https://private-user-images.githubusercontent.com/1888043/659873452-81e77cff-0e61-4694-9a88-add0c1f997e4.mp4?jwt=${jwt}`;
+const beforeSigned = signed("expired");
+const metadata = `<details><summary>before.mp4</summary><video src="${beforeSigned}"></video></details><video><source src="${after}" /></video>`;
 
 afterEach(() => {
   cleanup();
@@ -58,12 +61,12 @@ it("renders GFM and Before/After players without duplicate loaded-media links", 
     [...container.querySelectorAll("h2, video")].map((node) =>
       node.tagName === "VIDEO" ? node.getAttribute("src") : node.textContent,
     ),
-  ).toEqual(["Before", before, "After", after]);
+  ).toEqual(["Before", beforeSigned, "After", after]);
   expect(
     screen.getByRole("link", { name: "Result recording" }),
   ).toHaveAttribute("href", after);
   for (const video of container.querySelectorAll("video")) {
-    expect(video).toHaveAttribute("preload", "metadata");
+    expect(video).toHaveAttribute("preload", "auto");
     expect(video).not.toHaveAttribute("autoplay");
     expect(video.closest("p, a")).toBeNull();
     fireEvent.loadedData(video);
@@ -202,6 +205,9 @@ it("keeps original links when media fails before loading", () => {
   );
   for (const media of container.querySelectorAll("video, img, audio"))
     fireEvent.error(media);
+  // The signed video failed; the plain URL is tried next.
+  for (const video of container.querySelectorAll(`video[src="${before}"]`))
+    fireEvent.error(video);
   expect(screen.getAllByRole("status")).toHaveLength(3);
   for (const [name, href] of [
     [before, before],
@@ -211,6 +217,25 @@ it("keeps original links when media fails before loading", () => {
     expect(screen.getByRole("link", { name })).toBeVisible();
     expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
   }
+});
+
+it("loads private attachments from GitHub's newest signed URL and keeps the one that loaded", () => {
+  const body = `![Screenshot](${before})`;
+  const html = (jwt: string) => `<img src="${signed(jwt)}">`;
+  const { container, rerender } = render(
+    <GitHubBody url={url} body={body} bodyHtml={html("one")} />,
+  );
+  const shown = () => container.querySelector("img")?.getAttribute("src");
+  expect(shown()).toBe(signed("one"));
+  fireEvent.error(screen.getByAltText("Screenshot"));
+  expect(shown()).toBe(before);
+  fireEvent.error(screen.getByAltText("Screenshot"));
+  expect(screen.getByRole("status")).toHaveTextContent("Image unavailable");
+  rerender(<GitHubBody url={url} body={body} bodyHtml={html("two")} />);
+  expect(shown()).toBe(signed("two"));
+  fireEvent.load(screen.getByAltText("Screenshot"));
+  rerender(<GitHubBody url={url} body={body} bodyHtml={html("three")} />);
+  expect(shown()).toBe(signed("two"));
 });
 
 it("preserves HTML-only summaries, prose and file links", () => {
@@ -453,6 +478,17 @@ it("preserves linked HTML images and media fallback destinations without nested 
   expect(container.querySelector("a a, a img")).toBeNull();
 });
 
+it("omits the link GitHub adds from an uploaded image to itself", () => {
+  render(
+    <GitHubBody
+      url={url}
+      body={`<a href="${image}"><img src="${image}" alt="Self-linked"></a>`}
+    />,
+  );
+  fireEvent.load(screen.getByAltText("Self-linked"));
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+});
+
 it("preserves deeply nested HTML as literal text beyond the parsing budget", () => {
   const { container } = render(
     <GitHubBody
@@ -541,7 +577,7 @@ it("ignores retired PR loads, retries errors, and clears media when navigating",
   expect(
     screen.queryByRole("button", { name: "Description" }),
   ).not.toBeInTheDocument();
-  expect(container.querySelector("video")).toHaveAttribute("src", before);
+  expect(container.querySelector("video")).toHaveAttribute("src", beforeSigned);
   const next = deferred<Response>();
   fetch.mockReturnValueOnce(next.promise);
   rerender(<GitHubPanel target={`${url}1`} close={() => {}} />);

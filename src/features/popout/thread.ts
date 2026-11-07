@@ -43,8 +43,10 @@ export type PopoutThreadView = {
   operations: MainOperation[];
   /** The viewer follows this thread. */
   following: boolean;
-  /** A DM: no thread following. */
+  /** A DM or Solo chat: no `#`, no thread following. */
   isDm: boolean;
+  /** This frame shows a thread (root + replies), not a conversation timeline. */
+  thread: boolean;
 };
 export type { MainOperation };
 const MAX_OPERATIONS = 64;
@@ -52,12 +54,82 @@ const MAX_REPLIES = 500;
 const visible = (rows: readonly ChannelMessage[]) =>
   rows.filter((row) => !row.membership && !row.huddle);
 
-/** One session-owned thread reader for a pop-out. Verified-root loading, access
- * and delivery stay with `session.thread`; this only projects. */
+/** What a frame reads: one thread (`session.thread`) or a conversation's
+ * top-level timeline (`session.channels.window`). Loading, access and delivery
+ * stay with the session; the projection only reads. */
+type Source = {
+  subscribe(listener: () => void): () => void;
+  snapshot(): {
+    status: "idle" | "loading" | "ready" | "error";
+    error: string | undefined;
+    root: ChannelMessage | undefined;
+    rows: readonly ChannelMessage[];
+    canLoadMore: boolean;
+    limited: boolean;
+    loadingOlder: boolean;
+  };
+  refresh(): void;
+  older(): void;
+  dispose(): void;
+};
+function threadSource(view: ThreadView): Source {
+  return {
+    subscribe: (listener) => view.subscribe(listener),
+    snapshot() {
+      const snap = view.snapshot();
+      return {
+        status: snap.status,
+        error: snap.error,
+        root: snap.root,
+        rows: snap.replies,
+        canLoadMore: snap.canLoadMore && !snap.limited,
+        limited: snap.limited,
+        loadingOlder: snap.readKind === "older",
+      };
+    },
+    refresh: () => void view.refresh().catch(() => {}),
+    older: () => void view.loadMore().catch(() => {}),
+    dispose: () => view.dispose(),
+  };
+}
+function channelSource(session: RelaySession, channelId: string): Source {
+  session.channels.ensure(channelId);
+  return {
+    subscribe: (listener) =>
+      session.channels.subscribeWindow(channelId, listener),
+    snapshot() {
+      const window = session.channels.window(channelId);
+      return {
+        status:
+          window.status === "error"
+            ? "error"
+            : window.status === "ready"
+              ? "ready"
+              : "loading",
+        error: window.error,
+        root: undefined,
+        rows: window.rows,
+        canLoadMore: window.hasMore && !window.historyLimited,
+        limited: !!window.historyLimited,
+        loadingOlder: window.loadingOlder,
+      };
+    },
+    refresh: () => {
+      session.channels.ensure(channelId);
+      session.channels.refresh?.(channelId);
+    },
+    older: () => session.channels.loadOlder(channelId),
+    dispose: () => {},
+  };
+}
+
+/** One session-owned reader for a pop-out frame: a thread when `rootId` is
+ * given, else the conversation's timeline. Verified-root loading, access and
+ * delivery stay with the session; this only projects. */
 export function createPopoutThread(
   session: RelaySession,
   channelId: string,
-  rootId: string,
+  rootId: string | undefined,
   changed: () => void,
   /** Registered plugin message actions, offered as main-window handoffs.
    * The pop-out's own spawn action is never offered to a thread window. */
@@ -89,16 +161,22 @@ export function createPopoutThread(
     ReturnType<typeof createAgentOwnerEvidence>
   >();
   const MAX_EVIDENCE = 32;
-  let thread: ThreadView | undefined;
+  let thread: Source | undefined;
   try {
-    thread = session.thread(channelId, rootId);
+    thread = rootId
+      ? threadSource(session.thread(channelId, rootId))
+      : channelSource(session, channelId);
     // A session thread may contain seeded rows while still idle. Start its
     // verified read before subscribing: refresh publishes loading synchronously,
     // while the caller is still constructing this window's owner.
-    void thread.refresh().catch(() => {});
+    thread.refresh();
   } catch (cause) {
     error =
-      cause instanceof Error ? cause.message : "Couldn’t open this thread.";
+      cause instanceof Error
+        ? cause.message
+        : rootId
+          ? "Couldn’t open this thread."
+          : "Couldn’t open this conversation.";
   }
   const stops = [
     thread?.subscribe(notify),
@@ -106,7 +184,9 @@ export function createPopoutThread(
     session.channels.subscribeList(notify),
     session.profiles.subscribe(notify),
     session.unread.subscribe({ kind: "channel", channelId }, notify),
-    session.unread.subscribe({ kind: "thread", channelId, rootId }, notify),
+    rootId
+      ? session.unread.subscribe({ kind: "thread", channelId, rootId }, notify)
+      : undefined,
     session.unread.subscribeSync(notify),
     actions?.subscribe(notify),
   ];
@@ -175,13 +255,10 @@ export function createPopoutThread(
    * but read-only. */
   const rootVerified = () => {
     const snap = thread?.snapshot();
-    return (
-      available() &&
-      snap?.status === "ready" &&
-      !snap.error &&
-      snap.root?.id === rootId &&
-      snap.root.channelId === channelId
-    );
+    if (!available() || snap?.status !== "ready" || snap.error) return false;
+    // A conversation frame has no root to verify: its window is ready.
+    if (!rootId) return true;
+    return snap.root?.id === rootId && snap.root.channelId === channelId;
   };
   // As the main thread composer decides: the relay's readOnly/cached flags,
   // not the roster, which the summary may not carry ("absent means unknown").
@@ -219,7 +296,7 @@ export function createPopoutThread(
       const snap = thread?.snapshot();
       if (!snap || !available()) return undefined;
       if (snap.root?.id === id) return snap.root;
-      return visible(snap.replies)
+      return visible(snap.rows)
         .slice(-MAX_REPLIES)
         .find((row) => row.id === id);
     },
@@ -327,7 +404,7 @@ export function createPopoutThread(
       const snap = thread?.snapshot();
       return new Set(
         snap && available()
-          ? [snap.root, ...visible(snap.replies).slice(-MAX_REPLIES)]
+          ? [snap.root, ...visible(snap.rows).slice(-MAX_REPLIES)]
               .filter((row) => row !== undefined)
               .map((row) => row.id)
           : [],
@@ -338,7 +415,7 @@ export function createPopoutThread(
     snapshot(): PopoutThreadView {
       const snap = thread?.snapshot();
       const profiles = session.profiles.snapshot();
-      const replies = snap ? visible(snap.replies) : [];
+      const replies = snap ? visible(snap.rows) : [];
       // Agent hints decide whose ownership to observe; evidence decides
       // authority. Observation follows the rows shown now.
       // The same bounded rows the window shows, admits and claims read.
@@ -420,27 +497,28 @@ export function createPopoutThread(
               : "loading",
         error: error ?? snap?.error,
         writable: writable(),
-        canLoadMore: !!snap?.canLoadMore && !snap.limited,
+        canLoadMore: !!snap?.canLoadMore,
         limited: !!snap?.limited || replies.length > MAX_REPLIES,
-        loadingOlder: snap?.readKind === "older",
+        loadingOlder: !!snap?.loadingOlder,
         readingRevision: session.unread.revision(),
         version,
         root: snap?.root && available() ? project(snap.root) : undefined,
         replies: available() ? replies.slice(-MAX_REPLIES).map(project) : [],
         operations: this.operations().slice(0, MAX_OPERATIONS),
-        following: session.unread.following(channelId, rootId),
-        isDm: c?.channelType === "dm",
+        following: rootId ? session.unread.following(channelId, rootId) : false,
+        isDm: c?.channelType === "dm" || c?.channelType === "solo",
+        thread: !!rootId,
       };
     },
     retry() {
       if (!thread || disposed) return;
       error = undefined;
-      void thread.refresh().catch(() => {});
+      thread.refresh();
       notify();
     },
     older() {
       if (!thread || disposed || !available()) return;
-      void thread.loadMore().catch(() => {});
+      thread.older();
     },
     recover(id: string, dismiss = false) {
       const item = session.outbox

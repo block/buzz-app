@@ -764,3 +764,82 @@ it("keeps projected actions within the native bounds without rewriting identitie
   // Left out of the wire projection, but still a valid handoff if asked for.
   expect(thread.handoff(ROOT, "plugin:a39", "1")?.id).toBe("a39");
 });
+
+it("projects a conversation frame from the channel window: top-level rows, no root, ready without a thread root", () => {
+  const h = fixture();
+  const row = (id: string, content: string) => ({
+    id,
+    channelId: "channel",
+    authorId: VIEWER,
+    createdAt: 1,
+    content,
+    attachments: [],
+    mentions: [],
+    reactions: [],
+    replyCount: 0,
+    participants: [],
+  });
+  let window = {
+    channelId: "channel",
+    status: "loading" as "loading" | "ready",
+    rows: [] as ReturnType<typeof row>[],
+    hasMore: true,
+    loadingOlder: false,
+    error: undefined,
+  };
+  const ensure = vi.fn();
+  const loadOlder = vi.fn();
+  const listeners = new Set<() => void>();
+  const session = {
+    ...h.session,
+    channels: {
+      ...h.session.channels,
+      ensure,
+      loadOlder,
+      window: () => window,
+      subscribeWindow: (_id: string, listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    // A conversation frame never reads a thread.
+    thread: () => {
+      throw new Error("not a thread");
+    },
+  } as unknown as RelaySession;
+  const changed = vi.fn();
+  const frame = createPopoutThread(session, "channel", undefined, changed);
+  clean.push(frame.dispose);
+  expect(ensure).toHaveBeenCalledWith("channel");
+  expect(frame.snapshot()).toMatchObject({
+    status: "loading",
+    thread: false,
+    root: undefined,
+    replies: [],
+    writable: false,
+    following: false,
+  });
+  window = {
+    ...window,
+    status: "ready",
+    rows: [
+      row("a".repeat(64), "First"),
+      {
+        ...row("b".repeat(64), "joined"),
+        membership: { kind: "join" },
+      } as never,
+      row("c".repeat(64), "Second"),
+    ],
+  };
+  for (const listener of listeners) listener();
+  const snap = frame.snapshot();
+  expect(snap.status).toBe("ready");
+  expect(snap.writable).toBe(true);
+  expect(snap.canLoadMore).toBe(true);
+  expect(snap.replies.map((r) => r.text)).toEqual(["First", "Second"]);
+  expect(frame.shown("c".repeat(64))?.content).toBe("Second");
+  expect(frame.rootVerified()).toBe(true);
+  frame.older();
+  expect(loadOlder).toHaveBeenCalledWith("channel");
+  expect([...frame.known()]).toEqual(["a".repeat(64), "c".repeat(64)]);
+});

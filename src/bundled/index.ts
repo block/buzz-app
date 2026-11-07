@@ -72,6 +72,14 @@ import * as pluginDevelopment from "./plugin-development";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
+import communityManifest from "./community-plugins/manifest.json";
+import * as communityPlugins from "./community-plugins";
+import {
+  communityIndexUrl,
+  communityPluginsAccess,
+} from "./community-plugins/config";
+
+const communityAccess = communityPluginsAccess(communityIndexUrl());
 
 const codexHarness: BundledPlugin = {
   manifest: { ...codexManifest, apiVersion: 1 },
@@ -255,6 +263,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...pluginDevelopmentManifest, apiVersion: 1 },
     module: pluginDevelopment,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...communityManifest, apiVersion: 1, ...communityAccess },
+    module: communityPlugins,
     enabledByDefault: true,
   },
 ];

@@ -16,6 +16,36 @@ const BUILDERLAB_APPS_DOMAIN_KEY: &str = "BUZZ_BUILDERLAB_APPS_DOMAIN";
 const BUILDERLAB_API_BASE_PATH_KEY: &str = "BUZZ_BUILDERLAB_API_BASE_PATH";
 const BUILDERLAB_APPS_CONTROL_PLANE_KEY: &str = "BUZZ_BUILDERLAB_APPS_CONTROL_PLANE";
 const REPOSITORY_ACCESS_KEY: &str = "BUZZ_BUILD_REPOSITORY_ACCESS";
+const COMMUNITY_PLUGIN_INDEX_KEY: &str = "BUZZ_COMMUNITY_PLUGIN_INDEX_URL";
+
+/// The community plugin index URL and its origin, or empty when the build has none.
+fn community_plugin_index(
+    local: &Path,
+    process: Option<String>,
+) -> Result<(String, String), &'static str> {
+    let values = build_env::load(local, &[COMMUNITY_PLUGIN_INDEX_KEY], |_| process.clone())?;
+    let Some(raw) = values
+        .get(COMMUNITY_PLUGIN_INDEX_KEY)
+        .filter(|raw| !raw.is_empty())
+        .cloned()
+    else {
+        return Ok(Default::default());
+    };
+    let url = url::Url::parse(&raw).map_err(|_| "Invalid community plugin index URL")?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || raw.contains('#')
+        || url.path() == "/"
+        || url.as_str() != raw
+    {
+        return Err(
+            "Community plugin index URL must be the HTTPS URL of index.json, without credentials or a fragment",
+        );
+    }
+    let origin = url.origin().ascii_serialization();
+    Ok((raw, origin))
+}
 
 /// Default repository access rules, in `repository-access.json`'s schema. Every rule
 /// must be usable, so a typo fails the build instead of dropping a rule. Cargo reads
@@ -168,6 +198,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_DOMAIN_KEY}");
     println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_CONTROL_PLANE_KEY}");
     println!("cargo:rerun-if-env-changed={REPOSITORY_ACCESS_KEY}");
+    println!("cargo:rerun-if-env-changed={COMMUNITY_PLUGIN_INDEX_KEY}");
     println!(
         "cargo:rerun-if-changed={}",
         root.join("crates/plugin-manager/src/access/schema.rs")
@@ -209,6 +240,9 @@ fn main() {
     let access = repository_access(process(REPOSITORY_ACCESS_KEY))
         .unwrap_or_else(|reason| panic!("Invalid {REPOSITORY_ACCESS_KEY}: {reason}"));
     println!("cargo:rustc-env={REPOSITORY_ACCESS_KEY}={access}");
+    let (_, index_origin) = community_plugin_index(&local, process(COMMUNITY_PLUGIN_INDEX_KEY))
+        .unwrap_or_else(|reason| panic!("Invalid {COMMUNITY_PLUGIN_INDEX_KEY}: {reason}"));
+    println!("cargo:rustc-env=BUZZ_COMMUNITY_PLUGIN_INDEX_ORIGIN={index_origin}");
 }
 
 #[cfg(test)]
@@ -237,6 +271,64 @@ mod tests {
             let selected = federated_identity(&local, env).map(|config| config.id);
             assert_eq!(selected.as_deref(), fi, "{mode}");
         }
+    }
+
+    #[test]
+    fn community_plugin_index_is_an_https_index_url_or_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        let none = (String::new(), String::new());
+        assert_eq!(community_plugin_index(&local, None).unwrap(), none);
+        assert_eq!(
+            community_plugin_index(&local, Some(String::new())).unwrap(),
+            none
+        );
+        for (raw, origin) in [
+            (
+                "https://raw.githubusercontent.com/block/buzz-plugins/index/index.json",
+                "https://raw.githubusercontent.com",
+            ),
+            (
+                "https://plugins.example:8443/v1/index.json",
+                "https://plugins.example:8443",
+            ),
+            (
+                "https://plugins.example/index.json?v=1",
+                "https://plugins.example",
+            ),
+        ] {
+            assert_eq!(
+                community_plugin_index(&local, Some(raw.into())).unwrap(),
+                (raw.to_string(), origin.to_string()),
+                "{raw}"
+            );
+        }
+        for raw in [
+            "http://plugins.example/index.json",
+            "https://plugins.example",
+            "https://plugins.example/",
+            "https://user@plugins.example/index.json",
+            "https://user:pass@plugins.example/index.json",
+            "https://plugins.example/index.json#top",
+            "https://plugins.example/index.json#",
+            "https://Plugins.Example/index.json",
+            "https://plugins.example/a b.json",
+            "plugins.example/index.json",
+        ] {
+            assert!(
+                community_plugin_index(&local, Some(raw.into())).is_err(),
+                "{raw}"
+            );
+        }
+        std::fs::write(
+            &local,
+            "BUZZ_COMMUNITY_PLUGIN_INDEX_URL=https://index.example/index.json\n",
+        )
+        .unwrap();
+        assert_eq!(
+            community_plugin_index(&local, None).unwrap().0,
+            "https://index.example/index.json"
+        );
     }
 
     #[test]

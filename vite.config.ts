@@ -48,6 +48,28 @@ function sharedAppsControlPlane(login: string) {
   return raw;
 }
 
+/** The community plugin index URL, checked as native's `build.rs` checks it. */
+function sharedCommunityPluginIndex() {
+  const raw = sharedBuildValue("BUZZ_COMMUNITY_PLUGIN_INDEX_URL") ?? "";
+  if (!raw) return "";
+  let url: URL | undefined;
+  try {
+    url = new URL(raw);
+  } catch {}
+  if (
+    url?.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    raw.includes("#") ||
+    url.pathname === "/" ||
+    url.href !== raw
+  )
+    throw new Error(
+      "Community plugin index URL must be the HTTPS URL of index.json, without credentials or a fragment",
+    );
+  return raw;
+}
+
 /** The built-in sign-in server's Builderlab, in the legacy URL's shape. Keep
  * in step with `BUILT_IN` in src-tauri/src/federated_identity/config.rs. */
 const BUILT_IN_BUILDERLAB = "https://app.builderlab.xyz";
@@ -101,6 +123,7 @@ export default defineConfig(async ({ command, mode }) => {
   const federatedUrl = federatedBuilderlabUrl(legacyUrl, live);
   const builderlabUrl = federatedUrl ?? legacyUrl ?? BUILT_IN_BUILDERLAB;
   const appsControlPlane = sharedAppsControlPlane(builderlabUrl);
+  const communityPluginIndex = sharedCommunityPluginIndex();
   const aliases = env.BUZZ_COMMUNITY_ALIASES ?? "";
   parseCommunityAliases(aliases);
   const externalMcpCommunities = (env.BUZZ_EXTERNAL_MCP_COMMUNITIES ?? "")
@@ -218,6 +241,8 @@ export default defineConfig(async ({ command, mode }) => {
         JSON.stringify(env.BUZZ_BUILDERLAB_APPS_DOMAIN) ?? "undefined",
       "import.meta.env.VITE_BUZZ_BUILDERLAB_APPS_CONTROL_PLANE":
         JSON.stringify(appsControlPlane),
+      "import.meta.env.VITE_BUZZ_COMMUNITY_PLUGIN_INDEX_URL":
+        JSON.stringify(communityPluginIndex),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
         JSON.stringify(databricksHost),

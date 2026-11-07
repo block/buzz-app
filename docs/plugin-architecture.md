@@ -904,7 +904,7 @@ contracts with their own layout and local navigation.
 Todos, Usage, Reminders, Workflows and Shared compute are off by default for fresh installs. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
-Membership, and Moderation are on by default, but optional. Both browser and
+Membership, Moderation and Community plugins are on by default, but optional. Both browser and
 native catalogs declare that policy.
 
 Solo is part of Channels, not a plugin: Solo chats are channels opened in

@@ -14,6 +14,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | Shared frontend/native build: HTTPS origin of the Apps control plane for the configured login origin, for deployments the built-in public table does not list; no runtime override. |
+| `BUZZ_COMMUNITY_PLUGIN_INDEX_URL` | Shared frontend/native build: HTTPS URL of the community plugin `index.json` the bundled Community plugins page reads. Unset or empty means no index and no requests. See [below](#community-plugin-index). |
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Native build: default [repository access rules](repository-access.md#default-rules), in `repository-access.json`'s schema. Unset means none. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
@@ -106,6 +107,56 @@ plugin starts receives it as `DATABRICKS_HOST`, so goose reports Databricks as
 configured and ignores a host saved in goose's config. Only the host is set:
 the model, thinking level and sign-in stay goose's own. Leave it unset for OSS
 builds.
+
+## Community plugin index
+
+The bundled Community plugins plugin (`buzz.community-plugins`, on by
+default) lists plugins people publish in public Git repositories from a public,
+static plugin index. Set `BUZZ_COMMUNITY_PLUGIN_INDEX_URL` to the full HTTPS URL
+of the index's `index.json`, such as
+`https://raw.githubusercontent.com/block/buzz-plugins/index/index.json`, in
+repository-root `.env.local` or the build process environment; the process
+wins, including empty. The URL needs a path and no credentials or fragment; a
+query string is kept as written. The native build grants the plugin the URL's
+origin and `https://api.github.com`, and the page fetches the URL as given.
+Unset or empty, the plugin gets no network access and shows "No community index
+configured". Any other value fails the build.
+
+Installs go through the usual plugin review. Install counts and upvotes never
+go to the index: they stay in the selected community. Each community keeps them
+in one open NIP-CL system channel labeled `buzz-marketplace`: the oldest open,
+unarchived one, whoever created it. When a complete lookup finds none, the first
+member's Buzz to need it creates it, and joins it to write.
+
+The plugin records every installed plugin, wherever it came from: from the
+page, a Git repository, or a local folder. Bundled plugins aren't recorded. In
+the background, at startup, whenever the installed set changes and whenever
+another community is selected, it brings the member's records in that
+community in line with what is installed, adding missing ones and withdrawing
+those for removed plugins. It writes only what differs, at most 50 records per
+pass. A member's install or upvote is one NIP-AR artifact (type
+`buzz.plugin.install` or `buzz.plugin.vote`) with the plugin's manifest id in a
+`plugin` tag and the writer in an `installer` tag. An install also records the
+kind of source in a `source` tag, `git` or `local`, never the repository, which
+could be private. Its `d` is derived from the member's
+key and the plugin id, so counts take each member once per plugin and an upvote
+only from someone with an install record. Index listings are counted by
+manifest id. Counts are read from current revisions, so only that community's
+members see them, along with who installed what. **Record my plugins in this
+community** on the page stops recording; turning it off withdraws the member's
+records. A community without NIP-CL or NIP-AR shows no counts and gets no
+records.
+
+**Add your plugin** on the page lets an author list a plugin. It checks
+anonymously through `https://api.github.com` that the repository is public and
+has a built `manifest.json` and `plugin.js`, then shows the plugin's
+`sources.txt` line with two links that open in the browser: a prefilled
+`list-plugin.yml` issue form, and GitHub's editor for `sources.txt` on `main`,
+which opens a pull request. The index repository's checks verify the line and
+a maintainer merges it; Buzz itself sends nothing to the index. The listing
+repository is the `<owner>/<repo>` of an index URL on
+`https://raw.githubusercontent.com/<owner>/<repo>/...`. For an index hosted
+anywhere else the button is hidden.
 
 ## Builderlab URL build input
 

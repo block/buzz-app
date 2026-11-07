@@ -55,6 +55,18 @@ it("releases unsent files on close while retaining the saved panel text draft", 
       observeDismiss: () => () => {},
       observeSend: () => () => {},
       ready: async () => {},
+      withChat: async () => {
+        throw new Error("No chat submission in this fixture");
+      },
+      stageChat: async () => {
+        throw new Error("No chat submission in this fixture");
+      },
+      resume: async () => {
+        throw new Error("No chat submission in this fixture");
+      },
+      whenPrepared: async () => {
+        throw new Error("No active preparation in this fixture");
+      },
       send: () => {
         throw new Error("No send expected");
       },

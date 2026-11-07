@@ -109,12 +109,14 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
       const revision = ownershipRevision;
       const db = await open();
       const next = new Map(operations.map((item) => [item.event.id, item]));
+      const skipped = new Set(options?.skip);
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(["events", "partitions"], "readwrite", {
           durability: "strict",
         });
         const events = tx.objectStore("events");
         for (const [id, operation] of next) {
+          if (skipped.has(id)) continue;
           const old = persisted.get(id);
           if (
             id !== options?.force &&
@@ -132,13 +134,16 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
           events.put({ scope, id, operation });
         }
         for (const id of persisted.keys())
-          if (!next.has(id)) events.delete([scope, id]);
+          if (!skipped.has(id) && !next.has(id)) events.delete([scope, id]);
         tx.objectStore("partitions").put(true, scope);
         tx.oncomplete = () => {
           // A read can relinquish an ID while this transaction is pending.
           // Do not let completion reclaim deletion ownership of that ID.
           persisted = new Map(
-            [...next].filter(([id]) => (forgotten.get(id) ?? 0) <= revision),
+            [
+              ...[...next].filter(([id]) => !skipped.has(id)),
+              ...[...persisted].filter(([id]) => skipped.has(id)),
+            ].filter(([id]) => (forgotten.get(id) ?? 0) <= revision),
           );
           resolve();
         };

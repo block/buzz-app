@@ -13,6 +13,7 @@ import type {
   PendingMention,
 } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
+import type { TaskWorkspace } from "../channel-navigation/solo-navigation-contract";
 
 /** The document owns editable marks and exact source tokens. Unimplemented
  * Markdown stays source text, never round-trips through an HTML serializer. */
@@ -37,7 +38,8 @@ export const composerSchema = new Schema<
   | "strike"
 >({
   nodes: {
-    doc: { content: "block+" },
+    /** `workspace` is a task draft's explicit, source-owned filing. */
+    doc: { content: "block+", attrs: { workspace: { default: null } } },
     paragraph: {
       group: "block",
       content: "inline*",
@@ -203,6 +205,39 @@ export function markdownRanges(text: string) {
     pending.push(...(node.children ?? []));
   }
   return { literal };
+}
+
+/** Copy only a bounded `{ id, label }`. The id is opaque to the host. */
+export function composerWorkspace(value: unknown): TaskWorkspace | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const { id, label, ...rest } = value as Record<string, unknown>;
+  if (
+    Object.keys(rest).length ||
+    typeof id !== "string" ||
+    !id ||
+    id.length > 4096 ||
+    /\p{Cc}/u.test(id) ||
+    typeof label !== "string" ||
+    !label.trim() ||
+    label.length > 256 ||
+    /[\p{Cc}\u202a-\u202e\u2066-\u2069]/u.test(label)
+  )
+    return;
+  return Object.freeze({ id, label });
+}
+
+/** Seed an empty task draft filed in a workspace. */
+export function composerWorkspaceDraft(
+  value: TaskWorkspace,
+): MentionDraft | undefined {
+  const workspace = composerWorkspace(value);
+  if (!workspace) return;
+  return projectComposerDocument(
+    composerSchema.nodes.doc.create(
+      { workspace },
+      composerSchema.nodes.paragraph.create(),
+    ),
+  ).draft;
 }
 
 /** Draft text stays the editing/completion coordinate space. Formatting metadata
@@ -463,12 +498,16 @@ function project(doc: EditorNode) {
   for (let i = 1; i < positions.length; i++)
     positions[i] = Math.max(positions[i] ?? 0, positions[i - 1] ?? 0);
   positions[positions.length - 1] = text.length;
+  const workspace = composerWorkspace(doc.attrs.workspace);
+  const content = doc.toJSON();
+  if (!workspace) delete content.attrs;
   return {
     draft: {
       text,
       recipients,
+      ...(workspace ? { workspace } : {}),
       ...(pending.length ? { pending } : {}),
-      document: { version: 1, content: doc.toJSON() },
+      document: { version: 1, content },
     } satisfies MentionDraft,
     positions,
     tokens,
@@ -527,6 +566,33 @@ export function composerMarkdownContext(
 }
 
 /** Local persistence envelope. The schema, not parallel mark ranges, owns shape. */
+/** Attribute values another build saved that this schema cannot keep.
+ * Loading drops them, so a task draft that carries them stays unchanged. */
+export function foreignComposerAttributes(value: unknown): boolean {
+  const pending = [
+    value && typeof value === "object" && "content" in value
+      ? value.content
+      : undefined,
+  ];
+  for (let count = 0; pending.length && count <= 32001; count++) {
+    const node = pending.pop();
+    if (!node || typeof node !== "object") continue;
+    const { type, attrs, content } = node as Record<string, unknown>;
+    const known =
+      typeof type === "string" ? composerSchema.nodes[type]?.spec.attrs : {};
+    if (
+      attrs &&
+      typeof attrs === "object" &&
+      Object.entries(attrs).some(
+        ([key, item]) => item !== null && item !== undefined && !known?.[key],
+      )
+    )
+      return true;
+    if (Array.isArray(content)) pending.push(...content);
+  }
+  return false;
+}
+
 export function readComposerSnapshot(value: unknown): EditorNode | undefined {
   // Snapshots are never mutated, and validation plus parsing is O(draft).
   if (typeof value !== "object" || !value) return read(value);
@@ -564,6 +630,15 @@ function read(value: unknown): EditorNode | undefined {
       if (typeof node.text !== "string") return;
       length += node.text.length;
     }
+    if (
+      node.type === "doc" &&
+      node.attrs &&
+      typeof node.attrs === "object" &&
+      "workspace" in node.attrs &&
+      node.attrs.workspace !== null &&
+      !composerWorkspace(node.attrs.workspace)
+    )
+      return;
     if (node.type === "token") {
       if (
         !node.attrs ||

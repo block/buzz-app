@@ -73,6 +73,7 @@ export function stageChatCards(
   }
   return {
     ...projectComposerDocument(tr.doc).draft,
+    ...(draft.unsupported ? { unsupported: draft.unsupported } : {}),
     ...(draft.gifs ? { gifs: draft.gifs } : {}),
     chatCards: [
       ...new Set([

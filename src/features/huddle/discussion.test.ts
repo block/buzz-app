@@ -62,6 +62,18 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
       observeSend: () => () => {},
       supports: () => true,
       ready: async () => {},
+      withChat: async () => {
+        throw new Error("No chat submission in this fixture");
+      },
+      stageChat: async () => {
+        throw new Error("No chat submission in this fixture");
+      },
+      resume: async () => {
+        throw new Error("No chat submission in this fixture");
+      },
+      whenPrepared: async () => {
+        throw new Error("No active preparation in this fixture");
+      },
       send: () => "id",
       recovery: async () => undefined,
       recover: async () => {},

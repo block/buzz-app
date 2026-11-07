@@ -49,6 +49,22 @@ export function PopoutWindowView({
   const settled = useRef(true);
   const [held, setHeld] = useState(false);
   const [confirming, setConfirming] = useState(0);
+  // A voice note being captured is lost when its editor unmounts, which
+  // changing frames does; navigation asks first while one is in progress.
+  const [capturing, setCapturing] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<
+    { action: "openThread"; rootId: string } | { action: "back" }
+  >();
+  const navigate = (
+    next: { action: "openThread"; rootId: string } | { action: "back" },
+  ) => {
+    if (capturing) {
+      setPendingNavigation(next);
+      return;
+    }
+    if (next.action === "openThread") act("openThread", next.rootId);
+    else act("back");
+  };
   const rows = useMemo(
     () => (view.root ? [view.root, ...view.replies] : view.replies),
     [view.root, view.replies],
@@ -105,6 +121,7 @@ export function PopoutWindowView({
       session: operationsSession,
       // Voice notes record here; main uploads them like any attachment.
       capture: true,
+      onCapturing: setCapturing,
     },
   );
   // Reactions and the picker use the same bridge as the composer: one owner
@@ -256,7 +273,7 @@ export function PopoutWindowView({
               aria-label="Back to conversation"
               title="Back"
               icon={<CaretLeftIcon />}
-              onClick={() => act("back")}
+              onClick={() => navigate({ action: "back" })}
             />
           )}
           <h1 className={styles.title}>
@@ -342,7 +359,7 @@ export function PopoutWindowView({
               // window; main re-points the projection and keeps the way back.
               onOpenThread: view.thread
                 ? undefined
-                : (rootId) => act("openThread", rootId),
+                : (rootId) => navigate({ action: "openThread", rootId }),
             }}
             layout={view.thread ? "thread" : "timeline"}
             openLink={(url) => {
@@ -451,6 +468,32 @@ export function PopoutWindowView({
               client.report({ messageId: reporting.id, type, note: note ?? "" })
             }
             close={() => setReporting(undefined)}
+          />
+        )}
+        {pendingNavigation && (
+          <AlertDialog
+            title="Discard your recording?"
+            description="A voice note is being recorded here. Leaving this view discards it."
+            onClose={() => setPendingNavigation(undefined)}
+            actions={
+              <>
+                <Button onClick={() => setPendingNavigation(undefined)}>
+                  Keep recording
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    const next = pendingNavigation;
+                    setPendingNavigation(undefined);
+                    if (next.action === "openThread")
+                      act("openThread", next.rootId);
+                    else act("back");
+                  }}
+                >
+                  Discard and continue
+                </Button>
+              </>
+            }
           />
         )}
         {confirming > 0 && (

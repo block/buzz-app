@@ -26,25 +26,20 @@ const noEdits: readonly ChannelMessage[] = [];
  * a pop-out that drilled from its conversation into a thread still holds the
  * conversation's files (drafts are keyed by the editor's session object,
  * which a companion rebuilds per connection), and returns them to the editor
- * that mounts again for the same draft key. Bounded; the oldest is dropped.
+ * that mounts again for the same draft key. Never evicted: each entry is
+ * unsent work the person attached by hand, and the window's close guard
+ * counts it; the window's lifetime bounds the set.
  */
 const retainedDrafts = new Map<
   string,
   { session: ComposerSession; channelId: string }
 >();
-const MAX_RETAINED_DRAFTS = 8;
 const retainedListeners = new Set<() => void>();
 const retainedChanged = () => {
   for (const listener of retainedListeners) listener();
 };
 function retainDraft(key: string, session: ComposerSession, channelId: string) {
-  retainedDrafts.delete(key);
   retainedDrafts.set(key, { session, channelId });
-  while (retainedDrafts.size > MAX_RETAINED_DRAFTS) {
-    const oldest = retainedDrafts.keys().next().value;
-    if (oldest === undefined) break;
-    retainedDrafts.delete(oldest);
-  }
   retainedChanged();
 }
 /** Files held for other editors of this window: still unsent work. */
@@ -83,6 +78,8 @@ export type CompanionComposerPresentation = {
   session?: ComposerSession | undefined;
   /** This window may record voice notes (pop-out windows; never the Huddle). */
   capture?: boolean | undefined;
+  /** Told while a voice note is being captured in this editor. */
+  onCapturing?: ((capturing: boolean) => void) | undefined;
 };
 export type CompanionComposerClient = ReturnType<
   typeof createHuddleComposerClient
@@ -209,6 +206,7 @@ function ConnectedComposer({
         replyParentId={presentation?.replyParentId}
         replyContext={presentation?.replyContext}
         onHeld={onHeld ? setEditorHeld : undefined}
+        onCapturing={presentation?.onCapturing}
         disabled={!data.writable}
         editMessages={presentation?.editMessages ?? noEdits}
       />

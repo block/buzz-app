@@ -316,6 +316,9 @@ export type MessageComposerProps = {
    * or a voice note being captured. A window hosting the editor asks before
    * closing while true. */
   onHeld?: ((held: boolean) => void) | undefined;
+  /** Told while a voice note is being captured (permission, recording,
+   * processing): work that is lost if the editor unmounts, unlike files. */
+  onCapturing?: ((capturing: boolean) => void) | undefined;
   /** Before a focused form detaches, its host can hand focus to retained content. */
   onFocusedRemoval?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
@@ -512,6 +515,7 @@ function Composer({
   onCommand,
   onDraftSaved,
   onHeld,
+  onCapturing,
   onFocusedRemoval,
   editMessages,
   onOpenLink,
@@ -1320,6 +1324,11 @@ function Composer({
   useEffect(() => {
     onHeld?.(held);
   }, [onHeld, held]);
+  const capturing = voice.capturing;
+  useEffect(() => {
+    onCapturing?.(capturing);
+    return () => onCapturing?.(false);
+  }, [onCapturing, capturing]);
   useEffect(() => {
     if (disabled) attachments.store.cancel();
     else attachments.store.resume();

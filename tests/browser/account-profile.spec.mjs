@@ -150,3 +150,51 @@ test("account menu choices remain reachable across themes, widths and enlarged t
     page.getByRole("region", { name: "Profile", exact: true }),
   ).toBeVisible();
 });
+
+// Geometry and wheel chaining need a real layout engine: a multi-line
+// description must not trap wheel scrolling in a nested textarea scrollport
+// or push Save out of reach behind an unbounded preview.
+test("a multi-line description keeps Save reachable and the pane scrollable", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page
+    .locator("[data-profile-menu]")
+    .getByRole("menuitem", { name: /, edit profile$/ })
+    .click();
+  await selectSettingsSection(page, "Profile");
+  const dialog = settingsDialog(page);
+  const about = dialog.getByLabel(/Profile description/);
+  await about.fill(
+    Array.from({ length: 30 }, (_, line) => `line ${line}`).join("\n"),
+  );
+  // The field grows with its content instead of nesting a scrollport.
+  await expect
+    .poll(async () =>
+      about.evaluate((area) => area.scrollHeight - area.clientHeight),
+    )
+    .toBeLessThanOrEqual(1);
+  // The hero preview stays clamped instead of mirroring all 30 lines.
+  const preview = dialog
+    .getByRole("region", { name: "Profile preview" })
+    .locator("p");
+  const previewLines = await preview.evaluate(
+    (paragraph) =>
+      paragraph.getBoundingClientRect().height /
+      Number.parseFloat(getComputedStyle(paragraph).lineHeight),
+  );
+  expect(previewLines).toBeLessThanOrEqual(5);
+  // Wheel with the pointer over the field, where it sits while typing.
+  const detail = dialog.locator(".buzz-dialog-navigation-detail");
+  const box = await about.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 40);
+  await page.mouse.wheel(0, 1600);
+  await expect
+    .poll(async () => detail.evaluate((pane) => pane.scrollTop))
+    .toBeGreaterThan(0);
+  await expect(
+    dialog.getByRole("button", { name: "Save", exact: true }),
+  ).toBeInViewport();
+});

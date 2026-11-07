@@ -56,15 +56,18 @@ it("calculates the selected preset at save time after a quick choice is edited",
     screen.queryByRole("menuitemradio", { name: "Don’t clear" }),
   ).not.toBeInTheDocument();
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "8 hours" }),
+    await screen.findByRole("menuitemradio", { name: "30 minutes" }),
   );
+  expect(
+    screen.getByRole("button", { name: "Duration: 30 minutes" }),
+  ).toBeVisible();
   now += 600_000;
   await user.click(screen.getByRole("button", { name: "Save status" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledWith({
     text: "Design review",
     emoji: "🗣️",
-    expiresAt: now / 1000 + 28800,
+    expiresAt: now / 1000 + 1800,
   });
 });
 it("prefills and preserves an existing deadline, and validates a custom date before saving", async () => {

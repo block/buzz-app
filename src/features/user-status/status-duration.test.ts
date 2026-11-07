@@ -29,4 +29,7 @@ it("chooses the closest preset when two deadlines are within tolerance", () => {
   const lateEvening = midnight - 3600 - 30;
   expect(statusDuration(midnight, lateEvening)).toBe("today");
   expect(statusDuration(lateEvening + 3600, lateEvening)).toBe("3600");
+  const halfHourBefore = midnight - 1800 - 30;
+  expect(statusDuration(midnight, halfHourBefore)).toBe("today");
+  expect(statusDuration(halfHourBefore + 1800, halfHourBefore)).toBe("1800");
 });

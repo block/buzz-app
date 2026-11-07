@@ -221,6 +221,7 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
       readStateFloor: () => 0,
       readPublisherLock: async (_signal, work) => work(),
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         close() {},
         async update(change) {
           journal = readJournal(change(journal), viewer.pubkey);
@@ -334,6 +335,7 @@ it("shows the first six unread conversations ahead of the rest", async () => {
       readStateFloor: () => 0,
       readPublisherLock: async (_signal, work) => work(),
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         close() {},
         async update(change) {
           journal = readJournal(change(journal), viewer.pubkey);

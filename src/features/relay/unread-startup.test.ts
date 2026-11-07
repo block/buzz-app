@@ -82,6 +82,7 @@ function setup(count = 1, snapshot = false) {
     {
       readStateFloor: () => 0,
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           journal = readJournal(change(journal), viewer.pubkey);
           return journal;

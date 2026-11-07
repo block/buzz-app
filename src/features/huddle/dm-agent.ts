@@ -37,7 +37,6 @@ export function dmVoiceAgent(
   return snapshot.running.find(
     (agent) =>
       agent.pubkey === peer &&
-      agent.type === "buzz.codex/codex" &&
       agent.owner === destination.viewer &&
       agent.place === "here" &&
       !agent.executionBinding &&

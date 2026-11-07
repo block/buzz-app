@@ -265,6 +265,7 @@ it("delivers every captured frame through the real seat during a slow bridge sen
       }),
       subscribe,
       voiceListening: vi.fn(),
+      voiceThinking: vi.fn(),
     },
     {
       snapshot: () => ({

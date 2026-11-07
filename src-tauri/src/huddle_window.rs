@@ -135,8 +135,6 @@ struct Person {
     #[serde(default)]
     thinking: bool,
     #[serde(default)]
-    attending: bool,
-    #[serde(default)]
     level: f32,
 }
 #[derive(Clone, Deserialize, Serialize)]

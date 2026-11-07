@@ -9,7 +9,7 @@ import {
 import type { Huddles, HuddleSnapshot } from "./service";
 import type { RelayData } from "../relay/service";
 import { createRelaySession } from "../relay/session";
-function harness(agents?: import("../agents/service").Agents) {
+function harness() {
   const store = createRelaySession(null);
   let snapshot: HuddleSnapshot = {
     id: "00000000-0000-4000-8000-000000000001",
@@ -78,7 +78,6 @@ function harness(agents?: import("../agents/service").Agents) {
     bridge,
     undefined,
     openLink,
-    agents,
   );
   return {
     companion,
@@ -715,54 +714,5 @@ it("projects listening only for locally active seats in a connected call", async
       { key: "remote", listening: false },
     ]),
   );
-  await h.dispose();
-});
-
-it("shrinks only a listening Codex seat while its owner speaks", async () => {
-  const h = harness({
-    snapshot: () => ({
-      running: [
-        { pubkey: "codex", type: "buzz.codex/codex" },
-        { pubkey: "other", type: "other/voice" },
-      ],
-    }),
-  } as unknown as import("../agents/service").Agents);
-  h.set({
-    ...h.call.snapshot(),
-    participants: ["viewer", "codex", "other"],
-    listening: ["codex", "other"],
-    speakers: { viewer: 0.1 },
-  });
-  h.release();
-  await h.companion.open();
-  expect(
-    vi.mocked(h.bridge.open).mock.lastCall?.[0].participants,
-  ).toMatchObject([
-    { key: "viewer", attending: false },
-    { key: "codex", attending: true },
-    { key: "other", attending: false },
-  ]);
-  for (const change of [
-    { muted: true },
-    { speakers: { other: 0.1 } },
-    { listening: [] },
-    { phase: "leaving" as const },
-  ]) {
-    h.set({
-      ...h.call.snapshot(),
-      muted: false,
-      speakers: { viewer: 0.1 },
-      listening: ["codex", "other"],
-      ...change,
-    });
-    await vi.waitFor(() =>
-      expect(
-        vi
-          .mocked(h.bridge.update)
-          .mock.lastCall?.[1]?.participants.find((p) => p.key === "codex")
-          ?.attending,
-      ).toBe(false),
-    );
-  }
   await h.dispose();
 });

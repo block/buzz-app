@@ -1,7 +1,6 @@
 import { HuddleAvatarToss } from "./HuddleAvatarToss";
 import { HuddleAvatarMotion } from "./HuddleAvatarMotion";
 import {
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -363,14 +362,9 @@ function Bubble({
   stage: RefObject<HTMLElement | null>;
 }) {
   const level = muted ? 0 : Math.max(0, Math.min(1, person.level));
-  const thinking = !!person.thinking && level === 0;
-  const [awaitingResponse, setAwaitingResponse] = useState(false);
-  useEffect(() => {
-    if (level > 0 || !person.listening) setAwaitingResponse(false);
-    else if (person.attending) setAwaitingResponse(true);
-  }, [level, person.listening, person.attending]);
-  const quiet =
-    (thinking || person.attending || awaitingResponse) && level === 0;
+  // A seated voice agent rests smaller; speech restores its normal size.
+  const quiet = level === 0 && !!(person.listening || person.thinking);
+  const thinking = level === 0 && !!person.thinking;
   const label = `${person.name}${person.own ? (muted ? " (you, muted)" : " (you)") : ""}${level > 0 ? ", speaking" : ""}${thinking ? ", thinking" : ""}${person.listening ? ", listening to you" : ""}`;
   return (
     <HuddleAvatarToss stage={stage}>

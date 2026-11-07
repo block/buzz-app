@@ -25,7 +25,6 @@ export type HuddleView = {
     own: boolean;
     listening?: boolean;
     thinking?: boolean;
-    attending?: boolean;
     level: number;
   }[];
 };
@@ -176,17 +175,6 @@ export function createHuddleWindow(
           own: key === call.destination?.viewer,
           listening:
             call.phase === "connected" && !!call.listening?.includes(key),
-          attending:
-            call.phase === "connected" &&
-            !call.muted &&
-            !!call.speakers?.[call.destination?.viewer ?? ""] &&
-            !!call.listening?.includes(key) &&
-            !!agents
-              ?.snapshot()
-              .running.some(
-                (agent) =>
-                  agent.pubkey === key && agent.type === "buzz.codex/codex",
-              ),
           thinking:
             call.phase === "connected" && !!call.thinking?.includes(key),
           level: call.speakers?.[key] ?? 0,

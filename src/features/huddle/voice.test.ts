@@ -59,7 +59,7 @@ afterEach(async () => {
   await Promise.all(disposals.splice(0).map((dispose) => dispose()));
   vi.useRealTimers();
 });
-function setup(type = "test/voice") {
+function setup() {
   const h = observable(),
     a = observable(),
     r = observable(),
@@ -83,7 +83,7 @@ function setup(type = "test/voice") {
     name: "Room",
     members: ["owner", "a", "b"],
   };
-  let running = [agent("a"), agent("b")].map((agent) => ({ ...agent, type }));
+  let running = [agent("a"), agent("b")];
   const connections = new Map<
     string,
     { input: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
@@ -95,7 +95,9 @@ function setup(type = "test/voice") {
     connections.set(seat.agent.pubkey, connection);
     return connection;
   });
-  let types = [{ key: type, voice }] as unknown as RegisteredAgentType[];
+  let types = [
+    { key: "test/voice", voice },
+  ] as unknown as RegisteredAgentType[];
   const callbacks = new Map<string, (event: HuddleUpdate) => void>();
   const bridge = {
     available: true,
@@ -562,20 +564,16 @@ it.each(["abort", "failure"])(
   },
 );
 
-it.each(["buzz.codex/codex", "test/voice"])(
-  "only Codex seats publish thinking animation state (%s)",
-  async (type) => {
-    const f = setup(type);
-    f.start();
-    await vi.waitFor(() => expect(f.connections.size).toBe(2));
-    const seat = required(f.seatArgs.get("a"));
-    seat.thinking?.(true);
-    if (type === "buzz.codex/codex")
-      expect(f.thinking).toHaveBeenCalledWith("human", "a", true);
-    else expect(f.thinking).not.toHaveBeenCalled();
-    f.room({ members: ["owner", "b"] });
-    f.thinking.mockClear();
-    seat.thinking?.(true);
-    expect(f.thinking).not.toHaveBeenCalled();
-  },
-);
+it("publishes a seat's thinking state until the agent leaves the room", async () => {
+  const f = setup();
+  f.start();
+  await vi.waitFor(() => expect(f.connections.size).toBe(2));
+  const seat = required(f.seatArgs.get("a"));
+  seat.thinking?.(true);
+  expect(f.thinking).toHaveBeenCalledWith("human", "a", true);
+  f.room({ members: ["owner", "b"] });
+  expect(f.thinking).toHaveBeenLastCalledWith("human", "a", false);
+  f.thinking.mockClear();
+  seat.thinking?.(true);
+  expect(f.thinking).not.toHaveBeenCalled();
+});

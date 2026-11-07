@@ -47,14 +47,13 @@ it("shows and clears the connected call's voice error alongside window errors", 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("holds the listening size through silence until the agent responds", () => {
+it("rests a seated agent smaller, rings it while thinking and restores it for speech", () => {
   const agent = {
     key: "agent",
     name: "Agent",
     picture: null,
     own: false,
     listening: true,
-    attending: true,
     level: 0,
   };
   const view: HuddleView = {
@@ -67,27 +66,26 @@ it("holds the listening size through silence until the agent responds", () => {
     participants: [agent],
   };
   const mounted = render(<HuddleWindowView view={view} act={vi.fn()} />);
-  const scale = () =>
-    mounted.container
-      .querySelector<HTMLElement>('[class*="bubbleArtwork"]')
-      ?.style.getPropertyValue("--voice-scale");
-  expect(scale()).toBe("0.8");
+  const art = () =>
+    mounted.container.querySelector<HTMLElement>('[class*="bubbleArtwork"]');
+  const scale = () => art()?.style.getPropertyValue("--voice-scale");
   const update = (changes: Partial<typeof agent> & { thinking?: boolean }) =>
     mounted.rerender(
       <HuddleWindowView
-        view={{
-          ...view,
-          participants: [{ ...agent, attending: false, ...changes }],
-        }}
+        view={{ ...view, participants: [{ ...agent, ...changes }] }}
         act={vi.fn()}
       />,
     );
-  update({});
   expect(scale()).toBe("0.8");
+  expect(art()?.hasAttribute("data-thinking")).toBe(false);
   update({ thinking: true });
   expect(scale()).toBe("0.8");
-  update({ level: 0.3 });
+  expect(art()?.hasAttribute("data-thinking")).toBe(true);
+  update({ thinking: true, level: 0.3 });
   expect(Number(scale())).toBeGreaterThan(1);
+  expect(art()?.hasAttribute("data-thinking")).toBe(false);
   update({});
+  expect(scale()).toBe("0.8");
+  update({ listening: false });
   expect(scale()).toBe("1");
 });

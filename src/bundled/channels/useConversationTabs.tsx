@@ -1,3 +1,4 @@
+import { viewerMember } from "../../features/relay/membership";
 import {
   useCallback,
   useEffect,
@@ -709,8 +710,7 @@ export function useConversationTabs({
       !target.readOnly &&
       !target.archived &&
       !target.cached &&
-      (target.channelType !== "solo" ||
-        !!target.members?.includes(queries.viewer ?? ""))
+      (target.channelType !== "solo" || viewerMember(target, queries.viewer))
     );
   }
   // The currently resolved channel can be a verified public/archived preview

@@ -1,3 +1,4 @@
+import { viewerMember } from "../../features/relay/membership";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { useState } from "react";
 import type { ChannelMessage } from "../../features/relay/contracts";
@@ -25,7 +26,7 @@ export function canStartLinkedChat(session: RelaySession, channelId: string) {
     !channel.archived &&
     !channel.readOnly &&
     ["stream", "forum"].includes(channel.channelType ?? "") &&
-    channel.members?.includes(session.viewer) &&
+    viewerMember(channel, session.viewer) &&
     session.channelWrites.available
   );
 }

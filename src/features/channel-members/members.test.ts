@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { PublishRejected, type OutgoingEvent } from "../relay/outbox";
 import { matchesEvent } from "../relay/projection";
@@ -8,6 +8,7 @@ import {
   addChannelMember,
   addChannelMembersAtOnce,
   canAddMembers,
+  canShareSoloChat,
 } from "./members";
 
 const cleanups: (() => void)[] = [];
@@ -1631,4 +1632,42 @@ it("leaves out someone archived while the roster is read", async () => {
       event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
     ),
   ).toEqual([[first, second]]);
+});
+
+it("keeps invitation and Solo sharing viewer gates independent of unloaded peers", () => {
+  const session = { viewer: "viewer", outbox: { supports: () => true } };
+  const channel = {
+    id: "channel",
+    name: "Updates",
+    channelType: "stream" as const,
+    viewerMembership: { pubkey: "viewer", joined: true },
+  };
+  expect(canAddMembers(session, channel)).toBe(true);
+  expect(canAddMembers(session, { ...channel, viewerRole: "guest" })).toBe(
+    false,
+  );
+  expect(canAddMembers(session, { ...channel, archived: true })).toBe(false);
+  expect(
+    canAddMembers(session, {
+      ...channel,
+      members: ["viewer"],
+      viewerMembership: { pubkey: "viewer", joined: false },
+    }),
+  ).toBe(false);
+  const soloSession = setup("solo").session;
+  assert(soloSession.viewer);
+  const solo = {
+    ...channel,
+    channelType: "solo" as const,
+    viewerMembership: { pubkey: soloSession.viewer, joined: true },
+  };
+  expect(canShareSoloChat(soloSession, solo)).toBe(true);
+  expect(canShareSoloChat(soloSession, { ...solo, cached: true })).toBe(false);
+  expect(
+    canShareSoloChat(soloSession, {
+      ...solo,
+      viewerRole: "guest",
+      readOnly: true,
+    }),
+  ).toBe(false);
 });

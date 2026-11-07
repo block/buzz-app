@@ -1,5 +1,10 @@
 import { retryRead } from "./read-retry";
-import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
+import {
+  channelRowKind,
+  rowProfileIds,
+  messagePreview,
+  viewerMember,
+} from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
@@ -419,6 +424,8 @@ export function createChannelStore(
         old.metadataCached === metadataCached &&
         old.visibility === channel.visibility &&
         old.joinRole === channel.joinRole &&
+        old.viewerMembership?.pubkey === channel.viewerMembership?.pubkey &&
+        old.viewerMembership?.joined === channel.viewerMembership?.joined &&
         old.viewerRole === channel.viewerRole &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
@@ -3199,7 +3206,7 @@ export function createChannelStore(
   function describeReference(id: string): ChannelReference {
     const channel = discovery?.get(id);
     if (channel) {
-      const joined = !!discovery && channel.members?.includes(discovery.viewer);
+      const joined = !!discovery && viewerMember(channel, discovery.viewer);
       return {
         state: "found",
         name: channel.name,

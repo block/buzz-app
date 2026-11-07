@@ -1,3 +1,4 @@
+import { viewerMember } from "../../features/relay/membership";
 import { useLayoutEffect, useSyncExternalStore } from "react";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
@@ -33,7 +34,7 @@ function joined(channel: ChannelSummary, viewer: string | undefined) {
     !!viewer &&
     referable(channel) &&
     (!channel.readOnly || channel.viewerRole === "guest" || !!channel.cached) &&
-    !!channel.members?.includes(viewer)
+    viewerMember(channel, viewer)
   );
 }
 

@@ -515,6 +515,50 @@ it.each([
   },
 );
 
+it.each(["stream", "forum"] as const)(
+  "tracks explicit viewer membership for %s setup without a parent render",
+  async (channelType) => {
+    const f = await ownedAgentChannel(channelType, {
+      choicesReady: true,
+      listed: true,
+    });
+    render(f.setup());
+    f.deliverMention();
+    await screen.findByRole("region", { name: "Agent connection setup" });
+    act(() => {
+      f.state.list = {
+        status: "ready",
+        channels: [
+          {
+            ...f.channel,
+            viewerMembership: { pubkey: f.viewer, joined: false },
+          },
+        ],
+      };
+      f.notify("list");
+    });
+    expect(
+      screen.queryByRole("region", { name: "Agent connection setup" }),
+    ).toBeNull();
+    act(() => {
+      f.state.list = {
+        status: "ready",
+        channels: [
+          {
+            ...f.channel,
+            members: [candidate.pubkey],
+            viewerMembership: { pubkey: f.viewer, joined: true },
+          },
+        ],
+      };
+      f.notify("list");
+    });
+    expect(
+      await screen.findByRole("region", { name: "Agent connection setup" }),
+    ).toBeVisible();
+  },
+);
+
 it("keeps dismissal disabled while an explicit import is pending", async () => {
   let finish!: (result: { notes: string[] }) => void;
   const port = vi.fn(

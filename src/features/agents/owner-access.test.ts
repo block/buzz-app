@@ -8,6 +8,8 @@ import {
 } from "../relay/channel-lifecycle-protocol";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type { RelayEvent } from "../relay/events";
+import { DiscoveryState } from "../relay/discovery";
+import { keypair, metadata, roster } from "../relay/testing";
 import {
   createOwnerAccess,
   type OwnerBinding,
@@ -185,6 +187,56 @@ describe("ownerMcpEnabled", () => {
 });
 
 describe("owner access", () => {
+  it.each(["deny", "omit", "all"] as const)(
+    "does not infer the owner's role from peers retained after %s",
+    async (loss) => {
+      const relay = keypair();
+      const discovery = new DiscoveryState(owner, relay.pubkey);
+      const details = metadata(relay, joined, "Plans", 10, [["public"]]);
+      discovery.accept(details);
+      discovery.accept(roster(relay, joined, [owner, person], 10));
+      if (loss === "deny") discovery.deny(joined);
+      else if (loss === "omit")
+        discovery.retain(new Set(), discovery.rosterVersions());
+      else discovery.denyAll();
+      discovery.resume(joined, details);
+      const preview = discovery.get(joined);
+      expect(preview?.members).toContain(owner);
+      expect(preview?.viewerMembership?.joined).toBe(false);
+      if (!preview) throw new Error("Missing public preview");
+      const fake = fakeSession({ channels: [preview] });
+      const access = createOwnerAccess(
+        { pubkey: agent, owner },
+        bound(fake.session).bind,
+      );
+      await expect(access.channels()).resolves.toMatchObject({
+        channels: [{ id: joined, role: null }],
+      });
+    },
+  );
+
+  it.each([true, false])(
+    "reports joined=%s without a peer roster, without inventing a role",
+    async (isJoined) => {
+      const fake = fakeSession({
+        channels: [
+          {
+            id: joined,
+            name: "Plans",
+            viewerMembership: { pubkey: owner, joined: isJoined },
+          },
+        ],
+      });
+      const access = createOwnerAccess(
+        { pubkey: agent, owner },
+        bound(fake.session).bind,
+      );
+      await expect(access.channels()).resolves.toMatchObject({
+        channels: [{ role: isJoined ? "unknown" : null }],
+      });
+    },
+  );
+
   it("lists the owner's channels, including ones the agent is not in, as the owner", async () => {
     const fake = fakeSession({ channels });
     const access = createOwnerAccess(

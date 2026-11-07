@@ -13,6 +13,7 @@ import { memberAuthority } from "../channel-members/administration-protocol";
 import { communityDestination } from "../communities/destination";
 import { channelIdentity } from "../relay/channel-labels";
 import type { ChannelSummary } from "../relay/contracts";
+import { viewerMember } from "../relay/membership";
 import type { RelayEvent } from "../relay/events";
 import {
   channelTypeTag,
@@ -283,8 +284,8 @@ function ownerChannel(item: ChannelSummary, viewer: string): OwnerChannel {
   // Membership alone does not say which role the owner holds.
   const role: OwnerRole | "unknown" | null | undefined =
     item.viewerRole ??
-    (item.members
-      ? item.members.includes(viewer)
+    (item.viewerMembership || item.members
+      ? viewerMember(item, viewer)
         ? "unknown"
         : null
       : undefined);

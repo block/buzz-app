@@ -23,6 +23,7 @@ import { MessageEditScope } from "../messages/MessageEditScope";
 import { mentionDraft } from "../messages/mention-draft";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
+import { viewerMember } from "../relay/membership";
 import { useChannelWindow } from "../relay/react";
 import { readView, viewRevision } from "../../shared/view-state";
 import { writeClipboardText } from "../../shared/clipboard";
@@ -132,7 +133,7 @@ export function DraftPreview({
     loading ||
     !!channel?.cached ||
     !!channel?.pending ||
-    (!!channel && !channel.members);
+    (!!channel && !channel.members && !channel.viewerMembership);
   const writable =
     channel &&
     !channel.cached &&
@@ -140,10 +141,9 @@ export function DraftPreview({
     !channel.archived &&
     !channel.readOnly &&
     !!session.viewer &&
-    channel.members?.includes(session.viewer);
+    viewerMember(channel, session.viewer);
   const readable =
-    channel &&
-    (channel.readOnly || channel.members?.includes(session.viewer ?? ""));
+    channel && (channel.readOnly || viewerMember(channel, session.viewer));
   useEffect(() => {
     const narrow = !!back.current?.getClientRects().length;
     // Sent never autofocuses its composer; a narrow open hides the list row.

@@ -1,3 +1,4 @@
+import { viewerMember } from "../relay/membership";
 import {
   useCallback,
   useContext,
@@ -86,6 +87,9 @@ export function AgentConnectionSetup({
       channel?.id,
       (listed) => listed?.members,
     ) ?? channel?.members;
+  const joined = useListedChannel(session.channels, channel?.id, (listed) =>
+    viewerMember(listed ?? channel, session.viewer),
+  );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -158,7 +162,7 @@ export function AgentConnectionSetup({
     channel &&
     (channel.channelType === "stream" || channel.channelType === "forum") &&
     session.viewer &&
-    roster?.includes(session.viewer) &&
+    joined &&
     !channel.archived &&
     !channel.readOnly &&
     !channel.cached &&
@@ -174,7 +178,7 @@ export function AgentConnectionSetup({
           ),
         ]
           // Only a current member can reply here.
-          .filter(([key]) => isAgent(key) && roster.includes(key))
+          .filter(([key]) => isAgent(key) && roster?.includes(key))
           .map(([mentioned, message]) => (
             <Candidate
               key={`${session.scope}:${channel.id}:${mentioned}`}

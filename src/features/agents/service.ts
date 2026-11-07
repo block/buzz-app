@@ -244,7 +244,8 @@ export type Agent<Config = unknown> = Readonly<{
   timers: Readonly<Record<string, TimerState>>;
   sourceRuns?: Readonly<Record<string, string>>;
   attentionHistory?: AgentRecord["attentionHistory"];
-  /** Whether its watches and timers wake it. Off keeps every object. */
+  /** Whether its watches and timers wake it: true while a plugin shows
+   * Attention. Off keeps every object. */
   attentionEnabled: boolean;
   /** Its type's settings, the same in each of its communities. */
   config: Config;
@@ -258,6 +259,8 @@ export type AgentChange<Config = unknown> = Readonly<{
   /** An HTTPS image URL; `null` or empty removes the picture. */
   picture?: string | null;
   config?: Config;
+  /** @deprecated A no-op: Attention runs for every agent while a plugin
+   * shows it. Still stored, but nothing reads it. */
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
@@ -546,9 +549,9 @@ export type AgentHandle = Readonly<{
   attention: AgentAttention;
 }>;
 /** What an agent reads and writes of its attention. Every read is current,
- * so a long run sees the owner's switch and the classifier's state change. */
+ * so a long run sees Attention turn off and the classifier's state change. */
 export type AgentAttention = Readonly<{
-  /** False when the owner turned attention off: none of its objects wakes the
+  /** False while no plugin shows Attention: none of its objects wakes the
    * agent. The handle still reads and writes them; the attention tools refuse
    * every call while it is off. */
   enabled(): boolean;
@@ -1301,9 +1304,9 @@ export type Agents = {
   registerTab(tab: AgentAddedTab): void;
   /** The tabs active plugins add now. */
   addedTabs(): readonly RegisteredAgentAddedTab[];
-  /** Says the calling plugin shows Attention and its device switch. Agents'
-   * Attention runs on this device only while such a plugin is on; with none,
-   * it is off for every agent and each keeps its saved switch. */
+  /** Says the calling plugin shows Attention. Agents' Attention runs on this
+   * device only while such a plugin is on; with none, it is off for every
+   * agent. */
   controlAttention(): void;
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code

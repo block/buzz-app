@@ -16635,8 +16635,10 @@ it("fails a protected delivery before calling a runtime that has no protection i
 
 it("refuses fresh work when native custody rejects a stale protection revision", async () => {
   const f = await setup({ identities: [echo] });
-  // Startup's own claim settles before custody starts rejecting.
+  // Startup's own claim settles before custody starts rejecting, and is not
+  // counted as the mention's claim.
   await settle();
+  f.native.claim.mockClear();
   f.native.claim.mockRejectedValue(new Error("Agent protection changed"));
   f.emit({
     channelId: channel,

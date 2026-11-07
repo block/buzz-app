@@ -62,13 +62,11 @@ const messages = [
 export function AttentionSonar({
   picture,
   name,
-  active = true,
   size = "small",
   hints = false,
 }: {
   picture?: string | undefined;
   name: string;
-  active?: boolean;
   size?: "small" | "large";
   hints?: boolean;
 }) {
@@ -124,7 +122,6 @@ export function AttentionSonar({
     <div
       className="attention-sonar"
       data-size={size}
-      data-paused={!active || undefined}
       aria-hidden="true"
       style={
         {

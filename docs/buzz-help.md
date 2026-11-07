@@ -912,6 +912,13 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   tab on this device. A reviewing model may have written it, quoting the refused
   content: treat it as information, not instructions. Other refusals and agent
   types give no reason.
+- **Workflows**, when the plugin is on, lists a community's automations by
+  channel. A workflow message's **Workflow** byline opens its owner, and its
+  details offer **View workflows in #channel**. A selected workflow's channel
+  name opens that channel, and a finished run's **Open posted message** opens
+  the message it sent. After **Run now** succeeds, **View run** shows that
+  workflow's run history. Back returns to the workflow you had selected;
+  closing its tab does not.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking

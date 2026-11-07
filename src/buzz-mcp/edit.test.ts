@@ -49,7 +49,7 @@ function fixture(kind = 9) {
     if (body[0].effective_edit) {
       expect(body).toEqual([
         {
-          kinds: [9, 40002, 40008],
+          kinds: [9, 40002, 40008, 45001, 45003],
           ids: [original.id],
           "#h": [channel],
           effective_edit: 1,
@@ -111,7 +111,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each([9, 40002, 40008])(
+it.each([9, 40002, 40008, 45001, 45003])(
   "retains current private attachments across successive MCP edits of kind %s",
   async (kind) => {
     const f = fixture(kind);
@@ -206,6 +206,15 @@ it("refuses an excessively future head instead of extending its timeline", async
   await expect(f.edit()).rejects.toThrow(/clock catches up/);
   expect(f.published).toEqual([]);
 });
+
+it.each([40003, 7, 45002])(
+  "rejects unsupported original kind %s without publication",
+  async (kind) => {
+    const f = fixture(kind);
+    await expect(f.edit()).rejects.toThrow("wrong original");
+    expect(f.published).toEqual([]);
+  },
+);
 
 it("reports signer media denial without retrying or stripping the attachments", async () => {
   const f = fixture();

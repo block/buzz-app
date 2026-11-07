@@ -135,7 +135,7 @@ it("reads effective edit state through the agent-authenticated native query", as
     ...member,
     filters: [
       {
-        kinds: [9, 40002, 40008],
+        kinds: [9, 40002, 40008, 45001, 45003],
         ids: [message.id],
         "#h": ["c"],
         effective_edit: 1,

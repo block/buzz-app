@@ -82,7 +82,7 @@ The shared MCP `edit` tool retains the latest live attachment set, including an
 empty set left by a previous edit. Both app-hosted and standalone agents resolve
 that state as the agent through the version-1 `effective_edit` primary lookup on
 `/query`; they verify the signed original/replacement and their target/channel.
-The exact filter uses kinds `[9,40002,40008]`. Deploy the relay support from
+The exact filter uses kinds `[9,40002,40008,45001,45003]`. Deploy the relay support from
 [buzz#9226](https://github.com/block/buzz/pull/9226) before releasing this client.
 An old relay's array response, inaccessible target, invalid response or failed
 lookup aborts without publishing. There is no original-attachment fallback.

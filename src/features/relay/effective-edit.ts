@@ -4,7 +4,7 @@ import { eventDto } from "./events";
 export function effectiveEditFilter(id: string, channel: string) {
   return [
     {
-      kinds: [9, 40002, 40008],
+      kinds: [9, 40002, 40008, 45001, 45003],
       ids: [id],
       "#h": [channel],
       effective_edit: 1,
@@ -30,7 +30,7 @@ export function effectiveEditDto(value: unknown, id: string, channel: string) {
     event.tags.find((t) => t[0] === "h")?.[1] === channel;
   if (
     original.id !== id ||
-    ![9, 40002, 40008].includes(original.kind) ||
+    ![9, 40002, 40008, 45001, 45003].includes(original.kind) ||
     !inChannel(original)
   )
     throw new Error("Effective edit response has the wrong original.");

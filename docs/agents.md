@@ -614,12 +614,14 @@ the agent's mention lane immediately. It waits for the action without spending
 its handover deadline; other conversations continue, and stopping the agent
 cancels the deferred work.
 
-Claude's channel-scoped sessions save a separate history timestamp for each
-thread. Working in one thread does not mark another thread's messages as seen.
-The 200 most recently addressed threads are tracked across reloads. Older saves
-and evicted entries supply that thread's recent context again on its next turn;
-the saved Claude session is retained. DMs and Solo chats keep one conversation
-timestamp.
+Claude's and goose's channel-scoped sessions keep a separate history timestamp
+for each thread, as do their DMs for threaded turns. Working in one thread does
+not mark another thread's messages as seen. Claude saves the 200 most recently
+addressed threads across reloads. Older saves and evicted entries supply that
+thread's recent context again on its next turn; the saved Claude session is
+retained. goose keeps them while its session is open; a new session is shown
+each thread's context again. A DM's top-level turns and Solo chats keep one
+conversation timestamp.
 
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the

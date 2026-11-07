@@ -84,7 +84,7 @@ catch-up (including a message taller than the viewport):
   **Unreads** filter and the Dock indicator follow `row`. Thread dots,
   Activity, the channel activity popover, unread-first search, the **New
   messages** divider, mark-read menus and every `observedCount` keep the unread. Explicit
-  unread intent still shows. A leave whose row shows nothing that the saved
+  unread intent omits `row`, so the row shows the whole channel again. A leave whose row shows nothing that the saved
   mark would not already hide writes nothing. These saves do not advance
   `revision()`, so a reader's entry evidence outlives them; another window's
   saves still do. A channel read covers the mark, which retention keeps last

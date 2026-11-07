@@ -43,7 +43,8 @@ export type UnreadSnapshot = Readonly<{
   error?: string | undefined;
   /** Channel targets with observed evidence: what the channel's sidebar row
    * shows. Opening a channel sees everything in it (`seen:`), so the row
-   * quiets while its messages and threads stay unread everywhere else. */
+   * quiets while its messages and threads stay unread everywhere else. Absent
+   * under explicit unread intent, which shows the whole channel again. */
   row?: Readonly<{
     observedCount: number;
     attentionCount: number;
@@ -977,7 +978,7 @@ export function createUnread({
       freshness,
       manual,
       ...(error ? { error } : {}),
-      ...(evidence && target.kind === "channel"
+      ...(evidence && target.kind === "channel" && manual === "none"
         ? {
             row: Object.freeze({
               observedCount: rowCount,

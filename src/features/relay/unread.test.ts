@@ -4572,7 +4572,7 @@ it("opening a channel quiets its row while its messages and threads stay unread"
   });
 });
 
-it("a saved seen mark quiets the row after reload; marked unread still shows", async () => {
+it("a saved seen mark quiets the row after reload; marking a message unread shows it all", async () => {
   const h = setup({}, true, (journal) => ({
     ...journal,
     state: { frontiers: { "seen:room": 12 }, overrides: {} },
@@ -4587,7 +4587,22 @@ it("a saved seen mark quiets the row after reload; marked unread still shows", a
     row: { observedCount: 1 },
   });
   await h.session.unread.markMessageUnread("room", seen.id);
-  expect(h.snapshot().row?.observedCount).toBe(2);
+  expect(h.snapshot().manual).not.toBe("none");
+  expect(h.snapshot().row).toBeUndefined();
+});
+
+it("marking a seen channel unread shows its whole row again", async () => {
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { "seen:room": 12 }, overrides: {} },
+  }));
+  h.grant("room");
+  h.emit([message(h.alice, "room", "seen", 11)]);
+  await h.session.unread.ensure();
+  expect(h.snapshot().row?.observedCount).toBe(0);
+  await h.session.unread.markUnreadLocal(h.target);
+  expect(h.snapshot()).toMatchObject({ manual: "local-only", observedCount: 1 });
+  expect(h.snapshot().row).toBeUndefined();
 });
 
 it("leaving a channel whose row shows nothing new writes no seen mark", async () => {

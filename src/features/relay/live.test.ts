@@ -1305,9 +1305,12 @@ it("keeps a socket that answers a wake check, and skips one it just heard", asyn
     // Focus can fire often; an answer this fresh already proves the socket.
     h.owner.check?.();
     expect(h.first.probes()).toHaveLength(1);
+    // A network change voids that proof.
+    h.owner.check?.(true);
+    expect(h.first.probes()).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(15_000);
     h.owner.check?.();
-    expect(h.first.probes()).toHaveLength(2);
+    expect(h.first.probes()).toHaveLength(3);
   } finally {
     h.owner.dispose();
   }

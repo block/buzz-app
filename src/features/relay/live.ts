@@ -276,8 +276,9 @@ export type LiveSubscription = {
   ): () => void;
   retry(): void;
   /** A hint (wake, network, focus) that an open socket may have died unseen:
-   * probe it now and replace it if it does not answer in time. */
-  check?(): void;
+   * probe it now and replace it if it does not answer in time. `network`: the
+   * network changed, so an earlier answer no longer proves this socket. */
+  check?(network?: boolean): void;
   dispose(): void;
 };
 /** Demand-scoped ephemeral authors, never a channel/history interest. */
@@ -2039,11 +2040,11 @@ export function subscribeRelayTraffic(
         notify();
       } else connect();
     },
-    check() {
+    check(network = false) {
       // A socket not yet admitted has its own deadline; a cooldown forbids requests.
       if (closed || !authenticated || checkDeadline || admission.delay())
         return;
-      if (Date.now() - answeredAt < LIVE_CHECK_FRESH_MS) return;
+      if (!network && Date.now() - answeredAt < LIVE_CHECK_FRESH_MS) return;
       sendProbe();
       checkDeadline = setTimeout(() => {
         checkDeadline = undefined;

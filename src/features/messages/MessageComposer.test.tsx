@@ -2546,12 +2546,36 @@ it.each(["cleanup", "restore"] as const)(
   },
 );
 
-it("offers emoji catalog refresh after an attachment publication fails preparation", async () => {
-  let available = false;
+it("sends shortcodes while the catalog load is pending", async () => {
+  const catalog = deferred<RelayEvent[]>();
+  const h = await mountUploadComposer({ emojiRead: () => catalog.promise });
+  try {
+    await waitFor(() =>
+      expect(h.owner.session.emoji.snapshot().status).toBe("loading"),
+    );
+    await userEvent.type(h.input(), "hello :party:");
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: "hello :party:",
+    });
+    expect(
+      h.publish.mock.calls[0]?.[0].tags.some(
+        ([name]: string[]) => name === "emoji",
+      ),
+    ).toBe(false);
+    expect(h.input()).toHaveValue("");
+    expect(h.owner.session.emoji.snapshot().status).toBe("loading");
+    expect(within(h.form()).queryByRole("alert")).toBeNull();
+  } finally {
+    await act(async () => catalog.resolve([]));
+  }
+});
+
+it("publishes attachments with literal shortcodes when the catalog is unavailable", async () => {
   const h = await mountUploadComposer({
     emojiRead: async () => {
-      if (!available) throw Error("catalog offline");
-      return [];
+      throw Error("catalog offline");
     },
   });
   await waitFor(() =>
@@ -2564,57 +2588,11 @@ it("offers emoji catalog refresh after an attachment publication fails preparati
   await act(async () =>
     h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji.txt")),
   );
-  await waitFor(() => expect(h.input()).toHaveValue("caption :party:"));
-  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji isn't ready",
-  );
-  // The refused send retried the catalog; recovery is offered once that fails.
-  expect(
-    await screen.findByRole("button", { name: "Retry message preparation" }),
-  ).toBeVisible();
-  // The retained refusal stays accurate once that retry has failed.
-  expect(h.owner.session.emoji.snapshot().status).toBe("error");
-  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
-  );
-  available = true;
-  fireEvent.click(
-    screen.getByRole("button", { name: "Retry message preparation" }),
-  );
-  await waitFor(() =>
-    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
-  );
-  expect(h.input()).toHaveValue("caption :party:");
-  expect(within(h.form()).getByText("emoji.txt")).toBeVisible();
-  expect(h.publish).not.toHaveBeenCalled();
-});
-
-it("sends once the catalog retry started by a refused emoji send loads", async () => {
-  let available = false;
-  const h = await mountUploadComposer({
-    emojiRead: async () => {
-      if (!available) throw Error("catalog offline");
-      return [];
-    },
-  });
-  await waitFor(() =>
-    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
-  );
-  available = true;
-  await userEvent.type(h.input(), ":party:");
-  fireEvent.click(h.send());
-  expect(within(h.form()).getByRole("alert")).toHaveTextContent(
-    "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
-  );
-  await waitFor(() =>
-    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
-  );
-  expect(
-    screen.queryByRole("button", { name: "Retry message preparation" }),
-  ).toBeNull();
-  expect(h.input()).toHaveValue(":party:");
-  fireEvent.click(h.send());
   await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("caption :party:"),
+  });
+  expect(h.input()).toHaveValue("");
   expect(within(h.form()).queryByRole("alert")).toBeNull();
 });
 
@@ -2858,142 +2836,65 @@ it("defers a failed upload recovery until an empty active message edit ends", as
   );
 });
 
-it("retains preparation retry when recovery is deferred by an edit then unmounted", async () => {
-  const h = await mountUploadComposer({
-    editable: true,
-    emojiRead: async () => {
-      throw Error("catalog offline");
-    },
-  });
-  await waitFor(() =>
-    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
-  );
-  attachByPaste(h.input(), attachmentFile("edit-remount.txt"));
-  await userEvent.type(h.input(), "caption :party:");
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  const viewer = h.owner.session.viewer;
-  if (!viewer) throw new Error("Expected upload viewer");
-  const row = editableMessage({ authorId: viewer });
-  h.rerender(
-    <MessageComposer
-      session={h.owner.session}
-      scope={h.scope}
-      channelId="channel"
-      channelName="General"
-      editMessages={[row]}
-    />,
-  );
-  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
-  await userEvent.clear(h.input());
-  await act(async () =>
-    h.uploadCalls[0]?.result.resolve(uploadDescriptor("edit-remount.txt")),
-  );
-  expect(h.input()).toHaveAccessibleName("Edit message");
-  await waitFor(() =>
-    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
-  );
-  expect(
-    within(h.form()).queryByRole("button", {
-      name: "Retry message preparation",
-    }),
-  ).toBeNull();
-  h.unmount();
-  const returned = render(
-    <MessageComposer
-      session={h.owner.session}
-      scope={h.scope}
-      channelId="channel"
-      channelName="General"
-      editMessages={[row]}
-    />,
-    { wrapper: ToastProvider },
-  );
-  const composer = within(returned.container);
-  expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
-  await waitFor(() =>
-    expect(composer.getByText("edit-remount.txt")).toBeVisible(),
-  );
-  expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji isn't ready",
-  );
-  // The refused send retried the catalog; recovery is offered once that fails.
-  expect(
-    await composer.findByRole("button", { name: "Retry message preparation" }),
-  ).toBeVisible();
-});
-
-it("offers message preparation retry after a failed attachment send remounts", async () => {
-  let available = false;
-  const h = await mountUploadComposer({
-    emojiRead: async () => {
-      if (!available) throw Error("catalog offline");
-      return [];
-    },
-  });
-  await waitFor(() =>
-    expect(h.owner.session.emoji.snapshot().status).toBe("error"),
-  );
-  attachByPaste(h.input(), attachmentFile("emoji-remount.txt"));
-  await userEvent.type(h.input(), "caption :party:");
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
-  h.unmount();
-  await act(async () =>
-    h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji-remount.txt")),
-  );
-  const again = render(
-    <MessageComposer
-      session={h.owner.session}
-      scope={h.scope}
-      channelId="channel"
-      channelName="General"
-    />,
-    { wrapper: ToastProvider },
-  );
-  const composer = within(again.container);
-  await waitFor(() =>
-    expect(composer.getByRole("textbox")).toHaveValue("caption :party:"),
-  );
-  await waitFor(() =>
-    expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
-  );
-  expect(composer.getByRole("alert")).toHaveTextContent(
-    "Community emoji isn't ready",
-  );
-  // The refused send retried the catalog; recovery is offered once that fails.
-  const retry = await composer.findByRole("button", {
-    name: "Retry message preparation",
-  });
-  available = true;
-  fireEvent.click(retry);
-  await waitFor(() =>
-    expect(h.owner.session.emoji.snapshot().status).toBe("ready"),
-  );
-  expect(composer.getByRole("textbox")).toHaveValue("caption :party:");
-  await waitFor(() =>
-    expect(composer.getByText("emoji-remount.txt")).toBeVisible(),
-  );
-  expect(h.publish).not.toHaveBeenCalled();
-  again.unmount();
-  const returned = render(
-    <MessageComposer
-      session={h.owner.session}
-      scope={h.scope}
-      channelId="channel"
-      channelName="General"
-    />,
-    { wrapper: ToastProvider },
-  );
-  expect(
-    within(returned.container).queryByRole("button", {
-      name: "Retry message preparation",
-    }),
-  ).toBeNull();
-  expect(within(returned.container).getByRole("textbox")).toHaveValue(
-    "caption :party:",
-  );
-});
+it.each(["editing", "unmounted"])(
+  "finishes attachment publication while %s despite unavailable emoji",
+  async (state) => {
+    const h = await mountUploadComposer({
+      editable: true,
+      emojiRead: async () => {
+        throw Error("catalog offline");
+      },
+    });
+    await waitFor(() =>
+      expect(h.owner.session.emoji.snapshot().status).toBe("error"),
+    );
+    attachByPaste(h.input(), attachmentFile("emoji-remount.txt"));
+    await userEvent.type(h.input(), "caption :party:");
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    const viewer = h.owner.session.viewer;
+    if (!viewer) throw new Error("Expected upload viewer");
+    const row = editableMessage({ authorId: viewer });
+    if (state === "editing") {
+      h.rerender(
+        <MessageComposer
+          session={h.owner.session}
+          scope={h.scope}
+          channelId="channel"
+          channelName="General"
+          editMessages={[row]}
+        />,
+      );
+      fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+      expect(h.input()).toHaveAccessibleName("Edit message");
+    } else h.unmount();
+    await act(async () =>
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor("emoji-remount.txt")),
+    );
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: expect.stringContaining("caption :party:"),
+    });
+    if (state === "editing") {
+      expect(h.input()).toHaveAccessibleName("Edit message");
+      expect(h.input()).toHaveValue(row.content);
+      h.unmount();
+    }
+    const returned = render(
+      <MessageComposer
+        session={h.owner.session}
+        scope={h.scope}
+        channelId="channel"
+        channelName="General"
+      />,
+      { wrapper: ToastProvider },
+    );
+    const composer = within(returned.container);
+    expect(composer.getByRole("textbox")).toHaveValue("");
+    expect(composer.queryByText("emoji-remount.txt")).toBeNull();
+    expect(composer.queryByRole("alert")).toBeNull();
+  },
+);
 
 it("identifies failed filenames through retry and removal when service errors match", async () => {
   const h = await mountUploadComposer();

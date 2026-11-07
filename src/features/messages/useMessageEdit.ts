@@ -100,7 +100,6 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
     retryable,
     error: error ?? delivery?.error,
     close,
-    clearError: () => setError(undefined),
     start(
       row: ChannelMessage,
       normalize: (body: string) => string = (body) => body,

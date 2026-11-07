@@ -516,9 +516,10 @@ export function foldMessages(
         attachments: Object.freeze(
           parseAttachments(attachmentEvent, projected.urls, attachmentNames),
         ),
-        emoji: emojiTags(
-          edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,
-        ),
+        // Each shortcode keeps its latest explicit mapping: newest edit first.
+        emoji: emojiTags({
+          tags: [...edits, event].flatMap((item) => item.tags),
+        }),
         reactions: groupReactions(
           aux.filter((item) => item.kind === 7),
           deleted,

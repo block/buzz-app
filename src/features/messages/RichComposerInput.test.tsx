@@ -44,7 +44,7 @@ vi.mock("../relay/message-content", async (importOriginal) => {
 composerDOMFixture();
 afterEach(cleanup);
 
-function mount(initial?: MentionDraft) {
+function mount(initial?: MentionDraft, emoji: readonly CustomEmoji[] = []) {
   const ref = createRef<ComposerInputElement>();
   let draft = initial ?? mentionDraft("");
   let commits = 0;
@@ -56,8 +56,6 @@ function mount(initial?: MentionDraft) {
   };
   const channelListeners = new Set<() => void>();
   const library = { status: "ready", identities: [], definitions: [] };
-  // A catalog snapshot, as MessageComposer passes it.
-  const emoji: readonly CustomEmoji[] = [];
   const source = {
     media: (url: string) => url,
     profiles: {
@@ -166,6 +164,13 @@ it("decorates a channel reference once its channel arrives or leaves, not from a
   expect(h.chips().map(([source]) => source)).toEqual(["#general"]);
   h.setChannels([]);
   expect(h.chips()).toEqual([]);
+});
+
+it("decorates only the shortcodes a send would tag", () => {
+  const h = mount(mentionDraft("nice:party: at 19:25Z: then :party:"), [
+    { shortcode: "party", url: "https://a.test/party.png" },
+  ]);
+  expect(h.chips().map(([source]) => source)).toEqual([":party:"]);
 });
 
 const label = (source = "") => source.match(/^\[(.*)\]\(/)?.[1];

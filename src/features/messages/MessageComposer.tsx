@@ -3839,25 +3839,6 @@ function Composer({
             </Button>
           </>
         )}
-        {(error || editing.error) && emojiCatalog.status === "error" && (
-          <Button
-            type="button"
-            disabled={editingDisabled}
-            onClick={() => {
-              void session.emoji.refresh().then(() => {
-                if (
-                  input.current?.isConnected &&
-                  session.emoji.snapshot().status === "ready"
-                ) {
-                  setError(undefined);
-                  editing.clearError();
-                }
-              });
-            }}
-          >
-            Retry message preparation
-          </Button>
-        )}
       </form>
       {active && linkEdit && (
         <ComposerLinkDialog

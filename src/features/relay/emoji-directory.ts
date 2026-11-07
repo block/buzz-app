@@ -343,16 +343,10 @@ export function createEmojiDirectory(
       if (!codes.length) return [];
       if (closed) throw new Error("Community session is closed");
       if (snapshot.status !== "ready") {
-        // A send retries a cold failure, but passive mounts cannot repeat
-        // reads; refresh() shares a pending one. Overflow would repeat on every
-        // read, so it waits for an explicit retry. The composer keeps this text
-        // after the read settles, so it must not claim the read is still running.
+        // Emoji enrichment is optional. Keep unresolved shortcodes literal while
+        // the catalog loads or recovers; a loaded catalog still pins its URLs.
         void (snapshot.status === "error" && !limited ? refresh() : ensure());
-        throw new Error(
-          snapshot.status === "error"
-            ? `Community emoji unavailable. Retry message preparation or open the emoji picker. ${snapshot.error ?? ""}`
-            : "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
-        );
+        return [];
       }
       return contentEmojiTags(content, snapshot.entries);
     },

@@ -1639,12 +1639,12 @@ follow the operating system.
 
 The session owns the catalog and its live updates. Reopening reuses the ready
 catalog, without hiding custom results behind a fresh read. Catalog failures expose
-Retry while leaving Unicode available and retaining drafts. A catalog that has loaded
+Retry while leaving Unicode available. Sending never waits for the catalog: while it is unavailable, shortcodes are sent as plain text without custom emoji tags. A catalog that has loaded
 stays usable for sending and in the picker while it refreshes, such as after a
 reconnect, and when that refresh fails. Only one picker owns
 Emoji Mart's global dictionary at a time; scoped custom IDs and disposal prevent
 old community entries leaking into search or Frequent. Historical messages and
-existing reactions keep their signed emoji URLs after catalog changes.
+existing reactions keep their signed emoji URLs after catalog changes. Each shortcode on an edited message keeps its most recent explicit mapping, from the newest edit or the original that tagged it.
 Emoji-only messages stay at the large 42px size regardless of count; normal text
 returns the message to its usual size. Long runs wrap instead of shrinking.
 Selecting and copying custom emoji preserves their `:shortcode:` in plain text,

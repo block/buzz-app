@@ -8,7 +8,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { foldMessages } from "../relay/fold";
@@ -48,7 +47,7 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 
-it("real ThreadPanel edits its own reply and recovers emoji preparation without losing text", async () => {
+it("real ThreadPanel edits its own reply while community emoji is unavailable", async () => {
   const viewer = keypair(),
     relay = keypair(),
     other = keypair();
@@ -57,7 +56,6 @@ it("real ThreadPanel edits its own reply and recovers emoji preparation without 
     ["e", root.id, "", "reply"],
   ]);
   const events = [root, reply];
-  let emojiAvailable = false;
   const publish = vi.fn(async () => {});
   const owner = createRelaySession(
     {
@@ -68,8 +66,7 @@ it("real ThreadPanel edits its own reply and recovers emoji preparation without 
       query: async (filters) =>
         filters.flatMap((filter) => {
           if (filter.kinds?.includes(30030)) {
-            if (!emojiAvailable) throw new Error("Emoji unavailable");
-            return [];
+            throw new Error("Emoji unavailable");
           }
           if (filter.kinds?.includes(39002))
             return [roster(relay, "channel", [viewer.pubkey, other.pubkey])];
@@ -129,26 +126,6 @@ it("real ThreadPanel edits its own reply and recovers emoji preparation without 
       input.setSelectionRange(15, 15);
     });
     fireEvent.input(input);
-    fireEvent.keyDown(input, { key: "Enter" });
-    const form = within(screen.getByRole("form", { name: "Edit message" }));
-    expect(form.getByRole("alert")).toHaveTextContent(
-      "Community emoji isn't ready",
-    );
-    expect(publish).not.toHaveBeenCalled();
-    // The refused edit retried the catalog; recovery is offered once that fails.
-    const retry = await screen.findByRole("button", {
-      name: "Retry message preparation",
-    });
-    // The retained refusal stays accurate once that retry has failed.
-    expect(form.getByRole("alert")).toHaveTextContent(
-      "Community emoji isn't ready. Your draft is kept; try sending again shortly.",
-    );
-    emojiAvailable = true;
-    fireEvent.click(retry);
-    await waitFor(() =>
-      expect(form.queryByRole("alert")).not.toBeInTheDocument(),
-    );
-    expect(input).toHaveValue("Revised :party:");
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(input).toHaveAccessibleName("Reply to thread"));
     expect(publish).toHaveBeenCalledExactlyOnceWith(

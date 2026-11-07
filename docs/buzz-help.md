@@ -415,7 +415,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   and, when you are elsewhere, can open it (except a huddle). Your message and
   files are back in that conversation's composer. Do not
   promise support for every file type or size.
-- **Emoji suggestions** appear when you type `:` and an emoji name. If a name
+- **Emoji suggestions** appear when you type `:` and an emoji name. Times such as `19:25Z:` stay plain text. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.

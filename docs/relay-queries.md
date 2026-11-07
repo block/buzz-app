@@ -174,11 +174,12 @@ the picker reuses its ready catalog; it is not a manual refresh fallback for an
 older broker.
 
 `session.messages.send`, `reply`, `edit`, and `react` resolve referenced `:shortcodes:`
-into original-URL emoji tags **before** the outbox assigns identity or signs. Text
-without shortcode candidates does not wait. A catalog that has not loaded yet,
-or failed before loading, throws synchronously, so a composer retains its draft.
-A refused send after a failed read starts one shared retry; mounts and pickers do
-not, and overflow waits for an explicit retry. Plugins can await `ensure()` or
+into original-URL emoji tags **before** the outbox assigns identity or signs. Sending
+never waits for the catalog. Colons embedded in words or timestamps (such as `19:25Z:`)
+are literal text, not shortcode candidates. While the catalog has not loaded yet, or
+failed before loading, shortcodes stay literal and the event carries no emoji tags.
+A send after a failed read starts one shared retry; mounts and pickers do not, and
+overflow waits for an explicit retry. Plugins can await `ensure()` or
 explicitly retry `refresh()`. Unknown codes in a ready catalog remain literal.
 Retries retain the exact original event and URL even if the palette changes.
 Low-level `outbox.send` remains raw intent; callers supply its tags themselves.

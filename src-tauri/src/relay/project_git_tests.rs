@@ -145,29 +145,36 @@ fn check_discovery_ceiling(parent: &Path) {
 #[test]
 fn macos_git_selection_skips_unavailable_shim_without_launching_it() {
     use std::os::unix::fs::PermissionsExt as _;
+    let fixture = |directory: &Path| {
+        let git = directory.join("git");
+        std::fs::write(&git, "fixture, never executed").unwrap();
+        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git
+    };
+    // Stands in for /usr/bin/git, so the test doesn't depend on the host's tools.
+    let apple = tempfile::tempdir().unwrap();
+    let shim = fixture(apple.path());
     let other = tempfile::tempdir().unwrap();
-    let alternative = other.path().join("git");
-    std::fs::write(&alternative, "fixture, never executed").unwrap();
-    std::fs::set_permissions(&alternative, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = std::env::join_paths([Path::new("/usr/bin"), other.path()]).unwrap();
+    let alternative = fixture(other.path());
+    let path = std::env::join_paths([apple.path(), other.path()]).unwrap();
     let mut calls = 0;
-    let selected = git_program_with_tools(&path, || {
+    let selected = git_program_with_tools(&path, &shim, || {
         calls += 1;
         false
     });
     assert_eq!(selected, Some(alternative.clone()));
     assert_eq!(calls, 1);
     assert_eq!(
-        git_program_with_tools(Path::new("/usr/bin").as_os_str(), || false),
+        git_program_with_tools(apple.path().as_os_str(), &shim, || false),
         None
     );
     assert_eq!(
-        git_program_with_tools(Path::new("/usr/bin").as_os_str(), || true),
-        Some("/usr/bin/git".into())
+        git_program_with_tools(apple.path().as_os_str(), &shim, || true),
+        Some(shim.clone())
     );
-    let path = std::env::join_paths([other.path(), Path::new("/usr/bin")]).unwrap();
+    let path = std::env::join_paths([other.path(), apple.path()]).unwrap();
     assert_eq!(
-        git_program_with_tools(&path, || panic!("shim probe should not run")),
+        git_program_with_tools(&path, &shim, || panic!("shim probe should not run")),
         Some(alternative)
     );
 }

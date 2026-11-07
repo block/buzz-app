@@ -415,6 +415,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   and, when you are elsewhere, can open it (except a huddle). Your message and
   files are back in that conversation's composer. Do not
   promise support for every file type or size.
+- **Photo galleries** in the expanded viewer move to the photo you choose at
+  once. Until the full photo has loaded, a soft preview or a placeholder in the
+  photo's shape stands in, and it sharpens when the photo is ready. **Copy
+  image** and click-to-zoom work once the full photo has loaded.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

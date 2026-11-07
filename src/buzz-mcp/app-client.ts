@@ -140,6 +140,12 @@ export function appClient(
       check();
       return events;
     },
+    effectiveEdit: async (id, channel) => {
+      check();
+      const event = await agent.effectiveEdit(id, channel);
+      check();
+      return event;
+    },
     searchProfiles: (query, limit) => {
       check();
       return agent.searchProfiles(query, limit);

@@ -89,6 +89,11 @@ function fake(
   const client: BuzzClient = {
     key: me,
     pubkey: me,
+    effectiveEdit: vi.fn(async (id: string) => {
+      const found = events.find((event) => event.id === id);
+      if (!found) throw new Error("No effective edit fixture");
+      return found;
+    }),
     query: vi.fn(async (filters: readonly Filter[]) => {
       const newest = [...events, ...kept].sort(
         (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -622,6 +627,18 @@ it("posts at the channel's top level when given a channel", async () => {
     text: "hello",
   });
   expect(published[0]?.tags).toEqual([["h", "other"]]);
+});
+
+it("refuses to edit when the host cannot obtain effective attachment state", async () => {
+  const { client, published } = fake(community);
+  delete client.effectiveEdit;
+  await expect(
+    callTool(client, { channel: "chan" }, "edit", {
+      id: root,
+      text: "must not copy the original's attachments",
+    }),
+  ).rejects.toThrow("cannot obtain effective edit state");
+  expect(published).toEqual([]);
 });
 
 it("tags the community emoji a message or edit uses, as the composer does", async () => {

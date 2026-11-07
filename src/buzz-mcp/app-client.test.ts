@@ -158,6 +158,30 @@ it("carries connection authorities independently of query event authors", async 
   expect(query).toHaveBeenCalledWith([{ kinds: [39000] }]);
 });
 
+it("reads effective edit state as the agent and withholds it after the turn retires", async () => {
+  const result = gate<Awaited<ReturnType<AgentHandle["effectiveEdit"]>>>();
+  const effectiveEdit = vi.fn(() => result.promise);
+  let live = true;
+  const client = appClient({ effectiveEdit } as unknown as AgentHandle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+    check: () => {
+      if (!live) throw new Error("retired");
+    },
+  });
+  const pending = client.effectiveEdit?.("target", "private");
+  expect(effectiveEdit).toHaveBeenCalledWith("target", "private");
+  live = false;
+  result.resolve({ id: "head" } as Awaited<
+    ReturnType<AgentHandle["effectiveEdit"]>
+  >);
+  await expect(pending).rejects.toThrow("retired");
+  await expect(client.effectiveEdit?.("target", "private")).rejects.toThrow(
+    "retired",
+  );
+  expect(effectiveEdit).toHaveBeenCalledOnce();
+});
+
 it("does not invent authority when a host has none", () => {
   const client = appClient({ pubkey: "agent" } as AgentHandle, {
     read: vi.fn(),

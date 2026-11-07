@@ -542,6 +542,7 @@ export type RunnerHost = {
         | "release"
         | "publish"
         | "query"
+        | "effectiveEdit"
         | "searchProfiles"
         | "upload"
         | "media"
@@ -2906,6 +2907,10 @@ export class AgentRunners {
         query: async (filters: readonly object[]) => {
           lifetime.throwIfAborted();
           return this.require().query(agent, filters);
+        },
+        effectiveEdit: async (id: string, channel: string) => {
+          lifetime.throwIfAborted();
+          return this.require().effectiveEdit(agent, id, channel);
         },
         searchProfiles: async (query: string, limit: number) => {
           lifetime.throwIfAborted();

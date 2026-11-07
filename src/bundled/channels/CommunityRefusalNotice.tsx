@@ -35,38 +35,36 @@ export function CommunityRefusalNotice({
       Try again
     </Button>
   );
-  return (
+  // Signed out, never signed in or expired: one prompt. Only its action
+  // depends on whether this device can sign in to the community's server.
+  return refusal === "sign-in" ? (
     <EmptyState
       icon={<LockIcon />}
-      {...(prompt
-        ? {
-            title: prompt.expired
-              ? "Sign in again to open this community"
-              : "Sign in to open this community",
-            description: prompt.expired
-              ? `Your ${prompt.server} sign-in has expired.`
-              : `This community needs your ${prompt.server} sign-in.`,
-            action: identity && state && (
-              <SignInButton
-                identity={identity}
-                state={state}
-                retry={retry}
-                variant="primary"
-              />
-            ),
-          }
-        : refusal === "sign-in"
-          ? {
-              title: "Sign in again to open this community",
-              description: "Your sign-in for this community has ended.",
-              action: tryAgain,
-            }
-          : {
-              title: "You don’t have access to this community",
-              description:
-                "This account isn’t a member. Ask one of its admins to add you, or switch to an account that has access.",
-              action: tryAgain,
-            })}
+      title="Sign in to open this community"
+      description={
+        prompt
+          ? `This community needs your ${prompt.server} sign-in.`
+          : "This community needs you to sign in."
+      }
+      action={
+        prompt && identity && state ? (
+          <SignInButton
+            identity={identity}
+            state={state}
+            retry={retry}
+            variant="primary"
+          />
+        ) : (
+          tryAgain
+        )
+      }
+    />
+  ) : (
+    <EmptyState
+      icon={<LockIcon />}
+      title="You don’t have access to this community"
+      description="This account isn’t a member. Ask one of its admins to add you, or switch to an account that has access."
+      action={tryAgain}
     />
   );
 }

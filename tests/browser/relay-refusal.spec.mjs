@@ -67,10 +67,10 @@ test("a sign-in that ends mid-session asks to sign in again, once", async ({
   await page.getByRole("button", { name: "Beta", exact: true }).click();
   await expect(
     page.getByRole("main").getByRole("heading", {
-      name: "Sign in again to open this community",
+      name: "Sign in to open this community",
     }),
   ).toBeVisible();
-  await expect(page.getByText(/Sign in again/)).toHaveCount(1);
+  await expect(page.getByText(/Sign in to open/)).toHaveCount(1);
   await expect(page.getByText(/Relay request failed|\(403\)/)).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("sign-in-ended.png") });
 });

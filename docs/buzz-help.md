@@ -314,10 +314,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   right says "Buzz is having trouble connecting" until it reconnects. There is
   nothing to press.
 - **Refused by a community**: if a community refuses your account, Messages
-  says so once. When it needs a sign-in you don't have or that expired, and
-  Buzz can sign you in to its server, Messages offers **Sign in with** that
-  server; otherwise it says you don't have access, or that your sign-in has
-  ended, with **Try again**. It doesn't retry on its own; signing in, or Try
+  says so once. If it needs you to sign in (you never have, signed out, or
+  your sign-in expired), it says **Sign in to open this community** and, where
+  Buzz can sign you in to that community's server, offers **Sign in with**
+  that server; otherwise **Try again**. If your account has no access, it says
+  so, with **Try again**. It doesn't retry on its own; signing in, or Try
   again once you have access, reopens it.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels

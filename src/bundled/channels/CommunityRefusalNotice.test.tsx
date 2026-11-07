@@ -37,7 +37,7 @@ it("offers the server's sign-in, once, when it refused a missing sign-in", async
   expect(retry).toHaveBeenCalledOnce();
 });
 
-it("says an expired sign-in has expired, and a sign-in in progress can be canceled", async () => {
+it("asks an expired sign-in the same way, and a sign-in in progress can be canceled", async () => {
   const h = federatedFixture();
   h.publish({ status: "reauthentication-required" });
   render(
@@ -48,12 +48,10 @@ it("says an expired sign-in has expired, and a sign-in in progress can be cancel
     />,
   );
   expect(
-    screen.getByRole("heading", {
-      name: "Sign in again to open this community",
-    }),
+    screen.getByRole("heading", { name: "Sign in to open this community" }),
   ).toBeVisible();
   expect(
-    screen.getByText("Your builderlab.example sign-in has expired."),
+    screen.getByText("This community needs your builderlab.example sign-in."),
   ).toBeVisible();
   h.publish({ status: "signing-in" });
   await userEvent
@@ -63,7 +61,7 @@ it("says an expired sign-in has expired, and a sign-in in progress can be cancel
 });
 
 // Without a sign-in to renew here (no server for it, or already signed in),
-// signing in is not this device's to offer: say it ended, with Try again.
+// signing in is not this device's to offer: the same prompt, with Try again.
 it.each([
   ["no sign-in server", undefined],
   ["a signed-in session", "signed-in"],
@@ -81,7 +79,10 @@ it.each([
       />,
     );
     expect(
-      screen.getByText("Your sign-in for this community has ended."),
+      screen.getByRole("heading", { name: "Sign in to open this community" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("This community needs you to sign in."),
     ).toBeVisible();
     await userEvent
       .setup()

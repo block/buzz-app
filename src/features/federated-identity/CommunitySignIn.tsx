@@ -143,13 +143,10 @@ function Action({
 }
 
 /** Whether a community refusing a missing or expired sign-in can be answered
- * by signing in to its server here: what to name, and whether it expired. */
+ * by signing in to its server here, and the server's name. */
 export function signInPrompt(state: SessionSnapshot | undefined) {
   if (!state?.authority || state.status === "signed-in") return null;
-  return {
-    server: serverName(state.authority),
-    expired: state.status === "reauthentication-required",
-  };
+  return { server: serverName(state.authority) };
 }
 
 /** Sign in (or cancel one in progress), then retry what was refused. Its

@@ -1,8 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
 
-const runtimeSwitch = (page) =>
-  page.getByRole("button", { name: "Attention status for Ada" });
-
 // Real browser focus and scroll geometry are outside jsdom.
 test("The Attention tab fits both themes and sizes and manages existing watches by keyboard", async ({
   page,
@@ -72,14 +69,14 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
   await expect(messages).toHaveCount(0);
   // Pointer affordances must reveal metadata without changing row geometry.
   const stamp = preview.locator(".attention-activity-time");
-  await runtimeSwitch(page).hover();
+  await page.mouse.move(0, 0);
   await expect(stamp).toHaveCSS("opacity", "1");
   const restingBox = await preview.boundingBox();
   await preview.hover();
   await expect(stamp).toHaveCSS("opacity", "1");
   await expect(preview).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(await preview.boundingBox()).toEqual(restingBox);
-  await runtimeSwitch(page).hover();
+  await page.mouse.move(0, 0);
   await preview.focus();
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
@@ -109,7 +106,6 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
         document.documentElement.dataset.colorMode = theme;
         document.documentElement.style.fontSize = "20px";
       }, theme);
-      await expect(runtimeSwitch(page)).toBeInViewport();
       await expect(
         page.getByRole("button", {
           name: "Watch status for Release discussion",
@@ -150,34 +146,6 @@ test("The Attention tab fits both themes and sizes and manages existing watches 
   await page.getByRole("menuitem", { name: "Resume", exact: true }).click();
   await expect(interestStatus).toHaveText("Active");
   await expect(watched).toHaveText("Active");
-  await page.keyboard.press("Escape");
-  const runtime = page.getByRole("button", {
-    name: "Attention status for Ada",
-  });
-  await runtime.focus();
-  await page.keyboard.press("Space");
-  await page
-    .getByRole("menu", { name: "Attention status for Ada", exact: true })
-    .getByRole("menuitem", { name: "Pause", exact: true })
-    .click();
-  await expect(runtime).toHaveText("Paused");
-  await expect(
-    page.locator(".attention-setting .attention-sonar-sweep"),
-  ).toHaveCSS("animation-play-state", "paused");
-  await page.screenshot({
-    path: testInfo.outputPath("attention-paused-menu.png"),
-  });
-  await page.keyboard.press("Escape");
-  await expect(page.getByText("Paused", { exact: true }).first()).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Watch status for Release discussion" }),
-  ).toBeVisible();
-  await runtime.click();
-  await page.getByRole("menuitem", { name: "Resume", exact: true }).click();
-  await expect(runtime).toHaveText("Active");
-  await expect(
-    page.locator(".attention-setting .attention-sonar-sweep"),
-  ).toHaveCSS("animation-play-state", "running");
   await page.keyboard.press("Escape");
   const details = page.getByRole("button", {
     name: "Details for example/project#42",
@@ -293,14 +261,14 @@ test("watch and interest deletion restore focus without taking it from another c
       .poll(() => page.evaluate(() => window.attentionFixture.saveStarted))
       .toBe(true);
     await page
-      .getByRole("button", { name: "Attention status for Ada" })
+      .getByRole("button", { name: "Interest status for Release planning" })
       .focus();
   } finally {
     await page.evaluate(() => window.attentionFixture.releaseSave());
   }
   await expect(remove).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Attention status for Ada" }),
+    page.getByRole("button", { name: "Interest status for Release planning" }),
   ).toBeFocused();
 });
 

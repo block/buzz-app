@@ -2360,6 +2360,48 @@ it.each([
     );
   },
 );
+it.each([
+  { channelType: "dm", scope: "thread" },
+  { channelType: "stream", scope: "channel" },
+])(
+  "keeps the running work's replies in its thread when another thread steers it in $channelType/$scope",
+  async ({ channelType, scope }) => {
+    const f = fixture();
+    vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+      status: "ready",
+      channels: [{ id: "channel", name: "test", channelType }],
+    });
+    const run = (delivery: Delivery) =>
+      f.runtime.run({
+        ...delivery,
+        config: { ...(delivery.config as object), scope },
+      });
+    const steers = () =>
+      f.sent
+        .filter((wire) => wire.method === "turn/steer")
+        .map((wire) =>
+          (wire.params as { input: { text: string }[] }).input
+            .map((item) => item.text)
+            .join(""),
+        );
+    await run(f.delivery("CURRENT_REQUEST"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await run(f.delivery("SAME_THREAD"));
+    await run(f.delivery("OTHER_THREAD", "e".repeat(64)));
+    await vi.waitFor(() => expect(steers()).toHaveLength(2));
+    const [same, other] = steers();
+    expect(same).toContain("SAME_THREAD");
+    expect(same).not.toContain("Ordinary replies");
+    expect(other).toContain("OTHER_THREAD");
+    expect(other).toContain(
+      `The reply target above is for the new message only. Ordinary replies about the work you were already doing still go to \`reply: "${root}"\`.`,
+    );
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+    );
+  },
+);
 it("cleans background terminals on server interruption and permits same-thread recovery", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));

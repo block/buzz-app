@@ -701,8 +701,9 @@ function Timeline({
     return () => observer.disconnect();
   }, []);
   useMessageSelection(scroller, rows, queries);
-  // While the connection recovers, its notice is the one report; the history
-  // edge does not repeat a failed read.
+  // While the connection recovers, its notice is the one report, so the
+  // history edge does not repeat the reason. Recovery does not retry older
+  // history, and paging stops on a failed read, so Retry stays either way.
   const { recovering } = useRecovery(queries.recovery);
   const edgeError = recovering ? undefined : window.error;
   // Keep pagination space through EOF so removing its control cannot change
@@ -1788,7 +1789,7 @@ function Timeline({
           <span>History window limit reached</span>
         ) : window.hasMore && queries.channels.cachedOnly ? (
           <span>You can load older messages once Buzz reconnects.</span>
-        ) : window.hasMore && (historyControl === "button" || edgeError) ? (
+        ) : window.hasMore && (historyControl === "button" || window.error) ? (
           <Button
             type="button"
             disabled={window.loadingOlder}
@@ -1801,7 +1802,7 @@ function Timeline({
           >
             {window.loadingOlder
               ? "Loading older…"
-              : edgeError
+              : window.error
                 ? "Retry older messages"
                 : "Load older messages"}
           </Button>

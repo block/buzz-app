@@ -2064,20 +2064,30 @@ it.each([false, true])(
   },
 );
 
-it("leaves a failed read to the recovery notice while the connection recovers", () => {
-  const failed = setup({ hasMore: true, error: "Read failed" });
-  expect(failed.alert()).toBe("Read failed");
-  expect(failed.historyButton()).toBe("Retry older messages");
-  failed.unmount();
-  const recovering = setup({
-    hasMore: true,
-    error: "Read failed",
-    recovering: true,
-  });
-  expect(recovering.alert()).toBeUndefined();
-  expect(recovering.historyButton()).toBe("Load older messages");
-  recovering.unmount();
-});
+it.each(["button", "scroll"] as const)(
+  "leaves a failed read's reason to the recovery notice but keeps its retry (%s)",
+  (historyControl) => {
+    const failed = setup({
+      hasMore: true,
+      historyControl,
+      error: "Read failed",
+    });
+    expect(failed.alert()).toBe("Read failed");
+    expect(failed.historyButton()).toBe("Retry older messages");
+    failed.unmount();
+    // Recovery does not retry older history, and paging stops on a failed
+    // read, so hiding Retry would strand paging until recovery settles.
+    const recovering = setup({
+      hasMore: true,
+      historyControl,
+      error: "Read failed",
+      recovering: true,
+    });
+    expect(recovering.alert()).toBeUndefined();
+    expect(recovering.historyButton()).toBe("Retry older messages");
+    recovering.unmount();
+  },
+);
 
 it("pages Solo chat history on scroll without an initial button and keeps error recovery", () => {
   const h = setup({ hasMore: true, historyControl: "scroll" });

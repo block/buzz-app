@@ -298,8 +298,8 @@ export function retainLocalRead(
   const accepted = new Map<string, number>();
   // A mark that a kept broader mark already reads is redundant here too, as
   // in the journal: keep it and it only takes room from real reads. A cover
-  // reads through at least the time of what it covers, so newest first
-  // accepts it before what it covers.
+  // reads through at least the time of what it covers, so newest first,
+  // then broader scope at equal times, accepts it before what it covers.
   // Overrides make inherited ancestry load-bearing; keep everything then.
   const coveredBy = overrides.size ? undefined : covered;
   const redundant = (key: string, value: number) => {
@@ -325,6 +325,7 @@ export function retainLocalRead(
     ([a, av], [b, bv]) =>
       Number(protectedKey(b)) - Number(protectedKey(a)) ||
       bv - av ||
+      scope(a) - scope(b) ||
       a.localeCompare(b),
   )) {
     // Once one mark does not fit, every later one is dropped too.
@@ -342,6 +343,15 @@ export function retainLocalRead(
       entries.length >= READ_RESERVE_KEYS ||
       bytes + cost > READ_RESERVE_BYTES
     ) {
+      // Protected-first ordering is not newest-first: a dropped message can
+      // be newer than every retained ancestor. Never raise the floor then.
+      if (overrides.size) {
+        if (protectedKey(key))
+          throw new Error(
+            "Read override ancestry capacity reached; saved floors retained",
+          );
+        break;
+      }
       full = true;
       raised = Math.max(raised, value);
       continue;

@@ -298,6 +298,74 @@ it("bounds the local reserve by entries and bytes, dropping oldest receipts dete
     ).toEqual(kept);
   }
 });
+it("keeps a tied covering receipt in the reserve's last slot without raising the floor", () => {
+  const reserve = {
+    ...Object.fromEntries(
+      Array.from({ length: READ_RESERVE_KEYS - 1 }, (_, n) => [
+        `msg:${n}`,
+        200,
+      ]),
+    ),
+    "thread-activity:root": 100,
+    "thread:root": 100,
+  };
+  const kept = retainLocalRead([], {}, "fixture", reserve, (key, frontier) =>
+    key === "thread-activity:root" &&
+    (frontier("thread:root") ?? -1) >= (frontier(key) ?? 0)
+      ? "thread:root"
+      : undefined,
+  );
+  expect(Object.keys(kept.reserve)).toHaveLength(READ_RESERVE_KEYS);
+  expect(kept.reserve["thread:root"]).toBe(100);
+  expect(kept.reserve["thread-activity:root"]).toBeUndefined();
+  expect(kept.floor).toBe(0);
+});
+it("never advances the floor when protected ancestry fills the reserve ahead of newer messages", () => {
+  const reserve = Object.fromEntries(
+    Array.from({ length: READ_RESERVE_KEYS }, (_, n) => [
+      `thread:${n}`,
+      1_000_000 + n,
+    ]),
+  );
+  const kept = retainLocalRead(
+    [
+      {
+        frontiers: Object.fromEntries(
+          Array.from({ length: 8000 }, (_, n) => [`msg:${n}`, 2_000_000 + n]),
+        ),
+        overrides: { child: { set: 1, clear: 0, baseline: 0 } },
+      },
+    ],
+    {},
+    "fixture",
+    reserve,
+    undefined,
+    10,
+  );
+  expect(kept.reserve).toEqual(reserve);
+  expect(kept.floor).toBe(10);
+});
+it("reports protected ancestry overflow rather than dropping inherited floors", () => {
+  const reserve = Object.fromEntries(
+    Array.from({ length: READ_RESERVE_KEYS + 10 }, (_, n) => [
+      `thread:${n}`,
+      1_000_000 + n,
+    ]),
+  );
+  expect(() =>
+    retainLocalRead(
+      [
+        {
+          frontiers: {},
+          overrides: { child: { set: 1, clear: 0, baseline: 0 } },
+        },
+      ],
+      {},
+      "fixture",
+      reserve,
+    ),
+  ).toThrow("Read override ancestry capacity reached; saved floors retained");
+});
 it("returning journal keys keep their highest archived frontier", () => {
   const kept = retainLocalRead(
     [{ frontiers: { "msg:old": 5 }, overrides: {} }],

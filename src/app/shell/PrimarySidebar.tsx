@@ -161,6 +161,10 @@ function ScopedSidebar({
     preferences?.subscribe ?? noSubscription,
     () => preferences?.snapshot(),
   );
+  // The community refused this account. Messages reports it once, with its
+  // own Try again; the sidebar keeps only the account action that answers it.
+  const refused =
+    connection.status === "error" && connection.denied && !connection.retrying;
   // A cached startup session has no Solo capabilities yet; its unavailable
   // placeholders still change height when the live inventories arrive.
   const soloReady =
@@ -387,15 +391,15 @@ function ScopedSidebar({
               {/* A connection retrying by itself is still connecting; only a
                   settled failure asks for Try again, right beside its notice. */}
               <div className={styles.connectionStatus}>
-                <p>
-                  {connection.status === "connecting" || connection.retrying
-                    ? "Connecting…"
-                    : connection.denied
-                      ? "You don’t have access to this community."
+                {!refused && (
+                  <p>
+                    {connection.status === "connecting" || connection.retrying
+                      ? "Connecting…"
                       : connection.status === "error"
                         ? "Couldn’t load channels."
                         : "Choose a community to see channels."}
-                </p>
+                  </p>
+                )}
                 {connection.status === "error" && !connection.retrying && (
                   <>
                     <CommunitySignIn
@@ -408,7 +412,9 @@ function ScopedSidebar({
                       relay={connection.origin}
                       memberships={props.memberships}
                     />
-                    <Button onClick={props.relay.retry}>Try again</Button>
+                    {!refused && (
+                      <Button onClick={props.relay.retry}>Try again</Button>
+                    )}
                   </>
                 )}
               </div>

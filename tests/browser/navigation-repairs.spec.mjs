@@ -131,7 +131,7 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   ).toBeFocused();
 });
 
-test("a refused account is explained as access, in place and in the sidebar", async ({
+test("a refused account is explained once, as access, in place", async ({
   page,
   app,
 }) => {
@@ -147,9 +147,10 @@ test("a refused account is explained as access, in place and in the sidebar", as
     main.getByRole("heading", { name: "You don’t have access to this" }),
   ).toBeVisible();
   await expect(main.getByText(/Check your connection/)).toHaveCount(0);
-  await expect(
-    page.getByText("You don’t have access to this community."),
-  ).toBeVisible();
+  // The sidebar does not repeat it, nor offer a second Try again.
+  const sidebar = page.getByRole("complementary", { name: "Sidebar" });
+  await expect(sidebar.getByText(/have access/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(1);
   const refusals = app.report.relayFailures.length;
   await button(main, "Try again").click();
   await expect

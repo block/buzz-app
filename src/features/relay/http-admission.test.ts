@@ -227,3 +227,72 @@ it("reads an edge 403 page as unavailable, not as the relay's denial", async () 
     error: "Relay request failed (403)",
   });
 });
+it.each([
+  [401, "authentication required\n", "sign-in"],
+  [403, "evidence rejected\n", "sign-in"],
+  [403, "authorization denied\n", "access"],
+])(
+  "reads the relay's exact %i %j as a community refusal",
+  async (status, body, admission) => {
+    const failure = await readApiFailure(
+      new Response(body, {
+        status,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      }),
+    );
+    expect(failure).toMatchObject({ denied: true, admission });
+    // The broker forwards it as JSON; reading that again keeps the refusal.
+    expect(apiFailure(status, failure)).toEqual(failure);
+  },
+);
+it.each([
+  // An outage, not a refusal.
+  [503, "authorization unavailable\n"],
+  // A known body under the wrong status, or not exactly the relay's bytes.
+  [403, "authentication required\n"],
+  [403, "authorization denied"],
+  [403, "Authorization denied\n"],
+])("leaves %i %j to the feature that asked", async (status, body) => {
+  const failure = await readApiFailure(new Response(body, { status }));
+  expect(failure.admission).toBeUndefined();
+  expect(failure.denied).toBeUndefined();
+});
+it("keeps one item's JSON refusal with its feature", async () => {
+  const failure = await readApiFailure(
+    Response.json({ error: "restricted: p-gated" }, { status: 403 }),
+  );
+  expect(failure).toMatchObject({ denied: true });
+  expect(failure.admission).toBeUndefined();
+  // Claimed admission without the relay's own reason is not one either.
+  expect(
+    apiFailure(403, { error: "restricted: p-gated", admission: "access" })
+      .admission,
+  ).toBeUndefined();
+});
+it("tells the lane about a community refusal and keeps the relay's status", async () => {
+  const refusals: string[] = [];
+  const lane = createApiAdmission((kind) => refusals.push(kind));
+  const response = await admittedApiRequest(
+    lane,
+    async () => new Response("authorization denied\n", { status: 403 }),
+  );
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({
+    error: "restricted: authorization denied",
+    admission: "access",
+  });
+  await expect(
+    admittedApiRequest(lane, () =>
+      Promise.reject("Federated sign-in is required"),
+    ),
+  ).rejects.toBe("Federated sign-in is required");
+  // An edge page and an item's refusal say nothing about the community.
+  await admittedApiRequest(
+    lane,
+    async () => new Response("<html>Forbidden</html>", { status: 403 }),
+  );
+  await admittedApiRequest(lane, async () =>
+    Response.json({ error: "restricted: p-gated" }, { status: 403 }),
+  );
+  expect(refusals).toEqual(["access", "sign-in"]);
+});

@@ -236,10 +236,20 @@ export function ChannelsPage({
             </div>
           ) : session.status === "error" && session.denied ? (
             <div role="alert" className={styles.failed}>
+              {/* The one report of a refusal: the sidebar beside it stays
+                  quiet, and nothing behind it repeats a failed read. */}
               <EmptyState
                 icon={<LockIcon />}
-                title="You don’t have access to this"
-                description="It belongs to another account or a community you haven’t joined."
+                title={
+                  session.refusal === "sign-in"
+                    ? "Sign in again to open this community"
+                    : "You don’t have access to this community"
+                }
+                description={
+                  session.refusal === "sign-in"
+                    ? "Your sign-in for this community has ended."
+                    : "This account isn’t a member. Ask one of its admins to add you, or switch to an account that has access."
+                }
                 action={
                   <Button
                     type="button"

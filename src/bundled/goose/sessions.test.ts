@@ -363,6 +363,57 @@ describe("AgentSessions", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
+  it("keeps the running turn's thread for its results when another thread steers it", async () => {
+    const { fake, sessions } = setup({}, true);
+    const first = sessions.deliver("c", "first", 1, { activityScope: "A" });
+    await flush(30);
+    const other = sessions.deliver("c", "plain", 2, {
+      steer: "steer",
+      activityScope: "B",
+    });
+    await flush(30);
+    const same = sessions.deliver("c", "plain", 3, {
+      steer: "again",
+      activityScope: "A",
+    });
+    await flush(30);
+    const [goose] = fake.geese;
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["first"]);
+    expect(goose?.turns[0]?.steered).toEqual([
+      'steer\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to `reply: "A"`.',
+      "again",
+    ]);
+    goose?.turns[0]?.finish();
+    await expect(Promise.all([first, other, same])).resolves.toHaveLength(3);
+  });
+
+  it("runs another thread's steer unchanged when it becomes the next turn", async () => {
+    const { fake, sessions } = setup({}, true);
+    const first = sessions.deliver("c", "first", 1, { activityScope: "A" });
+    await flush(30);
+    const [goose] = fake.geese;
+    // goose names a run that has already ended, so it refuses the steer.
+    goose?.update("session-1", {
+      sessionUpdate: "session_info_update",
+      _meta: { goose: { activeRunId: "run-0" } },
+    });
+    const other = sessions.deliver("c", "plain", 2, {
+      steer: "steer",
+      activityScope: "B",
+    });
+    await flush(30);
+    const steers = goose?.received.filter(
+      (message) => message.method === "_goose/unstable/session/steer",
+    );
+    expect(steers).toHaveLength(1);
+    expect(goose?.turns[0]?.steered).toEqual([]);
+    goose?.turns[0]?.finish();
+    await flush(30);
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["first", "steer"]);
+    goose?.turns[1]?.finish();
+    await expect(Promise.all([first, other])).resolves.toHaveLength(2);
+  });
+
   it("runs a turn on the model its message asked for, and the next on the agent's", async () => {
     const { fake, sessions, choose } = setup();
     choose({ provider: "openai", model: "" });

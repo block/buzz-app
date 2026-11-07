@@ -1205,6 +1205,10 @@ function protectedPreview() {
     stateKey: key,
     assertAvailable,
     check: async () => {},
+    checkEvidence: async (_action, evidence) => {
+      for await (const _part of evidence.read()) {
+      }
+    },
     processProtection: { readOnlyPaths: [], hiddenPaths: [] },
     spawn: (options) => worker.spawn("app-server", options),
   });
@@ -1407,7 +1411,7 @@ it("shows the owner the protection reason only for the protected turn its refusa
   const f = protectedPreview();
   const handle = f.handle;
   if (!handle?.protection) throw new Error("Missing protected handle");
-  const check = vi.spyOn(handle.protection, "check");
+  const check = vi.spyOn(handle.protection, "checkEvidence");
   const run = (text: string) =>
     f.runtime.run({
       ...f.delivery(text),
@@ -1417,14 +1421,22 @@ it("shows the owner the protection reason only for the protected turn its refusa
   const thread = (index: number) =>
     (f.worker.starts()[index]?.params as { threadId?: string } | undefined)
       ?.threadId ?? "";
-  const refuse = (index: number, reason: string) => {
+  const refuse = async (index: number, reason: string) => {
     check.mockRejectedValueOnce(new ProtectionDenied(reason));
-    return f.security({
+    const opened = (await f.security({
       jsonrpc: "2.0",
       id: reason,
-      method: "buzz/security/check",
-      params: { kind: "context", session: thread(index), content: {} },
-    });
+      method: "buzz/security/evidence/begin",
+      params: { kind: "context", session: thread(index) },
+    })) as { result: { id: string } };
+    await expect(
+      f.security({
+        id: reason,
+        method: "buzz/security/evidence/finish",
+        params: { id: opened.result.id, sequence: 0, bytes: 0 },
+      }),
+    ).rejects.toThrow();
+    return { result: { allowed: false } };
   };
   const fail = (index: number, message: string) =>
     f.worker.emit({
@@ -1466,15 +1478,22 @@ it("shows the owner the protection reason only for the protected turn its refusa
     const earlier = f.security({
       jsonrpc: "2.0",
       id: "earlier",
-      method: "buzz/security/check",
-      params: { kind: "context", session: thread(0), content: {} },
+      method: "buzz/security/evidence/begin",
+      params: { kind: "context", session: thread(0) },
     });
     expect(check).toHaveBeenCalledTimes(2);
     await run("second");
     await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(2));
     expect(thread(1)).toBe(thread(0));
     held.resolve();
-    expect(await earlier).toMatchObject({ result: { allowed: false } });
+    const admitted = (await earlier) as { result: { id: string } };
+    await expect(
+      f.security({
+        id: "finish-earlier",
+        method: "buzz/security/evidence/finish",
+        params: { id: admitted.result.id, sequence: 0, bytes: 0 },
+      }),
+    ).resolves.toMatchObject({ result: { allowed: false } });
     fail(1, "model busy");
     await vi.waitFor(() =>
       expect(f.runtime.sessions(pubkey)).toMatchObject([

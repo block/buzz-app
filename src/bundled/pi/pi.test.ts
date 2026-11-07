@@ -220,6 +220,9 @@ it.each(["dispose", "exit", "retire", "policy"])(
     let gate: AgentProtection = {
       key: "a:1",
       stateKey: "a:1",
+      checkEvidence: async () => {
+        throw new Error("Unexpected streamed check in this fixture");
+      },
       check,
       assertAvailable() {},
       processProtection: { readOnlyPaths: [], hiddenPaths: [] },
@@ -299,6 +302,9 @@ it("isolates protected agents, contains their runtime code and rejects crossed n
     },
     spawn: async () => {
       throw new Error("Unused protected runtime");
+    },
+    checkEvidence: async () => {
+      throw new Error("Unexpected streamed check in this fixture");
     },
     check: vi.fn(async (_action, signal) => {
       waiting = signal;

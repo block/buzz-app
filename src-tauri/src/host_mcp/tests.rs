@@ -452,3 +452,33 @@ async fn stops_with_the_page() {
     let (late, _events) = channel();
     assert!(servers.serve(page, "plugin".into(), late, false).is_err());
 }
+
+#[tokio::test]
+async fn bounded_security_evidence_chunks_cross_the_authenticated_loopback_server_intact() {
+    let servers = HostMcpServers::default();
+    let (channel, mut events) = channel();
+    let info = servers
+        .serve(servers.page(), "plugin".into(), channel, false)
+        .unwrap();
+    let named = initialize(&servers, &info, &mut events).await;
+    let body = serde_json::json!({"jsonrpc": "2.0", "id": 1,
+        "method": "buzz/security/evidence/chunk", "params": {"id":"transfer","sequence":0,"data": "eHh4".repeat(16384)}})
+    .to_string();
+    let request = post(&info, &info.token, &named, &body);
+    let client = tokio::spawn({
+        let info = info.clone();
+        async move { send(&info, request).await }
+    });
+    let event = next(&mut events).await;
+    assert_eq!(event["body"].as_str().unwrap(), body);
+    servers
+        .reply(
+            "plugin",
+            info.handle,
+            event["request"].as_u64().unwrap(),
+            Some(r#"{"jsonrpc":"2.0","id":1,"result":{"allowed":true}}"#.into()),
+        )
+        .unwrap();
+    assert_eq!(status(&client.await.unwrap()), "200");
+    servers.close("plugin", info.handle).unwrap();
+}

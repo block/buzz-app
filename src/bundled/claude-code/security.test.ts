@@ -49,6 +49,9 @@ function fixture(initialization: "success" | "error" | "held" = "success") {
         throw new Error("Unused protected runtime");
       },
       assertAvailable() {},
+      checkEvidence: async () => {
+        throw new Error("Unexpected streamed check in this fixture");
+      },
       check,
     },
     history: async () => [{ role: "user", content: "authorized task" }],
@@ -59,6 +62,9 @@ function fixture(initialization: "success" | "error" | "held" = "success") {
     spawn,
     protection,
     launch,
+    checkEvidence: async () => {
+      throw new Error("Unexpected streamed check in this fixture");
+    },
     check,
     acknowledge: () => acknowledge(),
   };

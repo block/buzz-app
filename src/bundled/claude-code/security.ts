@@ -181,3 +181,9 @@ export async function protectedRuntime(spawn: Spawn) {
   if (!id) throw new Error("Protected Claude needs a Mac");
   return id;
 }
+
+/** Acquire a snapshot before an asynchronous hook/tool check starts reading it. */
+export function retainProtectionHistory(value: unknown): () => void {
+  const history = value as { retain?: () => () => void } | null;
+  return typeof history?.retain === "function" ? history.retain() : () => {};
+}

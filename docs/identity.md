@@ -989,6 +989,12 @@ and ignores the result, so sign-out never waits for it and works offline. It
 ends only the session this copy held, never one read back from the secure
 store. Sign out of Buzz, expiry and refusals end nothing at the server.
 
+The browser callback shows that sign-in was received and attempts to close after
+three seconds. After verified session installation, macOS can return focus to
+the visible Buzz window while the captured sign-in browser is still foreground.
+Cancellation, sign-out, replacement and failed verification retire that attempt's
+return permission. Other platforms keep manual focus return.
+
 FI records use the OS secure-store service
 `xyz.block.buzz.desktop.federated-session` (with `.debug` for Rust debug
 builds), keyed by profile and each server's deployment fingerprint, so a build's

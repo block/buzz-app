@@ -13,9 +13,13 @@ each performing its own code exchange and verification:
   branding and browser light/dark styling. Success means the callback was
   received, not that native account verification has completed: the page
   instructs the user to return to the app to finish verification. Errors retain
-  their generic recovery copy. Federated pages have no script, auto-close hint,
-  artwork, or focus return; their CSP permits only the embedded stylesheet by
-  hash and self-contained data assets.
+  their generic recovery copy. Federated pages share the three-second close script and manual-close hint,
+  with no cube artwork. After native verification and session installation,
+  their attempt-scoped macOS return can focus the visible Buzz window only
+  while the captured browser is foreground. Cancellation, replacement, expiry
+  and failed verification retire that permission. The signed-in snapshot
+  publishes before the return delay. The CSP permits exact embedded style and
+  script hashes and self-contained data assets.
 
 Each caller passes an owner key: native FI uses its server's fingerprint and
 restore a fixed key. An owner's pending attempt cannot be replaced by that owner.
@@ -48,7 +52,9 @@ Each owner has one slot. Attempts from different owners may be pending at once,
 each on its own port and path, and end only through their own wait, cancel,
 timeout, launch failure, or a main-document load. An owner serializes its own
 begin/wait/cancel sequence: after its generic listener finishes, its next attempt
-can replace the unconsumed result. A native FI result stays until wait or cancel.
+can replace the unconsumed result. A native FI result stays until wait or cancel. A captured return permission
+survives a successful wait until verified completion or cancellation; each
+owner keeps its own permission, so concurrent servers cannot replace it.
 
 ## State protection
 

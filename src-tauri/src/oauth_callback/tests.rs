@@ -362,6 +362,7 @@ async fn attempts_from_different_owners_resolve_independently() {
             "server-a",
             "https://identity.example/v1/login/start".into(),
             |_| Ok(()),
+            None,
         )
         .unwrap();
     let restore = start_as(&host, "restore", options("/callback/restore")).unwrap();
@@ -370,7 +371,8 @@ async fn attempts_from_different_owners_resolve_independently() {
         .begin_federated(
             "server-a",
             "https://identity.example/v1/login/start".into(),
-            |_| { panic!("A pending owner must not launch a second attempt") }
+            |_| { panic!("A pending owner must not launch a second attempt") },
+            None,
         )
         .is_err());
     assert!(start_as(&host, "restore", options("/callback/other")).is_err());
@@ -399,6 +401,7 @@ async fn attempts_from_different_owners_resolve_independently() {
             "server-b",
             "https://peer.example/v1/login/start".into(),
             |_| Ok(()),
+            None,
         )
         .unwrap();
     host.cancel(&server.id).unwrap();
@@ -617,6 +620,7 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
         OWNER,
         "https://identity.example/prefix/v1/login/start?handoff_challenge=fixture&handoff_challenge_method=S256".into(),
         |url| { opened = Some(url::Url::parse(url).unwrap()); Ok(()) },
+        Some("synthetic-browser".into()),
     ).unwrap();
     let opened = opened.unwrap();
     let params: Vec<_> = opened.query_pairs().into_owned().collect();
@@ -673,6 +677,17 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
         response(&[("code", "fixture-code")])
     );
     assert!(host.wait(&attempt.id).await.is_err());
+    assert!(host
+        .0
+        .lock()
+        .unwrap()
+        .values()
+        .find(|a| a.id == attempt.id)
+        .unwrap()
+        .focus
+        .deadline(&attempt.id)
+        .is_some());
+    host.cancel(&attempt.id).unwrap();
     let next = start(&host, options("/other")).unwrap();
     host.cancel(&next.id).unwrap();
 }
@@ -689,9 +704,12 @@ fn assert_federated_callback(response: &str, message: &str) {
     assert!(body.contains("name=\"viewport\""));
     assert!(!body.contains("{{"));
     assert!(!body.contains("Builderlab"));
-    assert!(!body.contains("<script"));
-    assert!(!body.contains("Closing this window automatically"));
-    assert!(!body.contains("id=\"close-spinner\""));
+    assert!(body.contains(include_str!("page.js")));
+    let script_hash =
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(include_str!("page.js")));
+    assert!(headers.contains(&format!("script-src 'sha256-{script_hash}'")));
+    assert!(body.contains("Closing this window automatically"));
+    assert!(body.contains("id=\"close-spinner\""));
     assert!(!body.contains("class=\"artwork\""));
     let style = body
         .split_once("<style>")
@@ -705,13 +723,47 @@ fn assert_federated_callback(response: &str, message: &str) {
     assert!(headers.contains("default-src 'none'"));
     assert!(headers.contains("font-src data:;"));
     assert!(headers.contains("base-uri 'none'; frame-ancestors 'none'"));
-    assert!(!headers.contains("script-src"));
+
     assert!(!headers.contains("unsafe-inline"));
     assert!(headers.contains("Cache-Control: no-store\r\n"));
     assert!(headers
         .split("\r\n")
         .any(|header| header == "Referrer-Policy: no-referrer"));
     assert!(headers.contains(&format!("Content-Length: {}\r\n", body.len())));
+}
+
+#[tokio::test]
+async fn concurrent_servers_keep_independent_return_permissions_until_cancel_or_reload() {
+    let host = OAuthCallbackHost::default();
+    let mut completed = Vec::new();
+    for owner in ["server-a", "server-b"] {
+        let attempt = host
+            .begin_federated(
+                owner,
+                "https://identity.example/v1/login/start".into(),
+                |_| Ok(()),
+                Some("synthetic-browser".into()),
+            )
+            .unwrap();
+        let url = url::Url::parse(&attempt.callback_url).unwrap();
+        let html = send(&url, &format!("{}?code=fixture", url.path()), "").await;
+        assert!(html.starts_with("HTTP/1.1 200"));
+        host.wait(&attempt.id).await.unwrap();
+        let focus = host.0.lock().unwrap()[owner].focus.clone();
+        assert!(focus.deadline(&attempt.id).is_some());
+        completed.push((attempt.id, focus));
+    }
+    let [(first, first_focus), (second, second_focus)] = completed.as_slice() else {
+        panic!("Both servers must complete their own callback");
+    };
+    host.cancel(first).unwrap();
+    assert!(first_focus.deadline(first).is_none());
+    assert!(second_focus.deadline(second).is_some());
+    host.cancel(first).unwrap();
+    assert!(second_focus.deadline(second).is_some());
+    host.document_load("main", tauri::webview::PageLoadEvent::Started)
+        .unwrap();
+    assert!(second_focus.deadline(second).is_none());
 }
 
 #[tokio::test]
@@ -722,6 +774,7 @@ async fn federated_error_uses_buzz_presentation_and_keeps_private_details_native
             OWNER,
             "https://organization.example/v1/login/start".into(),
             |_| Ok(()),
+            None,
         )
         .unwrap();
     let callback = url::Url::parse(&attempt.callback_url).unwrap();

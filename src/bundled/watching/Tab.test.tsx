@@ -1292,10 +1292,11 @@ it("shows a minimal activity timeline with full message and output previews", ()
     );
     if (index === 0) {
       expect(reads).toContainEqual([[author, casey], "background"]);
+      // A chip splits its first character from the rest of the name.
       expect(
-        screen
-          .getByText("Casey", { selector: "[data-mention-kind]" })
-          .getAttribute("data-mention-kind"),
+        [...document.querySelectorAll("[data-mention-kind]")]
+          .find((element) => element.textContent === "Casey")
+          ?.getAttribute("data-mention-kind"),
       ).toBe("person");
       expect(
         screen.getByRole("link", { name: "#Beta" }).getAttribute("href"),

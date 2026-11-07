@@ -269,9 +269,10 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   await user.click(solo);
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Solo" })).toBeNull();
+  // Without its heading, Solo creates from New beside the tabs.
   expect(
-    screen.getByRole("button", { name: "New chat or workspace" }),
-  ).toBeVisible();
+    screen.queryByRole("button", { name: "New chat or workspace" }),
+  ).toBeNull();
   expect(screen.getByRole("button", { name: "Chats" })).toHaveAttribute(
     "aria-expanded",
     "false",
@@ -489,10 +490,7 @@ it("keeps unavailable creation actions disabled", async () => {
   );
 });
 
-it.each([
-  ["New", "New workspace"],
-  ["New chat or workspace", "New workspace"],
-])(
+it.each([["New", "New workspace"]])(
   "does not navigate to a replaced session after project creation from %s completes",
   async (triggerName, itemName) => {
     const f = fixture(true, true);
@@ -773,9 +771,7 @@ it.each(["empty", "chats", "projects", "both"])(
       expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
     }
     await user.click(screen.getByRole("tab", { name: "Solo" }));
-    const trigger = within(nav).getByRole("button", {
-      name: "New chat or workspace",
-    });
+    const trigger = screen.getByRole("button", { name: "New" });
     await user.click(trigger);
     await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
     expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
@@ -792,9 +788,7 @@ it.each(["empty", "chats", "projects", "both"])(
 it("keeps new Solo chats available when project creation is unavailable", async () => {
   const user = userEvent.setup();
   const f = fixture(true);
-  await user.click(
-    screen.getByRole("button", { name: "New chat or workspace" }),
-  );
+  await user.click(screen.getByRole("button", { name: "New" }));
   expect(
     await screen.findByRole("menuitem", { name: "New workspace" }),
   ).toHaveAttribute("aria-disabled", "true");
@@ -895,7 +889,7 @@ it("an explicit Solo reveal during a restriction keeps the saved Team filter", a
   }
 });
 
-it("uses one contributed heading and the prior All Team Nexus order without losing chat creation", async () => {
+it("uses one contributed heading and the prior All Team Nexus order, with no heading creation", async () => {
   const h = createSoloRegionFixture(viewer);
   await h.register({ title: "Nexus", component: () => null });
   const target = conversationTarget(h.scope, "owned");
@@ -916,36 +910,20 @@ it("uses one contributed heading and the prior All Team Nexus order without losi
     expect(screen.getAllByText("Nexus")).toHaveLength(2);
     await userEvent.setup().click(screen.getByRole("tab", { name: "Nexus" }));
     expect(screen.getAllByText("Nexus")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Create" })).toBeVisible();
     await userEvent.setup().click(screen.getByRole("tab", { name: "All" }));
     expect(screen.getAllByText("Nexus")).toHaveLength(2);
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "Create" }));
+    // Headings carry no creation of their own; the New menu owns it.
     expect(
-      await screen.findByRole("menuitem", { name: "New chat" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("menuitem", { name: "New workspace" }),
-    ).toBeVisible();
+      screen.queryByRole("button", { name: "Create" }),
+    ).not.toBeInTheDocument();
   } finally {
     view.unmount();
     await h.dispose();
   }
 });
 
-it("merged Create keeps workspace creation and return focus when a plugin menu fails", async () => {
+it("omits a contributed create action whose menu fails", async () => {
   const h = createSoloRegionFixture(viewer);
-  const create = vi.fn(async (_section: { id: string; name: string }) => {});
-  Object.assign(h.session, {
-    soloPreferences: {
-      ...h.session.soloPreferences,
-      sectionCreationWritable: true,
-      createSection: create,
-    },
-  });
-  const open = vi.fn(async () => ({ status: "opened" as const }));
-  const navigator = { ...h.navigator, open };
   await h.register({
     title: "Nexus",
     component: () => null,
@@ -965,41 +943,18 @@ it("merged Create keeps workspace creation and return focus when a plugin menu f
     <ToastProvider>
       <PrimarySidebar
         relay={h.relay}
-        navigator={navigator}
+        navigator={h.navigator}
         target={conversationTarget(h.scope, "owned")}
       >
         {null}
       </PrimarySidebar>
     </ToastProvider>,
   );
-  const user = userEvent.setup();
   try {
-    const trigger = screen.getByRole("button", { name: "Create" });
-    await user.click(trigger);
-    await user.click(
-      await screen.findByRole("menuitem", { name: "New workspace" }),
-    );
-    await screen.findByRole("dialog", { name: "New workspace" });
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(trigger).toHaveFocus());
-    await user.click(trigger);
-    await user.click(
-      await screen.findByRole("menuitem", { name: "New workspace" }),
-    );
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-    await user.type(
-      within(dialog).getByRole("textbox", { name: "Name" }),
-      "Planning",
-    );
-    await user.click(within(dialog).getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(create).toHaveBeenCalledOnce());
-    const project = create.mock.calls[0]?.[0] as unknown as { id: string };
-    await waitFor(() =>
-      expect(open).toHaveBeenCalledWith(
-        soloDraftTarget(h.scope, { project: project.id }),
-      ),
-    );
-    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.getAllByText("Nexus")).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: "Create" }),
+    ).not.toBeInTheDocument();
   } finally {
     view.unmount();
     await h.dispose();

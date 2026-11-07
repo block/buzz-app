@@ -144,6 +144,55 @@ export type OwnerMemberPage = Readonly<{
     name?: string;
   }>[];
 }>;
+/** A message read: a thread (any of its messages' IDs) in its own channel, a
+ * search (`search`, optionally in `channel`), or else `channel`'s latest.
+ * `author` and `since` narrow a search or channel read; `before` and
+ * `beforeId` are the relay's cursor. */
+export type OwnerReadRequest = Readonly<{
+  channel?: string;
+  thread?: string;
+  search?: string;
+  author?: string;
+  since?: number;
+  before?: number;
+  beforeId?: string;
+  limit: number;
+}>;
+export type OwnerMessagePage = Readonly<{
+  execution: OwnerExecution;
+  /** The channel read: a thread's own, or the one a search was narrowed to. */
+  channel?: string;
+  root?: string;
+  /** The messages, and the edits to them, in any order. A thread's root
+   * comes on its first page only. */
+  events: readonly BuzzEvent[];
+  /** Authors' display names, where they have one. */
+  names: Readonly<Record<string, string>>;
+  /** Authors' owners, where the owner's Buzz has verified one; their edits
+   * in the channel count as the author's. */
+  owners?: Readonly<Record<string, string>>;
+  /** Where the next older page starts, when older messages remain. */
+  more?: Readonly<{ before: number; beforeId: string }>;
+  /** A search filled its limit, so more matches may exist. */
+  limited?: true;
+  /** The edit lookup filled its limit, so some messages may show older text. */
+  editsLimited?: true;
+  /** The owner's channel list is incomplete, so a search may be missing
+   * matches from channels not yet listed. */
+  partial?: true;
+}>;
+export type OwnerCanvas = Readonly<{
+  execution: OwnerExecution;
+  channel: string;
+  /** The current canvas, or the revision asked for; none when it has none. */
+  canvas?: BuzzEvent;
+}>;
+export type OwnerCanvasHistory = Readonly<{
+  execution: OwnerExecution;
+  channel: string;
+  /** A page of revisions, newest first. */
+  revisions: readonly BuzzEvent[];
+}>;
 /** Read-only operations the app runs with its signed-in human's access, for
  * that human's own agent in that agent's community. Typed operations only:
  * no filters, signing or client of the owner's. */
@@ -155,6 +204,21 @@ export type OwnerAccess = Readonly<{
     page: Readonly<{ offset: number; limit: number }>,
     signal?: AbortSignal,
   ): Promise<OwnerMemberPage>;
+  messages(
+    request: OwnerReadRequest,
+    signal?: AbortSignal,
+  ): Promise<OwnerMessagePage>;
+  /** The current canvas, or its revision `revision`. */
+  canvas(
+    channel: string,
+    revision?: string,
+    signal?: AbortSignal,
+  ): Promise<OwnerCanvas>;
+  canvasHistory(
+    channel: string,
+    cursor: Readonly<{ before?: number; beforeId?: string }>,
+    signal?: AbortSignal,
+  ): Promise<OwnerCanvasHistory>;
   /** Throws unless the binding that answered with `execution` still holds,
    * as checked just before its answer is released; reads nothing. */
   held(execution: OwnerExecution): void;

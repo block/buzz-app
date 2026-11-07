@@ -109,7 +109,7 @@ export function sessionHint(added: readonly AddedTool[] = [], owner = false) {
     ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
     : "";
   const owned = owner
-    ? ", your owner's channels and members read with their access (owner_channel_list)"
+    ? ", your owner's channels, members, messages and canvases read with their access (owner_channel_list, owner_read)"
     : "";
   return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), Nexus workers an owner lets you run (solo_worker_connections), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${owned}${plugins}.`;
 }

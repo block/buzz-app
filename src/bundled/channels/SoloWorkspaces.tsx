@@ -1,3 +1,4 @@
+import { FadingLabel } from "./FadingLabel";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
@@ -34,6 +35,7 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
@@ -478,21 +480,8 @@ export function SoloWorkspaces({
             <ChatActionsMenu
               id={`project-${project.id}`}
               title={project.name}
-              className={`${channelStyles.sectionHeader} ${styles.projectHeader}`}
+              className={undefined}
               enabled={!!project.id}
-              trailing={
-                <div className={channelStyles.sectionActions}>
-                  {onNew && (
-                    <IconButton
-                      size="compact"
-                      aria-label={`New chat in ${project.name}`}
-                      title="New chat"
-                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                      onClick={() => onNew(project.id || undefined)}
-                    />
-                  )}
-                </div>
-              }
               content={
                 <>
                   <MenuItem onClick={() => setSettingsFor(project)}>
@@ -526,25 +515,47 @@ export function SoloWorkspaces({
                 </>
               }
             >
-              <Collapsible.Trigger
-                type="button"
-                className={`${channelStyles.sidebarSectionHeading} ${styles.projectHeading}`}
-                aria-expanded={
-                  !collapsed.includes(project.id) ||
-                  renamingProject === project.id
-                }
-                onClick={(event) => setAnimate(event.detail > 0)}
-              >
-                <span className={channelStyles.sectionTitle}>
-                  {project.name}
-                </span>
-                <span
-                  className={channelStyles.sectionChevron}
-                  aria-hidden="true"
+              {(overflow) => (
+                <NavigationSectionHeading
+                  disclosure
+                  revealActions
+                  actions={
+                    <>
+                      {overflow}
+                      {onNew && (
+                        <IconButton
+                          size="compact"
+                          aria-label={`New chat in ${project.name}`}
+                          title="New chat"
+                          icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                          onClick={() => onNew(project.id || undefined)}
+                        />
+                      )}
+                    </>
+                  }
                 >
-                  <CaretDownIcon size={15} strokeWidth={2.5} />
-                </span>
-              </Collapsible.Trigger>
+                  <Collapsible.Trigger
+                    type="button"
+                    className={styles.projectHeading}
+                    aria-expanded={
+                      !collapsed.includes(project.id) ||
+                      renamingProject === project.id
+                    }
+                    onClick={(event) => setAnimate(event.detail > 0)}
+                  >
+                    <FadingLabel className={channelStyles.sectionTitle}>
+                      {project.name}
+                    </FadingLabel>
+                    <span
+                      className={channelStyles.sectionChevron}
+                      aria-hidden="true"
+                      data-navigation-reveal=""
+                    >
+                      <CaretDownIcon size={15} strokeWidth={2.5} />
+                    </span>
+                  </Collapsible.Trigger>
+                </NavigationSectionHeading>
+              )}
             </ChatActionsMenu>
             <Collapsible.Panel
               className={styles.projectPanel}
@@ -884,17 +895,16 @@ export function ChatActionsMenu({
   content,
   indicator,
   enabled = true,
-  trailing,
 }: {
   id: string;
   title: string;
   className: string | undefined;
-  children: ReactNode;
+  /** A function places the overflow action itself, such as in a heading's
+   * actions; otherwise it follows the children. */
+  children: ReactNode | ((overflow: ReactNode) => ReactNode);
   content: ReactNode;
   indicator?: ReactNode;
   enabled?: boolean;
-  /** Follows the overflow action, preserving header action keyboard order. */
-  trailing?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -909,10 +919,35 @@ export function ChatActionsMenu({
   if (!enabled)
     return (
       <div className={className} data-solo-menu-id={id}>
-        {children}
-        {trailing}
+        {typeof children === "function" ? children(null) : children}
       </div>
     );
+  const overflow = (
+    <MenuRoot>
+      <MenuTrigger
+        render={(props) => (
+          <IconButton
+            {...props}
+            // A heading reveals its own actions; rows reveal theirs here.
+            data-solo-row-action={
+              typeof children === "function" ? undefined : ""
+            }
+            variant="bare"
+            size="compact"
+            aria-label={`Actions for ${title}`}
+            icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+          />
+        )}
+      />
+      <MenuPopup
+        aria-label={`Actions for ${title}`}
+        align="end"
+        finalFocus={restoreFocus}
+      >
+        {content}
+      </MenuPopup>
+    </MenuRoot>
+  );
   return (
     <ContextMenuRoot
       open={open}
@@ -935,31 +970,15 @@ export function ChatActionsMenu({
           }
         }}
       >
-        {children}
-        {indicator}
-        <MenuRoot>
-          <MenuTrigger
-            render={(props) => (
-              <IconButton
-                {...props}
-                data-solo-row-action=""
-                variant="bare"
-                size="compact"
-                data-solo-overflow-action=""
-                aria-label={`Actions for ${title}`}
-                icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
-              />
-            )}
-          />
-          <MenuPopup
-            aria-label={`Actions for ${title}`}
-            align="end"
-            finalFocus={restoreFocus}
-          >
-            {content}
-          </MenuPopup>
-        </MenuRoot>
-        {trailing}
+        {typeof children === "function" ? (
+          children(overflow)
+        ) : (
+          <>
+            {children}
+            {indicator}
+            {overflow}
+          </>
+        )}
       </ContextMenuTrigger>
       <MenuPopup
         aria-label={`Actions for ${title}`}

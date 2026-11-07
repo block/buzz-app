@@ -114,7 +114,7 @@ test("collapsed headings follow unread, confirmed mute and read changes", async 
   await expect(beta).toBeHidden();
   // The aggregate Team heading also represents nested collapsed sections.
   const team = page.locator(
-    '[data-sidebar-section="scope:team"] > div > details > summary',
+    '[data-sidebar-section="scope:team"] > .navigation-section-heading .navigation-section-heading-label > details > summary',
   );
   await team.click();
   await expect(team.getByText("Team", { exact: true })).toHaveCSS(

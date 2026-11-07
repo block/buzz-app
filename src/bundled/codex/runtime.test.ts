@@ -7045,6 +7045,9 @@ it.each([true, false])(
       })),
       channel: vi.fn(),
       members: vi.fn(),
+      messages: vi.fn(),
+      canvas: vi.fn(),
+      canvasHistory: vi.fn(),
       held: vi.fn(),
     };
     const delivery = f.delivery("@Codex list my channels");
@@ -7068,9 +7071,14 @@ it.each([true, false])(
     );
     expect(listed).toEqual(
       owned
-        ? ["owner_channel_list", "owner_channel_get", "owner_member_list"].map(
-            (name) => expect.objectContaining({ name, deferLoading: true }),
-          )
+        ? [
+            "owner_channel_list",
+            "owner_channel_get",
+            "owner_member_list",
+            "owner_read",
+            "owner_canvas_get",
+            "owner_canvas_history",
+          ].map((name) => expect.objectContaining({ name, deferLoading: true }))
         : [],
     );
     // A name the model remembers or guesses is checked against the run's

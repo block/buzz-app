@@ -78,17 +78,32 @@ servers do not support these operations.
 ## Owner tools
 
 In communities the build flag `BUZZ_OWNER_MCP_COMMUNITIES` enables, an agent's
-runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get` and
-`owner_member_list`. They read the owner's channels, one channel's details and
-the owner's rights in it, and its roster, through the owner's own signed-in
-session, including private and archived channels, DMs and Solo chats the agent
-is not in. They write nothing. The app decides the agent, owner and community;
+runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get`,
+`owner_member_list`, `owner_read`, `owner_canvas_get` and `owner_canvas_history`.
+They read the owner's channels, one channel's details and
+the owner's rights in it, its roster, its messages, whole threads and searches,
+and its Canvas and earlier revisions, through the
+owner's own signed-in session, including private and archived channels, DMs and
+Solo chats the agent is not in. Message reads and Canvas history page with a
+`next` cursor, as `read` and the app's history do. A search covers only the
+owner's channels and says `partial` while their list is incomplete. Other
+channels' matches still fill its page, so `limited` with few results means
+narrowing it by channel or time. A message shows its newest edit by its author
+or, as in the app, by the author's verified owner. One read fetches a page's edits;
+when they fill it, the answer says `edits_limited` and some messages may show earlier text. They write
+nothing: no membership, subscription, read state, post, agent start or Canvas
+change. Content comes from the relay's own answer, not the owner's open views,
+so it changes no unread counts. They do not save the owner's attachments: a
+saved file would be readable before the call's final checks. The app
+decides the agent, owner and community;
 answers name them in `executedAs`. Each call needs the agent's owner signed in
 to that community now and fails, returning nothing, when the account, community
 or connection changes during it or the turn ends or is stopped, including while
 protection reviews its result. Installed harness plugins, plugins' tools, plugin
 MCP connections and external apps never get this access, and a plugin cannot add
-a tool whose name starts with `owner_`. Protection reviews these calls and their
+a tool whose name starts with `owner_`. A [Mesh agent](../src/bundled/mesh-compute/MESH_AGENT.md)
+has these tools too; as its setup warns of all tool output, members serving its
+model can read what they return. Protection reviews these calls and their
 results as it does other Buzz tools. See
 [configuration](configuration.md#owner-mcp-community-flag).
 

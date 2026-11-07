@@ -497,8 +497,32 @@ framing and scrolling. `wrapSections` lets Settings groups wrap in one shared
 responsive layout when their host becomes narrow; do not reproduce that grid or
 its margin reset in the modal or feature stylesheet. Shared selector rules live globally in the design system,
 never nested inside feature CSS Modules via `@apply` (which renames their targets).
-Features keep unread cues, branded headers, collapsible groups, drag targets and
-composite row/scrollbar geometry; their existing layout rules remain in charge.
+Features keep unread cues, branded headers, drag targets and composite
+row/scrollbar geometry; their existing layout rules remain in charge.
+
+A scrolling list under sticky chrome with no material behind it, such as the
+sidebar below its tabs or message history below its header, feathers its edges
+with the scroll fade instead of cutting rows at a hard line. Set
+`data-scroll-fade` on the scroller. `always` feathers both edges, as message
+history does. `scrolled` feathers only an edge with content past it, marked by
+`useScrollEdges("block")`, so a list at rest keeps its first row crisp; the
+sidebar uses it. A host whose scroller cannot carry the attribute applies
+`--scroll-fade-always`. Reduced transparency and forced colors remove the fade.
+Tab strips keep their own wider horizontal fade.
+
+Every sidebar heading row, including collapsible channel groups and Solo
+workspaces, is a `NavigationSectionHeading`. It is auto layout: the label fills
+and truncates, actions hug the trailing edge, and the row fills its list. Never
+position heading actions absolutely or reserve trailing padding for them; a
+row that must work at every sidebar width cannot depend on a fixed gap. Use
+`disclosure` when the label is the feature's own collapse trigger, and
+`revealActions` or `data-navigation-reveal` for quiet parts such as the chevron.
+Revealed parts show on hover, keyboard focus, an open heading menu or while
+one of them has focus, and always show on touch; a focused control is never
+invisible. Hidden actions take no width, like a hidden auto layout
+child, so a long label keeps its words at large text sizes and narrow widths. When a host already names a list, as
+the sidebar's Team and Solo tabs do, omit its heading rather than hiding or
+overlaying it; any actions it still needs take a headingless heading row.
 Top-bar pills and picker options are not sidebar rows and keep their own recipes.
 
 Omit NavigationSection’s `label` for a headingless reference group: it keeps
@@ -1892,11 +1916,13 @@ or white 10%, in the same direction as the chips. Hovering the add control lays
 the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
 they keep the standard ink and overlay of the panel they sit on. A reaction you
-made stays marked as yours: `affordance-reaction-self` (accent step 3) with a
-1px inset `border-reaction-self` ring in the accent link ink, which clears 3:1 on
-the tint and its host where step 9 would not (Citrus, Bee). Inside your bubble
-it takes the `-own` pair, which at Buzzin’ is the accent's strong overlay ringed
-in the bubble's ink, since an accent ring would vanish on the accent fill.
+made swaps bubble fills, with no ring: on a received bubble or the panel it
+takes `affordance-reaction-self`, your own bubble's fill, with its ink
+`text-reaction-self`; inside your bubble it takes `affordance-reaction-self-own`,
+the received bubble's fill, with `text-reaction-self-own`. A highlight on a
+highlight would barely show. At Chillin’ the tinted bubble is too faint for
+that, so a reaction you made takes the solid `accent-9` with the accent ink, as
+at Buzzin’, and inside your bubble the panel white (`neutral-7` in dark mode).
 
 When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in

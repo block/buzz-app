@@ -2367,7 +2367,7 @@ it("keeps audio and video players between their original image runs", () => {
 });
 
 it.each([true, false])(
-  "uses smaller shared avatars without shrinking thread profile controls (clickable=%s)",
+  "keeps timeline-sized thread avatars and one step smaller nested ones (clickable=%s)",
   (clickable) => {
     const props = {
       row: { ...row, authorId: "a".repeat(64) },
@@ -2382,7 +2382,7 @@ it.each([true, false])(
     const view = renderDom(<MessageRow {...props} compactAvatar />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      "tiny",
+      "small",
     );
     if (clickable) {
       expect(
@@ -2392,7 +2392,7 @@ it.each([true, false])(
     view.rerender(<MessageRow {...props} />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      "small",
+      "default",
     );
     view.unmount();
   },
@@ -3065,7 +3065,7 @@ it.each(["timeline", "thread", "continuation"] as const)(
       expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
       expect(container.querySelector(".buzz-avatar")).toHaveAttribute(
         "data-size",
-        "tiny",
+        "small",
       );
       expect(
         screen.getByRole("button", { name: "View author profile" }),

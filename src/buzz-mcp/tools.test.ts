@@ -735,6 +735,18 @@ it("reads the current thread with each message's latest edit", async () => {
         ["e", nested],
       ],
     }),
+    // Newer, but not the author's, so it must not hide the author's edit.
+    event({
+      id: "e".repeat(64),
+      kind: 40003,
+      pubkey: bob,
+      created_at: 130,
+      content: "not theirs",
+      tags: [
+        ["h", "chan"],
+        ["e", nested],
+      ],
+    }),
   ]);
   const text = (await callTool(
     client,

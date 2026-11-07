@@ -403,3 +403,284 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
     expect(inset).toBe(fittingInset);
   }
 });
+
+// The sidebar is fluid, like auto layout: rows and headings fill their list,
+// a heading's label fills and its actions hug, and nothing floats over or
+// reserves space for anything else. Every tab, at both width limits, has to
+// hold that without per-tab adjustments.
+test("every sidebar tab fills its rows and keeps heading actions in their row at any width", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  const soloRow = page.locator(`[data-solo-menu-id="${solo}"]`);
+  // A workspace gives Solo its own collapsible heading with actions.
+  await page.getByRole("tab", { name: "Solo" }).click();
+  await soloRow.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
+  await page.getByRole("menuitem", { name: "New workspace" }).click();
+  const dialog = page.getByRole("dialog");
+  const field = dialog.getByRole("textbox", { name: "Workspace name" });
+  await expect(field).toBeFocused();
+  await field.fill("Work");
+  await dialog.getByRole("button", { name: "Create and move" }).click();
+  await expect(dialog).not.toBeVisible();
+
+  const sidebar = page.getByRole("complementary", { name: "Sidebar" });
+  const layout = () =>
+    sidebar.evaluate((aside) => {
+      const shown = (element) => element.getClientRects().length > 0;
+      const rows = [
+        ...aside.querySelectorAll(
+          '[data-channel-sidebar-row], [data-solo-menu-id]:not([data-solo-menu-id^="project-"])',
+        ),
+      ].filter(shown);
+      if (!rows.length) return { problems: ["no rows"] };
+      let scroller = rows[0];
+      while (
+        scroller &&
+        !/auto|scroll/.test(getComputedStyle(scroller).overflowY)
+      )
+        scroller = scroller.parentElement;
+      const bounds = scroller.getBoundingClientRect();
+      const problems = [];
+      if (scroller.scrollWidth > scroller.clientWidth)
+        problems.push(
+          `list scrolls sideways by ${scroller.scrollWidth - scroller.clientWidth}px`,
+        );
+      // Rows paint their fill on ::before, so its end is the visible edge.
+      const spread = (values) => Math.max(...values) - Math.min(...values);
+      const ends = rows
+        .map((row) => getComputedStyle(row, "::before").right)
+        .map((right, index) =>
+          right.endsWith("px")
+            ? rows[index].getBoundingClientRect().right - parseFloat(right)
+            : undefined,
+        )
+        .filter((end) => end !== undefined);
+      if (spread(ends) >= 1) problems.push(`rows end ${spread(ends)}px apart`);
+      // Headings share one leading text inset and one trailing action edge.
+      const textStarts = [];
+      const actionEnds = [];
+      for (const box of [
+        ...rows,
+        ...aside.querySelectorAll(".navigation-section-heading"),
+      ].filter(shown)) {
+        const rect = box.getBoundingClientRect();
+        if (rect.left < bounds.left - 0.5 || rect.right > bounds.right + 0.5)
+          problems.push(
+            `${box.textContent.trim().slice(0, 24)} leaves the list`,
+          );
+      }
+      const headings = [
+        ...aside.querySelectorAll(".navigation-section-heading"),
+      ].filter(shown);
+      for (const heading of headings) {
+        const frame = heading.getBoundingClientRect();
+        const name = heading.textContent.trim().slice(0, 24) || "(actions)";
+        const actions = heading.querySelector(
+          ":scope > .navigation-section-heading-actions",
+        );
+        // Hidden quiet actions give their width to the label, like a hidden
+        // auto layout child; their clipped buttons are not laid out parts.
+        const collapsed =
+          actions?.hasAttribute("data-navigation-reveal") &&
+          getComputedStyle(actions).opacity === "0";
+        if (collapsed) {
+          const style = getComputedStyle(actions);
+          const content =
+            actions.clientWidth -
+            parseFloat(style.paddingInlineStart) -
+            parseFloat(style.paddingInlineEnd);
+          if (content > 0.5)
+            problems.push(`${name}: hidden actions take space`);
+        }
+        for (const part of heading.querySelectorAll("*")) {
+          if (!shown(part)) continue;
+          if (collapsed && actions.contains(part) && part !== actions) continue;
+          const rect = part.getBoundingClientRect();
+          if (rect.width <= 1 && rect.height <= 1) continue;
+          if (/absolute|fixed/.test(getComputedStyle(part).position))
+            problems.push(`${name}: a part floats over the row`);
+          if (
+            rect.left < frame.left - 0.5 ||
+            rect.right > frame.right + 0.5 ||
+            rect.top < frame.top - 0.5 ||
+            rect.bottom > frame.bottom + 0.5
+          )
+            problems.push(`${name}: a part sits outside its heading`);
+        }
+        const label = heading.querySelector(
+          ":scope > .navigation-section-heading-label",
+        );
+        // The trigger, inside its <details> when a section collapses natively.
+        const trigger = label?.querySelector(
+          ":scope > button, :scope > details > summary",
+        );
+        if (trigger && shown(trigger)) {
+          const style = getComputedStyle(trigger);
+          // Width kept for actions is a reservation, not an inset.
+          if (
+            parseFloat(style.paddingInlineEnd) >
+            parseFloat(style.paddingInlineStart)
+          )
+            problems.push(`${name}: reserves trailing space`);
+          // Where the title's first glyph paints, whatever wraps it.
+          const walker = document.createTreeWalker(
+            trigger,
+            NodeFilter.SHOW_TEXT,
+            {
+              // Skip blank and visually hidden text.
+              acceptNode: (node) =>
+                node.data.trim() &&
+                node.parentElement.getBoundingClientRect().width > 1
+                  ? NodeFilter.FILTER_ACCEPT
+                  : NodeFilter.FILTER_SKIP,
+            },
+          );
+          const text = walker.nextNode();
+          if (text) {
+            const range = document.createRange();
+            range.setStart(text, text.data.search(/\S/));
+            range.setEnd(text, text.data.search(/\S/) + 1);
+            textStarts.push(range.getBoundingClientRect().left);
+          }
+        }
+        const buttons =
+          actions && !collapsed ? [...actions.children].filter(shown) : [];
+        buttons.forEach((button, index) => {
+          const next = buttons[index + 1];
+          if (
+            next &&
+            button.getBoundingClientRect().right >
+              next.getBoundingClientRect().left + 0.5
+          )
+            problems.push(`${name}: actions overlap`);
+        });
+        if (buttons.length)
+          actionEnds.push(buttons.at(-1).getBoundingClientRect().right);
+      }
+      if (textStarts.length && spread(textStarts) >= 1)
+        problems.push(`heading text starts ${spread(textStarts)}px apart`);
+      if (actionEnds.length && spread(actionEnds) >= 1)
+        problems.push(`heading actions end ${spread(actionEnds)}px apart`);
+      // Where the tab's first row or heading starts: an empty band moves it.
+      const start = Math.min(
+        ...[...rows, ...headings].map((box) => box.getBoundingClientRect().top),
+      );
+      return {
+        end: ends[0],
+        problems,
+        rows: rows.length,
+        headings: headings.length,
+        start: Math.round(start - bounds.top + scroller.scrollTop),
+      };
+    });
+  const separator = page.getByRole("separator", {
+    name: "Resize sidebar",
+    exact: true,
+  });
+  for (const limit of ["Home", "End"]) {
+    await separator.focus();
+    await separator.press(limit);
+    const starts = {};
+    const ends = [];
+    for (const tab of ["All", "Team", "Solo"]) {
+      await page.getByRole("tab", { name: tab }).click();
+      await page.mouse.move(0, 0);
+      const result = await layout();
+      expect(result.problems, `${tab} at ${limit}`).toEqual([]);
+      expect(result.rows, `${tab} at ${limit}`).toBeGreaterThan(0);
+      expect(result.headings, `${tab} at ${limit}`).toBeGreaterThan(0);
+      ends.push(result.end);
+      starts[tab] = result.start;
+    }
+    // Every tab's rows end on the same edge at a given width.
+    expect(Math.max(...ends) - Math.min(...ends), limit).toBeLessThan(1);
+    // Solo starts its list exactly where Team does.
+    expect(starts.Solo, limit).toBe(starts.Team);
+  }
+
+  // No heading control is ever invisible: hovering any heading reveals every
+  // button in it, so nothing clickable or focusable hides behind a rule that
+  // can never switch on.
+  for (const tab of ["All", "Team", "Solo"]) {
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+    // Headings leave creation to New beside the tabs.
+    await expect(
+      sidebar.getByRole("button", { name: "New chat or workspace" }),
+    ).toHaveCount(0);
+    const headings = sidebar.locator(".navigation-section-heading");
+    for (let index = 0; index < (await headings.count()); index += 1) {
+      const heading = headings.nth(index);
+      if (!(await heading.isVisible())) continue;
+      await heading.hover();
+      await expect
+        .poll(
+          () =>
+            heading.evaluate((row) =>
+              [...row.querySelectorAll("button")]
+                .filter((button) => button.getClientRects().length)
+                .filter((button) => {
+                  let opacity = 1;
+                  for (let node = button; node; node = node.parentElement)
+                    opacity *= parseFloat(getComputedStyle(node).opacity);
+                  return opacity < 1;
+                })
+                .map((button) => button.getAttribute("aria-label")),
+            ),
+          { message: `${tab} heading ${index} hides a control` },
+        )
+        .toEqual([]);
+    }
+  }
+  await page.getByRole("tab", { name: "Solo", exact: true }).click();
+
+  // A workspace's actions reveal on hover, centered on its own heading.
+  const nav = page.getByRole("navigation", { name: "Solo conversations" });
+  const work = nav.getByRole("button", { name: "Work", exact: true });
+  const create = nav.getByRole("button", { name: "New chat in Work" });
+  const options = nav.getByRole("button", { name: "Actions for Work" });
+  // What the eye sees: every ancestor's opacity multiplies.
+  const seen = (locator) =>
+    locator.evaluate((element) => {
+      let opacity = 1;
+      for (let node = element; node; node = node.parentElement)
+        opacity *= parseFloat(getComputedStyle(node).opacity);
+      return opacity;
+    });
+  await page.mouse.move(0, 0);
+  for (const action of [create, options])
+    await expect.poll(() => seen(action)).toBe(0);
+  await work.hover();
+  for (const action of [create, options])
+    await expect.poll(() => seen(action)).toBe(1);
+  const center = (locator) =>
+    locator.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.y + rect.height / 2;
+    });
+  await expect
+    .poll(async () => Math.abs((await center(create)) - (await center(work))))
+    .toBeLessThan(1);
+  // Revealed, the actions take their width back: after the title, in the row.
+  const placed = await options.evaluate((button) => {
+    const row = button
+      .closest(".navigation-section-heading")
+      .getBoundingClientRect();
+    const actions = button.parentElement.closest(
+      ".navigation-section-heading-actions",
+    );
+    const title = actions.previousElementSibling.getBoundingClientRect();
+    const slot = actions.getBoundingClientRect();
+    return (
+      title.right <= slot.left + 0.5 &&
+      [...actions.querySelectorAll("button")].every((part) => {
+        const rect = part.getBoundingClientRect();
+        return rect.left >= slot.left - 0.5 && rect.right <= row.right + 0.5;
+      })
+    );
+  });
+  expect(placed).toBe(true);
+});

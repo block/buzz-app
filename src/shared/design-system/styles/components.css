@@ -1039,6 +1039,50 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  /* Scroll fade: a scroller feathers its edges into the surface instead of
+     cutting content at a hard line. `always` feathers both edges, as message
+     history does; `scrolled` feathers only an edge with content past it, so a
+     list at rest keeps its first row crisp. Set `data-scroll-fade` on the
+     scroller; `scrolled` also needs `useScrollEdges("block")` on it. A host
+     that cannot mark its scroller applies `--scroll-fade-always` itself. */
+  :root {
+    --scroll-fade: var(--space-4);
+    --scroll-fade-always: linear-gradient(
+      to bottom,
+      transparent,
+      #000 var(--scroll-fade),
+      #000 calc(100% - var(--scroll-fade)),
+      transparent
+    );
+    --scroll-fade-start: linear-gradient(
+      to bottom,
+      transparent,
+      #000 var(--scroll-fade)
+    );
+    --scroll-fade-end: linear-gradient(
+      to top,
+      transparent,
+      #000 var(--scroll-fade)
+    );
+  }
+  @media (forced-colors: active), (prefers-reduced-transparency: reduce) {
+    :root {
+      --scroll-fade-always: none;
+      --scroll-fade-start: none;
+      --scroll-fade-end: none;
+    }
+  }
+  [data-scroll-fade="always"],
+  [data-scroll-fade="scrolled"][data-overflow-start][data-overflow-end] {
+    mask-image: var(--scroll-fade-always);
+  }
+  [data-scroll-fade="scrolled"][data-overflow-start]:not([data-overflow-end]) {
+    mask-image: var(--scroll-fade-start);
+  }
+  [data-scroll-fade="scrolled"][data-overflow-end]:not([data-overflow-start]) {
+    mask-image: var(--scroll-fade-end);
+  }
+
   /* A scrolling strip fades out on each edge that has tabs past them, so a cut
      tab reads as "more this way" rather than as clipped. Only the panel and
      navigation lists scroll; the others never hide a tab to fade. */
@@ -1473,13 +1517,141 @@
     margin-top: var(--space-section-gap);
   }
 
+  /* Auto layout: the label fills and truncates, the actions hug. Nothing is
+     positioned over the row or reserves width for something else. */
   .navigation-section-heading {
     display: flex;
     min-height: var(--size-row);
     align-items: center;
-    justify-content: space-between;
     gap: var(--space-row-gap);
     padding: 0 var(--space-control-inset);
+  }
+
+  .navigation-section-heading-label {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: center;
+  }
+
+  .navigation-section-heading-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+  }
+
+  .navigation-section-heading-actions:empty {
+    display: none;
+  }
+
+  /* A disclosure heading's trigger spans the label slot, so the inset is its
+     hit area and focus ring; the actions keep a small trailing inset. */
+  .navigation-section-heading[data-disclosure] {
+    min-height: var(--size-control-sm);
+    gap: 0;
+    padding: 0;
+  }
+
+  /* Quiet section actions use text-subtle; disabled actions keep their own
+     shared disabled color. */
+  .navigation-section-heading[data-disclosure]
+  .navigation-section-heading-actions {
+    padding-inline-end: var(--space-1);
+    color: var(--text-subtle);
+  }
+
+  .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-actions
+    [data-icon-variant]:not([data-disabled]) {
+    color: inherit;
+  }
+
+  .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    > :where(details, summary, button) {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* Only the trigger itself, never a control nested inside it. */
+  .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    > button,
+  .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    > details
+    > summary {
+    @apply text-label-sm;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    width: 100%;
+    min-height: var(--size-control-sm);
+    padding: var(--space-half) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--text-metadata);
+    text-align: start;
+    list-style: none;
+    cursor: pointer;
+    /* Like NavigationItem, a disclosure is navigation, not document text. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    > button:focus-visible,
+  .navigation-section-heading[data-disclosure]
+    .navigation-section-heading-label
+    > details
+    > summary:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: -2px;
+  }
+
+  /* Quiet parts are transparent while hidden. Quiet actions also give up
+     their content width, like a hidden auto layout child, so the label takes
+     that space until they appear. They stay focusable, and a focused quiet
+     part always shows, however focus got there: a dialog closed with the
+     mouse returns focus to its trigger without the keyboard flag. */
+  .navigation-section-heading [data-navigation-reveal] {
+    opacity: 0;
+  }
+
+  .navigation-section-heading-actions[data-navigation-reveal] {
+    max-width: 0;
+    overflow: hidden;
+  }
+
+  :is(
+      .navigation-section-heading:hover,
+      html[data-keyboard-navigation] .navigation-section-heading:focus-within,
+      .navigation-section-heading:has([data-navigation-reveal]:focus-within),
+      .navigation-section-heading:has(
+        [aria-expanded="true"][aria-haspopup="menu"]
+      ),
+      [data-context-menu-present] > .navigation-section-heading
+    )
+    [data-navigation-reveal] {
+    opacity: 1;
+    max-width: none;
+    overflow: visible;
+  }
+
+  @media (hover: none) {
+    .navigation-section-heading [data-navigation-reveal] {
+      opacity: 1;
+      max-width: none;
+      overflow: visible;
+    }
   }
 
   .navigation-section-label {
@@ -1491,10 +1663,6 @@
   /* A headingless reference stays above the named groups when navigation wraps. */
   .navigation-section[data-headingless] {
     grid-column: 1 / -1;
-  }
-
-  .navigation-section-heading .buzz-button[data-icon-size="compact"] {
-    margin-right: calc(var(--space-control-inset) * -1);
   }
 
   .navigation-section-rows {
@@ -1981,11 +2149,11 @@
     > :is(svg, img) {
     flex-shrink: 0;
   }
-  /* Named static groups use main's disclosure-heading type and leading inset.
-     Disclosure, chevron and action behavior stay with their feature owner. */
-  .buzz-sidebar-navigation .navigation-section-heading {
+  /* Named static groups use main's disclosure-heading type and leading inset,
+     and end their actions where disclosure headings do. */
+  .buzz-sidebar-navigation .navigation-section-heading:not([data-disclosure]) {
     min-height: var(--size-control-sm);
-    padding: var(--space-half) var(--space-2);
+    padding: var(--space-half) var(--space-1) var(--space-half) var(--space-2);
   }
   .buzz-sidebar-navigation .navigation-section-label {
     @apply text-body-sm;

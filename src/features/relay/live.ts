@@ -43,6 +43,10 @@ const REPLAY_BATCH_SIZE = 10; // Relay limit for filters per REQ.
 const COMBINED_REPLAY_CHANNELS = 256;
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
+/** How long a socket asked to prove itself (`check`) has to answer. */
+export const LIVE_CHECK_TIMEOUT_MS = 5_000;
+/** A probe answered this recently already proves the socket; `check` skips. */
+const LIVE_CHECK_FRESH_MS = 15_000;
 /** A live batch is re-sent after this long even with no grant, in case a
  * grant notice never arrived (a dropped frame, or a duplicate notice the
  * relay stored once and did not fan out again). */
@@ -301,6 +305,10 @@ export type LiveSubscription = {
     sink: VerifiedProfileSink,
   ): () => void;
   retry(): void;
+  /** A hint (wake, network, focus) that an open socket may have died unseen:
+   * probe it now and replace it if it does not answer in time. `network`: the
+   * network changed, so an earlier answer no longer proves this socket. */
+  check?(network?: boolean): void;
   dispose(): void;
 };
 /** Demand-scoped ephemeral authors, never a channel/history interest. */
@@ -456,6 +464,10 @@ export function subscribeRelayTraffic(
   let tickedAt = 0;
   let provenAt = 0;
   let probe: string | undefined;
+  // A `check` waiting for a probe answer, and when a probe was last answered.
+  // Only a probe answer proves the socket: other frames may predate a sleep.
+  let checkDeadline: ReturnType<typeof setTimeout> | undefined;
+  let answeredAt = 0;
   let unresponsive: ((reason: string) => void) | undefined;
   // A policy close (1008) gets one fresh-evidence reconnect; only NIP-42
   // admission restores it, so a post-admission denial cannot loop.
@@ -750,6 +762,11 @@ export function subscribeRelayTraffic(
     pump();
     notify();
   }
+  function sendProbe() {
+    if (probe) send(["CLOSE", probe]);
+    probe = `probe-${++serial}`;
+    send(["REQ", probe, { kinds: [44100], "#p": [viewer], limit: 0 }]);
+  }
   function recover() {
     if (closed || !authenticated) return;
     provenAt = tickedAt;
@@ -759,9 +776,7 @@ export function subscribeRelayTraffic(
     // no answer at all means the socket is dead, so replace it. A probe is a
     // request too: during a relay cooldown it waits for a later silent minute.
     if (!heard && !admission.delay()) {
-      if (probe) send(["CLOSE", probe]);
-      probe = `probe-${++serial}`;
-      send(["REQ", probe, { kinds: [44100], "#p": [viewer], limit: 0 }]);
+      sendProbe();
       clearTimeout(deadline);
       deadline = setTimeout(
         () => unresponsive?.("Live connection stopped answering"),
@@ -1404,6 +1419,8 @@ export function subscribeRelayTraffic(
     clearTimeout(dispatchTimer);
     clearTimeout(recoveryTimer);
     clearTimeout(deadline);
+    clearTimeout(checkDeadline);
+    checkDeadline = undefined;
     for (const route of routes.values()) clearTimeout(route.deadline);
     awaitingReplay.clear();
     replayQueue.clear();
@@ -1613,6 +1630,9 @@ export function subscribeRelayTraffic(
           admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
         }
         probe = undefined;
+        clearTimeout(checkDeadline);
+        checkDeadline = undefined;
+        answeredAt = Date.now();
         return;
       }
       if (
@@ -2261,6 +2281,17 @@ export function subscribeRelayTraffic(
         pump();
         notify();
       } else connect();
+    },
+    check(network = false) {
+      // A socket not yet admitted has its own deadline; a cooldown forbids requests.
+      if (closed || !authenticated || checkDeadline || admission.delay())
+        return;
+      if (!network && Date.now() - answeredAt < LIVE_CHECK_FRESH_MS) return;
+      sendProbe();
+      checkDeadline = setTimeout(() => {
+        checkDeadline = undefined;
+        unresponsive?.("Live connection did not answer a wake check");
+      }, LIVE_CHECK_TIMEOUT_MS);
     },
     dispose() {
       if (closed) return;

@@ -178,6 +178,9 @@ into a new worktree. Native dependencies are fetched by Cargo as needed into the
 shared `~/.cargo`. Each worktree compiles into its own `target/`, overriding any
 user-level `target-dir`, so its app and bundled resources always match its sources;
 remove stale worktrees (or run `bin/cargo clean` in them) to reclaim that space.
+The bundled `buzz` CLI is the exception: it builds from a pinned block/buzz
+revision, not worktree sources, so linked worktrees share one build in the main
+checkout's `target/`.
 Native compilation still takes time in each new worktree. Parallel worktrees normally need
 no port flags: each derives a stable default from its path. Pass `--port` if paths
 collide, the default is occupied, or you run a second instance from one checkout;

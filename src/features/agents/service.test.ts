@@ -14577,7 +14577,10 @@ describe("full external agent access", () => {
     scopes: readonly import("./external-connection").ExternalScope[] = [
       "agent",
     ],
-    options: Pick<NonNullable<Parameters<typeof setup>[0]>, "readFile"> = {},
+    options: Pick<
+      NonNullable<Parameters<typeof setup>[0]>,
+      "readFile" | "revision"
+    > = {},
   ) {
     vi.stubEnv(
       "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
@@ -14697,6 +14700,27 @@ describe("full external agent access", () => {
       );
     } finally {
       await f.cleanup();
+    }
+  });
+
+  it("never gets the owner's access a bundled harness's run has", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await fixture(["agent"], { revision: "bundled" });
+    try {
+      // The same run's own handle does carry it.
+      const run = runnerGate<AgentHandle>();
+      f.run.mockImplementationOnce(async ({ agent }) => run.resolve(agent));
+      f.plugin.agents.wake(bot, { channel, root: "e".repeat(64), text: "hi" });
+      expect(await run.promise).toHaveProperty("ownerAccess");
+      const names = await f.names();
+      expect(names).toContain("send");
+      expect(names.filter((name) => name.startsWith("owner_"))).toEqual([]);
+      const read = await f.call("owner_channel_list", {});
+      expect(read.result.isError).toBe(true);
+      expect(read.result.content[0]?.text).toContain("nothing was read");
+    } finally {
+      await f.cleanup();
+      vi.unstubAllEnvs();
     }
   });
 

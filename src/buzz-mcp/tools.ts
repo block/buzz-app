@@ -419,10 +419,10 @@ export const TOOLS: readonly Tool[] = [
 ];
 
 /** Message kinds as the CLI reads them. */
-const MESSAGES = [9, 40002, 40008, 45001, 45003];
-const THREAD = [9, 40002, 40008, 45003];
-const SEARCH = [9, 40002, 45001, 45003];
-const HEX = /^[0-9a-f]{64}$/;
+export const MESSAGES = [9, 40002, 40008, 45001, 45003];
+export const THREAD = [9, 40002, 40008, 45003];
+export const SEARCH = [9, 40002, 45001, 45003];
+export const HEX = /^[0-9a-f]{64}$/;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
 /** A repository name the community accepts. */
@@ -2096,27 +2096,9 @@ class Tools {
       : [];
     const messages = edited([...events, ...edits]);
     const names = await this.names(messages.map((event) => event.pubkey));
-    return messages.map((event) => {
-      const name = names.get(event.pubkey);
-      const channel = tag(event, "h");
-      const owner = tag(event, "auth");
-      const reference = threadReference(event);
-      const thread = reference?.rootId;
-      return [
-        event.id,
-        `from ${event.pubkey}`,
-        name && JSON.stringify(name),
-        owner && `claimed owner ${owner}`,
-        channel && channel !== scope.channel && `in ${channel}`,
-        thread && thread !== scope.root && `re ${thread}`,
-        reference &&
-          reference.parentId !== thread &&
-          `reply_to ${reference.parentId}`,
-        `at ${time(event.created_at)}: ${event.content}`,
-      ]
-        .filter(Boolean)
-        .join(" ");
-    });
+    return messages.map((event) =>
+      messageLine(event, names.get(event.pubkey), scope),
+    );
   }
 
   /** NIP-30 tags for the community emoji `content` uses, as the composer
@@ -2199,8 +2181,34 @@ class Tools {
   }
 }
 
+/** A message's line in a read, omitting what `scope` names. */
+export function messageLine(
+  event: BuzzEvent,
+  name: string | undefined,
+  scope: Readonly<{ channel?: string; root?: string }>,
+) {
+  const channel = tag(event, "h");
+  const owner = tag(event, "auth");
+  const reference = threadReference(event);
+  const thread = reference?.rootId;
+  return [
+    event.id,
+    `from ${event.pubkey}`,
+    name && JSON.stringify(name),
+    owner && `claimed owner ${owner}`,
+    channel && channel !== scope.channel && `in ${channel}`,
+    thread && thread !== scope.root && `re ${thread}`,
+    reference &&
+      reference.parentId !== thread &&
+      `reply_to ${reference.parentId}`,
+    `at ${time(event.created_at)}: ${event.content}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 /** The root of the thread `event` is in, by its NIP-10 markers. */
-function rootOf(event: BuzzEvent) {
+export function rootOf(event: BuzzEvent) {
   const tags = event.tags.filter(
     (t) => t[0] === "e" && t.length >= 4 && HEX.test(t[1] ?? ""),
   );
@@ -2209,23 +2217,39 @@ function rootOf(event: BuzzEvent) {
   return ((root && reply ? root : reply)?.[1] ?? event.id) as string;
 }
 
-/** Messages oldest first, each showing its author's latest edit. */
-function edited(events: readonly BuzzEvent[]) {
+/** Messages oldest first, each showing its latest eligible edit: its
+ * author's, or in its channel its verified owner's (`ownerOf`), as the app
+ * folds a chat message or forum post. */
+export function edited(
+  events: readonly BuzzEvent[],
+  ownerOf?: (author: string) => string | undefined,
+) {
+  const messages = events.filter((event) => event.kind !== 40003);
+  const byId = new Map(messages.map((event) => [event.id, event]));
+  const eligible = (edit: BuzzEvent, message: BuzzEvent) =>
+    edit.pubkey === message.pubkey ||
+    ([9, 40002].includes(message.kind) &&
+      tag(edit, "h") === tag(message, "h") &&
+      edit.pubkey === ownerOf?.(message.pubkey));
   const edits = new Map<string, BuzzEvent>();
   for (const event of events)
     if (event.kind === 40003) {
       const target = tag(event, "e");
+      const message = target && byId.get(target);
       const last = target && edits.get(target);
-      if (target && (!last || last.created_at < event.created_at))
+      // Eligibility first, so an ineligible newer edit hides none.
+      if (
+        target &&
+        message &&
+        eligible(event, message) &&
+        (!last || last.created_at < event.created_at)
+      )
         edits.set(target, event);
     }
-  return events
-    .filter((event) => event.kind !== 40003)
+  return messages
     .map((event) => {
       const edit = edits.get(event.id);
-      return edit && edit.pubkey === event.pubkey
-        ? { ...event, content: edit.content }
-        : event;
+      return edit ? { ...event, content: edit.content } : event;
     })
     .sort((a, b) => a.created_at - b.created_at);
 }
@@ -2391,7 +2415,7 @@ function latestNotes(events: readonly BuzzEvent[]) {
   return [...latest.values()].sort((a, b) => b.created_at - a.created_at);
 }
 
-function pubkey(value: string) {
+export function pubkey(value: string) {
   if (HEX.test(value.toLowerCase())) return value.toLowerCase();
   try {
     const decoded = decode(value);
@@ -2693,7 +2717,7 @@ function joinRoleArg(args: Args) {
 }
 
 /** A `since` or `before` argument: a Unix time in seconds, inclusive. */
-function unixTime(args: Args, key: string) {
+export function unixTime(args: Args, key: string) {
   const value = args[key];
   if (value === undefined) return undefined;
   // In milliseconds, a time from this century is past the year 5000.
@@ -2731,7 +2755,10 @@ function required(args: Args, name: string) {
     throw new Error(`${name} is required.`);
   return value;
 }
-const bound = (value: number | undefined, fallback: number, max: number) =>
-  Math.max(1, Math.min(max, Math.floor(value ?? fallback)));
-const time = (seconds: number) =>
+export const bound = (
+  value: number | undefined,
+  fallback: number,
+  max: number,
+) => Math.max(1, Math.min(max, Math.floor(value ?? fallback)));
+export const time = (seconds: number) =>
   `${new Date(seconds * 1000).toISOString().slice(0, 16)}Z`;

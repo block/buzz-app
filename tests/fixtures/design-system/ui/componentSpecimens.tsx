@@ -50,6 +50,7 @@ import { PanelSwapPlaygrounds } from "./PanelSwapPlaygrounds";
 import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorkspace";
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
+  CaretDownIcon,
   DotsThreeIcon,
   TrashIcon,
   ArrowLeftIcon,
@@ -90,7 +91,10 @@ import {
   NavigationCard,
   NavigationItem,
 } from "../../../../src/shared/design-system/ui/NavigationItem";
-import { NavigationSection } from "../../../../src/shared/design-system/ui/NavigationSection";
+import {
+  NavigationSection,
+  NavigationSectionHeading,
+} from "../../../../src/shared/design-system/ui/NavigationSection";
 import {
   PanelHeader,
   PanelHeaderLabel,
@@ -1180,6 +1184,49 @@ function PanelHeaderSpecimen() {
   );
 }
 
+function DisclosureHeadingSpecimen() {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="component-navigation-section-demo">
+      <NavigationSectionHeading
+        disclosure
+        revealActions
+        actions={
+          <>
+            <IconButton
+              size="compact"
+              aria-label="Workspace options"
+              icon={<DotsThreeIcon size={16} aria-hidden="true" />}
+            />
+            <IconButton
+              size="compact"
+              aria-label="New chat in Work"
+              icon={<PlusIcon size={16} aria-hidden="true" />}
+            />
+          </>
+        }
+      >
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          Work with a long workspace name that truncates
+          <span data-navigation-reveal="" aria-hidden="true">
+            <CaretDownIcon size={12} />
+          </span>
+        </button>
+      </NavigationSectionHeading>
+      {open && (
+        <>
+          <NavigationItem label="Launch plan" />
+          <NavigationItem label="Design review" />
+        </>
+      )}
+    </div>
+  );
+}
+
 function NavigationSectionSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -1230,6 +1277,24 @@ function NavigationSectionSpecimen() {
             <NavigationItem label="design-system" />
           </NavigationSection>
         </div>
+      </SpecimenGroup>
+      <SpecimenGroup
+        label="Disclosure heading — the label fills, actions hug and reveal on hover or focus"
+        code={`<NavigationSectionHeading
+  disclosure
+  revealActions
+  actions={<>
+    <IconButton size="compact" aria-label="Workspace options" icon={…} />
+    <IconButton size="compact" aria-label="New chat in Work" icon={…} />
+  </>}
+>
+  <button type="button" aria-expanded={open} onClick={toggle}>
+    Work
+    <span data-navigation-reveal="" aria-hidden="true">{caret}</span>
+  </button>
+</NavigationSectionHeading>`}
+      >
+        <DisclosureHeadingSpecimen />
       </SpecimenGroup>
     </div>
   );

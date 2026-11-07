@@ -9,7 +9,9 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MAX_PENDING, type OutgoingEvent } from "../relay/outbox";
+import { MAX_PENDING, type Outbox, type OutgoingEvent } from "../relay/outbox";
+import { createMessages } from "../relay/messages";
+import type { UploadedAttachment } from "../relay/attachments";
 import { keypair, signed } from "../relay/testing";
 import { profileTarget } from "../profiles/target";
 import { AgentsContext } from "../agents/react";
@@ -76,7 +78,11 @@ function gate() {
   return { promise, resolve, reject };
 }
 
-async function fixture(models?: Agents, initialDraft?: MentionDraft) {
+async function fixture(
+  models?: Agents,
+  initialDraft?: MentionDraft,
+  upload?: (file: File) => Promise<UploadedAttachment>,
+) {
   const region = createSoloRegionFixture();
   disposals.push(region.dispose);
   const rows = [{ pubkey: agent, name: "Task agent", managed: false }];
@@ -95,13 +101,30 @@ async function fixture(models?: Agents, initialDraft?: MentionDraft) {
   const ready = gate(),
     sent = gate();
   const outboxReady = vi.fn(() => ready.promise);
-  const whenPrepared = vi.fn(() => sent.promise);
+  const whenPrepared = vi.fn(async () => {
+    await sent.promise;
+    return signed(keypair(), {
+      kind: 9,
+      content: "Prepared message",
+      tags: [["h", channelId]],
+      created_at: 1,
+    });
+  });
   const start = vi.fn(() => ({
     create: "create-event",
     ready: Promise.resolve(),
   }));
-  const send = vi.fn(() => "first-event");
+  const enqueue = vi.fn<Outbox["send"]>(() => "first-event");
   let operations: readonly OutgoingEvent[] = [];
+  const outbox = {
+    ...region.session.outbox,
+    supports: () => true,
+    subscribe: () => () => {},
+    ready: outboxReady,
+    snapshot: () => operations,
+    whenPrepared,
+    send: enqueue,
+  } as Outbox;
   Object.assign(region.session, {
     agentChoices: {
       ...region.session.agentChoices,
@@ -121,16 +144,21 @@ async function fixture(models?: Agents, initialDraft?: MentionDraft) {
       ensure: async () => {},
     },
     channelWrites: { ...region.session.channelWrites, available: true, start },
-    messages: { ...region.session.messages, send },
-    outbox: {
-      ...region.session.outbox,
-      supports: () => true,
-      subscribe: () => () => {},
-      ready: outboxReady,
-      snapshot: () => operations,
-      whenPrepared,
-    },
+    messages: createMessages(
+      outbox,
+      region.session.viewer,
+      () => undefined,
+      () => [],
+      () => {},
+      () => true,
+      "https://relay.example.org",
+    ),
+    outbox,
   });
+  if (upload)
+    Object.assign(region.session, {
+      attachments: { uploadForNewChat: upload },
+    });
   let allowed = true;
   const prepare = vi.fn<SoloTaskMode["prepare"]>(async (input) => ({
     ok: true,
@@ -191,7 +219,7 @@ async function fixture(models?: Agents, initialDraft?: MentionDraft) {
     outboxReady,
     whenPrepared,
     start,
-    send,
+    enqueue,
     prepare,
     started,
     mounted,
@@ -251,14 +279,16 @@ it.each(["accepted", "rejected"] as const)(
         recipients: [agent],
         text: "Review the task",
       });
-      expect(f.send).toHaveBeenCalledWith(
-        channelId,
-        "Review the task",
-        [agent],
-        [],
+      expect(f.enqueue).toHaveBeenCalledWith(
+        {
+          kind: 9,
+          content: "Review the task",
+          tags: [
+            ["h", channelId],
+            ["p", agent],
+          ],
+        },
         expect.any(Object),
-        [],
-        {},
       );
       if (outcome === "accepted") {
         await act(async () => f.sent.resolve());
@@ -315,7 +345,7 @@ it("keeps the pending label without granting a revoked agent permission to start
     );
     expect(f.prepare).not.toHaveBeenCalled();
     expect(f.start).not.toHaveBeenCalled();
-    expect(f.send).not.toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
     expect(f.started).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Keep this request");
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
@@ -375,7 +405,7 @@ it("refuses a task before claiming its marker when fewer than two outbox slots r
     );
     expect(f.claim).not.toHaveBeenCalled();
     expect(f.start).not.toHaveBeenCalled();
-    expect(f.send).not.toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent(
       "Keep the full queue draft",
     );
@@ -384,7 +414,7 @@ it("refuses a task before claiming its marker when fewer than two outbox slots r
     await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
     expect(f.claim).toHaveBeenCalledOnce();
     expect(f.start).toHaveBeenCalledOnce();
-    expect(f.send).toHaveBeenCalledOnce();
+    expect(f.enqueue).toHaveBeenCalledOnce();
   } finally {
     f.ready.resolve();
     f.sent.resolve();
@@ -415,7 +445,7 @@ it("keeps an ineligible identity link in a new task without claiming or sending"
     );
     expect(f.prepare).not.toHaveBeenCalled();
     expect(f.claim).not.toHaveBeenCalled();
-    expect(f.send).not.toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Unavailable");
   } finally {
     f.ready.resolve();
@@ -493,15 +523,180 @@ it("sends the selected model and effort to the first task primary", async () => 
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
-    expect(f.send).toHaveBeenCalledExactlyOnceWith(
-      channelId,
-      "@Task agent Use the selected model",
-      [agent],
-      [],
+    expect(f.enqueue).toHaveBeenCalledExactlyOnceWith(
+      {
+        kind: 9,
+        content: "@Task agent Use the selected model",
+        tags: [
+          ["h", channelId],
+          ["p", agent],
+          ["model", agent, "deep"],
+          ["effort", agent, "high"],
+        ],
+      },
       expect.any(Object),
-      [],
-      { [agent]: { model: "deep", effort: "high" } },
     );
+  } finally {
+    f.ready.resolve();
+    f.sent.resolve();
+    f.mounted.unmount();
+  }
+});
+
+const attachment: UploadedAttachment = {
+  name: "notes.txt",
+  url: `https://relay.example.org/media/${"f".repeat(64)}.txt`,
+  type: "text/plain",
+  size: 5,
+  sha256: "f".repeat(64),
+};
+
+it.each([32_000, 32_001])(
+  "checks the serialized task limit before source intent with an attachment (%i characters)",
+  async (length) => {
+    const link = `\n\n[notes.txt](<${attachment.url}>)`;
+    const text = "a".repeat(length - link.length);
+    const upload = vi.fn(async () => attachment);
+    const f = await fixture(undefined, { text, recipients: [] }, upload);
+    const user = userEvent.setup();
+    try {
+      f.ready.resolve();
+      f.sent.resolve();
+      await user.upload(
+        screen.getByLabelText("Choose attachments"),
+        new File(["notes"], "notes.txt", { type: "text/plain" }),
+      );
+      await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      if (length > 32_000) {
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "The task message exceeds 32,000 characters",
+        );
+        expect(f.prepare).not.toHaveBeenCalled();
+        expect(f.claim).not.toHaveBeenCalled();
+        expect(f.start).not.toHaveBeenCalled();
+        expect(f.enqueue).not.toHaveBeenCalled();
+        expect(screen.getByRole("textbox")).toHaveTextContent(text);
+        await user.clear(screen.getByRole("textbox"));
+        await user.type(screen.getByRole("textbox"), "Read the file");
+        await user.click(screen.getByRole("button", { name: "Send message" }));
+      }
+      await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
+      expect(f.prepare).toHaveBeenCalledOnce();
+      expect(f.claim).toHaveBeenCalledOnce();
+      expect(f.enqueue).toHaveBeenCalledOnce();
+      const event = f.enqueue.mock.calls[0]?.[0];
+      expect(event?.content).toBe(
+        `${length > 32_000 ? "Read the file" : text}${link}`,
+      );
+      expect(event?.tags).toContainEqual([
+        "imeta",
+        `url ${attachment.url}`,
+        "m text/plain",
+        "size 5",
+        `x ${attachment.sha256}`,
+        "filename notes.txt",
+      ]);
+      expect(upload).toHaveBeenCalledOnce();
+    } finally {
+      f.ready.resolve();
+      f.sent.resolve();
+      f.mounted.unmount();
+    }
+  },
+);
+
+const metadataFiles = ["a", "b"].map((letter) => ({
+  ...attachment,
+  name: `${letter.repeat(251)}.txt`,
+}));
+const metadataLinks = metadataFiles
+  .map((file) => `\n\n[${file.name}](<${file.url}>)`)
+  .join("");
+it.each([
+  {
+    kind: "multibyte text",
+    text: "😀".repeat(8192),
+    files: [] as UploadedAttachment[],
+  },
+  {
+    kind: "attachment metadata",
+    text: "a".repeat(32_000 - metadataLinks.length),
+    files: metadataFiles,
+  },
+])(
+  "refuses $kind before source intent and keeps the task editable",
+  async ({ text, files }) => {
+    const upload = vi.fn(async (file: File) => {
+      const uploaded = files.find((item) => item.name === file.name);
+      if (!uploaded) throw new Error("Unexpected fixture attachment");
+      return uploaded;
+    });
+    const f = await fixture(undefined, { text, recipients: [] }, upload);
+    const user = userEvent.setup();
+    try {
+      f.ready.resolve();
+      f.sent.resolve();
+      if (files.length) {
+        await user.upload(
+          screen.getByLabelText("Choose attachments"),
+          files.map(
+            (item) => new File(["notes"], item.name, { type: "text/plain" }),
+          ),
+        );
+        await waitFor(() => expect(upload).toHaveBeenCalledTimes(files.length));
+      }
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Message is empty or too large",
+      );
+      expect(f.prepare).not.toHaveBeenCalled();
+      expect(f.claim).not.toHaveBeenCalled();
+      expect(f.start).not.toHaveBeenCalled();
+      expect(f.enqueue).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveTextContent(text);
+      await user.clear(screen.getByRole("textbox"));
+      await user.type(screen.getByRole("textbox"), "A smaller request 😀");
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
+      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(
+        `A smaller request 😀${files.length ? metadataLinks : ""}`,
+      );
+      expect(
+        f.enqueue.mock.calls[0]?.[0].tags.filter(([name]) => name === "imeta"),
+      ).toHaveLength(files.length);
+      expect(f.claim).toHaveBeenCalledOnce();
+    } finally {
+      f.ready.resolve();
+      f.sent.resolve();
+      f.mounted.unmount();
+    }
+  },
+);
+
+it("refuses a prepared channel that cannot preserve the UUID event budget", async () => {
+  const f = await fixture();
+  const user = userEvent.setup();
+  f.prepare.mockImplementation(async (input) => ({
+    ok: true,
+    channelId: "channel-without-a-uuid",
+    members: input.recipients,
+    revision: input.revision,
+    preparationId: "prepared",
+  }));
+  try {
+    f.ready.resolve();
+    f.sent.resolve();
+    await user.type(screen.getByRole("textbox"), "Keep this task");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The prepared task has changed",
+    );
+    expect(f.prepare).toHaveBeenCalledOnce();
+    expect(f.claim).not.toHaveBeenCalled();
+    expect(f.start).not.toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveTextContent("Keep this task");
   } finally {
     f.ready.resolve();
     f.sent.resolve();

@@ -137,7 +137,7 @@ export function toMessage(row: CompanionRow) {
     attachmentSeams: row.attachmentSeams ?? [],
     mentionReferences: row.mentionReferences ?? [],
     reactions: row.reactions ?? [],
-    replyCount: 0,
+    replyCount: row.replyCount ?? 0,
     participants: [],
     ...(row.delivery !== "seen" ? { delivery: row.delivery } : {}),
     ...(row.authorIsAgent ? { agentEnvelope: true as const } : {}),

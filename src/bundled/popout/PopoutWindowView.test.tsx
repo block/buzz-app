@@ -165,3 +165,53 @@ it("shows projected reactions even before the bridge connects", () => {
   );
   expect(screen.getByText("👍")).toBeTruthy();
 });
+
+it("shows a conversation as a timeline with day dividers, drills into a row's thread in place and offers the way back", () => {
+  const act = vi.fn();
+  const day = 86_400;
+  const conversation = view({
+    thread: false,
+    root: undefined,
+    writable: true,
+    replies: [
+      { ...row("1".repeat(64), "Monday"), time: 1_700_000_000 },
+      {
+        ...row("2".repeat(64), "Tuesday, with a thread"),
+        time: 1_700_000_000 + day,
+        replyCount: 3,
+      },
+    ],
+  });
+  const { rerender } = render(
+    <PopoutWindowView view={conversation} act={act} />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "#Design",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Back to conversation" }),
+  ).toBeNull();
+  expect(screen.getByRole("log", { name: "Messages" })).toBeTruthy();
+  // One divider per day shown.
+  expect(document.querySelectorAll("[data-day]")).toHaveLength(2);
+  fireEvent.click(
+    screen.getByRole("button", { name: /View thread: 3 replies/ }),
+  );
+  expect(act).toHaveBeenCalledWith("openThread", "2".repeat(64));
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: true,
+        canGoBack: true,
+        root: row("2".repeat(64), "Tuesday, with a thread"),
+        replies: [],
+      })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Thread #Design",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Back to conversation" }));
+  expect(act).toHaveBeenCalledWith("back");
+});

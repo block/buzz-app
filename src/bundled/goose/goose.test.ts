@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GooseProcess,
+  LISTING,
   REQUEST_TIMEOUT_MS,
   stepLabel,
   type ToolServer,
@@ -240,6 +241,28 @@ describe("GooseProcess", () => {
       },
     ]);
     expect(process.prompts.get(session.id)).toBe("Be Buzz");
+  });
+
+  it("defers tools only for a session with Buzz tools that asks to", async () => {
+    const { goose, open, process } = await start();
+    await open({ deferTools: true });
+    await open();
+    await goose.open({ cwd: "/work", systemPrompt: "", deferTools: true });
+    expect(
+      process.opened.map(
+        (opened) => (opened._meta as { deferTools?: boolean }).deferTools,
+      ),
+    ).toEqual([true, undefined, undefined]);
+  });
+
+  it("marks only the always-loaded Buzz tools to send up front", () => {
+    const tool = { name: "send", description: "", inputSchema: {} };
+    expect(LISTING.tool?.({ ...tool, load: "always" })).toEqual({
+      ...tool,
+      _meta: { "goose/alwaysLoad": true },
+    });
+    expect(LISTING.tool?.({ ...tool, load: "search" })).toEqual(tool);
+    expect(LISTING.instructions).toBeUndefined();
   });
 
   it("replaces goose's base prompt with ours, raw, when asked", async () => {

@@ -11,6 +11,7 @@ import type {
   ConfigOptions,
 } from "../../features/agent-harness/acp/session";
 import { errorMessage } from "../../features/agent-harness/acp/steps";
+import type { Listing } from "../../buzz-mcp/rpc";
 import type {
   AcpHooks,
   ServeMcp,
@@ -48,6 +49,16 @@ export type PlatformExtension = Readonly<{
 }>;
 
 const DEVELOPER: PlatformExtension = { type: "platform", name: "developer" };
+
+/** How goose lists the Buzz tools. A session that defers tools (`deferTools`
+ * in `session/new`) sends those marked `goose/alwaysLoad` up front and lists
+ * the rest by name until the model loads them. No `sessionHint`: goose's own
+ * prompt names the tools it holds back, and a goose that can't load them
+ * would be told to search for tools it already has. */
+export const LISTING: Listing = {
+  tool: ({ load, ...tool }) =>
+    load === "always" ? { ...tool, _meta: { "goose/alwaysLoad": true } } : tool,
+};
 /** goose's provider id for the provider and model its config picks. */
 const CONFIGURED = "goose";
 
@@ -92,7 +103,7 @@ export const GOOSE: AcpHooks = {
         },
         () => true,
       ),
-  newSessionMeta: (buzz, { title, provider, platform }) => ({
+  newSessionMeta: (buzz, { title, provider, platform, deferTools }) => ({
     // The session's whole tool set: goose's developer tools and the Buzz
     // tools, so extensions in the owner's goose config and plugins never load
     // into a Buzz agent. The pinned Goose persists this list, including the
@@ -103,6 +114,10 @@ export const GOOSE: AcpHooks = {
     enabledExtensions: buzz
       ? [...(platform ?? [DEVELOPER]), { type: "mcp", server: buzz }]
       : [],
+    // Tools that load on search stay out of each request until the model
+    // loads them. Mesh sessions don't ask: their small model and replaced
+    // prompt are untested with it.
+    ...(buzz && deferTools ? { deferTools: true } : {}),
     ...(title ? { sessionTitle: title } : {}),
     // On the provider's default model, whatever goose's config holds.
     ...(provider ? { provider } : {}),

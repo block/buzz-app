@@ -244,6 +244,9 @@ export class AcpProcess {
       /** Replaces the harness's own base prompt with `systemPrompt` instead
        * of appending it, for small models that a long prompt throws off. */
       replacePrompt?: boolean;
+      /** Holds back the Buzz tools listed to load on search until the model
+       * asks for them, for harnesses that can. */
+      deferTools?: boolean;
       /** Given the session as soon as the harness has opened it, before it
        * is set up, so a caller can close one whose open then fails. */
       onSession?: (session: AcpSession) => void;
@@ -302,6 +305,7 @@ export class AcpProcess {
               ...(title ? { title } : {}),
               provider,
               ...(launch.platform ? { platform: launch.platform } : {}),
+              ...(launch.deferTools ? { deferTools: true } : {}),
             }),
           }),
         },

@@ -130,6 +130,8 @@ export type SessionsOptions = Readonly<{
   resolveDirectory: ResolveDirectory;
   /** Answers the agent's Buzz tools. */
   tools: ToolServer;
+  /** Whether its sessions hold back the tools listed to load on search. */
+  deferTools?: boolean;
   /** The process its sessions open in, started when needed. */
   process: Readonly<{ get(): Promise<AcpProcess> }>;
   /** The servers its sessions hold: the shared pool unless given. */
@@ -582,6 +584,7 @@ export class AgentSessions {
         ...(title ? { title } : {}),
         ...(named ? { named } : {}),
         tools: this.options.tools,
+        ...(this.options.deferTools ? { deferTools: true } : {}),
         choice: this.options.choice,
       });
     let session: AcpSession;

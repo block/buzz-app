@@ -282,6 +282,11 @@ it("returns index matches in list order and skips names that cannot match", () =
   expect(matchingMentions(rows, "oney")).toEqual([]);
   expect(matchingMentions(rows, "jane d")).toEqual([rows[2]]);
   expect(matchingMentions(rows, "")).toBe(rows);
+  // A repeated query reuses its matches; another query is matched afresh.
+  const jane = matchingMentions(rows, "Jane");
+  expect(matchingMentions(rows, "jane")).toBe(jane);
+  expect(matchingMentions(rows, "hon")).toEqual([rows[1]]);
+  expect(matchingMentions(rows, "jane")).toEqual(jane);
 });
 
 it("bounds index work for long profile names and still matches them", () => {

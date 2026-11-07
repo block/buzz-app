@@ -59,8 +59,11 @@ through Buzz's Codex setup also records the ChatGPT workspace in the review
 home, and reviews start Codex with `forced_chatgpt_workspace_id` set to it and
 `forced_login_method="chatgpt"`. Codex then refuses an API key, or a sign-in
 recorded for another workspace, before loading any workspace's managed
-configuration. A replacement that records the pinned workspace with another
-workspace's tokens is stopped only if OpenAI's servers check the two match,
+configuration. Codex reads the workspace from the sign-in's unsigned fields
+(`tokens.account_id` and the `id_token` payload, whose signature it never
+checks), so a replacement that names the pinned workspace with another
+account's tokens is stopped only if OpenAI's servers bind the
+`ChatGPT-Account-ID` header to the bearer token,
 which Buzz has not verified. Existing users must sign in through Buzz once, with
 **Sign in again** in Codex's harness defaults: until then, and while the shared
 sign-in is an API key or names another workspace, Codex reviews fail closed with

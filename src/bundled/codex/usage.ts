@@ -60,7 +60,7 @@ function buzzStart(prompt: string) {
   const root = str(context?.session_thread);
   let title = "";
   for (const { body } of sections) {
-    const request = /^Request: (".*")$/m.exec(body)?.[1];
+    const request = /^Request: ("[^\n]*")$/m.exec(body)?.[1];
     if (!request) continue;
     try {
       title = str(JSON.parse(request)).split("\n")[0]?.trim() ?? "";

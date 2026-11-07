@@ -122,6 +122,30 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
   expect(channelTurn).not.toHaveProperty("endedAt");
 });
 
+it("shows a request holding a line or paragraph separator", () => {
+  for (const request of ["a\u2028b", "a\u2029b"]) {
+    // JSON leaves both separators raw, as Buzz's prompt records do.
+    const text = `<buzz-event>\n{"id":"e","pubkey":"sam"}\nRequest: ${JSON.stringify(request)}\n</buzz-event>`;
+    const [mapped] = codexTurns(
+      [
+        turn({
+          items: [
+            {
+              type: "userMessage",
+              id: "u1",
+              content: [{ type: "text", text }],
+            },
+          ],
+        }),
+      ],
+      conversation,
+    );
+    expect(mapped?.items).toEqual([
+      expect.objectContaining({ type: "prompt", text: request }),
+    ]);
+  }
+});
+
 const agent = { key: "a".repeat(64), name: "Sol" };
 const lookup = { agent, channelId: "channel", name: "dev", root };
 

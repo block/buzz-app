@@ -195,6 +195,9 @@ export async function reviewModel(
         // would otherwise add their instructions and skills.
         project_doc_max_bytes: 0,
         "skills.include_instructions": false,
+        // Reviews are never resumed; Codex otherwise keeps an unsubscribed
+        // thread loaded for 30 minutes.
+        thread_unload_delay_secs: 0,
         ...(model.provider ? { model_provider: model.provider } : {}),
       },
     });
@@ -225,8 +228,8 @@ export async function reviewModel(
   }
 }
 
-/** Stops a review's unfinished turn, even one still starting, and unloads
- * its thread from the shared worker. */
+/** Stops a review's unfinished turn, even one still starting, and unsubscribes
+ * from its thread. Codex unloads it once idle, as its unload delay is 0. */
 async function release(
   rpc: AppServer,
   thread: Promise<Started>,

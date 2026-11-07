@@ -28,7 +28,7 @@ const contextLabel = (role, body) =>
   }`;
 // Buzz turns end with `Request: "<json string>"`; show that instead of context.
 function buzzRequest(value) {
-  const match = value.match(/^Request: (".*")$/m);
+  const match = value.match(/^Request: ("[^\n]*")$/m);
   try {
     return match ? JSON.parse(match[1]) : undefined;
   } catch {

@@ -131,19 +131,22 @@ fn legacy_binding_signs_with_the_old_key_but_never_saves_it() {
             .template(1_700_000_000, "")
             .unwrap()
     };
-    // (saved, legacy entry, signs, reads legacy)
-    for (saved, legacy, signs, reads_legacy) in [
-        (None, Some(format!(" {nsec}\n")), true, true),
-        (None, None, false, true),
-        (None, Some("not-a-key".into()), false, true),
-        (Some(other.clone()), Some(nsec.clone()), false, false),
+    // An unreadable old key is Ok(None), so first run makes a new key; a
+    // saved key is an error, so nothing falls back.
+    // (saved, legacy entry, signs, unreadable, reads legacy)
+    for (saved, legacy, signs, unreadable, reads_legacy) in [
+        (None, Some(format!(" {nsec}\n")), true, false, true),
+        (None, None, false, true, true),
+        (None, Some("not-a-key".into()), false, true, true),
+        (Some(other.clone()), Some(nsec.clone()), false, false, false),
     ] {
         let store = Arc::new(Memory::default());
         *store.saved.lock().unwrap() = saved.clone().map(String::into_bytes);
         *store.legacy.lock().unwrap() = legacy;
         let result = identity(&store).sign_legacy(template());
-        assert_eq!(result.is_ok(), signs, "{result:?}");
-        if let Ok(value) = result {
+        assert_eq!(matches!(result, Ok(Some(_))), signs, "{result:?}");
+        assert_eq!(matches!(result, Ok(None)), unreadable, "{result:?}");
+        if let Ok(Some(value)) = result {
             let event: Event = serde_json::from_value(value).unwrap();
             event.verify().unwrap();
             assert_eq!(event.kind.as_u16(), 24243);

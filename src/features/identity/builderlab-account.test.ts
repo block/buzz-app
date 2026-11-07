@@ -982,13 +982,21 @@ describe("bind", () => {
       expect(await account.bindLegacy()).toBeNull();
     });
 
-    it("resolves null when native can't sign with old Buzz's key, sending no verify", async () => {
-      vi.mocked(invoke).mockRejectedValue(
-        "No identity from the earlier Buzz app was found",
-      );
+    it("resolves null when native can't read old Buzz's key, sending no verify", async () => {
+      vi.mocked(invoke).mockResolvedValue(null);
       const { request, sent } = kgoose(unbound, answer(200, challenge));
       const account = forwardedAccount(credential, request, untouched);
       expect(await account.bindLegacy()).toBeNull();
+      expect(sent).toHaveLength(2);
+    });
+
+    it("fails when native refuses to sign, such as an expired challenge, sending no verify", async () => {
+      vi.mocked(invoke).mockRejectedValue("Invalid Nostr identity challenge");
+      const { request, sent } = kgoose(unbound, answer(200, challenge));
+      const account = forwardedAccount(credential, request, untouched);
+      await expect(account.bindLegacy()).rejects.toThrow(
+        "Invalid Nostr identity challenge",
+      );
       expect(sent).toHaveLength(2);
     });
 

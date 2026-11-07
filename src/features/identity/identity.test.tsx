@@ -1352,6 +1352,37 @@ it.each(["can't be read", "is another account's"])(
   },
 );
 
+it("a failed link of old Buzz's key, such as an expired challenge, makes no new key, and Try again links old Buzz's", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const attempt = deferred<Credential>();
+  const bindLegacy = vi
+    .fn<() => Promise<string | null>>()
+    .mockRejectedValueOnce(new Error("Invalid Nostr identity challenge"))
+    .mockResolvedValueOnce(viewer);
+  const { identity } = legacyLaunch(
+    Promise.resolve(true),
+    () => Promise.resolve(viewer),
+    () => attempt.promise,
+    (...args) => ({ ...unlinked(...args), bindLegacy }),
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await act(async () => attempt.resolve(credential));
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  expect(screen.getByText("Invalid Nostr identity challenge")).toBeVisible();
+  expect(identity.snapshot().status).toBe("missing");
+  expect(commands()).not.toContain("identity_create");
+  await user.click(retry);
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  expect(bindLegacy).toHaveBeenCalledTimes(2);
+  expect(commands()).not.toContain("identity_create");
+  expect(commands()).toContain("identity_import_legacy");
+  identity.dispose();
+});
+
 it("a relaunch after old Buzz's key was linked but not saved saves that key and backs it up, instead of Welcome back", async () => {
   const attempt = deferred<Credential>();
   const backUp = vi.fn(() => Promise.resolve());

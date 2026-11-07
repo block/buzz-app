@@ -185,8 +185,10 @@ only while no key is saved here, and saving nothing), and first run saves it
 only once the account holds it, from that same read (native holds the key in
 memory between the signature and the save, so the OS asks for old Buzz's
 storage once). When kgoose refuses it as another account's, or it can't be
-read (a denied OS prompt included), first run makes a new key instead, so a key
-that can't be linked never reaches this device. A run that linked it and then
+read (a denied OS prompt included, which native answers with null), first run
+makes a new key instead, so a key that can't be linked never reaches this
+device. Any other failure, such as a challenge that expired before native
+signed it, fails setup with Try again, which links old Buzz's key again. A run that linked it and then
 stopped before the save (a failed save, or Buzz quit in between) leaves the
 account holding a key this device lacks. When that key isn't backed up, the
 next sign-in checks old Buzz's key before resting on Welcome back

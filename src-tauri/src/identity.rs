@@ -414,19 +414,28 @@ impl Identity {
     }
     /// Signs with the key installed old Buzz saved, read from its storage and
     /// never saved here, so first run can link it before adopting it: a key
-    /// that can't be linked never lands on this device.
-    fn sign_legacy(&mut self, event: EventTemplate) -> Result<serde_json::Value> {
+    /// that can't be linked never lands on this device. `None` when that key
+    /// can't be read (absent, denied or malformed), so first run makes a new
+    /// one; any other failure is an error, so a retry still links old Buzz's.
+    fn sign_legacy(&mut self, event: EventTemplate) -> Result<Option<serde_json::Value>> {
         if self.restore()?.is_some() {
             return Err("An identity is already saved; nothing was signed".into());
         }
         let key = match self.legacy.take() {
             Some(key) => key,
-            None => Key::parse(self.store.legacy()?.trim())
-                .map_err(|_| "The earlier Buzz app's identity is malformed; nothing was signed")?,
+            None => match self
+                .store
+                .legacy()
+                .ok()
+                .and_then(|nsec| Key::parse(nsec.trim()).ok())
+            {
+                Some(key) => key,
+                None => return Ok(None),
+            },
         };
         let signed = key.sign(event);
         self.legacy = Some(key);
-        signed
+        signed.map(Some)
     }
     fn require_missing(&mut self) -> Result<()> {
         if self.restore()?.is_some() || self.store.read()?.is_some() {
@@ -1257,7 +1266,7 @@ impl BuilderlabChallenge {
 }
 /// Signs only a valid Builderlab binding challenge; never a general event signer.
 /// `legacy` signs with installed old Buzz's key instead, only while no key is
-/// saved here, and saves nothing.
+/// saved here, and saves nothing; it answers null when that key can't be read.
 #[tauri::command]
 pub async fn identity_sign_builderlab_binding(
     host: tauri::State<'_, IdentityHost>,
@@ -1271,7 +1280,9 @@ pub async fn identity_sign_builderlab_binding(
     let event = challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?;
     if legacy == Some(true) {
         with_identity(host.inner().clone(), move |identity| {
-            identity.sign_legacy(event)
+            identity
+                .sign_legacy(event)
+                .map(|signed| signed.unwrap_or(serde_json::Value::Null))
         })
         .await
     } else {

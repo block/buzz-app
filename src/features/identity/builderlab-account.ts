@@ -184,7 +184,7 @@ const OTHER_KEY =
 
 const KEY_CHANGED =
   "The key on this device changed before it could be linked, so your Builderlab account wasn’t changed.";
-/** Native could not sign with old Buzz's key: there is none, or it is malformed. */
+/** Native could not read old Buzz's key: there is none, access was denied, or it is malformed. */
 class LegacyUnusable extends Error {}
 
 /**
@@ -497,13 +497,17 @@ function kgooseAccount(
     // latter. It signs with whatever key secure storage holds now, or old
     // Buzz's while none is saved. Verify binds the signer, which linking
     // again cannot undo, so only `pubkey`'s signature may reach kgoose.
-    const event = await invoke<{ pubkey?: unknown }>(
+    // Old Buzz's key that can't be read answers null, so setup makes a new
+    // key. Any rejection, such as a challenge that expired, is a failure to
+    // retry: a retry still links old Buzz's key.
+    const event = await invoke<{ pubkey?: unknown } | null>(
       "identity_sign_builderlab_binding",
       pubkey ? { challenge } : { challenge, legacy: true },
     ).catch((error: unknown) => {
-      throw pubkey ? asError(error) : new LegacyUnusable();
+      throw asError(error);
     });
-    const signer = event.pubkey;
+    if (event === null && !pubkey) throw new LegacyUnusable();
+    const signer = event?.pubkey;
     if (typeof signer !== "string" || (pubkey && signer !== pubkey))
       throw new Error(KEY_CHANGED);
     if (held === signer) return signer;

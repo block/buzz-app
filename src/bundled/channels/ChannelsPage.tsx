@@ -1064,7 +1064,12 @@ function ChannelWorkspace({
   const channelConversation = useRef<HTMLDivElement>(null);
   const highlightReturn = useReturnHighlight(channelConversation, currentId);
   const returnFocus = useRef<
-    { trigger: HTMLElement; channelId: string | undefined } | undefined
+    | {
+        trigger: HTMLElement;
+        channelId: string | undefined;
+        after?: { from: string; target: string; closingFocus: Element | null };
+      }
+    | undefined
   >(undefined);
   // A close's native return lands a task or more after its dismissal. Until
   // then the navigator still shows the retiring visit.
@@ -1267,17 +1272,33 @@ function ChannelWorkspace({
         remaining,
       );
     },
-    onClosePanel: (entry, remaining) => {
+    onClosePanel: (entry, remaining, trigger) => {
       if (!historyPanel(entry)) return;
       const pane = entryPane(tabState.mainEntries, entry);
       const fallback = closeTarget(pane, remaining);
-      if (fallback)
-        dismissContent(
-          tabState.detailVisits(entry.channelId, entry.target),
-          fallback,
-          pane,
-          remaining,
-        );
+      const visits = tabState.detailVisits(entry.channelId, entry.target);
+      const from = navigator?.snapshot().entry.id;
+      // Retiring a retained panel need not leave the current visit.
+      const deferFocus = !!(
+        trigger &&
+        fallback &&
+        from &&
+        visits.includes(from)
+      );
+      if (fallback) {
+        if (deferFocus && trigger && from)
+          returnFocus.current = {
+            trigger,
+            channelId: currentId,
+            after: {
+              from,
+              target: targetKey(fallback),
+              closingFocus: document.activeElement,
+            },
+          };
+        dismissContent(visits, fallback, pane, remaining);
+      }
+      return deferFocus;
     },
     onCloseThread: (tab, active, last) => {
       // X is explicit dismissal; Back/Forward never comes through this path.
@@ -1402,6 +1423,20 @@ function ChannelWorkspace({
     }
     const pending = returnFocus.current;
     if (!pending) return;
+    // Restore only at the returned visit. History and the closed tab's DOM
+    // removal can commit in either order.
+    if (pending.after) {
+      if (!navigation || navigation.entryId === pending.after.from) return;
+      if (
+        targetKey(navigation.target) !== pending.after.target ||
+        (document.activeElement !== document.body &&
+          document.activeElement !== pending.after.closingFocus)
+      ) {
+        // A different destination or a newer focus choice wins the handoff.
+        returnFocus.current = undefined;
+        return;
+      }
+    }
     if (pending.channelId !== currentId || !pending.trigger.isConnected) {
       returnFocus.current = undefined;
       return;

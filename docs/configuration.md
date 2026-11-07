@@ -354,6 +354,10 @@ On Linux, when the NVIDIA kernel module is loaded and GTK will use Wayland, the
 app sets `WEBKIT_FORCE_DMABUF_RENDERER=1` and `__NV_DISABLE_EXPLICIT_SYNC=1`
 before WebKit starts. Ubuntu's WebKitGTK package turns GPU rendering off on
 NVIDIA unless the first is set, and Wayland then closes the app with protocol
-error 71 unless the second is set. Setting `WEBKIT_FORCE_DMABUF_RENDERER`,
-`WEBKIT_DISABLE_DMABUF_RENDERER` or `WEBKIT_DISABLE_COMPOSITING_MODE` yourself
-turns this off, so `WEBKIT_FORCE_DMABUF_RENDERER=0` restores WebKit's default.
+error 71 unless the second is set. To restore WebKit's default, start the app
+with `WEBKIT_FORCE_DMABUF_RENDERER=0` in its own environment, such as in a
+desktop entry's `Exec=env ...` line. `.env.local` does not forward this name.
+The app also leaves both alone when `WEBKIT_DISABLE_DMABUF_RENDERER` or
+`WEBKIT_DISABLE_COMPOSITING_MODE` is set to anything but `0`, or when
+`__NV_DISABLE_EXPLICIT_SYNC` is set to anything but `1`. Child processes
+inherit whatever the app sets.

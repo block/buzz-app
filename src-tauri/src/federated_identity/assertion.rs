@@ -68,6 +68,9 @@ pub(crate) struct Assertion {
     /// The server that issued it; every later check asks that server.
     server: Weak<super::Inner>,
 }
+/// The sign-in reason a request carries when this device has no sign-in for a
+/// community that needs one; relay.rs reports it as that community's refusal.
+pub(crate) const SIGNED_OUT: &str = "Federated sign-in is required";
 #[derive(Clone)]
 pub(crate) struct Authorization {
     pub(crate) assertion: Option<Assertion>,
@@ -418,7 +421,6 @@ impl FederatedIdentity {
         // Advertising NIP-FI is support, not a requirement (NIP-FI Discovery):
         // without a token the request goes plainly and the relay decides.
         const UNCONFIGURED: &str = "Federated identity is not configured for this community";
-        const SIGNED_OUT: &str = "Federated sign-in is required";
         let Some(config) = self.0.config.as_ref() else {
             authorization.unsigned = Some(UNCONFIGURED);
             return Ok(authorization);

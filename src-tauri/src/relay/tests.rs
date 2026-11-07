@@ -4514,3 +4514,37 @@ async fn community_refusals_reach_the_window_from_any_signed_request() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_plugin_request_refused_without_the_users_sign_in_is_not_their_refusal() {
+    // Native plugins read and publish without federated evidence, so an
+    // FI-gated community's missing-evidence refusal is about that request.
+    let (url, task) = fixture_server(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 24\r\nConnection: close\r\n\r\nauthentication required\n"
+            .into(),
+    );
+    let community = url.origin().ascii_serialization();
+    let mut refused = refusals().subscribe();
+    let response = send(
+        &IdentityHost::fixture(),
+        None,
+        url,
+        "POST",
+        Some("[]".into()),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status, 401);
+    task.join().unwrap();
+    let marker = Url::parse("https://plugin-refusal-marker.test/query").unwrap();
+    observe_refusal(&marker, &Err(SIGNED_OUT.into()));
+    loop {
+        let refusal = refused.recv().await.unwrap();
+        assert_ne!(refusal.community, community);
+        if refusal.community == "https://plugin-refusal-marker.test" {
+            break;
+        }
+    }
+}

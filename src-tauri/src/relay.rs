@@ -2,7 +2,7 @@
 pub(crate) mod agent;
 mod huddle;
 use crate::federated_identity::{
-    assertion::{Authorization, HEADER},
+    assertion::{Authorization, HEADER, SIGNED_OUT},
     FederatedIdentity,
 };
 use crate::identity::{EventTemplate, IdentityHost};
@@ -991,7 +991,10 @@ async fn send(
         .await
     }
     .await;
-    if authenticated {
+    // Only a request sent as the signed-in user speaks for their session: a
+    // native plugin's read or publish goes without federated evidence, so an
+    // FI-gated community refusing it says nothing about the user's sign-in.
+    if authenticated && fi.is_some() {
         observe_refusal(&community, &result);
     }
     result
@@ -1011,7 +1014,6 @@ fn community_refusal(result: &Result<RelayResponse>) -> Option<&'static str> {
         Err(_) => None,
     }
 }
-const SIGNED_OUT: &str = "Federated sign-in is required";
 
 #[derive(Clone, Serialize)]
 struct Refusal {
@@ -1546,7 +1548,9 @@ async fn upload_file(
         .await
     }
     .await;
-    observe_refusal(&community, &result);
+    if fi.is_some() {
+        observe_refusal(&community, &result);
+    }
     result
 }
 

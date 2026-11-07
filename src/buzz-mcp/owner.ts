@@ -1,12 +1,15 @@
-// The owner tools (`owner_*`): read with the signed-in human's access instead
-// of the agent's, only where the host gives the client `ownerAccess`. The host
-// decides who the owner, agent and community are; no argument names them.
+// The owner tools (`owner_*`): read and manage channels with the signed-in
+// human's access instead of the agent's, only where the host gives the client
+// `ownerAccess`. The host decides who the owner, agent and community are; no
+// argument names them.
 import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
 import { parseBuzzLink } from "../features/navigation/buzz-links";
 import type {
   BuzzClient,
   OwnerAccess,
+  OwnerChannelWrite,
   OwnerExecution,
+  OwnerLifecycleAction,
   OwnerReadRequest,
 } from "./client";
 import {
@@ -57,6 +60,31 @@ const tool = (
   },
   annotations: { readOnlyHint: true },
 });
+const write = (
+  name: string,
+  description: string,
+  properties: Readonly<Record<string, object>>,
+  required: readonly string[],
+  destructiveHint: boolean,
+): Tool => ({
+  ...tool(name, description, properties, required),
+  annotations: { readOnlyHint: false, destructiveHint },
+});
+const OUTCOME =
+  " outcome confirmed means read back; rejected, that nothing changed (see reason); unconfirmed, that it may have taken effect: check with owner_channel_get, never repeat it blindly.";
+const exact = {
+  type: "string",
+  description:
+    "The channel's exact ID, from owner_channel_list or owner_channel_get.",
+} as const;
+const lifecycle = (action: OwnerLifecycleAction, description: string) =>
+  write(
+    `owner_channel_${action}`,
+    `${description}${OUTCOME}`,
+    { channel: exact },
+    ["channel"],
+    action === "delete",
+  );
 
 export const OWNER_TOOLS: readonly Tool[] = [
   tool(
@@ -128,6 +156,65 @@ export const OWNER_TOOLS: readonly Tool[] = [
     { channel, before, before_id: beforeId },
     ["channel"],
   ),
+  write(
+    "owner_channel_create",
+    `Create a channel as your owner, who owns it; you are not added. Choose a new UUID as id. To resume a create that was not confirmed, call again with the same id, details and the operation it answered: that call never signs another create, and answers unconfirmed if Buzz can no longer tell.${OUTCOME}`,
+    {
+      id: { type: "string", description: "A new UUID you choose." },
+      operation: {
+        type: "string",
+        description: "The operation an earlier create of this id answered.",
+      },
+      name: { type: "string" },
+      visibility: {
+        type: "string",
+        enum: ["open", "private"],
+        description: "Required unless solo.",
+      },
+      description: { type: "string" },
+      ttl_seconds: {
+        type: "integer",
+        description: "A temporary channel's lifetime; omit for ongoing.",
+      },
+      solo: {
+        type: "boolean",
+        description: "A private Solo chat with only your owner in it.",
+      },
+    },
+    ["id", "name"],
+    false,
+  ),
+  write(
+    "owner_channel_update",
+    `Change a channel's name, description, visibility, join role or lifetime as your owner; other details stay. Give the version owner_channel_get answered: if the channel changed since, nothing is saved.${OUTCOME}`,
+    {
+      channel: exact,
+      version: { type: "string", description: "From owner_channel_get." },
+      name: { type: "string" },
+      description: { type: "string" },
+      visibility: { type: "string", enum: ["open", "private"] },
+      join_role: {
+        type: "string",
+        enum: ["member", "guest"],
+        description: "The role people who join it get.",
+      },
+      ttl_seconds: {
+        type: ["integer", "null"],
+        description: "A temporary channel's lifetime; null makes it ongoing.",
+      },
+    },
+    ["channel", "version"],
+    true,
+  ),
+  lifecycle(
+    "archive",
+    "Archive one of your owner's channels: it stays readable, takes no new messages and can be unarchived.",
+  ),
+  lifecycle("unarchive", "Unarchive one of your owner's archived channels."),
+  lifecycle(
+    "delete",
+    "Delete one of your owner's channels and everything in it, permanently. Only for a channel your owner asked to delete, confirmed by its ID with owner_channel_get; archive one otherwise.",
+  ),
 ];
 
 export const isOwnerTool = (name: string) =>
@@ -145,7 +232,7 @@ export async function callOwnerTool(
   const { ownerAccess } = client;
   if (!ownerAccess)
     throw new Error(
-      "Owner tools are not available to this agent here; nothing was read.",
+      "Owner tools are not available to this agent here; nothing was read or changed.",
     );
   const extra = Object.keys(args).filter(
     (arg) => !Object.hasOwn(tool.inputSchema.properties, arg),
@@ -169,9 +256,21 @@ export async function callOwnerTool(
       ...(list.error ? { error: list.error } : {}),
     });
   }
+  if (name === "owner_channel_create")
+    return written(ownerAccess, await ownerAccess.createChannel(created(args)));
   if (name === "owner_read") return read(ownerAccess, args);
   const id = optionalText(args.channel, "channel");
   if (!id) throw new Error("channel is required.");
+  if (name === "owner_channel_update")
+    return written(
+      ownerAccess,
+      await ownerAccess.updateChannel(updated(id, args)),
+    );
+  if (name.startsWith("owner_channel_")) {
+    const action = name.slice("owner_channel_".length);
+    if (action === "archive" || action === "unarchive" || action === "delete")
+      return written(ownerAccess, await ownerAccess.changeChannel(action, id));
+  }
   if (name === "owner_canvas_get") {
     const revision = eventId(args.id, "id");
     const { execution, channel, canvas } = await ownerAccess.canvas(
@@ -349,6 +448,121 @@ function answer(
     text: JSON.stringify({ executedAs: execution, ...fields }),
     held: () => ownerAccess.held(execution),
   };
+}
+
+/** A write's answer. Released whatever its binding does next, as it reports
+ * what was done; past a change it says only that, never readback. */
+function written(ownerAccess: OwnerAccess, result: OwnerChannelWrite) {
+  const { execution, ...fields } = result;
+  return {
+    text: JSON.stringify({ executedAs: execution, ...fields }),
+    held: () => {
+      try {
+        ownerAccess.held(execution);
+      } catch {
+        throw new Error(
+          `Your owner's connection changed before this answer was returned: owner_channel_${result.action} on ${result.channel}${result.operation ? ` (operation ${result.operation})` : ""} ${result.outcome === "rejected" ? "changed nothing" : "may have taken effect"}. Check it with owner_channel_get before acting on it again.`,
+        );
+      }
+    },
+  };
+}
+
+function created(args: Readonly<Record<string, unknown>>) {
+  const solo = args.solo;
+  if (solo !== undefined && typeof solo !== "boolean")
+    throw new Error("solo must be true or false.");
+  const visibility = args.visibility;
+  if (solo) {
+    if (visibility !== undefined && visibility !== "private")
+      throw new Error("A Solo chat is private.");
+  } else if (visibility !== "open" && visibility !== "private")
+    throw new Error("visibility must be open or private.");
+  const name = optionalText(args.name, "name");
+  if (!name) throw new Error("name is required.");
+  const description = optionalText(args.description, "description");
+  const ttlSeconds = lifetime(args.ttl_seconds);
+  if (solo && description) throw new Error("A Solo chat has no description.");
+  return {
+    id: uuid(optionalText(args.id, "id"), "id"),
+    ...(args.operation !== undefined
+      ? { operation: eventId(args.operation, "operation") }
+      : {}),
+    name,
+    visibility: solo
+      ? ("private" as const)
+      : (visibility as "open" | "private"),
+    ...(description ? { description } : {}),
+    ...(typeof ttlSeconds === "number" ? { ttlSeconds } : {}),
+    ...(solo ? { solo } : {}),
+  };
+}
+
+function updated(id: string, args: Readonly<Record<string, unknown>>) {
+  const version = eventId(args.version, "version");
+  if (!version) throw new Error("version is required, from owner_channel_get.");
+  const visibility = args.visibility;
+  if (
+    visibility !== undefined &&
+    visibility !== "open" &&
+    visibility !== "private"
+  )
+    throw new Error("visibility must be open or private.");
+  const joinRole = args.join_role;
+  if (joinRole !== undefined && joinRole !== "member" && joinRole !== "guest")
+    throw new Error("join_role must be member or guest.");
+  if (args.name !== undefined && !optionalText(args.name, "name"))
+    throw new Error("name must not be empty.");
+  if (args.description !== undefined && typeof args.description !== "string")
+    throw new Error("description must be text.");
+  const fields = [
+    "name",
+    "description",
+    "visibility",
+    "join_role",
+    "ttl_seconds",
+  ];
+  if (!fields.some((field) => args[field] !== undefined))
+    throw new Error(`Give at least one of ${fields.join(", ")} to change.`);
+  const ttlSeconds = lifetime(args.ttl_seconds, true);
+  return {
+    id,
+    version,
+    ...(args.name !== undefined ? { name: args.name as string } : {}),
+    ...(args.description !== undefined
+      ? { description: args.description as string }
+      : {}),
+    ...(visibility
+      ? {
+          visibility:
+            visibility === "open" ? ("public" as const) : ("private" as const),
+        }
+      : {}),
+    ...(joinRole ? { joinRole: joinRole as "member" | "guest" } : {}),
+    ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+  };
+}
+
+function lifetime(value: unknown, clearable = false) {
+  if (value === undefined || (clearable && value === null))
+    return value as undefined | null;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value <= 0 ||
+    value > 2_147_483_647
+  )
+    throw new Error(
+      "ttl_seconds must be a whole number of seconds, 1 or more.",
+    );
+  return value;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function uuid(value: string | undefined, name: string): string {
+  if (!value || !UUID.test(value))
+    throw new Error(`${name} must be a lowercase UUID.`);
+  return value;
 }
 
 /** A `before` and `before_id` cursor. */

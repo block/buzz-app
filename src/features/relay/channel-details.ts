@@ -28,7 +28,7 @@ export interface ChannelDetailsCapability {
     base: ChannelDetails,
     draft: ChannelDetailsDraft,
     signal?: AbortSignal,
-    /** Checked synchronously right before publishing; false publishes nothing. */
+    /** Checked before signing and publishing; false stops unpublished work. */
     active?: () => boolean,
   ): Promise<void>;
   check(id: string, signal?: AbortSignal): Promise<void>;
@@ -37,6 +37,13 @@ export interface ChannelDetailsCapability {
 }
 const uncertain =
   "The change may have been saved. Check its status before trying again.";
+
+export class ChannelDetailsUnconfirmed extends Error {
+  constructor() {
+    super(uncertain);
+    this.name = "ChannelDetailsUnconfirmed";
+  }
+}
 
 /** Session owns uncertain intent through panel close/reopen; no automatic publication retry. */
 export function createChannelDetails({
@@ -236,6 +243,8 @@ export function createChannelDetails({
             await authorize();
             const template = detailsTemplate(id, draft, base);
             phase = "Could not sign the channel change";
+            if (active?.() === false)
+              throw new DOMException("Channel edit cancelled", "AbortError");
             const signed = await writer.sign(structuredClone(template), signal);
             signal.throwIfAborted();
             if (
@@ -263,7 +272,7 @@ export function createChannelDetails({
         if (publicationStarted && !(error instanceof PublishRejected)) {
           if (!closed)
             attempts.set(id, Object.freeze({ draft, status: "unconfirmed" }));
-          throw new Error(uncertain);
+          throw new ChannelDetailsUnconfirmed();
         }
         attempts.delete(id);
         if (error instanceof Error && error.name === "AbortError") throw error;

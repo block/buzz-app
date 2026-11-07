@@ -2,7 +2,7 @@
 // reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memories } from "./client";
+import type { BuzzClient, Memories, OwnerMutationCaller } from "./client";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type {
@@ -55,6 +55,24 @@ export function appClient(
     check();
     return result;
   };
+  /** An owner write, admitted only while this turn holds. A host that can't
+   * say whether its turn still runs gets none. */
+  const changing = async <T>(
+    write: (caller: OwnerMutationCaller) => Promise<T>,
+  ) => {
+    check();
+    if (!options.signal && !options.check)
+      throw new Error(
+        "Owner changes are unavailable in this harness; nothing was changed.",
+      );
+    return write({
+      signal: options.signal,
+      check: () => {
+        check();
+        agent.protection?.assertAvailable();
+      },
+    });
+  };
   return {
     ...(agent.protection
       ? {
@@ -106,6 +124,12 @@ export function appClient(
           check();
           ownerAccess.held(execution);
         },
+        createChannel: (input) =>
+          changing((caller) => ownerAccess.createChannel(input, caller)),
+        updateChannel: (input) =>
+          changing((caller) => ownerAccess.updateChannel(input, caller)),
+        changeChannel: (action, id) =>
+          changing((caller) => ownerAccess.changeChannel(action, id, caller)),
       },
     }),
     relayAuthor: options.relayAuthor,

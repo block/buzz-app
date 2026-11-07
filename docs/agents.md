@@ -80,8 +80,8 @@ servers do not support these operations.
 
 In communities the build flag `BUZZ_OWNER_MCP_COMMUNITIES` enables, an agent's
 runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get`,
-`owner_member_list`, `owner_read`, `owner_canvas_get` and `owner_canvas_history`.
-They read the owner's channels, one channel's details and
+`owner_member_list`, `owner_read`, `owner_canvas_get` and `owner_canvas_history`,
+and the channel writes below. The reads read the owner's channels, one channel's details and
 the owner's rights in it, its roster, its messages, whole threads and searches,
 and its Canvas and earlier revisions, through the
 owner's own signed-in session, including private and archived channels, DMs and
@@ -91,7 +91,7 @@ owner's channels and says `partial` while their list is incomplete. Other
 channels' matches still fill its page, so `limited` with few results means
 narrowing it by channel or time. A message shows its newest edit by its author
 or, as in the app, by the author's verified owner. One read fetches a page's edits;
-when they fill it, the answer says `edits_limited` and some messages may show earlier text. They write
+when they fill it, the answer says `edits_limited` and some messages may show earlier text. The reads write
 nothing: no membership, subscription, read state, post, agent start or Canvas
 change. Content comes from the relay's own answer, not the owner's open views,
 so it changes no unread counts. They do not save the owner's attachments: a
@@ -107,6 +107,26 @@ has these tools too; as its setup warns of all tool output, members serving its
 model can read what they return. Protection reviews these calls and their
 results as it does other Buzz tools. See
 [configuration](configuration.md#owner-mcp-community-flag).
+
+`owner_channel_create`, `owner_channel_update`, `owner_channel_archive`,
+`owner_channel_unarchive` and `owner_channel_delete` manage the owner's
+ordinary channels and Solo chats through the same session and the app's own
+channel writers, never DMs or system channels. A created channel or Solo chat
+has the owner as Owner and does not add the agent. Create takes a UUID the agent
+chooses, and the same ID with other details is a conflict. To resume a create,
+the agent repeats it with the `operation` it answered; that call never signs
+another create, and answers `unconfirmed` when Buzz no longer holds that
+operation and the relay shows no such channel. Update takes the
+`version` that `owner_channel_get` answered and saves nothing if the channel has
+changed since. Lifecycle tools take an exact channel ID; delete is permanent.
+Each answer's `outcome` is `confirmed` (read back from the relay), `rejected`
+(nothing changed; `reason` says why, such as `busy`, `conflict` or
+`cancelled`) or `unconfirmed` (it may have taken effect; check with
+`owner_channel_get` before trying again). A write is admitted only while the
+calling turn runs, the agent still runs here as the owner's, and the owner's
+account, community and connection are unchanged, checked again just before the
+command is signed and sent. A harness that cannot report whether its turn is
+still running gets no writes.
 
 ## External app authorization
 

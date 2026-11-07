@@ -318,7 +318,7 @@ it("publishes no edit once the caller's guard turns false during signing", async
   await h.owner.capability.save(base, draft);
   expect(h.publish).toHaveBeenCalledOnce();
 });
-it("checks the guard only after the final re-authorization read settles", async () => {
+it("rechecks the guard after the final re-authorization read settles", async () => {
   const h = harness();
   const base = await h.owner.capability.load(id);
   let eligible = true;
@@ -338,13 +338,13 @@ it("checks the guard only after the final re-authorization read settles", async 
     .catch((error: unknown) => error);
   try {
     await started.promise;
-    expect(active).not.toHaveBeenCalled();
+    expect(active).toHaveBeenCalledOnce();
     eligible = false;
   } finally {
     gate.resolve();
   }
   expect(await saving).toMatchObject({ name: "AbortError" });
-  expect(active).toHaveBeenCalledOnce();
+  expect(active).toHaveBeenCalledTimes(2);
   expect(h.publish).not.toHaveBeenCalled();
   eligible = true;
   await h.owner.capability.save(base, draft, undefined, active);

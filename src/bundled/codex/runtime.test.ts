@@ -7078,6 +7078,11 @@ it.each([true, false])(
             "owner_read",
             "owner_canvas_get",
             "owner_canvas_history",
+            "owner_channel_create",
+            "owner_channel_update",
+            "owner_channel_archive",
+            "owner_channel_unarchive",
+            "owner_channel_delete",
           ].map((name) => expect.objectContaining({ name, deferLoading: true }))
         : [],
     );

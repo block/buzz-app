@@ -49,7 +49,7 @@ export interface ChannelLifecycleCapability {
     action: ChannelLifecycleCommand,
     channelId: string,
     signal?: AbortSignal,
-    /** Checked synchronously right before publishing; false publishes nothing. */
+    /** Checked before signing and publishing; false stops unpublished work. */
     active?: () => boolean,
   ): Promise<void>;
   snapshot(): DmVisibility;
@@ -461,6 +461,8 @@ export function createChannelLifecycle({
               );
           };
           if (await authorize()) return;
+          if (active?.() === false)
+            throw new DOMException("Channel action cancelled", "AbortError");
           const fresh = lifecycleTemplate(action, id);
           const template = {
             ...fresh,

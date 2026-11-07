@@ -2264,8 +2264,10 @@ describe("caller publication guard", () => {
     const active = vi.fn(() => true);
     try {
       await h.owner.capability.run("archive", id, undefined, active);
-      expect(active).toHaveBeenCalledOnce();
-      const [checked = 0] = active.mock.invocationCallOrder;
+      expect(active).toHaveBeenCalledTimes(2);
+      const [beforeSign = 0, checked = 0] = active.mock.invocationCallOrder;
+      const [signed = 0] = h.sign.mock.invocationCallOrder;
+      expect(beforeSign).toBeLessThan(signed);
       const [published = 0] = h.publish.mock.invocationCallOrder;
       const reads = h.read.mock.invocationCallOrder.filter(
         (at) => at < published,

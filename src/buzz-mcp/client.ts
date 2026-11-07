@@ -123,10 +123,13 @@ export type OwnerChannelDetails = Readonly<{
       ttlSeconds?: number;
       creator?: string;
       createdAt?: number;
+      /** The metadata record read; owner_channel_update takes it. */
+      version?: string;
     }>;
   /** From the relay-signed admin list and roster, read for this call. The
    * relay still authorizes every command. */
   capabilities: Readonly<{
+    edit?: boolean;
     manageRoles: boolean;
     removeMembers: boolean;
     archive: boolean;
@@ -222,6 +225,71 @@ export type OwnerAccess = Readonly<{
   /** Throws unless the binding that answered with `execution` still holds,
    * as checked just before its answer is released; reads nothing. */
   held(execution: OwnerExecution): void;
+  /** Owner writes. The host supplies `caller`; a call without one changes
+   * nothing. */
+  createChannel(
+    input: OwnerChannelCreate,
+    caller?: OwnerMutationCaller,
+  ): Promise<OwnerChannelWrite>;
+  updateChannel(
+    input: OwnerChannelUpdate,
+    caller?: OwnerMutationCaller,
+  ): Promise<OwnerChannelWrite>;
+  changeChannel(
+    action: OwnerLifecycleAction,
+    id: string,
+    caller?: OwnerMutationCaller,
+  ): Promise<OwnerChannelWrite>;
+}>;
+
+/** The calling turn, as its host checks it: `check` throws once the turn has
+ * ended or been stopped. Host-supplied; no tool argument names it. */
+export type OwnerMutationCaller = Readonly<{
+  signal?: AbortSignal | undefined;
+  check(): void;
+}>;
+/** `confirmed`: read back from the relay. `rejected`: refused before it was
+ * sent, or refused by the relay, so nothing changed. `unconfirmed`: sent, or
+ * possibly sent, with no answer yet; check before acting again. */
+export type OwnerWriteOutcome = "confirmed" | "rejected" | "unconfirmed";
+export type OwnerLifecycleAction = "archive" | "unarchive" | "delete";
+export type OwnerChannelCreate = Readonly<{
+  /** The caller's own UUID for the new channel. */
+  id: string;
+  /** The `operation` an earlier create of `id` answered. Given, the call only
+   * resumes or confirms that create and never signs another. */
+  operation?: string | undefined;
+  name: string;
+  visibility: "open" | "private";
+  description?: string | undefined;
+  ttlSeconds?: number | undefined;
+  /** A private Solo chat whose only member is the owner. */
+  solo?: boolean | undefined;
+}>;
+export type OwnerChannelUpdate = Readonly<{
+  id: string;
+  /** The `version` owner_channel_get answered; a newer one is a conflict. */
+  version: string;
+  name?: string | undefined;
+  description?: string | undefined;
+  visibility?: "public" | "private" | undefined;
+  joinRole?: "member" | "guest" | undefined;
+  /** `null` makes a temporary channel ongoing. */
+  ttlSeconds?: number | null | undefined;
+}>;
+export type OwnerChannelWrite = Readonly<{
+  execution: OwnerExecution;
+  action: "create" | "update" | OwnerLifecycleAction;
+  channel: string;
+  outcome: OwnerWriteOutcome;
+  /** The signed command's event ID, where the writer exposes it. */
+  operation?: string;
+  reason?: "busy" | "conflict" | "cancelled" | "denied" | "refused" | "failed";
+  error?: string;
+  /** From the roster read back after a confirmed change. */
+  ownerRole?: OwnerRole | "unknown" | null;
+  callerMember?: boolean;
+  version?: string;
 }>;
 
 export interface BuzzClient {

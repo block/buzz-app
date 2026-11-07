@@ -1,13 +1,14 @@
-// The owner tools' host side: read-only operations the app runs with its
-// signed-in human's own session, for that human's agent, in the agent's own
-// community. Every call resolves the binding again and checks it once more
-// before returning anything, so a sign-out, account switch or reconnect during
-// a call returns nothing.
+// The owner tools' host side: operations the app runs with its signed-in
+// human's own session, for that human's agent, in the agent's own community.
+// Every call resolves the binding again and checks it once more before
+// returning anything, so a sign-out, account switch or reconnect during a read
+// returns nothing. Writes are admitted by `ownerMutationActive`.
 import type {
   BuzzEvent,
   OwnerAccess,
   OwnerChannel,
   OwnerExecution,
+  OwnerMutationCaller,
   OwnerReadRequest,
   OwnerRole,
 } from "../../buzz-mcp/client";
@@ -26,6 +27,8 @@ import {
 } from "../relay/channel-lifecycle-protocol";
 import { soloLabels } from "../solo/labels";
 import type { RelaySession } from "../relay/session";
+import { detailsSettings } from "../relay/channel-details-protocol";
+import { ownerChannelWrites } from "./owner-channels";
 
 /** Whether this build lets agents read with their owner's access in
  * `community`: its exact canonical origin is in the build's list. */
@@ -49,6 +52,9 @@ export type OwnerSession = Pick<
   | "profiles"
   | "channelLifecycle"
   | "snapshotRead"
+  | "channelWrites"
+  | "channelDetails"
+  | "outbox"
 >;
 /** The owner's live session for the agent's community, as the host binds it
  * now. `signal` aborts when that binding is replaced. */
@@ -58,6 +64,37 @@ export type OwnerBinding = Readonly<{
   session: OwnerSession;
   signal: AbortSignal;
 }>;
+
+/** An owner write's admission: true only while the calling turn, the binding
+ * the write was admitted on, the agent's lifetime on this host and its
+ * recorded owner all still hold. Synchronous and side-effect free, so a writer
+ * can ask it right before signing and again right before publishing. */
+export function ownerMutationActive(
+  owner: string,
+  binding: OwnerBinding,
+  bind: () => OwnerBinding | undefined,
+  caller: OwnerMutationCaller,
+  lifetime?: AbortSignal,
+): () => boolean {
+  return () => {
+    try {
+      caller.signal?.throwIfAborted();
+      caller.check();
+      if (binding.signal.aborted || lifetime?.aborted) return false;
+      const now = bind();
+      return (
+        !!now &&
+        !now.signal.aborted &&
+        now.session === binding.session &&
+        now.viewer === binding.viewer &&
+        now.origin === binding.origin &&
+        now.viewer === owner
+      );
+    } catch {
+      return false;
+    }
+  };
+}
 
 /** One edit read serves a whole page; the relay reader's cap. */
 const EDITS = 500;
@@ -75,11 +112,13 @@ const changed = () =>
     "Your owner's connection changed during the call, so nothing was returned. Try again.",
   );
 
-/** `agent`'s owner reads. `bind` answers the owner's current binding for the
- * agent's community, or undefined when it may not be used now. */
+/** `agent`'s owner reads and writes. `bind` answers the owner's current
+ * binding for the agent's community, or undefined when it may not be used now;
+ * `lifetime` ends with the agent's run authority on this host. */
 export function createOwnerAccess(
   agent: Readonly<{ pubkey: string; owner: string }>,
   bind: () => OwnerBinding | undefined,
+  lifetime?: AbortSignal,
 ): OwnerAccess {
   /** The binding each answer was read with. */
   const answered = new WeakMap<OwnerExecution, OwnerBinding>();
@@ -132,15 +171,14 @@ export function createOwnerAccess(
     return execution;
   };
   /** The relay-signed metadata, admin list and roster, read fresh. */
-  const authority = async (
+  const records = async (
     binding: OwnerBinding,
     id: string,
     signal: AbortSignal,
   ) => {
-    const { session, viewer } = binding;
-    const relayAuthor = session.relayAuthor;
+    const relayAuthor = binding.session.relayAuthor;
     if (!relayAuthor) throw unavailable();
-    const events = await session.readRemote(
+    const events = await binding.session.readRemote(
       [39000, 39001, 39002].map((kind) => ({
         kinds: [kind],
         consistency: "strong" as const,
@@ -151,6 +189,18 @@ export function createOwnerAccess(
       { signal, priority: "foreground" },
     );
     signal.throwIfAborted();
+    return events;
+  };
+  /** The same records, for a channel that must exist and not be a system one. */
+  const authority = async (
+    binding: OwnerBinding,
+    id: string,
+    signal: AbortSignal,
+  ) => {
+    const { session, viewer } = binding;
+    const relayAuthor = session.relayAuthor;
+    if (!relayAuthor) throw unavailable();
+    const events = await records(binding, id, signal);
     if (!events.some((event) => event.kind === 39000))
       throw new Error(
         `Channel ${id} was not found or your owner cannot see it.`,
@@ -281,7 +331,39 @@ export function createOwnerAccess(
     };
   };
 
+  /** A write's binding, admission and signal, for a host-supplied caller that
+   * still holds now. */
+  const admit = (caller: OwnerMutationCaller | undefined) => {
+    if (!caller)
+      throw new Error(
+        "Owner changes are unavailable to this caller; nothing was changed.",
+      );
+    caller.signal?.throwIfAborted();
+    caller.check();
+    if (lifetime?.aborted) throw unavailable();
+    const binding = current();
+    return {
+      binding,
+      active: ownerMutationActive(agent.owner, binding, bind, caller, lifetime),
+      signal: AbortSignal.any([
+        binding.signal,
+        ...(caller.signal ? [caller.signal] : []),
+        ...(lifetime ? [lifetime] : []),
+      ]),
+      execution: execution(binding),
+    };
+  };
+  const writes = ownerChannelWrites({
+    agent: agent.pubkey,
+    admit,
+    records,
+    known: (session, id) => known(session, channelId(id)),
+  });
+
   return Object.freeze({
+    createChannel: writes.create,
+    updateChannel: writes.update,
+    changeChannel: writes.change,
     channels: (signal?: AbortSignal) =>
       run(signal, (binding) => {
         const { channels } = binding.session;
@@ -323,6 +405,18 @@ export function createOwnerAccess(
           ? await binding.session.channelLifecycle.load(id, bound, events)
           : undefined;
         bound.throwIfAborted();
+        // Versioned as channel settings save it; unreadable details only omit it.
+        let details: ReturnType<typeof detailsSettings>["details"] | undefined;
+        try {
+          ({ details } = detailsSettings(
+            events,
+            id,
+            viewer,
+            binding.session.relayAuthor ?? "",
+          ));
+        } catch {
+          details = undefined;
+        }
         return {
           execution: execution(binding),
           channel: {
@@ -331,15 +425,34 @@ export function createOwnerAccess(
             archived: exactLifecycleTag(metadata, "archived") === "true",
             role: role ?? null,
             members: Object.keys(rights.roles).length,
-            ...(summary.description
-              ? { description: summary.description }
-              : {}),
-            ...(summary.joinRole ? { joinRole: summary.joinRole } : {}),
-            ...(summary.ttlSeconds ? { ttlSeconds: summary.ttlSeconds } : {}),
+            ...(details
+              ? {
+                  name: details.name,
+                  description: details.description,
+                  visibility:
+                    details.visibility === "public"
+                      ? ("open" as const)
+                      : ("private" as const),
+                  ...(details.joinRole ? { joinRole: details.joinRole } : {}),
+                  ...(details.ttlSeconds !== undefined
+                    ? { ttlSeconds: details.ttlSeconds }
+                    : {}),
+                  version: details.version,
+                }
+              : {
+                  ...(summary.description
+                    ? { description: summary.description }
+                    : {}),
+                  ...(summary.joinRole ? { joinRole: summary.joinRole } : {}),
+                  ...(summary.ttlSeconds
+                    ? { ttlSeconds: summary.ttlSeconds }
+                    : {}),
+                }),
             ...(summary.creator ? { creator: summary.creator } : {}),
             ...(summary.createdAt ? { createdAt: summary.createdAt } : {}),
           },
           capabilities: {
+            edit: !!details?.canEdit,
             manageRoles: rights.canManage,
             removeMembers: rights.canRemove,
             archive: !!offer?.canArchive,

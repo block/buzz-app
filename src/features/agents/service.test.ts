@@ -14669,7 +14669,16 @@ describe("full external agent access", () => {
       const run = runnerGate<AgentHandle>();
       f.run.mockImplementationOnce(async ({ agent }) => run.resolve(agent));
       f.plugin.agents.wake(bot, { channel, root: "e".repeat(64), text: "hi" });
-      expect(await run.promise).toHaveProperty("ownerAccess");
+      const handle = await run.promise;
+      expect(handle).toHaveProperty("ownerAccess");
+      // Its writes take the calling turn from the host, never from a caller.
+      await expect(
+        handle.ownerAccess?.createChannel({
+          id: "33333333-3333-4333-8333-333333333333",
+          name: "Plans",
+          visibility: "open",
+        }),
+      ).rejects.toThrow("unavailable to this caller");
       const names = await f.names();
       expect(names).toContain("send");
       expect(names.filter((name) => name.startsWith("owner_"))).toEqual([]);

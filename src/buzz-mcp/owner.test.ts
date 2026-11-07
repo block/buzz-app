@@ -84,6 +84,24 @@ function owned() {
       revisions: [message("9", { kind: 40100, content: "# Plan\nShip it" })],
     })),
     held: vi.fn<OwnerAccess["held"]>(),
+    createChannel: vi.fn<OwnerAccess["createChannel"]>(async (input) => ({
+      execution: executedAs,
+      action: "create",
+      channel: input.id,
+      outcome: "confirmed",
+    })),
+    updateChannel: vi.fn<OwnerAccess["updateChannel"]>(async (input) => ({
+      execution: executedAs,
+      action: "update",
+      channel: input.id,
+      outcome: "confirmed",
+    })),
+    changeChannel: vi.fn<OwnerAccess["changeChannel"]>(async (action, id) => ({
+      execution: executedAs,
+      action,
+      channel: id,
+      outcome: "confirmed",
+    })),
   };
 }
 const clientWith = (fields: Partial<BuzzClient> = {}) =>
@@ -209,6 +227,199 @@ describe("callOwnerTool", () => {
     const { held: _, ...reads } = ownerAccess;
     for (const read of Object.values(reads))
       expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["owner_channel_create", { name: "plans", visibility: "open" }, "id must"],
+    [
+      "owner_channel_create",
+      { id: "not-a-uuid", name: "plans", visibility: "open" },
+      "id must",
+    ],
+    ["owner_channel_create", { id, name: "plans" }, "visibility must"],
+    ["owner_channel_create", { id, visibility: "open" }, "name is required"],
+    [
+      "owner_channel_create",
+      { id, name: "me", solo: true, visibility: "open" },
+      "Solo chat is private",
+    ],
+    [
+      "owner_channel_create",
+      { id, name: "me", solo: true, description: "x" },
+      "no description",
+    ],
+    [
+      "owner_channel_create",
+      { id, name: "p", visibility: "open", ttl_seconds: 0 },
+      "ttl_seconds",
+    ],
+    [
+      "owner_channel_create",
+      { id, name: "p", visibility: "open", operation: "abc" },
+      "operation must",
+    ],
+    [
+      "owner_channel_create",
+      { id, name: "p", visibility: "open", as: executedAs.owner },
+      "cannot be used",
+    ],
+    ["owner_channel_update", { channel: id, name: "x" }, "version"],
+    [
+      "owner_channel_update",
+      { channel: id, version: hex("1") },
+      "at least one",
+    ],
+    [
+      "owner_channel_update",
+      { channel: id, version: hex("1"), visibility: "public" },
+      "visibility must",
+    ],
+    [
+      "owner_channel_update",
+      { channel: id, version: hex("1"), join_role: "owner" },
+      "join_role must",
+    ],
+    [
+      "owner_channel_update",
+      { channel: id, version: hex("1"), name: " " },
+      "name must not be empty",
+    ],
+    ["owner_channel_archive", {}, "channel is required"],
+    ["owner_channel_delete", { channel: id, force: true }, "cannot be used"],
+  ])("rejects %s %j before changing anything", async (name, args, message) => {
+    const ownerAccess = owned();
+    await expect(
+      callOwnerTool(clientWith({ ownerAccess }), name, args),
+    ).rejects.toThrow(message);
+    for (const each of Object.values(ownerAccess))
+      expect(each).not.toHaveBeenCalled();
+  });
+
+  it("creates, updates and changes a channel with exactly the given fields, answering who it ran as", async () => {
+    const ownerAccess = owned();
+    const client = clientWith({ ownerAccess });
+    const text = async (name: string, args: Record<string, unknown>) =>
+      JSON.parse((await callOwnerTool(client, name, args)).text);
+    expect(
+      await text("owner_channel_create", {
+        id,
+        name: "Plans",
+        visibility: "private",
+        description: "Next quarter",
+        ttl_seconds: 3600,
+      }),
+    ).toEqual({
+      executedAs,
+      action: "create",
+      channel: id,
+      outcome: "confirmed",
+    });
+    expect(ownerAccess.createChannel).toHaveBeenLastCalledWith({
+      id,
+      name: "Plans",
+      visibility: "private",
+      description: "Next quarter",
+      ttlSeconds: 3600,
+    });
+    await text("owner_channel_create", { id, name: "Me", solo: true });
+    expect(ownerAccess.createChannel).toHaveBeenLastCalledWith({
+      id,
+      name: "Me",
+      visibility: "private",
+      solo: true,
+    });
+    await text("owner_channel_create", {
+      id,
+      name: "Plans",
+      visibility: "open",
+      operation: hex("2"),
+    });
+    expect(ownerAccess.createChannel).toHaveBeenLastCalledWith({
+      id,
+      operation: hex("2"),
+      name: "Plans",
+      visibility: "open",
+    });
+    await text("owner_channel_update", {
+      channel: id,
+      version: hex("1"),
+      visibility: "open",
+      join_role: "guest",
+      ttl_seconds: null,
+    });
+    expect(ownerAccess.updateChannel).toHaveBeenLastCalledWith({
+      id,
+      version: hex("1"),
+      visibility: "public",
+      joinRole: "guest",
+      ttlSeconds: null,
+    });
+    await text("owner_channel_update", {
+      channel: id,
+      version: hex("1"),
+      description: "",
+    });
+    expect(ownerAccess.updateChannel).toHaveBeenLastCalledWith({
+      id,
+      version: hex("1"),
+      description: "",
+    });
+    for (const action of ["archive", "unarchive", "delete"] as const)
+      expect(
+        await text(`owner_channel_${action}`, { channel: id }),
+      ).toMatchObject({ action, channel: id, outcome: "confirmed" });
+    expect(ownerAccess.changeChannel.mock.calls).toEqual([
+      ["archive", id],
+      ["unarchive", id],
+      ["delete", id],
+    ]);
+    ownerAccess.changeChannel.mockResolvedValueOnce({
+      execution: executedAs,
+      action: "delete",
+      channel: id,
+      outcome: "rejected",
+      reason: "busy",
+      error: "Another channel action is still in progress",
+    });
+    expect(await text("owner_channel_delete", { channel: id })).toMatchObject({
+      outcome: "rejected",
+      reason: "busy",
+    });
+  });
+
+  it("says what a write did when its binding changed before the answer was released", async () => {
+    const ownerAccess = owned();
+    ownerAccess.held.mockImplementation(() => {
+      throw new Error("changed");
+    });
+    ownerAccess.createChannel.mockResolvedValueOnce({
+      execution: executedAs,
+      action: "create",
+      channel: id,
+      outcome: "unconfirmed",
+      operation: hex("e"),
+    });
+    const sent = await callOwnerTool(
+      clientWith({ ownerAccess }),
+      "owner_channel_create",
+      { id, name: "plans", visibility: "open" },
+    );
+    expect(() => sent.held()).toThrow(
+      `owner_channel_create on ${id} (operation ${hex("e")}) may have taken effect`,
+    );
+    ownerAccess.changeChannel.mockResolvedValueOnce({
+      execution: executedAs,
+      action: "archive",
+      channel: id,
+      outcome: "rejected",
+      reason: "cancelled",
+    });
+    const refused = await callOwnerTool(
+      clientWith({ ownerAccess }),
+      "owner_channel_archive",
+      { channel: id },
+    );
+    expect(() => refused.held()).toThrow("changed nothing");
   });
 
   it("reads nothing for a client without owner access", async () => {
@@ -447,22 +658,35 @@ describe("callOwnerTool", () => {
     });
   });
 
-  it("names only the read tools", () => {
-    expect(OWNER_TOOLS.map(({ name }) => name)).toEqual([
+  it("names the read tools and the channel writes, marking only delete and update destructive", () => {
+    const reads = [
       "owner_channel_list",
       "owner_channel_get",
       "owner_member_list",
       "owner_read",
       "owner_canvas_get",
       "owner_canvas_history",
+    ];
+    expect(OWNER_TOOLS.map(({ name }) => name)).toEqual([
+      ...reads,
+      "owner_channel_create",
+      "owner_channel_update",
+      "owner_channel_archive",
+      "owner_channel_unarchive",
+      "owner_channel_delete",
     ]);
     expect(
       OWNER_TOOLS.every(
         (tool) =>
-          tool.annotations?.readOnlyHint === true &&
+          tool.annotations?.readOnlyHint === reads.includes(tool.name) &&
           tool.inputSchema.additionalProperties === false,
       ),
     ).toBe(true);
+    expect(
+      OWNER_TOOLS.filter((tool) => tool.annotations?.destructiveHint).map(
+        ({ name }) => name,
+      ),
+    ).toEqual(["owner_channel_update", "owner_channel_delete"]);
     expect(isOwnerTool("owner_channel_list")).toBe(true);
     expect(isOwnerTool("owner_send")).toBe(false);
   });

@@ -983,6 +983,12 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   instructions for watched turns in both Chat and Agent mode. Watched messages
   are context for that Interest; later direct requests do not inherit it. Mesh
   agents respond only to their owner.
+- **Owner tools**: in communities a build enables them, an agent running in this
+  app on a bundled harness can read its owner's channels with the owner's access
+  and create, edit, archive, unarchive or delete the owner's channels and Solo
+  chats. The owner stays the channel's Owner and the agent is not added. Each
+  change answers confirmed, rejected or unconfirmed; unconfirmed may still have
+  taken effect, so check the channel before asking again. Deleting is permanent.
 - **Solo workers**: where a plugin offers it, an owner can authorize one agent to
   start, message, read, stop, and archive the owner's workers in Solo chats. The
   agent asks the owner's Buzz in a private channel with only the two of them;

@@ -455,3 +455,70 @@ it("offers the handle's owner reads with the turn's signal, withholding answers 
   expect(() => client.ownerAccess?.held(execution)).toThrow("ended");
   expect(ownerAccess.held).toHaveBeenCalledOnce();
 });
+
+it("gives owner writes the turn's own caller check, and none to a harness without one", async () => {
+  const memories = async () => ({ entries: [], partial: false });
+  const answer = { outcome: "confirmed" } as never;
+  const ownerAccess = {
+    createChannel: vi.fn(async (..._: unknown[]) => answer),
+    updateChannel: vi.fn(async (..._: unknown[]) => answer),
+    changeChannel: vi.fn(async (..._: unknown[]) => answer),
+  };
+  let ended = false;
+  let protectedOut = false;
+  const controller = new AbortController();
+  const handle = {
+    pubkey: "agent",
+    ownerAccess,
+    protection: {
+      assertAvailable: () => {
+        if (protectedOut) throw new Error("Protection is unavailable");
+      },
+    },
+  } as unknown as AgentHandle;
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories,
+    signal: controller.signal,
+    check: () => {
+      if (ended) throw new Error("The turn has ended");
+    },
+  });
+  const input = { id: "c", name: "plans", visibility: "open" as const };
+  await expect(client.ownerAccess?.createChannel(input)).resolves.toBe(answer);
+  const [, caller] = ownerAccess.createChannel.mock.calls[0] as unknown as [
+    unknown,
+    { signal?: AbortSignal; check(): void },
+  ];
+  expect(caller.signal).toBe(controller.signal);
+  expect(() => caller.check()).not.toThrow();
+  // The caller is the turn itself: it fails once the turn, or its protection,
+  // no longer holds.
+  protectedOut = true;
+  expect(() => caller.check()).toThrow("Protection is unavailable");
+  protectedOut = false;
+  ended = true;
+  expect(() => caller.check()).toThrow("ended");
+  await expect(
+    client.ownerAccess?.changeChannel("archive", "c"),
+  ).rejects.toThrow("ended");
+  expect(ownerAccess.changeChannel).not.toHaveBeenCalled();
+  ended = false;
+  await client.ownerAccess?.updateChannel({ id: "c", version: "v" });
+  await client.ownerAccess?.changeChannel("delete", "c");
+  expect(ownerAccess.updateChannel.mock.calls[0]?.[0]).toEqual({
+    id: "c",
+    version: "v",
+  });
+  expect(ownerAccess.changeChannel.mock.calls[0]?.slice(0, 2)).toEqual([
+    "delete",
+    "c",
+  ]);
+
+  // A harness that can't say whether its turn still runs changes nothing.
+  const blind = appClient(handle, { read: vi.fn(), memories });
+  await expect(blind.ownerAccess?.createChannel(input)).rejects.toThrow(
+    "unavailable in this harness",
+  );
+  expect(ownerAccess.createChannel).toHaveBeenCalledOnce();
+});

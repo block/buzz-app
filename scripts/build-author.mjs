@@ -34,6 +34,7 @@ await writeFile(
       types: "types/plugins/author.d.ts",
       exports: { ".": { types: "./types/plugins/author.d.ts" } },
       dependencies: {
+        "@base-ui/react": pkg.dependencies["@base-ui/react"],
         "@deepseek-ai/cordis": pkg.dependencies["@deepseek-ai/cordis"],
         "@types/react": pkg.devDependencies["@types/react"],
         "nostr-tools": pkg.dependencies["nostr-tools"],

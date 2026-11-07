@@ -54,6 +54,9 @@ function Surfaces() {
         channelId="channel"
         disabled={false}
         recipients={[]}
+        readDraft={() => null}
+        replaceDraft={() => false}
+        isFocused={() => false}
         insertText={() => false}
         insertMention={() => false}
         insertMentions={() => false}

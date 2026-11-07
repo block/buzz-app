@@ -7368,9 +7368,15 @@ it("revokes captured tool commands after retargeting, disabling and unmounting",
   const h = mount();
   h.fill("channel draft");
   const channel = h.commands();
+  const captured = channel.readDraft();
+  expect(captured).not.toBeNull();
   h.retarget({ threadRootId: "root" });
   act(() => {
     expect(channel.insertText("stale")).toBe(false);
+    expect(channel.readDraft()).toBeNull();
+    expect(
+      channel.replaceDraft(captured as NonNullable<typeof captured>, "stale"),
+    ).toBe(false);
     expect(channel.insertMention(first)).toBe(false);
     expect(channel.insertResource(resource)).not.toBe(true);
   });

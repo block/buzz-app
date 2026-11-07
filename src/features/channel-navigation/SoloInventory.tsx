@@ -48,12 +48,15 @@ import {
 import creationStyles from "./SoloInventory.module.css";
 import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import type { ContributionReader } from "../conversation/contracts";
+import type { ContributionReader, TabAction } from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import type { ChatIcon, ChatMenu } from "../conversation/service";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 
 const noSubscription = () => () => {};
+const noneActions: readonly Contribution<TabAction>[] = [];
+const noTabActions = () => noneActions;
 const chatIcon = (
   <span className={styles.conversationIcon} aria-hidden="true">
     <ChatCircleIcon size={16} />
@@ -68,6 +71,7 @@ export function SoloInventory({
   target,
   chatIcons,
   chatMenus,
+  tabActions,
   renderContents,
 }: {
   session: RelaySession;
@@ -77,6 +81,8 @@ export function SoloInventory({
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  /** Conversation actions a chat row offers in its menu; one may claim ⌘-click. */
+  tabActions?: ContributionReader<TabAction> | undefined;
   renderContents?: (
     content: ReactNode,
     actions: ReactNode,
@@ -122,6 +128,20 @@ export function SoloInventory({
   const menus = useSyncExternalStore(
     chatMenus?.subscribe ?? noSubscription,
     () => chatMenus?.snapshot(),
+  );
+  const conversationActions = useSyncExternalStore(
+    tabActions?.subscribe ?? noSubscription,
+    tabActions?.snapshot ?? noTabActions,
+  );
+  const offered = useCallback(
+    (channelId: string, action: Contribution<TabAction>) => {
+      try {
+        return action.matches({ channelId }, session);
+      } catch {
+        return false; // A failing contribution hides itself, not the menu.
+      }
+    },
+    [session],
   );
   const workingChannels = useMemo(
     () => new Set<string>(JSON.parse(workingIds)),
@@ -185,7 +205,20 @@ export function SoloInventory({
         selected={selected === item.id}
         working={workingChannels.has(item.id)}
         Icon={ChatIcon}
-        onSelect={() => void open(item.id)}
+        onSelect={() => {
+          // ⌘/Ctrl-click hands the row to the action claiming the gesture.
+          const event = window.event;
+          const claimed =
+            event instanceof MouseEvent && (event.metaKey || event.ctrlKey)
+              ? conversationActions.find(
+                  (action) =>
+                    action.gesture === "modifier-click" &&
+                    offered(item.id, action),
+                )
+              : undefined;
+          if (claimed) claimed.run({ channelId: item.id }, session);
+          else void open(item.id);
+        }}
         onRename={rename}
         onOpenThread={(thread) => openMessage(thread.channelId, thread.rootId)}
         onOpenWorkingAgent={(id, _agent, messageId) => {
@@ -204,14 +237,29 @@ export function SoloInventory({
       open,
       openMessage,
       openAgentActivity,
+      conversationActions,
+      offered,
     ],
   );
   const renderChatMenu = useCallback(
-    (channelId: string) =>
-      menus?.map(({ key, component: Menu }) => (
-        <Menu key={key} session={session} channelId={channelId} />
-      )),
-    [menus, session],
+    (channelId: string) => (
+      <>
+        {menus?.map(({ key, component: Menu }) => (
+          <Menu key={key} session={session} channelId={channelId} />
+        ))}
+        {conversationActions
+          .filter((action) => offered(channelId, action))
+          .map((action) => (
+            <MenuItem
+              key={`action:${action.key}`}
+              onClick={() => action.run({ channelId }, session)}
+            >
+              {action.title}
+            </MenuItem>
+          ))}
+      </>
+    ),
+    [menus, session, conversationActions, offered],
   );
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.

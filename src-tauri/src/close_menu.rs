@@ -108,6 +108,11 @@ pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 pub(crate) fn handle<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) {
+    // A focused pop-out window is the key window: Close closes it, through
+    // its unsaved-work guard, rather than a tab in the hidden main window.
+    if event.id().as_ref() == CLOSE && crate::popout_window::close_focused(app) {
+        return;
+    }
     let script = match event.id().as_ref() {
         CLOSE => format!("{{ const tabEvent = \"buzz:close-active-tab\";\n{REQUEST}}}"),
         CLOSE_ALL => format!("{{ const tabEvent = \"buzz:close-all-tabs\";\n{REQUEST}}}"),

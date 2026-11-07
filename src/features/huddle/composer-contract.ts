@@ -8,6 +8,8 @@ export type ComposerSnapshot = {
   viewer: string | undefined;
   scope: string;
   room: string;
+  /** Thread root when the composer replies into a thread (pop-out windows). */
+  thread?: string | undefined;
   writable: boolean;
   uploads: boolean;
   canAdd: boolean;
@@ -23,6 +25,8 @@ export type ComposerSnapshot = {
   media: ReadonlyMap<string, string | undefined>;
   tools: readonly string[];
   completions: readonly string[];
+  /** Enabled link renderers, so a companion labels links as main does. */
+  links?: readonly string[];
 };
 export type ComposerOperations = {
   models: {
@@ -41,6 +45,74 @@ export type ComposerOperations = {
       attachments: readonly UploadedAttachment[];
     };
     result: string;
+  };
+  reply: {
+    args: {
+      text: string;
+      draft: string;
+      parent?: string | undefined;
+      picks?: import("../relay/messages").MentionPicks;
+      mentions: readonly string[];
+      references: readonly string[];
+      attachments: readonly UploadedAttachment[];
+    };
+    result: string;
+  };
+  /** Pop-out windows: operations on messages this window shows, admitted in
+   * main against its own view of them. Each answers with the outbox event id
+   * main will carry and the projection version at admission. */
+  react: {
+    args: {
+      messageId: string;
+      content: string;
+      emoji?: import("../relay/emoji").CustomEmoji | undefined;
+    };
+    result: import("../companion/operations").Admission;
+  };
+  removeReactions: {
+    args: { messageId: string; ids: readonly string[] };
+    result: import("../companion/operations").Admission;
+  };
+  deleteMessage: {
+    args: { messageId: string };
+    result: import("../companion/operations").Admission;
+  };
+  edit: {
+    args: {
+      messageId: string;
+      content: string;
+      attachmentSourceId: string;
+      /** The source text the companion edited; main refuses a stale one. */
+      baseline: string;
+    };
+    result: import("../companion/operations").Admission;
+  };
+  sendToChannel: {
+    args: { messageId: string };
+    result: import("../companion/operations").Admission;
+  };
+  retryOperation: { args: { id: string }; result: undefined };
+  /** Pop-out windows: hand a registered plugin action for a shown message to
+   * the main window (a labelled interim, not execution in the companion). */
+  handoff: {
+    args: { messageId: string; key: string; revision: string };
+    result: undefined;
+  };
+  /** The companion reconciled these terminal operation reports; main may
+   * stop repeating them. */
+  acknowledgeOperations: {
+    args: { ids: readonly string[] };
+    result: undefined;
+  };
+  markRead: { args: { messageId: string; unread: boolean }; result: undefined };
+  follow: { args: { following: boolean }; result: undefined };
+  report: {
+    args: {
+      messageId: string;
+      type: import("../relay/messages").ReportType;
+      note: string;
+    };
+    result: undefined;
   };
   release: { args: UploadedAttachment; result: undefined };
   agents: {
@@ -95,5 +167,5 @@ export type ComposerResponse =
   | { kind: "closed"; client: string };
 export type ComposerReader = Pick<
   ConversationExtensions,
-  "tools" | "completions"
+  "tools" | "completions" | "links"
 >;

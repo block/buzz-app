@@ -2,6 +2,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -57,6 +58,9 @@ type Props = {
   /** Menu items rendered above the built-in actions. */
   leadingItems?: ReactNode;
   overflowItems?: ReactNode;
+  /** Open the menu from outside and activate one contribution's item (by
+   * its `data-contribution` group), as a handed-off menu action does. */
+  openRequest?: { id: number; activate: number } | undefined;
 };
 
 export function MessageActionBar(props: Props) {
@@ -103,8 +107,32 @@ function MessageActionBarControls({
   messageId,
   menuTriggerRef,
   rowRef,
+  openRequest,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const activate = useRef<number>(undefined);
+  useEffect(() => {
+    if (!openRequest) return;
+    activate.current = openRequest.activate;
+    setOpen(true);
+  }, [openRequest]);
+  // The item is activated once this bar's own popup shows it (another
+  // rendering of the same message has its own bar); the contribution's own
+  // click handler runs, exactly as a chosen item's would.
+  const popupRef = useRef<HTMLDivElement>(null);
+  const activateRequested = () => {
+    const key = activate.current;
+    if (key === undefined) return;
+    const item = popupRef.current?.querySelector<HTMLElement>(
+      `[data-contribution="${key}"] [role="menuitem"]`,
+    );
+    if (!item) return;
+    activate.current = undefined;
+    if (item.getAttribute("aria-disabled") !== "true") item.click();
+  };
+  useEffect(() => {
+    if (open) activateRequested();
+  });
   const barRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const floating = useFloatingActionBar(
@@ -151,6 +179,7 @@ function MessageActionBarControls({
   };
   const popup = (
     <MenuPopup
+      ref={popupRef}
       align={children ? "start" : "end"}
       anchor={contextAnchor}
       data-message-id={messageId}
@@ -260,6 +289,8 @@ function MessageActionBarControls({
     </MenuPopup>
   );
   const closed = (opened: boolean) => {
+    if (opened) activateRequested();
+    else activate.current = undefined;
     if (!opened) {
       const action = afterClose.current;
       afterClose.current = undefined;

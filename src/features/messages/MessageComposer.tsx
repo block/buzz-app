@@ -311,6 +311,14 @@ export type MessageComposerProps = {
     | undefined;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
+  /** Told when this editor holds work that view state does not: an
+   * unresolved draft conflict, a draft whose save failed, a send in flight
+   * or a voice note being captured. A window hosting the editor asks before
+   * closing while true. */
+  onHeld?: ((held: boolean) => void) | undefined;
+  /** Told while a voice note is being captured (permission, recording,
+   * processing): work that is lost if the editor unmounts, unlike files. */
+  onCapturing?: ((capturing: boolean) => void) | undefined;
   /** Before a focused form detaches, its host can hand focus to retained content. */
   onFocusedRemoval?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
@@ -506,6 +514,8 @@ function Composer({
   onSend,
   onCommand,
   onDraftSaved,
+  onHeld,
+  onCapturing,
   onFocusedRemoval,
   editMessages,
   onOpenLink,
@@ -1308,6 +1318,17 @@ function Composer({
     !active || editingDisabled || !!editing.target || !canAttach,
     refuseAttachment,
   );
+  // A voice note being captured (permission, recording, processing) is
+  // unsent work until it is cancelled or lands in the attachment draft.
+  const held = conflict || storageFailed || sending || voice.capturing;
+  useEffect(() => {
+    onHeld?.(held);
+  }, [onHeld, held]);
+  const capturing = voice.capturing;
+  useEffect(() => {
+    onCapturing?.(capturing);
+    return () => onCapturing?.(false);
+  }, [onCapturing, capturing]);
   useEffect(() => {
     if (disabled) attachments.store.cancel();
     else attachments.store.resume();

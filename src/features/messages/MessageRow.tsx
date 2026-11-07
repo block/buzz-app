@@ -6,6 +6,7 @@ import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockPreference } from "../../shared/clock-preference";
+import { messageActionRequests } from "./action-requests";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -59,6 +60,7 @@ import {
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
@@ -105,6 +107,7 @@ import { useForwardMessage } from "./ForwardMessage";
 import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
 import {
   MenuIcon,
+  MenuGroup,
   MenuItem,
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
@@ -125,8 +128,12 @@ export type MessageRowProps = {
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   /** Resolves names, channels and mentions where the row is shown without
-   * `session`, which would also offer its controls. */
-  references?: RelaySession | undefined;
+   * `session`, which would also offer its controls. A companion's bridge
+   * session carries main's channel list and profiles. */
+  references?: RelaySession | ComposerSession | undefined;
+  /** Host-resolved labels for message links, by URL, where `references`
+   * cannot read the linked message (a companion shows main's). */
+  linkLabels?: ReadonlyMap<string, string> | undefined;
   scope?: string | undefined;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -149,6 +156,9 @@ export type MessageRowProps = {
   startsThreads?: boolean;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
+  /** Replaces the row's own reaction chips: a companion window renders
+   * `MessageReactions` over a session whose operations run in main. */
+  reactionSlot?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
   compactAvatar?: boolean;
   viewer?: string | undefined;
@@ -243,7 +253,9 @@ function MessageRowContent({
   startsThreads = true,
   quickControls,
   overflowItems,
+  reactionSlot,
   participantProfiles,
+  linkLabels,
   layout = "timeline",
   compactAvatar = false,
   viewer = session?.viewer,
@@ -540,37 +552,95 @@ function MessageRowContent({
       </MenuItem>
     </>
   );
-  const activateAction = (action: (typeof actions)[number]) => {
+  const activateAction = useCallback(
+    (action: (typeof actions)[number]) => {
+      if (
+        !session ||
+        !active ||
+        !extensions?.actions?.snapshot().includes(action)
+      )
+        return;
+      try {
+        if (action.matches(row, session))
+          setOpenAction({ action, session, messageId: row.id });
+      } catch {
+        // A failed matcher makes this action unavailable.
+      }
+    },
+    [session, active, extensions?.actions, row],
+  );
+  // A handed-off action (from a pop-out window) for this exact row: the exact
+  // contribution instance opens as if chosen here; a menu item's menu opens.
+  const [menuOpenRequest, setMenuOpenRequest] = useState<{
+    id: number;
+    activate: number;
+  }>();
+  const handedOff = useSyncExternalStore(
+    messageActionRequests.subscribe,
+    messageActionRequests.snapshot,
+    () => undefined,
+  );
+  useEffect(() => {
     if (
+      !handedOff ||
+      !scope ||
       !session ||
-      !active ||
-      !extensions?.actions?.snapshot().includes(action)
+      handedOff.session !== session ||
+      handedOff.scope !== scope ||
+      handedOff.channelId !== row.channelId ||
+      handedOff.messageId !== row.id
     )
       return;
-    try {
-      if (action.matches(row, session))
-        setOpenAction({ action, session, messageId: row.id });
-    } catch {
-      // A failed matcher makes this action unavailable.
-    }
-  };
+    const action = actions.find(
+      (entry) =>
+        entry.key === handedOff.key && entry.revision === handedOff.revision,
+    );
+    const taken = messageActionRequests.take(
+      session,
+      scope,
+      row.channelId,
+      row.id,
+    );
+    if (!taken || !action) return;
+    // A menu contribution owns its activation (its item's click): the menu
+    // opens and that contribution's item is activated as a chosen item is.
+    if (action.placement === "menu")
+      setMenuOpenRequest((previous) => ({
+        id: (previous?.id ?? 0) + 1,
+        activate: contributionKey(action),
+      }));
+    else activateAction(action);
+  }, [
+    handedOff,
+    scope,
+    session,
+    row.channelId,
+    row.id,
+    actions,
+    activateAction,
+  ]);
   const actionItems = (contextMenu: boolean) =>
     actions
       .filter((action) => action.placement !== "toolbar" || contextMenu)
       .map((action) =>
         action.placement === "menu" && session && extensions?.actions ? (
-          <ContributionBoundary key={contributionKey(action)} fallback={null}>
-            <WithTargetOpener
-              component={action.component}
-              props={{
-                message: row,
-                session,
-                close: () => setOpenAction(undefined),
-              }}
-              registry={extensions.actions}
-              entry={action}
-            />
-          </ContributionBoundary>
+          <MenuGroup
+            key={contributionKey(action)}
+            data-contribution={contributionKey(action)}
+          >
+            <ContributionBoundary fallback={null}>
+              <WithTargetOpener
+                component={action.component}
+                props={{
+                  message: row,
+                  session,
+                  close: () => setOpenAction(undefined),
+                }}
+                registry={extensions.actions}
+                entry={action}
+              />
+            </ContributionBoundary>
+          </MenuGroup>
         ) : (
           <MenuItem key={action.key} onClick={() => activateAction(action)}>
             {action.icon && (
@@ -679,6 +749,7 @@ function MessageRowContent({
       onOpenLink={openLink}
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
+      linkLabels={linkLabels}
       largeEmoji={emojiOnly}
       edited={editedInBody && displayRow.edited}
     />
@@ -764,6 +835,7 @@ function MessageRowContent({
     <MessageActionBar
       rowRef={rowRef}
       menuTriggerRef={menuTrigger}
+      openRequest={menuOpenRequest}
       messageId={row.id}
       onForward={forward ? () => forward(row) : undefined}
       onReply={
@@ -1024,7 +1096,9 @@ function MessageRowContent({
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
   const editedInBubble = !editedInBody && reactionsInBubble;
   const reactionContent =
-    session && scope && extensions ? (
+    reactionSlot !== undefined ? (
+      reactionSlot
+    ) : session && scope && extensions ? (
       <MessageReactions
         onFocusedRemoval={() =>
           menuTrigger.current?.focus({ preventScroll: true })
@@ -1291,6 +1365,7 @@ function MessageRowContent({
                       onOpenLink={openLink}
                       canOpenLink={canOpenLink}
                       participantProfiles={participantProfiles}
+                      linkLabels={linkLabels}
                     />
                   ))}
                 </div>

@@ -1,0 +1,275 @@
+// @vitest-environment jsdom
+import { expect, it, vi } from "vitest";
+import type { ComposerSession } from "../messages/composer-session";
+import { createCompanionOperations } from "./operations";
+
+const MESSAGE = "b".repeat(64);
+const OWN = "c".repeat(64);
+
+function setup() {
+  type Admit = { id: string; version: number };
+  const react = vi.fn<(args: unknown) => Promise<Admit>>();
+  const removeReactions = vi.fn<(args: unknown) => Promise<Admit>>();
+  const deleteMessage = vi.fn<(args: unknown) => Promise<Admit>>();
+  const edit = vi.fn<(args: unknown) => Promise<Admit>>();
+  const sendToChannel = vi.fn<(args: unknown) => Promise<Admit>>();
+  const retryOperation = vi.fn<(args: unknown) => Promise<undefined>>();
+  const acknowledgeOperations = vi.fn<(args: unknown) => Promise<undefined>>(
+    async () => undefined,
+  );
+  const base = {
+    viewer: "a".repeat(64),
+    messages: {},
+  } as unknown as ComposerSession;
+  const session = createCompanionOperations(
+    base,
+    {
+      react,
+      removeReactions,
+      deleteMessage,
+      edit,
+      sendToChannel,
+      retryOperation,
+      acknowledgeOperations,
+    },
+    {
+      messageOf: (eventId) => (eventId === OWN ? MESSAGE : undefined),
+      sourceOf: (messageId) => (messageId === MESSAGE ? "original" : undefined),
+    },
+  );
+  const changed = vi.fn();
+  session.outbox?.subscribe(changed);
+  return {
+    session,
+    react,
+    removeReactions,
+    deleteMessage,
+    edit,
+    sendToChannel,
+    retryOperation,
+    acknowledgeOperations,
+    changed,
+  };
+}
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+it("keeps one local id from request through main's delivery", async () => {
+  const h = setup();
+  const MAIN = "e".repeat(64);
+  let settle: (a: { id: string; version: number }) => void = () => {};
+  h.react.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  const id = h.session.messages.react(MESSAGE, "👍");
+  const [item] = h.session.outbox?.snapshot() ?? [];
+  if (!item) throw new Error("pending operation");
+  expect(item.event.id).toBe(id);
+  expect(item.delivery).toBe("sending");
+  expect(h.session.messages.reactionTarget(item.event)).toBe(MESSAGE);
+  settle({ id: MAIN, version: 5 });
+  await flush();
+  // Admitted, but not yet delivered: still sending under the same local id.
+  expect(h.session.outbox?.snapshot()[0]).toMatchObject({
+    event: { id },
+    delivery: "sending",
+  });
+  // An older projection says nothing; a newer one carrying main's id mirrors it.
+  h.session.setMainOperations([], 5);
+  expect(h.session.outbox?.snapshot()[0]?.event.id).toBe(id);
+  h.session.setMainOperations(
+    [
+      {
+        id: MAIN,
+        messageId: MESSAGE,
+        kind: 7,
+        delivery: "failed",
+        error: "Relay refused",
+      },
+    ],
+    6,
+  );
+  expect(h.session.outbox?.snapshot()[0]).toMatchObject({
+    event: { id },
+    delivery: "failed",
+    error: "Relay refused",
+  });
+  // Retry retries main's exact event.
+  h.retryOperation.mockResolvedValueOnce(undefined);
+  h.session.outbox?.retry(id);
+  expect(h.retryOperation).toHaveBeenCalledWith({ id: MAIN });
+  // Delivered: gone.
+  h.session.setMainOperations(
+    [{ id: MAIN, messageId: MESSAGE, kind: 7, delivery: "accepted" }],
+    7,
+  );
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("never infers delivery from absence; main's terminal report ends it, in either order", async () => {
+  const h = setup();
+  const MAIN = "f".repeat(64);
+  h.deleteMessage.mockResolvedValueOnce({ id: MAIN, version: 3 });
+  const id = h.session.messages.deleteMessage(MESSAGE);
+  await flush();
+  expect(h.session.outbox?.snapshot()[0]?.event).toMatchObject({ id, kind: 5 });
+  // A capped newer projection that omits it changes nothing.
+  h.session.setMainOperations([], 4);
+  expect(h.session.outbox?.snapshot()).toHaveLength(1);
+  h.session.setMainOperations(
+    [{ id: MAIN, messageId: MESSAGE, kind: 5, delivery: "accepted" }],
+    5,
+  );
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  // Only the adapter's own reconciliation tells main to stop repeating it.
+  expect(h.acknowledgeOperations).toHaveBeenCalledWith({ ids: [MAIN] });
+  // Terminal report before the admission reply: reconciled on admission.
+  let settle: (a: { id: string; version: number }) => void = () => {};
+  h.edit.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  const EDIT = "e".repeat(64);
+  const editId = h.session.messages.edit(MESSAGE, "x", "src");
+  h.session.setMainOperations(
+    [{ id: EDIT, messageId: MESSAGE, kind: 40003, delivery: "accepted" }],
+    6,
+  );
+  expect(h.session.outbox?.snapshot().some((i) => i.event.id === editId)).toBe(
+    true,
+  );
+  settle({ id: EDIT, version: 5 });
+  await flush();
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  // An older projection never regresses a newer status.
+  h.react.mockResolvedValueOnce({ id: "a".repeat(64), version: 7 });
+  const reactId = h.session.messages.react(MESSAGE, "👍");
+  await flush();
+  h.session.setMainOperations(
+    [
+      {
+        id: "a".repeat(64),
+        messageId: MESSAGE,
+        kind: 7,
+        delivery: "failed",
+        error: "x",
+      },
+    ],
+    8,
+  );
+  h.session.setMainOperations(
+    [{ id: "a".repeat(64), messageId: MESSAGE, kind: 7, delivery: "sending" }],
+    7,
+  );
+  expect(
+    h.session.outbox?.snapshot().find((i) => i.event.id === reactId)?.delivery,
+  ).toBe("failed");
+});
+
+it("shows main's refusal as a failed operation that can be retried with the same request", async () => {
+  const h = setup();
+  h.react.mockRejectedValueOnce(new Error("This thread is read-only."));
+  h.session.messages.react(MESSAGE, "👍");
+  await flush();
+  const [failed] = h.session.outbox?.snapshot() ?? [];
+  if (!failed) throw new Error("failed operation");
+  expect(failed).toMatchObject({
+    delivery: "failed",
+    error: "This thread is read-only.",
+  });
+  h.react.mockResolvedValueOnce({ id: "e".repeat(64), version: 1 });
+  h.session.outbox?.retry(failed.event.id);
+  expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("sending");
+  await flush();
+  expect(h.react).toHaveBeenCalledTimes(2);
+  h.session.setMainOperations(
+    [{ id: "e".repeat(64), messageId: MESSAGE, kind: 7, delivery: "seen" }],
+    2,
+  );
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("removes own reactions through main, naming the message they belong to", async () => {
+  const h = setup();
+  h.removeReactions.mockResolvedValueOnce({ id: "e".repeat(64), version: 1 });
+  h.session.messages.remove([OWN]);
+  const [item] = h.session.outbox?.snapshot() ?? [];
+  if (!item) throw new Error("pending operation");
+  expect(item.event.kind).toBe(5);
+  expect(h.session.messages.reactionTarget(item.event)).toBe(MESSAGE);
+  expect(h.removeReactions).toHaveBeenCalledWith({
+    messageId: MESSAGE,
+    ids: [OWN],
+  });
+  expect(() => h.session.messages.remove(["d".repeat(64)])).toThrow(
+    /Load the reaction/,
+  );
+  await flush();
+  h.session.setMainOperations(
+    [{ id: "e".repeat(64), messageId: MESSAGE, kind: 5, delivery: "accepted" }],
+    2,
+  );
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("shows main's admitted-but-undelivered reactions and retries that exact event through main", async () => {
+  const h = setup();
+  const admitted = "e".repeat(64);
+  h.session.setMainOperations(
+    [
+      {
+        id: admitted,
+        messageId: MESSAGE,
+        kind: 7,
+        delivery: "failed",
+        error: "Relay refused",
+      },
+    ],
+    1,
+  );
+  const [item] = h.session.outbox?.snapshot() ?? [];
+  expect(item).toMatchObject({ delivery: "failed", error: "Relay refused" });
+  expect(
+    h.session.messages.reactionTarget(item?.event ?? { kind: 0, tags: [] }),
+  ).toBe(MESSAGE);
+  h.retryOperation.mockRejectedValueOnce(
+    new Error("This change can no longer be retried here."),
+  );
+  h.session.outbox?.retry(admitted);
+  expect(h.retryOperation).toHaveBeenCalledWith({ id: admitted });
+  await flush();
+  expect(h.session.outbox?.snapshot()[0]?.error).toMatch(
+    /no longer be retried/,
+  );
+  // The next projection is authoritative: a delivered reaction disappears.
+  h.session.setMainOperations([], 2);
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+});
+
+it("acknowledges terminal reports it has no local for, so a reloaded window frees main's slots", async () => {
+  const h = setup();
+  const stale = Array.from({ length: 3 }, (_, i) => ({
+    id: (i + 1).toString(16).padStart(64, "0"),
+    messageId: MESSAGE,
+    kind: 40003 as const,
+    delivery: "accepted" as const,
+  }));
+  h.session.setMainOperations(stale, 1);
+  expect(h.acknowledgeOperations).toHaveBeenCalledWith({
+    ids: stale.map((op) => op.id),
+  });
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  // Repeated once by main before it processed the acknowledgement: no echo.
+  h.session.setMainOperations(stale, 2);
+  expect(h.acknowledgeOperations).toHaveBeenCalledTimes(1);
+  // Terminal-before-admission still resolves after that acknowledgement.
+  let settle: (a: { id: string; version: number }) => void = () => {};
+  h.edit.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  const EDIT = "e".repeat(64);
+  const id = h.session.messages.edit(MESSAGE, "x", "src");
+  h.session.setMainOperations(
+    [{ id: EDIT, messageId: MESSAGE, kind: 40003, delivery: "accepted" }],
+    3,
+  );
+  expect(h.session.outbox?.snapshot().some((i) => i.event.id === id)).toBe(
+    true,
+  );
+  settle({ id: EDIT, version: 2 });
+  await flush();
+  expect(h.session.outbox?.snapshot()).toEqual([]);
+  expect(h.acknowledgeOperations).toHaveBeenCalledTimes(2);
+});

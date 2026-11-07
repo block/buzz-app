@@ -157,8 +157,25 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   const discardSettings = useRef(false);
   const settingsEditorScope = useRef<string | undefined>(undefined);
+  // Work a community exit would discard (pop-out windows with unsent replies,
+  // say): a direct selection waits as a pending selection; a navigation that
+  // would change community asks here, before its route commits.
+  const exitHolds = useSyncExternalStore(
+    services.communities.subscribe,
+    services.communities.exitHolds,
+  );
+  const pendingSelection = useSyncExternalStore(
+    services.communities.subscribe,
+    services.communities.pendingSelection,
+  );
+  const exitTraversal = useRef<
+    { holds: readonly string[]; decide(proceed: boolean): void } | undefined
+  >(undefined);
+  const [confirmExit, setConfirmExit] = useState(false);
+  const holdingExit = exitHolds.length > 0;
   useLayoutEffect(() => {
-    if (!settingsUnsaved) return;
+    if (!settingsUnsaved && !holdingExit) return;
+    // One guard in the host's single slot decides both concerns.
     return services.navigationHost.guardDeparture((next, decide) => {
       if (discardSettings.current) {
         discardSettings.current = false;
@@ -167,17 +184,49 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       const current = services.navigation.snapshot().entry.target;
       // Settings sections share the mounted Profile editor. A different scope
       // or leaving the dialog would unmount it.
-      if (
-        next.kind === "settings" &&
-        current.kind === "settings" &&
-        JSON.stringify(next.scope) === JSON.stringify(current.scope)
-      )
-        return false;
-      settingsTraversal.current = decide;
-      setConfirmSettingsDiscard(true);
-      return true;
+      const leavingEditor =
+        settingsUnsaved &&
+        !(
+          next.kind === "settings" &&
+          current.kind === "settings" &&
+          JSON.stringify(next.scope) === JSON.stringify(current.scope)
+        );
+      const holds = services.communities.exitHolds();
+      const selected = services.communities.snapshot().selected;
+      const origin = selected ? communityDestination(selected).url : null;
+      const nextOrigin =
+        "scope" in next ? (next.scope?.communityOrigin ?? null) : origin;
+      const leavingCommunity = holds.length > 0 && nextOrigin !== origin;
+      // One decision covers both: the community prompt also names the editor.
+      if (leavingCommunity) {
+        exitTraversal.current = { holds, decide };
+        setConfirmExit(true);
+        return true;
+      }
+      if (leavingEditor) {
+        settingsTraversal.current = decide;
+        setConfirmSettingsDiscard(true);
+        return true;
+      }
+      return false;
     });
-  }, [services, settingsUnsaved]);
+  }, [services, settingsUnsaved, holdingExit]);
+  const keepCommunity = () => {
+    exitTraversal.current?.decide(false);
+    exitTraversal.current = undefined;
+    setConfirmExit(false);
+    services.communities.cancelSelection();
+  };
+  const leaveCommunity = () => {
+    const traversal = exitTraversal.current;
+    exitTraversal.current = undefined;
+    setConfirmExit(false);
+    // Confirming the switch also settles unsaved Settings edits: the dialog
+    // named them, and the route that follows must not ask again.
+    if (settingsUnsaved) discardSettings.current = true;
+    if (traversal) traversal.decide(true);
+    else services.communities.confirmSelection();
+  };
   const keepSettings = () => {
     settingsTraversal.current?.(false);
     settingsTraversal.current = undefined;
@@ -367,8 +416,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     const recovering =
       services.navigation.snapshot().ingress &&
       services.navigation.snapshot().retryable;
-    services.communities.select(id);
-    if (!recovering) select("buzz.channels/channels");
+    // Navigate only once selected: a held exit asks first and continues here.
+    services.communities.select(id, {
+      after: () => {
+        if (!recovering) select("buzz.channels/channels");
+      },
+    });
   };
   if (firstRun)
     return (
@@ -656,6 +709,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                 agents={services.agents}
                 chatIcons={services.conversation.chatIcons}
                 chatMenus={services.conversation.chatMenus}
+                tabActions={services.conversation.tabActions}
                 sidebarSections={services.sidebarSections}
                 sidebarScope={services.sidebarScope}
                 sidebarRows={services.sidebarRows}
@@ -707,6 +761,42 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             relay={services.relay}
           />
           <InterruptedNotice agents={services.agents} />
+          {(confirmExit || pendingSelection) && (
+            <AlertDialog
+              title={
+                !exitTraversal.current && pendingSelection?.id === null
+                  ? "Leave this community?"
+                  : "Switch community?"
+              }
+              description={
+                <>
+                  Switching closes work in this community that isn’t saved
+                  anywhere else:
+                  <ul className="mt-2 list-disc pl-5">
+                    {[
+                      ...(exitTraversal.current?.holds ??
+                        pendingSelection?.holds ??
+                        []),
+                      ...(settingsUnsaved
+                        ? ["Your profile has unsaved changes."]
+                        : []),
+                    ].map((hold) => (
+                      <li key={hold}>{hold}</li>
+                    ))}
+                  </ul>
+                </>
+              }
+              onClose={keepCommunity}
+              actions={
+                <>
+                  <Button onClick={keepCommunity}>Keep working</Button>
+                  <Button variant="destructive" onClick={leaveCommunity}>
+                    Switch anyway
+                  </Button>
+                </>
+              }
+            />
+          )}
           <MediaMenuDownloadNotice />
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />

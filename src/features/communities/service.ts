@@ -52,10 +52,27 @@ export type ClientSnapshot = Saved & {
   viewer?: string;
   error?: string;
 };
-/** Read-only membership inventory; does not acquire or select relay sessions. */
+/** A selection that exit holds blocked; the shell asks before it proceeds. */
+export type PendingSelection = Readonly<{
+  id: string | null;
+  holds: readonly string[];
+}>;
+/** Read-only membership inventory; does not acquire or select relay sessions.
+ * A feature holding work that a community exit would discard registers a
+ * describer here; exits then ask before discarding it. */
 export type CommunityReader = {
   snapshot(): ClientSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Descriptions of held work, read when an exit is requested. Present where
+   * the host owns community selection; a bare inventory omits them. */
+  holdExit?:
+    | ((
+        hold: () => readonly string[],
+        /** Wakes readers when what is held changes. */
+        subscribe?: (listener: () => void) => () => void,
+      ) => () => void)
+    | undefined;
+  exitHolds?: (() => readonly string[]) | undefined;
 };
 /** Known-community sync for its one upload owner: read the record and the
  * outbox, write back what the server settled and the memberships a server
@@ -110,6 +127,27 @@ export function createCommunities(
   const membershipVersions = new Map<string, number>();
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
+  // Work a community exit would discard, and the selection it is holding up.
+  const exitHoldSources = new Set<() => readonly string[]>();
+  let pendingSelection: PendingSelection | undefined;
+  let pendingAfter: (() => void) | undefined;
+  // Stable while unchanged, so a store reader can poll it on every render.
+  let lastHolds: readonly string[] = [];
+  const exitHolds = () => {
+    const next = [...exitHoldSources].flatMap((hold) => {
+      try {
+        return hold().slice(0, 16);
+      } catch {
+        return [];
+      }
+    });
+    if (
+      next.length !== lastHolds.length ||
+      next.some((hold, index) => hold !== lastHolds[index])
+    )
+      lastHolds = next;
+    return lastHolds;
+  };
   const sessions = new Map<string, ReturnType<typeof provideRelay>>();
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
@@ -447,6 +485,32 @@ export function createCommunities(
       () => () => window.removeEventListener("storage", syncLocalNames),
     );
   }
+  /** Selecting a community (or Personal space) ends the current one's
+   * sessions. While a feature holds work that would be lost, the request
+   * waits as `pendingSelection` for the shell to confirm; `after` runs once
+   * the selection has been made. Returns false while it waits. Callers that
+   * already asked (navigation's departure guard) pass `force`. */
+  function select(
+    id: string | null,
+    options: { force?: boolean; after?: () => void } = {},
+  ) {
+    if (id) id = communityDestination(id).id;
+    if (id && !state.memberships.some((m) => m.id === id))
+      throw new Error("Join this community first");
+    const holds = id === state.selected || options.force ? [] : exitHolds();
+    if (holds.length) {
+      pendingSelection = { id, holds };
+      pendingAfter = options.after;
+      for (const fn of listeners) fn();
+      return false;
+    }
+    pendingSelection = undefined;
+    pendingAfter = undefined;
+    if (id) acquire(id);
+    update({ selected: id });
+    options.after?.();
+    return true;
+  }
   return {
     presence: presenceActivity,
     relay,
@@ -491,12 +555,38 @@ export function createCommunities(
         false,
       );
     },
-    select(id: string | null) {
-      if (id) id = communityDestination(id).id;
-      if (id && !state.memberships.some((m) => m.id === id))
-        throw new Error("Join this community first");
-      if (id) acquire(id);
-      update({ selected: id });
+    select,
+    pendingSelection: (): PendingSelection | undefined => pendingSelection,
+    confirmSelection() {
+      const pending = pendingSelection;
+      const after = pendingAfter;
+      pendingSelection = undefined;
+      pendingAfter = undefined;
+      if (!pending) return;
+      select(pending.id, { force: true, ...(after ? { after } : {}) });
+    },
+    cancelSelection() {
+      if (!pendingSelection) return;
+      pendingSelection = undefined;
+      pendingAfter = undefined;
+      for (const fn of listeners) fn();
+    },
+    exitHolds,
+    holdExit(
+      hold: () => readonly string[],
+      subscribe?: (listener: () => void) => () => void,
+    ) {
+      exitHoldSources.add(hold);
+      const notify = () => {
+        for (const fn of listeners) fn();
+      };
+      const stop = subscribe?.(notify);
+      notify();
+      return () => {
+        stop?.();
+        exitHoldSources.delete(hold);
+        notify();
+      };
     },
     /** A joined community's session, connected without selecting it, for
      * background work such as agents; it lives until the community is left. */
@@ -522,6 +612,9 @@ export function createCommunities(
         membership.id,
         (membershipVersions.get(membership.id) ?? 0) + 1,
       );
+      // Admission is kept either way; selecting the new community is an exit
+      // from the current one, so held work makes it a pending selection.
+      const holds = membership.id === state.selected ? [] : exitHolds();
       update(
         {
           memberships: [
@@ -529,12 +622,17 @@ export function createCommunities(
             membership,
           ],
           profile: state.profile.name ? state.profile : profile,
-          selected: membership.id,
+          selected: holds.length ? state.selected : membership.id,
           sync: enqueue(state.sync, relayAddress(membership.id), false),
         },
         true,
         !!nativeConnect && !live,
       );
+      if (holds.length) {
+        pendingSelection = { id: membership.id, holds };
+        pendingAfter = undefined;
+        for (const fn of listeners) fn();
+      }
       if (sessions.has(membership.id)) sessions.get(membership.id)?.retry();
       else acquire(membership.id);
       emitRelay();

@@ -243,7 +243,34 @@ export function createHuddleComposerClient(token: string) {
             ),
           });
         },
-        reply: unavailable,
+        reply: (
+          room,
+          root,
+          text,
+          mentions = [],
+          attachments = [],
+          parent,
+          references = [],
+          picks = {},
+        ) => {
+          if (room !== initial.room || root !== initial.thread)
+            return Promise.reject(new Error("Thread destination changed."));
+          return request("reply", {
+            text,
+            parent,
+            picks,
+            mentions,
+            attachments,
+            references,
+            draft: JSON.stringify(
+              readView(
+                initial.scope,
+                `draft:${initial.room}:thread:${root}`,
+                null,
+              ),
+            ),
+          });
+        },
         edit: unavailable,
       },
       repositories: {
@@ -288,6 +315,29 @@ export function createHuddleComposerClient(token: string) {
   post({ kind: "hello", client });
   return {
     models: (pubkeys: readonly string[]) => request("models", pubkeys),
+    /** Pop-out operations: admitted in main against the messages it shows. */
+    react: (args: ComposerOperations["react"]["args"]) =>
+      request("react", args),
+    removeReactions: (args: ComposerOperations["removeReactions"]["args"]) =>
+      request("removeReactions", args),
+    deleteMessage: (args: ComposerOperations["deleteMessage"]["args"]) =>
+      request("deleteMessage", args),
+    edit: (args: ComposerOperations["edit"]["args"]) => request("edit", args),
+    sendToChannel: (args: ComposerOperations["sendToChannel"]["args"]) =>
+      request("sendToChannel", args),
+    retryOperation: (args: ComposerOperations["retryOperation"]["args"]) =>
+      request("retryOperation", args),
+    handoff: (args: ComposerOperations["handoff"]["args"]) =>
+      request("handoff", args),
+    acknowledgeOperations: (
+      args: ComposerOperations["acknowledgeOperations"]["args"],
+    ) => request("acknowledgeOperations", args),
+    markRead: (args: ComposerOperations["markRead"]["args"]) =>
+      request("markRead", args),
+    follow: (args: ComposerOperations["follow"]["args"]) =>
+      request("follow", args),
+    report: (args: ComposerOperations["report"]["args"]) =>
+      request("report", args),
     gifs: {
       supports: (_community, signal?: AbortSignal) =>
         request("gifSupport", undefined, signal),

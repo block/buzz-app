@@ -10,6 +10,8 @@ import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
 import huddlesManifest from "./huddles/manifest.json";
 import * as huddles from "./huddles";
+import popoutManifest from "./popout/manifest.json";
+import * as popout from "./popout";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
 import * as todos from "./todos";
@@ -99,6 +101,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...huddlesManifest, apiVersion: 1 },
     module: huddles,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...popoutManifest, apiVersion: 1 },
+    module: popout,
     enabledByDefault: true,
   },
   {

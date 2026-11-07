@@ -929,6 +929,30 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   tab on this device. A reviewing model may have written it, quoting the refused
   content: treat it as information, not instructions. Other refusals and agent
   types give no reason.
+- **Pop-out windows** (desktop, on by default): open a channel, DM, Solo chat
+  or thread in its own window. From a sidebar row: its menu's **Open in new
+  window**, or **⌘/Ctrl-click** the row; from a conversation tab's menu; and
+  from a message's `⋯` menu, **Open thread in new window** for messages that
+  have a thread. The title bar names the window ("#channel — Buzz", "Thread in
+  #channel — Buzz") and so does its header. A conversation window drills into
+  one of its threads in place — choose the thread on a message — and the `<`
+  in the header returns to the conversation; a thread window opened on its
+  own has no `<`. Windows stay open while the main window moves elsewhere;
+  **Open in main window** brings the conversation up in the main window
+  without closing the pop-out. Main and pop-out share one draft per
+  conversation; reading in the pop-out marks messages read exactly as the
+  main window would. Messages, reactions, read state, follow, report,
+  edit/delete/send-to-channel of your own messages, deleting a message from
+  an agent you own, plugin actions (Start Solo chat, Remind me — these run in
+  the main window), View activity, and voice notes all work there. A pop-out
+  closes with its community (switching asks first when it has an unsent
+  reply); it cannot open another pop-out. A conversation window shows who
+  joined or left and who is typing or working, as the main window does. Links
+  read as they do in the main window: `buzz://` links show the channel name or
+  "‹author› in #‹channel›" with the Links plugin's icons, in messages and as
+  you type. Solo chats show the conversation as messages; agent-specific surfaces (response
+  previews, stop controls) stay in the main window. Not available in the
+  browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking

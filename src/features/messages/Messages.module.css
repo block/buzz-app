@@ -335,17 +335,15 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }
-/* Your reactions keep their tint and ring after the pointer leaves. The ring is
-   an inset outline: an inset box-shadow cost hover frames on macOS. */
+/* Your reactions keep their tint after the pointer leaves. */
 .reactionItem[data-mine] {
   background: var(--reaction-self-surface, var(--affordance-reaction-self));
-  outline: 1px solid var(--reaction-self-border, var(--border-reaction-self));
-  outline-offset: -1px;
 }
 /* Forced colors replace the tint, so a system-color ring keeps it marked. */
 @media (forced-colors: active) {
   .reactionItem[data-mine] {
-    outline-color: Highlight;
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
   }
 }
 .reactionGlyph {
@@ -3280,7 +3278,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --reaction-surface: var(--affordance-reaction-own);
   --reaction-ink: var(--text-message-own);
   --reaction-self-surface: var(--affordance-reaction-self-own);
-  --reaction-self-border: var(--border-reaction-self-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
   --message-icon-subtle: var(--icon-subtle-own);
   --message-metadata: var(--text-metadata-own);
@@ -3935,7 +3932,6 @@ html[data-keyboard-navigation]
   --reaction-surface: initial;
   --reaction-ink: initial;
   --reaction-self-surface: initial;
-  --reaction-self-border: initial;
   /* An edited marker there sits on the panel too. */
   --message-metadata: initial;
 }

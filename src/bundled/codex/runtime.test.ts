@@ -574,6 +574,7 @@ function fixture(
     args: unknown,
     index = starts().length - 1,
     overrides = {},
+    answerAfter?: Promise<unknown>,
   ) => {
     const threadId = (
       starts()[index]?.params as { threadId: string } | undefined
@@ -593,6 +594,7 @@ function fixture(
         ...overrides,
       },
     });
+    if (answerAfter) await answerAfter;
     await vi.waitFor(
       () =>
         expect(sent.some((wire) => wire.id === id && !wire.method)).toBe(true),
@@ -4548,11 +4550,17 @@ it.each([false, true])(
       started.resolve();
       return late ? gate.promise : child;
     });
-    const reading = f.tool("send", {
-      audience: "everyone",
-      path: "answer.txt",
-      final: true,
-    });
+    const reading = f.tool(
+      "send",
+      {
+        audience: "everyone",
+        path: "answer.txt",
+        final: true,
+      },
+      undefined,
+      {},
+      gate.promise,
+    );
     await started.promise;
     f.interrupt();
     try {

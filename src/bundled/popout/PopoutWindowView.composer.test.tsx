@@ -232,3 +232,108 @@ it("keeps a conversation's files and close protection while drilled into a threa
   ).toBeTruthy();
   await waitFor(() => expect(act).toHaveBeenLastCalledWith("guard", "1"));
 });
+
+it("keeps every retained draft: the first of nine threads' files is still there when it is reopened", async () => {
+  const h = harness();
+  const threadOwners = Array.from({ length: 9 }, (_, i) => {
+    const owner = createHuddleComposerOwner(
+      h.session,
+      h.room,
+      h.room,
+      undefined,
+      () => true,
+      () => true,
+      undefined,
+      String(i + 1).padStart(64, "0"),
+    );
+    cleanup.push(() => owner.dispose());
+    return owner;
+  });
+  const act = vi.fn();
+  const conversation = { ...view(h), thread: false, root: undefined };
+  const threadView = (i: number) => ({
+    ...view(h),
+    thread: true,
+    canGoBack: true,
+    composer: threadOwners[i]?.token,
+  });
+  const mounted = render(<PopoutWindowView view={conversation} act={act} />);
+  await screen.findByRole("textbox", { name: "Message #Design" });
+  for (let i = 0; i < 9; i++) {
+    mounted.rerender(<PopoutWindowView view={threadView(i)} act={act} />);
+    await screen.findByRole("textbox", { name: "Reply to thread" });
+    const input = mounted.container.querySelector('input[type="file"]');
+    if (!input) throw new Error("Missing file picker");
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["t"], `thread-${i + 1}.txt`, { type: "text/plain" })],
+      },
+    });
+    await screen.findByRole("button", { name: `Remove thread-${i + 1}.txt` });
+    mounted.rerender(<PopoutWindowView view={conversation} act={act} />);
+    await screen.findByRole("textbox", { name: "Message #Design" });
+  }
+  mounted.rerender(<PopoutWindowView view={threadView(0)} act={act} />);
+  expect(
+    await screen.findByRole("button", { name: "Remove thread-1.txt" }),
+  ).toBeTruthy();
+  await waitFor(() => expect(act).toHaveBeenLastCalledWith("guard", "1"));
+});
+
+it("asks before leaving a view while a voice note is being recorded", async () => {
+  const track = { stop: vi.fn(), kind: "audio" };
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    mediaDevices: {
+      getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })),
+    },
+  });
+  class Recorder extends EventTarget {
+    state = "inactive";
+    static isTypeSupported = () => true;
+    start() {
+      this.state = "recording";
+    }
+    stop() {
+      this.state = "inactive";
+      this.dispatchEvent(new Event("stop"));
+    }
+  }
+  vi.stubGlobal("MediaRecorder", Recorder);
+  vi.stubGlobal(
+    "AudioContext",
+    class {
+      createAnalyser = () => ({ fftSize: 0, smoothingTimeConstant: 0 });
+      createMediaStreamSource = () => ({ connect: () => {} });
+      close = async () => {};
+    },
+  );
+  const h = harness();
+  const act = vi.fn();
+  const root = view(h).root as NonNullable<PopoutView["root"]>;
+  const conversation: PopoutView = {
+    ...view(h),
+    thread: false,
+    root: undefined,
+    replies: [{ ...root, replyCount: 2 }],
+  };
+  render(<PopoutWindowView view={conversation} act={act} />);
+  await screen.findByRole("textbox", { name: "Message #Design" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Record voice note" }),
+  );
+  await waitFor(() => expect(act).toHaveBeenLastCalledWith("guard", "1"));
+  fireEvent.click(
+    screen.getByRole("button", { name: /View thread: 2 replies/ }),
+  );
+  expect(act).not.toHaveBeenCalledWith("openThread", expect.anything());
+  expect(screen.getByText("Discard your recording?")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Keep recording" }));
+  expect(act).not.toHaveBeenCalledWith("openThread", expect.anything());
+  expect(track.stop).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getByRole("button", { name: /View thread: 2 replies/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Discard and continue" }));
+  expect(act).toHaveBeenCalledWith("openThread", root.id);
+});

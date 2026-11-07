@@ -659,6 +659,9 @@ available rather than silently discarding it.
   then choose a supported **Thinking** level. If Builderlab recommends a model
   and thinking level, both start selected; change either to choose your own. Both
   choices are required; changing the model clears the thinking choice.
+  A bolt after a model's name means Builderlab serves it on faster hardware, so
+  it replies sooner. When only some models are fast, the menu also lists them
+  in a **Fast** section at the top, above the families.
   Instructions are optional. **Create agent** stays disabled until its name and
   required choices are complete; Builderlab also waits for sign-in and its model
   catalog.

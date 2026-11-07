@@ -708,6 +708,19 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+`call(client, context, args)` can read `client.signal`, a host-owned
+`AbortSignal` captured for that call. Native Claude and Codex cancel it on
+Stop. Keep that exact signal across waits. Pass it to work that supports
+cancellation, then call `signal.throwIfAborted()` before an external write.
+A new turn does not restore a canceled call. The supplied client also checks
+cancellation before it publishes. Stop cannot undo a write already sent.
+The signal does not grant access or replace the plugin's access checks.
+Hosts without a cancellation signal omit it; a tool that requires one must
+refuse the call when it is absent. Do not infer cancellation from conversation
+activity. The signal is a live object, not part of saved tool arguments or
+session archives. `BuzzClient` from `@buzz/author` declares this property;
+`AddedToolContext` keeps only the conversation destination.
+
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns
 [the authoring guide](plugin-authoring-guide.md), bundled with the app.

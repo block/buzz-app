@@ -30,6 +30,8 @@ export function appClient(
     /** Reject operations after the owning turn or community has ended. */
     check?(): void;
     signal?: AbortSignal;
+    /** Exact request cancellation exposed to added tools. */
+    callSignal?: AbortSignal;
     protectionContext?(): Promise<unknown>;
     /** Retain a file-backed native snapshot until the exact tool check settles. */
     captureProtectionContext?(): Promise<{ value: unknown; release(): void }>;
@@ -51,6 +53,7 @@ export function appClient(
   const plugins = agent.plugins;
   const { settings } = agent;
   return {
+    ...(options.callSignal ? { signal: options.callSignal } : {}),
     ...(agent.protection
       ? {
           protect: async (

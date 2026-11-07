@@ -36,8 +36,8 @@ export type AddedTool = Readonly<{
   name: string;
   description: string;
   inputSchema: Readonly<Record<string, unknown>>;
-  /** Runs it as the agent working in `context`. A throw is a tool error for
-   * the agent to correct. */
+  /** Runs as the agent in `context`. Use `client.signal` to cancel waits and
+   * check it before external writes. A throw is a tool error for the agent. */
   call(
     client: BuzzClient,
     context: Context,

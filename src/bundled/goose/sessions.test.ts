@@ -388,27 +388,23 @@ describe("AgentSessions", () => {
   });
 
   it("runs another thread's steer unchanged when it becomes the next turn", async () => {
-    const { fake, sessions } = setup({}, true);
+    const held = gated("_goose/unstable/session/steer");
+    const { fake, sessions } = setup({}, true, { wrap: held.wrap });
     const first = sessions.deliver("c", "first", 1, { activityScope: "A" });
     await flush(30);
-    const [goose] = fake.geese;
-    // goose names a run that has already ended, so it refuses the steer.
-    goose?.update("session-1", {
-      sessionUpdate: "session_info_update",
-      _meta: { goose: { activeRunId: "run-0" } },
-    });
     const other = sessions.deliver("c", "plain", 2, {
       steer: "steer",
       activityScope: "B",
     });
     await flush(30);
-    const steers = goose?.received.filter(
-      (message) => message.method === "_goose/unstable/session/steer",
-    );
-    expect(steers).toHaveLength(1);
-    expect(goose?.turns[0]?.steered).toEqual([]);
+    expect(held.waiting()).toEqual(["session-1"]);
+    // A's run ends before goose reads the steer, so goose refuses it.
+    const [goose] = fake.geese;
     goose?.turns[0]?.finish();
     await flush(30);
+    held.release();
+    await flush(30);
+    expect(goose?.turns[0]?.steered).toEqual([]);
     expect(goose?.turns.map((turn) => turn.text)).toEqual(["first", "steer"]);
     goose?.turns[1]?.finish();
     await expect(Promise.all([first, other])).resolves.toHaveLength(2);

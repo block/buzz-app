@@ -25,6 +25,19 @@ function FastSuffix({ model }: { model: ModelChoice }) {
   ) : null;
 }
 
+/** Menu rows space their children apart; one text run keeps the suffix
+ * attached to the name instead of floating as its own column. */
+function ModelName({ model, label }: { model: ModelChoice; label: string }) {
+  return model.fast ? (
+    <span>
+      {label}
+      <FastSuffix model={model} />
+    </span>
+  ) : (
+    label
+  );
+}
+
 /** Catalogs expose IDs, not a common family field. Unknown IDs remain available. */
 export function modelFamily(model: ModelChoice): string {
   if (model.family) return model.family;
@@ -187,10 +200,14 @@ export function ModelFamilyMenu({
                         value={model.id}
                         closeOnClick
                       >
-                        {model.unlisted && model.description
-                          ? `${model.label} · ${model.description}`
-                          : model.label}
-                        <FastSuffix model={model} />
+                        <ModelName
+                          model={model}
+                          label={
+                            model.unlisted && model.description
+                              ? `${model.label} · ${model.description}`
+                              : model.label
+                          }
+                        />
                       </MenuRadioItem>
                     ),
                   )}
@@ -249,8 +266,7 @@ function EffortMenu({
       }}
     >
       <MenuSubmenuTrigger role="menuitemradio" aria-checked={selected}>
-        {model.label}
-        <FastSuffix model={model} />
+        <ModelName model={model} label={model.label} />
         {selected && <CheckIcon size={16} aria-hidden="true" />}
       </MenuSubmenuTrigger>
       <MenuSubmenuPopup aria-label={`${model.label} thinking effort`}>

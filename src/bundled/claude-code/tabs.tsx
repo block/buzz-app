@@ -9,6 +9,7 @@ import { ProviderDialogActions } from "../../features/agents/ProviderDialogActio
 // Claude's provider controls, New agent choices, and agent settings.
 import {
   type ReactNode,
+  useCallback,
   useEffect,
   useRef,
   useId,
@@ -221,6 +222,38 @@ function ClaudeSignIn({
         />
       </Dialog>
     </>
+  );
+}
+
+/** While `claude auth login` runs: the code its browser page may show to
+ * paste back. Not a form: it sits inside agent creation's and Settings' own. */
+function SignInCode({ setup }: { setup: ClaudeSetup }) {
+  const [code, setCode] = useState("");
+  const send = () => {
+    if (!code.trim()) return;
+    void setup.answer(code.trim());
+    setCode("");
+  };
+  return (
+    <Field
+      label="Sign-in code"
+      description="If the browser shows a code to paste, enter it here."
+    >
+      <div className="flex items-center gap-2">
+        <Input
+          value={code}
+          onValueChange={setCode}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            send();
+          }}
+        />
+        <Button type="button" disabled={!code.trim()} onClick={send}>
+          Send
+        </Button>
+      </div>
+    </Field>
   );
 }
 
@@ -591,6 +624,15 @@ export function createTabs({
     const ready = !!state.status && !signedOut && !resolving;
     useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const [asking, setAsking] = useState(false);
+    // A sign-in this surface started, which closing or leaving it cancels,
+    // so an abandoned browser flow can't later switch every Claude agent.
+    const ownSignIn = useRef(false);
+    const cancelOwnSignIn = useCallback(() => {
+      if (ownSignIn.current && setup.snapshot().running === "sign-in")
+        void setup.cancel();
+      ownSignIn.current = false;
+    }, []);
+    useEffect(() => cancelOwnSignIn, [cancelOwnSignIn]);
     // Once per arrival: after a key is saved, a later sign-out asks in the row.
     const asked = useRef(false);
     useEffect(() => {
@@ -654,6 +696,7 @@ export function createTabs({
           onOpenChange={(next) => {
             if (next) return;
             setAsking(false);
+            cancelOwnSignIn();
             // Only the person closes it this way: credentials close it
             // through `signedOut`. Closing without them turns Claude down.
             onDecline?.();
@@ -663,18 +706,25 @@ export function createTabs({
             {/* A build that signs in interactively (`auth.signIn`) starts
              * it here, as Claude's Settings dialog does; a key's form saves
              * on its own. */}
-            {setup.auth.signIn && !signingIn && (
+            {setup.auth.signIn && (
               <div>
+                {/* Kept while pending, so focus and size stay; Close cancels. */}
                 <Button
                   size="sm"
                   variant="prominent"
-                  disabled={props.disabled || !!state.running}
-                  onClick={() => void setup.run("sign-in")}
+                  loading={signingIn}
+                  // A check under way would skip the one sign-in ends with.
+                  disabled={props.disabled || !!state.running || state.checking}
+                  onClick={() => {
+                    ownSignIn.current = true;
+                    void setup.run("sign-in");
+                  }}
                 >
                   Sign in
                 </Button>
               </div>
             )}
+            {signingIn && <SignInCode setup={setup} />}
             <SignIn setup={setup} disabled={props.disabled} />
           </div>
         </Dialog>
@@ -762,7 +812,11 @@ export function createTabs({
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
     const state = useSetupCatalog();
     const status = state.status;
-    const ready = status?.state === "ready" && !state.checking;
+    // Switching to the account signs in from a ready Claude.
+    const ready =
+      status?.state === "ready" &&
+      !state.checking &&
+      state.running !== "sign-in";
     const signingIn =
       state.running === "sign-in" ||
       (status?.state === "signed-out" && !state.running);
@@ -826,6 +880,19 @@ export function createTabs({
               </p>
             </div>
           )}
+          {state.running === "sign-in" && (
+            <p
+              role="status"
+              className="m-0 flex items-center gap-2 text-body-sm"
+            >
+              <CircleNotchIcon
+                size={16}
+                aria-hidden="true"
+                className="motion-safe:animate-spin"
+              />
+              Waiting for Claude Code sign-in…
+            </p>
+          )}
           {status?.state === "missing" && !state.running && (
             <p className="m-0 text-body-sm text-subtle">
               Downloads Buzz's own copy of Claude (about 250 MB) from
@@ -843,6 +910,7 @@ export function createTabs({
               {state.output}
             </div>
           )}
+          {state.running === "sign-in" && <SignInCode setup={setup} />}
           {signingIn && <SignIn setup={setup} onSaved={onClose} />}
           {status?.state === "error" && (
             <p className="m-0 text-body-sm text-subtle">
@@ -854,7 +922,7 @@ export function createTabs({
         {/* Kept through a routine check, so a paste or save goes on. Saving
             the key closes the dialog while the key is all it edits; once it
             has other settings, saving should leave it open. */}
-        {status?.state === "ready" && (
+        {status?.state === "ready" && state.running !== "sign-in" && (
           <SignedIn setup={setup} onSaved={onClose} />
         )}
         <ProviderDialogActions>

@@ -1880,7 +1880,9 @@ made swaps bubble fills, with no ring: on a received bubble or the panel it
 takes `affordance-reaction-self`, your own bubble's fill, with its ink
 `text-reaction-self`; inside your bubble it takes `affordance-reaction-self-own`,
 the received bubble's fill, with `text-reaction-self-own`. A highlight on a
-highlight would barely show.
+highlight would barely show. At Chillin’ the tinted bubble is too faint for
+that, so a reaction you made takes the solid `accent-9` with the accent ink, as
+at Buzzin’, and inside your bubble the panel white (`neutral-7` in dark mode).
 
 When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in

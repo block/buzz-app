@@ -417,14 +417,15 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "--affordance-reaction-self",
         variable: "--affordance-reaction-self",
-        pointsAt: "surface-message-own",
+        pointsAt: "surface-message-own at Buzzin’; accent-9 at Chillin’",
         use: "A reaction you made, on received bubbles and the panel: your own bubble's fill, paired with text-reaction-self.",
         status: "core",
       },
       {
         token: "--affordance-reaction-self-own",
         variable: "--affordance-reaction-self-own",
-        pointsAt: "surface-message",
+        pointsAt:
+          "surface-message at Buzzin’; neutral-1 at Chillin’ (neutral-7 in dark mode)",
         use: "A reaction you made inside your own bubble: the received bubble's fill, paired with text-reaction-self-own.",
         status: "core",
       },
@@ -676,7 +677,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-reaction-self",
         variable: "--text-reaction-self",
-        pointsAt: "text-message-own",
+        pointsAt: "text-message-own at Buzzin’; accent ink at Chillin’",
         use: "Count of a reaction you made on received bubbles and the panel, paired with bg-affordance-reaction-self.",
         status: "core",
       },

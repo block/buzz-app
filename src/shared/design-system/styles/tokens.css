@@ -1976,6 +1976,11 @@
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
+  /* The tinted bubble is too faint for a reaction you made, so it takes the
+     solid accent as at Buzzin’, and the panel fill inside your bubble. */
+  --affordance-reaction-self: var(--accent-9);
+  --text-reaction-self: var(--accent-ink);
+  --affordance-reaction-self-own: var(--neutral-1);
 }
 
 :root[data-color-level="touch"][data-color-mode="dark"],
@@ -1983,6 +1988,11 @@
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
+  /* As in light mode; inside your bubble a lifted neutral, since the panel is
+     darker than the bubble. */
+  --affordance-reaction-self: var(--accent-9);
+  --text-reaction-self: var(--accent-ink);
+  --affordance-reaction-self-own: var(--neutral-7);
 }
 
 :root[data-color-level="high"],

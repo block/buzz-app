@@ -206,8 +206,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
-  or removes your reaction. Capsules you reacted with take the color of your
-  own messages; on your own messages they take the color of everyone else's.
+  or removes your reaction. Capsules you reacted with take your solid accent
+  color; on your own messages they take a neutral gray instead.
 - In the fullscreen video viewer, comments and emoji reactions at the current
   frame stay attached to that video when you move through a thread's media.
 - With **Voice Notes** enabled, use the microphone in the composer to record

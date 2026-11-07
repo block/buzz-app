@@ -121,6 +121,23 @@ it("at the synced limit, recent catch-up never pushes out a quiet channel's mark
   for (const key of [...channels, ...threads])
     expect(kept.frontiers[key]).toBe(state.frontiers[key]);
 });
+it("row seen marks go last and are never override ancestry", () => {
+  const seen = Array.from({ length: 300 }, (_, n) => [`seen:room${n}`, 100]);
+  const state = {
+    frontiers: { room: 20, "msg:a": 5, ...Object.fromEntries(seen) },
+    overrides: { "msg:child": { set: 4, clear: 0, baseline: 15 } },
+  };
+  // Ancestry would need every seen mark kept, which cannot fit.
+  const kept = retainReadState([state], {}, "fixture", 512);
+  expect(kept.overrides).toEqual(state.overrides);
+  expect(kept.frontiers.room).toBe(20);
+  expect(kept.frontiers["msg:a"]).toBe(5);
+  const rows = Object.keys(kept.frontiers).filter((key) =>
+    key.startsWith("seen:"),
+  );
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.length).toBeLessThan(seen.length);
+});
 it("old broad marks never crowd out the newest read", () => {
   const hex = (n: number) => n.toString(16).padStart(64, "0");
   const uuid = (n: number) =>

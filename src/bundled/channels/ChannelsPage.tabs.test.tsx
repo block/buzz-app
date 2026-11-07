@@ -1225,11 +1225,14 @@ it("lists a plugin's tab action for the tabs it matches, with the exact target",
       };
     },
   };
+  // A stable snapshot: the page's forward provider subscribes to navigation.
+  const navigationSnapshot = { entry: { id: "visit" }, attempt: {} };
   const h = await page(
     "stream",
     {
       open: vi.fn(async () => ({ status: "opened" as const })),
-      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+      snapshot: () => navigationSnapshot,
+      subscribe: () => () => {},
     } as unknown as Navigation,
     false,
     undefined,

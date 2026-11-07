@@ -20,7 +20,6 @@ import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { UnreadBadge } from "./UnreadBadge";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
-import { clearView, writeView } from "../../shared/view-state";
 
 afterEach(cleanup);
 
@@ -746,93 +745,5 @@ it("keeps cached mute from quieting unread but retains confirmed mute through re
     expect(row()).toHaveAttribute("data-ordinary");
   } finally {
     store.dispose();
-  }
-});
-
-it("marks a channel with a draft in it or one of its threads, except while it is open", () => {
-  const state = owner();
-  const scope = `https://demo.invalid:${"a".repeat(64)}`;
-  Object.assign(state.session, { scope });
-  const thread = `draft:alpha:thread:${"b".repeat(64)}`;
-  try {
-    const view = render(
-      <ChannelSidebarItem {...itemProps(state.session, false)} />,
-    );
-    expect(document.querySelector("[data-channel-draft]")).toBeNull();
-    act(() => {
-      writeView(scope, "draft:alpha", { text: "  \n", recipients: [] });
-    });
-    // Whitespace is not a draft, the same rule Drafts & sent counts by.
-    expect(document.querySelector("[data-channel-draft]")).toBeNull();
-    act(() => {
-      writeView(scope, thread, { text: "Half a reply", recipients: [] });
-    });
-    const pencil = screen.getByRole("img", { name: "Draft" });
-    expect(pencil).toHaveAttribute("title", "Draft");
-    // Part of the row's name, not a separate stop.
-    expect(pencil.closest("button")).toHaveAttribute(
-      "data-channel-id",
-      "alpha",
-    );
-    expect(screen.getByRole("button", { name: /Alpha.*Draft/ })).toBe(
-      pencil.closest("button"),
-    );
-    view.rerender(
-      <ChannelSidebarItem
-        {...itemProps(state.session, false)}
-        selected="alpha"
-      />,
-    );
-    expect(document.querySelector("[data-channel-draft]")).toBeNull();
-    view.rerender(<ChannelSidebarItem {...itemProps(state.session, false)} />);
-    expect(screen.getByRole("img", { name: "Draft" })).toBeInTheDocument();
-    // One quiet marker at a time: the draft outranks the lifetime clock.
-    view.rerender(
-      <ChannelSidebarItem
-        {...itemProps(state.session, false, {
-          id: "alpha",
-          name: "Alpha",
-          channelType: "stream",
-          ttlSeconds: 604800,
-        })}
-      />,
-    );
-    expect(document.querySelector("[data-channel-temporary]")).toBeNull();
-    act(() => clearView(scope, thread));
-    expect(document.querySelector("[data-channel-draft]")).toBeNull();
-    expect(document.querySelector("[data-channel-temporary]")).not.toBeNull();
-  } finally {
-    localStorage.clear();
-  }
-});
-
-it("re-renders a row for its own drafts, not for typing elsewhere", () => {
-  const state = owner();
-  const scope = `https://demo.invalid:${"a".repeat(64)}`;
-  Object.assign(state.session, { scope });
-  let commits = 0;
-  try {
-    render(
-      <Profiler id="row" onRender={() => commits++}>
-        <ChannelSidebarItem {...itemProps(state.session, false)} />
-      </Profiler>,
-    );
-    const settled = commits;
-    act(() => {
-      writeView(scope, "draft:beta", { text: "Elsewhere", recipients: [] });
-    });
-    act(() => {
-      writeView(scope, "draft:beta", {
-        text: "Elsewhere, more",
-        recipients: [],
-      });
-    });
-    expect(commits).toBe(settled);
-    act(() => {
-      writeView(scope, "draft:alpha", { text: "Here", recipients: [] });
-    });
-    expect(screen.getByRole("img", { name: "Draft" })).toBeInTheDocument();
-  } finally {
-    localStorage.clear();
   }
 });

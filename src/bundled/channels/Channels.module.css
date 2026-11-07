@@ -1038,16 +1038,6 @@ html[data-keyboard-navigation]
   place-items: center;
 }
 
-/* A draft sits just left of the counts; with no count it takes their place. */
-.draftMarker {
-  display: inline-flex;
-  flex-shrink: 0;
-  color: var(--text-subtle);
-}
-.draftMarker + .indicatorStack:has(> .indicatorLayer:empty:only-child) {
-  display: none;
-}
-
 .indicatorLayer,
 .thinkingBadge {
   grid-area: 1 / 1;

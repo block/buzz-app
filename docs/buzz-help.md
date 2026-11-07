@@ -546,11 +546,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   opens the original conversation.
   Search above the list matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
-  attached files without opening the conversation. The same drafts show where
-  you left them: a pencil at the right edge of a channel or DM's sidebar row
-  when it, or one of its threads, holds a draft (hidden while that conversation is
-  open), and **Draft** on a message's reply line, or **Draft reply** when no
-  one has replied yet (hidden while that thread is open).
+  attached files without opening the conversation. A thread draft also shows
+  where you left it: **Draft** on a message's reply line, or **Draft reply** when
+  no one has replied yet (hidden while that thread is open).
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;

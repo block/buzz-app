@@ -598,10 +598,23 @@ export function createTabs({
       asked.current = true;
       setAsking(true);
     }, [signedOut, onDecline]);
-    // Credentials that arrive any way close the ask for good.
+    // Credentials that arrive any way close the ask for good, and an ask
+    // they answer says so: a saved key, or an interactive sign-in.
+    const askingNow = useRef(false);
+    askingNow.current = asking;
+    const notifyNow = useRef(notify);
+    notifyNow.current = notify;
     useEffect(() => {
-      if (!signedOut) setAsking(false);
+      if (signedOut) return;
+      if (askingNow.current)
+        notifyNow.current(
+          "Claude is set up",
+          "success",
+          openSetup && { label: "Manage in Settings", onClick: openSetup },
+        );
+      setAsking(false);
     }, [signedOut]);
+    const signingIn = state.running === "sign-in";
     return (
       <>
         <SettingsGroup>
@@ -641,26 +654,29 @@ export function createTabs({
           onOpenChange={(next) => {
             if (next) return;
             setAsking(false);
-            // Only the person closes it this way: saving closes it through
-            // `signedOut`. Closing without a key turns Claude down.
+            // Only the person closes it this way: credentials close it
+            // through `signedOut`. Closing without them turns Claude down.
             onDecline?.();
           }}
         >
-          <SignIn
-            setup={setup}
-            disabled={props.disabled}
-            onSaved={() => {
-              setAsking(false);
-              notify(
-                "Claude API key added",
-                "success",
-                openSetup && {
-                  label: "Manage in Settings",
-                  onClick: openSetup,
-                },
-              );
-            }}
-          />
+          <div className="grid gap-3">
+            {/* A build that signs in interactively (`auth.signIn`) starts
+             * it here, as Claude's Settings dialog does; a key's form saves
+             * on its own. */}
+            {setup.auth.signIn && !signingIn && (
+              <div>
+                <Button
+                  size="sm"
+                  variant="prominent"
+                  disabled={props.disabled || !!state.running}
+                  onClick={() => void setup.run("sign-in")}
+                >
+                  Sign in
+                </Button>
+              </div>
+            )}
+            <SignIn setup={setup} disabled={props.disabled} />
+          </div>
         </Dialog>
       </>
     );

@@ -73,6 +73,20 @@ vi.mock("@tauri-apps/api/core", () => ({
     return null;
   },
 }));
+// A build whose auth.tsx signs in interactively, as Block's does: its
+// ClaudeAuth has a sign-in step, which here saves the credentials.
+const interactive = vi.hoisted(() => ({ signIn: false }));
+vi.mock("./auth", async (actual) => {
+  const real = await actual<typeof import("./auth")>();
+  class ClaudeAuth extends real.ClaudeAuth {
+    override readonly signIn = interactive.signIn
+      ? async () => {
+          nativeKey.saved = true;
+        }
+      : undefined;
+  }
+  return { ...real, ClaudeAuth };
+});
 const dialogMotion = vi.hoisted(() => ({ reduced: false }));
 vi.mock("motion/react", async (actual) => ({
   ...(await actual<typeof import("motion/react")>()),
@@ -1753,7 +1767,7 @@ it("asks for the key in Set up Claude when Claude is picked, then offers its mod
     await screen.findByRole("combobox", { name: "Model" }),
   ).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
-  expect(await screen.findByText("Claude API key added")).toBeVisible();
+  expect(await screen.findByText("Claude is set up")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Manage in Settings" }));
   expect(navigation.open).toHaveBeenCalledWith({
     version: 1,
@@ -1797,6 +1811,61 @@ it("keeps Claude's missing key as a row in the Harness group when Claude starts 
   ).toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "Set up Claude" })).toBeNull();
   expect(onReadyChange).toHaveBeenLastCalledWith(true);
+});
+
+it("offers an interactive sign-in in Set up Claude when the build has one", async () => {
+  interactive.signIn = true;
+  try {
+    const { type } = installed({ keySaved: false });
+    const Configuration = type.CreateConfiguration;
+    if (!Configuration) throw new Error("Missing creation configuration");
+    const onDecline = vi.fn();
+    render(
+      <ToastProvider>
+        <Configuration
+          config={DEFAULT_CONFIG}
+          disabled={false}
+          harnessControl={<div>Harness row</div>}
+          onDecline={onDecline}
+          onChange={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
+    await userEvent
+      .setup()
+      .click(within(dialog).getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Set up Claude" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByRole("combobox", { name: "Model" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Claude is set up")).toBeVisible();
+    expect(onDecline).not.toHaveBeenCalled();
+  } finally {
+    interactive.signIn = false;
+  }
+});
+
+it("offers no sign-in button where the key's form is the setup", async () => {
+  const { type } = installed({ keySaved: false });
+  const Configuration = type.CreateConfiguration;
+  if (!Configuration) throw new Error("Missing creation configuration");
+  render(
+    <Configuration
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      harnessControl={<div>Harness row</div>}
+      onDecline={vi.fn()}
+      onChange={vi.fn()}
+    />,
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
+  expect(within(dialog).getByLabelText("Anthropic API key")).toBeVisible();
+  expect(within(dialog).queryByRole("button", { name: "Sign in" })).toBeNull();
 });
 
 it("lets an agent on an execution target be edited without a key on this computer", async () => {

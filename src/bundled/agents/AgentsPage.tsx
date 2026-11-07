@@ -138,6 +138,8 @@ import {
 } from "./routes";
 import { AgentCardCreate } from "./AgentCardCreate";
 import { writeClipboardText } from "../../shared/clipboard";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -186,12 +188,14 @@ export function AgentsPage({
   communities,
   navigation,
   navigator,
+  linkRenderers,
 }: {
   agents: Agents;
   relay: RelayData;
   communities?: CommunityReader | undefined;
   navigation?: PageNavigation;
   navigator?: Navigation;
+  linkRenderers?: ConversationExtensions["links"] | undefined;
 }) {
   const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
@@ -738,6 +742,32 @@ export function AgentsPage({
         memories={
           connection.status === "ready"
             ? connection.session.agentMemories
+            : undefined
+        }
+        memoryLinks={
+          connection.status === "ready"
+            ? {
+                session: connection.session,
+                registry: linkRenderers,
+                open(url) {
+                  if (
+                    !navigator ||
+                    !navigation ||
+                    navigation.signal.aborted ||
+                    navigator.snapshot().entry.id !== navigation.entryId ||
+                    !connection.viewer ||
+                    !connection.origin
+                  )
+                    return false;
+                  const target = buzzLinkTarget(url, {
+                    viewer: connection.viewer,
+                    communityOrigin: connection.origin,
+                  });
+                  if (!target) return false;
+                  void navigator.open(target);
+                  return true;
+                },
+              }
             : undefined
         }
         onRemoved={() => removed(selected.pubkey)}

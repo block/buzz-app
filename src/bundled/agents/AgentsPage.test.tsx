@@ -1,4 +1,5 @@
 import { ProfilePanel } from "../profiles/ProfilePanel";
+import { createAgentMemories } from "../../features/agents/memory";
 import {
   createRelaySession,
   type RelaySession,
@@ -589,6 +590,90 @@ it("opens the side panel with the type's tabs and the app's Settings and Memory 
     "aria-selected",
     "false",
   );
+});
+
+it("opens memory Buzz links in their community and rejects a retired page's callback", async () => {
+  const user = userEvent.setup();
+  const viewer = "f".repeat(64),
+    channelId = "11111111-1111-4111-8111-111111111111",
+    messageId = "e".repeat(64);
+  const url = `buzz://message?channel=${channelId}&id=${messageId}`;
+  const owner = createRelaySession({
+    viewer,
+    relayAuthor: "d".repeat(64),
+    query: async () => [],
+    media: () => undefined,
+  });
+  const memories = createAgentMemories(
+    async () => ({
+      entries: [
+        { slug: "core", body: url, eventId: "b".repeat(64), createdAt: 1 },
+      ],
+      partial: false,
+    }),
+    viewer,
+    () => true,
+  );
+  const signal = new AbortController();
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  let entryId = "agents";
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator = {
+    snapshot: () => ({ entry: { id: entryId, target } }),
+    open,
+  } as unknown as Navigation;
+  const navigation = {
+    entryId,
+    target,
+    signal: signal.signal,
+    position: () => undefined,
+    savePosition() {},
+  } as unknown as PageNavigation;
+  const page = { navigation, navigator };
+  const view = setup([agent("Ada", 1)]);
+  const connection = {
+    status: "ready",
+    generation: 1,
+    viewer,
+    origin: "https://relay.example",
+    scope: `https://relay.example:${viewer}`,
+    session: { ...owner.session, agentMemories: memories.capability },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={relay} {...page} />);
+    await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+    await user.click(screen.getByRole("tab", { name: "Memory" }));
+    await user.click(await screen.findByRole("button", { name: "core" }));
+    const link = screen.getByRole("link", { name: url });
+    await user.click(link);
+    expect(open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: "https://relay.example" },
+      channelId,
+      messageId,
+    });
+    entryId = "another-page";
+    await user.click(link);
+    expect(open).toHaveBeenCalledTimes(1);
+    entryId = "agents";
+    signal.abort();
+    await user.click(link);
+    expect(open).toHaveBeenCalledTimes(1);
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
 });
 
 it("checks providers in Agent setup and opens their host-owned dialogs", async () => {

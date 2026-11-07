@@ -6,17 +6,18 @@ import {
   type PopoutControl,
 } from "./window";
 import type { RelayData } from "../relay/service";
-import { createRelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 
 const ROOT = "b".repeat(64);
 const VIEWER = "a".repeat(64);
 
-function harness() {
+function harness(patch: (base: RelaySession) => object = () => ({})) {
   const store = createRelaySession(null);
   const session = {
     ...store.session,
     viewer: VIEWER,
     media: (url: string) => url,
+    ...patch(store.session),
   };
   let connection = {
     session,
@@ -282,4 +283,102 @@ it("projects the main window's applied appearance, not just a dark class, and fo
     delete root.dataset.colorMode;
     delete root.dataset.accent;
   }
+});
+
+it("a conversation window drills into a shown thread in place and comes back; a thread window never drills", async () => {
+  const rows = [
+    {
+      id: ROOT,
+      channelId: "channel",
+      authorId: VIEWER,
+      createdAt: 1,
+      content: "Root",
+      attachments: [],
+      mentions: [],
+      reactions: [],
+      replyCount: 2,
+      participants: [],
+    },
+  ];
+  const channel = {
+    id: "channel",
+    name: "Design",
+    channelType: "stream" as const,
+  };
+  const threads: string[] = [];
+  const h = harness((base) => ({
+    channels: {
+      ...base.channels,
+      get: () => channel,
+      ensure: () => {},
+      window: () => ({
+        channelId: "channel",
+        status: "ready",
+        rows,
+        hasMore: false,
+        loadingOlder: false,
+        error: undefined,
+      }),
+      subscribeWindow: () => () => {},
+    },
+    thread: (_channelId: string, rootId: string) => {
+      threads.push(rootId);
+      return {
+        snapshot: () => ({
+          status: "ready",
+          error: undefined,
+          canLoadMore: false,
+          limited: false,
+          root: rows[0],
+          replies: [],
+        }),
+        subscribe: () => () => {},
+        refresh: async () => {},
+        loadMore: async () => {},
+        retarget: async () => "selected" as const,
+        dispose: () => {},
+      };
+    },
+  }));
+  await h.windows.open({ channelId: "channel" });
+  const opened = vi.mocked(h.bridge.open).mock.calls[0];
+  expect(opened?.[0]).toMatchObject({ channelId: "channel" });
+  expect(opened?.[0].threadRootId).toBeUndefined();
+  expect(opened?.[1]).toMatchObject({
+    thread: false,
+    canGoBack: false,
+    title: "Design",
+    root: undefined,
+  });
+  expect(opened?.[1].replies.map((r) => r.id)).toEqual([ROOT]);
+  // An unknown root is ignored; a shown one opens a thread frame in place.
+  h.control("openThread", "f".repeat(64));
+  await h.flush();
+  expect(threads).toEqual([]);
+  h.control("openThread", ROOT);
+  await h.flush();
+  expect(threads).toEqual([ROOT]);
+  let latest = vi.mocked(h.bridge.update).mock.lastCall?.[1];
+  expect(latest).toMatchObject({ thread: true, canGoBack: true });
+  expect(latest?.root?.id).toBe(ROOT);
+  // The thread frame drills no further; back returns to the conversation.
+  h.control("openThread", ROOT);
+  await h.flush();
+  expect(threads).toEqual([ROOT]);
+  h.control("back");
+  await h.flush();
+  latest = vi.mocked(h.bridge.update).mock.lastCall?.[1];
+  expect(latest).toMatchObject({ thread: false, canGoBack: false });
+  h.control("back");
+  await h.flush();
+  expect(vi.mocked(h.bridge.update).mock.lastCall?.[1]).toMatchObject({
+    canGoBack: false,
+  });
+  // One window per conversation: reopening focuses the same binding.
+  await h.windows.open({ channelId: "channel" });
+  expect(h.bridge.open).toHaveBeenCalledTimes(2);
+  expect(h.windows.isOpen({ channelId: "channel" })).toBe(true);
+  expect(h.windows.isOpen({ channelId: "channel", threadRootId: ROOT })).toBe(
+    false,
+  );
 });

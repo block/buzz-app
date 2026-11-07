@@ -13,7 +13,11 @@ import {
 import { createReadingOwner } from "./reading-bridge";
 import { createPopoutThread, type PopoutThreadView } from "./thread";
 
-export type PopoutTarget = { channelId: string; threadRootId: string };
+/** A conversation (channel, DM, Solo chat) or one thread of it. */
+export type PopoutTarget = {
+  channelId: string;
+  threadRootId?: string | undefined;
+};
 export type PopoutBinding = PopoutTarget & {
   scope: string;
   viewer: string;
@@ -23,6 +27,8 @@ export type PopoutView = PopoutThreadView & {
   dark: boolean;
   /** The main window's applied appearance, mirrored by this window. */
   appearance?: DocumentAppearance | undefined;
+  /** This frame was opened from the previous one; `back` returns there. */
+  canGoBack?: boolean;
   closeRequested?: number;
   detached?: boolean;
 };
@@ -30,6 +36,8 @@ export type PopoutAction =
   | "openLink"
   | "openInMain"
   | "focusMain"
+  | "openThread"
+  | "back"
   | "older"
   | "retry"
   | "retryMessage"
@@ -63,21 +71,32 @@ export const nativePopoutWindow: PopoutBridge = {
 };
 const hex = /^[0-9a-f]{64}$/;
 
+/** What a window shows at one point of its history: a projection, the
+ * composer owner and the reading owner for one target. */
+type Frame = {
+  target: PopoutTarget;
+  thread: ReturnType<typeof createPopoutThread>;
+  composer: ReturnType<typeof createHuddleComposerOwner>;
+  reading: ReturnType<typeof createReadingOwner>;
+};
 type Entry = {
   /** Empty while native creation is pending; the entry is owned regardless. */
   label: string;
   session: RelaySession;
   scope: string;
   viewer: string;
+  /** The window's binding: what it was opened for (native dedupes on it). */
   target: PopoutTarget;
-  thread: ReturnType<typeof createPopoutThread>;
-  composer: ReturnType<typeof createHuddleComposerOwner>;
-  reading: ReturnType<typeof createReadingOwner>;
+  /** Bottom first; the top frame is what the window shows. A conversation
+   * window drills into one of its threads here, as Slack's does. */
+  frames: Frame[];
   /** The companion holds work view state does not (files, a conflicted or
    * unsaved reply); a voluntary community exit names it before discarding. */
   held: boolean;
   retired: boolean;
 };
+const top = (entry: Entry) => entry.frames[entry.frames.length - 1] as Frame;
+const MAX_FRAMES = 2;
 
 /** Main-window owner of every pop-out. Companions are remote views; this is the
  * only place that reads the thread, sends, or publishes reading intent for them. */
@@ -128,14 +147,21 @@ export function createPopoutWindows(
   const same = (a: PopoutTarget, b: PopoutTarget) =>
     a.channelId === b.channelId && a.threadRootId === b.threadRootId;
   function view(entry: Entry): PopoutView {
+    const frame = top(entry);
     return {
-      ...entry.thread.snapshot(),
-      composer: entry.thread.writable() ? entry.composer.token : undefined,
-      reading: entry.reading.token,
+      ...frame.thread.snapshot(),
+      composer: frame.thread.writable() ? frame.composer.token : undefined,
+      reading: frame.reading.token,
       dark: appearance().colorMode === "dark",
       appearance: appearance(),
+      canGoBack: entry.frames.length > 1,
     };
   }
+  const disposeFrame = (frame: Frame) => {
+    frame.reading.dispose();
+    frame.composer.dispose();
+    frame.thread.dispose();
+  };
   function sync(entry: Entry) {
     if (entry.retired || !entry.label) return;
     const next = view(entry);
@@ -147,9 +173,7 @@ export function createPopoutWindows(
     entry.retired = true;
     entries.delete(entry);
     if (entry.held) for (const listener of holdListeners) listener();
-    entry.reading.dispose();
-    entry.composer.dispose();
-    entry.thread.dispose();
+    for (const frame of entry.frames) disposeFrame(frame);
     if (entry.label) void chain(() => bridge.update(entry.label, null));
     if (reason) notify(reason);
   }
@@ -178,26 +202,58 @@ export function createPopoutWindows(
         // An agent's activity view opens beside this conversation in main,
         // through the existing target opener; other Buzz links navigate.
         if (profileActivityViewKey(text))
-          options.openActivity?.(text, entry.target);
+          options.openActivity?.(text, top(entry).target);
         else options.openLink?.(text);
         return;
       case "focusMain":
         return; // Native handles it and forwards nothing.
-      case "openInMain":
+      case "openInMain": {
+        const { channelId, threadRootId } = top(entry).target;
         options.openLink?.(
-          `buzz://message?channel=${encodeURIComponent(entry.target.channelId)}&id=${entry.target.threadRootId}&thread=${entry.target.threadRootId}`,
+          threadRootId
+            ? `buzz://message?channel=${encodeURIComponent(channelId)}&id=${threadRootId}&thread=${threadRootId}`
+            : `buzz://channel/${encodeURIComponent(channelId)}`,
         );
         return;
+      }
+      case "openThread": {
+        // A conversation frame drills into one of the threads it shows; the
+        // thread frame itself never opens anything further.
+        const frame = top(entry);
+        if (
+          !text ||
+          !hex.test(text) ||
+          frame.target.threadRootId ||
+          entry.frames.length >= MAX_FRAMES ||
+          !frame.thread.shown(text)
+        )
+          return;
+        entry.frames.push(
+          createFrame(entry, {
+            channelId: frame.target.channelId,
+            threadRootId: text,
+          }),
+        );
+        sync(entry);
+        return;
+      }
+      case "back": {
+        if (entry.frames.length < 2) return;
+        const frame = entry.frames.pop() as Frame;
+        disposeFrame(frame);
+        sync(entry);
+        return;
+      }
       case "older":
-        entry.thread.older();
+        top(entry).thread.older();
         return;
       case "retry":
-        entry.thread.retry();
+        top(entry).thread.retry();
         return;
       case "retryMessage":
       case "discardMessage":
         if (text)
-          entry.thread.recover(text, control.action === "discardMessage");
+          top(entry).thread.recover(text, control.action === "discardMessage");
         return;
       case "guard": {
         const held = text === "1";
@@ -211,13 +267,93 @@ export function createPopoutWindows(
         return;
     }
   }
+  /** The projection, composer owner and reading owner for one target of a
+   * window; the window's binding (session, scope, viewer) is the entry's. */
+  function createFrame(entry: Entry, target: PopoutTarget): Frame {
+    const { session } = entry;
+    const frame: Frame = {
+      target,
+      thread: createPopoutThread(
+        session,
+        target.channelId,
+        target.threadRootId,
+        () => {
+          if (!entry.label || entry.retired || top(entry) !== frame) return;
+          // Revocation: the roster is known and the channel is gone or cached.
+          if (
+            !frame.thread.available() &&
+            session.channels.list().status === "ready" &&
+            session.channels.list().coverage !== "partial"
+          )
+            retire(
+              entry,
+              `Closed the pop-out window: ${frame.thread.snapshot().title} is no longer available.`,
+            );
+          else sync(entry);
+        },
+        options.actions,
+      ),
+      composer: undefined as unknown as Frame["composer"],
+      reading: undefined as unknown as Frame["reading"],
+    };
+    frame.composer = createHuddleComposerOwner(
+      session,
+      target.channelId,
+      target.channelId,
+      options.extensions,
+      () => current(entry) && top(entry) === frame,
+      // Admission needs the verified root of this exact thread (or a ready
+      // conversation), not only a joined channel; rechecked after async work.
+      () => frame.thread.rootVerified(),
+      options.agents,
+      target.threadRootId,
+      {
+        message: (id) => frame.thread.shown(id),
+        reactionBusy: (id) => frame.thread.reactionBusy(id),
+        retryOperation: (id) => frame.thread.retryOperation(id),
+        version: () => frame.thread.snapshot().version,
+        root: () =>
+          target.threadRootId
+            ? frame.thread.shown(target.threadRootId)
+            : undefined,
+        admit: (id, messageId, kind) => {
+          frame.thread.admit(id, messageId, kind);
+          if (top(entry) === frame) sync(entry);
+        },
+        authorization: (id) => frame.thread.authorization(id),
+        handoff: (messageId, key, revision) => {
+          const action = frame.thread.handoff(messageId, key, revision);
+          if (!action || !current(entry)) return false;
+          options.handoff?.(frame.target, messageId, action);
+          return true;
+        },
+        acknowledge: (ids) => {
+          // Retiring reports may let a capped presentation show others.
+          if (frame.thread.acknowledge(ids) && top(entry) === frame)
+            sync(entry);
+        },
+      },
+    );
+    frame.reading = createReadingOwner(
+      session.unread,
+      target.channelId,
+      target.threadRootId,
+      () => frame.thread.known(),
+      () =>
+        current(entry) && top(entry) === frame && frame.thread.readingEnabled(),
+    );
+    return frame;
+  }
   async function open(target: PopoutTarget) {
     if (disposed) throw new Error("Pop-out windows are unavailable.");
     const connection = relay.snapshot();
     const { session, scope, viewer } = connection;
     if (connection.status !== "ready" || !scope || !viewer)
       throw new Error("Connect to the community before opening a window.");
-    if (!hex.test(target.threadRootId)) throw new Error("Invalid thread.");
+    if (!target.channelId || target.channelId.length > 256)
+      throw new Error("Invalid conversation.");
+    if (target.threadRootId !== undefined && !hex.test(target.threadRootId))
+      throw new Error("Invalid thread.");
     const existing = [...entries].find(
       (entry) =>
         entry.scope === scope &&
@@ -242,72 +378,11 @@ export function createPopoutWindows(
       scope,
       viewer,
       target,
-      retired: false,
-      thread: createPopoutThread(
-        session,
-        target.channelId,
-        target.threadRootId,
-        () => {
-          if (!entry.label || entry.retired) return;
-          // Revocation: the roster is known and the channel is gone or cached.
-          if (
-            !entry.thread.available() &&
-            session.channels.list().status === "ready" &&
-            session.channels.list().coverage !== "partial"
-          )
-            retire(
-              entry,
-              `Closed the pop-out window: ${entry.thread.snapshot().title} is no longer available.`,
-            );
-          else sync(entry);
-        },
-        options.actions,
-      ),
-      composer: undefined as unknown as Entry["composer"],
-      reading: undefined as unknown as Entry["reading"],
+      frames: [],
       held: false,
+      retired: false,
     };
-    entry.composer = createHuddleComposerOwner(
-      session,
-      target.channelId,
-      target.channelId,
-      options.extensions,
-      () => current(entry),
-      // Admission needs the verified root of this exact thread, not only a
-      // joined channel; the owner rechecks this after async preparation.
-      () => entry.thread.rootVerified(),
-      options.agents,
-      target.threadRootId,
-      {
-        message: (id) => entry.thread.shown(id),
-        reactionBusy: (id) => entry.thread.reactionBusy(id),
-        retryOperation: (id) => entry.thread.retryOperation(id),
-        version: () => entry.thread.snapshot().version,
-        root: () => entry.thread.shown(target.threadRootId),
-        admit: (id, messageId, kind) => {
-          entry.thread.admit(id, messageId, kind);
-          sync(entry);
-        },
-        authorization: (id) => entry.thread.authorization(id),
-        handoff: (messageId, key, revision) => {
-          const action = entry.thread.handoff(messageId, key, revision);
-          if (!action || !current(entry)) return false;
-          options.handoff?.(entry.target, messageId, action);
-          return true;
-        },
-        acknowledge: (ids) => {
-          // Retiring reports may let a capped presentation show others.
-          if (entry.thread.acknowledge(ids)) sync(entry);
-        },
-      },
-    );
-    entry.reading = createReadingOwner(
-      session.unread,
-      target.channelId,
-      target.threadRootId,
-      () => entry.thread.known(),
-      () => current(entry) && entry.thread.readingEnabled(),
-    );
+    entry.frames.push(createFrame(entry, target));
     // Owned before creation: a scope change or disposal during the native
     // await retires it, and completion below then destroys the new window.
     entries.add(entry);
@@ -354,7 +429,7 @@ export function createPopoutWindows(
       if (!current(entry))
         retire(
           entry,
-          `Closed the pop-out window: ${entry.thread.snapshot().title} (the community or session changed).`,
+          `Closed the pop-out window: ${top(entry).thread.snapshot().title} (the community or session changed).`,
         );
   });
   const theme = new MutationObserver(() => {
@@ -389,7 +464,7 @@ export function createPopoutWindows(
         .filter((entry) => entry.held && !entry.retired)
         .map(
           (entry) =>
-            `The pop-out window for “${entry.thread.snapshot().title}” has an unsent reply.`,
+            `The pop-out window for “${top(entry).thread.snapshot().title}” has an unsent reply.`,
         ),
     subscribeHeld(listener: () => void) {
       holdListeners.add(listener);

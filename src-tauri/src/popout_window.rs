@@ -90,9 +90,15 @@ pub(crate) struct View {
     /// The viewer follows this thread.
     #[serde(default)]
     following: bool,
-    /// A DM: no thread following offered.
+    /// A DM or Solo chat: no `#`, no thread following offered.
     #[serde(default)]
     is_dm: bool,
+    /// A thread (root + replies) rather than a conversation timeline.
+    #[serde(default)]
+    thread: bool,
+    /// The frame was opened from the previous one; `back` returns there.
+    #[serde(default)]
+    can_go_back: bool,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -127,6 +133,10 @@ pub(crate) enum Action {
     /// Bring the main window forward after a handoff admitted through the
     /// composer bridge; nothing is forwarded to main.
     FocusMain,
+    /// A conversation window drills into one of its shown threads (text: root id).
+    OpenThread,
+    /// Return to the frame this one was opened from.
+    Back,
     Older,
     Retry,
     RetryMessage,
@@ -197,7 +207,11 @@ impl View {
     /// #channel" (a DM has no `#`).
     fn window_title(&self) -> String {
         let hash = if self.is_dm { "" } else { "#" };
-        format!("Thread in {hash}{} — Buzz", self.title)
+        if self.thread {
+            format!("Thread in {hash}{} — Buzz", self.title)
+        } else {
+            format!("{hash}{} — Buzz", self.title)
+        }
     }
 }
 fn validate(view: &View) -> Result<()> {
@@ -463,6 +477,14 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
                 return Err("Invalid pop-out guard".into());
             }
         }
+        Action::OpenThread => {
+            if !text
+                .as_deref()
+                .is_some_and(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err("Invalid pop-out thread".into());
+            }
+        }
         _ => {
             if text.is_some() {
                 return Err("Unexpected pop-out message".into());
@@ -678,6 +700,8 @@ mod tests {
             operations: vec![],
             following: false,
             is_dm: false,
+            thread: true,
+            can_go_back: false,
         }
     }
     #[test]
@@ -773,10 +797,16 @@ mod tests {
     fn window_title_names_the_thread_and_its_conversation() {
         let mut view = view();
         view.title = "design".into();
+        view.thread = true;
         assert_eq!(view.window_title(), "Thread in #design — Buzz");
         view.is_dm = true;
         view.title = "Ada".into();
         assert_eq!(view.window_title(), "Thread in Ada — Buzz");
+        view.thread = false;
+        assert_eq!(view.window_title(), "Ada — Buzz");
+        view.is_dm = false;
+        view.title = "design".into();
+        assert_eq!(view.window_title(), "#design — Buzz");
     }
     #[test]
     fn focus_main_is_a_companion_action_with_no_payload() {

@@ -65,6 +65,7 @@ import { registerNavigationShortcuts } from "../../app/shortcuts";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import { AgentsPage } from "./AgentsPage";
+import { sharedAgentTarget } from "./routes";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -3536,6 +3537,129 @@ it("opens marketplace beside Your teams without a modal", async () => {
   expect(
     screen.getByRole("button", { name: "Create your first agent" }),
   ).toBeVisible();
+});
+
+it("restores a linked marketplace profile with Back/Forward and retires it on Close", async () => {
+  const user = userEvent.setup();
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const host = createNavigationController(createMemoryHistory(base));
+  const navigator = host.navigation;
+  const store = createRelaySession(null);
+  const owner = "a".repeat(64);
+  const event = {
+    id: "b".repeat(64),
+    pubkey: owner,
+    kind: 30175,
+    created_at: 1,
+    tags: [
+      ["d", "helper"],
+      ["shared", "true"],
+    ],
+    content: JSON.stringify({
+      display_name: "Linked helper",
+      system_prompt: "The addressed definition",
+    }),
+  };
+  // The grid's first page contains no target. Its exact-address read does.
+  const read = vi.fn(async (filters: readonly { authors?: string[] }[]) =>
+    filters[0]?.authors ? [event] : [],
+  );
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    origin: "https://relay.example",
+    session: { ...store.session, read },
+  };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  function Host({ agents }: { agents: Agents }) {
+    const { entry, attempt } = useSyncExternalStore(
+      navigator.subscribe,
+      navigator.snapshot,
+    );
+    const navigation = useMemo(() => {
+      const request: PageNavigation = {
+        entryId: entry.id,
+        target: entry.target,
+        signal: attempt.signal,
+        position: () => undefined,
+        savePosition() {},
+        passThrough: () => () => {},
+        forSession: () => request,
+        resolve: () => true,
+        complete: () => true,
+      };
+      return request;
+    }, [entry, attempt]);
+    useEffect(() => {
+      host.complete(attempt, { status: "opened" });
+    }, [attempt]);
+    return (
+      <AgentsPage
+        agents={agents}
+        relay={relay}
+        navigation={navigation}
+        navigator={navigator}
+      />
+    );
+  }
+  const view = setup([agent("Ada", 1)]);
+  const linked = sharedAgentTarget(base, `${owner}:helper`, snapshot.origin);
+  try {
+    view.rerender(<Host agents={view.agents} />);
+    act(() => {
+      void navigator.open(linked);
+    });
+    expect(await screen.findByText("The addressed definition")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Marketplace" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(view.agents.port).not.toHaveBeenCalled();
+    act(() => navigator.back());
+    await waitFor(() =>
+      expect(
+        screen.queryByText("The addressed definition"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    act(() => navigator.forward());
+    expect(await screen.findByText("The addressed definition")).toBeVisible();
+    await user.click(
+      within(
+        screen.getByRole("region", { name: "Shared agent profile" }),
+      ).getByRole("button", { name: /Close/ }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("The addressed definition"),
+      ).not.toBeInTheDocument(),
+    );
+    act(() => navigator.back());
+    act(() => navigator.forward());
+    expect(
+      screen.queryByText("The addressed definition"),
+    ).not.toBeInTheDocument();
+    act(() => {
+      void navigator.open(linked);
+    });
+    expect(await screen.findByText("The addressed definition")).toBeVisible();
+  } finally {
+    view.unmount();
+    store.dispose();
+    host.dispose();
+  }
 });
 
 it("offers importing first agents only when there are some to import", async () => {

@@ -6,7 +6,10 @@ import {
   historyRoute,
   historyTarget,
   teamRoute,
+  sharedAgentRoute,
+  sharedAgentTarget,
 } from "./routes";
+import { SharedAgentLinkPanel } from "./SharedAgentLinkPanel";
 import {
   historyPresentation,
   type HistoryPresentation,
@@ -199,19 +202,76 @@ export function AgentsPage({
   const channels = useChannelChoices(
     connection.status === "ready" ? connection.session.channels : undefined,
   );
-  const [tab, setTab] = useState<Tab>("yours");
+  const [localTab, setTab] = useState<Tab>("yours");
+  const linked =
+    navigation?.target.kind === "page"
+      ? sharedAgentRoute(navigation.target.route?.params)
+      : undefined;
+  const tab = linked ? "marketplace" : localTab;
   const [sharedSelection, setSharedSelection] =
     useState<SharedAgentSelection>();
   const sharedTrigger = useRef<HTMLButtonElement | null>(null);
   const shared =
+    !linked &&
     connection.status === "ready" &&
     sharedSelection?.session === connection.session
       ? sharedSelection
       : undefined;
   // Commit first: a narrow layout hides the list, and its tile, while open.
   const closeShared = () => {
+    if (
+      linked &&
+      navigation &&
+      navigator &&
+      navigation.target.kind === "page"
+    ) {
+      if (
+        navigation.signal.aborted ||
+        navigator.snapshot().entry.id !== navigation.entryId
+      )
+        return;
+      const page = agentProviderTarget(navigation.target);
+      const pageKey = targetKey(page);
+      navigator.dismiss(
+        (visit) =>
+          visit.kind === "page" &&
+          sharedAgentRoute(visit.route?.params)?.id === linked.id &&
+          sharedAgentRoute(visit.route?.params)?.community ===
+            linked.community &&
+          targetKey(agentProviderTarget(visit)) === pageKey,
+        page,
+      );
+    }
     flushSync(() => setSharedSelection(undefined));
     sharedTrigger.current?.focus();
+  };
+  const openShared = (
+    selection: SharedAgentSelection,
+    trigger: HTMLButtonElement | null,
+  ) => {
+    sharedTrigger.current = trigger;
+    if (
+      selection.community &&
+      navigation &&
+      navigator &&
+      navigation.target.kind === "page"
+    ) {
+      if (
+        navigation.signal.aborted ||
+        navigator.snapshot().entry.id !== navigation.entryId
+      )
+        return;
+      void navigator.open(
+        sharedAgentTarget(
+          navigation.target,
+          selection.agent.id,
+          selection.community,
+        ),
+      );
+    } else {
+      setTab("marketplace");
+      setSharedSelection(selection);
+    }
   };
   const [selectedKey, setSelectedKey] = useState<string>();
   const [creating, setCreating] = useState(false);
@@ -384,6 +444,7 @@ export function AgentsPage({
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
   const changeTab = (next: Tab) => {
+    if (linked) closeShared();
     if (next !== "teams") setEditingTeam(undefined);
     if (next !== "marketplace") setSharedSelection(undefined);
     setTab(next);
@@ -492,13 +553,14 @@ export function AgentsPage({
     setFlow(undefined);
     changeTab(next);
   };
-  const returnToAgents = returnTo("yours");
   // The listing and its trigger go with it, so focus follows to the tab now
   // shown.
   const leaveListing = () => {
+    if (linked) closeShared();
     flushSync(() => {
       setSharedSelection(undefined);
-      returnToAgents();
+      setFlow(undefined);
+      setTab("yours");
     });
     document.getElementById("agents-yours-tab")?.focus();
   };
@@ -648,13 +710,14 @@ export function AgentsPage({
       // A published agent's toast opens it where everyone else finds it.
       onViewListing: (agent: SharedAgent) => {
         if (connection.status !== "ready") return;
-        sharedTrigger.current = null;
-        changeTab("marketplace");
-        setSharedSelection({
-          agent,
-          session: connection.session,
-          community: connection.origin,
-        });
+        openShared(
+          {
+            agent,
+            session: connection.session,
+            community: connection.origin,
+          },
+          null,
+        );
       },
     };
     return connection.status === "ready" ? (
@@ -782,10 +845,9 @@ export function AgentsPage({
           ) : tab === "marketplace" ? (
             <AgentBrowse
               relay={relay}
-              selectedId={shared?.agent.id}
+              selectedId={linked?.id ?? shared?.agent.id}
               onSelect={(selection, trigger) => {
-                sharedTrigger.current = trigger;
-                setSharedSelection(selection);
+                openShared(selection, trigger);
               }}
             />
           ) : (
@@ -821,7 +883,8 @@ export function AgentsPage({
         style={split.style}
         className={styles.browse}
         data-side={
-          (panel && tab === "yours") || (shared && tab === "marketplace")
+          (panel && tab === "yours") ||
+          ((shared || linked) && tab === "marketplace")
             ? ""
             : undefined
         }
@@ -851,19 +914,30 @@ export function AgentsPage({
             </div>
           </Panel>
         </div>
-        {shared && tab === "marketplace" && (
+        {(shared || linked) && tab === "marketplace" && (
           <aside className={styles.side}>
             {split.handle}
             <Panel aria-label="Shared agent profile">
               <PanelWorkspace
-                value={shared.agent.id}
+                value={linked?.id ?? shared?.agent.id ?? ""}
                 select={() => {}}
                 items={[
                   {
-                    id: shared.agent.id,
-                    label: shared.agent.name,
+                    id: linked?.id ?? shared?.agent.id ?? "",
+                    label: shared?.agent.name ?? "Shared agent",
                     close: closeShared,
-                    content: (
+                    content: linked ? (
+                      <SharedAgentLinkPanel
+                        key={`${linked.community}:${linked.id}`}
+                        id={linked.id}
+                        community={linked.community}
+                        relay={relay}
+                        agents={agents}
+                        types={runnable}
+                        onImported={leaveListing}
+                        onOpen={(agent) => browse(agent.pubkey, leaveListing)}
+                      />
+                    ) : shared ? (
                       <SharedAgentPanel
                         key={shared.agent.id}
                         selection={shared}
@@ -873,7 +947,7 @@ export function AgentsPage({
                         // Stays on the listing if an unsaved draft is kept.
                         onOpen={(agent) => browse(agent.pubkey, leaveListing)}
                       />
-                    ),
+                    ) : null,
                   },
                 ]}
               />

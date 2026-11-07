@@ -57,6 +57,9 @@ import hero from "../../features/profiles/ProfileHero.module.css";
 import pageStyles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
 import styles from "./AgentBrowse.module.css";
+import { sharedAgentLink } from "./routes";
+import { writeClipboardText } from "../../shared/clipboard";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 
 const pageSize = 200;
 
@@ -230,6 +233,7 @@ export function SharedAgentPanel({
   ...importing
 }: Importing & { selection: SharedAgentSelection }) {
   const { agent, session, community } = selection;
+  const notify = useToastNotification();
   const pack = agentAvatars.find((item) => item.url === agent.picture);
   const picture = useAvatarPreview(
     pack ? "" : (agent.picture ?? ""),
@@ -257,6 +261,21 @@ export function SharedAgentPanel({
             variant={backdrop ? "glass" : "subtle"}
             {...importing}
           />
+          {community && (
+            <Button
+              variant={backdrop ? "glass" : "subtle"}
+              onClick={() => {
+                void writeClipboardText(
+                  sharedAgentLink(agent.id, community),
+                ).then(
+                  () => notify("Link copied.", "success"),
+                  () => notify("Couldn’t copy the link. Try again.", "error"),
+                );
+              }}
+            >
+              Copy link
+            </Button>
+          )}
         </div>
       </section>
       <section>

@@ -2,7 +2,19 @@ import { createAppearance } from "../../src/shared/theme/service";
 import { ClaudeLogoIcon } from "../../src/shared/design-system/icons";
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
-import { useId, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { createBrowserHistory } from "../../src/features/navigation/browser-history";
+import { createNavigationController } from "../../src/features/navigation/controller";
+import { buzzLinkTarget } from "../../src/features/navigation/buzz-links";
+import type { PageNavigation } from "../../src/features/navigation/service";
+import { createRelaySession } from "../../src/features/relay/session";
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { AgentSaveButton } from "../../src/features/agents/AgentSaveButton";
 import { CreationReview } from "../../src/bundled/agents/CreationReview";
 import { UpdateReview } from "../../src/bundled/agents/UpdateReview";
@@ -519,6 +531,104 @@ const relay = {
   snapshot: () => disconnected,
   subscribe: () => () => {},
 } as unknown as RelayData;
+
+// One marketplace journey: real Agents page and browser history, fictional
+// catalog/session only. Other agent-library scenarios remain disconnected.
+const marketplace = new URLSearchParams(location.search).has("marketplace");
+function Marketplace() {
+  const [host] = useState(() => {
+    const scope = {
+      viewer: "f".repeat(64),
+      communityOrigin: "https://relay.example",
+    };
+    const base = {
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.agents",
+      pageId: "agents",
+      scope,
+    } as const;
+    const history = createBrowserHistory(window);
+    history.replace(base);
+    const host = createNavigationController(history);
+    const session = createRelaySession(null);
+    const events = ["a", "b"].map((key) => ({
+      id: key.repeat(64),
+      pubkey: key.repeat(64),
+      kind: 30175,
+      created_at: 1,
+      tags: [
+        ["d", "helper"],
+        ["shared", "true"],
+      ],
+      content: JSON.stringify({
+        display_name: "Helper",
+        system_prompt: `Instructions from publisher ${key}.`,
+      }),
+    }));
+    const snapshot = {
+      status: "ready",
+      generation: 1,
+      origin: scope.communityOrigin,
+      session: { ...session.session, read: async () => events },
+    };
+    const relay = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+    } as unknown as RelayData;
+    Object.assign(window, {
+      openMarketplaceLink: (href: string) => {
+        const target = buzzLinkTarget(href, scope);
+        // The app's page resolver turns a plugin target into its registered page.
+        if (target?.kind !== "plugin" || target.pluginId !== "buzz.agents")
+          throw new Error("Not an Agents link");
+        return host.navigation.open({
+          ...base,
+          route: { version: 1, params: target.params ?? {} },
+        });
+      },
+    });
+    return { ...host, relay, session };
+  });
+  const { entry, attempt } = useSyncExternalStore(
+    host.navigation.subscribe,
+    host.navigation.snapshot,
+  );
+  const navigation = useMemo(() => {
+    const request: PageNavigation = {
+      entryId: entry.id,
+      target: entry.target,
+      signal: attempt.signal,
+      position: () => undefined,
+      savePosition() {},
+      passThrough: () => () => {},
+      forSession: () => request,
+      resolve: () => true,
+      complete: () => true,
+    };
+    return request;
+  }, [entry, attempt]);
+  useEffect(() => {
+    host.complete(attempt, { status: "opened" });
+  }, [host, attempt]);
+  useEffect(
+    () => () => {
+      host.dispose();
+      host.session.dispose();
+    },
+    [host],
+  );
+  return (
+    <ToastProvider>
+      <AgentsPage
+        agents={agents}
+        relay={host.relay}
+        navigation={navigation}
+        navigator={host.navigation}
+      />
+    </ToastProvider>
+  );
+}
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
 const memoryOwner =
@@ -552,7 +662,9 @@ createRoot(root).render(
     className="h-screen"
     style={memoryOwner ? { maxWidth: "28rem" } : undefined}
   >
-    {memoryOwner && memoryAgent ? (
+    {marketplace ? (
+      <Marketplace />
+    ) : memoryOwner && memoryAgent ? (
       <AgentDetails
         agents={agents}
         agent={{ ...memoryAgent, relay: "wss://current.example" }}

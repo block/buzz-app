@@ -415,9 +415,18 @@ it("keeps join unavailable after native identity hydration, but still saves a lo
   }
 });
 
-it.each(["", "not-a-relay"])(
+const unreadable = "Enter a community address or invite link.";
+const bareCode = "Paste the whole invite link, not only its code.";
+
+it.each([
+  ["", unreadable],
+  ["not a relay", unreadable],
+  ["v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo", bareCode],
+  // A sentence-ending dot copied with the code still normalizes to it.
+  ["v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo.", bareCode],
+])(
   "shows inline relay validation for %j without contacting a relay",
-  async (value) => {
+  async (value, message) => {
     const user = userEvent.setup();
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
@@ -436,18 +445,68 @@ it.each(["", "not-a-relay"])(
       />,
     );
     const input = screen.getByLabelText("Community URL");
-    if (value) await user.type(input, value);
+    if (value) {
+      await user.click(input);
+      await user.paste(value);
+    }
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Enter a wss:// or https:// relay URL",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(input).toHaveAttribute("aria-invalid", "true");
-    expect(input).toHaveAccessibleDescription(
-      /Enter a wss:\/\/ or https:\/\/ relay URL/,
-    );
+    expect(input).toHaveAccessibleDescription(expect.stringContaining(message));
     expect(fetch).not.toHaveBeenCalled();
     await user.clear(input);
     await user.type(input, "wss://relay.example");
+    expect(screen.queryByRole("alert")).toBeNull();
+  },
+);
+
+it.each([
+  [
+    "an invite link",
+    "https://Relay.Example/invite/v2.abc",
+    "https://relay.example",
+    "v2.abc",
+  ],
+  ["a bare host", "relay.example", "https://relay.example", undefined],
+  // Only a code-length label after `v2.` is refused as a bare invite code.
+  ["a short v2 host", "v2.dev", "https://v2.dev", undefined],
+])(
+  "looks up the community for %s and prefills only an invite link's code",
+  async (_, value, origin, code) => {
+    const user = userEvent.setup();
+    const requests = vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: false });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", requests);
+    const communities = {
+      snapshot: () => ({
+        status: "ready",
+        relayAvailable: true,
+        profile: { name: "", picture: "" },
+      }),
+    } as unknown as Communities;
+    render(
+      <CommunityDialog
+        communities={communities}
+        mode="join"
+        close={() => {}}
+      />,
+    );
+    await user.click(screen.getByLabelText("Community URL"));
+    await user.paste(value);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    // The access step names the canonical origin the lookup went to.
+    expect(await screen.findByText(origin)).toBeVisible();
+    expect(requests).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent(origin)}/info`,
+      expect.anything(),
+    );
+    if (code) expect(screen.getByLabelText("Invite code")).toHaveValue(code);
+    else expect(screen.queryByLabelText("Invite code")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   },
 );

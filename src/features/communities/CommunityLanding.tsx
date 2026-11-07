@@ -6,7 +6,11 @@ import { OnboardingScreen } from "../identity/OnboardingScreen";
 import type { SettingsCards } from "../settings/service";
 import { CommunityDialog } from "./CommunityDialog";
 import type { FederatedIdentity } from "../federated-identity/service";
-import { type InviteLink, parsePastedInvite } from "./invite-link";
+import {
+  type InviteLink,
+  parsePastedInvite,
+  pastedInviteError,
+} from "./invite-link";
 import type { Communities } from "./service";
 
 /** First run with no community: joining replaces the empty shell. */
@@ -66,7 +70,13 @@ export function CommunityLanding({
               event.preventDefault();
               const parsed = parsePastedInvite(link);
               if (parsed) setJoining(parsed);
-              else setError("Paste an invite link or community URL.");
+              else
+                setError(
+                  pastedInviteError(
+                    link,
+                    "Paste an invite link or community URL.",
+                  ),
+                );
             }}
           >
             <Field label="Invite link or community URL" error={error}>

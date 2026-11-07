@@ -1358,6 +1358,7 @@ export function Settings({
         <div hidden={selected !== "notifications"}>
           <NotificationSettings
             notifications={notifications}
+            names={relaySession?.names}
             active={selected === "notifications"}
           />
         </div>

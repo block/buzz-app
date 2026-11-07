@@ -10,6 +10,9 @@ import {
   communityDestination,
   isCommunityAlias,
   relayAddress,
+  configuredRelayPolicy,
+  assertRelayRemovable,
+  RelayPolicyError,
 } from "./destination";
 import { purgeCommunityDeviceState, type PurgeFailure } from "./device-state";
 import { fetchCommunityPresentation } from "./community-icon";
@@ -37,6 +40,8 @@ export type Membership = {
   /** Optional current public metadata; not ownership or membership evidence. */
   publishedName?: string | undefined;
   publishedIcon?: string | undefined;
+  /** Added by a policy build's pin, not joined: never uploaded to the account. */
+  seeded?: true;
 };
 type Saved = {
   profile: PersonalProfile;
@@ -148,10 +153,11 @@ export function createCommunities(
           JSON.stringify({
             profile: next.profile,
             memberships: [...next.memberships, ...unresolvedMemberships].map(
-              ({ id, name, icon }) => ({
+              ({ id, name, icon, seeded }) => ({
                 id,
                 name,
                 ...(icon ? { icon } : {}),
+                ...(seeded ? { seeded } : {}),
               }),
             ),
             selected: next.selected ?? selection,
@@ -253,8 +259,11 @@ export function createCommunities(
         if (disposed) return;
         let saved = empty();
         let seeded = false;
+        let hadRecord = false;
+        let hadSelection = false;
         try {
           const stored = localStorage.getItem(`buzz-client.v1:${viewer}`);
+          hadRecord = stored !== null;
           const raw = JSON.parse(stored ?? "null");
           if (raw)
             saved = {
@@ -290,14 +299,19 @@ export function createCommunities(
                         m.icon.startsWith("https://")
                           ? { icon: m.icon }
                           : {}),
+                        ...("seeded" in m && m.seeded === true
+                          ? { seeded: true as const }
+                          : {}),
                       };
                       try {
                         return [
                           { ...membership, id: communityDestination(m.id).id },
                         ];
-                      } catch {
+                      } catch (error) {
+                        // Keep aliases and policy-blocked relays stored, hidden.
                         if (
-                          isCommunityAlias(m.id) &&
+                          (isCommunityAlias(m.id) ||
+                            error instanceof RelayPolicyError) &&
                           !unresolvedMemberships.some(
                             (entry) => entry.id === m.id,
                           )
@@ -319,10 +333,21 @@ export function createCommunities(
             // Any stored record, including Personal space or one this reader
             // cannot understand, wins over the seed.
             const { id, name } = communityDestination(openRelay);
-            saved = { ...saved, memberships: [{ id, name }], selected: id };
+            // A default that is the pin is as automatic as the policy seed.
+            const seed =
+              configuredRelayPolicy &&
+              communityDestination(configuredRelayPolicy.pinned).id === id
+                ? { seeded: true as const }
+                : {};
+            saved = {
+              ...saved,
+              memberships: [{ id, name, ...seed }],
+              selected: id,
+            };
             seeded = true;
           }
           if (typeof raw?.selected === "string") {
+            hadSelection = true;
             try {
               saved.selected = communityDestination(raw.selected).id;
             } catch {
@@ -335,6 +360,22 @@ export function createCommunities(
         }
         if (!saved.memberships.some((m) => m.id === saved.selected))
           saved.selected = null;
+        if (configuredRelayPolicy) {
+          const pinned = communityDestination(configuredRelayPolicy.pinned);
+          if (!saved.memberships.some((m) => m.id === pinned.id)) {
+            saved.memberships.unshift({
+              id: pinned.id,
+              name: pinned.name,
+              seeded: true,
+            });
+            seeded = true;
+          }
+          // A fresh install starts on the pin, even over a default community.
+          // Preserve a deliberate Personal space selection; replace a blocked
+          // startup destination with the pinned relay.
+          if (!hadRecord || (!saved.selected && hadSelection))
+            saved.selected = pinned.id;
+        }
         presenceActivity.setViewer(viewer);
         if (saved.selected) acquire(saved.selected, viewer);
         saved.memberships = saved.memberships.map((membership) => ({
@@ -559,6 +600,7 @@ export function createCommunities(
       id: string,
       { purge = true }: { purge?: boolean } = {},
     ): Promise<PurgeFailure[]> {
+      assertRelayRemovable(id);
       id = communityDestination(id).id;
       if (!state.memberships.some((m) => m.id === id)) return [];
       const { viewer } = state;

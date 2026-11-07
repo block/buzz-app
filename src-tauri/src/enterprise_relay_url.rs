@@ -1,5 +1,7 @@
 use url::Url;
 
+// The app uses only canonicalization; build.rs and tests parse the allowlist.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_enterprise_relay_allowlist(raw: &str) -> Result<Vec<String>, String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -61,7 +63,7 @@ pub(crate) fn canonical_enterprise_relay_url(raw: &str) -> Result<String, String
         _ => None,
     };
     if let Some(host) = dotted_host {
-        if host.is_empty() {
+        if host.is_empty() || host.ends_with('.') {
             return Err("Enterprise relay URL has an invalid host".into());
         }
         url.set_host(Some(&host))

@@ -110,7 +110,12 @@ import {
   removeAgentFromChannels,
   removeRelayAgent,
 } from "./relay-removal";
-import { communityDestination, relayOrigin } from "../communities/destination";
+import {
+  communityDestination,
+  RelayPolicyError,
+  relayOrigin,
+  resolveCommunity,
+} from "../communities/destination";
 import type { Communities } from "../communities/service";
 import {
   prepareRemoteAgentAuthorization,
@@ -1744,6 +1749,25 @@ const originOf = (value: string) => {
     return communityDestination(value).url;
   } catch {
     return undefined;
+  }
+};
+/** The origin a relay URL or community ID names whatever the relay policy:
+ * the identity its keys and synced config are stored under, never permission
+ * to connect. */
+const storedOrigin = (value: string) => {
+  try {
+    return resolveCommunity(value).url;
+  } catch {
+    return undefined;
+  }
+};
+/** Whether this build's relay policy refuses a relay URL or community ID. */
+const relayBlocked = (value: string) => {
+  try {
+    communityDestination(value);
+    return false;
+  } catch (error) {
+    return error instanceof RelayPolicyError;
   }
 };
 /** One of the viewer's kind 30177 agent records. Ones without a `runtime`
@@ -4680,6 +4704,15 @@ export class AgentsService extends Service implements Agents {
       this.refresh().catch((error: unknown) =>
         console.warn(`Agents list was not refreshed`, error),
       );
+    // A blocked home never connects, so the config Delete archives there
+    // never could be: refused before anything is saved.
+    if (
+      relayBlocked(homeOf(identity)) &&
+      Object.keys(this.configBinding(identity)).length
+    )
+      throw new Error(
+        `${identity.name} can't be deleted here: its home community's relay is not allowed by this build's relay policy.`,
+      );
     // Saved first, so neither a relaunch nor another copy runs it again.
     await native.beginDelete(pubkey);
     await refresh();
@@ -4859,6 +4892,7 @@ export class AgentsService extends Service implements Agents {
     );
     const shown = new Map<string, Agent>();
     for (const member of this.liveRows()) {
+      if (!originOf(member.relay)) continue;
       const { pubkey } = member;
       if (here.has(pubkey) || member.deleting || !ownedBy(member, binding))
         continue;
@@ -5182,7 +5216,7 @@ export class AgentsService extends Service implements Agents {
   /** The communities where `pubkey` is one of the owner's agents a team
    * there can have. */
   private homesOf(pubkey: string) {
-    return [...this.bound].flatMap(([origin, { binding }]) =>
+    const homes = [...this.bound].flatMap(([origin, { binding }]) =>
       this.teamAgents(origin).some(
         (agent) =>
           agent.pubkey === pubkey &&
@@ -5191,6 +5225,17 @@ export class AgentsService extends Service implements Agents {
         ? [origin]
         : [],
     );
+    // A membership the relay policy blocks is never bound, but still keeps a
+    // team spanning it local.
+    const { viewer } = this.communities.snapshot();
+    for (const identity of this.liveRows(pubkey)) {
+      const origin =
+        identity.owner === viewer &&
+        relayBlocked(identity.relay) &&
+        storedOrigin(identity.relay);
+      if (origin && !homes.includes(origin)) homes.push(origin);
+    }
+    return homes;
   }
 
   /** Moves each local team whose members are all the owner's agents in
@@ -5884,7 +5929,7 @@ export class AgentsService extends Service implements Agents {
         ...row,
         key: agentKey(
           row.pubkey,
-          originOf(row.relay) ?? row.relay,
+          storedOrigin(row.relay) ?? row.relay,
           homeOf(row),
         ),
       }),
@@ -6248,7 +6293,8 @@ export class AgentsService extends Service implements Agents {
       else void this.readListings(origin, binding);
     }
     const native = this.native;
-    for (const identity of this.identities)
+    for (const identity of this.identities) {
+      if (!originOf(identity.relay)) continue;
       if (!identity.deleted)
         native
           ?.publishProfile(identity)
@@ -6262,6 +6308,7 @@ export class AgentsService extends Service implements Agents {
         const binding = this.bindingOf(identity);
         if (binding) this.cleanup(identity, binding);
       }
+    }
   }
   /** Starts the cleanup of a membership deleted under the old order, or
    * whose Delete or Remove stopped short of dropping it, unless one is
@@ -6344,7 +6391,8 @@ export class AgentsService extends Service implements Agents {
       origins.add(origin);
       // Its home keeps its config, which its Delete archives even after it
       // left there.
-      origins.add(homeOf(identity));
+      const home = originOf(homeOf(identity));
+      if (home) origins.add(home);
     }
     // Left, or left and joined again with a new session.
     for (const [origin, entry] of this.bound)
@@ -6870,7 +6918,7 @@ async function handOnMainAgent(session: RelaySession, pubkey: string) {
  * the community it was first in, where its membership's key is its pubkey. */
 function homeOf(row: Pick<AgentIdentity, "relay" | "home">) {
   const relay = row.home ?? row.relay;
-  return originOf(relay) ?? relay;
+  return storedOrigin(relay) ?? relay;
 }
 /** A synced team change that stopped, as its owner reads it. */
 function teamOutcome(result: TeamResult, name: (pubkey: string) => string) {

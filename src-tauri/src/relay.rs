@@ -61,6 +61,12 @@ fn template(event: &serde_json::Value, error: &str) -> Result<EventTemplate> {
 }
 
 pub(crate) fn origin(value: &str) -> Result<Url> {
+    crate::relay_policy::allowed(value)?;
+    parse_origin(value)
+}
+
+// Advertised admin hosts are subordinate endpoints, not community destinations.
+pub(crate) fn parse_origin(value: &str) -> Result<Url> {
     let url = Url::parse(value).map_err(|_| "Invalid relay origin")?;
     if value.len() > 2048
         || url.scheme() != "https"
@@ -369,6 +375,7 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
             return Err("Malformed Canvas save".into());
         }
     } else if event.kind == 28936 {
+        crate::relay_policy::removable(community)?;
         // A NIP-43 leave request revokes the signer's own membership: empty
         // content and exactly the NIP-70 protected tag, nothing else.
         if !event.content.is_empty() || event.tags != vec![vec!["-".to_string()]] {
@@ -833,6 +840,16 @@ fn read_cancels() -> &'static Uploads {
     CANCELS.get_or_init(Uploads::default)
 }
 
+/// The relay narrows `kind` to `u16`, so 94472 would alias 28936 there:
+/// refuse anything that is not an integer in range instead of comparing raw.
+pub(crate) fn event_kind(event: &serde_json::Value) -> Result<u16> {
+    event
+        .get("kind")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|kind| u16::try_from(kind).ok())
+        .ok_or_else(|| "Invalid event kind".into())
+}
+
 #[tauri::command]
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
@@ -854,7 +871,10 @@ pub(crate) async fn relay_http(
         let event: serde_json::Value =
             serde_json::from_str(body.as_deref().ok_or("Invalid relay request body")?)
                 .map_err(|_| "Invalid relay request body")?;
-        let kind = event.get("kind").and_then(serde_json::Value::as_u64);
+        let kind = Some(u64::from(event_kind(&event)?));
+        if kind == Some(28936) {
+            crate::relay_policy::removable(&community)?;
+        }
         if matches!(kind, Some(41010)) {
             return Err("Choose between one and eight other people.".into());
         }

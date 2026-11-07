@@ -2,6 +2,7 @@ import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
 import { createAgentLibrary } from "./library";
+import * as destinations from "../communities/destination";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
@@ -5625,6 +5626,184 @@ it("forgets records whose key is gone when identities load", async () => {
   expect(storage.getItem("buzz.agents.v1")).toBeNull();
   expect(storage.getItem(`buzz.agent.v1:${sibling}`)).toBeNull();
   expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
+});
+
+it("preserves blocked agents' settings and teams without binding or publishing to their relays", async () => {
+  const resolve = destinations.communityDestination;
+  const policy = destinations.parseRelayPolicy(
+    JSON.stringify({
+      pinned: "relay.example.test",
+      allowlist: ["other.example.test"],
+    }),
+  );
+  const gate = vi
+    .spyOn(destinations, "communityDestination")
+    .mockImplementation((value) => resolve(value, undefined, policy));
+  const storage = memoryStorage();
+  const saved = JSON.stringify({
+    pubkey: bot,
+    attention: {},
+    timers: {},
+    config: { reply: "saved" },
+  });
+  storage.setItem(`buzz.agent.v1:${bot}`, saved);
+  const teams = [
+    {
+      id: "kept",
+      name: "Kept",
+      instructions: "Keep settings",
+      members: [bot, sibling],
+    },
+  ];
+  await writeTeams(storage, teams);
+  const fixture = await setup({
+    storage,
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://blocked.example",
+        owner: viewer,
+        type: "example/echo",
+        name: "Blocked",
+        deleted: false,
+      },
+      {
+        pubkey: sibling,
+        relay: "wss://other.example.test",
+        home: "wss://blocked.example",
+        owner: viewer,
+        type: "example/echo",
+        name: "Allowed membership",
+        deleted: false,
+      },
+    ],
+  });
+  try {
+    await fixture.service.refresh();
+    expect(storage.getItem(`buzz.agent.v1:${bot}`)).toBe(saved);
+    expect(readTeams(storage)).toEqual(teams);
+    expect(fixture.communities.open).not.toHaveBeenCalledWith(
+      "https://blocked.example",
+    );
+    expect(fixture.communities.open).not.toHaveBeenCalledWith(
+      "wss://blocked.example",
+    );
+    expect(
+      fixture.native.publishProfile.mock.calls.every(
+        ([row]) => row.relay !== "wss://blocked.example",
+      ),
+    ).toBe(true);
+  } finally {
+    await fixture.ctx.fiber.dispose();
+    gate.mockRestore();
+  }
+});
+
+it.each([
+  ["refuses Delete before saving anything", true],
+  ["deletes as before with no config", false],
+])("%s when its home is blocked", async (_, synced) => {
+  const resolve = destinations.communityDestination;
+  const policy = destinations.parseRelayPolicy(
+    JSON.stringify({ pinned: "relay.example.test", allowlist: [] }),
+  );
+  const gate = vi
+    .spyOn(destinations, "communityDestination")
+    .mockImplementation((value) => resolve(value, undefined, policy));
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://blocked.example",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  const fixture = await setup({
+    binding: () =>
+      synced ? { instructions: { mode: "synced", subject } } : {},
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://relay.example.test",
+        home: "wss://blocked.example",
+        owner: viewer,
+        type: "example/echo",
+        name: "Away",
+        deleted: false,
+      },
+    ],
+  });
+  try {
+    await fixture.service.refresh();
+    if (synced) {
+      await expect(fixture.service.remove(bot)).rejects.toThrow(
+        "Away can't be deleted here: its home community's relay is not allowed by this build's relay policy.",
+      );
+      expect(fixture.native.beginDelete).not.toHaveBeenCalled();
+    } else {
+      await fixture.service.remove(bot);
+      expect(fixture.native.beginDelete).toHaveBeenCalledOnce();
+    }
+  } finally {
+    await fixture.ctx.fiber.dispose();
+    gate.mockRestore();
+  }
+});
+
+it("finds a blocked home's synced config by its canonical origin and refuses Delete", async () => {
+  const resolve = destinations.communityDestination;
+  const policy = destinations.parseRelayPolicy(
+    JSON.stringify({ pinned: "relay.example.test", allowlist: [] }),
+  );
+  const gate = vi
+    .spyOn(destinations, "communityDestination")
+    .mockImplementation((value) => resolve(value, undefined, policy));
+  const storage = memoryStorage();
+  // Saved under the canonical origin while the home was allowed.
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://blocked.example",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  const store = new AgentConfigStore(storage);
+  const head = finalizeEvent(
+    {
+      kind: 45010,
+      created_at: 1,
+      content: JSON.stringify({ version: 1, text: "confirmed" }),
+      tags: [["op", "create"]],
+    },
+    generateSecretKey(),
+  ) as RelayEvent;
+  store.applyRead(subject, store.capture(subject), {
+    kind: "head",
+    event: head,
+  });
+  const fixture = await setup({
+    storage,
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://blocked.example",
+        owner: viewer,
+        type: "example/echo",
+        name: "Home",
+        deleted: false,
+      },
+    ],
+  });
+  try {
+    await fixture.service.refresh();
+    expect(fixture.service.memberships(bot)[0]?.key).toBe(bot);
+    await expect(fixture.service.remove(bot)).rejects.toThrow(
+      "Home can't be deleted here: its home community's relay is not allowed by this build's relay policy.",
+    );
+    expect(fixture.native.beginDelete).not.toHaveBeenCalled();
+  } finally {
+    await fixture.ctx.fiber.dispose();
+    gate.mockRestore();
+  }
 });
 
 it("starts with the old shared records when a full store refuses their move", async () => {
@@ -16501,6 +16680,34 @@ describe("synced teams", () => {
       );
       expect(f.saveTeam).not.toHaveBeenCalled();
       expect(f.storage.get(TEAM_MOVES_KEY)).toBeFalsy();
+    });
+
+    it("keeps a team local when an agent's other saved community is blocked by the relay policy", async () => {
+      const resolve = destinations.communityDestination;
+      const policy = destinations.parseRelayPolicy(
+        JSON.stringify({ pinned: "relay.example.test", allowlist: [] }),
+      );
+      const gate = vi
+        .spyOn(destinations, "communityDestination")
+        .mockImplementation((value) => resolve(value, undefined, policy));
+      try {
+        const t = await local([{ ...mine, members: [alder] }]);
+        const f = await ready(
+          [here(alder), here(alder, "wss://blocked.example")],
+          t.storage,
+        );
+        await vi.waitFor(() =>
+          expect(f.service.teamSync("local-1")).toEqual({
+            local: "communities",
+          }),
+        );
+        await settle();
+        expect(f.saveTeam).not.toHaveBeenCalled();
+        expect(f.storage.get(TEAM_MOVES_KEY)).toBeFalsy();
+        expect(f.storage.get(teamsKey)).toContain("Mine");
+      } finally {
+        gate.mockRestore();
+      }
     });
   });
 

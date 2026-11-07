@@ -70,6 +70,9 @@ impl CredentialService {
         params: &[String],
     ) -> Result<String, Failure> {
         let (record, generation) = self.0.pairings.admit(token, self.human().await).await?;
+        // A pairing restored from an earlier build may name a relay this one blocks.
+        crate::relay_policy::allowed(&record.relay)
+            .map_err(|error| Failure::new("denied", &error))?;
         {
             let mut budgets = self
                 .0

@@ -59,7 +59,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     );
     assert.notEqual(services.accountActions.snapshot()[0], firstFeedback);
     await settle();
-    assert.equal(services.pages.snapshot().length, 4);
+    assert.equal(services.pages.snapshot().length, 5);
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
@@ -95,7 +95,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.charts",
           "buzz.drafts-and-sent",
           "buzz.changesets",
-          "buzz.community-plugins",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
@@ -397,7 +396,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       services.pages.snapshot().some((page) => page.pluginId === "buzz.bestie"),
       false,
     );
-    assert.equal(services.pages.snapshot().length, 4);
+    assert.equal(services.pages.snapshot().length, 5);
     await services.plugins.change("enable", "buzz.bestie");
     // Management completion is not activation completion; Cordis still owns import/disposal barriers.
     await vi.waitFor(() =>
@@ -484,7 +483,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const projects = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.repos");
-    assert.equal(services.pages.snapshot().length, 5);
+    assert.equal(services.pages.snapshot().length, 6);
     assert.equal(projects.pluginId, "buzz.repos");
     assert.equal(projects.id, "repos");
     assert.equal(projects.title, "Repository");
@@ -517,7 +516,13 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     // Bestie was re-enabled above, so it registered after Inbox.
     assert.deepEqual(
       services.pages.snapshot().map((page) => page.pluginId),
-      ["buzz.channels", "buzz.agents", "buzz.inbox", "buzz.bestie"],
+      [
+        "buzz.channels",
+        "buzz.agents",
+        "buzz.community-plugins",
+        "buzz.inbox",
+        "buzz.bestie",
+      ],
     );
     await services.plugins.change("enable", "buzz.repos");
     await vi.waitFor(() => {

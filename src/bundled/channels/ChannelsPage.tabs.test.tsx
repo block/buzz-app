@@ -186,7 +186,16 @@ async function page(
     matches: (target) => target === "https://app.example/",
     component: appComponent ?? (() => <p>App content</p>),
   };
-  const available = [panel, app];
+  const profile: RegisteredPanel = {
+    id: "profile",
+    key: "fixture:profile",
+    pluginId: "fixture",
+    revision: "1",
+    title: "Profile",
+    matches: (target) => target.startsWith("nostr:npub"),
+    component: () => <p>Profile content</p>,
+  };
+  const available = [panel, app, profile];
   let handleOpen: ((request: PanelOpenRequest) => boolean) | undefined;
   const panels: Panels = {
     snapshot: () => available,
@@ -936,6 +945,39 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
   await h.user.click(screen.getByRole("tab", { name: "Beta" }));
   expect(screen.queryByRole("button", { name: "Chat actions" })).toBeNull();
 });
+
+// This fixture's profile isn't a history panel and its visit never changes, so
+// closing it has no dismissal's return. solo-workspace.spec.mjs covers focus
+// returning to the side tab's opener when the profile closes.
+it.each(["Share access", "Chat actions"])(
+  "opens a profile from a Solo side tab's %s",
+  async (opener) => {
+    const snapshot = { entry: { id: "visit" }, attempt: {} };
+    const h = await page("stream", {
+      open: vi.fn(async () => ({ status: "opened" as const })),
+      snapshot: () => snapshot,
+    } as unknown as Navigation);
+    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+    act(() =>
+      tabs.result.current.setTabs((items) => [
+        ...items,
+        { id: "conversation:gamma", kind: "conversation", channelId: "gamma" },
+      ]),
+    );
+    await h.user.click(await screen.findByRole("tab", { name: "Gamma" }));
+    await h.user.click(await screen.findByRole("button", { name: opener }));
+    if (opener === "Chat actions")
+      await h.user.click(
+        await screen.findByRole("menuitem", { name: "Share access" }),
+      );
+    const dialog = await screen.findByRole("dialog", { name: /Share access/ });
+    await h.user.click(
+      await within(dialog).findByRole("button", { name: /^Open profile for/ }),
+    );
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await screen.findByText("Profile content")).toBeVisible();
+  },
+);
 
 it("keeps a side tab's failed move recoverable after switching tabs", async () => {
   const base = {

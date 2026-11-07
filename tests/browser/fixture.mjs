@@ -2744,8 +2744,24 @@ export const test = base.extend({
           return { event, plaintext, agent };
         },
         // Answer later kind-0 reads for this key; no live delivery is modeled.
-        serveProfile(key, body) {
-          const event = sign(0, [], JSON.stringify(body), key);
+        // An owner key adds its signed NIP-OA attestation.
+        serveProfile(key, body, owner) {
+          const digest =
+            owner &&
+            createHash("sha256")
+              .update(`nostr:agent-auth:${getPublicKey(key)}:`)
+              .digest();
+          const tags = digest
+            ? [
+                [
+                  "auth",
+                  getPublicKey(owner),
+                  "",
+                  bytesToHex(schnorr.sign(new Uint8Array(digest), owner)),
+                ],
+              ]
+            : [];
+          const event = sign(0, tags, JSON.stringify(body), key);
           servedProfiles.set(event.pubkey, event);
           return event;
         },

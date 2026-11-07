@@ -14,6 +14,9 @@ import type {
 import type { MainOperation } from "../companion/operations";
 import { lastEditableMessage } from "../messages/useMessageEdit";
 import { createAgentOwnerEvidence } from "../profiles/agent-owner-evidence";
+import { knownAgentsOf } from "../messages/TypingIndicator";
+import { currentActivity } from "../agents/current-activity";
+import { formatPublicKey } from "../../shared/identity/public-key";
 
 /** What a pop-out window shows for one thread. Bounded like the native DTO. */
 export type PopoutThreadView = {
@@ -47,12 +50,23 @@ export type PopoutThreadView = {
   isDm: boolean;
   /** This frame shows a thread (root + replies), not a conversation timeline. */
   thread: boolean;
+  /** People typing and agents working in this frame's conversation. */
+  typing?: CompanionTyping | undefined;
 };
 export type { MainOperation };
 const MAX_OPERATIONS = 64;
 const MAX_REPLIES = 500;
-const visible = (rows: readonly ChannelMessage[]) =>
-  rows.filter((row) => !row.membership && !row.huddle);
+/** Thread frames show messages only; a conversation timeline also shows
+ * membership activity rows, as main's does. Huddle rows are never shown. */
+const visible = (rows: readonly ChannelMessage[], timeline = false) =>
+  rows.filter((row) => (timeline || !row.membership) && !row.huddle);
+/** Who is typing or working here, as main's indicator would say it. */
+export type CompanionTyping = {
+  /** Up to two names; `more` counts the rest. */
+  humans: string[];
+  more: number;
+  agents: string[];
+};
 
 /** What a frame reads: one thread (`session.thread`) or a conversation's
  * top-level timeline (`session.channels.window`). Loading, access and delivery
@@ -189,7 +203,53 @@ export function createPopoutThread(
       : undefined,
     session.unread.subscribeSync(notify),
     actions?.subscribe(notify),
+    session.typing.subscribe(notify),
+    session.agentActivity.subscribe(notify),
+    session.agentChoices.subscribe(notify),
   ];
+  /** Typing and agent work for this frame, from the same stores and pure
+   * classification main's indicator uses; no step details are projected. */
+  function typing(): CompanionTyping | undefined {
+    const profiles = session.profiles.snapshot();
+    const entries = session.typing
+      .snapshot()
+      .filter(
+        (entry) =>
+          entry.channelId === channelId &&
+          (rootId ? entry.threadRootId === rootId : !entry.threadRootId),
+      );
+    const known = knownAgentsOf(
+      session.agentChoices.snapshot(),
+      session.typing.snapshot(),
+      profiles,
+    );
+    const details = currentActivity(
+      session.agentActivity.snapshot(),
+      session.typing.snapshot(),
+      known,
+      channelId,
+      rootId,
+      false,
+    );
+    const name = (pubkey: string) =>
+      (
+        profiles.get(pubkey)?.name ??
+        formatPublicKey(pubkey) ??
+        "Someone"
+      ).slice(0, 200);
+    const humans = entries
+      .filter(
+        (entry) => !known.has(entry.pubkey) && entry.pubkey !== session.viewer,
+      )
+      .map((entry) => entry.pubkey);
+    const agents = [...details.keys()].sort().slice(0, 8).map(name);
+    if (!humans.length && !agents.length) return undefined;
+    return {
+      humans: humans.slice(0, 2).map(name),
+      more: Math.max(0, humans.length - 2),
+      agents,
+    };
+  }
   /** Actions main would offer for a row, by exact contribution instance,
    * within the native DTO's bounds: at most 32, each field ≤256 UTF-8 bytes.
    * Identities are never rewritten; an action that does not fit is left out
@@ -296,7 +356,7 @@ export function createPopoutThread(
       const snap = thread?.snapshot();
       if (!snap || !available()) return undefined;
       if (snap.root?.id === id) return snap.root;
-      return visible(snap.rows)
+      return visible(snap.rows, !rootId)
         .slice(-MAX_REPLIES)
         .find((row) => row.id === id);
     },
@@ -404,7 +464,7 @@ export function createPopoutThread(
       const snap = thread?.snapshot();
       return new Set(
         snap && available()
-          ? [snap.root, ...visible(snap.rows).slice(-MAX_REPLIES)]
+          ? [snap.root, ...visible(snap.rows, !rootId).slice(-MAX_REPLIES)]
               .filter((row) => row !== undefined)
               .map((row) => row.id)
           : [],
@@ -415,7 +475,7 @@ export function createPopoutThread(
     snapshot(): PopoutThreadView {
       const snap = thread?.snapshot();
       const profiles = session.profiles.snapshot();
-      const replies = snap ? visible(snap.rows) : [];
+      const replies = snap ? visible(snap.rows, !rootId) : [];
       // Agent hints decide whose ownership to observe; evidence decides
       // authority. Observation follows the rows shown now.
       // The same bounded rows the window shows, admits and claims read.
@@ -508,6 +568,7 @@ export function createPopoutThread(
         following: rootId ? session.unread.following(channelId, rootId) : false,
         isDm: c?.channelType === "dm" || c?.channelType === "solo",
         thread: !!rootId,
+        typing: available() ? typing() : undefined,
       };
     },
     retry() {

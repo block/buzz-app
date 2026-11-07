@@ -58,3 +58,10 @@
   font-size: var(--text-body-sm);
   color: var(--text-secondary);
 }
+
+.typing {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  color: var(--text-secondary);
+}

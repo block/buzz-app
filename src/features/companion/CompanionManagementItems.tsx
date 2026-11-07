@@ -141,5 +141,6 @@ export function toMessage(row: CompanionRow) {
     participants: [],
     ...(row.delivery !== "seen" ? { delivery: row.delivery } : {}),
     ...(row.authorIsAgent ? { agentEnvelope: true as const } : {}),
+    ...(row.membership ? { membership: row.membership } : {}),
   };
 }

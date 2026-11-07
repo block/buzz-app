@@ -4,6 +4,8 @@ import { profileActivityViewKey } from "../profiles/target";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { ImageReviewStage } from "../messages/ImageReviewStage";
 import { MessageRow } from "../messages/MessageRow";
+import { MembershipRow } from "../messages/MembershipRow";
+import { membershipRows, type TimelineRow } from "../messages/membership-rows";
 import {
   MessageReactionControls,
   MessageReactions,
@@ -73,18 +75,47 @@ export function CompanionRows({
   const selectedImage = imageRow?.attachments.find(
     (attachment) => attachment.url === image?.url,
   );
+  // A timeline groups consecutive membership rows into one notice, as main's
+  // does; the group takes the id of its newest row.
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const grouped =
+    layout === "timeline"
+      ? membershipRows(rows.map((row) => toMessage(row)))
+      : rows.map((row) => toMessage(row) as TimelineRow);
+  const membershipProfiles = (row: TimelineRow) =>
+    new Map(
+      (row.membershipRows ?? [row]).flatMap((entry) =>
+        [entry.membership?.actor, entry.membership?.target].flatMap((key) => {
+          const name = key && byId.get(entry.id)?.mentionNames?.[key];
+          return key && name ? [[key, { name }] as const] : [];
+        }),
+      ),
+    );
   return (
     <>
-      {rows.map((row, index) => {
-        // The row's own recovery line below reports delivery; the renderer's
-        // would duplicate it.
-        const { delivery: _delivery, ...message } = toMessage(row);
-        const previous = rows[index - 1];
+      {grouped.map((timelineRow, index) => {
+        const row = byId.get(timelineRow.id);
+        if (!row) return null;
+        const previous = grouped[index - 1];
         const day =
           layout === "timeline" &&
           (!previous ||
-            new Date(previous.time * 1000).toDateString() !==
-              new Date(row.time * 1000).toDateString());
+            new Date(previous.createdAt * 1000).toDateString() !==
+              new Date(timelineRow.createdAt * 1000).toDateString());
+        if (timelineRow.membership)
+          return (
+            <MembershipRow
+              key={row.id}
+              row={timelineRow}
+              profiles={membershipProfiles(timelineRow)}
+              viewer={capabilities?.reactions?.session.viewer}
+              media={() => undefined}
+              day={day}
+            />
+          );
+        // The row's own recovery line below reports delivery; the renderer's
+        // would duplicate it.
+        const { delivery: _delivery, ...message } = toMessage(row);
         const openThread = capabilities?.onOpenThread;
         const management = capabilities?.management;
         const reactions = capabilities?.reactions;

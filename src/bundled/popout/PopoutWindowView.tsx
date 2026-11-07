@@ -70,6 +70,19 @@ export function PopoutWindowView({
     [view.root, view.replies],
   );
   const conversation = view.isDm ? view.title : `#${view.title}`;
+  // Main's own words for who is working and typing here.
+  const typingText = view.typing
+    ? [
+        view.typing.agents.length
+          ? `${view.typing.agents.join(", ")}${view.typing.agents.length === 1 ? " is working" : " are working"}`
+          : "",
+        view.typing.humans.length
+          ? `${view.typing.humans.join(", ")}${view.typing.more ? ` and ${view.typing.more} others` : ""}${view.typing.humans.length + view.typing.more === 1 ? " is typing" : " are typing"}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(". ")
+    : "";
   // Companion wording follows the frame: a thread's replies or a
   // conversation's messages.
   const what = view.thread ? "thread" : "conversation";
@@ -373,6 +386,16 @@ export function PopoutWindowView({
             }
             focusConversation={focusConversation}
           />
+          {typingText && (
+            <p
+              role="status"
+              aria-live="polite"
+              className={styles.typing}
+              data-conversation-activity=""
+            >
+              {typingText}
+            </p>
+          )}
           <div ref={tail} />
         </div>
         {view.error && (

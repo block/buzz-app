@@ -153,11 +153,23 @@ export async function edge(page, direction, scroller = history(page)) {
       direction,
     );
   await scroller.hover();
-  // Send one real gesture for the actual distance, not an arbitrary 100,000px
+  // Send real gestures for the actual distance, not an arbitrary 100,000px
   // overshoot. At the boundary, retain input so production can initiate paging.
-  const remaining = await distance();
-  if (remaining >= 4) await wheel(page, direction * remaining, scroller);
-  else await page.mouse.wheel(0, direction * Math.max(1, remaining));
+  let remaining = await distance();
+  if (remaining < 4)
+    await page.mouse.wheel(0, direction * Math.max(1, remaining));
+  // A gesture can end short of the edge, as one did 199px from the top in
+  // Linux WebKit (see upper). Each further gesture must make real progress,
+  // so an immobile timeline still fails.
+  for (let gesture = 0; remaining >= 4 && gesture < 4; gesture++) {
+    await wheel(page, direction * remaining, scroller);
+    const before = remaining;
+    remaining = await distance();
+    if (remaining >= 4)
+      expect(remaining, "edge gesture moves toward the edge").toBeLessThan(
+        before,
+      );
+  }
   await expect
     .poll(distance, { message: "wheel reaches timeline edge" })
     .toBeLessThan(4);

@@ -22,12 +22,18 @@ import { composerDOMFixture } from "./composer-testing";
 composerDOMFixture();
 afterEach(cleanup);
 
-function mount(overrides: Partial<DocumentEditorProps> = {}) {
+function mount(
+  overrides: Partial<DocumentEditorProps> = {},
+  {
+    initialValue = "Hello world",
+    accept = (_next: string): boolean => true,
+  } = {},
+) {
   const ref = createRef<DocumentEditorHandle>();
   const change = vi.fn();
   const save = vi.fn();
   function Editor(props: Partial<DocumentEditorProps>) {
-    const [value, setValue] = useState("Hello world");
+    const [value, setValue] = useState(initialValue);
     const [source, setSource] = useState(false);
     const [linkOpen, setLinkOpen] = useState(false);
     return (
@@ -36,7 +42,7 @@ function mount(overrides: Partial<DocumentEditorProps> = {}) {
         value={value}
         onChange={(next) => {
           change(next);
-          setValue(next);
+          if (accept(next)) setValue(next);
         }}
         editing
         maxLength={32768}
@@ -138,6 +144,58 @@ it("loads accepted source content when returning to rich mode", () => {
   expect(input).toHaveTextContent("Accepted source");
   expect(input.querySelector("strong")).toHaveTextContent("Accepted");
 });
+
+it("keeps the caret through a declined insertion and the next Backspace", async () => {
+  const initialValue = "Intro paragraph.\n\nClosing line.";
+  const h = mount(
+    {},
+    {
+      initialValue,
+      accept: (next) => next.length <= initialValue.length,
+    },
+  );
+  const input = screen.getByRole("textbox", {
+    name: "Document body",
+  }) as ComposerInputElement;
+  act(() => {
+    input.focus();
+    input.setSelectionRange(5, 5);
+    input.insertText("Z");
+  });
+  expect(h.change).toHaveBeenCalledTimes(1);
+  expect(input.selectionStart).toBe(5);
+  expect(input.selectionEnd).toBe(5);
+  expect(input).toHaveFocus();
+  await userEvent.setup().keyboard("{Backspace}");
+  await waitFor(() =>
+    expect(h.change).toHaveBeenLastCalledWith(
+      "Intr paragraph.\n\nClosing line.",
+    ),
+  );
+});
+
+it.each(["*italic*", "__bold__", "+ item", "1) item"])(
+  "does not emit a normalized rollback for %j",
+  (initialValue) => {
+    const h = mount(
+      {},
+      { initialValue, accept: (next) => next.length <= initialValue.length },
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    act(() => {
+      input.focus();
+      input.setSelectionRange(1, 1);
+      input.insertText("Z");
+    });
+    expect(h.change).toHaveBeenCalledTimes(1);
+    h.rerender({ source: true });
+    expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
+      initialValue,
+    );
+  },
+);
 
 it("keeps save shortcuts and selection restoration at the controlled editor boundary", () => {
   const h = mount();

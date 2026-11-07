@@ -458,6 +458,8 @@ export function AgentCreateDialog({
                       <Model
                         key={type.key}
                         config={config}
+                        // Thinking has its own row beside it.
+                        {...(Thinking && { showEffort: false })}
                         disabled={pending}
                         onChange={(next) => chooseModel(type, next)}
                       />

@@ -1291,6 +1291,20 @@ it("saves the create-time Thinking choice in the initial agent config", async ()
   );
 });
 
+it("leaves Thinking to its own row instead of the model field", async () => {
+  const shown: unknown[] = [];
+  const type = {
+    ...withThinking(notes),
+    CreateModel: (props: AgentCreateProps) => {
+      shown.push(props.showEffort);
+      return <span>Model field</span>;
+    },
+  } as RegisteredAgentType;
+  const { dialog } = setup([type]);
+  expect(within(dialog).getByText("Model field")).toBeInTheDocument();
+  expect(shown.at(-1)).toBe(false);
+});
+
 it("restores inherited Thinking when Default is chosen before creation", async () => {
   const { agents, dialog, user } = setup([withThinking(notes)]);
   const thinking = within(dialog).getByRole("combobox", { name: "Thinking" });

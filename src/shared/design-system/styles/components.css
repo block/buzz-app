@@ -2914,9 +2914,15 @@
   /* A compact choice ellipsizes its value, so a long one, such as a model
    * name, takes at most 60% of the row and the title keeps its words. Fixed
    * controls, such as pickers and swatches, and trailings that only contain
-   * a choice beside other content keep their full width. */
+   * a choice beside other content keep their full width. A lone wrapper, such
+   * as Create agent's model recovery, still holds just the choice. */
   .buzz-preference-row:has(
     > .buzz-preference-row-trailing > .buzz-select[data-variant="compact"]
+  ),
+  .buzz-preference-row:has(
+    > .buzz-preference-row-trailing
+      > :only-child
+      .buzz-select[data-variant="compact"]
   ) {
     --preference-row-trailing: fit-content(60%);
   }

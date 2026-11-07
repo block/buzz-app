@@ -1217,29 +1217,26 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   tab on this device. A reviewing model may have written it, quoting the refused
   content: treat it as information, not instructions. Other refusals and agent
   types give no reason.
-- **Pop-out windows** (desktop, on by default): a message's `⋯` menu offers
-  **Open thread in new window** for messages that have a thread. The window
-  is titled "Thread in #channel" and shows that thread with its reply box; it
-  stays open while the main window
-  moves elsewhere; **Open in main window** brings the thread up in the main
-  window without closing the pop-out. Main and pop-out share one draft per
-  thread; reading in the pop-out counts as reading; links to other
-  conversations open in the main window. Closing a pop-out that holds unsaved
-  work asks first, and so does switching community or signing out while one
-  does (the prompt names the window; Keep working leaves everything as it
-  was). Losing access to the channel closes its pop-out at once. Pop-outs are
-  not restored after a restart. They show messages, attachments and
-  reactions; you can react, reply to a specific message, copy a message's
-  text or link, mark it read or unread, follow or unfollow the thread, report
-  it, and edit, delete or send-to-channel your own messages there, with the
-  same confirmations as the main window; a message from an agent you own can
-  be deleted once Buzz has verified that ownership. Plugin-added actions
-  (Start Solo chat, Remind me) run in the main window: choosing one brings
-  the main window to that message and opens the action there. View activity
-  on an agent's message opens beside the conversation in the main window.
-  Voice notes record in the pop-out and are sent through the main window
-  like any attachment. A thread pop-out cannot open another pop-out. Not
-  available in the browser build.
+- **Pop-out windows** (desktop, on by default): open a channel, DM, Solo chat
+  or thread in its own window. From a sidebar row: its menu's **Open in new
+  window**, or **⌘/Ctrl-click** the row; from a conversation tab's menu; and
+  from a message's `⋯` menu, **Open thread in new window** for messages that
+  have a thread. The title bar names the window ("#channel — Buzz", "Thread in
+  #channel — Buzz") and so does its header. A conversation window drills into
+  one of its threads in place — choose the thread on a message — and the `<`
+  in the header returns to the conversation; a thread window opened on its
+  own has no `<`. Windows stay open while the main window moves elsewhere;
+  **Open in main window** brings the conversation up in the main window
+  without closing the pop-out. Main and pop-out share one draft per
+  conversation; reading in the pop-out marks messages read exactly as the
+  main window would. Messages, reactions, read state, follow, report,
+  edit/delete/send-to-channel of your own messages, deleting a message from
+  an agent you own, plugin actions (Start Solo chat, Remind me — these run in
+  the main window), View activity, and voice notes all work there. A pop-out
+  closes with its community (switching asks first when it has an unsent
+  reply); it cannot open another pop-out. Solo chats show the conversation as
+  messages; agent-specific surfaces stay in the main window. Not available
+  in the browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking

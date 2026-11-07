@@ -32,6 +32,7 @@ import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type { UnreadSnapshot } from "../relay/unread";
 import type { Navigation } from "../navigation/controller";
+import type { ContributionReader, TabAction } from "../conversation/contracts";
 import type {
   RegisteredSidebarSection,
   SidebarSectionRow,
@@ -130,6 +131,7 @@ function fixture(
   ],
   sidebarSections?: SidebarSections,
   sidebarRows?: SidebarRows,
+  tabActions?: ContributionReader<TabAction>,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -240,6 +242,7 @@ function fixture(
             }}
             sidebarSections={sidebarSections}
             sidebarRows={sidebarRows}
+            tabActions={tabActions}
           >
             {pages}
           </PrimarySidebar>
@@ -873,6 +876,50 @@ it("opens an Activity mention at its message, with no thread root", async () => 
   );
   expect(vi.mocked(h.navigator.open).mock.lastCall?.[0]).not.toHaveProperty(
     "threadRootId",
+  );
+});
+
+it("offers contributed conversation actions in a row's menu and hands ⌘-click to the one claiming it", async () => {
+  const run = vi.fn();
+  const entry = (id: string, gesture?: "modifier-click") => ({
+    id,
+    key: `test/${id}`,
+    pluginId: "test",
+    revision: "1",
+    title: id === "window" ? "Open in new window" : "Other action",
+    matches: (target: { channelId: string }) => target.channelId !== "gamma",
+    run: (target: { channelId: string }) => run(id, target.channelId),
+    ...(gesture ? { gesture } : {}),
+  });
+  const actions = [entry("window", "modifier-click"), entry("other")];
+  const h = fixture(undefined, "ready", undefined, undefined, undefined, {
+    snapshot: () => actions,
+    subscribe: () => () => {},
+  });
+  render(h.view("alpha"));
+  fireEvent.keyDown(await screen.findByRole("button", { name: "beta" }), {
+    key: "ContextMenu",
+  });
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Open in new window" }),
+  );
+  expect(run).toHaveBeenCalledWith("window", "beta");
+  // A row the action does not match offers nothing and navigates on ⌘-click.
+  fireEvent.click(screen.getByRole("button", { name: "gamma" }), {
+    metaKey: true,
+  });
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+  );
+  vi.mocked(h.navigator.open).mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "beta" }), {
+    metaKey: true,
+  });
+  expect(run).toHaveBeenLastCalledWith("window", "beta");
+  expect(h.navigator.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "beta" }));
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "conversation", channelId: "beta" }),
   );
 });
 

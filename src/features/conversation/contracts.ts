@@ -283,12 +283,16 @@ export type ConversationTabTarget = Readonly<{
   threadRootId?: string | undefined;
 }>;
 /** An entry in a conversation tab's menu, after the host's own actions. The
- * host shows it while `matches` passes for that tab's target. */
+ * host shows it while `matches` passes for that tab's target. The same entry
+ * appears in a conversation's sidebar row menu for the row's conversation. */
 export type TabAction = Readonly<{
   id: string;
   title: string;
   matches(target: ConversationTabTarget, session: RelaySession): boolean;
   run(target: ConversationTabTarget, session: RelaySession): void;
+  /** A ⌘/Ctrl-click on a conversation entry runs this action instead of
+   * opening the conversation in place (one action may claim the gesture). */
+  gesture?: "modifier-click";
 }>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;

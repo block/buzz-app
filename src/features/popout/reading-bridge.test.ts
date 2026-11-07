@@ -67,11 +67,13 @@ function setup() {
     },
   );
   owners.push(owner);
+  // Within the read-state retention window: older events count as read.
+  const now = Math.floor(Date.now() / 1000);
   incoming([
-    roster(relay, "room", [viewer.pubkey], 10),
-    metadata(relay, "room", "room", 10),
+    roster(relay, "room", [viewer.pubkey], now - 10),
+    metadata(relay, "room", "room", now - 10),
   ]);
-  const row = message(alice, "room", "hello", 11, [["p", viewer.pubkey]]);
+  const row = message(alice, "room", "hello", now - 5, [["p", viewer.pubkey]]);
   incoming([row]);
   return {
     session: owner.session,

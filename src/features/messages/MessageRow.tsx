@@ -493,56 +493,6 @@ function MessageRowContent({
     actions.includes(openAction.action)
       ? openAction.action
       : undefined;
-  // A handed-off action (from a pop-out window) for this exact row: the exact
-  // contribution instance opens as if chosen here; a menu item's menu opens.
-  const [menuOpenRequest, setMenuOpenRequest] = useState<{
-    id: number;
-    activate: number;
-  }>();
-  const handedOff = useSyncExternalStore(
-    messageActionRequests.subscribe,
-    messageActionRequests.snapshot,
-    () => undefined,
-  );
-  useEffect(() => {
-    if (
-      !handedOff ||
-      !scope ||
-      !session ||
-      handedOff.session !== session ||
-      handedOff.scope !== scope ||
-      handedOff.channelId !== row.channelId ||
-      handedOff.messageId !== row.id
-    )
-      return;
-    const action = actions.find(
-      (entry) =>
-        entry.key === handedOff.key && entry.revision === handedOff.revision,
-    );
-    const taken = messageActionRequests.take(
-      session,
-      scope,
-      row.channelId,
-      row.id,
-    );
-    if (!taken || !action) return;
-    // A menu contribution owns its activation (its item's click): the menu
-    // opens and that contribution's item is activated as a chosen item is.
-    if (action.placement === "menu")
-      setMenuOpenRequest((previous) => ({
-        id: (previous?.id ?? 0) + 1,
-        activate: contributionKey(action),
-      }));
-    else activateAction(action);
-  }, [
-    handedOff,
-    scope,
-    session,
-    row.channelId,
-    row.id,
-    actions,
-    activateAction,
-  ]);
   useEffect(() => {
     if (openAction && !opened) setOpenAction(undefined);
   }, [openAction, opened]);
@@ -601,20 +551,73 @@ function MessageRowContent({
       </MenuItem>
     </>
   );
-  const activateAction = (action: (typeof actions)[number]) => {
+  const activateAction = useCallback(
+    (action: (typeof actions)[number]) => {
+      if (
+        !session ||
+        !active ||
+        !extensions?.actions?.snapshot().includes(action)
+      )
+        return;
+      try {
+        if (action.matches(row, session))
+          setOpenAction({ action, session, messageId: row.id });
+      } catch {
+        // A failed matcher makes this action unavailable.
+      }
+    },
+    [session, active, extensions?.actions, row],
+  );
+  // A handed-off action (from a pop-out window) for this exact row: the exact
+  // contribution instance opens as if chosen here; a menu item's menu opens.
+  const [menuOpenRequest, setMenuOpenRequest] = useState<{
+    id: number;
+    activate: number;
+  }>();
+  const handedOff = useSyncExternalStore(
+    messageActionRequests.subscribe,
+    messageActionRequests.snapshot,
+    () => undefined,
+  );
+  useEffect(() => {
     if (
+      !handedOff ||
+      !scope ||
       !session ||
-      !active ||
-      !extensions?.actions?.snapshot().includes(action)
+      handedOff.session !== session ||
+      handedOff.scope !== scope ||
+      handedOff.channelId !== row.channelId ||
+      handedOff.messageId !== row.id
     )
       return;
-    try {
-      if (action.matches(row, session))
-        setOpenAction({ action, session, messageId: row.id });
-    } catch {
-      // A failed matcher makes this action unavailable.
-    }
-  };
+    const action = actions.find(
+      (entry) =>
+        entry.key === handedOff.key && entry.revision === handedOff.revision,
+    );
+    const taken = messageActionRequests.take(
+      session,
+      scope,
+      row.channelId,
+      row.id,
+    );
+    if (!taken || !action) return;
+    // A menu contribution owns its activation (its item's click): the menu
+    // opens and that contribution's item is activated as a chosen item is.
+    if (action.placement === "menu")
+      setMenuOpenRequest((previous) => ({
+        id: (previous?.id ?? 0) + 1,
+        activate: contributionKey(action),
+      }));
+    else activateAction(action);
+  }, [
+    handedOff,
+    scope,
+    session,
+    row.channelId,
+    row.id,
+    actions,
+    activateAction,
+  ]);
   const actionItems = (contextMenu: boolean) =>
     actions
       .filter((action) => action.placement !== "toolbar" || contextMenu)

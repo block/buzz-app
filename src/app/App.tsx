@@ -710,6 +710,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                 agents={services.agents}
                 chatIcons={services.conversation.chatIcons}
                 chatMenus={services.conversation.chatMenus}
+                tabActions={services.conversation.tabActions}
                 sidebarSections={services.sidebarSections}
                 sidebarScope={services.sidebarScope}
                 sidebarRows={services.sidebarRows}

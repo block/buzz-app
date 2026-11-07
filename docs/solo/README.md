@@ -267,6 +267,13 @@ The validated `ttlSeconds` is sent as the third `channelWrites.create` argument;
 there is no create-then-edit. Local settings store name, Canvas and lifetime
 together. Invalid stored durations are visible failures, not implicit Ongoing.
 
+A draft with no saved lifetime follows the default from **Settings → Local
+settings → New Solo chats**, stored on the device for each community and account
+and read again when the chat starts. Choosing a lifetime in **Chat settings**,
+including Ongoing, saves it for that draft; saving with the shown default
+unchanged keeps following the default. A default other than one of the offered
+durations is read as Ongoing, unlike an invalid duration saved on a draft.
+
 The **Chat settings** gear in the header opens the form directly; Solo chat
 row menus offer the same form as **Chat settings**. Both open one
 scrollable dialog, with **Chat name** above Workspace/Canvas

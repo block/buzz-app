@@ -4,8 +4,8 @@ use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-pub async fn download(url: &str) -> Result<Vec<u8>, String> {
-    let url = buzzodz_plugins::imports::plugin_url(url)?;
+pub async fn download(url: String) -> Result<Vec<u8>, String> {
+    let url = buzzodz_plugins::imports::plugin_url(&url)?;
     let client = reqwest::Client::builder()
         .https_only(true)
         .connect_timeout(Duration::from_secs(30))

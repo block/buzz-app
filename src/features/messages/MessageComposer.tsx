@@ -159,6 +159,7 @@ import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
+import { recognizeSlashCommand } from "../conversation/slash-command";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -303,6 +304,9 @@ export type MessageComposerProps = {
   chatPresentation?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
+  /** Whether a draft that begins with a registered `/command` runs it on send.
+   * Channel, DM and thread composers opt in; Solo chats never run commands. */
+  slashCommands?: boolean | undefined;
   onSend?: (id: string) => void;
   /** A plain slash command with no recipients or attachments may be consumed by
    * its conversation owner. Return false to send it as an ordinary message. */
@@ -521,6 +525,7 @@ function Composer({
   requireMention = false,
   chatPresentation = false,
   inviteAgents = false,
+  slashCommands = false,
   trailingTool,
 }: MessageComposerProps) {
   const active = useConversationPresentation();
@@ -1130,6 +1135,10 @@ function Composer({
   useEffect(() => {
     setPasteTooLong(false);
   }, [draft, editing.target]);
+  const commands =
+    slashCommands && !solo && !editing.target && !submission
+      ? extensions?.commands
+      : undefined;
   const editScope = useMessageEditScope();
   const editableRows = () =>
     editMessages ??
@@ -2635,7 +2644,7 @@ function Composer({
     const capturedRunPicks = stickyPicks
       ? { ...(choicesNow?.value ?? {}) }
       : { ...capturedPicks, ...(choicesNow?.value ?? {}) };
-    const command =
+    const ownerCommand =
       onCommand &&
       !captured.recipients.length &&
       !captured.pending?.length &&
@@ -2667,8 +2676,8 @@ function Composer({
         agentKeys,
       );
     try {
-      if (command && onCommand) {
-        const handled = onCommand(command, attempt.signal);
+      if (ownerCommand && onCommand) {
+        const handled = onCommand(ownerCommand, attempt.signal);
         if (handled !== false) {
           setSending(true);
           if (await handled) {
@@ -2691,6 +2700,21 @@ function Composer({
           }
         }
       }
+      const command =
+        commands &&
+        recognizeSlashCommand(
+          composerMarkdown({ ...captured, chatCards: [], gifs: [] }),
+          commands.snapshot(),
+        );
+      if (
+        command &&
+        (capturedAttachments.length ||
+          captured.chatCards?.length ||
+          captured.gifs?.length)
+      )
+        throw new Error(
+          "Commands can't be sent with attachments. Remove the attachments to run it.",
+        );
       const bringable = new Set(
         (agents?.joinable() ?? []).map((agent) => agent.pubkey),
       );
@@ -2728,6 +2752,48 @@ function Composer({
           ownSoloConversation ? capturedPicksRevision : undefined,
         );
         return;
+      }
+      let body = composerMarkdown(captured);
+      if (command) {
+        setSending(true);
+        setError(undefined);
+        const release = () => {
+          if (sendAttempt.current !== attempt) return;
+          sendAttempt.current = null;
+          if (live.current) setSending(false);
+        };
+        attempt.signal.addEventListener("abort", release, { once: true });
+        let result: Awaited<ReturnType<typeof command.command.run>>;
+        try {
+          result = await command.command.run({
+            session,
+            scope,
+            channelId,
+            threadRootId,
+            args: command.args,
+            recipients: captured.recipients.map(({ pubkey, name }) => ({
+              pubkey,
+              name,
+            })),
+            signal: attempt.signal,
+          });
+        } finally {
+          attempt.signal.removeEventListener("abort", release);
+        }
+        attempt.signal.throwIfAborted();
+        if (
+          valueRef.current !== captured ||
+          !sameAttachmentSelection(
+            attachments.store.snapshot(),
+            capturedAttachments,
+          )
+        )
+          return;
+        if (viewRevision(scope, draftKey) !== savedRevision) {
+          setConflict(true);
+          return;
+        }
+        body = result.send;
       }
       let references: readonly string[] = [];
       let recipients = capturedRecipients.map((item) => item.pubkey);
@@ -2834,8 +2900,8 @@ function Composer({
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
-          : composerMarkdown(captured);
+          ? mediaTimeReply(mediaTimeSeconds, body)
+          : body;
       // Alone with agents, the toolbar keeps the agents; the next draft starts empty.
       const next = routing
         ? mentionDraft("")
@@ -3311,6 +3377,7 @@ function Composer({
             channelId={channelId}
             threadRootId={threadRootId}
             inviteAgents={agentChoices && !editing.target}
+            slashCommands={!!commands}
             replace={replaceCompletion}
             resolved={value}
           />

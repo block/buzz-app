@@ -3,7 +3,10 @@ import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { ConversationService } from "../conversation/service";
 import * as emojiPlugin from "../../bundled/emoji";
+import * as commandsPlugin from "../../bundled/commands";
+import type { PluginModule } from "../../plugins/api";
 import { File as NodeFile } from "node:buffer";
+import { attachmentDraft } from "./attachment-draft";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
@@ -1892,6 +1895,7 @@ async function mountUploadComposer(
     requireMention?: boolean;
     /** The channel is a generated huddle room, as a legacy room's metadata shows. */
     huddle?: boolean;
+    slashCommands?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
@@ -1998,6 +2002,7 @@ async function mountUploadComposer(
           channelName="General"
           defaultMention={options.defaultMention}
           requireMention={options.requireMention}
+          slashCommands={options.slashCommands}
           {...(options.extensions ? { extensions: options.extensions } : {})}
           {...(options.threadRootId
             ? { threadRootId: options.threadRootId }
@@ -15737,4 +15742,379 @@ describe("oversized paste feedback", () => {
       screen.getByRole("region", { name: "Chat attachments" }),
     ).toBeVisible();
   });
+});
+
+const wireShrug = "¯" + "\\".repeat(3) + "_(ツ)" + "\\" + "_/¯";
+
+/** The real conversation service with the built-in commands and a command that always fails. */
+async function commandService() {
+  const root = new Context();
+  let tools: ComposerToolProps | undefined;
+  const held = {
+    runs: 0,
+    signals: [] as AbortSignal[],
+    result: deferred<{ send: string }>(),
+  };
+  const failing: PluginModule = {
+    inject: ["conversation"],
+    apply: ({ conversation }) => {
+      conversation.registerTool({
+        id: "capture",
+        title: "Capture",
+        component: (props) => {
+          tools = props;
+          return null;
+        },
+      });
+      conversation.registerCommand({
+        id: "shout",
+        name: "shout",
+        usage: "/shout",
+        description: "Always fails",
+        run: () => {
+          throw new Error("Shout is unavailable");
+        },
+      });
+      conversation.registerCommand({
+        id: "hold",
+        name: "hold",
+        usage: "/hold",
+        description: "Waits until the test settles it",
+        run: ({ signal }) => {
+          held.runs++;
+          held.signals.push(signal);
+          return held.result.promise;
+        },
+      });
+      conversation.registerCommand({
+        id: "refuse",
+        name: "refuse",
+        usage: "/refuse",
+        description: "Rejects",
+        run: () => Promise.reject(new Error("Refused remotely")),
+      });
+    },
+  };
+  const runtime = new PluginRuntime(root, async (plugin) =>
+    plugin.manifest.id === "buzz.commands" ? commandsPlugin : failing,
+  );
+  const service = new ConversationService(root);
+  onTestFinished(async () => {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  });
+  const info = (id: string) => ({
+    manifest: { id, name: id, apiVersion: 1 as const },
+    enabled: true,
+    source: "external" as const,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  });
+  runtime.reconcile([info("buzz.commands"), info("test.shout")]);
+  await vi.waitFor(() => expect(service.commands.snapshot()).toHaveLength(4));
+  return Object.assign(service, { composerTools: () => tools, held });
+}
+
+const commandRows = () =>
+  [
+    ...document.querySelectorAll(
+      'section[aria-label="Command suggestions"] [role="option"]',
+    ),
+  ].map((row) => row.textContent);
+
+it("completes slash commands from the keyboard without running them, and sends /shrug with the text first", async () => {
+  const h = mount({ extensions: await commandService(), slashCommands: true });
+  h.fill("/");
+  await waitFor(() => expect(commandRows()).toHaveLength(4));
+  expect(commandRows()).toEqual([
+    expect.stringContaining("/hold"),
+    expect.stringContaining("/refuse"),
+    expect.stringContaining("/shout"),
+    expect.stringContaining("/shrug [text]"),
+  ]);
+  await h.user.keyboard("{Escape}");
+  expect(commandRows()).toEqual([]);
+  expect(h.input()).toHaveValue("/");
+  h.fill("/sh");
+  await waitFor(() => expect(commandRows()).toHaveLength(2));
+  await h.user.keyboard("{ArrowDown}{Enter}");
+  expect(h.input()).toHaveValue("/shrug ");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  h.fill("/s");
+  await waitFor(() => expect(commandRows()).toHaveLength(2));
+  await h.user.keyboard("{Tab}");
+  expect(h.input()).toHaveValue("/shout ");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  h.fill("/shrug well");
+  expect(commandRows()).toEqual([]);
+  h.submit();
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      `well ${wireShrug}`,
+      [],
+      [],
+    ),
+  );
+  expect(h.input()).toHaveValue("");
+  h.fill("/shrug");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    wireShrug,
+    [],
+    [],
+  );
+});
+
+it.each(["/review hello", "/usr/bin/foo", "//shrug", "hello /shrug"])(
+  "sends %j unchanged",
+  async (draft) => {
+    const h = mount({
+      extensions: await commandService(),
+      slashCommands: true,
+    });
+    h.fill(draft);
+    h.submit();
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        draft,
+        [],
+        [],
+      ),
+    );
+  },
+);
+
+it("leaves a draft that starts with an @mention to the agent, even when it names a command", async () => {
+  const service = await commandService();
+  const h = mount({ extensions: service, slashCommands: true });
+  act(() => service.composerTools()?.insertMention(first));
+  await h.user.keyboard("/shrug hi");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  const [, content] = h.messages.send.mock.calls[0] ?? [];
+  expect(content).toContain("/shrug hi");
+  expect(content).not.toContain(wireShrug);
+});
+
+it("keeps the draft and shows the reason when a command fails", async () => {
+  const h = mount({ extensions: await commandService(), slashCommands: true });
+  h.fill("/shout now");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Shout is unavailable",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/shout now");
+});
+
+it("offers and runs no commands where the composer has not opted in", async () => {
+  const service = await commandService();
+  const plain = mount({ extensions: service });
+  plain.fill("/shrug");
+  expect(commandRows()).toEqual([]);
+  plain.submit();
+  await waitFor(() =>
+    expect(plain.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "/shrug",
+      [],
+      [],
+    ),
+  );
+});
+
+it("refuses to run a command with an attachment", async () => {
+  const h = await mountUploadComposer({
+    extensions: await commandService(),
+    slashCommands: true,
+  });
+  pickAttachments(h.container, [attachmentFile()]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+  fireEvent.input(h.input(), { target: { value: "/shrug" } });
+  fireEvent.submit(h.form());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Commands can't be sent with attachments",
+  );
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/shrug");
+  expect(screen.getByText("notes.txt")).toBeVisible();
+});
+
+it("runs a pending command once, keeps the draft until it settles, and clears it after", async () => {
+  const service = await commandService();
+  const h = mount({ extensions: service, slashCommands: true });
+  h.fill("/hold now");
+  await h.user.keyboard("{Enter}");
+  await waitFor(() => expect(service.held.runs).toBe(1));
+  await h.user.keyboard("{Enter}");
+  h.submit();
+  expect(service.held.runs).toBe(1);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/hold now");
+  await act(async () => service.held.result.resolve({ send: "done" }));
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "done",
+      [],
+      [],
+    ),
+  );
+  expect(h.input()).toHaveValue("");
+});
+
+it("keeps the draft and shows the reason when a command's promise rejects", async () => {
+  const h = mount({ extensions: await commandService(), slashCommands: true });
+  h.fill("/refuse please");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Refused remotely",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/refuse please");
+});
+
+it("abandons a pending command when the composer unmounts, sending and reporting nothing", async () => {
+  const service = await commandService();
+  const h = mount({ extensions: service, slashCommands: true });
+  h.fill("/hold now");
+  h.submit();
+  await waitFor(() => expect(service.held.runs).toBe(1));
+  const signal = service.held.signals[0];
+  expect(signal?.aborted).toBe(false);
+  h.unmount();
+  expect(signal?.aborted).toBe(true);
+  await act(async () => service.held.result.resolve({ send: "late" }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("releases the composer when a retarget abandons a command that ignores its signal", async () => {
+  const service = await commandService();
+  const h = mount({
+    extensions: service,
+    slashCommands: true,
+    threadRootId: "root",
+  });
+  h.fill("/hold now");
+  h.submit();
+  await waitFor(() => expect(service.held.runs).toBe(1));
+  h.retarget({ threadRootId: "root", replyParentId: "parent" });
+  expect(service.held.signals[0]?.aborted).toBe(true);
+  h.fill("plain reply");
+  h.submit();
+  await waitFor(() => expect(h.messages.reply).toHaveBeenCalledOnce());
+  await act(async () => service.held.result.resolve({ send: "late" }));
+  expect(h.messages.reply).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps the draft and an attachment added while a command runs, and sends neither", async () => {
+  const service = await commandService();
+  const h = await mountUploadComposer({
+    extensions: service,
+    slashCommands: true,
+  });
+  fireEvent.input(h.input(), { target: { value: "/hold now" } });
+  await act(async () => {});
+  fireEvent.submit(h.form());
+  await waitFor(() => expect(service.held.runs).toBe(1));
+  act(() =>
+    attachmentDraft(h.owner.session, `${h.scope}:draft:channel`, "channel").add(
+      [attachmentFile()],
+    ),
+  );
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => service.held.result.resolve({ send: "done" }));
+  await act(async () => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/hold now");
+  await waitFor(() => expect(screen.getByText("notes.txt")).toBeVisible());
+});
+
+it("runs a command before asking about a mentioned nonmember, then sends its result to whoever the answer keeps", async () => {
+  const service = await commandService();
+  const h = mount({ extensions: service, slashCommands: true });
+  const add = vi.fn(async () => {});
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+  });
+  h.fill("/hold ");
+  act(() => service.composerTools()?.insertMention(first));
+  h.submit();
+  await waitFor(() => expect(service.held.runs).toBe(1));
+  expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+  await act(async () => service.held.result.resolve({ send: "done" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add).toHaveBeenCalledWith("channel", first.pubkey);
+  expect(h.messages.send.mock.calls[0]?.slice(1)).toEqual([
+    "done",
+    [first.pubkey],
+    [],
+  ]);
+});
+
+it("chooses a typeahead option by pointer without running it", async () => {
+  const h = mount({ extensions: await commandService(), slashCommands: true });
+  h.fill("/sh");
+  await waitFor(() => expect(commandRows()).toHaveLength(2));
+  await h.user.click(screen.getByRole("option", { name: /\/shrug/ }));
+  expect(h.input()).toHaveValue("/shrug ");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("takes the first Enter on a typed command name as a choice and the second as the send", async () => {
+  const h = mount({ extensions: await commandService(), slashCommands: true });
+  h.fill("/shrug");
+  await waitFor(() => expect(commandRows()).toHaveLength(1));
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("/shrug ");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      wireShrug,
+      [],
+      [],
+    ),
+  );
+});
+
+it("leaves a new conversation's composer without commands", async () => {
+  const submit = vi.fn();
+  const h = mount({
+    extensions: await commandService(),
+    slashCommands: true,
+    submission: { draftKey: "new", locked: false, disabled: false, submit },
+  });
+  h.fill("/sh");
+  await act(async () => {});
+  expect(commandRows()).toEqual([]);
+  h.fill("/shrug hi");
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(submit).toHaveBeenCalledWith(
+    expect.objectContaining({ text: "/shrug hi" }),
+    expect.anything(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  );
 });

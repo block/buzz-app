@@ -272,29 +272,21 @@ export function createHuddles(
       ),
     };
     current = attempt;
-    attempt.stopAccess = connection.session.channels.subscribeList(() => {
-      const list = connection.session.channels.list();
-      if (
-        valid(attempt) &&
-        (accessible() === "denied" ||
-          (accessible() === "unknown" &&
-            list.status === "ready" &&
-            list.coverage !== "partial"))
-      )
-        void leave("You no longer have access to this channel.");
-    });
-    update({
-      ...idle,
-      phase: "connecting",
-      id: attempt.id,
-      destination,
-      ...(room ? { room } : {}),
-      ...(incoming
-        ? { requester: incoming.requester, participants: incoming.participants }
-        : {}),
-    });
-    const key = dmAgent?.(connection, destination);
+    // Only a fresh start invites; joining someone else's room never adds a listener.
+    const key = discover ? dmAgent?.(connection, destination) : undefined;
     let invited = false;
+    let inviteError: string | undefined;
+    const seated = (roomId: string) =>
+      !!key &&
+      !!connection.session.channels.get?.(roomId)?.members?.includes(key);
+    // Clear only this invitation's warning, once the room roster shows the agent.
+    const confirmInvite = () => {
+      if (!inviteError || snapshot.error !== inviteError) return;
+      if (!snapshot.room || !seated(snapshot.room)) return;
+      inviteError = undefined;
+      const { error: _invite, ...rest } = snapshot;
+      update(rest);
+    };
     const inviteAgent = async (roomId: string) => {
       if (!key || invited) return;
       invited = true;
@@ -309,7 +301,7 @@ export function createHuddles(
           channel.parentChannelId !== destination.channelId
         )
           throw new Error("Couldn’t verify the Huddle room");
-        if (!channel.members?.includes(key))
+        if (!seated(roomId))
           await addChannelMember(
             connection.session,
             roomId,
@@ -317,13 +309,33 @@ export function createHuddles(
             attempt.abort.signal,
           );
       } catch (error) {
-        if (valid(attempt))
-          update({
-            ...snapshot,
-            error: `Couldn’t add the agent: ${message(error)}. Use Huddle options → Add someone to retry.`,
-          });
+        if (!valid(attempt) || seated(roomId)) return;
+        inviteError = `Couldn’t add the agent: ${message(error)}. Use Huddle options → Add someone to retry.`;
+        update({ ...snapshot, error: inviteError });
       }
     };
+    attempt.stopAccess = connection.session.channels.subscribeList(() => {
+      const list = connection.session.channels.list();
+      if (
+        valid(attempt) &&
+        (accessible() === "denied" ||
+          (accessible() === "unknown" &&
+            list.status === "ready" &&
+            list.coverage !== "partial"))
+      )
+        void leave("You no longer have access to this channel.");
+      else if (valid(attempt)) confirmInvite();
+    });
+    update({
+      ...idle,
+      phase: "connecting",
+      id: attempt.id,
+      destination,
+      ...(room ? { room } : {}),
+      ...(incoming
+        ? { requester: incoming.requester, participants: incoming.participants }
+        : {}),
+    });
     const receive = (event: HuddleUpdate) => {
       if (!valid(attempt)) return;
       if (event.type === "ended") {
@@ -451,32 +463,23 @@ export function createHuddles(
         else if (snapshot.phase === "incoming") update(idle);
       },
     );
+  // Seat presentation for this call only; old calls and inactive phases are ignored.
+  const voiceSeat =
+    (field: "listening" | "thinking") =>
+    (id: string, key: string, active: boolean) => {
+      if (snapshot.id !== id || (active && snapshot.phase !== "connected"))
+        return;
+      const keys = snapshot[field] ?? [];
+      if (keys.includes(key) === active) return;
+      update({
+        ...snapshot,
+        [field]: active ? [...keys, key] : keys.filter((peer) => peer !== key),
+      });
+    };
   return {
     snapshot: () => snapshot,
-    voiceThinking(id: string, key: string, active: boolean) {
-      if (snapshot.id !== id || (active && snapshot.phase !== "connected"))
-        return;
-      const thinking = snapshot.thinking ?? [];
-      if (thinking.includes(key) === active) return;
-      update({
-        ...snapshot,
-        thinking: active
-          ? [...thinking, key]
-          : thinking.filter((peer) => peer !== key),
-      });
-    },
-    voiceListening(id: string, key: string, active: boolean) {
-      if (snapshot.id !== id || (active && snapshot.phase !== "connected"))
-        return;
-      const listening = snapshot.listening ?? [];
-      if (listening.includes(key) === active) return;
-      update({
-        ...snapshot,
-        listening: active
-          ? [...listening, key]
-          : listening.filter((peer) => peer !== key),
-      });
-    },
+    voiceListening: voiceSeat("listening"),
+    voiceThinking: voiceSeat("thinking"),
     voiceError(call: string, error?: string) {
       if (snapshot.id !== call) return;
       const { error: _previous, ...rest } = snapshot;

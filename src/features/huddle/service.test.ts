@@ -692,6 +692,62 @@ describe("automatic DM voice invitation", () => {
       }
     },
   );
+  it.each([
+    ["explicit room", "room"],
+    ["discovered room", undefined],
+  ])("never invites when joining an existing call (%s)", async (_, joined) => {
+    vi.mocked(addChannelMember).mockClear();
+    const h = harness([parent, room], () => "agent");
+    try {
+      await h.service.join(destination, joined);
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(addChannelMember).not.toHaveBeenCalled();
+    } finally {
+      await h.dispose();
+    }
+  });
+  it("clears only its own invitation warning once the agent is in the room", async () => {
+    vi.mocked(addChannelMember).mockRejectedValueOnce(new Error("Offline"));
+    const h = harness([parent, room], () => "agent");
+    try {
+      await h.service.start(destination);
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await vi.waitFor(() =>
+        expect(h.service.snapshot().error).toContain("Couldn’t add the agent"),
+      );
+      h.access([parent, { ...room, members: [destination.viewer, "agent"] }]);
+      expect(h.service.snapshot().error).toBeUndefined();
+      const id = h.service.snapshot().id ?? "";
+      h.service.voiceError(id, "Agent: Voice disconnected");
+      h.access([parent, { ...room, members: [destination.viewer, "agent"] }]);
+      expect(h.service.snapshot().error).toBe("Agent: Voice disconnected");
+    } finally {
+      await h.dispose();
+    }
+  });
+  it("does not resurrect a warning when the agent joins before the rejected invite settles", async () => {
+    let reject = (_: Error) => {};
+    vi.mocked(addChannelMember).mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    const h = harness([parent, room], () => "agent");
+    try {
+      await h.service.start(destination);
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await vi.waitFor(() => expect(addChannelMember).toHaveBeenCalled());
+      h.access([parent, { ...room, members: [destination.viewer, "agent"] }]);
+      reject(new Error("Timed out"));
+      await new Promise((resolve) => setTimeout(resolve));
+      expect(h.service.snapshot().error).toBeUndefined();
+    } finally {
+      await h.dispose();
+    }
+  });
   it("keeps the human connected and exposes a failed invitation", async () => {
     vi.mocked(addChannelMember).mockRejectedValueOnce(new Error("Offline"));
     const h = harness([parent, room], () => "agent");

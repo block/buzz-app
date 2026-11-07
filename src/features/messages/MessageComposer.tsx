@@ -356,7 +356,7 @@ export type MessageComposerProps = {
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
   autoFocus?: boolean | RefObject<HTMLElement | null>;
-  focusRequest?: number | AbortSignal;
+  focusRequest?: number | AbortSignal | undefined;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */

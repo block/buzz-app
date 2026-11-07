@@ -98,6 +98,7 @@ function hostOverlayOpen(viewport: BrowserBounds): boolean {
 export function BrowserHostView({
   url,
   storage: requestedStorage,
+  userAgent,
   builderlab,
   canResumeUrl,
   label,
@@ -176,7 +177,11 @@ export function BrowserHostView({
       | { bounds: BrowserBounds; visible: boolean }
       | undefined;
     let writingBounds = false;
-    const park = storage === undefined ? undefined : `${storage}\n${url}`;
+    // A parked guest is only adopted by a view asking for the same User-Agent.
+    const park =
+      storage === undefined
+        ? undefined
+        : JSON.stringify([storage, url, userAgent ?? null]);
 
     const visible = (bounds: BrowserBounds) =>
       document.visibilityState === "visible" &&
@@ -291,6 +296,7 @@ export function BrowserHostView({
           storage,
           park,
           builderlab,
+          userAgent,
         )
         .then((sessionId) => {
           if (!sessionId || disposed) return;
@@ -411,6 +417,7 @@ export function BrowserHostView({
     storage,
     titleKey,
     url,
+    userAgent,
   ]);
 
   async function run(operation: (sessionId: string) => Promise<void>) {

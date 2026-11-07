@@ -23,7 +23,7 @@ export function apply(ctx: Context) {
 }
 ```
 
-`browser.View` is a host-provided React component accepting `{ url: string; storage?: string }`. It owns the controls, website viewport and native session for its mounted lifetime. It needs a flex container with available height, as supplied by Buzz's panel card. Plugins do not import internal host modules or invoke native commands directly. This preview API is not a stable compatibility contract.
+`browser.View` is a host-provided React component accepting `{ url: string; storage?: string; userAgent?: string }`. `userAgent` replaces the User-Agent the website sees, for sites that refuse the embedded engine's default (for example, Slack's web client requires a Safari-style `Version/… Safari/…` token). It must be 1-512 printable ASCII characters and is fixed for the view's session; a kept-storage guest is only resumed by a view with the same value. It owns the controls, website viewport and native session for its mounted lifetime. It needs a flex container with available height, as supplied by Buzz's panel card. Plugins do not import internal host modules or invoke native commands directly. This preview API is not a stable compatibility contract.
 
 `browser.available` is currently true only in the macOS desktop application. Web, Windows and Linux builds leave existing link handling unchanged. The Windows native positioning path is unverified; Linux needs a different embedding implementation. URLs must use HTTP(S), contain no credentials, and fit the 2,048-byte limit after URL normalization. Native validation also rejects Buzz's own application and development origins. Invalid addresses leave the existing page visible and show an error.
 

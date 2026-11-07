@@ -4745,3 +4745,71 @@ it("a row receipt never hides a message a peer marked unread", async () => {
     row: { attentionCount: 1 },
   });
 });
+
+it("background arrivals survive a frozen visit's leave and reload without being seen", async () => {
+  const h = setup();
+  h.grant("room");
+  const old = message(h.alice, "room", "old mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const ordinary = message(h.alice, "room", "old ordinary", 100);
+  h.emit([old, ordinary]);
+  await h.session.unread.enterChannel("room");
+  const journal = h.journal();
+  h.session.unread.setChannelActive("room", false);
+  await flush();
+  expect(h.journal()).toBe(journal);
+  const late = message(h.alice, "room", "background mention", 99, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const newer = message(h.alice, "room", "background ordinary", 101);
+  h.emit([late, newer]);
+  expect(h.snapshot().row).toMatchObject({
+    observedCount: 2,
+    attentionCount: 1,
+  });
+  h.session.unread.setChannelActive("room", false);
+  h.session.unread.leaveChannel("room");
+  h.session.unread.setChannelActive("room", true);
+  expect(h.snapshot().row).toMatchObject({
+    observedCount: 2,
+    attentionCount: 1,
+  });
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers["seen:room"]).toBe(100),
+  );
+  expect(h.journal()?.state.frontiers[`seen:msg:${old.id}`]).toBe(100);
+  expect(h.journal()?.state.frontiers[`seen:msg:${late.id}`]).toBeUndefined();
+  await h.clearCache();
+  h.grant("room");
+  h.emit([old, ordinary, late, newer]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 4,
+    row: { observedCount: 2, attentionCount: 1 },
+  });
+});
+
+it("inactive entry sees nothing until the open visit resumes", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room", false);
+  expect(h.snapshot().row?.attentionCount).toBe(1);
+  h.session.unread.leaveChannel("room");
+  await flush();
+  expect(
+    h.journal()?.state.frontiers[`seen:msg:${mention.id}`],
+  ).toBeUndefined();
+  await h.session.unread.enterChannel("room", false);
+  h.session.unread.setChannelActive("room", true);
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+  h.session.unread.setChannelActive("room", false);
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+  );
+});

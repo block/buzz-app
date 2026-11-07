@@ -3,6 +3,11 @@ import type { RelaySession } from "../relay/session";
 import type { ReadingHandle } from "../relay/unread";
 import { useMessageEditScope } from "./MessageEditScope";
 
+/** Shared document attention gate for reading and row visits. */
+export function readingDocumentActive() {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
 /** Wake dwell after owner-controlled positioning, even when geometry is unchanged. */
 export function readingPositioned(element: HTMLElement | null) {
   element?.dispatchEvent(new Event("reading-positioned"));
@@ -92,8 +97,7 @@ export function useReading({
       element.isConnected &&
       !element.closest('[inert], [hidden], [aria-hidden="true"]') &&
       settled.current &&
-      document.visibilityState === "visible" &&
-      document.hasFocus() &&
+      readingDocumentActive() &&
       focused(document.activeElement);
     const active = () => ready() && element.getClientRects().length > 0;
     function cancel() {

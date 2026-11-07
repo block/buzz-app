@@ -152,7 +152,8 @@ export interface UnreadCapability {
   /** End the channel visit; the device-local sidebar force remains until next open. */
   leaveChannel(channelId: string): void;
   /** Reconcile the previous visit's sidebar force without clearing independent channel intent. */
-  enterChannel(channelId: string): Promise<void>;
+  enterChannel(channelId: string, active?: boolean): Promise<void>;
+  setChannelActive(channelId: string, active: boolean): void;
   /** Explicit channel prefix through retained verified evidence, including replies. */
   markChannelRead(channelId: string): Promise<ReadMutationResult>;
   /** Capture one prefix/time cut; each invocation queues that same intent for
@@ -311,12 +312,17 @@ export function createUnread({
   // Per-visit message overlay; only the sidebar hint is persisted in read state.
   const forcedMessages = new Map<string, Set<string>>();
   const entered = new Set<string>();
+  const openChannels = new Set<string>();
   // What each channel's row has seen this session, applied before its marks
   // save: everything while a visit is open (Infinity), then that visit's cut
   // and the attention it showed.
   const seenRows = new Map<
     string,
-    Readonly<{ through: number; ids: ReadonlySet<string> }>
+    Readonly<{
+      through: number;
+      ids: ReadonlySet<string>;
+      marks?: Readonly<Record<string, number>>;
+    }>
   >();
   const seenKey = (channelId: string) => `seen:${channelId}`;
   /** A row receipt for one attention message. It stays on this device, as
@@ -745,29 +751,37 @@ export function createUnread({
    * the channel's cut, synced, and a receipt for each unread attention
    * message, kept on this device. Only marks the saved state lacks are
    * written, so revisiting a quiet channel writes nothing. */
-  function seeChannel(channelId: string) {
-    const rows = byChannel.get(channelId) ?? [];
-    const state = reads.state();
-    const dm = isDm(channelId);
-    const saved = state.frontiers[seenKey(channelId)] ?? -1;
-    const marks: Record<string, number> = {};
-    const ids = new Set<string>();
-    let through = -1,
-      ordinary = false;
-    for (const entry of rows) {
-      const { id, created_at } = entry.event;
-      through = Math.max(through, created_at);
-      if (!isUnread(entry, state, dm)) continue;
-      if (!priority(entry, dm)) ordinary ||= created_at > saved;
-      else {
-        ids.add(id);
-        if (state.frontiers[receiptKey(id)] === undefined)
-          marks[receiptKey(id)] = created_at;
+  function seeChannel(channelId: string, save = true) {
+    let snapshot = seenRows.get(channelId);
+    if (!snapshot) return;
+    if (snapshot.through === Number.POSITIVE_INFINITY) {
+      indexEvidence();
+      const rows = byChannel.get(channelId) ?? [];
+      const state = reads.state();
+      const dm = isDm(channelId);
+      const saved = state.frontiers[seenKey(channelId)] ?? -1;
+      const marks: Record<string, number> = {};
+      const ids = new Set<string>();
+      let through = -1,
+        ordinary = false;
+      for (const entry of rows) {
+        const { id, created_at } = entry.event;
+        through = Math.max(through, created_at);
+        if (!isUnread(entry, state, dm)) continue;
+        if (!priority(entry, dm)) ordinary ||= created_at > saved;
+        else {
+          ids.add(id);
+          if (state.frontiers[receiptKey(id)] === undefined)
+            marks[receiptKey(id)] = created_at;
+        }
       }
+      if (ordinary) marks[seenKey(channelId)] = through;
+      snapshot = { through, ids, marks };
+      seenRows.set(channelId, snapshot);
     }
-    if (ordinary) marks[seenKey(channelId)] = through;
-    seenRows.set(channelId, { through, ids });
+    const marks = snapshot.marks ?? {};
     if (
+      !save ||
       closed ||
       reads.snapshot().capability !== "frontier-sync" ||
       !Object.keys(marks).length
@@ -1508,6 +1522,7 @@ export function createUnread({
       known.delete(channel);
       forcedMessages.delete(channel);
       entered.delete(channel);
+      openChannels.delete(channel);
       seenRows.delete(channel);
     }
     const retained = new Map(events);
@@ -2748,6 +2763,7 @@ export function createUnread({
       });
     },
     leaveChannel(channelId) {
+      openChannels.delete(channelId);
       visits.set(channelId, (visits.get(channelId) ?? 0) + 1);
       forcedMessages.delete(channelId);
       if (!closed && allowed(channelId)) {
@@ -2757,12 +2773,28 @@ export function createUnread({
       publish(new Set([channelId]), true);
       entered.delete(channelId);
     },
-    enterChannel(channelId) {
-      const visit = visits.get(channelId) ?? 0;
-      // The row quiets on open; what arrives during the visit is seen too.
-      if (!closed && allowed(channelId)) {
+    setChannelActive(channelId, active) {
+      if (closed || !allowed(channelId) || !openChannels.has(channelId)) return;
+      if (
+        (seenRows.get(channelId)?.through === Number.POSITIVE_INFINITY) ===
+        active
+      )
+        return;
+      if (active)
         seenRows.set(channelId, {
           through: Number.POSITIVE_INFINITY,
+          ids: new Set(),
+        });
+      else seeChannel(channelId, false);
+      publish(new Set([channelId]), true);
+    },
+    enterChannel(channelId, active = true) {
+      const visit = visits.get(channelId) ?? 0;
+      // Only an active visit sees arrivals; background entry sees nothing.
+      if (!closed && allowed(channelId)) {
+        openChannels.add(channelId);
+        seenRows.set(channelId, {
+          through: active ? Number.POSITIVE_INFINITY : -1,
           ids: new Set(),
         });
         publish(new Set([channelId]), true);
@@ -2966,6 +2998,7 @@ export function createUnread({
       known.clear();
       forcedMessages.clear();
       entered.clear();
+      openChannels.clear();
       seenRows.clear();
       bytes = 0;
       freshness = "unknown";
@@ -2997,6 +3030,7 @@ export function createUnread({
       inboxListeners.clear();
       forcedMessages.clear();
       entered.clear();
+      openChannels.clear();
       seenRows.clear();
       reads.dispose();
     },

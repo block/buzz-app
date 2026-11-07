@@ -76,8 +76,12 @@ catch-up (including a message taller than the viewport):
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
 - `seen:<channel>` quiets the channel's sidebar row, and reads nothing.
-  Opening a channel (`enterChannel`) hides everything in the row, including what
-  arrives during the visit; leaving it (`leaveChannel`) saves what the row saw.
+  Opening a channel (`enterChannel`) while the document is visible and focused
+  hides everything in the row, including arrivals during that active visit.
+  Blur or hiding the document freezes the evidence already seen, without writing.
+  Background arrivals remain visible in the row; leaving (`leaveChannel`) saves
+  only the frozen evidence. Visible focus resumes an open visit. Entering in the
+  background sees nothing until focus returns.
   Ordinary messages go by a timestamp: `seen:<channel>` is the newest retained
   verified event, so one delivered later with an equal or older timestamp stays
   quiet in the row (bold only, as with `activity:`). Attention (mentions,

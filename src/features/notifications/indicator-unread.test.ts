@@ -334,3 +334,19 @@ it("counts only conversations the notification gates allow and follows gate chan
   for (const listener of gateListeners) listener();
   expect(h.project).toHaveBeenLastCalledWith(false);
 });
+
+it("relights the Dock projection for attention arriving during a background visit", async () => {
+  const h = setup();
+  h.grant();
+  h.bind();
+  h.emit([message(h.peer, "room", "before", 11)]);
+  await h.session.unread.enterChannel("room");
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  h.session.unread.setChannelActive("room", false);
+  h.emit([
+    message(h.peer, "room", "background mention", 10, [["p", h.viewer.pubkey]]),
+  ]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  h.session.unread.leaveChannel("room");
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});

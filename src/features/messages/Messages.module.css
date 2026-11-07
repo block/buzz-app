@@ -426,14 +426,12 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionCustomEmoji {
   display: block;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: var(--type-size-16);
+  height: var(--type-size-16);
   object-fit: contain;
 }
-/* Paint 12px artwork at 14px (10.5pt), keeping the capsule's layout box. */
-.reactionGlyph [data-reaction-artwork],
-.reactionGlyph .reactionCustomEmoji {
-  scale: calc(7 / 6);
+.reactionGlyph [data-reaction-artwork] {
+  font-size: var(--type-size-16);
 }
 .visuallyHidden {
   position: absolute;

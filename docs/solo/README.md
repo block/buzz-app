@@ -280,6 +280,13 @@ after Canvas confirms, the dialog keeps the choices
 and retry skips that confirmed Canvas revision. Partial confirmation is explained
 as an error, not presented as two independent normal save states.
 
+**Cancel** in new and saved **Chat settings** and **Workspace settings** discards
+without asking. Close, Escape and, except in a new chat, backdrop clicks close untouched
+forms at once; changed ones first show **Discard changes?**: **Keep editing** (focused)
+or Escape returns to the intact form, and **Discard changes** closes it. A failed save's
+local draft or a name/lifetime save awaiting **Check save status** closes without
+asking: reopening restores it. A typed, unadded folder path is not part of the draft.
+
 Conflicts require explicit Reload while retaining the selected lifetime; an
 unconfirmed save survives modal remount and relabels the single primary action
 **Check save status**, without republishing or implicitly saving other draft

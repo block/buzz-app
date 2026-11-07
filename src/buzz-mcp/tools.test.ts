@@ -628,6 +628,18 @@ it("posts at the channel's top level when given a channel", async () => {
   expect(published[0]?.tags).toEqual([["h", "other"]]);
 });
 
+it("refuses to edit when the host cannot obtain effective attachment state", async () => {
+  const { client, published } = fake(community);
+  delete client.effectiveEdit;
+  await expect(
+    callTool(client, { channel: "chan" }, "edit", {
+      id: root,
+      text: "must not copy the original's attachments",
+    }),
+  ).rejects.toThrow("cannot obtain effective edit state");
+  expect(published).toEqual([]);
+});
+
 it("tags the community emoji a message or edit uses, as the composer does", async () => {
   const stamp = "https://relay/media/stamp.png";
   const emojiSet = (pubkey: string, created_at: number, entries: string[][]) =>

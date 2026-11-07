@@ -176,6 +176,7 @@ it.each([
   "signature",
   "replacement target",
   "replacement channel",
+  "replacement kind",
 ])("rejects a signed snapshot with invalid %s", async (fault) => {
   const f = fixture();
   let original = f.original;
@@ -188,7 +189,7 @@ it.each([
   if (fault === "signature") original = { ...original, sig: "0".repeat(128) };
   if (fault.startsWith("replacement"))
     edit = signed(agent, {
-      kind: 40003,
+      kind: fault === "replacement kind" ? 7 : 40003,
       content: "bad",
       tags: [
         ["h", fault.endsWith("channel") ? "elsewhere" : channel],

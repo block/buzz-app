@@ -82,15 +82,22 @@ The shared MCP `edit` tool retains the latest live attachment set, including an
 empty set left by a previous edit. Both app-hosted and standalone agents resolve
 that state as the agent through the version-1 `effective_edit` primary lookup on
 `/query`; they verify the signed original/replacement and their target/channel.
-The exact filter uses kinds `[9,40002,40008,45001,45003]`. Deploy the relay support from
+The exact filter uses kinds `[9,40002,40008,45001,45003]`.
+Deploy the relay support from
 [buzz#9226](https://github.com/block/buzz/pull/9226) before releasing this client.
 An old relay's array response, inaccessible target, invalid response or failed
-lookup aborts without publishing. There is no original-attachment fallback.
+lookup aborts without publishing. All MCP agent edits stop working on a community
+whose relay lacks this lookup; upgrade each community before releasing the client.
+There is no original-attachment fallback. Observe MCP edit errors and the relay's
+`buzz_media_publication_access_total` denials during rollout. Rolling the client
+back restores the original-attachment resurrection bug.
 
 The tool waits until the second after the observed head before requesting a
 signature, reusing the bounded wait for notes/canvas. If that second is over five
-seconds ahead, it asks the caller to retry when the clock catches up. Concurrent
-writers still use relay ordering; this is not compare-and-swap. The relay must
+seconds ahead, it asks the caller to retry when the clock catches up.
+The MCP publisher stamps the current time, so its five-second wait bounds tool
+latency. The CLI supplies an explicit timestamp and tolerates a 60-second lead.
+Concurrent writers still use relay ordering; this is not compare-and-swap. The relay must
 authorize every carried file for the signing agent; an owner's access does not
 grant the agent private-media access, and denial never causes an automatic retry
 with files stripped.

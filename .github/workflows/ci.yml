@@ -85,11 +85,11 @@ jobs:
           BUZZ_TEST_WORKERS: "2"
           CLAUDE_PROTECTION_BIN: ${{ github.workspace }}/target/protected-claude-test/claude
         run: ./bin/node scripts/ci-test-report.mjs kind=vitest report=test-results/protection/native-vitest.json evidence=test-results/protection/native-timing.json title="Native security hooks" -- ./bin/pnpm exec vitest run src/bundled/claude-code/protection.live.test.ts --reporter=default --reporter=json --outputFile=test-results/protection/native-vitest.json
-      - name: Native approval-state containment
+      - name: Native approval-state and window-state tests
         run: |
           mkdir -p test-results/protection
           set -o pipefail
-          ./bin/cargo test --manifest-path src-tauri/Cargo.toml host_process --lib 2>&1 | tee test-results/protection/native.log
+          ./bin/cargo test --manifest-path src-tauri/Cargo.toml --locked --lib -- host_process window_state::tests 2>&1 | tee test-results/protection/native.log
       - name: Protection test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

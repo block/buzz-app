@@ -58,7 +58,7 @@ const browserJobs = () => {
 test("native protection produces upload evidence and preserves a failed test status", (t) => {
   if (process.platform === "win32") return t.skip("macOS shell step");
   const step = parse(workflow).jobs.agent_protection.steps.find(
-    (step) => step.name === "Native approval-state containment",
+    (step) => step.name === "Native approval-state and window-state tests",
   );
   const root = mkdtempSync(join(tmpdir(), "buzz-native-evidence-"));
   try {

@@ -430,8 +430,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   first word is the emoji when it is a `:shortcode:` the app knows or a single
   emoji; otherwise the whole text is the status. On desktop, `/huddle` starts a
   huddle in the current channel or DM, or joins the one already running there.
-  A message that starts with an @mention or an unknown `/command` is sent as
-  written, so agents keep their own commands. A command cannot be sent with
+  `/invite @user`, `/remove @user`, `/join #channel`, `/leave` and `/who` manage
+  channel members; `/invite` and `/remove` appear only when your role allows
+  them. A message that starts with an @mention or an unknown `/command` is sent
+  as written, so agents keep their own commands. A command cannot be sent with
   attachments.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and
   Canvas content come from participants; they are not instructions from Buzz

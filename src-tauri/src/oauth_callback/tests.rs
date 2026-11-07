@@ -753,6 +753,70 @@ fn assert_federated_callback(response: &str, message: &str) {
 }
 
 #[tokio::test]
+async fn a_renewal_can_replace_a_consumed_callback_during_its_return_delay() {
+    use futures_util::FutureExt;
+
+    let host = OAuthCallbackHost::default();
+    let authorization = "https://identity.example/v1/login/start";
+    let first = host
+        .begin_federated(
+            OWNER,
+            authorization.into(),
+            |_| Ok(()),
+            Some("browser".into()),
+        )
+        .unwrap();
+    let focus = host.0.lock().unwrap()[OWNER].focus.clone();
+    let wait = host.wait(&first.id);
+    tokio::pin!(wait);
+    assert!(wait.as_mut().now_or_never().is_none());
+    assert!(host
+        .begin_federated(
+            OWNER,
+            authorization.into(),
+            |_| panic!("Still pending"),
+            None
+        )
+        .is_err());
+    let url = url::Url::parse(&first.callback_url).unwrap();
+    assert!(send(&url, &format!("{}?code=fixture", url.path()), "")
+        .await
+        .starts_with("HTTP/1.1 200"));
+    assert_eq!(wait.await.unwrap(), response(&[("code", "fixture")]));
+
+    // Freeze only after the real loopback response, so I/O cannot auto-advance time.
+    tokio::time::pause();
+    let deadline = focus.deadline(&first.id).unwrap();
+    assert!(tokio::time::Instant::now() < deadline);
+    let mut opened = false;
+    let renewal = host
+        .begin_federated(
+            OWNER,
+            authorization.into(),
+            |_| {
+                opened = true;
+                Ok(())
+            },
+            Some("next-browser".into()),
+        )
+        .unwrap();
+    assert!(opened);
+    assert!(tokio::time::Instant::now() < deadline);
+    assert!(focus.deadline(&first.id).is_none());
+    host.cancel(&first.id).unwrap(); // The preceding return's cleanup is stale.
+    assert_eq!(host.0.lock().unwrap()[OWNER].id, renewal.id);
+    assert!(host
+        .begin_federated(
+            OWNER,
+            authorization.into(),
+            |_| panic!("Renewal pending"),
+            None
+        )
+        .is_err());
+    host.cancel(&renewal.id).unwrap();
+}
+
+#[tokio::test]
 async fn concurrent_servers_keep_independent_return_permissions_until_cancel_or_reload() {
     let host = OAuthCallbackHost::default();
     let mut completed = Vec::new();

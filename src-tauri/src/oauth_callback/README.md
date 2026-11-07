@@ -56,6 +56,8 @@ begin/wait/cancel sequence: after its generic listener finishes, its next attemp
 can replace the unconsumed result. A native FI result stays until wait or cancel. A captured return permission
 survives a successful wait until verified completion or cancellation; each
 owner keeps its own permission, so concurrent servers cannot replace it.
+Once the handoff is consumed, another sign-in for that owner can supersede its
+pending focus return immediately. The previous attempt's cleanup cannot end the new one.
 
 ## State protection
 

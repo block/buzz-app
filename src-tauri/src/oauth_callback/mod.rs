@@ -135,10 +135,12 @@ impl OAuthCallbackHost {
             return Err("Invalid callback path".into());
         }
         let mut attempts = self.0.lock().map_err(|_| "Sign-in unavailable")?;
-        if attempts
-            .get(owner)
-            .is_some_and(|attempt| attempt.retain_result || !attempt.task.is_finished())
-        {
+        // A consumed handoff can be replaced while only its focus return remains.
+        if attempts.get(owner).is_some_and(|attempt| {
+            let returning =
+                attempt.result.is_none() && attempt.focus.deadline(&attempt.id).is_some();
+            !returning && (attempt.retain_result || !attempt.task.is_finished())
+        }) {
             return Err("An OAuth callback is already pending".into());
         }
         // Binding is synchronous so cancellation cannot overtake listener registration.

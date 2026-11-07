@@ -389,6 +389,9 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
+- Within the last 10% of the 16,000-character message limit, the composer
+  shows the count, such as 14,400/16,000. Formatting and link addresses
+  count toward the limit, as do chat links and GIFs.
 - In the composer, Enter sends and Shift+Enter adds a new line by default.
   **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
   outside Apple platforms) swaps that on this device: Enter adds a line and

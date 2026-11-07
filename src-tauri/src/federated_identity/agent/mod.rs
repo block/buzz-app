@@ -449,7 +449,7 @@ impl AgentTokens {
         write: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
         let row = row_key(agent, relay)?;
-        let _retired = lock(&self.0.retired);
+        let retired = lock(&self.0.retired);
         let incarnations = lock(&self.0.incarnations);
         let (at, row) = (
             incarnations.get(agent).copied().unwrap_or_default(),
@@ -463,10 +463,16 @@ impl AgentTokens {
         {
             return Err(DELETED.into());
         }
-        if state.closed || state.retirements != retirements {
+        // An organization sign-out marks its retirement pending before it counts it.
+        if retired.pending == Some(true) || state.closed || state.retirements != retirements {
             return Err(CHANGED.into());
         }
         write()
+    }
+    /// As an organization sign-out does before it counts its retirement.
+    #[cfg(test)]
+    pub(crate) fn mark_retirement_pending(&self) {
+        lock(&self.0.retired).pending = Some(true);
     }
     /// The owner's retirements so far: sign-out, another account, or a
     /// retired grant each add one.

@@ -2579,7 +2579,9 @@ export class CodexRuntime {
       // tools starts fresh.
       const added = this.added();
       const owner = this.ownerAccess(agent);
-      const tools = addedKey(added) + (owner ? ":owner" : "");
+      const tools =
+        addedKey(added) +
+        (owner ? (owner.media ? ":owner+media" : ":owner") : "");
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       type Started = { thread: { id: string; cwd: string } };

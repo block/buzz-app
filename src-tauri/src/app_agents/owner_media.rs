@@ -46,12 +46,16 @@ enum Op {
         reserved: u64,
     },
     Staged(Staged),
+    /// Taken by its publication, whose body still counts until it is dropped.
+    Publishing {
+        reserved: u64,
+    },
 }
 impl Op {
     fn reserved(&self) -> u64 {
         match self {
-            Op::Fetching { reserved, .. } => *reserved,
-            Op::Staged(staged) => staged.body.len() as u64,
+            Op::Fetching { reserved, .. } | Op::Publishing { reserved } => *reserved,
+            Op::Staged(staged) => staged.body.capacity() as u64,
         }
     }
 }
@@ -65,7 +69,7 @@ impl State {
     fn prune(&mut self, now: Instant) {
         self.ops.retain(|_, op| match op {
             Op::Staged(staged) => now.duration_since(staged.at) < LIFETIME,
-            Op::Fetching { .. } => true,
+            Op::Fetching { .. } | Op::Publishing { .. } => true,
         });
         self.cancelled
             .retain(|_, at| now.duration_since(*at) < LIFETIME);
@@ -107,6 +111,7 @@ impl OwnerMedia {
     /// Reserves `bytes` for `id`'s body before any of it is read.
     fn reserve(&self, id: &str, bytes: u64) -> Result<(), String> {
         let mut state = self.lock();
+        state.prune(Instant::now());
         let others: u64 = state
             .ops
             .iter()
@@ -145,6 +150,9 @@ impl OwnerMedia {
         let mut state = self.lock();
         let now = Instant::now();
         state.prune(now);
+        if matches!(state.ops.get(id), Some(Op::Publishing { .. })) {
+            return;
+        }
         if let Some(op) = state.ops.remove(id) {
             if let Op::Fetching {
                 cancel: Some(cancel),
@@ -180,16 +188,29 @@ impl OwnerMedia {
         }
     }
     /// Takes `id`'s staged body for `agent` in `relay`; it can be taken once.
+    /// It stays counted until [`OwnerMedia::published`].
     fn take(&self, id: &str, agent: &str, relay: &str) -> Result<Staged, String> {
         let mut state = self.lock();
         state.prune(Instant::now());
-        match state.ops.get(id) {
-            Some(Op::Staged(staged)) if staged.agent == agent && staged.relay == relay => {}
-            _ => return Err(NOTHING.into()),
-        }
-        match state.ops.remove(id) {
-            Some(Op::Staged(staged)) => Ok(staged),
+        let Some(op) = state.ops.get_mut(id) else {
+            return Err(NOTHING.into());
+        };
+        match op {
+            Op::Staged(staged) if staged.agent == agent && staged.relay == relay => {
+                let reserved = op.reserved();
+                match std::mem::replace(op, Op::Publishing { reserved }) {
+                    Op::Staged(staged) => Ok(staged),
+                    _ => unreachable!(),
+                }
+            }
             _ => Err(NOTHING.into()),
+        }
+    }
+    /// Releases what `id`'s publication held, once its body is dropped.
+    fn published(&self, id: &str) {
+        let mut state = self.lock();
+        if matches!(state.ops.get(id), Some(Op::Publishing { .. })) {
+            state.ops.remove(id);
         }
     }
     /// Drops every read and body, as a new page or a closed window starts none.
@@ -346,7 +367,10 @@ fn publish(
     relay: &str,
     id: &str,
 ) -> Result<(), String> {
+    valid_id(id)?;
     let (owner, stamp, retirements) = host.owner_media.peek(id, pubkey, relay)?;
+    // Declared first, so dropped after the body it keeps counted.
+    let _published = Published(&host.owner_media, id);
     // The order every credential owner takes: identity, then the agent tokens'
     // locks, then this request's. Sign-out, deletion and a change of account
     // either refuse this or wait for its first bytes.
@@ -376,18 +400,22 @@ fn publish(
         .and_then(|()| file.flush())
         .map_err(drop)
         .and_then(|()| file.persist(&path).map(drop).map_err(drop))
-        .map_err(|()| {
-            format!(
-                "Saving {} started but did not finish; part of it may have been written",
-                path.display()
-            )
-        })
+        .map_err(|()| format!("Saving {} failed; nothing was saved", path.display()))
+}
+
+struct Published<'a>(&'a OwnerMedia, &'a str);
+impl Drop for Published<'_> {
+    fn drop(&mut self) {
+        self.0.published(self.1);
+    }
 }
 
 /// Drops request `id`'s read or held media; one still to come is refused.
 #[tauri::command]
 pub(crate) fn app_agent_owner_media_discard(state: tauri::State<'_, AppAgentHost>, id: String) {
-    state.owner_media.discard(&id);
+    if valid_id(&id).is_ok() {
+        state.owner_media.discard(&id);
+    }
 }
 
 #[cfg(test)]

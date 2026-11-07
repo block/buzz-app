@@ -219,6 +219,11 @@ async fn owner_media_bodies_are_bounded_by_what_was_reserved() {
     assert!(read(8, Arc::clone(&reserved)).await.is_err());
     served.heads().await;
     assert_eq!(*reserved.lock().unwrap(), [8]);
+    // Nor does one within it grow its buffer past what was reserved.
+    let served = community.serve(vec![reply("", "01234")]);
+    let (_, body) = read(5, Arc::default()).await.unwrap();
+    served.heads().await;
+    assert_eq!((body.as_slice(), body.capacity()), (&b"01234"[..], 5));
     // A declared length over the limit reserves nothing.
     let reserved = Arc::default();
     let served = community.serve(vec![reply("Content-Length: 10\r\n", "0123456789")]);
@@ -331,11 +336,15 @@ fn a_staged_body_is_taken_once_by_its_own_agent_before_it_expires() {
     );
     assert_eq!(media.held().0, 1, "a foreign call leaves it held");
     assert_eq!(media.peek("a", "agent", relay).unwrap().0, "owner");
-    assert_eq!(
-        media.take("a", "agent", relay).unwrap().body,
-        PNG.as_bytes()
-    );
+    let taken = media.take("a", "agent", relay).unwrap();
+    assert_eq!(taken.body, PNG.as_bytes());
     assert_eq!(media.take("a", "agent", relay).err().unwrap(), NOTHING);
+    // Until its publication drops it, the body still counts, even past a discard.
+    media.discard("a");
+    let counted = (1, taken.body.capacity() as u64);
+    assert_eq!(media.held(), counted);
+    drop(taken);
+    media.published("a");
     let _b = media.begin("b").unwrap();
     let mut old = staged("agent", relay, "owner", Stamp::default(), 0);
     old.at = Instant::now().checked_sub(LIFETIME).unwrap();
@@ -390,12 +399,19 @@ async fn staged_for() -> (
 
 #[tokio::test]
 async fn nothing_is_written_once_the_owner_or_agent_stops_acting() {
-    for change in ["delete", "sign-out", "identity-closed", "none"] {
+    for change in [
+        "delete",
+        "sign-out",
+        "retirement-pending",
+        "identity-closed",
+        "none",
+    ] {
         let identity = IdentityHost::fixture();
         let (f, host, agent, _store) = staged_for().await;
         match change {
             "delete" => f.tokens.forget(&agent.owner, &agent.pubkey).await.unwrap(),
             "sign-out" => drop(f.tokens.sign_out(None).await.unwrap()),
+            "retirement-pending" => f.tokens.mark_retirement_pending(),
             "identity-closed" => identity.close(),
             _ => {}
         }

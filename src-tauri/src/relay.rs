@@ -2271,10 +2271,13 @@ pub(crate) async fn owner_media(
     limit: u64,
     reserve: impl FnOnce(u64) -> Result<()>,
 ) -> Result<(Option<String>, Vec<u8>)> {
-    // Signed first: nothing, not even discovery, is sent for another owner.
-    let template = blossom_template(&url, "get", "Get buzz-media", Vec::new())?;
-    let auth = blossom_header(host.sign_owner_media_get(owner.into(), template).await?)?;
+    // Signed first, so nothing, not even discovery, is sent for another owner;
+    // then signed again once the community credential is known, so a change of
+    // account while it was found cannot pair it with this owner's signature.
+    let template = || blossom_template(&url, "get", "Get buzz-media", Vec::new());
+    host.sign_owner_media_get(owner.into(), template()?).await?;
     let assertion = evidence(host, fi, &url).await?;
+    let auth = blossom_header(host.sign_owner_media_get(owner.into(), template()?).await?)?;
     let operation = async {
         let mut upstream = send_signed(host, fi, assertion.as_ref(), url, None, auth)
             .await
@@ -2300,21 +2303,29 @@ pub(crate) async fn owner_media(
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
         let mut body = Vec::new();
+        let no_memory = |_| "Not enough memory for the media";
         if declared.is_some() {
             // One buffer of the declared size, so the body is never copied to grow it.
             body.try_reserve_exact(reserved as usize)
-                .map_err(|_| "Not enough memory for the media")?;
+                .map_err(no_memory)?;
         }
         while let Some(chunk) = upstream
             .chunk()
             .await
             .map_err(|_| "The media request failed")?
         {
-            if (body.len() + chunk.len()) as u64 > reserved {
+            let needed = body.len() + chunk.len();
+            if needed as u64 > reserved {
                 return Err(match declared {
                     Some(_) => "The media was larger than the community said".into(),
                     None => too_large(),
                 });
+            }
+            if needed > body.capacity() {
+                // Grown as `Vec` would, but never past what was reserved.
+                let grown = needed.max(body.capacity() * 2).min(reserved as usize);
+                body.try_reserve_exact(grown - body.len())
+                    .map_err(no_memory)?;
             }
             body.extend_from_slice(&chunk);
         }

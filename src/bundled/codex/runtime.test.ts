@@ -6445,6 +6445,46 @@ it.each([false, true])(
   },
 );
 
+it("starts fresh instead of restoring an owner binding saved before owner_media_get was listed", async () => {
+  const f = fixture();
+  f.storage.set(
+    `buzz.codex.sessions.v17:${scope}:${pubkey}`,
+    JSON.stringify({
+      [JSON.stringify(["channel", root])]: {
+        threadId: "owner-thread",
+        workspace: "/tmp/codex-test",
+        tools: ":owner",
+      },
+    }),
+  );
+  const media = vi.fn();
+  const ownerAccess = {
+    channels: vi.fn(),
+    channel: vi.fn(),
+    members: vi.fn(),
+    messages: vi.fn(),
+    canvas: vi.fn(),
+    canvasHistory: vi.fn(),
+    held: vi.fn(),
+    media,
+  };
+  const delivery = f.delivery("new work");
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, ownerAccess } as typeof delivery.agent,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    0,
+  );
+  const thread = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { dynamicTools: { tools: { name: string }[] }[] };
+  expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
+    "owner_media_get",
+  );
+  await f.complete();
+});
+
 function guestTarget(guest: ReturnType<typeof fixture>): AgentExecution {
   const lifetime = new AbortController();
   return {

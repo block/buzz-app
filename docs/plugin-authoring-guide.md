@@ -66,7 +66,7 @@ export function apply(ctx) {
 | `navigation` | Open destinations | `await ctx.navigation.open(target)` returns `{ status: "opened" \| "failed" \| "superseded" \| "cancelled" }`. Targets: `{ version: 1, kind: "plugin", pluginId, pageId?, params? }`, `{ version: 1, kind: "home" }`, `{ version: 1, kind: "settings", section? }`. |
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
-| `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })` resolves `{ outcome: "answered", backend, model, answers }` or `{ outcome: "failed", backend, reason }` and never rejects. By default Builderlab or TypeSafe answers, with Jev. See [Decisions](#decisions) below. |
+| `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })`. `questions` maps 1 to 32 answer names to `{ type: "yes_no", instructions }`, `{ type: "choice", instructions, options }` (value -> when to pick it) or `{ type: "score", instructions, levels }` (lowest first). `timeoutMs` is in milliseconds (1000-30000). `community` is the relay URL the text came from; Builderlab fails without it (in an agent tool: `ctx.agents.snapshot().running.find((a) => a.key === client.key)?.relay`; in a panel: `channelContext.relayUrl`). Resolves `{ outcome: "answered", model, answers }` (for example `answers.urgent.probability`) or `{ outcome: "failed", reason }`; never rejects. By default Builderlab or TypeSafe answers, with Jev. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
 | `pluginInstaller` (optional) | Ask the owner to install another plugin or check installation status | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. |
 
@@ -97,50 +97,6 @@ ctx.effect(() => {
 ```
 
 The table above covers the services most plugins use. The full contract for every service, with TypeScript types and examples, is in [Plugin architecture](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md); the types are exported from [`src/plugins/author.ts`](https://github.com/block/buzz-app/blob/main/src/plugins/author.ts). Read it before you use a service that is not in this table. It describes the latest Buzz, which can have services this app does not. If a service in `inject` is missing, `apply` never runs, so check `plugin_status` after you install.
-
-### Decisions
-
-`state` is the text to judge. The provider sees it and every question, so send only what the decision needs. `questions` holds 1 to 32 questions keyed by answer name (at most 64 characters), each one of:
-
-- `{ type: "yes_no", instructions }`: the answer is the probability that the statement holds.
-- `{ type: "choice", instructions, options }`: 2 to 255 options, each value -> when to pick it.
-- `{ type: "score", instructions, levels }`: 2 to 10 level labels, lowest first.
-
-`timeoutMs` is in milliseconds, clamped to 1000-30000 (default 30000). The request is at most 128 KiB.
-
-`community` is the relay URL (`wss://...`) of the community the text comes from. Builderlab bills that community and fails a request without it as `invalid_request`; TypeSafe ignores it. Pass the community the text came from, not the one the owner has selected:
-
-- In an agent tool's `call(client, context, args)` (with `"agents"` injected): `ctx.agents.snapshot().running.find((agent) => agent.key === client.key)?.relay`.
-- In a panel opened from a channel: `channelContext.relayUrl`.
-
-If you cannot tell which community the text came from, omit `community`; Builderlab then fails the call, so handle that failure.
-
-```js
-const result = await ctx.decisions.decide({
-  state: messageText,
-  questions: {
-    urgent: { type: "yes_no", instructions: "It needs attention now." },
-    topic: {
-      type: "choice",
-      instructions: "What is it about?",
-      options: { build: "CI or builds", other: "Anything else" },
-    },
-  },
-  timeoutMs: 5000,
-  community, // the text's community, as above
-});
-if (result.outcome === "answered") {
-  const urgent = result.answers.urgent.probability; // 0 to 1
-  const topic = result.answers.topic.choice; // "build" or "other"
-} else {
-  // result.reason: "unavailable", "missing_credentials", "unauthorized",
-  // "invalid_request", "input_limit", "timeout", "service_error" or "invalid_response".
-}
-```
-
-Each answer has its question's `type`: `yes_no` gives `probability`; `choice` gives `choice`, `confidence` and `probabilities`; `score` gives a 0-based `score` (it can be fractional), `confidence` and `probabilities`. A failed call is not retried and does not fall back to another provider. On failure, `backend` is undefined when no provider is registered.
-
-The owner chooses the provider in Settings → Decisions API. Until they do, Builderlab answers when this build includes it and the owner's account is allowed decisions, else TypeSafe with the owner's TypeSafe key. Both answer with the Jev model; `result.model` names the model that answered. If the owner chose another provider and it is off, calls fail as `unavailable`. `ctx.decisions.status()` returns `"checking"`, `"ready"`, `"unconfirmed"`, `"needs-setup"` or `"unavailable"`; treat `"ready"` as usable and `"unconfirmed"` as possibly usable (it could not check, for example while the keychain is locked), wait while it is `"checking"`, and use `ctx.decisions.subscribe(listener)` to hear when it changes.
 
 ## Host access (`manifest.host`)
 

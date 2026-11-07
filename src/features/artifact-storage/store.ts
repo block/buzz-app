@@ -29,6 +29,21 @@ function sameRefresh(
   return left?.source === right.source && left.generation === right.generation;
 }
 
+/** Leave holds this lock before it removes membership, through the whole purge. */
+export function withArtifactPartitionLock<T>(
+  viewer: string,
+  relay: string,
+  mode: LockMode,
+  work: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  return navigator.locks.request(
+    `${DB}:${relayPartition(relay, viewer)}`,
+    { mode, ...(signal ? { signal } : {}) },
+    work,
+  );
+}
+
 /** Same IndexedDB transaction boundary as the relay journals. No head-cache eviction. */
 export function createArtifactStore(viewer: string, relay: string) {
   if (!viewer || !relay)
@@ -174,6 +189,7 @@ export function createArtifactStore(viewer: string, relay: string) {
   function collection(
     owner: string,
     definition: ArtifactCollectionDefinition,
+    validate?: () => void,
   ): HostArtifactCollection {
     if (closed) throw new Error("Artifact storage closed");
     if (
@@ -239,46 +255,56 @@ export function createArtifactStore(viewer: string, relay: string) {
         },
       );
     }
-    const ready = transact<void>(
-      "readwrite",
-      STORES,
-      (tx, then, done) => {
-        const metadata = tx.objectStore("metadata");
-        then(metadata.get(key("schema")), (schema) => {
-          if (schema?.type && schema.type !== definition.type)
-            throw new Error("Artifact collection type changed");
-          if (schema?.version === definition.version) {
-            done();
-            return;
-          }
-          if (schema?.version > definition.version)
-            throw new Error("Artifact collection requires a newer plugin");
-          metadata.delete(key("source"));
-          metadata.delete(key("refresh"));
-          metadata.delete(key("checkpoint"));
-          const request = tx.objectStore("records").openCursor(range(prefix));
-          then(request, (cursor) => {
-            if (!cursor) {
-              metadata.put({
-                scope,
-                collection,
-                key: "schema",
-                version: definition.version,
-                type: definition.type,
+    const ready = withArtifactPartitionLock(
+      viewer,
+      relay,
+      "shared",
+      () =>
+        transact<void>(
+          "readwrite",
+          STORES,
+          (tx, then, done) => {
+            validate?.();
+            const metadata = tx.objectStore("metadata");
+            then(metadata.get(key("schema")), (schema) => {
+              if (schema?.type && schema.type !== definition.type)
+                throw new Error("Artifact collection type changed");
+              if (schema?.version === definition.version) {
+                done();
+                return;
+              }
+              if (schema?.version > definition.version)
+                throw new Error("Artifact collection requires a newer plugin");
+              metadata.delete(key("source"));
+              metadata.delete(key("refresh"));
+              metadata.delete(key("checkpoint"));
+              const request = tx
+                .objectStore("records")
+                .openCursor(range(prefix));
+              then(request, (cursor) => {
+                if (!cursor) {
+                  metadata.put({
+                    scope,
+                    collection,
+                    key: "schema",
+                    version: definition.version,
+                    type: definition.type,
+                  });
+                  done();
+                  return;
+                }
+                then(
+                  tx.objectStore("preferences").get(key(cursor.value.id)),
+                  (pref: StoredPreference | undefined) =>
+                    reindex(tx, then, cursor.value, pref?.value, () =>
+                      cursor.continue(),
+                    ),
+                );
               });
-              done();
-              return;
-            }
-            then(
-              tx.objectStore("preferences").get(key(cursor.value.id)),
-              (pref: StoredPreference | undefined) =>
-                reindex(tx, then, cursor.value, pref?.value, () =>
-                  cursor.continue(),
-                ),
-            );
-          });
-        });
-      },
+            });
+          },
+          lifetime.signal,
+        ),
       lifetime.signal,
     );
     // Keep an unopened handle's initialization rejection observable by its first operation.
@@ -296,6 +322,7 @@ export function createArtifactStore(viewer: string, relay: string) {
         stores,
         (tx, then, done) => {
           then(tx.objectStore("metadata").get(key("schema")), (schema) => {
+            validate?.();
             if (schema?.version !== definition.version)
               throw new Error("Artifact collection version changed");
             work(tx, then, done);

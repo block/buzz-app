@@ -1,7 +1,7 @@
 import { Context } from "@deepseek-ai/cordis";
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createCommunities } from "./service";
-import { communityDestination } from "./destination";
+import { communityDestination, relayAddress } from "./destination";
 import { localCommunityNameKey } from "./names";
 import * as destinations from "./destination";
 import { flush } from "../relay/testing";
@@ -419,7 +419,7 @@ it("retains unresolved memberships but honors an explicit Personal selection or 
     localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null",
   );
   expect(persisted.memberships).toEqual([
-    { id: "primary", name: "New community" },
+    expect.objectContaining({ id: "primary", name: "New community" }),
     membership,
   ]);
   expect(persisted.selected).toBe("primary");
@@ -925,7 +925,12 @@ it("a synced-in community shows the viewer's local name and reads its presentati
     "wss://new.example",
   ]);
   expect(client.snapshot().memberships).toEqual([
-    { id: "https://new.example", name: "new.example", localName: "Mine" },
+    expect.objectContaining({
+      id: "https://new.example",
+      name: "new.example",
+      localName: "Mine",
+      generation: expect.any(String),
+    }),
   ]);
   await flush();
   expect(requests).toContain(
@@ -1032,4 +1037,42 @@ it("hydrates native public identity without contacting the development broker", 
   await flush();
   expect(fetch).not.toHaveBeenCalled();
   expect(client.relay.snapshot().status).not.toBe("ready");
+});
+
+it("keeps a leave from another window when a local command saves before its storage event", async () => {
+  const client = setup({
+    profile: { name: "Local", picture: "" },
+    memberships: [{ id: "primary", name: "Primary" }],
+    selected: "primary",
+  });
+  await flush();
+  const record = `buzz-client.v1:${viewer}`;
+  localStorage.setItem(
+    record,
+    JSON.stringify({
+      profile: { name: "Local", picture: "" },
+      memberships: [],
+      selected: null,
+      sync: {
+        known: [],
+        outbox: [{ url: relayAddress("primary"), removed: true }],
+      },
+    }),
+  );
+  const changed = vi.fn();
+  client.subscribe(changed);
+  expect(client.snapshot().memberships).toEqual([]);
+  await flush();
+  expect(changed).not.toHaveBeenCalled();
+  client.saveProfile({ name: "Updated", picture: "" });
+  expect(changed).toHaveBeenCalledOnce();
+  expect(JSON.parse(localStorage.getItem(record) ?? "null")).toMatchObject({
+    profile: { name: "Updated" },
+    memberships: [],
+    selected: null,
+    sync: { outbox: [{ url: relayAddress("primary"), removed: true }] },
+  });
+  expect(client.open("primary")).toBeUndefined();
+  expect(client.relay.snapshot().status).toBe("disconnected");
+  expect(() => client.select("primary")).toThrow("Join this community first");
 });

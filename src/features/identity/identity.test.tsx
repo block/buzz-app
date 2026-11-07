@@ -3438,6 +3438,7 @@ it("Join journals the join, proves admission with the signed profile read, and c
     { id: expect.any(String), community: relay.origin },
   ]);
   const membership = {
+    generation: expect.any(String),
     id: relay.origin,
     name: "relay.example.com:8443",
     icon: "https://cdn.example.com/icon.png",
@@ -3539,6 +3540,7 @@ it("a relay that already holds the key's profile skips the profile step, enters 
     screen.queryByRole("heading", { name: "Set up your profile" }),
   ).toBeNull();
   const membership = {
+    generation: expect.any(String),
     id: relay.origin,
     name: "relay.example.com:8443",
     icon: "https://cdn.example.com/icon.png",

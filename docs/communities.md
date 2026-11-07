@@ -150,6 +150,12 @@ empty state there. Try drafting in A, switching to B, then returning to A.
 Selected channels, drafts and reading offsets are partitioned by the canonical
 community origin and viewer; channel IDs alone are not sufficient keys.
 
+Windows on the same app origin read the current membership record before use.
+Leave clears a removed selection and closes its session and artifact handles in
+every window. Each new membership has a generation, so rejoin permits new handles
+and keeps old handles closed. Live selection stays local to each window.
+Collection setup waits for a pending device purge before it writes new data.
+
 ## Import from the previous desktop app
 
 After native startup, Buzz offers the previous desktop app's saved communities

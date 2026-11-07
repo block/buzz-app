@@ -2697,6 +2697,17 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
+    // Every thread whose request the turn took in hears how it ended, once.
+    const notify = (content: string) =>
+      Promise.all(
+        active.requests
+          .filter(
+            (taken, index, all) =>
+              all.findIndex((other) => other.replyRoot === taken.replyRoot) ===
+              index,
+          )
+          .map((taken) => this.publish(taken, content)),
+      );
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;
@@ -2857,8 +2868,7 @@ export class CodexRuntime {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);
-        await this.publish(
-          active.reply,
+        await notify(
           "Codex’s turn was interrupted. Send another mention to continue.",
         );
         this.status(agent.key, key, "Interrupted");
@@ -2895,7 +2905,7 @@ export class CodexRuntime {
       const why = explain?.();
       if (!signal.aborted) {
         const reason = `Codex could not finish: ${message(error)}.`;
-        await this.publish(active.reply, reason).catch((failure) =>
+        await notify(reason).catch((failure) =>
           console.error("Codex could not publish its failure", failure),
         );
         // The denied input may have shaped the provider's reason, so it shows

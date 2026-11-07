@@ -26,15 +26,25 @@ const INTRO_GEOMETRY: &str = "onboarding-window-restore.json";
 pub(crate) fn onboarding_preserve_window<R: Runtime>(
     window: tauri::WebviewWindow<R>,
 ) -> Result<(), String> {
+    preserve_onboarding_window(&window, || {
+        #[cfg(target_os = "macos")]
+        {
+            let native = window.ns_window().map_err(|error| error.to_string())?;
+            let native: &objc2_app_kit::NSWindow = unsafe { &*native.cast() };
+            native.setAnimationBehavior(objc2_app_kit::NSWindowAnimationBehavior::None);
+        }
+        Ok(())
+    })
+}
+
+fn preserve_onboarding_window<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    prepare: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     if window.label() != "main" {
         return Err("Main window required".into());
     }
-    #[cfg(target_os = "macos")]
-    {
-        let native = window.ns_window().map_err(|error| error.to_string())?;
-        let native: &objc2_app_kit::NSWindow = unsafe { &*native.cast() };
-        native.setAnimationBehavior(objc2_app_kit::NSWindowAnimationBehavior::None);
-    }
+    prepare()?;
     let app = window.app_handle();
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     let target = dir.join(INTRO_GEOMETRY);
@@ -627,10 +637,124 @@ mod tests {
         let bytes = serde_json::to_vec(&saved_state(100, 120, 960, 640)).unwrap();
         super::preserve_intro_geometry(&path, &bytes).unwrap();
         let original = std::fs::read(&path).unwrap();
-        super::onboarding_preserve_window(webview).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let ordinary = dir.path().join(tauri_plugin_window_state::DEFAULT_FILENAME);
+        let mut preparations = 0;
+        for expected in 1..=2 {
+            super::preserve_onboarding_window(&webview, || {
+                preparations += 1;
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+                assert!(!ordinary.exists());
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(preparations, expected);
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            assert!(!ordinary.exists());
+        }
         super::restore(&window).unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn onboarding_rejects_non_main_before_preparation_or_persistence() {
+        let (dir, app) = fixture();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "other", Default::default())
+            .build()
+            .unwrap();
+        let mut preparations = 0;
+        assert_eq!(
+            super::preserve_onboarding_window(&webview, || {
+                preparations += 1;
+                Err("Non-main preparation must not run".into())
+            }),
+            Err("Main window required".into())
+        );
+        assert_eq!(preparations, 0);
+        assert!(!dir.path().join(super::INTRO_GEOMETRY).exists());
+        assert!(!dir
+            .path()
+            .join(tauri_plugin_window_state::DEFAULT_FILENAME)
+            .exists());
+    }
+
+    #[test]
+    fn onboarding_preparation_failure_leaves_all_state_unchanged() {
+        for existing_snapshot in [false, true] {
+            let (dir, app) = fixture();
+            let ordinary = dir.path().join(tauri_plugin_window_state::DEFAULT_FILENAME);
+            let pending = dir.path().join(super::INTRO_GEOMETRY);
+            let bytes = serde_json::to_vec(&saved_state(100, 120, 960, 640)).unwrap();
+            std::fs::write(&ordinary, &bytes).unwrap();
+            if existing_snapshot {
+                std::fs::write(&pending, &bytes).unwrap();
+            }
+            let mut plugin = super::builder().build();
+            plugin.initialize(app.handle(), Value::Null).unwrap();
+            let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+                .build()
+                .unwrap();
+            plugin.window_created(webview.as_ref().window().clone());
+            let original_pending = std::fs::read(&pending).ok();
+            let error = "native preparation failed: sentinel".to_string();
+            let mut preparations = 0;
+            assert_eq!(
+                super::preserve_onboarding_window(&webview, || {
+                    preparations += 1;
+                    assert_eq!(std::fs::read(&ordinary).unwrap(), bytes);
+                    assert_eq!(std::fs::read(&pending).ok(), original_pending);
+                    Err(error.clone())
+                }),
+                Err(error)
+            );
+            assert_eq!(preparations, 1);
+            assert_eq!(std::fs::read(&ordinary).unwrap(), bytes);
+            assert_eq!(std::fs::read(&pending).ok(), original_pending);
+        }
+    }
+
+    #[test]
+    fn onboarding_saves_plugin_geometry_only_after_preparation() {
+        let (dir, app) = fixture();
+        let ordinary = dir.path().join(tauri_plugin_window_state::DEFAULT_FILENAME);
+        let pending = dir.path().join(super::INTRO_GEOMETRY);
+        let bytes = serde_json::to_vec(&saved_state(100, 120, 960, 640)).unwrap();
+        // The plugin loads its real cache during initialization. MockRuntime's
+        // zero-sized getters cannot supply or prove native window geometry.
+        std::fs::write(&ordinary, &bytes).unwrap();
+        let mut plugin = super::builder().build();
+        plugin.initialize(app.handle(), Value::Null).unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        plugin.window_created(webview.as_ref().window().clone());
+        let mut preparations = 0;
+        super::preserve_onboarding_window(&webview, || {
+            preparations += 1;
+            assert!(!pending.exists());
+            assert_eq!(std::fs::read(&ordinary).unwrap(), bytes);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(preparations, 1);
+        let original = std::fs::read(&pending).unwrap();
+        assert_eq!(original, std::fs::read(&ordinary).unwrap());
+        let geometry = super::saved_geometry(&original, "main").unwrap();
+        assert_eq!(
+            (geometry.width, geometry.height, geometry.x, geometry.y),
+            (960, 640, 0, 0)
+        );
+        let changed = serde_json::to_vec(&saved_state(300, 240, 1200, 800)).unwrap();
+        std::fs::write(&ordinary, &changed).unwrap();
+        super::preserve_onboarding_window(&webview, || {
+            preparations += 1;
+            assert_eq!(std::fs::read(&pending).unwrap(), original);
+            assert_eq!(std::fs::read(&ordinary).unwrap(), changed);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(preparations, 2);
+        assert_eq!(std::fs::read(&pending).unwrap(), original);
+        assert_eq!(std::fs::read(&ordinary).unwrap(), changed);
     }
 
     #[test]

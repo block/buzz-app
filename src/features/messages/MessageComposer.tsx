@@ -46,9 +46,11 @@ import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
+import { useRecovery } from "../relay/RecoveryNotice";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
+import { useToastClearance } from "../../shared/design-system/ui/Toast";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -390,6 +392,8 @@ export function MessageComposer(props: MessageComposerProps) {
 function PersonalComposer(props: MessageComposerProps) {
   const { session, channelId, submission } = props;
   const choices = useAgentChoices(session, true, true);
+  // While the connection recovers, its notice is the one report.
+  const { recovering } = useRecovery(session.recovery);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -452,7 +456,7 @@ function PersonalComposer(props: MessageComposerProps) {
   return (
     <DraftMentionRoster.Provider value={value}>
       <Composer {...props} />
-      {choices.error && (
+      {choices.error && !recovering && (
         <p role="alert">
           {choices.error}{" "}
           <Button onClick={() => void props.session.agentChoices.refresh()}>
@@ -1275,6 +1279,8 @@ function Composer({
     { ids: readonly string[]; owner: Element | null } | undefined
   >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  // Notices float above the composer, not over Send.
+  useToastClearance(form);
   const notify = useToastNotification();
   const handOffFocus = useEffectEvent(() => {
     if (!form.current?.contains(document.activeElement)) return;

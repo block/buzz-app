@@ -135,6 +135,7 @@ function setup({
   loadingOlder = false,
   historyLimited = false,
   error = undefined as string | undefined,
+  recovering = false,
   initial = undefined as unknown,
   mounted = [] as { id: string; y: number }[],
   initialRows = undefined as ChannelMessage[] | undefined,
@@ -274,6 +275,15 @@ function setup({
       // Geometry fixtures are read-only; reading behavior has its own boundary tests.
       unread: { sync: () => ({ capability: "unsupported" }) },
       media: () => undefined,
+      recovery: {
+        snapshot: () => ({
+          recovering,
+          attempt: 0,
+          shown: false,
+          reauthorized: 0,
+        }),
+        subscribe: () => () => {},
+      },
     } as unknown as RelaySession);
   let rows = initialRows ?? [timelineMessage("first"), timelineMessage("last")];
   type Section = ReactElement<{
@@ -414,6 +424,23 @@ function setup({
         children: ReactElement[];
       }>;
       return edge.props.children.some((child) => child?.type === Button);
+    },
+    /** The edge's alert text, if any. */
+    alert() {
+      const edge = section.props.children[0] as ReactElement<{
+        children: ReactElement<{ role?: string; children: unknown }>[];
+      }>;
+      return edge.props.children.find(
+        (child) => child?.type === "span" && child.props.role === "alert",
+      )?.props.children;
+    },
+    /** The edge's history button label, if any. */
+    historyButton() {
+      const edge = section.props.children[0] as ReactElement<{
+        children: ReactElement<{ children: unknown }>[];
+      }>;
+      return edge.props.children.find((child) => child?.type === Button)?.props
+        .children;
     },
     /** The edge's plain caption text, if any (not its alert or status). */
     caption() {
@@ -2036,6 +2063,21 @@ it.each([false, true])(
     h.unmount();
   },
 );
+
+it("leaves a failed read to the recovery notice while the connection recovers", () => {
+  const failed = setup({ hasMore: true, error: "Read failed" });
+  expect(failed.alert()).toBe("Read failed");
+  expect(failed.historyButton()).toBe("Retry older messages");
+  failed.unmount();
+  const recovering = setup({
+    hasMore: true,
+    error: "Read failed",
+    recovering: true,
+  });
+  expect(recovering.alert()).toBeUndefined();
+  expect(recovering.historyButton()).toBe("Load older messages");
+  recovering.unmount();
+});
 
 it("pages Solo chat history on scroll without an initial button and keeps error recovery", () => {
   const h = setup({ hasMore: true, historyControl: "scroll" });

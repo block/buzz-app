@@ -15738,3 +15738,23 @@ describe("oversized paste feedback", () => {
     ).toBeVisible();
   });
 });
+
+it("leaves the agents error to the recovery notice while the connection recovers", () => {
+  const h = mount({ ownSoloConversation: true });
+  const real = h.session.agentChoices;
+  const failed = { ...real.snapshot(), error: "Could not read agents." };
+  let state = { recovering: true, attempt: 0, shown: false, reauthorized: 0 };
+  Object.assign(h.session, {
+    agentChoices: { ...real, snapshot: () => failed },
+    recovery: { snapshot: () => state, subscribe: () => () => {} },
+  });
+  h.retarget({});
+  expect(screen.queryByText("Could not read agents.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry agents" })).toBeNull();
+  state = { ...state, recovering: false };
+  h.retarget({});
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not read agents.");
+  expect(
+    screen.getByRole("button", { name: "Retry agents" }),
+  ).toBeInTheDocument();
+});

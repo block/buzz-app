@@ -417,16 +417,15 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "--affordance-reaction-self",
         variable: "--affordance-reaction-self",
-        pointsAt: "accent step 3",
-        use: "A reaction you made, on received bubbles and the panel.",
+        pointsAt: "surface-message-own",
+        use: "A reaction you made, on received bubbles and the panel: your own bubble's fill, paired with text-reaction-self.",
         status: "core",
       },
       {
         token: "--affordance-reaction-self-own",
         variable: "--affordance-reaction-self-own",
-        pointsAt:
-          "affordance-reaction-self; at Buzzin’, the accent's strong overlay on its fill",
-        use: "A reaction you made inside your own bubble.",
+        pointsAt: "surface-message",
+        use: "A reaction you made inside your own bubble: the received bubble's fill, paired with text-reaction-self-own.",
         status: "core",
       },
       {
@@ -672,6 +671,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-message-link-own",
         pointsAt: "accent link at Chillin’; accent ink at Buzzin’",
         use: "Links on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-reaction-self",
+        variable: "--text-reaction-self",
+        pointsAt: "text-message-own",
+        use: "Count of a reaction you made on received bubbles and the panel, paired with bg-affordance-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "text-reaction-self-own",
+        variable: "--text-reaction-self-own",
+        pointsAt: "text-standard",
+        use: "Count of a reaction you made inside your own bubble, paired with bg-affordance-reaction-self-own.",
         status: "core",
       },
       {

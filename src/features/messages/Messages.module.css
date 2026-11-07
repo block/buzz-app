@@ -335,7 +335,8 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }
-/* Your reactions keep their tint after the pointer leaves. */
+/* Your reactions take the other bubble's fill: yours on a received message,
+   the received one inside your bubble. */
 .reactionItem[data-mine] {
   background: var(--reaction-self-surface, var(--affordance-reaction-self));
 }
@@ -363,6 +364,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionItem [data-reaction] {
   color: var(--reaction-ink, var(--text-standard));
+}
+.reactionItem[data-mine] [data-reaction] {
+  color: var(--reaction-self-ink, var(--text-reaction-self));
 }
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
@@ -3278,6 +3282,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --reaction-surface: var(--affordance-reaction-own);
   --reaction-ink: var(--text-message-own);
   --reaction-self-surface: var(--affordance-reaction-self-own);
+  --reaction-self-ink: var(--text-reaction-self-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
   --message-icon-subtle: var(--icon-subtle-own);
   --message-metadata: var(--text-metadata-own);
@@ -3932,6 +3937,7 @@ html[data-keyboard-navigation]
   --reaction-surface: initial;
   --reaction-ink: initial;
   --reaction-self-surface: initial;
+  --reaction-self-ink: initial;
   /* An edited marker there sits on the panel too. */
   --message-metadata: initial;
 }

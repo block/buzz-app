@@ -214,8 +214,8 @@ const PAIRS = [
   // quieter overlay under the pointer.
   ["--text-standard", "--affordance-reaction"],
   ["--text-message-own", "--affordance-reaction-own"],
-  ["--text-standard", "--affordance-reaction-self"],
-  ["--text-message-own", "--affordance-reaction-self-own"],
+  ["--text-reaction-self", "--affordance-reaction-self"],
+  ["--text-reaction-self-own", "--affordance-reaction-self-own"],
   ["--text-message-own", "--affordance-message-own-hover"],
   // An arrival cue lays the regular step across the whole bubble.
   ["--text-standard", "--affordance-message-highlight"],
@@ -360,7 +360,6 @@ const SITS_ON = new Map([
   ["--affordance-message-own-highlight", "--surface-message-own"],
   ["--affordance-reaction", "--surface-message"],
   ["--affordance-reaction-own", "--surface-message-own"],
-  ["--affordance-reaction-self-own", "--surface-message-own"],
 ]);
 
 /** `#rgb` or `#rrggbb` as three 0–255 channels. */

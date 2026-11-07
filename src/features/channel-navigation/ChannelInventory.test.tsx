@@ -842,6 +842,70 @@ it("copies a channel link that opens the same channel", async () => {
   ).toBeInTheDocument();
 });
 
+it("opens an Activity thread row at the reply it previews, in its thread", async () => {
+  const root = "d".repeat(64);
+  const reply = "e".repeat(64);
+  const h = fixture();
+  const item = {
+    channelId: "beta",
+    rootId: root,
+    latestMessageId: reply,
+    authorId: "b".repeat(64),
+    preview: "Nested reply",
+    unreadCount: 1,
+    createdAt: 1,
+  };
+  // Stable per channel, as external-store snapshots must be.
+  const snapshots = new Map(
+    ["alpha", "beta", "gamma"].map((id) => [
+      id,
+      {
+        channelId: id,
+        items: id === "beta" ? [item] : [],
+        coverage: "observed" as const,
+        freshness: "observed" as const,
+      },
+    ]),
+  );
+  const unread = h.session.unread;
+  h.session.unread = {
+    ...unread,
+    activity: (id) => snapshots.get(id) ?? unread.activity(id),
+    subscribeActivity: () => () => {},
+  };
+  // The sidebar reads back the attempt it started to hand off focus return.
+  let opened: unknown;
+  vi.mocked(h.navigator.open).mockImplementation(async (next) => {
+    opened = next;
+    return { status: "opened" };
+  });
+  Object.assign(h.navigator, {
+    snapshot: () => ({
+      attempt: {
+        id: "visit",
+        entry: { id: "entry", target: opened },
+        signal: new AbortController().signal,
+      },
+    }),
+  });
+  render(h.view("alpha"));
+  const beta = await screen.findByRole("button", { name: /^beta/ });
+  beta.focus();
+  await userEvent.keyboard("{Enter}");
+  const popup = await screen.findByRole("dialog", { name: "Activity in beta" });
+  await userEvent.click(
+    within(popup).getByRole("button", { name: /^Open unread thread from/ }),
+  );
+  expect(h.navigator.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      kind: "conversation",
+      channelId: "beta",
+      messageId: reply,
+      threadRootId: root,
+    }),
+  );
+});
+
 it("offers DMs a Move conversation menu and relocates them into a saved group", async () => {
   const saved: SidebarPreferences = {
     sections: [{ id: "work", name: "Work", order: 0 }],

@@ -536,6 +536,55 @@ test("superseding a held exact read cancels it; a late response cannot steal foc
   await expect.poll(() => status(page)).toBe("opened");
 });
 
+test.describe("cold channel", () => {
+  test.use({ historyCounts: { alpha: 103, beta: 1 } });
+  // Browser-only: the timeline mounts after the channel's head read, so only a
+  // real load shows that a click made meanwhile keeps its focus.
+  test("an exact message opened into a loading channel keeps focus the person moved meanwhile", async ({
+    page,
+    app,
+  }) => {
+    const beta = Promise.withResolvers();
+    await page.route("**/query", async (route) => {
+      const filters = route.request().postDataJSON() ?? [];
+      if (filters.some((filter) => filter["#h"]?.includes("beta")))
+        await beta.promise;
+      await route.fallback();
+    });
+    const [message] = app.histories.get("primary/beta");
+    const composer = page.getByRole("textbox", {
+      name: "Message #Beta",
+      exact: true,
+    });
+    try {
+      await open(page, app);
+      await page.evaluate(
+        (value) => {
+          window.fixtureNavigation.open(value);
+        },
+        {
+          ...target(app, message.id),
+          channelId: "beta",
+          threadRootId: undefined,
+        },
+      );
+      await expect(
+        page.getByRole("status").filter({ hasText: "Loading messages…" }),
+      ).toBeVisible();
+      await composer.click();
+    } finally {
+      beta.resolve();
+    }
+    await expect.poll(() => status(page)).toBe("opened");
+    await expect(
+      page.locator(
+        `[data-channel-timeline="beta"] [data-message-id="${message.id}"]`,
+      ),
+    ).toBeInViewport();
+    await expect(composer).toBeFocused();
+  });
+});
+
 for (const selected of ["reply", "root"]) {
   test(`same-scope replacement waits for fresh membership before reopening the exact ${selected}`, async ({
     page,

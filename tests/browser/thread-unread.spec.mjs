@@ -1,6 +1,7 @@
 import { pauseClock } from "./clock.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
+import { generateSecretKey } from "nostr-tools";
 import { clickRow, open, virtuaIdle } from "./timeline.mjs";
 import {
   holdReadingFocus,
@@ -415,6 +416,52 @@ test.describe("mentioned reply priority", () => {
   });
 });
 
+// Browser-only: a collapsed branch mounts no rows, so real layout and focus
+// show whether Activity's nested reply is revealed in view and then read.
+test("opening a nested reply from Activity reveals it in its collapsed branch, then reads it", async ({
+  page,
+  app,
+}) => {
+  await holdReadingFocus(page);
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  const previews = () =>
+    page.evaluate(() =>
+      window.fixtureRelay
+        .snapshot()
+        .session.unread.activity("alpha")
+        .items?.map((item) => item.preview),
+    );
+  await alpha.hover();
+  const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+  const item = (text) =>
+    popover
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: text });
+  // Nested under the top-level "Broadcast reply", whose branch starts collapsed.
+  await expect(item("Broadcast descendant")).toBeVisible();
+  await releaseReadingFocus(page);
+  await item("Broadcast descendant").click();
+  const target = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().entry.target,
+  );
+  expect(target).toMatchObject({ channelId: "alpha", threadRootId: root.id });
+  expect(target.messageId).not.toBe(root.id);
+  const reply = page
+    .getByRole("complementary", { name: "Thread", exact: true })
+    .locator(`[data-message-id="${target.messageId}"]`);
+  await expect(reply).toContainText("Broadcast descendant");
+  await expect(reply).toBeInViewport();
+  await expect(reply).toBeFocused();
+  await expect.poll(previews).not.toContain("Broadcast descendant");
+  await alpha.hover();
+  await expect(item("Unread reply 1")).toBeVisible();
+  await expect(item("Broadcast descendant")).toHaveCount(0);
+});
+
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({
   page,
   app,
@@ -725,84 +772,121 @@ test("thread buttons show observed unread independently, clear only after readin
   ).toEqual([]);
 });
 
-// Browser focus plus actual controller/React wiring: a same-target open must not
-// leave the timeline's trigger installed merely because the history entry is reused.
-test("same-thread sidebar activity replaces timeline focus return", async ({
-  page,
-  app,
-}) => {
-  await holdReadingFocus(page);
-  await open(page, app);
-  const root = app.histories
-    .get("primary/alpha")
-    .find((row) => row.content === "Thread root 0");
-  const alpha = page.locator('button[data-channel-id="alpha"]');
-  await expect(
-    alpha.getByRole("img", { name: /unread threads?/ }),
-  ).toBeVisible();
-  let release;
-  const held = new Promise((resolve) => {
-    release = resolve;
-  });
-  let requested = false;
-  await page.route("**/api/relay/**/query", async (route) => {
-    if (
-      route
-        .request()
-        .postDataJSON()
-        .some((filter) => filter.depth_limit)
-    ) {
-      requested = true;
-      await held;
-    }
-    await route.continue().catch(() => {});
-  });
-  try {
-    const trigger = page
-      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
-    await virtuaIdle(page);
-    await releaseReadingFocus(page);
-    await trigger.click();
-    await expect.poll(() => requested).toBe(true);
-    const before = await page.evaluate(() => {
-      const { entry, attempt } = window.fixtureNavigation.snapshot();
-      return { entry: entry.id, attempt: attempt.id };
+// Browser focus plus actual controller/React wiring: Activity retargeting the
+// thread the timeline is still opening must not leave the timeline's trigger.
+// An unread reply is a new visit; a working agent's top-level message reuses
+// the timeline's history entry.
+for (const source of ["unread reply", "working agent"]) {
+  test(`same-thread sidebar activity (${source}) replaces timeline focus return`, async ({
+    page,
+    app,
+  }) => {
+    await holdReadingFocus(page);
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 0");
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    if (source === "working agent") {
+      await expect
+        .poll(() => app.relay.hasRoute("primary", "observer"))
+        .toBe(true);
+      app.observer(
+        {
+          kind: "turn_started",
+          seq: 1,
+          timestamp: new Date().toISOString(),
+          channelId: "alpha",
+          sessionId: "S",
+          turnId: "focus-return",
+          payload: { triggeringEventIds: [root.id] },
+        },
+        generateSecretKey(),
+      );
+      await expect(
+        alpha.getByRole("img", { name: /working in Alpha/ }),
+      ).toBeVisible();
+    } else
+      await expect(
+        alpha.getByRole("img", { name: /unread threads?/ }),
+      ).toBeVisible();
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
     });
-    await alpha.hover();
-    const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
-    await activity
-      .getByRole("button", {
-        name: /Open unread thread from.*Broadcast descendant/,
-      })
-      .click();
-    await expect
-      .poll(() =>
-        page.evaluate((before) => {
-          const { entry, attempt } = window.fixtureNavigation.snapshot();
-          return {
-            sameEntry: entry.id === before.entry,
-            freshAttempt: attempt.id !== before.attempt,
-          };
-        }, before),
-      )
-      .toEqual({ sameEntry: true, freshAttempt: true });
-    release();
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.fixtureNavigation.snapshot().status),
-      )
-      .toBe("opened");
-    await page
-      .locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
-      )
-      .click();
-    await expect(alpha).toBeFocused();
-  } finally {
-    release();
-  }
-});
+    let requested = false;
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.depth_limit)
+      ) {
+        requested = true;
+        await held;
+      }
+      await route.continue().catch(() => {});
+    });
+    try {
+      const trigger = page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ });
+      await virtuaIdle(page);
+      await releaseReadingFocus(page);
+      await trigger.click();
+      await expect.poll(() => requested).toBe(true);
+      const before = await page.evaluate(() => {
+        const { entry, attempt } = window.fixtureNavigation.snapshot();
+        return { entry: entry.id, attempt: attempt.id };
+      });
+      await alpha.hover();
+      const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
+      await activity
+        .getByRole("button", {
+          name:
+            source === "working agent"
+              ? /^Open thread for .* in Alpha$/
+              : /Open unread thread from.*Broadcast descendant/,
+        })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            ({ before, rootId }) => {
+              const { entry, attempt } = window.fixtureNavigation.snapshot();
+              return {
+                sameEntry: entry.id === before.entry,
+                rootTarget: entry.target.messageId === rootId,
+                sameThread: entry.target.threadRootId === rootId,
+                freshAttempt: attempt.id !== before.attempt,
+              };
+            },
+            { before, rootId: root.id },
+          ),
+        )
+        .toEqual({
+          sameEntry: source === "working agent",
+          rootTarget: source === "working agent",
+          sameThread: true,
+          freshAttempt: true,
+        });
+      release();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
+      await page
+        .locator(
+          '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+        )
+        .click();
+      await expect(alpha).toBeFocused();
+    } finally {
+      release();
+    }
+  });
+}
 
 // Browser-only contract: fitting rows generate no scroll/resize when an empty
 // legacy continuation finishes. Opening alone must still earn reading dwell.

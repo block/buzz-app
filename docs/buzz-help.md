@@ -572,6 +572,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   **Open Activity** opens the page. The card's **Unread only** switch is
   separate from the Activity page's filters and hides reactions when on. The preview is not shown on touch
   devices or while the Activity page is open.
+- **Channel activity**: rest the pointer on a channel or Solo chat in the
+  sidebar to see its working agents and **Unread threads**. Choosing an unread
+  thread opens it at the reply shown, expanding the replies it is nested under.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community

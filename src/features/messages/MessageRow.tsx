@@ -683,7 +683,7 @@ function MessageRowContent({
       edited={editedInBody && displayRow.edited}
     />
   );
-  const avatarSize = compactAvatar && !flat ? "tiny" : "default";
+  const avatarSize = compactAvatar && !flat ? "small" : "default";
   const authorName = (
     <>
       {/* Inside the name, so the byline keeps the text baseline. */}

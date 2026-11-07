@@ -1,9 +1,9 @@
 # Agent Activity
 
-Shows an incoming agent response on the left while your request is being handled. The same avatar and bubble begin with typing dots, then show the current tool step. Published agent content replaces this live preview; recorded coordination history keeps its completed-step disclosure.
+Shows what happened to your request on the message you sent: a failure you can retry or dismiss, a result Buzz couldn't confirm, or a stop. An agent's live work is never shown here: it has one place, the end of its conversation, where its reply will land.
 
 ## Getting started
 
 1. Mention an agent in a conversation.
-2. Its picture and typing bubble appear on the agent's side of the conversation.
-3. Tool details appear in that bubble as they arrive. Hover for activity controls, including Stop, or click to open the thread when available.
+2. While it works, the end of the conversation shows its picture, typing dots and current step, with Stop.
+3. If the request fails or is stopped, the message notes it; once the agent has replied, the note follows its latest reply.

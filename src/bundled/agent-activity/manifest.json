@@ -2,7 +2,7 @@
   "id": "buzz.agent-activity",
   "name": "Agent Activity",
   "apiVersion": 1,
-  "description": "Show live and recent agent work alongside conversations.",
+  "description": "Note failed, unconfirmed and stopped agent requests on their messages.",
   "discovery": {
     "category": "agent-tools",
     "tags": ["Essentials", "coding-agents"]

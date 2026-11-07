@@ -1,17 +1,11 @@
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { AgentResponsePreview } from "./AgentResponsePreview";
-import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
-import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockPreference } from "../../shared/clock-preference";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
-import {
-  TypingPresentation,
-  useReplacedTypers,
-} from "../conversation/typing-presentation";
 import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
@@ -210,16 +204,7 @@ function useCompletedMessageWork(
 }
 
 const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
-  return props.session && props.scope && props.extensions?.accessories ? (
-    <TypingPresentation
-      active
-      key={`${props.scope}:${props.row.channelId}:${props.row.id}`}
-    >
-      <MessageRowContent {...props} />
-    </TypingPresentation>
-  ) : (
-    <MessageRowContent {...props} />
-  );
+  return <MessageRowContent {...props} />;
 });
 function MessageRowContent({
   row,
@@ -279,8 +264,7 @@ function MessageRowContent({
       : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
-    row.id,
-    row.threadRootId,
+    row.replyCount > 0 || !!row.threadRootId,
   );
   const rootId = row.threadRootId ?? row.id;
   const threadDraft = useThreadDraft(
@@ -1682,14 +1666,6 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   const activity = failure ? undefined : props.recordedActivity;
   const bubble =
     activity?.container === "bubble" || activity?.container === "standalone";
-  const live = useActivityIndicator(
-    session,
-    row,
-    activity?.ownsLive ?? false,
-    undefined,
-    activity?.requestId,
-  );
-  const active = live || (activity?.active ?? false);
   const alignmentRow = failure ? (props.stoppedRequest ?? row) : row;
   const keepMounted = props.keepMounted;
   useEffect(() => {
@@ -1820,7 +1796,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                   session={session}
                   viewer={props.viewer ?? session?.viewer}
                   pubkey={row.authorId}
-                  active={active}
+                  active={false}
                 />
               )}
               {failure && (
@@ -1838,7 +1814,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
               {!failure && open && bubble && "Collapse"}
               {!failure && !open && (
                 <span className={styles.audiencePreviewText}>
-                  <ShimmerText active={active}>{visiblePreview}</ShimmerText>
+                  {visiblePreview}
                 </span>
               )}
               {!open && row.edited && <EditedMarker />}
@@ -1924,14 +1900,8 @@ function useThreadAgents(
   session: RelaySession | undefined,
   channelId: string,
   rootId: string,
-  messageId: string,
-  messageThreadRootId: string | undefined,
+  threadExists: boolean,
 ) {
-  const represented = useReplacedTypers(
-    session,
-    channelId,
-    messageThreadRootId,
-  );
   const get = () =>
     session?.typing
       .snapshot()
@@ -1954,17 +1924,9 @@ function useThreadAgents(
       keys ? keys.split(",") : [],
       channelId,
       rootId,
-      { messageId, agents: represented },
+      threadExists,
     );
-    const local = localActivity(
-      {
-        local: (activity?.local ?? []).filter(
-          (row) => row.messageId !== messageId || !represented.has(row.agent),
-        ),
-      },
-      channelId,
-      rootId,
-    );
+    const local = localActivity(activity, channelId, rootId);
     const waiting =
       typers.length > 0 && typers.every((agent) => breathing(local.get(agent)));
     return `${waiting ? "waiting" : "working"}:${typers.join(",")}`;

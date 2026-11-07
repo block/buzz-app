@@ -1,9 +1,5 @@
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import messageStyles from "./Messages.module.css";
-import {
-  usePresentedAgents,
-  useReplacedTypers,
-} from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   useCallback,
@@ -100,7 +96,6 @@ export function useLiveConversationAgents(
   threadRootId: string | undefined,
   includeThreads = true,
 ): readonly string[] {
-  const presented = usePresentedAgents(session, channelId, threadRootId);
   const watchChannel = !threadRootId && !includeThreads;
   const subscribe = useCallback(
     (listener: () => void) => {
@@ -134,10 +129,7 @@ export function useLiveConversationAgents(
       includeThreads,
       threadRootsOf(channelRowsOf(session, channelId, watchChannel)),
     );
-    return [...details.keys()]
-      .filter((key) => !presented.has(key))
-      .sort()
-      .join(",");
+    return [...details.keys()].sort().join(",");
   };
   const key = useSyncExternalStore(subscribe, getKey, getKey);
   return useMemo(() => (key ? key.split(",") : []), [key]);
@@ -150,8 +142,6 @@ export function useConversationAgents(
   threadRootId: string | undefined,
   includeThreads = true,
 ) {
-  const replaced = useReplacedTypers(session, channelId, threadRootId);
-  const presented = usePresentedAgents(session, channelId, threadRootId);
   const entries = useSyncExternalStore(
     session.typing.subscribe,
     session.typing.snapshot,
@@ -204,16 +194,12 @@ export function useConversationAgents(
     getDetails,
     getDetails,
   );
-  // A message's live bubble is the agent's working indicator. Recorded history
-  // may own only the step details; then the conversation keeps its busy cue.
-  const agents = [...details.keys()]
-    .filter((key) => !presented.has(key))
-    .sort();
+  // This indicator is the conversation's only place for live agent work.
+  const agents = [...details.keys()].sort();
   return {
     activity: (session.agentActivity?.snapshot ?? noActivity)(),
     details,
     entries,
-    replaced,
     agents,
     knownAgents,
     choices,
@@ -252,7 +238,6 @@ export function TypingIndicator({
     activity,
     details,
     entries,
-    replaced,
     agents: activeAgents,
     knownAgents,
     choices,
@@ -280,22 +265,6 @@ export function TypingIndicator({
   const agents = audience === "humans" ? [] : activeAgents;
   const hostedAgents = useContext(AgentsContext);
   useAgentsSnapshot(hostedAgents);
-  const controls = new Map(
-    agents.map((agent) => [
-      agent,
-      conversationWorkStops(
-        activity,
-        agent,
-        channelId,
-        threadRootId,
-        session.agentActivity,
-        hostedAgents,
-      ),
-    ]),
-  );
-  const { pending, stop } = useWorkStops(
-    [...controls.values()].flatMap((rows) => rows.map((row) => row.control)),
-  );
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -319,7 +288,45 @@ export function TypingIndicator({
     [session, channelId, needsRows],
   );
   const rows = useSyncExternalStore(subscribeRows, getRows);
+  // A channel-only view controls only the channel's own work: a request is in
+  // a thread once it has replies, and that thread's end controls it then.
+  const threadRoots = inFlow && !threadRootId ? threadRootsOf(rows) : undefined;
+  const controls = new Map(
+    agents.map((agent) => [
+      agent,
+      conversationWorkStops(
+        activity,
+        agent,
+        channelId,
+        threadRootId,
+        session.agentActivity,
+        hostedAgents,
+      ).flatMap((row) => {
+        if (!threadRoots) return [row];
+        const root = row.work?.threadRootId ?? row.threadRootId;
+        return row.work?.thread || (root && threadRoots.has(root))
+          ? []
+          : [{ ...row, threadRootId: undefined }];
+      }),
+    ]),
+  );
+  const { pending, stop } = useWorkStops(
+    [...controls.values()].flatMap((rows) => rows.map((row) => row.control)),
+  );
   const firstAgent = agents[0];
+  // Anyone with agent work recorded in this channel is an agent, whether or
+  // not this viewer's directory knows them: never "typing".
+  const working = new Set([
+    ...(activity?.records ?? [])
+      .filter((record) => record.channelIds.includes(channelId))
+      .map((record) => record.agent),
+    ...(activity?.local ?? [])
+      .filter((work) => work.channelId === channelId)
+      .map((work) => work.agent),
+    ...(activity?.turns ?? [])
+      .filter((turn) => turn.channelId === channelId)
+      .map((turn) => turn.agent),
+  ]);
   const humans = entries.filter(
     (entry) =>
       audience !== "agents" &&
@@ -327,7 +334,7 @@ export function TypingIndicator({
       entry.threadRootId === threadRootId &&
       !knownAgents.has(entry.pubkey) &&
       !details.has(entry.pubkey) &&
-      !replaced.has(entry.pubkey),
+      !working.has(entry.pubkey),
   );
   const name = (pubkey: string) =>
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
@@ -389,7 +396,7 @@ export function TypingIndicator({
     );
     const conversationRoot =
       workRoot ??
-      work?.threadRootId ??
+      (threadRoots ? undefined : work?.threadRootId) ??
       threadRootId ??
       (knownRoots.length === 1 ? knownRoots[0] : undefined);
     const conversation = conversationRoot
@@ -452,7 +459,6 @@ export function TypingIndicator({
     : "";
   const firstStep = firstAgent ? details.get(firstAgent)?.label : undefined;
   const previewText =
-    (firstAgent && replaced.has(firstAgent)) ||
     firstStep === "Working" ||
     firstStep === "Received · waiting to start" ||
     firstStep === "Starting"

@@ -139,17 +139,23 @@ test("thread preserves bottom and reading position through activity and composer
     await frames(page);
     await settle(page, history);
   };
-  // Activity grows in and leaves over several rendering updates. Leaving hides
-  // its region at once, but it stays mounted until its animation ends; its
-  // removal is the last resize.
-  const arrived = (row) =>
-    row
-      .locator("[data-message-activity]")
-      .evaluate((section) =>
-        Promise.all(section.getAnimations().map((motion) => motion.finished)),
-      );
-  const left = (row) =>
-    expect(row.locator("[data-message-activity]")).toHaveCount(0);
+  // Live work shows only at the thread's end, never on its request. It grows
+  // in over several rendering updates; its removal is the last resize.
+  const live = history.locator("[data-conversation-activity]");
+  const arrived = async () => {
+    await expect(live).toBeVisible();
+    await live.evaluate((section) =>
+      Promise.all(
+        section
+          .getAnimations({ subtree: true })
+          .filter(
+            (motion) => motion.effect?.getTiming().iterations !== Infinity,
+          )
+          .map((motion) => motion.finished),
+      ),
+    );
+  };
+  const left = () => expect(live).toHaveCount(0);
   await expect(history.locator("[data-message-id]")).toHaveCount(33);
   await expect.poll(gap).toBeLessThan(4);
   await settled();
@@ -218,14 +224,14 @@ test("thread preserves bottom and reading position through activity and composer
     await expect(sent).toBeVisible();
     const id = await sent.getAttribute("data-message-id");
     start(id, "bottom");
+    await arrived();
     await expect(
       sent.getByRole("region", { name: "Agent activity on this message" }),
-    ).toBeVisible();
-    await arrived(sent);
+    ).toHaveCount(0);
     await settled();
     expect(await gap()).toBeLessThan(4);
     stop("bottom");
-    await left(sent);
+    await left();
     await settled();
     expect(await gap()).toBeLessThan(4);
     const samples = await sampling.evaluate((state) => {
@@ -288,20 +294,21 @@ test("thread preserves bottom and reading position through activity and composer
       }, anchor),
     ).toBeLessThan(4);
   };
-  // Activity above the reader is a child-only reflow, not a thread snapshot.
+  // Work on a request above the reader arrives at the thread's end, below
+  // the reader: the reading position does not move.
   const threadRoot = history.locator(`[data-message-id="${root.id}"]`);
   start(root.id, "reading");
+  await arrived();
   await expect(
     threadRoot.getByRole("region", { name: "Agent activity on this message" }),
-  ).toHaveCount(1);
-  await arrived(threadRoot);
+  ).toHaveCount(0);
   await unchanged();
   await input.fill("Growing draft\n".repeat(8));
   await unchanged();
   await input.fill("");
   await unchanged();
   stop("reading");
-  await left(threadRoot);
+  await left();
   await unchanged();
 });
 

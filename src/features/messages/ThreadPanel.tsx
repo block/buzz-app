@@ -5,7 +5,6 @@ import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
   activityPresentation,
-  useChannelActivitySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
 import { activityRuns } from "./activity-groups";
@@ -604,11 +603,6 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
-  const threadChannels = useMemo(() => new Set([channelId]), [channelId]);
-  const activitySnapshot = useChannelActivitySnapshot(
-    session.agentActivity,
-    threadChannels,
-  );
   const stableActivity = useStableRowActivity();
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
@@ -1048,11 +1042,10 @@ function ThreadMessages({
         snapshot.root?.audience === "agents"
           ? [snapshot.root, ...snapshot.replies]
           : snapshot.replies,
-        activitySnapshot,
         agentPubkeys,
         rootId,
       ),
-    [snapshot.root, snapshot.replies, activitySnapshot, agentPubkeys, rootId],
+    [snapshot.root, snapshot.replies, agentPubkeys, rootId],
   );
   const rootActivity = rootId ? rootPresentation.byRow.get(rootId) : undefined;
   // A stopped note may follow only a reply that is always shown: collapsed
@@ -1061,11 +1054,10 @@ function ThreadMessages({
     () =>
       activityPresentation(
         tree.children.get(undefined) ?? [],
-        activitySnapshot,
         agentPubkeys,
         rootId,
       ),
-    [tree, activitySnapshot, agentPubkeys, rootId],
+    [tree, agentPubkeys, rootId],
   );
   const liveAgents = useLiveConversationAgents(session, channelId, rootId);
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
@@ -1478,7 +1470,6 @@ function ThreadMessages({
       requestRows.set(snapshot.root.id, snapshot.root);
     const presentation = activityPresentation(
       chronologicalSiblings,
-      activitySnapshot,
       agentPubkeys,
       parent ?? rootId,
     );

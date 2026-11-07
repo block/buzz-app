@@ -1360,15 +1360,28 @@ tasks unknown.
 
 ### Activity updates in the conversation
 
-When no live activity bubble on the triggering message shows an agent, the live
-conversation indicator remains visible while it works, even when recorded
-activity is collapsed or expanded. While that bubble shows, it is the agent's
-working indicator and the conversation adds no second one; the conversation cue
-returns once recorded history owns the work. The indicator keeps dots beside
-current tool labels; reduced motion leaves the dots static. Activity text may
-shimmer too, but does not replace that persistent working cue.
-When local request evidence is available, old activity does not inherit the
-working/thinking state of a different request in the same thread.
+Live agent work has one place: the end of the conversation it happens in, where
+its reply will land. The timeline's end and a thread's end each show their own
+conversation's work; the channel's reply summary says when an agent works in a
+thread. Live work never shows on the triggering message or in recorded history,
+whatever is mounted or scrolled into view, so it cannot show twice. That
+indicator carries the current step, the transcript link and **Stop**, keeps dots
+beside current tool labels, and stacks under the agent's latest reply. Reduced
+motion leaves the dots static. When local request evidence is available, old
+activity does not inherit the working/thinking state of a different request in
+the same thread.
+
+A top-level request is its own conversation until it has replies: its work shows
+at the channel's end. Once the request has replies, it is a thread, and its work
+is that thread's (its summary in the channel, its end in the thread). Work in a
+thread whose root is outside the loaded channel window counts as the channel's.
+Turns whose records do not name a thread root use their triggering messages'
+thread.
+
+The triggering message shows only what happened to its request: a failure it
+can retry or dismiss, a result Buzz couldn't confirm, or a stop. Once the agent
+has replied, that note follows the agent's latest reply instead. Outcomes follow
+the same conversation rule as live work.
 
 Agent-to-agent coordination messages remain in the conversation as collapsed,
 expandable history, including after completion, stopping, steering, or reload.
@@ -1383,15 +1396,10 @@ not its messages. When lifecycle evidence is missing, a related public reply can
 retire the old live treatment without claiming that execution completed. Current
 work continues to appear in the conversation indicator.
 
-A public reply alone does not replace the request's live indicator. Mounted
-update history can own the current step and request controls while the live
-conversation indicator remains available. When public replies
-split one request's updates into several runs, only the latest run for each agent
-owns its live shimmer and Stop control; earlier runs remain readable history.
-Other agents and requests retain their own live presentation.
-Codex transfers live activity to an accepted follow-up in the same conversation.
-Top-level DM messages share that presentation scope; actual DM threads remain
-independent, even when they share a harness session.
+A public reply does not end live work: the conversation's end keeps showing it
+until its lifecycle finishes. Update history never animates and has no Stop; it
+keeps transcript links. Codex transfers live activity to an accepted follow-up
+in the same conversation.
 
 The historical-reply fallback requires the reply author to have participated in
 the exchange or received the helper’s last update. It never overrides available
@@ -1408,11 +1416,11 @@ telemetry publication enabled, then give it work. This activity plugin does not
 start agents. No records may mean publishing is off, no new traffic, or an
 interrupted feed, not that an agent is idle.
 
-Select an active agent above the channel or thread composer, or its bubble under
-the triggering message: it opens the agent's profile on its Activity tab. Disable
-the **Agent Activity** plugin in **Settings → Plugins → Manage plugins**, give the
-agent work, then re-enable: the bubble and working indicator should return for new
-work only.
+Select an active agent at the end of the channel or thread: it opens the agent's
+profile on its Activity tab. The **Agent Activity** plugin shows what happened to
+each request on its message (failures, stops); disabling it in **Settings →
+Plugins → Manage plugins** hides those notes, while the end-of-conversation
+indicator stays.
 
 The feed is best-effort telemetry: producers coalesce/batch and may elide oversized
 content. It is not a complete ACP transcript.

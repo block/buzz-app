@@ -1,156 +1,28 @@
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useState } from "react";
 import type { ChannelMessage } from "../relay/contracts";
-import type { RelaySession } from "../relay/session";
-import { requestWork, isSettledWork } from "../agents/request-work";
 import { continuesMessageGroup } from "./message-grouping";
 import { activityRuns } from "./activity-groups";
 
-type Activity = RelaySession["agentActivity"];
-type Snapshot = ReturnType<Activity["snapshot"]>;
-type ActivityRun = {
+/** A run of agent coordination updates: readable history only. Live work is
+ * never shown here; the conversation's end indicator is its only place. */
+export type ActivityPresentation = {
   ids: string[];
   history: ChannelMessage[];
   latest: ChannelMessage;
   participants: string[];
-  requestId: string | undefined;
-  followingMessage: ChannelMessage | undefined;
-};
-export type ActivityPresentation = ActivityRun & {
-  /** Retires the live treatment only; coordination history remains readable. */
-  retired: boolean;
-  /** Only the latest update run for an agent/request owns live work and Stop. */
-  liveParticipants: string[];
-  working: boolean;
   standalone: boolean;
 };
 export type ActivityRowPresentation = {
-  requestId: string | undefined;
-  active: boolean;
-  ownsLive: boolean;
   container: "history" | "bubble" | "standalone";
 };
-const noSubscribe = () => () => {};
 
-const sameItems = <T>(a: readonly T[], b: readonly T[]) =>
-  a.length === b.length && a.every((item, index) => item === b[index]);
-/** Whether two snapshots agree on everything a request projection in these
- * channels reads: their records, turns and local work, status and trimming. */
-function sameChannelActivity(
-  a: Snapshot | undefined,
-  b: Snapshot | undefined,
-  channels: ReadonlySet<string>,
-) {
-  if (a === b) return true;
-  if (!a || !b || a.status !== b.status || a.trimmed !== b.trimmed)
-    return false;
-  const records = (snapshot: Snapshot) =>
-    snapshot.records.filter((record) =>
-      record.channelIds.some((id) => channels.has(id)),
-    );
-  const local = (snapshot: Snapshot) =>
-    (snapshot.local ?? []).filter((work) => channels.has(work.channelId));
-  const turns = (snapshot: Snapshot) =>
-    JSON.stringify(
-      snapshot.turns.filter(
-        (turn) => !!turn.channelId && channels.has(turn.channelId),
-      ),
-    );
-  return (
-    sameItems(records(a), records(b)) &&
-    sameItems(local(a), local(b)) &&
-    turns(a) === turns(b)
-  );
-}
-/** The activity snapshot, changing only when these channels' evidence does:
- * work elsewhere in the session does not re-render this conversation. */
-export function useChannelActivitySnapshot(
-  activity: Activity | undefined,
-  channels: ReadonlySet<string>,
-) {
-  const held = useRef<Snapshot | undefined>(undefined);
-  const read = () => {
-    const live = activity?.snapshot();
-    if (!sameChannelActivity(held.current, live, channels)) held.current = live;
-    return held.current;
-  };
-  return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
-}
-
-/** Status belongs to the triggering request, never to all work in its thread. */
-function activityStatus(
-  group: ActivityRun,
-  snapshot: Snapshot | undefined,
-  agents: ReadonlySet<string> | undefined,
-  requests: ReadonlyMap<string, string>,
-) {
-  const { latest, participants, followingMessage: response, requestId } = group;
-  const followedByReply =
-    !!response &&
-    response.audience !== "agents" &&
-    !response.membership &&
-    response.channelId === latest.channelId &&
-    response.threadRootId === latest.threadRootId &&
-    response.createdAt >= latest.createdAt &&
-    requests.get(response.id) === requestId &&
-    (participants.includes(response.authorId) ||
-      // A helper can hand its result back to the replying coordinator without
-      // the coordinator having authored a message in this activity run.
-      ((response.agentEnvelope || agents?.has(response.authorId)) &&
-        latest.mentions.includes(response.authorId)));
-  // Only signed immediate reply links and activity IDs bind lifecycle evidence.
-  // The preceding human message/thread root is useful for layout, not proof
-  // that these updates came from that request's turn.
-  const work = snapshot
-    ? participants.flatMap((agent) => {
-        const ids = group.history
-          .filter((row) => row.authorId === agent)
-          .flatMap((row) => [
-            row.id,
-            ...(row.replyParentId ? [row.replyParentId] : []),
-          ]);
-        return requestWork(snapshot, latest.channelId, ids).filter(
-          (entry) => entry.agent === agent,
-        );
-      })
-    : [];
-  // A layout-associated request may prove ongoing work, but cannot prove
-  // completion for an unlinked update. Keep those two evidence paths separate.
-  const pending =
-    snapshot && requestId
-      ? requestWork(snapshot, latest.channelId, requestId).filter(
-          (entry) =>
-            participants.includes(entry.agent) && !isSettledWork(entry),
-        )
-      : [];
-  const complete = participants.every((agent) =>
-    work.some((entry) => entry.agent === agent && isSettledWork(entry)),
-  );
-  // Known pending, failed or uncertain work wins over the historical fallback.
-  // Without lifecycle evidence, a related public reply only retires the live treatment.
-  const retired =
-    !pending.length &&
-    (complete || (!!followedByReply && work.every(isSettledWork)));
-  const working = new Set(
-    [...work, ...pending]
-      .filter((entry) => entry.working)
-      .map((entry) => entry.agent),
-  );
-  return {
-    retired,
-    working,
-  };
-}
-
-/** Shared projection for timeline and thread; hosts own scrolling and disclosure state. */
+/** Shared projection for timeline and thread; hosts own scrolling and
+ * disclosure state. Layout only: it reads messages, never live activity. */
 export function activityPresentation(
   rows: readonly ChannelMessage[],
-  snapshot: Snapshot | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
 ) {
-  const following = new Map(
-    rows.map((row, index) => [row.id, rows[index + 1]]),
-  );
   const preceding = new Map(
     rows.map((row, index) => [row.id, rows[index - 1]]),
   );
@@ -201,18 +73,6 @@ export function activityPresentation(
     for (const id of replies.values()) replyRequests.set(id, requestId);
   }
   const groups: ActivityPresentation[] = [];
-  const activityKey = (row: ChannelMessage) =>
-    JSON.stringify([
-      row.channelId,
-      row.threadRootId,
-      requests.get(row.id) ?? row.threadRootId,
-      row.authorId,
-    ]);
-  const latestUpdates = new Map(
-    rows
-      .filter((row) => row.audience === "agents" && !row.membership)
-      .map((row) => [activityKey(row), row.id]),
-  );
   const bubbleAnchors = new Set<string>();
   const byRow = new Map<string, ActivityRowPresentation>();
   for (const history of activityRuns(rows, requests)) {
@@ -220,27 +80,6 @@ export function activityPresentation(
     const latest = history.at(-1);
     if (!first || !latest) continue;
     const participants = [...new Set(history.map((row) => row.authorId))];
-    const liveParticipants = participants.filter((agent) =>
-      history.some(
-        (row) =>
-          row.authorId === agent &&
-          latestUpdates.get(activityKey(row)) === row.id,
-      ),
-    );
-    const group: ActivityRun = {
-      ids: history.map((row) => row.id),
-      history,
-      latest,
-      participants,
-      requestId: requests.get(first.id) ?? first.threadRootId,
-      followingMessage: following.get(latest.id),
-    };
-    const { retired, working } = activityStatus(
-      group,
-      snapshot,
-      agents,
-      requests,
-    );
     const anchor = preceding.get(first.id);
     const standalone =
       !anchor ||
@@ -250,28 +89,15 @@ export function activityPresentation(
       anchor.threadRootId !== first.threadRootId ||
       !continuesMessageGroup(anchor, first);
     if (!standalone && anchor) bubbleAnchors.add(anchor.id);
-    const lastByAgent = new Map(history.map((row) => [row.authorId, row.id]));
-    for (const row of history) {
-      const last = lastByAgent.get(row.authorId) === row.id;
+    for (const row of history)
       byRow.set(row.id, {
-        requestId: group.requestId,
-        active:
-          last &&
-          liveParticipants.includes(row.authorId) &&
-          working.has(row.authorId),
-        ownsLive:
-          last &&
-          liveParticipants.includes(row.authorId) &&
-          !retired &&
-          (working.has(row.authorId) || !group.followingMessage),
         container: row.id === first.id && standalone ? "standalone" : "bubble",
       });
-    }
     groups.push({
-      ...group,
-      retired,
-      liveParticipants,
-      working: liveParticipants.some((agent) => working.has(agent)),
+      ids: history.map((row) => row.id),
+      history,
+      latest,
+      participants,
       standalone,
     });
   }
@@ -286,18 +112,12 @@ export function activityPresentation(
 }
 export function useActivityPresentation(
   rows: readonly ChannelMessage[],
-  activity: Activity | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
 ) {
-  const channels = useMemo(
-    () => new Set(rows.map((row) => row.channelId)),
-    [rows],
-  );
-  const snapshot = useChannelActivitySnapshot(activity, channels);
   return useMemo(
-    () => activityPresentation(rows, snapshot, agents, rootId),
-    [rows, snapshot, agents, rootId],
+    () => activityPresentation(rows, agents, rootId),
+    [rows, agents, rootId],
   );
 }
 
@@ -318,15 +138,8 @@ export function useStableRowActivity() {
           return undefined;
         }
         const prior = activities.get(id);
-        if (
-          prior &&
-          prior.requestId === next.requestId &&
-          prior.active === next.active &&
-          prior.ownsLive === next.ownsLive &&
-          prior.container === container
-        )
-          return prior;
-        const value = { ...next, container };
+        if (prior?.container === container) return prior;
+        const value = { container };
         activities.set(id, value);
         return value;
       },

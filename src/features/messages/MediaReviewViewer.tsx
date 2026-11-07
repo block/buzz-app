@@ -653,11 +653,7 @@ function ReviewComments({
 }) {
   const profiles = useRowProfiles(session.profiles, replies);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
-  const activity = useActivityPresentation(
-    replies,
-    session.agentActivity,
-    agentPubkeys,
-  );
+  const activity = useActivityPresentation(replies, agentPubkeys);
   const stableActivity = useStableRowActivity();
   const comments = useRef<HTMLElement>(null);
   useEffect(() => {

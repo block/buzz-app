@@ -3,6 +3,7 @@ import type { Agents } from "./service";
 import type { RequestWork } from "./request-work";
 import type { LocalWork } from "./local-activity";
 import { activityTranscript } from "./activity-transcript";
+import { requestedRoot } from "./current-activity";
 
 export type WorkStopAgents = Pick<Agents, "interruptible" | "interrupt">;
 export type WorkStop = {
@@ -90,20 +91,22 @@ export function conversationWorkStops(
     channelId,
   }).turns;
   const roots = new Set(
-    turns.flatMap((turn) =>
-      !turn.endedAt &&
-      typeof turn.threadRootId === "string" &&
-      (!threadRootId || turn.threadRootId === threadRootId) &&
-      snapshot.turns.some(
+    turns.flatMap((turn) => {
+      const live = snapshot.turns.find(
         (live) =>
           live.agent === agent &&
           live.channelId === channelId &&
           live.turnId === turn.turnId &&
           live.state === "working",
-      )
-        ? [turn.threadRootId]
-        : [],
-    ),
+      );
+      const root = turn.threadRootId ?? (live && requestedRoot(live));
+      return !turn.endedAt &&
+        live &&
+        typeof root === "string" &&
+        (!threadRootId || root === threadRootId)
+        ? [root]
+        : [];
+    }),
   );
   return [...roots].flatMap((root) => {
     const control = workStop(

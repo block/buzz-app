@@ -23,9 +23,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.detail {
-  color: var(--text-subtle);
-}
 
 .summaryActivity {
   color: var(--text-subtle);
@@ -49,11 +46,6 @@
 }
 .preview[data-error] {
   color: var(--text-danger);
-}
-
-/* Tabler’s point-up octagon becomes the flat-top stop-sign orientation. */
-.stopIcon {
-  transform: rotate(22.5deg);
 }
 
 .action {

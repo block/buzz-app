@@ -15,7 +15,6 @@ import { stageChatCards } from "./composer-chat-cards";
 import { chatCardIds } from "./chat-cards";
 import { ComposerChatCards } from "./ComposerChatCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
-import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
 import { TypingIndicator } from "./TypingIndicator";
 import { useEffectEvent } from "react";
@@ -375,15 +374,17 @@ export function MessageComposer(props: MessageComposerProps) {
     props.threadRootId,
   )}`;
   return (
-    <TypingPresentation active key={key}>
-      <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
-        {props.ownSoloConversation ? (
-          <PersonalComposer {...props} />
-        ) : (
-          <Composer {...props} />
-        )}
-      </TargetOpenerProvider>
-    </TypingPresentation>
+    <TargetOpenerProvider
+      key={key}
+      canOpen={props.canOpenLink}
+      open={props.onOpenLink}
+    >
+      {props.ownSoloConversation ? (
+        <PersonalComposer {...props} />
+      ) : (
+        <Composer {...props} />
+      )}
+    </TargetOpenerProvider>
   );
 }
 

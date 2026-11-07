@@ -585,10 +585,9 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   expect(hook.itemBottom - hook.avatar.center).toBeGreaterThan(30);
   expectHookOnAvatar(hook, "left");
 
-  // An agent's activity under a reply carries the agent's avatar on the left;
-  // the hook stays on the reply's own avatar rather than crossing the
-  // transparent activity bubble to reach it. An agents reply mounts its
-  // activity only inside its open disclosure.
+  // Work an agent does for a reply shows at the thread's end, never under the
+  // reply, so the hook stays on the reply's own avatar. An agents reply is
+  // checked with its disclosure open.
   const disclosure = row(agentPeerReply).getByRole("button", {
     name: /coordination note/,
   });
@@ -623,14 +622,15 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
     [viewerReply, "right"],
     [agentPeerReply, "left"],
   ]) {
-    const activity = row(reply).getByRole("region", {
-      name: "Agent activity on this message",
-      exact: true,
-    });
-    await expect(activity).toBeVisible();
-    await activity.evaluate((section) =>
-      Promise.all(section.getAnimations().map((motion) => motion.finished)),
-    );
+    await expect(
+      panel.locator("[data-conversation-activity]").first(),
+    ).toBeAttached();
+    await expect(
+      row(reply).getByRole("region", {
+        name: "Agent activity on this message",
+        exact: true,
+      }),
+    ).toHaveCount(0);
     await row(reply).scrollIntoViewIfNeeded();
     expectHookOnAvatar(await hookFor(row(reply)), side);
   }

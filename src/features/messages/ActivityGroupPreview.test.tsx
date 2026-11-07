@@ -78,11 +78,10 @@ it("keeps a dispatch readable after its sender finishes, while the helper works 
       dispatch,
       { ...publicStep, id: "reply", content: "Status update", createdAt: 101 },
     ];
-    function Preview({ reloaded = false }: { reloaded?: boolean }) {
+    function Preview() {
       const [expanded, setExpanded] = useState(false);
       const presentation = useActivityPresentation(
         rows,
-        reloaded ? undefined : f.activity,
         new Set(["agent", "helper"]),
         "request",
       );
@@ -129,7 +128,8 @@ it("keeps a dispatch readable after its sender finishes, while the helper works 
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(dispatch.content, { selector: "p" })).toBeVisible();
     fireEvent.click(toggle, { detail: 0 });
-    view.rerender(<Preview reloaded />);
+    // A reload mounts the history again from its messages alone.
+    view.rerender(<Preview key="reloaded" />);
     const restored = screen.getByRole("button", {
       name: /Show activity history/,
     });
@@ -140,7 +140,7 @@ it("keeps a dispatch readable after its sender finishes, while the helper works 
     f.dispose();
   }
 });
-it("shimmers a standalone working step and stops when that request finishes", () => {
+it("never animates a standalone step, while its request works or after", () => {
   const f = fixture();
   const owner = createRelaySession({
     viewer: keypair().pubkey,
@@ -160,7 +160,6 @@ it("shimmers a standalone working step and stops when that request finishes", ()
     function Preview() {
       const presentation = useActivityPresentation(
         [step],
-        f.activity,
         new Set(["agent"]),
         step.threadRootId,
       );
@@ -178,10 +177,8 @@ it("shimmers a standalone working step and stops when that request finishes", ()
       );
     }
     render(<Preview />);
-    expect(screen.getByText(step.content)).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    // Live work shows only at the conversation's end.
+    expect(screen.getByText(step.content)).not.toHaveAttribute("data-active");
     act(() => work.finish({ ok: true }));
     expect(screen.getByText(step.content)).not.toHaveAttribute("data-active");
   } finally {
@@ -202,7 +199,6 @@ it("opens contained history and keeps focus on the collapse control", () => {
   ];
   const presentation = activityPresentation(
     history,
-    undefined,
     new Set(["agent", "helper"]),
   );
   const group = presentation.groups[0];
@@ -253,8 +249,7 @@ it("opens contained history and keeps focus on the collapse control", () => {
 it("keeps the primary avatar on the activity bubble without repeating an anchored byline", () => {
   const history = [{ ...step, id: "one" }, step];
   const renderGroup = (rows: ChannelMessage[]) => {
-    const group = activityPresentation(rows, undefined, new Set(["agent"]))
-      .groups[0];
+    const group = activityPresentation(rows, new Set(["agent"])).groups[0];
     if (!group) throw new Error("Missing group");
     return (
       <ActivityGroupPreview
@@ -331,7 +326,6 @@ it("uses channel-qualified names for the excerpt and participant avatars", () =>
       { ...step, id: "first", authorId: primary },
       { ...step, id: "second", authorId: helper },
     ],
-    undefined,
     new Set([primary, helper]),
   ).groups[0];
   if (!group) throw new Error("Missing group");
@@ -365,7 +359,7 @@ it("uses channel-qualified names for the excerpt and participant avatars", () =>
   }
 });
 
-it("follows live work for collapsed request controls only once they are shown", () => {
+it("reads no live work for history controls, shown or collapsed", () => {
   const owner = createRelaySession({
     viewer: keypair().pubkey,
     relayAuthor: keypair().pubkey,
@@ -378,29 +372,25 @@ it("follows live work for collapsed request controls only once they are shown", 
       ...owner.session,
       agentActivity: { ...owner.session.agentActivity, subscribe },
     };
-    const group = activityPresentation([step], undefined, new Set(["agent"]))
-      .groups[0];
+    const group = activityPresentation([step], new Set(["agent"])).groups[0];
     if (!group) throw new Error("Missing activity group");
     const view = render(
       <ActivityGroupActions
         session={session}
         group={group}
         profiles={new Map()}
-        returnFocus={{ current: null }}
         active={false}
       />,
     );
-    expect(subscribe).not.toHaveBeenCalled();
     view.rerender(
       <ActivityGroupActions
         session={session}
         group={group}
         profiles={new Map()}
-        returnFocus={{ current: null }}
         active
       />,
     );
-    expect(subscribe).toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
   } finally {
     owner.dispose();
   }

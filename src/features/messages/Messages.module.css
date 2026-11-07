@@ -2283,13 +2283,12 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   pointer-events: none;
 }
 /* Each reply's own avatar anchors its hook, so the hook lands on the avatar
-   whatever renders around it: reactions, delivery notices, an open agents
-   disclosure, or an agent's activity on the reply, whose avatar is not the
-   reply's. */
+   whatever renders around it: reactions, delivery notices or an open agents
+   disclosure. */
 .replyItem {
   anchor-scope: --reply-avatar;
 }
-:where(.replyItem) .messageAvatar:not([data-message-activity] *),
+:where(.replyItem) .messageAvatar,
 :where(.replyItem .audienceLine) > .audienceAvatar:first-child {
   anchor-name: --reply-avatar;
 }
@@ -3464,9 +3463,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message[data-viewer-message] > .messageBody > .reactions {
   align-self: flex-end;
   margin-inline: 0 var(--space-2);
-}
-.message[data-viewer-message] > .messageBody > [data-message-activity] {
-  align-self: flex-end;
 }
 .message[data-viewer-message] > .messageBody > [data-thread-summary] {
   align-self: flex-end;

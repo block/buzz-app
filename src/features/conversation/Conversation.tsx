@@ -1,4 +1,3 @@
-import { ActivityIndicatorPresentation } from "./typing-presentation";
 import {
   createContext,
   useCallback,
@@ -252,11 +251,7 @@ function Provider({
       onOpenMediaReview,
     ],
   );
-  return (
-    <Context.Provider value={value}>
-      <ActivityIndicatorPresentation>{children}</ActivityIndicatorPresentation>
-    </Context.Provider>
-  );
+  return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
 function ConversationMediaReview(props: MediaReview) {

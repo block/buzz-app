@@ -1,15 +1,12 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { ActivityGroupActions } from "./ActivityGroupActions";
-import { useActivityTypingReplacement } from "../conversation/typing-presentation";
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import { useRef, type ReactNode } from "react";
 import { CaretUpIcon } from "../../shared/design-system/icons";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { RemoteAgentHint, RemoteWorkIcon } from "./RemoteAgentHint";
-import { useActivityIndicator } from "./use-activity-indicator";
 import type { RelaySession } from "../relay/session";
-import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import type { ActivityPresentation } from "./activity-presentation";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -17,7 +14,8 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import styles from "./Messages.module.css";
 
-/** One stable disclosure for a run of activity, showing its latest speaker. */
+/** One stable disclosure for a run of activity, showing its latest speaker.
+ * History only: live work shows at the conversation's end, never here. */
 export function ActivityGroupPreview({
   group,
   session,
@@ -47,27 +45,7 @@ export function ActivityGroupPreview({
   const disclosure = useRef<HTMLButtonElement>(null);
   const resolveName = useChannelIdentityNames(session, group.latest.channelId);
   useActivityFocusHandoff(container);
-  const { latest: row, history, participants, retired, working } = group;
-  const live = useActivityIndicator(
-    session,
-    row,
-    !retired && (working || !group.followingMessage),
-    group.liveParticipants,
-    group.requestId,
-  );
-  useActivityTypingReplacement(
-    session
-      ? {
-          session,
-          channelId: row.channelId,
-          threadRootId: row.threadRootId,
-          pubkey: row.authorId,
-          requestId: group.requestId,
-        }
-      : undefined,
-    !retired && !!group.requestId,
-    group.liveParticipants,
-  );
+  const { latest: row, history, participants } = group;
   const primary = history[0]?.authorId ?? row.authorId;
   const profile = profiles.get(primary);
   const named = (id: string) =>
@@ -118,17 +96,15 @@ export function ActivityGroupPreview({
               session={session}
               viewer={session?.viewer}
               pubkey={row.authorId}
-              active={working || live}
+              active={false}
             />
           )}
           <span className={styles.audiencePreviewText}>
-            {expanded ? (
-              "Collapse"
-            ) : (
-              <ShimmerText active={working || live}>
-                {participants.length > 1 ? `${speaker}: ${preview}` : preview}
-              </ShimmerText>
-            )}
+            {expanded
+              ? "Collapse"
+              : participants.length > 1
+                ? `${speaker}: ${preview}`
+                : preview}
           </span>
         </button>
       </div>
@@ -168,7 +144,6 @@ export function ActivityGroupPreview({
               <ActivityGroupActions
                 session={session}
                 group={group}
-                returnFocus={disclosure}
                 active={expanded}
                 profiles={profiles}
                 open={openActivity}

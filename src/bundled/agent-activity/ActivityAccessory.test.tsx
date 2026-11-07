@@ -1,12 +1,9 @@
-import { ActivityGroupPreview } from "../../features/messages/ActivityGroupPreview";
 // @vitest-environment jsdom
-import {
-  activityPresentation,
-  useActivityPresentation,
-} from "../../features/messages/activity-presentation";
+import { ActivityGroupPreview } from "../../features/messages/ActivityGroupPreview";
+import { activityPresentation } from "../../features/messages/activity-presentation";
 import { MessageRow } from "../../features/messages/MessageRow";
-import { createRelaySession } from "../../features/relay/session";
 import { createLocalAgentActivity } from "../../features/agents/local-activity";
+import { createRelaySession } from "../../features/relay/session";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -19,23 +16,18 @@ import {
   within,
 } from "@testing-library/react";
 
-import { Profiler } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  ActivityAccessory,
-  ActivityTypingReplacement,
-} from "./ActivityAccessory";
-import {
-  ActivityIndicatorPresentation,
-  TypingPresentation,
-} from "../../features/conversation/typing-presentation";
+import { ActivityAccessory } from "./ActivityAccessory";
 import { TypingIndicator } from "../../features/messages/TypingIndicator";
+import { AgentsContext } from "../../features/agents/react";
+import type { Agents } from "../../features/agents/service";
 import {
   claimProfileTranscript,
   profileTranscriptRequest,
 } from "../../features/profiles/target";
 import { createAgentActivity } from "../../features/agents/activity";
 import { createAgentLibrary } from "../../features/agents/library";
+import type { ChannelMessage } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 
 // Stop's results are host toasts; the shared Toast owns how they show.
@@ -86,6 +78,7 @@ function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
     [A, { name: "Blossom", isAgent: true as const }],
     [B, { name: "Bubbles", isAgent: true as const }],
   ]);
+  let rows: readonly ChannelMessage[] = [];
   const session = {
     viewer,
     presence: {
@@ -99,6 +92,12 @@ function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
       snapshot: () => profiles,
       subscribe: () => () => {},
       ensure: vi.fn(async () => {}),
+    },
+    typing: { snapshot: () => noTyping, subscribe: () => () => {} },
+    // The loaded channel window, which tells the timeline's end which threads exist.
+    channels: {
+      window: () => ({ rows }),
+      subscribeWindow: () => () => {},
     },
     live: { retry: () => activity.state(live) },
     media: () => undefined,
@@ -154,6 +153,15 @@ function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
     activity,
     release,
     send,
+    // A hosted turn for the request, in the conversation its harness names.
+    start: (agent: string, turnId: string) =>
+      send(agent, turnId, 1, "turn_started", {
+        triggeringEventIds: [root],
+        threadRootEventId: root,
+      }),
+    setRows: (next: readonly ChannelMessage[]) => {
+      rows = next;
+    },
     props,
     live,
     profiles,
@@ -163,40 +171,447 @@ function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
     },
   };
 }
+const noTyping: readonly never[] = [];
+type Props = ReturnType<typeof fixture>["props"] &
+  Partial<Parameters<typeof ActivityAccessory>[0]>;
+/** The request message's accessory and its conversation's end indicator, as a
+ * thread or (with `channel`) the channel timeline mounts them. */
+function Conversation({
+  agents,
+  channel = false,
+  ...props
+}: Props & { agents?: Agents; channel?: boolean }) {
+  return (
+    <AgentsContext.Provider value={agents}>
+      <div data-testid="request">
+        <ActivityAccessory {...props} />
+      </div>
+      <div data-testid="end">
+        <TypingIndicator
+          audience="agents"
+          inFlow
+          session={props.session}
+          channelId={props.channelId}
+          threadRootId={channel ? undefined : props.threadRootId}
+          canOpenActivity={props.canOpen}
+          openActivity={props.open}
+        />
+      </div>
+    </AgentsContext.Provider>
+  );
+}
+const settle = () => act(async () => {});
+const request = () => within(screen.getByTestId("request"));
+const end = () => within(screen.getByTestId("end"));
+const endTrigger = () =>
+  screen
+    .getByTestId("end")
+    .querySelector<HTMLButtonElement>("[data-agent-activity-trigger]");
+const openOutcome = () =>
+  fireEvent.click(
+    (screen.queryByTestId("request") ? request() : screen).getByRole("button", {
+      name: /View agent activity/,
+    }),
+  );
+const openEnd = () => {
+  const trigger = endTrigger();
+  if (!trigger) throw new Error("No live work at the conversation's end");
+  fireEvent.click(trigger);
+};
+const stopButton = () => screen.queryByRole("button", { name: "Stop Blossom" });
+// Reopen the end's popup, if anything closed it, to read the agent's row.
+const look = () => {
+  const trigger = endTrigger();
+  if (trigger && !screen.queryByRole("dialog")) fireEvent.click(trigger);
+  return screen;
+};
+const stopPending = () =>
+  expect(stopButton()).toHaveAttribute("aria-disabled", "true");
+const stopReady = () =>
+  expect(stopButton()).not.toHaveAttribute("aria-disabled");
+function hosted(running: boolean | Promise<boolean> = true) {
+  return {
+    subscribe: () => () => {},
+    snapshot: () => undefined,
+    interruptible: vi.fn(() => true),
+    interrupt: vi.fn(async () => running),
+  };
+}
+const asAgents = (agents: ReturnType<typeof hosted>) =>
+  agents as unknown as Agents;
 
-it("shows one bubble with one avatar per agent across multiple turns, removing only the settled agent", () => {
-  const f = fixture();
-  const view = render(<ActivityAccessory {...f.props} />);
+it.each([false, true])(
+  "shows live work only at the conversation's end, never on its request (channel=%s)",
+  (channel) => {
+    const local = createLocalAgentActivity();
+    const f = fixture(local);
+    const view = render(<Conversation {...f.props} channel={channel} />);
+    try {
+      let work!: ReturnType<typeof local.begin>;
+      act(() => {
+        work = local.begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        });
+      });
+      const expectOnlyAtEnd = () => {
+        console.log(screen.getByTestId("end").innerHTML);
+        expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+        expect(endTrigger()).toBeVisible();
+        expect(
+          view.container.querySelectorAll("[data-agent-activity-trigger]"),
+        ).toHaveLength(1);
+      };
+      expectOnlyAtEnd();
+      act(() => work.started());
+      expectOnlyAtEnd();
+      act(() => work.step("Read", "notes.txt"));
+      expectOnlyAtEnd();
+      expect(end().getByText("Reading notes.txt")).toBeVisible();
+      // What happened to the request stays on it; the end has nothing live.
+      act(() => work.finish({ ok: false, error: "Provider unavailable" }));
+      expect(endTrigger()).toBeNull();
+      expect(request().getByText("Couldn’t finish")).toBeVisible();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "shows a hosted turn only at its conversation's end (channel=%s)",
+  (channel) => {
+    const f = fixture();
+    const view = render(
+      <Conversation
+        {...f.props}
+        channel={channel}
+        messageLayout={channel ? undefined : "thread"}
+      />,
+    );
+    try {
+      f.start(A, "a");
+      f.start(B, "b");
+      expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+      expect(
+        end().getByRole("button", { name: "Activity: 2 agents working" }),
+      ).toBeVisible();
+      f.send(A, "a", 2, "turn_completed");
+      expect(
+        end().getByRole("button", { name: "Activity: Bubbles working" }),
+      ).toBeVisible();
+      f.send(B, "b", 2, "turn_completed", { outcome: "failed" });
+      expect(endTrigger()).toBeNull();
+      expect(request().getByText("Couldn’t finish")).toBeVisible();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+
+it("moves a top-level request's work from the channel's end into its thread once the thread exists", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<Conversation {...f.props} channel />);
   try {
-    f.send(A, "a1", 1, "turn_started", { triggeringEventIds: [root] });
-    f.send(A, "a2", 1, "turn_started", { triggeringEventIds: [root] });
-    f.send(B, "b1", 1, "turn_started", { triggeringEventIds: [root] });
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .started();
+    });
+    f.start(B, "b");
     expect(
-      screen.getAllByRole("button", { name: /View agent activity/ }),
-    ).toHaveLength(1);
-    expect(screen.getAllByTitle("Blossom")).toHaveLength(1);
-    expect(screen.getAllByTitle("Bubbles")).toHaveLength(1);
-    expect(view.container.querySelector(".buzz-avatar-status-dot")).toBeNull();
-    f.send(A, "a1", 2, "turn_completed");
-    expect(
-      screen.getByRole("button", { name: /View agent activity: Blossom/ }),
-    ).toBeInTheDocument();
-    f.send(A, "a2", 2, "turn_completed");
-    expect(
-      screen.queryByRole("button", { name: /Blossom/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /View agent activity: Bubbles/ }),
-    ).toBeInTheDocument();
-    f.send(B, "b1", 2, "turn_completed");
-    expect(
-      screen.queryByLabelText("Agent activity on this message"),
-    ).not.toBeInTheDocument();
+      end().getByRole("button", { name: "Activity: 2 agents working" }),
+    ).toBeVisible();
+    // A reply makes the request a thread: its work is that thread's now, and
+    // the channel shows it in the thread's reply summary instead.
+    f.setRows([{ ...f.props.message, replyCount: 1 }]);
+    view.rerender(<Conversation {...f.props} channel />);
+    expect(endTrigger()).toBeNull();
   } finally {
     view.unmount();
     f.dispose();
   }
 });
+
+it("keeps coordination history readable but never live: no sheen and no Stop", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const stop = vi.fn(async () => {});
+  const work = local.begin({
+    scope: "test",
+    agent: A,
+    channelId: "c",
+    messageId: root,
+    threadRootId: root,
+    thread: true,
+  });
+  work.interruptible(stop);
+  work.step("Read", "files");
+  const row = {
+    ...f.props.message,
+    id: "step",
+    authorId: A,
+    threadRootId: root,
+    replyParentId: root,
+    audience: "agents" as const,
+    content: "Checking the files",
+  };
+  const { groups, byRow } = activityPresentation([row], new Set([A]), root);
+  // History rows need the full session surface (reporting and its menus).
+  const owner = createRelaySession(null);
+  const session = { ...owner.session, ...f.props.session };
+  const group = groups[0];
+  if (!group) throw new Error("Missing activity history");
+  const view = render(
+    <>
+      <div data-testid="history">
+        <ActivityGroupPreview
+          session={session}
+          group={group}
+          profiles={f.profiles}
+          media={() => undefined}
+          expanded
+          onToggle={() => {}}
+          openActivity={f.props.open}
+          canOpenActivity={f.props.canOpen}
+          renderHistory={(entry) => (
+            <MessageRow
+              row={entry}
+              session={session}
+              profile={f.profiles.get(A)}
+              media={() => undefined}
+              onOpenLink={f.props.open}
+              day={false}
+              retry={undefined}
+              recordedActivity={{
+                ...(byRow.get(entry.id) ?? { container: "bubble" }),
+                container: "history",
+              }}
+            />
+          )}
+        />
+      </div>
+      <Conversation {...f.props} messageLayout="thread" />
+    </>,
+  );
+  try {
+    const history = screen.getByTestId("history");
+    expect(within(history).getByText("Checking the files")).toBeVisible();
+    expect(history.querySelector("[data-active]")).toBeNull();
+    expect(end().getByText("Reading files")).toBeVisible();
+    // Its one Stop is at the conversation's end; history keeps the transcript.
+    expect(stopButton()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "View transcript" }));
+    const activity = `buzz:profile?agent=${A}&tab=activity`;
+    expect(f.props.open).toHaveBeenCalledWith(activity, { rootId: root });
+    expect(claimProfileTranscript(activity)).toBeDefined();
+    openEnd();
+    expect(
+      screen.getAllByRole("button", { name: "Stop Blossom" }),
+    ).toHaveLength(1);
+  } finally {
+    view.unmount();
+    owner.dispose();
+    f.dispose();
+  }
+});
+
+it("shows a local failure without requiring an ACP transcript, and opens the agent profile", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .finish({ ok: false, error: "Provider unavailable" });
+    });
+    expect(screen.getByText("Couldn’t finish")).toBeInTheDocument();
+    const details = screen.getByRole("button", {
+      name: /View agent activity: Blossom/,
+    });
+    expect(details.querySelector("[data-state]")).toBeNull();
+    fireEvent.click(details);
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View activity for Blossom" }),
+    );
+    const activity = `buzz:profile?agent=${A}&tab=activity`;
+    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(activity);
+    expect(claimProfileTranscript(activity)).toBeDefined();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps the outcome popup when opening the transcript fails, and removes it when access is revoked", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const activity = `buzz:profile?agent=${A}&tab=activity`;
+  let asked: number | undefined;
+  // Opening fails, after seeing whether a transcript was asked for.
+  f.props.open.mockImplementation(() => {
+    asked = profileTranscriptRequest(activity);
+    return false;
+  });
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .finish({ ok: false, error: "Provider unavailable" });
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /View agent activity/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "View activity for Blossom" }),
+    );
+    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(activity);
+    expect(asked).toBeDefined();
+    // The failed opening leaves no request behind for a later Activity.
+    expect(claimProfileTranscript(activity)).toBeUndefined();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(<ActivityAccessory {...f.props} canOpen={() => false} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps namesakes as separate exact identities", () => {
+  const f = fixture();
+  f.profiles.set(B, { name: "Blossom", isAgent: true as const });
+  const view = render(<ActivityAccessory {...f.props} />);
+  try {
+    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
+    f.send(B, "b", 1, "turn_started", { triggeringEventIds: [root] });
+    f.send(A, "a", 2, "turn_completed", { outcome: "failed" });
+    f.send(B, "b", 2, "turn_completed", { outcome: "failed" });
+    const titles = screen
+      .getAllByTitle(/Blossom/)
+      .map((avatar) => avatar.getAttribute("title"));
+    expect(new Set(titles).size).toBe(2);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it.each(["payload", "prompt"])(
+  "keeps %s thread scope through partial and full raw-record eviction",
+  (scope) => {
+    const f = fixture();
+    // The request's thread exists, so its work is that thread's.
+    f.props.message.replyCount = 1;
+    const view = render(<ActivityAccessory {...f.props} />);
+    try {
+      f.send(A, "thread", 1, "turn_started", {
+        triggeringEventIds: [root],
+        ...(scope === "payload" ? { threadRootEventId: root } : {}),
+      });
+      f.send(A, "thread", 2, "acp_write", {
+        method: "session/prompt",
+        params: {
+          prompt: [
+            {
+              type: "text",
+              text: `<context>\nScope: thread\nThread root: ${root}\n</context>`,
+            },
+          ],
+        },
+      });
+      for (let seq = 1; seq <= 150; seq++)
+        f.send(B, "unrelated", seq, "acp_read");
+      f.send(A, "thread", 3, "acp_read");
+      for (let seq = 151; seq <= 201; seq++)
+        f.send(B, "unrelated", seq, "acp_read");
+      f.send(A, "thread", 4, "turn_completed", { outcome: "failed" });
+      expect(
+        screen.queryByRole("button", { name: /View agent activity/ }),
+      ).not.toBeInTheDocument();
+      for (let seq = 202; seq <= 402; seq++)
+        f.send(B, "unrelated", seq, "acp_read");
+      expect(
+        screen.queryByRole("button", { name: /View agent activity/ }),
+      ).not.toBeInTheDocument();
+      view.rerender(<ActivityAccessory {...f.props} messageLayout="thread" />);
+      expect(
+        screen.getByRole("button", { name: /View agent activity: Blossom/ }),
+      ).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "keeps a thread request's outcome in its thread (local=%s)",
+  (isLocal) => {
+    const local = createLocalAgentActivity();
+    const f = fixture(isLocal ? local : undefined);
+    f.props.message.replyCount = 1;
+    if (isLocal)
+      local
+        .begin({
+          scope: "test",
+          agent: A,
+          channelId: "c",
+          messageId: root,
+          threadRootId: root,
+          thread: true,
+        })
+        .finish({ ok: false, error: "Provider unavailable" });
+    else {
+      f.start(A, "turn");
+      f.send(A, "turn", 2, "turn_completed", { outcome: "failed" });
+    }
+    const view = render(
+      <ActivityAccessory {...f.props} messageLayout="timeline" />,
+    );
+    try {
+      expect(
+        screen.queryByLabelText("Agent activity on this message"),
+      ).toBeNull();
+      view.rerender(<ActivityAccessory {...f.props} messageLayout="thread" />);
+      expect(
+        screen.getByLabelText("Agent activity on this message"),
+      ).toBeVisible();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+
 it("does not show sibling thread work and reports lost freshness without pretending completion", () => {
   const f = fixture();
   const view = render(<ActivityAccessory {...f.props} />);
@@ -213,6 +628,7 @@ it("does not show sibling thread work and reports lost freshness without pretend
     f.dispose();
   }
 });
+
 it("keeps a stopped agent visible beside another agent's persistent failure", () => {
   const f = fixture();
   const view = render(<ActivityAccessory {...f.props} />);
@@ -237,6 +653,7 @@ it("keeps a stopped agent visible beside another agent's persistent failure", ()
     f.dispose();
   }
 });
+
 it.each([
   ["failed", "Couldn’t finish"],
   ["terminated", "Couldn’t finish"],
@@ -278,379 +695,6 @@ it.each([
     }
   },
 );
-it.each(["payload", "prompt"])(
-  "keeps %s thread scope through partial and full raw-record eviction",
-  (scope) => {
-    const f = fixture();
-    const view = render(<ActivityAccessory {...f.props} />);
-    try {
-      f.send(A, "thread", 1, "turn_started", {
-        triggeringEventIds: [root],
-        ...(scope === "payload" ? { threadRootEventId: root } : {}),
-      });
-      f.send(A, "thread", 2, "acp_write", {
-        method: "session/prompt",
-        params: {
-          prompt: [
-            {
-              type: "text",
-              text: `<context>\nScope: thread\nThread root: ${root}\n</context>`,
-            },
-          ],
-        },
-      });
-      expect(
-        screen.queryByRole("button", { name: /View agent activity/ }),
-      ).not.toBeInTheDocument();
-      for (let seq = 1; seq <= 150; seq++)
-        f.send(B, "unrelated", seq, "acp_read");
-      f.send(A, "thread", 3, "acp_read");
-      for (let seq = 151; seq <= 201; seq++)
-        f.send(B, "unrelated", seq, "acp_read");
-      expect(
-        screen.queryByRole("button", { name: /View agent activity/ }),
-      ).not.toBeInTheDocument();
-      for (let seq = 202; seq <= 402; seq++)
-        f.send(B, "unrelated", seq, "acp_read");
-      expect(
-        screen.queryByRole("button", { name: /View agent activity/ }),
-      ).not.toBeInTheDocument();
-      view.rerender(<ActivityAccessory {...f.props} messageLayout="thread" />);
-      expect(
-        screen.getByRole("button", { name: /View agent activity: Blossom/ }),
-      ).toBeInTheDocument();
-    } finally {
-      view.unmount();
-      f.dispose();
-    }
-  },
-);
-it("keeps namesakes as separate exact identities", () => {
-  const f = fixture();
-  f.profiles.set(B, { name: "Blossom", isAgent: true as const });
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
-    f.send(B, "b", 1, "turn_started", { triggeringEventIds: [root] });
-    const avatars = screen.getAllByTitle(/Blossom/);
-    expect(avatars).toHaveLength(2);
-    expect(avatars[0]?.getAttribute("title")).not.toBe(
-      avatars[1]?.getAttribute("title"),
-    );
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("previews only live scoped actions and retains profile navigation", () => {
-  const f = fixture();
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    f.send(A, "old", 1, "turn_started", { triggeringEventIds: [root] });
-    const thought = (text: string) => ({
-      method: "session/update",
-      params: {
-        update: {
-          sessionUpdate: "agent_thought_chunk",
-          content: { type: "text", text },
-        },
-      },
-    });
-    f.send(A, "old", 2, "acp_read", thought("Old thought"));
-    f.send(A, "old", 3, "turn_completed");
-    f.send(A, "new", 1, "turn_started", { triggeringEventIds: [root] });
-    fireEvent.click(
-      screen.getByRole("button", { name: /View agent activity/ }),
-    );
-    expect(
-      screen.getByText("Waiting for activity details"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Old thought")).not.toBeInTheDocument();
-    f.send(A, "new", 2, "acp_read", thought("Current thought"));
-    expect(screen.getByText("Current thought")).toBeInTheDocument();
-    f.send(B, "sibling", 1, "turn_started", { triggeringEventIds: [next] });
-    f.send(B, "sibling", 2, "acp_read", thought("Private sibling thought"));
-    expect(
-      screen.queryByText("Private sibling thought"),
-    ).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "View activity for Blossom" }),
-    );
-    const activity = `buzz:profile?agent=${A}&tab=activity`;
-    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(activity);
-    // It asks that Activity for this message's transcript, once.
-    expect(claimProfileTranscript(activity)).toBeDefined();
-    act(() => vi.advanceTimersByTime(31000));
-    fireEvent.click(
-      screen.getByRole("button", { name: /View agent activity/ }),
-    );
-    expect(
-      screen.getByText(/Buzz couldn’t confirm whether this request finished/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Current thought")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "View activity for Blossom" }),
-    ).not.toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-it("removes the whole popup when access is revoked", () => {
-  const f = fixture();
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
-    fireEvent.click(
-      screen.getByRole("button", { name: /View agent activity/ }),
-    );
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    view.rerender(<ActivityAccessory {...f.props} canOpen={() => false} />);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("makes the compact avatar and tool preview one action, retaining the popup when opening fails", () => {
-  const f = fixture();
-  const activity = `buzz:profile?agent=${A}&tab=activity`;
-  let asked: number | undefined;
-  // Opening fails, after seeing whether a transcript was asked for.
-  f.props.open.mockImplementation(() => {
-    asked = profileTranscriptRequest(activity);
-    return false;
-  });
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
-    f.send(A, "a", 2, "acp_read", {
-      method: "session/update",
-      params: {
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId: "read",
-          title: "buzz-dev-mcp__read_file",
-          status: "in_progress",
-          rawInput: { path: "/project/file.ts" },
-        },
-      },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: /View agent activity/ }),
-    );
-    const popup = within(
-      screen.getByRole("dialog", { name: "Agent activity" }),
-    );
-    // The agent's row is the popup's one action; no separate Activity heading.
-    expect(popup.getAllByRole("button")).toHaveLength(1);
-    for (const text of [
-      "Agent activity",
-      "Latest reported activity for this message.",
-      "Blossom",
-      "View activity",
-      "Close",
-    ])
-      expect(popup.queryByText(text, { exact: true })).not.toBeInTheDocument();
-    const row = popup.getByRole("button", {
-      name: "View activity for Blossom",
-    });
-    expect(row).toHaveTextContent("Read file · Running");
-    expect(row.querySelector(".buzz-avatar")).not.toBeNull();
-    fireEvent.click(row);
-    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(activity);
-    expect(asked).toBeDefined();
-    // The failed opening leaves no request behind for a later Activity.
-    expect(claimProfileTranscript(activity)).toBeUndefined();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    view.rerender(
-      <ActivityAccessory
-        {...f.props}
-        canOpen={(target) => !target.startsWith("buzz:profile?")}
-      />,
-    );
-    expect(
-      screen.queryByRole("button", { name: "View activity for Blossom" }),
-    ).not.toBeInTheDocument();
-    expect(f.props.open).toHaveBeenCalledOnce();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("keeps conversation dots visible alongside message-linked activity", () => {
-  const f = fixture();
-  const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
-  const session = {
-    ...f.props.session,
-    typing: { snapshot: () => typing, subscribe: () => () => {} },
-  } as unknown as RelaySession;
-  const props = { ...f.props, session };
-  const ui = (replacement: boolean) => (
-    <TypingPresentation active>
-      {/* MessageRow gives each row its own presentation scope. */}
-      <TypingPresentation active>
-        <ActivityAccessory {...props} />
-      </TypingPresentation>
-      {replacement && <ActivityTypingReplacement {...props} />}
-      <TypingIndicator session={session} channelId="c" threadRootId={root} />
-    </TypingPresentation>
-  );
-  const view = render(ui(true));
-  try {
-    f.send(A, "unlinked", 1, "turn_liveness");
-    expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeInTheDocument();
-    f.send(A, "sibling", 1, "turn_started", { triggeringEventIds: [next] });
-    expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeInTheDocument();
-    f.send(A, "here", 1, "turn_started", { triggeringEventIds: [root] });
-    expect(
-      screen.getByRole("button", {
-        name: "View agent activity: Blossom, working",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeInTheDocument();
-    view.rerender(ui(false));
-    expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("shows local receipt and failure without requiring an ACP transcript, and opens the agent profile", () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    let work!: ReturnType<typeof local.begin>;
-    act(() => {
-      work = local.begin({
-        scope: "test",
-        channelId: "c",
-        threadRootId: root,
-        messageId: root,
-        agent: A,
-      });
-    });
-    const bubble = screen.getByRole("button", {
-      name: "View agent activity: Blossom, Received · waiting to start",
-    });
-    expect(bubble.querySelector('[data-state="waiting"]')).not.toBeNull();
-    act(() => work.started());
-    expect(bubble).toHaveAccessibleName(
-      "View agent activity: Blossom, Starting",
-    );
-    expect(bubble.querySelector('[data-state="waiting"]')).not.toBeNull();
-    act(() => work.step("send_message"));
-    expect(bubble).not.toHaveTextContent("Sending a message");
-    expect(bubble.querySelector('[data-state="working"]')).not.toBeNull();
-    act(() => work.step("Read", "notes.txt"));
-    expect(bubble).toHaveAccessibleName(
-      "View agent activity: Blossom, Reading notes.txt",
-    );
-    expect(bubble).toHaveTextContent("Reading notes.txt");
-    expect(bubble.querySelector('[data-state="working"]')).not.toBeNull();
-    act(() => work.finish({ ok: false, error: "Provider unavailable" }));
-    expect(screen.getByText("Couldn’t finish")).toBeInTheDocument();
-    const details = screen.getByRole("button", {
-      name: /View agent activity: Blossom/,
-    });
-    expect(details.querySelector("[data-state]")).toBeNull();
-    fireEvent.click(details);
-    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "View activity for Blossom" }),
-    );
-    const activity = `buzz:profile?agent=${A}&tab=activity`;
-    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(activity);
-    expect(claimProfileTranscript(activity)).toBeDefined();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("dismisses only that agent's error on this message, without changing other work", () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const onFocusedRemoval = vi.fn();
-  const view = render(
-    <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
-  );
-  const begin = (agent: string, messageId: string) =>
-    local.begin({
-      scope: "test",
-      channelId: "c",
-      threadRootId: root,
-      messageId,
-      agent,
-    });
-  try {
-    act(() => {
-      begin(A, root).finish({
-        ok: false,
-        error: "Provider unavailable after a long and detailed reason",
-      });
-      begin(A, next).finish({ ok: false, error: "Elsewhere" });
-      begin(B, root).step("Read", "notes.txt");
-    });
-    const mixed = screen.getByRole("button", { name: /View agent activity/ });
-    expect(mixed).toHaveTextContent("1 failed");
-    const failedBadge = mixed.querySelector("[data-activity-failure]");
-    const workingBadge = mixed.querySelector("[data-thread-working]");
-    expect(
-      screen.getByRole("img", { name: "Blossom, Bubbles" }),
-    ).toBeInTheDocument();
-    expect(failedBadge?.parentElement).toBe(workingBadge?.parentElement);
-    expect(workingBadge).toHaveTextContent("Reading notes.txt");
-    fireEvent.click(
-      screen.getByRole("button", { name: /View agent activity/ }),
-    );
-    expect(
-      screen.getByText("Provider unavailable after a long and detailed reason")
-        .parentElement,
-    ).toHaveAttribute("data-error");
-    expect(
-      screen.queryByRole("button", { name: "Dismiss error from Bubbles" }),
-    ).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Dismiss error from Blossom" }),
-    );
-    expect(f.props.open).not.toHaveBeenCalled();
-    expect(onFocusedRemoval).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "View activity for Bubbles" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "View activity for Blossom" }),
-    ).toBeNull();
-    expect(
-      local.reader
-        .work()
-        .filter((row) => row.agent === A)
-        .map((row) => [row.messageId, row.state, row.dismissed]),
-    ).toEqual([
-      // The outcome remains as settled evidence; only its display is hidden.
-      [root, "error", true],
-      [next, "error", undefined],
-    ]);
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
 
 it.each([false, true])(
   "returns focus after retiring the last error unless focus moved: %s",
@@ -699,320 +743,6 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
-  "keeps live activity after a public reply without hiding other work (thread=%s)",
-  async (thread) => {
-    const f = fixture();
-    const onFocusedRemoval = vi.fn();
-    const view = render(
-      <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
-    );
-    try {
-      expect(
-        screen.queryByLabelText("Agent activity on this message"),
-      ).toBeNull();
-      f.send(A, "here", 1, "turn_started", { triggeringEventIds: [root] });
-      f.send(B, "other", 1, "turn_started", { triggeringEventIds: [root] });
-      const response = {
-        ...f.props.message,
-        id: "response",
-        authorId: A,
-        agentEnvelope: true as const,
-        content: "Here is the answer",
-        replyParentId: root,
-      };
-      const rows = [
-        f.props.message,
-        { ...f.props.message, id: next },
-        response,
-      ];
-      const represented = activityPresentation(
-        thread ? rows.slice(1) : rows,
-        undefined,
-        new Set([A, B]),
-        thread ? root : undefined,
-      ).representedAgents;
-      view.rerender(
-        <ActivityAccessory
-          {...f.props}
-          onFocusedRemoval={onFocusedRemoval}
-          representedAgents={represented.get(root)}
-        />,
-      );
-      expect(screen.getByTitle("Blossom")).toBeInTheDocument();
-      expect(screen.getByTitle("Bubbles")).toBeInTheDocument();
-      expect(represented.get(next)).toBeUndefined();
-      act(() =>
-        screen.getByRole("button", { name: /View agent activity/ }).focus(),
-      );
-      f.send(B, "other", 2, "turn_completed");
-      expect(screen.getByTitle("Blossom")).toBeInTheDocument();
-      f.send(A, "here", 2, "turn_completed");
-      await act(async () => vi.runAllTicks());
-      expect(onFocusedRemoval).toHaveBeenCalledOnce();
-      expect(
-        screen.queryByLabelText("Agent activity on this message"),
-      ).toBeNull();
-      view.rerender(
-        <ActivityAccessory
-          {...f.props}
-          onFocusedRemoval={onFocusedRemoval}
-          representedAgents={represented.get(root)}
-        />,
-      );
-      expect(screen.queryByTitle("Blossom")).toBeNull();
-    } finally {
-      view.unmount();
-      f.dispose();
-    }
-  },
-);
-
-const settle = () => act(async () => {});
-const openBubble = () =>
-  fireEvent.click(screen.getByRole("button", { name: /View agent activity/ }));
-const stopButton = () => screen.queryByRole("button", { name: "Stop Blossom" });
-// Reopen the popup, if anything closed it, to read the agent's row.
-const look = () => {
-  const activity = screen.queryByRole("button", {
-    name: /View agent activity/,
-  });
-  if (activity && !screen.queryByRole("dialog")) fireEvent.click(activity);
-  return screen;
-};
-const stopPending = () =>
-  expect(stopButton()).toHaveAttribute("aria-disabled", "true");
-const stopReady = () =>
-  expect(stopButton()).not.toHaveAttribute("aria-disabled");
-function hosted(running: boolean | Promise<boolean> = true) {
-  return {
-    interruptible: vi.fn(() => true),
-    interrupt: vi.fn(async () => running),
-  };
-}
-
-it.each(["waiting", "working"])(
-  "stops a local request that is %s through its harness, then notes it stopped",
-  async (state) => {
-    const local = createLocalAgentActivity();
-    const f = fixture(local);
-    const queries = f.props.session.agentActivity;
-    const interrupt = vi.fn(queries.interrupt);
-    const session = {
-      ...f.props.session,
-      agentActivity: { ...queries, interrupt },
-    };
-    const stop = vi.fn(async () => {});
-    const view = render(<ActivityAccessory {...f.props} session={session} />);
-    try {
-      act(() => {
-        const work = local.begin({
-          scope: "test",
-          channelId: "c",
-          threadRootId: root,
-          messageId: root,
-          agent: A,
-        });
-        work.interruptible(stop);
-        if (state === "working") work.started();
-      });
-      openBubble();
-      fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-      expect(interrupt).toHaveBeenCalledExactlyOnceWith(A, "c", root);
-      await settle();
-      expect(stop).toHaveBeenCalledOnce();
-      expect(notify).toHaveBeenCalledExactlyOnceWith(
-        "Stopped Blossom",
-        "success",
-      );
-      expect(
-        screen.queryByRole("button", { name: /View agent activity/ }),
-      ).not.toBeInTheDocument();
-      expect(screen.getByText("Blossom · Stopped")).toBeInTheDocument();
-      // Handling the same message again replaces the note with its live work.
-      act(() => {
-        local
-          .begin({
-            scope: "test",
-            channelId: "c",
-            threadRootId: root,
-            messageId: root,
-            agent: A,
-          })
-          .started();
-      });
-      expect(screen.queryByText(/Stopped/)).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: /View agent activity: Blossom/ }),
-      ).toBeInTheDocument();
-    } finally {
-      view.unmount();
-      f.dispose();
-    }
-  },
-);
-it.each([
-  [undefined, "timeline"],
-  ["thread", "thread"],
-] as const)(
-  "notes a stopped request in the response lane (layout %s)",
-  async (messageLayout, layout) => {
-    const local = createLocalAgentActivity();
-    const f = fixture(local);
-    const view = render(
-      <ActivityAccessory {...f.props} messageLayout={messageLayout} />,
-    );
-    try {
-      act(() => {
-        local
-          .begin({
-            scope: "test",
-            channelId: "c",
-            threadRootId: root,
-            messageId: root,
-            agent: A,
-          })
-          .interruptible(async () => {});
-      });
-      expect(
-        screen.getByRole("button", { name: /View agent activity: Blossom/ }),
-      ).toBeInTheDocument();
-      // Stop retains its exact request and response-side notice.
-      await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
-      expect(
-        screen.queryByRole("button", { name: /View thread/ }),
-      ).not.toBeInTheDocument();
-      // The note keeps the incoming message column instead of the list's edge.
-      expect(
-        screen.getByText("Blossom · Stopped").closest("[data-layout]"),
-      ).toHaveAttribute("data-layout", layout);
-    } finally {
-      view.unmount();
-      f.dispose();
-    }
-  },
-);
-it("moves a stopped note below the agent's latest public reply", async () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const reply = {
-    ...f.props.message,
-    id: next,
-    authorId: A,
-    createdAt: 2,
-    content: "On it",
-  };
-  const view = render(
-    <>
-      <div data-testid="request">
-        <ActivityAccessory {...f.props} repliedAgents={[A]} />
-      </div>
-      <div data-testid="reply">
-        <ActivityAccessory
-          {...f.props}
-          message={reply}
-          stoppedRequest={f.props.message}
-        />
-      </div>
-    </>,
-  );
-  try {
-    act(() => {
-      local
-        .begin({
-          scope: "test",
-          channelId: "c",
-          threadRootId: root,
-          messageId: root,
-          agent: A,
-        })
-        .interruptible(async () => {});
-    });
-    // Live work stays on its request; a reply does not take the bubble.
-    expect(
-      within(screen.getByTestId("request")).getByRole("button", {
-        name: /View agent activity: Blossom/,
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
-    await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
-    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
-    expect(
-      within(screen.getByTestId("reply")).getByText("Stopped"),
-    ).toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-it.each(["failed", "terminated", "unknown"])(
-  "places a remote %s caption beneath its reply without repeating the agent identity",
-  (outcome) => {
-    const f = fixture();
-    const reply = {
-      ...f.props.message,
-      id: next,
-      authorId: A,
-      createdAt: 2,
-      content: "An agent reply",
-    };
-    const view = render(
-      <>
-        <div data-testid="request">
-          <ActivityAccessory
-            {...f.props}
-            messageLayout="thread"
-            repliedAgents={[A]}
-          />
-        </div>
-        <div data-testid="reply">
-          <ActivityAccessory
-            {...f.props}
-            message={reply}
-            messageLayout="thread"
-            stoppedRequest={f.props.message}
-          />
-        </div>
-      </>,
-    );
-    try {
-      f.send(A, "remote", 1, "turn_started", { triggeringEventIds: [root] });
-      expect(
-        within(screen.getByTestId("request")).getByRole("button", {
-          name: /View agent activity/,
-        }),
-      ).toBeInTheDocument();
-      expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
-      if (outcome === "unknown") act(() => vi.advanceTimersByTime(31000));
-      else f.send(A, "remote", 2, "turn_completed", { outcome });
-      expect(screen.getByTestId("request")).toBeEmptyDOMElement();
-      const caption = within(screen.getByTestId("reply"));
-      expect(
-        caption.getByText(
-          outcome === "unknown" ? "Status unavailable" : "Couldn’t finish",
-        ),
-      ).toBeInTheDocument();
-      expect(caption.queryByText("Blossom")).not.toBeInTheDocument();
-      expect(
-        screen.getByTestId("reply").querySelector("[data-avatar-stack]"),
-      ).toBeNull();
-      fireEvent.click(
-        caption.getByRole("button", { name: /View agent activity/ }),
-      );
-      expect(
-        screen.getByRole("dialog", { name: "Agent activity" }),
-      ).toHaveTextContent(
-        outcome === "unknown"
-          ? "Buzz couldn’t confirm"
-          : "This request ended before it could finish",
-      );
-      expect(f.props.open).not.toHaveBeenCalled();
-    } finally {
-      view.unmount();
-      f.dispose();
-    }
-  },
-);
 it("does not duplicate a replied thread failure on its channel request", () => {
   const f = fixture();
   const view = render(
@@ -1050,6 +780,7 @@ it("does not duplicate a replied thread failure on its channel request", () => {
     f.dispose();
   }
 });
+
 it.each(["thread", "continuation"] as const)(
   "keeps a thread request's stopped note on a %s reply",
   async (layout) => {
@@ -1107,6 +838,7 @@ it.each(["thread", "continuation"] as const)(
     }
   },
 );
+
 it("notes only stopped requests once their work settles", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);
@@ -1127,162 +859,6 @@ it("notes only stopped requests once their work settles", () => {
       screen.queryByLabelText("Agent activity on this message"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/Stopped/)).not.toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("hands focus back to the host when a focused Stop retires with its work", async () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const onFocusedRemoval = vi.fn();
-  const view = render(
-    <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
-  );
-  try {
-    act(() => {
-      local
-        .begin({
-          scope: "test",
-          channelId: "c",
-          threadRootId: root,
-          messageId: root,
-          agent: A,
-        })
-        .interruptible(async () => {});
-    });
-    openBubble();
-    const stop = stopButton() as HTMLElement;
-    act(() => stop.focus());
-    fireEvent.click(stop);
-    await settle();
-    expect(stop.isConnected).toBe(false);
-    await act(async () => vi.runAllTicks());
-    expect(onFocusedRemoval).toHaveBeenCalledOnce();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("shows a local request as stopping until its harness has stopped it", async () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  let release = () => {};
-  const stop = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-  );
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    act(() => {
-      local
-        .begin({
-          scope: "test",
-          channelId: "c",
-          threadRootId: root,
-          messageId: root,
-          agent: A,
-        })
-        .interruptible(stop);
-    });
-    openBubble();
-    fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-    expect(look().getByText("Stopping…")).toBeInTheDocument();
-    stopPending();
-    fireEvent.click(stopButton() as HTMLElement);
-    expect(stop).toHaveBeenCalledOnce();
-    expect(notify).not.toHaveBeenCalled();
-    release();
-    await settle();
-    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
-    expect(notify).toHaveBeenCalledExactlyOnceWith(
-      "Stopped Blossom",
-      "success",
-    );
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("offers no Stop for a local request that cannot be stopped or has failed", () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const view = render(<ActivityAccessory {...f.props} />);
-  const begin = (agent: string) =>
-    local.begin({
-      scope: "test",
-      channelId: "c",
-      threadRootId: root,
-      messageId: root,
-      agent,
-    });
-  try {
-    act(() => {
-      begin(A).started();
-      const failed = begin(B);
-      failed.interruptible(async () => {});
-      failed.finish({ ok: false, error: "Provider unavailable" });
-    });
-    openBubble();
-    expect(stopButton()).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Stop Bubbles" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Dismiss error from Bubbles" }),
-    ).toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("retries a failed local request from its row, before Dismiss, which begins it again", () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const view = render(<ActivityAccessory {...f.props} />);
-  const retry = vi.fn(() => void begin());
-  function begin() {
-    return local.begin(
-      {
-        scope: "test",
-        channelId: "c",
-        threadRootId: root,
-        messageId: root,
-        agent: A,
-      },
-      retry,
-    );
-  }
-  try {
-    act(() => begin().finish({ ok: false, error: "Provider unavailable" }));
-    openBubble();
-    const again = screen.getByRole("button", { name: "Retry Blossom" });
-    expect(again).toHaveTextContent("Retry");
-    expect(
-      again.compareDocumentPosition(
-        screen.getByRole("button", { name: "Dismiss error from Blossom" }),
-      ) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    fireEvent.click(again);
-    expect(retry).toHaveBeenCalledOnce();
-    expect(f.props.open).not.toHaveBeenCalled();
-    expect(notify).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", {
-        name: "View agent activity: Blossom, Received · waiting to start",
-      }),
-    ).toBeInTheDocument();
-    look();
-    expect(screen.getByText("Received · waiting to start")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Retry Blossom" }),
-    ).not.toBeInTheDocument();
   } finally {
     view.unmount();
     f.dispose();
@@ -1312,7 +888,7 @@ it("says why a failed request could not be retried, keeping it to try again or d
       begin(A, retry).finish({ ok: false, error: "Provider unavailable" });
       begin(B).finish({ ok: false, error: "Busy" });
     });
-    openBubble();
+    openOutcome();
     // Only a request that can be asked again offers Retry.
     expect(
       screen.queryByRole("button", { name: "Retry Bubbles" }),
@@ -1341,13 +917,447 @@ it("says why a failed request could not be retried, keeping it to try again or d
   }
 });
 
+it("dismisses only that agent's error on this message, without changing other work", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const onFocusedRemoval = vi.fn();
+  const view = render(
+    <Conversation {...f.props} onFocusedRemoval={onFocusedRemoval} />,
+  );
+  const begin = (agent: string, messageId: string) =>
+    local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId,
+      agent,
+    });
+  try {
+    act(() => {
+      begin(A, root).finish({
+        ok: false,
+        error: "Provider unavailable after a long and detailed reason",
+      });
+      begin(A, next).finish({ ok: false, error: "Elsewhere" });
+      begin(B, root).step("Read", "notes.txt");
+    });
+    // The failure is the request's; the other agent's live step is the end's.
+    const failed = request().getByRole("button", {
+      name: /View agent activity/,
+    });
+    expect(request().getByText("Couldn’t finish")).toBeVisible();
+    expect(request().queryByText("Reading notes.txt")).toBeNull();
+    expect(end().getByText("Reading notes.txt")).toBeVisible();
+    fireEvent.click(failed);
+    expect(
+      screen.getByText("Provider unavailable after a long and detailed reason")
+        .parentElement,
+    ).toHaveAttribute("data-error");
+    expect(
+      screen.queryByRole("button", { name: "Dismiss error from Bubbles" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss error from Blossom" }),
+    );
+    expect(f.props.open).not.toHaveBeenCalled();
+    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+    expect(end().getByText("Reading notes.txt")).toBeVisible();
+    expect(
+      local.reader
+        .work()
+        .filter((row) => row.agent === A)
+        .map((row) => [row.messageId, row.state, row.dismissed]),
+    ).toEqual([
+      // The outcome remains as settled evidence; only its display is hidden.
+      [root, "error", true],
+      [next, "error", undefined],
+    ]);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it.each(["waiting", "working"])(
+  "stops a local request that is %s from the conversation's end, then notes it stopped on the request",
+  async (state) => {
+    const local = createLocalAgentActivity();
+    const f = fixture(local);
+    const queries = f.props.session.agentActivity;
+    const interrupt = vi.fn(queries.interrupt);
+    const session = {
+      ...f.props.session,
+      agentActivity: { ...queries, interrupt },
+    };
+    const stop = vi.fn(async () => {});
+    const view = render(<Conversation {...f.props} session={session} />);
+    try {
+      act(() => {
+        const work = local.begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        });
+        work.interruptible(stop);
+        if (state === "working") work.started();
+      });
+      openEnd();
+      fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
+      expect(interrupt).toHaveBeenCalledExactlyOnceWith(A, "c", root);
+      await settle();
+      expect(stop).toHaveBeenCalledOnce();
+      expect(notify).toHaveBeenCalledExactlyOnceWith(
+        "Stopped Blossom",
+        "success",
+      );
+      expect(endTrigger()).toBeNull();
+      expect(request().getByText("Blossom · Stopped")).toBeInTheDocument();
+      // Handling the same message again replaces the note with its live work.
+      act(() => {
+        local
+          .begin({
+            scope: "test",
+            channelId: "c",
+            threadRootId: root,
+            messageId: root,
+            agent: A,
+          })
+          .started();
+      });
+      expect(screen.queryByText(/Stopped/)).not.toBeInTheDocument();
+      expect(endTrigger()).toBeVisible();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+it.each([
+  [undefined, "timeline"],
+  ["thread", "thread"],
+] as const)(
+  "notes a stopped request in the response lane (layout %s)",
+  async (messageLayout, layout) => {
+    const local = createLocalAgentActivity();
+    const f = fixture(local);
+    const view = render(
+      <ActivityAccessory {...f.props} messageLayout={messageLayout} />,
+    );
+    try {
+      act(() => {
+        local
+          .begin({
+            scope: "test",
+            channelId: "c",
+            threadRootId: root,
+            messageId: root,
+            agent: A,
+          })
+          .interruptible(async () => {});
+      });
+      expect(view.container).toBeEmptyDOMElement();
+      // Stop retains its exact request and response-side notice.
+      await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
+      expect(
+        screen.queryByRole("button", { name: /View thread/ }),
+      ).not.toBeInTheDocument();
+      // The note keeps the incoming message column instead of the list's edge.
+      expect(
+        screen.getByText("Blossom · Stopped").closest("[data-layout]"),
+      ).toHaveAttribute("data-layout", layout);
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+it("moves a stopped note below the agent's latest public reply", async () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const reply = {
+    ...f.props.message,
+    id: next,
+    authorId: A,
+    createdAt: 2,
+    content: "On it",
+  };
+  const view = render(
+    <>
+      <div data-testid="request">
+        <ActivityAccessory {...f.props} repliedAgents={[A]} />
+      </div>
+      <div data-testid="reply">
+        <ActivityAccessory
+          {...f.props}
+          message={reply}
+          stoppedRequest={f.props.message}
+        />
+      </div>
+    </>,
+  );
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .interruptible(async () => {});
+    });
+    // Neither message shows live work.
+    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+    expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
+    await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
+    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+    expect(
+      within(screen.getByTestId("reply")).getByText("Stopped"),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+it.each(["failed", "terminated", "unknown"])(
+  "places a remote %s caption beneath its reply without repeating the agent identity",
+  (outcome) => {
+    const f = fixture();
+    const reply = {
+      ...f.props.message,
+      id: next,
+      authorId: A,
+      createdAt: 2,
+      content: "An agent reply",
+    };
+    const view = render(
+      <>
+        <div data-testid="request">
+          <ActivityAccessory
+            {...f.props}
+            messageLayout="thread"
+            repliedAgents={[A]}
+          />
+        </div>
+        <div data-testid="reply">
+          <ActivityAccessory
+            {...f.props}
+            message={reply}
+            messageLayout="thread"
+            stoppedRequest={f.props.message}
+          />
+        </div>
+      </>,
+    );
+    try {
+      f.send(A, "remote", 1, "turn_started", { triggeringEventIds: [root] });
+      expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+      expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
+      if (outcome === "unknown") act(() => vi.advanceTimersByTime(31000));
+      else f.send(A, "remote", 2, "turn_completed", { outcome });
+      expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+      const caption = within(screen.getByTestId("reply"));
+      expect(
+        caption.getByText(
+          outcome === "unknown" ? "Status unavailable" : "Couldn’t finish",
+        ),
+      ).toBeInTheDocument();
+      expect(caption.queryByText("Blossom")).not.toBeInTheDocument();
+      expect(
+        screen.getByTestId("reply").querySelector("[data-avatar-stack]"),
+      ).toBeNull();
+      fireEvent.click(
+        caption.getByRole("button", { name: /View agent activity/ }),
+      );
+      expect(
+        screen.getByRole("dialog", { name: "Agent activity" }),
+      ).toHaveTextContent(
+        outcome === "unknown"
+          ? "Buzz couldn’t confirm"
+          : "This request ended before it could finish",
+      );
+      expect(f.props.open).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
+
+it("retries a failed local request from its row, before Dismiss, which begins it again at the conversation's end", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<Conversation {...f.props} />);
+  const retry = vi.fn(() => void begin());
+  function begin() {
+    return local.begin(
+      {
+        scope: "test",
+        channelId: "c",
+        threadRootId: root,
+        messageId: root,
+        agent: A,
+      },
+      retry,
+    );
+  }
+  try {
+    act(() => begin().finish({ ok: false, error: "Provider unavailable" }));
+    openOutcome();
+    const again = screen.getByRole("button", { name: "Retry Blossom" });
+    expect(again).toHaveTextContent("Retry");
+    expect(
+      again.compareDocumentPosition(
+        screen.getByRole("button", { name: "Dismiss error from Blossom" }),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(again);
+    expect(retry).toHaveBeenCalledOnce();
+    expect(f.props.open).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+    expect(
+      end().getByRole("button", { name: "Activity: Blossom working" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Retry Blossom" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("hands focus back to the host when a focused Retry retires its outcome", async () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const onFocusedRemoval = vi.fn();
+  const view = render(
+    <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
+  );
+  try {
+    act(() => {
+      local
+        .begin(
+          {
+            scope: "test",
+            channelId: "c",
+            threadRootId: root,
+            messageId: root,
+            agent: A,
+          },
+          () => {
+            local.begin({
+              scope: "test",
+              channelId: "c",
+              threadRootId: root,
+              messageId: root,
+              agent: A,
+            });
+          },
+        )
+        .finish({ ok: false, error: "Provider unavailable" });
+    });
+    openOutcome();
+    const again = screen.getByRole("button", { name: "Retry Blossom" });
+    act(() => again.focus());
+    fireEvent.click(again);
+    expect(again.isConnected).toBe(false);
+    await act(async () => vi.runAllTicks());
+    expect(onFocusedRemoval).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("shows a local request as stopping until its harness has stopped it", async () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  let release = () => {};
+  const stop = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const view = render(<Conversation {...f.props} />);
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .interruptible(stop);
+    });
+    openEnd();
+    fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
+    stopPending();
+    fireEvent.click(stopButton() as HTMLElement);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(notify).not.toHaveBeenCalled();
+    release();
+    await settle();
+    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
+    expect(notify).toHaveBeenCalledExactlyOnceWith(
+      "Stopped Blossom",
+      "success",
+    );
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("offers no Stop for a local request that cannot be stopped or has failed", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<Conversation {...f.props} />);
+  const begin = (agent: string) =>
+    local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId: root,
+      agent,
+    });
+  try {
+    act(() => {
+      begin(A).started();
+      const failed = begin(B);
+      failed.interruptible(async () => {});
+      failed.finish({ ok: false, error: "Provider unavailable" });
+    });
+    openEnd();
+    expect(stopButton()).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Stop Bubbles" }),
+    ).not.toBeInTheDocument();
+    openOutcome();
+    expect(
+      screen.getByRole("button", { name: "Dismiss error from Bubbles" }),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it("stops a hosted agent's turn through its provider in this thread", async () => {
   const f = fixture();
   const agents = hosted(true);
-  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  const view = render(<Conversation {...f.props} agents={asAgents(agents)} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     expect(agents.interruptible).toHaveBeenCalledWith(A);
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(A, {
@@ -1363,45 +1373,23 @@ it("stops a hosted agent's turn through its provider in this thread", async () =
       "success",
     );
     f.send(A, "t", 2, "turn_completed");
-    expect(
-      screen.queryByRole("button", { name: /View agent activity/ }),
-    ).not.toBeInTheDocument();
+    expect(endTrigger()).toBeNull();
+    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
   } finally {
     view.unmount();
     f.dispose();
   }
 });
 
-it("stops a hosted agent in the thread its message replies to", () => {
-  const f = fixture();
-  const agents = hosted();
-  const reply = { ...f.props.message, id: next, threadRootId: root };
-  const view = render(
-    <ActivityAccessory {...f.props} message={reply} agents={agents} />,
-  );
-  try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [next] });
-    openBubble();
-    fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(A, {
-      channelId: "c",
-      threadRootId: root,
-    });
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("offers each agent its own Stop in the activity popup", async () => {
+it("offers each agent its own Stop at the conversation's end", async () => {
   const f = fixture();
   const agents = hosted(true);
-  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  const view = render(<Conversation {...f.props} agents={asAgents(agents)} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    f.send(B, "u", 1, "turn_started", { triggeringEventIds: [root] });
+    f.start(A, "t");
+    f.start(B, "u");
     expect(stopButton()).not.toBeInTheDocument();
-    openBubble();
+    openEnd();
     const popup = within(screen.getByRole("dialog"));
     expect(
       popup.getByRole("button", { name: "Stop Blossom" }),
@@ -1430,16 +1418,16 @@ it("offers each agent its own Stop in the activity popup", async () => {
 it("returns a hosted agent to its activity when its provider had nothing running to stop", async () => {
   const f = fixture();
   const view = render(
-    <ActivityAccessory {...f.props} agents={hosted(false)} />,
+    <Conversation {...f.props} agents={asAgents(hosted(false))} />,
   );
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
     expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
     expect(
-      look().getByText("Waiting for activity details"),
+      look().getByText("No current step details received."),
     ).toBeInTheDocument();
     stopReady();
     expect(notify).toHaveBeenCalledExactlyOnceWith(
@@ -1456,10 +1444,10 @@ it("says why a hosted agent could not be stopped and lets the owner try again", 
   const f = fixture();
   const agents = hosted();
   agents.interrupt.mockRejectedValueOnce(new Error("Provider is busy."));
-  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  const view = render(<Conversation {...f.props} agents={asAgents(agents)} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     expect(look().getByText("Stopping…")).toBeInTheDocument();
     await settle();
@@ -1481,15 +1469,14 @@ it("says why a hosted agent could not be stopped and lets the owner try again", 
 it("forgets a stop once its agent's work here has ended", async () => {
   const f = fixture();
   const agents = hosted();
-  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  const view = render(<Conversation {...f.props} agents={asAgents(agents)} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
     f.send(A, "t", 2, "turn_completed");
-    f.send(A, "u", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "u");
     expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
     stopReady();
   } finally {
@@ -1502,17 +1489,18 @@ it("offers no Stop for a hosted agent that is not interruptible, or whose activi
   const f = fixture();
   const agents = hosted();
   agents.interruptible.mockReturnValue(false);
-  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  const view = render(<Conversation {...f.props} agents={asAgents(agents)} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     expect(stopButton()).not.toBeInTheDocument();
     // Interruptible, but no longer known to be working.
     agents.interruptible.mockReturnValue(true);
-    view.rerender(<ActivityAccessory {...f.props} agents={agents} />);
+    view.rerender(<Conversation {...f.props} agents={asAgents(agents)} />);
     expect(stopButton()).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(31000));
-    expect(screen.getByText("Status unavailable")).toBeInTheDocument();
+    expect(request().getByText("Status unavailable")).toBeInTheDocument();
+    expect(endTrigger()).toBeNull();
     expect(stopButton()).not.toBeInTheDocument();
   } finally {
     view.unmount();
@@ -1522,26 +1510,11 @@ it("offers no Stop for a hosted agent that is not interruptible, or whose activi
 
 it("offers no Stop for a hosted agent when the host supplies no agents", () => {
   const f = fixture();
-  const view = render(<ActivityAccessory {...f.props} />);
+  const view = render(<Conversation {...f.props} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     expect(stopButton()).not.toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("shows no activity, and so no Stop, without a message", () => {
-  const f = fixture();
-  const agents = hosted();
-  const { message: _message, ...props } = f.props;
-  const view = render(<ActivityAccessory {...props} agents={agents} />);
-  try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(agents.interruptible).not.toHaveBeenCalled();
   } finally {
     view.unmount();
     f.dispose();
@@ -1558,10 +1531,10 @@ const alive = (f: ReturnType<typeof fixture>, turn: string, seq: number) =>
 it("lets the owner try Stop again when a hosted turn is still working 30 seconds after it was stopped", async () => {
   const f = fixture();
   const agents = hosted(true);
-  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  const view = render(<Conversation {...f.props} agents={asAgents(agents)} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
     expect(look().getByText("Stopping…")).toBeInTheDocument();
@@ -1590,17 +1563,16 @@ it("lets the owner try Stop again when a hosted turn is still working 30 seconds
 it("does not let an older stop's timeout overwrite a newer stop of the same agent", async () => {
   const f = fixture();
   const agents = hosted(true);
-  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  const view = render(<Conversation {...f.props} agents={asAgents(agents)} />);
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
     // The turn ends and the agent starts another before the first timeout.
     elapse(10_000);
     f.send(A, "t", 2, "turn_completed");
-    f.send(A, "u", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "u");
     expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
     fireEvent.click(stopButton() as HTMLElement);
     await settle();
@@ -1624,521 +1596,22 @@ it("does not let an older stop's timeout overwrite a newer stop of the same agen
 
 it("shows nothing later when a stopped hosted turn ends before its 30 seconds", async () => {
   const f = fixture();
-  const view = render(<ActivityAccessory {...f.props} agents={hosted(true)} />);
+  const view = render(
+    <Conversation {...f.props} agents={asAgents(hosted(true))} />,
+  );
   try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    openBubble();
+    f.start(A, "t");
+    openEnd();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
     elapse(10_000);
     f.send(A, "t", 2, "turn_completed");
     elapse(60_000);
     expect(notStopped()).toBe(0);
-    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   } finally {
     view.unmount();
     f.dispose();
   }
 });
-
-it.each([
-  [false, false],
-  [true, false],
-  [false, true],
-  [true, true],
-])(
-  "shows one step label through handoff (stoppable=%s, thinking=%s)",
-  async (stoppable, thinking) => {
-    const local = createLocalAgentActivity();
-    const f = fixture(local);
-    const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
-    const session = {
-      ...f.props.session,
-      typing: { snapshot: () => typing, subscribe: () => () => {} },
-    } as unknown as RelaySession;
-    const props = { ...f.props, session };
-    const ui = (representedAgents: string[]) => (
-      <ActivityIndicatorPresentation>
-        <ActivityAccessory {...props} representedAgents={representedAgents} />
-        <TypingPresentation active>
-          <ActivityTypingReplacement {...props} />
-        </TypingPresentation>
-        <TypingIndicator session={session} channelId="c" threadRootId={root} />
-      </ActivityIndicatorPresentation>
-    );
-    const work = local.begin({
-      scope: "test",
-      agent: A,
-      channelId: "c",
-      messageId: root,
-      threadRootId: root,
-    });
-    const label = thinking ? "Thinking" : "Reading notes.txt";
-    work.step(
-      thinking ? "Thinking" : "Read",
-      thinking ? undefined : "notes.txt",
-    );
-    const stop = vi.fn(async () => {});
-    if (stoppable) work.interruptible(stop);
-    const view = render(ui([]));
-    try {
-      expect(
-        screen.getByRole("button", {
-          name: `View agent activity: Blossom, ${label}`,
-        }),
-      ).toBeVisible();
-      // The message bubble is the agent's one working indicator here.
-      expect(
-        screen.queryByRole("button", { name: /Activity: .*working/ }),
-      ).toBeNull();
-      expect(screen.getAllByText(label)).toHaveLength(1);
-      view.rerender(ui([A]));
-      expect(
-        screen.getByRole("button", {
-          name: `View agent activity: Blossom, ${label}`,
-        }),
-      ).toBeVisible();
-      expect(
-        screen.queryByRole("button", { name: /Activity: .*working/ }),
-      ).toBeNull();
-      expect(
-        screen.queryByRole("button", { name: "Reading notes.txt" }),
-      ).toBeNull();
-      openBubble();
-      if (stoppable) {
-        fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-        await settle();
-        expect(stop).toHaveBeenCalledOnce();
-        return;
-      }
-      expect(stopButton()).toBeNull();
-    } finally {
-      view.unmount();
-      f.dispose();
-    }
-  },
-);
-it("does not re-render the typing replacement for liveness that leaves its agents unchanged", () => {
-  const f = fixture();
-  const onRender = vi.fn();
-  const view = render(
-    <Profiler id="replacement" onRender={onRender}>
-      <ActivityTypingReplacement {...f.props} />
-    </Profiler>,
-  );
-  try {
-    f.send(A, "here", 1, "turn_started", { triggeringEventIds: [root] });
-    const renders = onRender.mock.calls.length;
-    f.send(A, "here", 2, "turn_liveness");
-    f.send(A, "here", 3, "turn_liveness");
-    expect(onRender).toHaveBeenCalledTimes(renders);
-    f.send(B, "there", 1, "turn_started", { triggeringEventIds: [root] });
-    expect(onRender.mock.calls.length).toBeGreaterThan(renders);
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it.each([false, true])(
-  "keeps thread request activity in its thread (local=%s)",
-  (isLocal) => {
-    const local = createLocalAgentActivity();
-    const f = fixture(isLocal ? local : undefined);
-    if (isLocal)
-      local.begin({
-        scope: "test",
-        agent: A,
-        channelId: "c",
-        messageId: root,
-        threadRootId: root,
-        thread: true,
-      });
-    else
-      f.send(A, "turn", 1, "turn_started", {
-        triggeringEventIds: [root],
-        threadRootEventId: root,
-      });
-    const view = render(
-      <ActivityAccessory {...f.props} messageLayout="timeline" />,
-    );
-    try {
-      expect(
-        screen.queryByLabelText("Agent activity on this message"),
-      ).toBeNull();
-      view.rerender(<ActivityAccessory {...f.props} messageLayout="thread" />);
-      expect(
-        screen.getByLabelText("Agent activity on this message"),
-      ).toBeVisible();
-    } finally {
-      view.unmount();
-      f.dispose();
-    }
-  },
-);
-
-it("lets a thread root's live bubble replace that thread's indicator", () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const typing = [{ pubkey: A, channelId: "c", threadRootId: root }];
-  const session = {
-    ...f.props.session,
-    typing: { snapshot: () => typing, subscribe: () => () => {} },
-  } as unknown as RelaySession;
-  // MessageRow passes the row's own thread root: none for a thread's root row.
-  const props = { ...f.props, session, threadRootId: undefined };
-  local.begin({
-    scope: "test",
-    agent: A,
-    channelId: "c",
-    messageId: root,
-    threadRootId: root,
-    thread: true,
-  });
-  const ui = (layout: "thread" | "timeline") => (
-    <ActivityIndicatorPresentation>
-      <ActivityAccessory {...props} messageLayout={layout} />
-      <TypingIndicator
-        session={session}
-        channelId="c"
-        threadRootId={root}
-        inFlow
-      />
-    </ActivityIndicatorPresentation>
-  );
-  const view = render(ui("thread"));
-  try {
-    expect(
-      screen.getByLabelText("Agent activity on this message"),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
-    // In the channel timeline the root shows no thread bubble, so the thread
-    // keeps its own indicator.
-    view.rerender(ui("timeline"));
-    expect(
-      screen.queryByLabelText("Agent activity on this message"),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /Activity: .*working/ }),
-    ).toBeVisible();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("shows thinking once across the live bubble, recorded history and conversation indicator", () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const owner = createRelaySession(null);
-  const session = { ...owner.session, ...f.props.session };
-  const work = local.begin({
-    scope: "test",
-    agent: A,
-    channelId: "c",
-    messageId: root,
-    threadRootId: root,
-    thread: true,
-  });
-  work.step("Thinking");
-  const row = {
-    ...f.props.message,
-    id: "thinking-step",
-    authorId: A,
-    threadRootId: root,
-    replyParentId: root,
-    audience: "agents" as const,
-    content: "Thinking",
-  };
-  const rows = [row];
-  const empty: typeof rows = [];
-  const agents = new Set([A]);
-  function Flow({
-    recorded,
-    expanded,
-  }: {
-    recorded: boolean;
-    expanded: boolean;
-  }) {
-    const presentation = useActivityPresentation(
-      recorded ? rows : empty,
-      session.agentActivity,
-      agents,
-      root,
-    );
-    const group = presentation.groups[0];
-    return (
-      <>
-        <ActivityAccessory
-          {...f.props}
-          session={session}
-          messageLayout="thread"
-        />
-        {group && (
-          <ActivityGroupPreview
-            session={session}
-            group={group}
-            profiles={f.profiles}
-            media={() => undefined}
-            expanded={expanded}
-            onToggle={() => {}}
-            renderHistory={(entry) => {
-              const activity = presentation.byRow.get(entry.id);
-              if (!activity) throw new Error("Missing recorded activity");
-              return (
-                <MessageRow
-                  row={entry}
-                  session={session}
-                  profile={f.profiles.get(A)}
-                  media={() => undefined}
-                  onOpenLink={f.props.open}
-                  day={false}
-                  retry={undefined}
-                  recordedActivity={{
-                    ...activity,
-                    container: "history",
-                  }}
-                />
-              );
-            }}
-          />
-        )}
-        <TypingIndicator
-          session={session}
-          channelId="c"
-          threadRootId={root}
-          inFlow
-        />
-      </>
-    );
-  }
-  const ui = (recorded: boolean, expanded = false) => (
-    <ActivityIndicatorPresentation>
-      <Flow recorded={recorded} expanded={expanded} />
-    </ActivityIndicatorPresentation>
-  );
-  const view = render(ui(false));
-  try {
-    expect(screen.getAllByText("Thinking")).toHaveLength(1);
-    // Until history owns the work, the message bubble is its one indicator.
-    expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
-    view.rerender(ui(true));
-    expect(
-      screen.queryByLabelText("Agent activity on this message"),
-    ).toBeNull();
-    expect(screen.getAllByText("Thinking")).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeVisible();
-    view.rerender(ui(true, true));
-    expect(screen.getAllByText("Thinking")).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeVisible();
-    act(() => work.finish({ ok: true }));
-    expect(screen.getByText("Thinking")).not.toHaveAttribute("data-active");
-    expect(
-      screen.queryByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeNull();
-  } finally {
-    view.unmount();
-    owner.dispose();
-    f.dispose();
-  }
-});
-
-it("hands live work to only the latest history for each agent and keeps Stop and transcript there", async () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const stop = vi.fn(async () => {});
-  const work = local.begin({
-    scope: "test",
-    agent: A,
-    channelId: "c",
-    messageId: root,
-    threadRootId: root,
-    thread: true,
-  });
-  work.interruptible(stop);
-  work.step("Read", "files");
-  const row = {
-    ...f.props.message,
-    id: "step",
-    authorId: A,
-    threadRootId: root,
-    replyParentId: root,
-    audience: "agents" as const,
-    content: "Checking the files",
-  };
-  const { audience: _audience, ...reply } = row;
-  const groups = activityPresentation(
-    [
-      row,
-      { ...reply, id: "reply" },
-      { ...row, id: "later", content: "Checking more files" },
-    ],
-    f.props.session.agentActivity.snapshot(),
-    new Set([A]),
-    root,
-  ).groups;
-  const ui = (expanded: boolean) => (
-    <ActivityIndicatorPresentation>
-      <ActivityAccessory {...f.props} messageLayout="thread" />
-      {groups.map((group) => (
-        <ActivityGroupPreview
-          key={group.ids[0]}
-          session={f.props.session}
-          group={group}
-          profiles={f.profiles}
-          media={() => undefined}
-          expanded={expanded}
-          onToggle={() => {}}
-          openActivity={f.props.open}
-          canOpenActivity={f.props.canOpen}
-        />
-      ))}
-    </ActivityIndicatorPresentation>
-  );
-  const view = render(ui(false));
-  try {
-    expect(screen.getByText("Checking the files")).not.toHaveAttribute(
-      "data-active",
-    );
-    expect(screen.getByText("Checking more files")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-    view.rerender(ui(true));
-    expect(
-      screen.queryByLabelText("Agent activity on this message"),
-    ).toBeNull();
-    expect(
-      screen.getAllByRole("button", { name: "Stop Blossom" }),
-    ).toHaveLength(1);
-    const transcript = screen.getAllByRole("button", {
-      name: "View transcript",
-    })[1];
-    if (!transcript)
-      throw new Error("Missing latest history transcript control");
-    fireEvent.click(transcript);
-    const activity = `buzz:profile?agent=${A}&tab=activity`;
-    expect(f.props.open).toHaveBeenCalledWith(activity, { rootId: root });
-    expect(claimProfileTranscript(activity)).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-    await settle();
-    expect(stop).toHaveBeenCalledOnce();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it.each([
-  {
-    runtime: "block.builderlab/builderlab",
-    fallback: "Running remotely on Builderlab…",
-  },
-  { runtime: "other/provider", fallback: "Running on a remote machine…" },
-])(
-  "keeps one byline hint and a remote fallback until current steps arrive: $runtime",
-  async ({ runtime, fallback }) => {
-    const f = fixture();
-    const base = f.props.session.agentChoices;
-    const choices = {
-      ...base.snapshot(),
-      identities: [
-        {
-          pubkey: B,
-          name: "Bubbles",
-          managed: false,
-          execution: "remote",
-          runtime,
-        },
-      ],
-    };
-    Object.assign(f.props.session, {
-      agentChoices: { ...base, snapshot: () => choices },
-    });
-    const update = (seq: number, update: unknown) => {
-      // The latest step wins, so each one arrives later than the last.
-      vi.setSystemTime(Date.now() + 1000);
-      f.send(B, "b1", seq, "acp_read", {
-        method: "session/update",
-        params: { update },
-      });
-    };
-    const hint = () => {
-      const bubble = screen.getByRole("button", {
-        name: /View agent activity: Bubbles, remote, /,
-      });
-      const preview = bubble.closest("[data-agent-response-preview]");
-      if (!(preview instanceof HTMLElement)) throw new Error("Missing preview");
-      const labels = within(preview).getAllByText("Remote");
-      expect(labels).toHaveLength(1);
-      expect(labels[0]?.closest("strong")).toBeNull();
-      expect(labels[0]?.closest("button")).toBeNull();
-      expect(within(bubble).queryByText("Remote")).toBeNull();
-      return labels[0];
-    };
-    render(<ActivityAccessory {...f.props} />);
-    try {
-      f.send(B, "b1", 1, "turn_started", { triggeringEventIds: [root] });
-      expect(hint()).toBeVisible();
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole("button", {
-            name: /View agent activity: Bubbles, remote, /,
-          }),
-        );
-        vi.advanceTimersToNextFrame();
-      });
-      expect(screen.getByText(fallback)).toBeVisible();
-      update(2, {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "On it" },
-      });
-      expect(hint()).toBeVisible();
-      expect(screen.queryByText(fallback)).toBeNull();
-      update(3, {
-        sessionUpdate: "agent_thought_chunk",
-        content: { type: "text", text: "Checking the row" },
-      });
-      expect(hint()).toBeVisible();
-      update(4, {
-        sessionUpdate: "tool_call",
-        toolCallId: "read",
-        title: "buzz-dev-mcp__read_file",
-        status: "in_progress",
-        rawInput: { path: "/project/file.ts" },
-      });
-      expect(hint()).toBeVisible();
-      f.send(B, "b1", 5, "turn_completed");
-      // A local agent's tool call never shows it.
-      f.send(A, "a1", 1, "turn_started", { triggeringEventIds: [root] });
-      f.send(A, "a1", 2, "acp_read", {
-        method: "session/update",
-        params: {
-          update: {
-            sessionUpdate: "tool_call",
-            toolCallId: "read",
-            title: "buzz-dev-mcp__read_file",
-            status: "in_progress",
-            rawInput: { path: "/project/file.ts" },
-          },
-        },
-      });
-      const local = screen.getByRole("button", {
-        name: /View agent activity: Blossom/,
-      });
-      expect(local).not.toHaveAccessibleName(/remote/);
-      expect(within(local).queryByText("Remote")).not.toBeInTheDocument();
-    } finally {
-      f.dispose();
-    }
-  },
-);

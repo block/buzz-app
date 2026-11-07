@@ -3294,7 +3294,7 @@ it("keeps the timestamp seek action beside a detached session card", () => {
   }
 });
 
-it("marks remote activity steps and animates only while active", () => {
+it("marks remote activity steps without animating recorded history", () => {
   const subscribe = () => () => {};
   const profiles = new Map();
   const choices = {
@@ -3315,28 +3315,16 @@ it("marks remote activity steps and animates only while active", () => {
     onOpenLink: () => false,
     day: false,
     retry: undefined,
-    recordedActivity: {
-      requestId: row.id,
-      active: true,
-      ownsLive: false,
-      container: "standalone" as const,
-    },
+    recordedActivity: { container: "standalone" as const },
   };
   const view = renderDom(<MessageRow {...props} />);
   try {
     const trigger = screen.getByRole("button", { name: "Agent: Root" });
     const cloud = () => trigger.querySelector(".tabler-icon-cloud");
-    expect(cloud()).toHaveAttribute("data-active", "true");
+    // Live work shows only at the conversation's end; history never animates.
+    expect(cloud()).not.toHaveAttribute("data-active");
     expect(cloud()).toHaveAttribute("aria-hidden", "true");
     expect(trigger).not.toHaveTextContent("Remote");
-    view.rerender(
-      <MessageRow
-        {...props}
-        recordedActivity={{ ...props.recordedActivity, active: false }}
-      />,
-    );
-    expect(cloud()).not.toBeNull();
-    expect(cloud()).not.toHaveAttribute("data-active");
     fireEvent.click(trigger);
     expect(cloud()).toBeNull();
     fireEvent.click(trigger);

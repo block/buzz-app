@@ -555,11 +555,7 @@ function Timeline({
         return next;
       });
   }, []);
-  const presentation = useActivityPresentation(
-    chronologicalRows,
-    queries.agentActivity,
-    agentPubkeys,
-  );
+  const presentation = useActivityPresentation(chronologicalRows, agentPubkeys);
   const activity = presentation.groups;
   const stableActivity = useStableRowActivity();
   const rowsById = useMemo(

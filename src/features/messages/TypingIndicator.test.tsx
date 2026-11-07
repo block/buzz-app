@@ -17,7 +17,6 @@ import {
   claimProfileTranscript,
   profileTranscriptRequest,
 } from "../profiles/target";
-import { ActivityIndicatorPresentation } from "../conversation/typing-presentation";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { activityPresentation } from "./activity-presentation";
 import type { ChannelMessage } from "../relay/contracts";
@@ -747,7 +746,7 @@ it.each([
   { team: false, local: true },
   { team: true, local: true },
 ])(
-  "keeps dots alongside visible activity and after it leaves (team=$team, local=$local)",
+  "keeps dots at the end beside recorded history, which never animates (team=$team, local=$local)",
   ({ team, local }) => {
     const f = fixture();
     const row: ChannelMessage = {
@@ -770,12 +769,11 @@ it.each([
         { ...row, id: "first", authorId: team ? other : agent },
         row,
       ],
-      undefined,
       new Set([agent]),
     ).groups[0];
     if (!group) throw new Error("Missing activity group");
     const renderFlow = (show: boolean, previousAuthor = agent) => (
-      <ActivityIndicatorPresentation>
+      <>
         {show && (
           <ActivityGroupPreview
             session={f.session}
@@ -791,7 +789,7 @@ it.each([
           channelId="channel"
           previousAuthor={previousAuthor}
         />
-      </ActivityIndicatorPresentation>
+      </>
     );
     const pulses = [
       { pubkey: agent, channelId: "channel" },
@@ -823,7 +821,7 @@ it.each([
       screen.getByText(
         team ? `${agent.slice(0, 10)}: Checking the fix` : "Checking the fix",
       ),
-    ).toHaveAttribute("data-active", "true");
+    ).not.toHaveAttribute("data-active");
     // Recorded ownership does not make the indicator adjacent to its author.
     view.rerender(renderFlow(true, human));
     const tail = view.container.querySelector<HTMLElement>(
@@ -843,7 +841,7 @@ it.each([
         screen.getByText(
           team ? `${agent.slice(0, 10)}: Checking the fix` : "Checking the fix",
         ),
-      ).toHaveAttribute("data-active", "true");
+      ).not.toHaveAttribute("data-active");
     }
     f.update(
       [{ pubkey: agent, channelId: "channel", threadRootId: secondRoot }],
@@ -1085,12 +1083,11 @@ it.each([undefined, root])(
     const { audience: _audience, ...reply } = row;
     const group = activityPresentation(
       [row, { ...reply, id: "reply", content: "Still checking" }],
-      f.session.agentActivity.snapshot(),
       new Set([agent]),
     ).groups[0];
     if (!group) throw new Error("Missing activity group");
     const preview = (expanded: boolean) => (
-      <ActivityIndicatorPresentation>
+      <>
         <ActivityGroupPreview
           session={f.session}
           group={group}
@@ -1105,12 +1102,11 @@ it.each([undefined, root])(
           threadRootId={threadRootId}
           inFlow
         />
-      </ActivityIndicatorPresentation>
+      </>
     );
     const view = render(preview(false));
-    expect(screen.getByText("Checking the fix")).toHaveAttribute(
+    expect(screen.getByText("Checking the fix")).not.toHaveAttribute(
       "data-active",
-      "true",
     );
     expect(
       screen
@@ -1148,11 +1144,10 @@ it("keeps a new request's thinking signal separate from old activity in the same
     participants: [],
     replyCount: 0,
   };
-  const group = activityPresentation([old], undefined, new Set([agent]), root)
-    .groups[0];
+  const group = activityPresentation([old], new Set([agent]), root).groups[0];
   if (!group) throw new Error("Missing old activity group");
   render(
-    <ActivityIndicatorPresentation>
+    <>
       <ActivityGroupPreview
         session={f.session}
         group={group}
@@ -1167,7 +1162,7 @@ it("keeps a new request's thinking signal separate from old activity in the same
         threadRootId={root}
         inFlow
       />
-    </ActivityIndicatorPresentation>,
+    </>,
   );
   const waiting = {
     scope: "test",
@@ -1218,7 +1213,7 @@ it("keeps one agent's simultaneous thread indicators independent", () => {
   };
   f.update([], { local: [first, second] });
   render(
-    <ActivityIndicatorPresentation>
+    <>
       <section aria-label="First thread">
         <TypingIndicator
           session={f.session}
@@ -1235,7 +1230,7 @@ it("keeps one agent's simultaneous thread indicators independent", () => {
           inFlow
         />
       </section>
-    </ActivityIndicatorPresentation>,
+    </>,
   );
   const one = within(screen.getByRole("region", { name: "First thread" }));
   const two = within(screen.getByRole("region", { name: "Second thread" }));

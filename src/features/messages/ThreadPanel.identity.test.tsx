@@ -178,7 +178,7 @@ it.each([false, true])(
   },
 );
 
-it("keeps a standalone activity root subscribed to its request through completion", async () => {
+it("never animates a standalone activity root, while its request works or after", async () => {
   const agent = keypair();
   const root = message(agent, "a", "Checking root activity", 1, [
     ["audience", "agents"],
@@ -229,7 +229,9 @@ it("keeps a standalone activity root subscribed to its request through completio
       />,
     );
     const preview = await screen.findByText("Checking root activity");
-    expect(preview).toHaveAttribute("data-active", "true");
+    // The root is history: its request's live work belongs to the thread's
+    // end, so the root never animates, while working or after.
+    expect(preview).not.toHaveAttribute("data-active");
     act(() => work.finish({ ok: true }));
     expect(preview).not.toHaveAttribute("data-active");
   } finally {

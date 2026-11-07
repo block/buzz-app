@@ -792,27 +792,22 @@ available rather than silently discarding it.
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.
   A turn's **Thread** or **Channel** label
-  opens that conversation. Choosing an agent in the activity under a message,
-  or a Working now agent whose conversation is known, opens that
-  conversation's transcript. Working indicators describe current work,
-  not a guarantee that an agent is available or that a message was delivered.
-  Expand grouped work updates to read each message; the collapsed excerpt names
-  its speaker. Thread work appears inside its thread; the channel’s reply summary
-  still shows when an agent is working there. While the activity under your
-  message shows an agent working, it is that agent's only working indicator.
-  Otherwise dots remain at the end of the conversation while agents work,
-  alongside current step details when available. With Reduce Motion enabled,
-  the dots stay still. Open the live indicator or expand recorded work to view
-  the agent’s activity or **Stop** the running request. The live indicator
-  keeps its controls while recorded updates are visible. Stop availability
-  depends on the agent type.
+  opens that conversation. Choosing a Working now agent whose conversation is
+  known opens that conversation's transcript. Working indicators describe
+  current work, not a guarantee that an agent is available or that a message
+  was delivered.
+  An agent's current work shows in one place: at the end of the conversation,
+  where its reply will land, with dots and its current step when available.
+  Thread work appears at the end of its thread; the channel's reply summary
+  shows when an agent is working there. A message you sent shows only what
+  happened to it: **Couldn’t finish** (with **Retry** or dismiss), an
+  unconfirmed result, or **Stopped**. With Reduce Motion enabled, the dots stay
+  still. Open the indicator at the end to view the agent's activity or **Stop**
+  the running request. Stop availability depends on the agent type.
 - Agent-to-agent messages stay in the conversation as collapsed history after
   work finishes or you reopen a thread. Expand them to read dispatches, handoffs,
-  and results. The working indicator shows current activity separately.
-  If more updates arrive after a reply, the newest update group carries that
-  agent’s live activity and Stop control; earlier groups remain readable history.
-  In Codex DMs, an accepted follow-up takes over the live indicator; separate
-  threads keep their own.
+  and results, or open a transcript. Current work shows at the conversation's
+  end, not in this history.
 - A Goose agent's Activity lists the sessions Buzz recorded on this device for
   each conversation. A conversation with no recorded session, such as one from
   an earlier version of Buzz or another computer, offers **Search older

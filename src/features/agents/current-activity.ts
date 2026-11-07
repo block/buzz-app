@@ -59,6 +59,15 @@ function toolLabel(tool: ToolItem): string {
     : verb;
 }
 
+/** Where a turn's requests are, when its own records do not say: older
+ * harnesses omit the thread root, but each triggering message names its own. */
+export function requestedRoot(turn: {
+  requests?: readonly { threadRootId: string }[] | undefined;
+}) {
+  const roots = new Set(turn.requests?.map((request) => request.threadRootId));
+  return roots.size === 1 ? [...roots][0] : undefined;
+}
+
 export type CurrentActivity = {
   label: string;
   detailAvailability: "available" | "no-current-step" | "typing-only";
@@ -66,7 +75,10 @@ export type CurrentActivity = {
   roots: (string | null | undefined)[];
 };
 
-/** Existing live evidence only. Channel views include threads; thread views do not. */
+/** Existing live evidence only. Channel views include threads; thread views do
+ * not. A channel-only view (`includeThreads` false) counts work as thread work
+ * only once that thread exists in `channelThreadRoots`: until then a top-level
+ * request's root is the request itself, and its work is the channel's. */
 export function currentActivity(
   snapshot: Snapshot | undefined,
   entries: readonly TypingEntry[],
@@ -87,6 +99,7 @@ export function currentActivity(
     agents.set(agent, activity);
     return activity;
   };
+  const channelOnly = !threadRootId && !includeThreads;
   const matches = (channel: string | null, root?: string) =>
     channel === channelId &&
     (threadRootId ? root === threadRootId : includeThreads || !root);
@@ -118,14 +131,20 @@ export function currentActivity(
     const tools: ToolItem[] = [];
     for (const evidence of working.filter((turn) => turn.agent === agent)) {
       const turn = transcript.find((turn) => turn.turnId === evidence.turnId);
+      const root = turn?.threadRootId ?? requestedRoot(evidence);
+      const unthreaded =
+        channelOnly &&
+        !!root &&
+        !!channelThreadRoots &&
+        !channelThreadRoots.has(root);
       if (
         turn?.endedAt ||
         (threadRootId
-          ? turn?.threadRootId !== threadRootId
-          : !includeThreads && !!turn?.threadRootId)
+          ? root !== threadRootId
+          : !includeThreads && !!root && !unthreaded)
       )
         continue;
-      const detail = add(agent, turn?.threadRootId);
+      const detail = add(agent, unthreaded ? null : root);
       detail.detailAvailability = "no-current-step";
       tools.push(
         ...(turn?.items.filter(
@@ -146,14 +165,13 @@ export function currentActivity(
           : toolLabel(firstTool);
     }
   }
-  const localSnapshot =
-    !threadRootId && !includeThreads
-      ? {
-          local: (snapshot?.local ?? []).filter(
-            (row) => !row.thread && !channelThreadRoots?.has(row.threadRootId),
-          ),
-        }
-      : snapshot;
+  const localSnapshot = channelOnly
+    ? {
+        local: (snapshot?.local ?? []).filter(
+          (row) => !row.thread && !channelThreadRoots?.has(row.threadRootId),
+        ),
+      }
+    : snapshot;
   const local = localActivity(localSnapshot, channelId, threadRootId);
   for (const [agent, work] of local) {
     agents.delete(agent);
@@ -168,7 +186,8 @@ export function currentActivity(
               (!threadRootId || row.threadRootId === threadRootId) &&
               (row.state === "working" || row.state === "waiting"),
           )
-          .map((row) => row.threadRootId),
+          // A channel-only view holds only the channel's own work.
+          .map((row) => (channelOnly ? null : row.threadRootId)),
       ),
     ];
     agents.set(agent, {

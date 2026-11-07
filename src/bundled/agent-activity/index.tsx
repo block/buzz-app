@@ -1,10 +1,7 @@
 import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  ActivityAccessory,
-  ActivityTypingReplacement,
-} from "./ActivityAccessory";
-export const inject = ["relay", "conversation", "agents"];
+import { ActivityAccessory } from "./ActivityAccessory";
+export const inject = ["relay", "conversation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   ctx.effect(() => {
@@ -29,12 +26,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerAccessory({
     id: "activity",
     title: "Agent Activity",
-    component: (props) => <ActivityAccessory {...props} agents={ctx.agents} />,
+    component: ActivityAccessory,
     placement: "response",
-  });
-  ctx.conversation.registerAccessory({
-    id: "typing-presentation",
-    title: "Agent typing presentation",
-    component: ActivityTypingReplacement,
   });
 };

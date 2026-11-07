@@ -1,8 +1,8 @@
 import {
   DEFAULT_CATEGORY_SOUNDS,
-  isSoundName,
+  isSoundRef,
   type CategorySounds,
-  type SoundName,
+  type SoundRef,
 } from "./sound";
 
 /** Desired account-local policy is separate from system permission. */
@@ -41,13 +41,13 @@ function parseSounds(raw: unknown): CategorySounds {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     throw new Error("Invalid notification sounds");
   const value = raw as Record<string, unknown>;
-  const sounds: Record<NotificationCategory, SoundName> = {
+  const sounds: Record<NotificationCategory, SoundRef> = {
     ...DEFAULT_CATEGORY_SOUNDS,
   };
   for (const category of NOTIFICATION_CATEGORIES) {
     const picked = value[category];
     if (picked === undefined) continue;
-    if (!isSoundName(picked)) throw new Error("Invalid notification sounds");
+    if (!isSoundRef(picked)) throw new Error("Invalid notification sounds");
     sounds[category] = picked;
   }
   return Object.freeze(sounds);

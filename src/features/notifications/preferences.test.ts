@@ -40,3 +40,28 @@ it.each([
     ).toThrow("Invalid notification sounds");
   },
 );
+
+it("plugin sound choices round-trip by shape, whether or not the pack is installed", () => {
+  const sounds = {
+    mention: "example.sound-pack/chime",
+    direct: "ping",
+    thread: "silent",
+    agent: "example.sound-pack/done",
+  };
+  expect(
+    parsePreferences(JSON.parse(JSON.stringify({ ...stored, sounds }))).sounds,
+  ).toEqual(sounds);
+});
+
+it.each([
+  "example.sound-pack/Chime",
+  "example sound-pack/chime",
+  "example.sound-pack/chime/extra",
+  "/chime",
+  "example.sound-pack/",
+  { pluginId: "example.sound-pack", soundId: "chime" },
+])("malformed sound choice %j rejects the payload", (mention) => {
+  expect(() => parsePreferences({ ...stored, sounds: { mention } })).toThrow(
+    "Invalid notification sounds",
+  );
+});

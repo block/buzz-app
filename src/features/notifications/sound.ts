@@ -27,7 +27,19 @@ export function isSoundName(value: unknown): value is SoundName {
 
 export const DEFAULT_SOUND: SoundName = "flutter";
 
-export type CategorySounds = Readonly<Record<NotificationCategory, SoundName>>;
+/** A bundled name, Silent, or `<pluginId>/<soundId>` for a plugin sound. */
+export type SoundRef = SoundName | `${string}/${string}`;
+const PLUGIN_SOUND_REF = /^[A-Za-z0-9_.-]{1,128}\/[a-z0-9-]{1,32}$/;
+/** Shape only: whether a plugin sound is installed is decided at play time,
+ * so removing a pack never invalidates saved preferences. */
+export function isSoundRef(value: unknown): value is SoundRef {
+  return (
+    isSoundName(value) ||
+    (typeof value === "string" && PLUGIN_SOUND_REF.test(value))
+  );
+}
+
+export type CategorySounds = Readonly<Record<NotificationCategory, SoundRef>>;
 export const DEFAULT_CATEGORY_SOUNDS: CategorySounds = Object.freeze({
   mention: DEFAULT_SOUND,
   direct: DEFAULT_SOUND,
@@ -56,36 +68,8 @@ export const RECOMMENDED_SOUND_BY_CATEGORY: Record<
 export function resolveCategorySound(
   sounds: CategorySounds,
   category: string,
-): SoundName {
+): SoundRef {
   return (
-    (sounds as Partial<Record<string, SoundName>>)[category] ?? DEFAULT_SOUND
+    (sounds as Partial<Record<string, SoundRef>>)[category] ?? DEFAULT_SOUND
   );
-}
-
-const cache = new Map<SoundName, HTMLAudioElement>();
-
-function getAudio(name: SoundName): HTMLAudioElement {
-  let audio = cache.get(name);
-  if (!audio) {
-    audio = new Audio(`/sounds/${name}.mp3`);
-    cache.set(name, audio);
-  }
-  return audio;
-}
-
-export function playNotificationSound(
-  name: SoundName,
-): HTMLAudioElement | null {
-  if (name === "silent") return null;
-  try {
-    const audio = getAudio(name);
-    audio.currentTime = 0;
-    audio.play().catch(() => {
-      // Best-effort — user may not have interacted with the page yet.
-    });
-    return audio;
-  } catch {
-    // Best-effort only.
-    return null;
-  }
 }

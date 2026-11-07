@@ -859,6 +859,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   A saved plugin sort can briefly wait for its plugin at startup, within the
   sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z
   without forgetting the saved choice.
+- A plugin can add a sound pack. Its sounds appear as their own group in each
+  sound menu under **Settings → Notifications**. While that plugin is disabled,
+  the menu shows the choice as unavailable and alerts play the default sound;
+  re-enabling the plugin restores it.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without

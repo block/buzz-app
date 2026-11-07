@@ -473,3 +473,100 @@ it("selects and restores Silent for every category, stops previews, and can rest
   expect(play).toHaveBeenCalledTimes(2);
   expect(service.snapshot().preferences.sounds.direct).toBe("flutter");
 });
+
+it("lists plugin sound packs as groups, previews them, and keeps an unavailable choice", async () => {
+  const audios: { src: string; play: () => Promise<void> }[] = [];
+  vi.stubGlobal(
+    "Audio",
+    class {
+      currentTime = 0;
+      pause = vi.fn();
+      play = vi.fn(async () => {});
+      constructor(public src: string) {
+        audios.push(this);
+      }
+    },
+  );
+  // jsdom has no blob: URLs.
+  let urls = 0;
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static override createObjectURL = () => `blob:test/${++urls}`;
+      static override revokeObjectURL = () => {};
+    },
+  );
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({
+    inject: ["notifications"],
+    apply(plugin: Context) {
+      plugin.notifications.sounds.register({
+        id: "pack",
+        label: "Example pack",
+        sounds: [
+          { id: "chime", label: "Chime", audio: new Blob([new Uint8Array(4)]) },
+        ],
+      });
+    },
+  }));
+  ctx.effect(() => () => runtime.dispose());
+  const service = new NotificationsService(
+    ctx,
+    provideNavigation(ctx).navigation,
+    {
+      label: "Browser",
+      permission: async () => "granted",
+      requestPermission: async () => "granted",
+      show: async () => {},
+      dispose() {},
+    },
+  );
+  service.selectViewer("a".repeat(64));
+  const plugin = {
+    manifest: {
+      id: "example.sound-pack",
+      name: "Sound pack",
+      apiVersion: 1 as const,
+    },
+    enabled: true,
+    source: "external" as const,
+    revision: "v1",
+    previous: null,
+    reloadable: true,
+    error: null,
+  };
+  render(<NotificationSettings notifications={service} />);
+  act(() => runtime.reconcile([plugin]));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Direct messages" }));
+  expect(
+    await screen.findByRole("group", { name: "Example pack" }),
+  ).toContainElement(screen.getByRole("option", { name: "Chime" }));
+  expect(screen.getByRole("group", { name: "Buzz" })).toContainElement(
+    screen.getByRole("option", { name: "ping" }),
+  );
+  await user.click(screen.getByRole("option", { name: "Chime" }));
+  expect(service.snapshot().preferences.sounds.direct).toBe(
+    "example.sound-pack/chime",
+  );
+  expect(audios.at(-1)?.src).toBe("blob:test/1");
+  expect(
+    screen.getByRole("combobox", { name: "Direct messages" }),
+  ).toHaveTextContent("Chime");
+  await act(async () => runtime.reconcile([]));
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Direct messages" }),
+    ).toHaveTextContent("example.sound-pack/chime (unavailable)"),
+  );
+  expect(service.snapshot().preferences.sounds.direct).toBe(
+    "example.sound-pack/chime",
+  );
+  await act(async () => runtime.reconcile([plugin]));
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Direct messages" }),
+    ).toHaveTextContent(/^Chime$/),
+  );
+});

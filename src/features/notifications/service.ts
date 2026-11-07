@@ -13,11 +13,8 @@ import {
   type NotificationPermissionState,
 } from "./platform";
 import { afterPresentation } from "./presentation";
-import {
-  playNotificationSound,
-  resolveCategorySound,
-  type SoundName,
-} from "./sound";
+import { DEFAULT_SOUND, resolveCategorySound, type SoundRef } from "./sound";
+import { createSoundRegistry, type SoundPackDescriptor } from "./sounds";
 import { pluginNotificationText, type NotificationText } from "./content";
 
 export type NotificationCategoryDescriptor = Readonly<{
@@ -44,6 +41,11 @@ export interface Notifications {
   /** While registered, only targets every gate allows may alert. Returns a
    * remover; disabling the plugin removes it too. */
   gate(gate: NotificationGate): () => void;
+  /** Adds a group of sounds to every category's choices in Settings. Returns a
+   * remover; disabling the plugin removes the pack too. */
+  readonly sounds: Readonly<{
+    register(pack: SoundPackDescriptor): () => void;
+  }>;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -87,6 +89,8 @@ export class NotificationsService extends Service implements Notifications {
   readonly indicator = createUnreadIndicator();
   private readonly contributions;
   private readonly gates;
+  readonly soundRegistry;
+  private readonly playSound: (ref: SoundRef) => void;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Candidate>();
   // Outstanding audio decisions for submissions awaiting platform acceptance.
@@ -110,13 +114,14 @@ export class NotificationsService extends Service implements Notifications {
     private readonly preferences = createNotificationPreferences(),
     private readonly authorized: (target: OpenTarget) => boolean = (target) =>
       !("scope" in target && target.scope),
-    private readonly playSound: (name: SoundName) => void = (name) =>
-      void playNotificationSound(name),
+    playSound?: (ref: SoundRef) => void,
   ) {
     super(ctx, "notifications");
+    this.playSound = playSound ?? ((ref) => void this.soundRegistry.play(ref));
     this.contributions =
       createContributions<NotificationCategoryDescriptor>(ctx);
     this.gates = createContributions<NotificationGate>(ctx);
+    this.soundRegistry = createSoundRegistry(ctx);
     this.state = Object.freeze({
       viewer: undefined,
       ...preferences.snapshot(),
@@ -263,6 +268,13 @@ export class NotificationsService extends Service implements Notifications {
       resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
     );
   }
+  /** Plays the category's saved sound, or the default while its plugin pack is
+   * unavailable; the saved choice is kept so re-enabling the pack restores it. */
+  playCategorySound(category: string) {
+    const ref = resolveCategorySound(this.state.preferences.sounds, category);
+    if (ref === "silent") return;
+    this.playSound(this.soundRegistry.isAvailable(ref) ? ref : DEFAULT_SOUND);
+  }
   /** Whether every registered gate lets this target alert. */
   gated(target: OpenTarget) {
     return this.gates.snapshot().every((gate) => {
@@ -272,6 +284,14 @@ export class NotificationsService extends Service implements Notifications {
         return true;
       }
     });
+  }
+  get sounds() {
+    // Bind the calling plugin's scope so its packs end with it.
+    const ctx = this.ctx;
+    return {
+      register: (pack: SoundPackDescriptor) =>
+        this.soundRegistry.register(ctx, pack),
+    };
   }
   subscribeGates = (listener: () => void) => this.gates.subscribe(listener);
   gate(gate: NotificationGate) {
@@ -503,9 +523,7 @@ export class NotificationsService extends Service implements Notifications {
         this.allowed(item) &&
         item.eligible() === true
       )
-        this.playSound(
-          resolveCategorySound(this.state.preferences.sounds, item.category),
-        );
+        this.playCategorySound(item.category);
     } catch (error) {
       this.pending.delete(item);
       this.reportError(error);

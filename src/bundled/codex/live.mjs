@@ -156,6 +156,7 @@ const storage = new Map();
 const store = {
   keys: () => [...storage.keys()],
   get: (key) => storage.get(key) ?? null,
+  read: async (key) => storage.get(key) ?? null,
   set: async (key, value) => {
     if (value === null) storage.delete(key);
     else storage.set(key, value);

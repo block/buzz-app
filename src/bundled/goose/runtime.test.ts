@@ -1,3 +1,5 @@
+import { fileStore } from "../../features/agents/state";
+import { localStore } from "../../features/agents/store";
 import { describe, expect, it, vi } from "vitest";
 import type { BuzzClient, Memories, OwnerAccess } from "../../buzz-mcp/client";
 import { callTool, memoryVersion } from "../../buzz-mcp/tools";
@@ -39,6 +41,30 @@ describe("sessionTitle", () => {
 });
 
 const self = "c".repeat(64);
+
+it("refreshes an idle session with saved owner instructions", async () => {
+  const f = setup();
+  const key = `buzz.owner-instructions.v1:${alice}`;
+  const request = (id: string) =>
+    message(id, "@Gander reply", {
+      tags: [
+        ["h", channel],
+        ["e", "1".repeat(64), "", "reply"],
+      ],
+    });
+  await f.deliver(request("2"));
+  await flush();
+  f.data.set(key, "Prefer short answers.");
+  await f.deliver(request("3"));
+  await vi.waitFor(() =>
+    expect(
+      JSON.stringify(
+        f.fake.geese.flatMap((process) => [...process.prompts.values()]),
+      ),
+    ).toContain("Prefer short answers."),
+  );
+  f.runtime.dispose();
+});
 const alice = "a".repeat(64);
 const channel = "chan-1";
 const message = (
@@ -65,6 +91,7 @@ function setup(
   options: Readonly<{
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
+    storage?: ConstructorParameters<typeof GooseRuntime>[6];
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
@@ -190,6 +217,7 @@ function setup(
     storage,
     undefined,
     options.repositories,
+    options.storage ?? localStore(storage),
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -235,6 +263,7 @@ function setup(
   return {
     agent,
     core,
+    data,
     deliver,
     run,
     runOnce,
@@ -2251,3 +2280,101 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     expect.anything(),
   );
 });
+
+it.each(["Save", "Clear"] as const)(
+  "never submits unsettled owner instructions from rejected %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${alice}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const native = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async (saved) => {
+        if (saved === key) {
+          await gate;
+          throw new Error("Write failed.");
+        }
+      },
+    );
+    const storage = { ...native, read: vi.fn(native.read) };
+    const f = setup({ storage });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writing = storage
+      .set(key, action === "Save" ? "Rejected preference." : null)
+      .catch((error: Error) => error.message);
+    const running = f.deliver(message("2", "@Gander reply")).then(
+      () => "submitted",
+      (error: Error) => error.message,
+    );
+    try {
+      await vi.waitFor(() => expect(storage.read).toHaveBeenCalledWith(key));
+      expect(f.fake.geese.flatMap((process) => process.turns)).toHaveLength(0);
+      release();
+      expect(await writing).toBe("Write failed.");
+      expect(await running).toBe("Write failed.");
+      expect(f.fake.geese.flatMap((process) => process.turns)).toHaveLength(0);
+      expect(storage.get(key)).toBe("Committed preference.");
+    } finally {
+      release();
+      await writing;
+      await running;
+      f.runtime.dispose();
+      error.mockRestore();
+    }
+  },
+);
+
+it.each(["abort", "stale"] as const)(
+  "does not submit a standalone turn when a settled preference read becomes %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${alice}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const nativeStore = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async () => {},
+      undefined,
+      async () => {
+        await gate;
+        return "Committed preference.";
+      },
+    );
+    const read = vi.fn(nativeStore.read);
+    const storage = { ...nativeStore, read };
+    const f = setup({ storage });
+    const abort = new AbortController();
+    let current = true;
+    const running = f.runtime
+      .runOnce({
+        delivery: {
+          ...{ agent: f.agent, config: DEFAULT_CONFIG },
+          current: () => current,
+        },
+        key: "preference-read",
+        signal: abort.signal,
+        prompt: async () => "Check the build.",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0])
+      .catch(() => ({ ok: false }));
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledWith(key));
+      expect(f.fake.geese.flatMap((process) => process.turns)).toHaveLength(0);
+      if (action === "abort") {
+        abort.abort(new Error("Canceled preference read"));
+        expect(await running).toMatchObject({ ok: false });
+      } else {
+        current = false;
+      }
+      release();
+      await running;
+      expect(f.fake.geese.flatMap((process) => process.turns)).toHaveLength(0);
+    } finally {
+      release();
+      await running;
+      f.runtime.dispose();
+    }
+  },
+);

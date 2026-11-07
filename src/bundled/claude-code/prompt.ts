@@ -8,7 +8,7 @@ import {
 import type { EventData } from "../../features/relay/events";
 import { messageAuthor } from "../../features/relay/fold";
 import {
-  BASE_PROMPT,
+  basePrompt,
   mentionSection,
 } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
@@ -43,6 +43,7 @@ export function systemPrompt(
     /** Who the agent is, so it can name itself and the session viewer can too. */
     agent?: Readonly<{ name: string; pubkey: string }>;
     instructions?: string;
+    ownerInstructions?: string;
     /** Device-local repository location, supplied by the owning runtime. */
     repositories?: string;
     /** A section for each team the agent is on, from the host. */
@@ -54,7 +55,7 @@ export function systemPrompt(
   }>,
 ) {
   const model = input.scope === "thread" ? threadModel : channelModel;
-  const base = [BASE_PROMPT, BUZZ_PROMPT, model];
+  const base = [basePrompt(input.ownerInstructions), BUZZ_PROMPT, model];
   return [
     input.agent
       ? section(

@@ -1,3 +1,4 @@
+import { settledSharedInstructions } from "../../features/agents/shared-instructions";
 // Turns Agents deliveries into goose turns. Each agent of this type runs in
 // its own `goose-acp` process; a delivery becomes a prompt in the harness format,
 // sent to the agent's ACP session for its conversation; a watch or timer wake
@@ -131,6 +132,7 @@ type Entry = {
   config: Config;
   /** The team sections of the latest run; a change reopens idle sessions. */
   team: string;
+  ownerInstructions: string;
   /** The agent's name, for its prompt; a rename reopens idle sessions. */
   name?: string;
   /** The agent's handle from its latest delivery, for the tools to act with. */
@@ -468,7 +470,14 @@ export class GooseRuntime {
       };
     };
     const { key, text: prepared, place, shown } = await prompt(false);
+    const ownerInstructions = await settledSharedInstructions(
+      this.agentStore,
+      agent.owner,
+      signal,
+    );
     signal.throwIfAborted();
+    if (this.agents.get(agent.key) !== entry || (current && !current())) return;
+    entry.ownerInstructions = ownerInstructions;
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
       async (deferred) => {
@@ -607,6 +616,18 @@ export class GooseRuntime {
     const entry = this.entry(agent.key, config(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
+    const ownerInstructions = await settledSharedInstructions(
+      this.agentStore,
+      agent.owner,
+      signal,
+    );
+    signal.throwIfAborted();
+    if (
+      this.agents.get(agent.key) !== entry ||
+      (delivery.current && !delivery.current())
+    )
+      return { ok: true };
+    entry.ownerInstructions = ownerInstructions;
     const done = entry.sessions.runOnce(
       key,
       async () => {
@@ -805,6 +826,7 @@ export class GooseRuntime {
       lifetime: new AbortController(),
       config: initial,
       team: "",
+      ownerInstructions: "",
       sessions: undefined as unknown as AgentSessions,
       goose: new AgentProcess(
         {
@@ -921,6 +943,7 @@ export class GooseRuntime {
           entry.config.provider.trim() ? 0 : this.defaultsRevision,
           entry.config.workspace,
           entry.config.instructions,
+          entry.ownerInstructions,
           entry.config.scope,
           entry.team,
           entry.name,
@@ -941,6 +964,7 @@ export class GooseRuntime {
               ? { agent: { name: entry.name, pubkey: pubkeyOf(agent) } }
               : {}),
             instructions,
+            ownerInstructions: entry.ownerInstructions,
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
           }),

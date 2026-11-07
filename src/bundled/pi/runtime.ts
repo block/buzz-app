@@ -1,3 +1,4 @@
+import { settledSharedInstructions } from "../../features/agents/shared-instructions";
 // Turns Agents deliveries into Pi turns. Every Pi agent here runs in the one
 // Pi host (pi.ts), each with its own Pi durable storage, where each Buzz
 // conversation is one Pi conversation. A delivery becomes a prompt in the
@@ -570,6 +571,13 @@ export class PiRuntime {
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.key, event, channel, topLevel);
+    const ownerInstructions = await settledSharedInstructions(
+      this.storage,
+      agent.owner,
+      signal,
+    );
+    signal.throwIfAborted();
+    if (this.agents.get(agent.key) !== entry || (current && !current())) return;
     const root = threadReference(event)?.rootId ?? event.id;
     const where = { channel, root, topLevel };
     // A turn keeps the posting policy it was admitted with: a request under
@@ -649,7 +657,13 @@ export class PiRuntime {
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       });
-      const picked = await this.turnOf(entry, agent.key, model, effort);
+      const picked = await this.turnOf(
+        entry,
+        agent.key,
+        ownerInstructions,
+        model,
+        effort,
+      );
       const text = await prompt();
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
@@ -770,9 +784,21 @@ export class PiRuntime {
       signal.throwIfAborted();
       const text = await prompt();
       if (text === undefined) return { ok: true };
+      const ownerInstructions = await settledSharedInstructions(
+        this.storage,
+        agent.owner,
+        signal,
+      );
+      signal.throwIfAborted();
+      if (
+        this.agents.get(agent.key) !== entry ||
+        (delivery.current && !delivery.current())
+      )
+        return { ok: true };
       const turn = await this.turnOf(
         entry,
         agent.key,
+        ownerInstructions,
         delivery.model,
         delivery.effort,
       );
@@ -1188,6 +1214,7 @@ export class PiRuntime {
   private async turnOf(
     entry: Entry,
     agent: AgentKey,
+    ownerInstructions: string,
     model?: string,
     effort?: string,
   ) {
@@ -1208,6 +1235,7 @@ export class PiRuntime {
           ? { agent: { name: entry.name, pubkey: pubkeyOf(agent) } }
           : {}),
         instructions,
+        ownerInstructions,
         team: entry.team,
       }),
       ...(memory === undefined

@@ -7,7 +7,7 @@ import type { AgentExecution } from "../../features/agents/execution";
 import { ClaudeProcess } from "./claude";
 import { executionSpawn } from "./execution";
 import { ClaudeRuntime, DEFAULT_CONFIG } from "./runtime";
-import { localStore } from "../../features/agents/store";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import { fileStore } from "../../features/agents/state";
 import type {
   Agent,
@@ -250,21 +250,23 @@ async function remoteFixture() {
   const local = vi.fn(async () => {
     throw new Error("Local Claude must stay unused");
   });
-  const create = () =>
-    new ClaudeRuntime(
+  let currentStorage: AgentStore;
+  const create = () => {
+    currentStorage = fileStore(
+      new Map(),
+      async (key, value) => {
+        await control.save();
+        await storage.set(key, value);
+      },
+      storage.add,
+      storage.read,
+      storage.scan,
+    );
+    return new ClaudeRuntime(
       { spawn: local },
       () => (control.connected ? reads : undefined),
       async () => null,
-      fileStore(
-        new Map(),
-        async (key, value) => {
-          await control.save();
-          await storage.set(key, value);
-        },
-        storage.add,
-        storage.read,
-        storage.scan,
-      ),
+      currentStorage,
       undefined,
       undefined,
       undefined,
@@ -276,6 +278,7 @@ async function remoteFixture() {
       },
       () => control.bound,
     );
+  };
   let runtime = create();
   runtime.sync([agent]);
   const waits: Promise<unknown>[] = [];
@@ -315,6 +318,11 @@ async function remoteFixture() {
     control,
     local,
     readRemote,
+    saveShared: (text: string) =>
+      currentStorage.set(
+        `buzz.owner-instructions.v1:${agent.owner}`,
+        text || null,
+      ),
     deliver,
     get runtime() {
       return runtime;
@@ -337,6 +345,45 @@ async function remoteFixture() {
     },
   };
 }
+
+it("uses parent owner preferences for fresh and refreshed remote Claude sessions", async () => {
+  const f = await remoteFixture();
+  try {
+    const prompt = async () =>
+      String(
+        (
+          (await f.wires())
+            .filter(
+              (wire) =>
+                (wire.request as { subtype?: string })?.subtype ===
+                "initialize",
+            )
+            .at(-1)?.request as { appendSystemPrompt?: string }
+        )?.appendSystemPrompt,
+      );
+    await f.saveShared("First owner preference.");
+    await f.deliver();
+    expect(await prompt()).toContain("First owner preference.");
+    const session = f.runtime.conversations(f.agent.key)[0]?.sessionId;
+    await f.saveShared("Updated owner preference.");
+    await f.deliver("again");
+    expect(await prompt()).toContain("Updated owner preference.");
+    expect(await prompt()).not.toContain("First owner preference.");
+    expect(
+      (await f.wires()).some(
+        (wire) =>
+          Array.isArray(wire.launch) && wire.launch.includes("--resume"),
+      ),
+    ).toBe(true);
+    expect(f.runtime.conversations(f.agent.key)[0]?.sessionId).toBe(session);
+    await f.saveShared("");
+    await f.deliver("cleared");
+    expect(await prompt()).not.toContain("<owner-instructions>");
+    expect(f.local).not.toHaveBeenCalled();
+  } finally {
+    await f.cleanup();
+  }
+});
 
 it("resumes a saved target before its first post-restart compaction and gives New a fresh key", async () => {
   const f = await remoteFixture();

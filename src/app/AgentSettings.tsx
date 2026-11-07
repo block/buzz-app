@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { PageNavigation } from "../features/navigation/service";
 import type { Agents } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
+import { SharedInstructionsSettings } from "../features/agents/SharedInstructionsSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
@@ -37,12 +38,16 @@ const delayLabel = (minutes: number) =>
 
 export function AgentSettings({
   agents,
+  owner,
+  onUnsavedChange,
   active = true,
   navigation,
   onProvider,
   keepAwakeAvailable = isTauri() && isApplePlatform(navigator.platform),
 }: {
   agents?: Agents | undefined;
+  owner?: string | undefined;
+  onUnsavedChange?: ((unsaved: boolean) => void) | undefined;
   active?: boolean;
   navigation?: PageNavigation | undefined;
   onProvider?: ((provider?: string) => void) | undefined;
@@ -66,6 +71,14 @@ export function AgentSettings({
           agents={agents}
           navigation={navigation}
           onProvider={onProvider}
+        />
+      )}
+      {agents && owner && (
+        <SharedInstructionsSettings
+          key={owner}
+          storage={agents.storage}
+          owner={owner}
+          onUnsavedChange={onUnsavedChange}
         />
       )}
       <div className="mt-section-gap">

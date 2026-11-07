@@ -843,6 +843,113 @@ it("returns keyboard-opened Settings to the same focused draft", async () => {
 });
 
 // Whole-app journeys through several Settings sections run slower in CI.
+it("guards shared instruction drafts on dismissal and aggregates them with Profile edits", async () => {
+  const user = await setup();
+  if (!services) throw new Error("Missing services");
+  const current = services;
+  const open = async () => {
+    await act(async () => {
+      void current.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "agents",
+      });
+    });
+    return screen.findByRole("dialog", { name: "Settings" });
+  };
+  let settings = await open();
+  const input = () =>
+    within(settings).getByRole("textbox", {
+      name: "Instructions for your local agents",
+    });
+  const keep = async () => {
+    const prompt = await screen.findByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    await user.click(
+      within(prompt).getByRole("button", { name: "Keep editing" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+      ).toBeNull(),
+    );
+    expect(input()).toHaveValue("Shared draft");
+  };
+  await user.type(input(), "Shared draft");
+  await user.keyboard("{Escape}");
+  await keep();
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await keep();
+  act(() => current.navigation.back());
+  await keep();
+  const setItem = Storage.prototype.setItem;
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key.startsWith("buzz.owner-instructions.v1:"))
+        throw new Error("Save failed. Try again.");
+      return setItem.call(this, key, value);
+    });
+  await user.click(within(settings).getByRole("button", { name: "Save" }));
+  expect(await within(settings).findByRole("alert")).toHaveTextContent(
+    "Save failed",
+  );
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await keep();
+  expect(within(settings).getByRole("alert")).toHaveTextContent("Save failed");
+  write.mockRestore();
+  await user.click(within(settings).getByRole("button", { name: "Save" }));
+  await within(settings).findByText(
+    "Shared instructions saved on this device.",
+  );
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  settings = await open();
+  expect(input()).toHaveValue("Shared draft");
+  await user.click(within(settings).getByRole("button", { name: "Profile" }));
+  const name = await within(settings).findByRole("textbox", {
+    name: "Display name",
+  });
+  await waitFor(() => expect(name).toHaveValue("Community name"));
+  await user.clear(name);
+  await user.type(name, "Profile draft");
+  await user.click(
+    within(settings).getByRole("button", { name: "Agent setup" }),
+  );
+  await user.type(input(), " edited");
+  await user.click(within(settings).getByRole("button", { name: "Clear" }));
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  await user.click(
+    within(prompt).getByRole("button", { name: "Keep editing" }),
+  );
+  await user.click(within(settings).getByRole("button", { name: "Profile" }));
+  await user.clear(name);
+  await user.type(name, "Community name");
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  expect(
+    screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+  ).toBeNull();
+}, 15_000);
+
 it("asks before any Settings dismissal discards unsaved profile edits", async () => {
   const user = await setup();
   await act(async () => {
@@ -1106,3 +1213,42 @@ it.each(["Close", "Back"] as const)(
   },
   15_000,
 );
+
+it("closes Profile when hidden shared instructions fail to read without edits", async () => {
+  const user = await setup();
+  if (!services) throw new Error("Missing services");
+  const getItem = Storage.prototype.getItem;
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (
+    this: Storage,
+    key,
+  ) {
+    if (key.startsWith("buzz.owner-instructions.v1:"))
+      throw new Error("Read failed");
+    return getItem.call(this, key);
+  });
+  await act(async () => {
+    void services?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+    });
+  });
+  const modal = await screen.findByRole("dialog", { name: "Settings" });
+  const shared = within(modal).getByLabelText(
+    "Instructions for your local agents",
+  );
+  await waitFor(() => expect(shared).toBeEnabled());
+  expect(shared).not.toBeVisible();
+  expect(
+    within(modal).getByRole("textbox", { name: "Display name" }),
+  ).toBeVisible();
+  await user.click(
+    within(modal).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  expect(
+    screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+  ).toBeNull();
+});

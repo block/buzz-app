@@ -1,3 +1,6 @@
+import { fileStore } from "../../features/agents/state";
+import { localStore } from "../../features/agents/store";
+import { memoryStorage } from "../../features/agents/test-fakes";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   promptMessage,
@@ -23,6 +26,27 @@ afterEach(() => {
 });
 
 const self = "c".repeat(64);
+
+it("reads owner instructions for each ordinary turn without replacing the agent's instructions", async () => {
+  const f = setup({ wait: () => ({ status: "done", answer: 5, text: "" }) });
+  const key = `buzz.owner-instructions.v1:${alice}`;
+  for (const [index, shared] of ["Prefer short answers.", ""].entries()) {
+    await f.storage.set(key, shared || null);
+    const turn = f.deliver(
+      { type: "mention", event: reply(String(index + 2), "@Pi look") },
+      { config: { ...DEFAULT_CONFIG, instructions: "Agent-specific rule." } },
+    );
+    await turn.run;
+    await f.settled(turn);
+    const prompt = String(
+      f.host.requests("deliver")[index]?.params.instructions,
+    );
+    expect(prompt).toContain("Agent-specific rule.");
+    if (shared) expect(prompt).toContain(shared);
+    else expect(prompt).not.toContain("<owner-instructions>");
+  }
+  f.runtime.dispose();
+});
 const alice = "a".repeat(64);
 const bob = "b".repeat(64);
 const channel = "chan-1";
@@ -59,6 +83,7 @@ function setup(
   /** The channel's Canvas, as it reads now. */
   canvas?: { content: string; pubkey?: string },
   repositories?: (scope: string | undefined) => string,
+  persisted?: ConstructorParameters<typeof PiRuntime>[8],
 ) {
   let submissions = 0;
   const host = fakeHost({
@@ -125,6 +150,7 @@ function setup(
   /** Whether `Agents.handle` gives the agent outside a run. */
   const connection = { live: true };
   const desktop = { spawn: host.spawn };
+  const storage = persisted ?? localStore(memoryStorage());
   const runtime = new PiRuntime(
     desktop,
     (key) => ownerReads(relay, pubkeyOf(key)),
@@ -135,6 +161,9 @@ function setup(
       connection.live && key === self
         ? (agent as unknown as AgentHandle)
         : undefined,
+    undefined,
+    undefined,
+    storage,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -207,6 +236,7 @@ function setup(
   return {
     runtime,
     host,
+    storage,
     desktop,
     deliver,
     runOnce,
@@ -967,9 +997,14 @@ it("compacts or starts a new session only while idle, and hands a mention over o
   await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
     "Wait for the active turn",
   );
-  const later = deliver({ type: "mention", event: reply("3", "@Pi again") });
+  const handover = new AbortController();
+  const later = deliver(
+    { type: "mention", event: reply("3", "@Pi again") },
+    { signal: handover.signal },
+  );
   // Released at once, and handed over after compaction.
   await later.run;
+  handover.abort(new Error("Handover expired"));
   expect(host.requests("deliver")).toHaveLength(1);
   compacted.resolve();
   await compacting;
@@ -2508,5 +2543,111 @@ it.each(["stop", "retire"])(
     await f.settled(turn);
     expect(f.published).toEqual([]);
     expect(check).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["Save", "Clear"] as const)(
+  "never submits unsettled owner instructions from rejected %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${alice}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const native = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async (saved) => {
+        if (saved === key) {
+          await gate;
+          throw new Error("Write failed.");
+        }
+      },
+    );
+    const storage = { ...native, read: vi.fn(native.read) };
+    const f = setup(
+      { wait: () => ({ status: "done", answer: 5, text: "" }) },
+      [],
+      undefined,
+      undefined,
+      storage,
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writing = storage
+      .set(key, action === "Save" ? "Rejected preference." : null)
+      .catch((error: Error) => error.message);
+    const running = f
+      .deliver({ type: "mention", event: reply("2", "@Pi reply") })
+      .run.then(
+        () => "submitted",
+        (error: Error) => error.message,
+      );
+    try {
+      await vi.waitFor(() => expect(storage.read).toHaveBeenCalledWith(key));
+      expect(f.host.requests("deliver")).toHaveLength(0);
+      release();
+      expect(await writing).toBe("Write failed.");
+      expect(await running).toBe("Write failed.");
+      expect(f.host.requests("deliver")).toHaveLength(0);
+      expect(storage.get(key)).toBe("Committed preference.");
+    } finally {
+      release();
+      await writing;
+      await running;
+      f.runtime.dispose();
+      error.mockRestore();
+    }
+  },
+);
+
+it.each(["abort", "stale"] as const)(
+  "does not submit a standalone turn when a settled preference read becomes %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${alice}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const nativeStore = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async () => {},
+      undefined,
+      async () => {
+        await gate;
+        return "Committed preference.";
+      },
+    );
+    const read = vi.fn(nativeStore.read);
+    const storage = { ...nativeStore, read };
+    const f = setup({}, [], undefined, undefined, storage);
+    const abort = new AbortController();
+    let current = true;
+    const running = f.runtime
+      .runOnce({
+        delivery: {
+          ...{ agent: f.agent, config: DEFAULT_CONFIG },
+          current: () => current,
+        },
+        key: "preference-read",
+        signal: abort.signal,
+        prompt: async () => "Check the build.",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0])
+      .catch(() => ({ ok: false }));
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledWith(key));
+      expect(f.host.requests("once")).toHaveLength(0);
+      if (action === "abort") {
+        abort.abort(new Error("Canceled preference read"));
+        expect(await running).toMatchObject({ ok: false });
+      } else {
+        current = false;
+      }
+      release();
+      await running;
+      expect(f.host.requests("once")).toHaveLength(0);
+    } finally {
+      release();
+      await running;
+      f.runtime.dispose();
+    }
   },
 );

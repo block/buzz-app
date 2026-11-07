@@ -2,6 +2,18 @@
 
 ## Scope
 
+Settings → Agent setup → Shared instructions saves owner-wide text on this device.
+Claude, Codex, goose and Pi add it to the bundled base prompt and their per-agent
+instructions. Buzz-controlled remote Claude and Codex use the same prompt path;
+provider-hosted agents do not use this device-local setting.
+Claude and goose pick up edits when an idle session next refreshes or a new
+session starts. Codex and Pi use them on their next ordinary turn, including
+resumed conversations. Steering an active turn does not update its instructions.
+Codex voice reads the shared text when a voice session opens; an open voice
+session keeps its instructions until it closes.
+Clear removes the shared text using the same pickup rules. The setting is shared
+across the owner's communities on this device, not synced to other devices.
+
 Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive

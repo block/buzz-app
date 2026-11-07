@@ -1,3 +1,4 @@
+import { settledSharedInstructions } from "../../features/agents/shared-instructions";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
 import { executionSpawn } from "./execution";
@@ -131,6 +132,7 @@ type Entry = {
   config: Config;
   /** The team sections of the latest run; a change restarts idle sessions. */
   team: string;
+  ownerInstructions: string;
   /** The agent's name, for its prompt; a rename restarts idle sessions. */
   name?: string;
   /** The agent's handle from its latest delivery, for the tools to act with. */
@@ -244,6 +246,8 @@ export class ClaudeRuntime {
     private readonly bound: (agent: AgentKey) => boolean = () => false,
     private readonly target?: AgentExecution,
     private readonly targetKey?: string,
+    /** Remote session storage is isolated; owner preferences stay with the parent. */
+    private readonly ownerPreferences: AgentStore = storage,
   ) {}
 
   /** A failed turn's error as its report says it, such as where to fix
@@ -346,6 +350,7 @@ export class ClaudeRuntime {
           undefined,
           execution,
           saved.key,
+          this.ownerPreferences,
         );
         runtime.subscribe(() => this.notify());
         this.remote.set(key, { agent, conversation, runtime, execution });
@@ -925,7 +930,14 @@ export class ClaudeRuntime {
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent, event, channel, topLevel);
+    const ownerInstructions = await settledSharedInstructions(
+      this.ownerPreferences,
+      agent.owner,
+      signal,
+    );
     signal.throwIfAborted();
+    if (this.agents.get(agent.key) !== entry || (current && !current())) return;
+    entry.ownerInstructions = ownerInstructions;
     if (this.execution && (await this.inspect?.(agent.key))) {
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
@@ -1173,6 +1185,18 @@ export class ClaudeRuntime {
     entry.team = team ?? "";
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
     if (refused) return { ok: false, error: refused };
+    const ownerInstructions = await settledSharedInstructions(
+      this.ownerPreferences,
+      agent.owner,
+      signal,
+    );
+    signal.throwIfAborted();
+    if (
+      this.agents.get(agent.key) !== entry ||
+      (delivery.current && !delivery.current())
+    )
+      return { ok: true };
+    entry.ownerInstructions = ownerInstructions;
     const done = entry.sessions.runOnce(key, prompt, signal);
     this.notify();
     return done.finally(() => this.notify());
@@ -1366,6 +1390,7 @@ export class ClaudeRuntime {
       ...(name ? { name } : {}),
       config: initial,
       team: "",
+      ownerInstructions: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
       policies: new Map(),
@@ -1448,6 +1473,7 @@ export class ClaudeRuntime {
           entry.config.effort,
           entry.config.workspace,
           entry.config.instructions,
+          entry.ownerInstructions,
           entry.config.scope,
           entry.team,
           entry.name,
@@ -1514,6 +1540,7 @@ export class ClaudeRuntime {
               ? { agent: { name: entry.name, pubkey: pubkeyOf(agent) } }
               : {}),
             instructions,
+            ownerInstructions: entry.ownerInstructions,
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
             notes,

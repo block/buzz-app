@@ -50,6 +50,34 @@ vi.mock("./voice", () => ({
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 
 const owner = "a".repeat(64);
+
+it("supplies saved and cleared owner instructions to ordinary resumed turns", async () => {
+  const f = fixture();
+  const key = `buzz.owner-instructions.v1:${owner}`;
+  const context = (index: number) =>
+    Object.values(
+      (
+        f.starts()[index]?.params as {
+          additionalContext: Record<string, { value: string }>;
+        }
+      )?.additionalContext ?? {},
+    )
+      .map((part) => part.value)
+      .join("");
+  for (const [index, shared] of ["", "Prefer short answers.", ""].entries()) {
+    if (shared) f.storage.set(key, shared);
+    else f.storage.delete(key);
+    await f.runtime.run(f.delivery(`@Codex turn ${index}`));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(index + 1));
+    expect(context(index)).toContain(
+      `<owner-instructions>\n${shared}\n</owner-instructions>`,
+    );
+    expect(context(index)).toContain("TEST_INSTRUCTIONS");
+    expect(context(index)).toContain("current request takes precedence");
+    await f.complete(index);
+  }
+  expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(true);
+});
 const pubkey = "b".repeat(64);
 const root = "c".repeat(64);
 const scope = `https://relay.test:${owner}`;
@@ -5846,6 +5874,48 @@ it("keeps interrupting an idle existing conversation a no-op", async () => {
 });
 
 describe("voice seats", () => {
+  it.each([false, true])(
+    "supplies current owner instructions when opening voice (resumed after Clear=%s)",
+    async (resumed) => {
+      vi.stubGlobal("RTCPeerConnection", class {});
+      const f = fixture();
+      f.huddleChannels.add("channel");
+      const key = `buzz.owner-instructions.v1:${owner}`;
+      f.storage.set(key, "Owner voice preference.");
+      if (resumed) {
+        await f.runtime.run(f.delivery("@Codex typed first"));
+        await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+        await f.complete(0);
+        f.storage.delete(key);
+      }
+      const d = f.delivery("unused");
+      const connection = await f.runtime.voice(
+        {
+          config: d.config,
+          agent: { ...d.agent, config: d.config } as unknown as Agent,
+          conversation: { channelId: "channel" },
+          signal: new AbortController().signal,
+          async output() {},
+          async transcript() {},
+          ended() {},
+        },
+        d.agent,
+      );
+      try {
+        const section = `<owner-instructions>\n${resumed ? "" : "Owner voice preference."}\n</owner-instructions>`;
+        expect(vi.mocked(openVoice).mock.calls.at(-1)?.[5]).toContain(section);
+        const method = resumed ? "thread/inject_items" : "thread/start";
+        expect(
+          JSON.stringify(
+            f.sent.filter((wire) => wire.method === method).at(-1)?.params,
+          ),
+        ).toContain(section.replaceAll("\n", "\\n"));
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
   async function seated(overrides: Partial<AgentVoiceSeat> = {}) {
     vi.stubGlobal("RTCPeerConnection", class {});
     const f = fixture();
@@ -7069,5 +7139,201 @@ it.each([true, false])(
     );
     expect(ownerAccess.channels).toHaveBeenCalledTimes(owned ? 1 : 0);
     await f.complete();
+  },
+);
+
+it.each(["Save", "Clear"] as const)(
+  "never submits unsettled owner instructions from rejected %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${owner}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const native = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async (saved) => {
+        if (saved === key) {
+          await gate;
+          throw new Error("Write failed.");
+        }
+      },
+    );
+    const storage = { ...native, read: vi.fn(native.read) };
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      storage,
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writing = storage
+      .set(key, action === "Save" ? "Rejected preference." : null)
+      .catch((error: Error) => error.message);
+    const running = f.runtime.run(f.delivery("@Codex reply")).then(
+      () => "submitted",
+      (error: Error) => error.message,
+    );
+    try {
+      await vi.waitFor(() => expect(storage.read).toHaveBeenCalledWith(key));
+      expect(f.starts()).toHaveLength(0);
+      release();
+      expect(await writing).toBe("Write failed.");
+      await running;
+      await f.workingUntil.mock.calls.at(-1)?.[0];
+      expect(f.starts()).toHaveLength(0);
+      expect(storage.get(key)).toBe("Committed preference.");
+    } finally {
+      release();
+      await writing;
+      await running;
+      f.runtime.dispose();
+      error.mockRestore();
+    }
+  },
+);
+
+it.each(["abort", "stale"] as const)(
+  "does not submit a standalone turn when a settled preference read becomes %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${owner}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const nativeStore = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async () => {},
+      undefined,
+      async () => {
+        await gate;
+        return "Committed preference.";
+      },
+    );
+    const read = vi.fn(nativeStore.read);
+    const storage = { ...nativeStore, read };
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      storage,
+    );
+    const abort = new AbortController();
+    let current = true;
+    const running = f.runtime
+      .runOnce({
+        delivery: { ...f.delivery("unused"), current: () => current },
+        key: "preference-read",
+        signal: abort.signal,
+        prompt: async () => "Check the build.",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0])
+      .catch(() => ({ ok: false }));
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledWith(key));
+      expect(f.starts()).toHaveLength(0);
+      if (action === "abort") {
+        abort.abort(new Error("Canceled preference read"));
+        expect(await running).toMatchObject({ ok: false });
+      } else {
+        current = false;
+      }
+      release();
+      await running;
+      expect(f.starts()).toHaveLength(0);
+    } finally {
+      release();
+      await running;
+      f.runtime.dispose();
+    }
+  },
+);
+
+it.each(["Save", "Clear", "abort"] as const)(
+  "keeps voice unopened while a preference %s is unsettled",
+  async (action) => {
+    vi.stubGlobal("RTCPeerConnection", class {});
+    const key = `buzz.owner-instructions.v1:${owner}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const native = fileStore(
+      new Map([[key, "Committed voice preference."]]),
+      async (saved) => {
+        if (saved === key) {
+          await gate;
+          throw new Error("Write failed.");
+        }
+      },
+    );
+    const storage = { ...native, read: vi.fn(native.read) };
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      storage,
+    );
+    f.huddleChannels.add("channel");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writing = storage
+      .set(key, action === "Clear" ? null : "Rejected voice preference.")
+      .catch(() => {});
+    const d = f.delivery("unused");
+    const abort = new AbortController();
+    const opened = vi.mocked(openVoice).mock.calls.length;
+    const running = f.runtime
+      .voice(
+        {
+          config: d.config,
+          agent: { ...d.agent, config: d.config } as unknown as Agent,
+          conversation: { channelId: "channel" },
+          signal: abort.signal,
+          async output() {},
+          async transcript() {},
+          ended() {},
+        },
+        d.agent,
+      )
+      .then(
+        () => "opened",
+        () => "rejected",
+      );
+    try {
+      await vi.waitFor(() => expect(storage.read).toHaveBeenCalledWith(key));
+      expect(vi.mocked(openVoice)).toHaveBeenCalledTimes(opened);
+      if (action === "abort") {
+        abort.abort(new Error("Canceled voice"));
+        expect(await running).toBe("rejected");
+      }
+      release();
+      await writing;
+      expect(await running).toBe("rejected");
+      expect(vi.mocked(openVoice)).toHaveBeenCalledTimes(opened);
+      expect(
+        f.sent.filter(
+          (wire) =>
+            wire.method === "thread/start" ||
+            wire.method === "thread/inject_items",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      release();
+      await writing;
+      await running;
+      f.runtime.dispose();
+      error.mockRestore();
+    }
   },
 );

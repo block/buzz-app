@@ -13,9 +13,13 @@ const APP = "https://counter--workspace.apps.example/report/42";
 afterEach(() => {
   cleanup();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
-function setup(loginAvailable = true) {
+function setup(loginAvailable = true, platform = "MacIntel") {
+  // matches() reads the host platform when called; tests default to macOS,
+  // the one host with native viewer sign-in.
+  vi.stubGlobal("navigator", { platform });
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://login.example");
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "apps.example");
   const acquire = vi.fn(async () => ({
@@ -49,6 +53,25 @@ function setup(loginAvailable = true) {
   };
   return { session, acquire, revoke, viewed, panel };
 }
+
+it("keeps viewer-path app links on the external browser path where native viewer sign-in is unsupported", async () => {
+  const { session, panel } = setup(true, "Linux x86_64");
+  await session.signIn();
+  // A signed-in panel would dead-end on the native guard, so the link keeps
+  // the external browser path it had before guests reached this platform.
+  expect(panel.matches(APP)).toBe(false);
+  // App URLs of another tenant use the app's own browser login and still embed.
+  expect(panel.matches("https://counter--other.apps.builderlab.xyz/")).toBe(
+    true,
+  );
+  session.dispose();
+});
+
+it("still embeds app links through browser login where Settings sign-in is unavailable", () => {
+  const { session, panel } = setup(false, "Linux x86_64");
+  expect(panel.matches(APP)).toBe(true);
+  session.dispose();
+});
 
 it("app links and apps_open use the Settings account and replace its guest lifetime on account change", async () => {
   const { session, acquire, revoke, viewed, panel } = setup();

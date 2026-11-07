@@ -1,3 +1,10 @@
+import {
+  membershipFilter,
+  MEMBERSHIP_TYPES,
+  membershipText,
+  MEMBERSHIP_BYTES,
+  admitMembershipSnapshot,
+} from "../src/features/relay/membership-snapshot.ts";
 import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
@@ -1169,6 +1176,25 @@ export function relayBrokerPlugin({
                 : "Select a community or configure BUZZ_RELAY_URL for unscoped requests",
             });
           const route = scoped ? `/api/relay/${parts[3]}` : url.pathname;
+          if (route === "/api/relay/membership-info" && req.method === "GET") {
+            const response = await fetchUpstream(relay, {
+              headers: { Accept: "application/nostr+json" },
+              redirect: "error",
+              signal: AbortSignal.any([
+                cancel.signal,
+                AbortSignal.timeout(10000),
+              ]),
+            });
+            if (!response.ok)
+              return json(res, 502, { error: "Community discovery failed" });
+            const info = JSON.parse(
+              await membershipText(response, MEMBERSHIP_BYTES),
+            );
+            return json(res, 200, {
+              self: info.self,
+              membership_snapshot: info.membership_snapshot,
+            });
+          }
           if (route === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
           if (route === "/api/relay/gif-info" && req.method === "GET") {
@@ -2323,6 +2349,7 @@ export function relayBrokerPlugin({
           if (
             ![
               "/api/relay/query",
+              "/api/relay/membership-snapshot",
               "/api/relay/agent-memories",
               "/api/relay/presence-snapshot",
               "/api/relay/channel-activity",
@@ -2404,6 +2431,86 @@ export function relayBrokerPlugin({
             )
           )
             return json(res, 413, { error: "Filter body too large" });
+          if (route === "/api/relay/membership-snapshot") {
+            const types = filters?.types;
+            if (
+              !filters ||
+              Object.keys(filters).length !== 1 ||
+              !Array.isArray(types) ||
+              !types.length ||
+              types.length > MEMBERSHIP_TYPES.length ||
+              types.some(
+                (type, index) =>
+                  !MEMBERSHIP_TYPES.includes(type) ||
+                  (index > 0 && types[index - 1] >= type),
+              )
+            )
+              return json(res, 400, { error: "Invalid membership types" });
+            if (inflight >= MAX_INFLIGHT)
+              return json(res, 429, {
+                error: "Query concurrency limit",
+                sent: false,
+              });
+            inflight++;
+            try {
+              const signal = AbortSignal.any([
+                cancel.signal,
+                AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              ]);
+              const result = await admitMembershipSnapshot(
+                admissions(relay, viewer).api,
+                async () => {
+                  signal.throwIfAborted();
+                  const body = JSON.stringify(membershipFilter(viewer, types));
+                  const auth = finalizeEvent(
+                    {
+                      kind: 27235,
+                      created_at: Math.floor(Date.now() / 1000),
+                      content: "",
+                      tags: [
+                        ["u", `${relay}/query`],
+                        ["method", "POST"],
+                        [
+                          "payload",
+                          createHash("sha256").update(body).digest("hex"),
+                        ],
+                        ["nonce", randomBytes(16).toString("hex")],
+                      ],
+                    },
+                    key,
+                  );
+                  const response = await fetchUpstream(`${relay}/query`, {
+                    method: "POST",
+                    body,
+                    redirect: "error",
+                    signal,
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization:
+                        "Nostr " +
+                        Buffer.from(JSON.stringify(auth)).toString("base64"),
+                    },
+                  });
+                  return {
+                    response,
+                    binding: {
+                      request_id: auth.id,
+                      signer_pubkey: auth.pubkey,
+                      origin: new URL(relay).origin,
+                    },
+                  };
+                },
+                signal,
+                req.headers["x-buzz-read-priority"] === "background"
+                  ? "background"
+                  : "foreground",
+              );
+              signal.throwIfAborted();
+              return json(res, 200, result);
+            } finally {
+              inflight--;
+            }
+          }
           let memoryAgent;
           if (memory) {
             try {

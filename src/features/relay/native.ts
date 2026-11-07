@@ -1,4 +1,9 @@
 import {
+  readMembershipSnapshot,
+  type MembershipHostResult,
+} from "./membership-snapshot";
+import { admitSignedMembershipSnapshot } from "./transport";
+import {
   artifactIncrementalCapability,
   artifactIncrementalFailure,
   createArtifactIncrementalReader,
@@ -156,6 +161,30 @@ export async function nativeRelayRequest(
     return nativeResponse(result);
   } finally {
     if (id) bounded.removeEventListener("abort", cancel);
+  }
+}
+
+async function nativeMembershipSnapshot(
+  origin: string,
+  types: readonly string[],
+  signal: AbortSignal,
+): Promise<MembershipHostResult> {
+  const bounded = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+  bounded.throwIfAborted();
+  const id = crypto.randomUUID();
+  const cancel = () => {
+    void invoke("relay_http_cancel", { id }).catch(() => {});
+  };
+  bounded.addEventListener("abort", cancel, { once: true });
+  try {
+    const result = await invoke<MembershipHostResult>(
+      "relay_membership_snapshot",
+      { community: origin, types, id },
+    );
+    bounded.throwIfAborted();
+    return result;
+  } finally {
+    bounded.removeEventListener("abort", cancel);
   }
 }
 
@@ -833,6 +862,38 @@ export async function connectNativeTransport(
         signal.throwIfAborted();
         await acceptReadStatePublish(response, event.id);
       },
+    },
+    async readMembershipSnapshot(types, signal, priority) {
+      return readMembershipSnapshot(
+        {
+          origin,
+          viewer: transport.viewer,
+          relay: author,
+          info: (signal) => nativeRelayInfo(origin, signal),
+          request: (types, signal) =>
+            admitSignedMembershipSnapshot(
+              origin,
+              transport.viewer,
+              async () => {
+                const result = await nativeMembershipSnapshot(
+                  origin,
+                  types,
+                  signal,
+                );
+                return {
+                  binding: result,
+                  response: new Response(result.body, {
+                    status: result.status,
+                  }),
+                };
+              },
+              signal,
+              priority,
+            ),
+        },
+        types,
+        signal,
+      );
     },
     ...(readCommunity
       ? {

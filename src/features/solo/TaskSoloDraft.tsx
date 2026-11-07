@@ -367,6 +367,18 @@ export function TaskSoloDraft({
       const uploaded = await files.prepareForSend(signal);
       checkActive();
       input.attachments = uploaded;
+      const firstMessage = session.messages.prepareNewChat(
+        input.text,
+        [input.primary],
+        uploaded,
+        Object.fromEntries(
+          Object.entries(picks ?? {}).filter(
+            ([pubkey]) => pubkey === input.primary,
+          ),
+        ),
+      );
+      if (firstMessage.content.length > 32_000)
+        throw new Error("The task message exceeds 32,000 characters.");
       const result = await context.mode.prepare(input, signal);
       checkActive();
       if (!result.ok)
@@ -382,7 +394,9 @@ export function TaskSoloDraft({
         members: Object.freeze([...result.members]),
       });
       if (
-        !prepared.channelId ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          prepared.channelId,
+        ) ||
         !prepared.preparationId ||
         prepared.revision !== input.revision ||
         !prepared.members.includes(input.primary) ||
@@ -439,11 +453,8 @@ export function TaskSoloDraft({
         if (reason instanceof ChatNotStarted)
           onFailed?.(prepared.channelId, reason.message);
       });
-      const firstEvent = session.messages.send(
+      const firstEvent = firstMessage.send(
         prepared.channelId,
-        input.text,
-        [input.primary],
-        uploaded,
         taskFirstEventRecovery({
           draftId: input.draftId,
           revision: input.revision,
@@ -451,12 +462,6 @@ export function TaskSoloDraft({
           channelId: prepared.channelId,
           regionLabel: context.label,
         }),
-        [],
-        Object.fromEntries(
-          Object.entries(picks ?? {}).filter(
-            ([pubkey]) => pubkey === input.primary,
-          ),
-        ),
       );
       await session.outbox.whenPrepared(firstEvent);
       signal.throwIfAborted();

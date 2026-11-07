@@ -9,6 +9,7 @@ import { messageAuthor } from "./fold";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
+import { byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 
 /** Owner authorization is supplied only after the agent's signed profile is verified. */
 export type AgentOwnerAuthorization = Readonly<{
@@ -297,6 +298,47 @@ export function createMessages(
     return operations[0] as string;
   };
   return Object.freeze({
+    prepareNewChat(
+      content: string,
+      mentions: readonly string[],
+      attachments: readonly UploadedAttachment[] = [],
+      picks: MentionPicks = {},
+    ) {
+      if (
+        mentions.length > 32 ||
+        mentions.some((key) => !/^[0-9a-f]{64}$/.test(key))
+      )
+        throw new Error("Choose at most 32 valid mention recipients");
+      const addressed = [...new Set(mentions)];
+      const message = attachmentMessage(content, attachments, relayOrigin);
+      const tags = [
+        ...addressed.map((key) => ["p", key]),
+        ...pickTags("", addressed, picks),
+        ...emojiTags(content),
+        ...message.tags,
+      ];
+      const input = (channelId: string) => ({
+        kind: 9,
+        content: text(message.content),
+        tags: [["h", channelId], ...tags],
+      });
+      // A new channel uses a UUID. Enqueue measures these same UTF-8 event bytes.
+      if (
+        byteSize(input("00000000-0000-0000-0000-000000000000")) >
+        OUTBOX_INPUT_MAX_BYTES
+      )
+        throw new Error("Message is empty or too large");
+      return Object.freeze({
+        content: message.content,
+        send(channelId: string, recovery?: OutboxRecovery) {
+          validateMentions(channelId, addressed);
+          return writer(9, channelId).send(
+            input(channelId),
+            ...(recovery ? [recovery] : []),
+          );
+        },
+      });
+    },
     send(
       channelId: string,
       content: string,

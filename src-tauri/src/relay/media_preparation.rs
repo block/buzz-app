@@ -641,7 +641,7 @@ mod tests {
                 wait_for_conversion(child, &output, false, &mut cancelled, timeout, limit).await,
                 Err(expected)
             );
-            assert!(!std::process::Command::new("/bin/kill")
+            assert!(!std::process::Command::new("kill")
                 .args(["-0", &pid.to_string()])
                 .stderr(Stdio::null())
                 .status()

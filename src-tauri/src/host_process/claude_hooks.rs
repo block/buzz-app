@@ -188,7 +188,7 @@ mod tests {
         format!("{}\n",serde_json::json!({"type":"control_response","response":{"request_id":id,"subtype":subtype,"response":{}}})).into_bytes()
     }
     fn worker() -> tokio::process::Child {
-        let mut command = tokio::process::Command::new("/bin/sleep");
+        let mut command = tokio::process::Command::new("sleep");
         command.arg("60").kill_on_drop(true);
         command.as_std_mut().process_group(0);
         command.spawn().unwrap()

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { appClient } from "../../buzz-mcp/app-client";
 import type { OwnerAccess } from "../../buzz-mcp/client";
-import { callSessionTool } from "../../buzz-mcp/session-tools";
+import { callSessionTool, type AddedTool } from "../../buzz-mcp/session-tools";
 import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
@@ -402,7 +402,10 @@ it("settles a stopped turn that Claude ends as aborted tools as stopped, not fai
 /** A Claude whose Buzz tools run through the real app client: `owner_channel_list`
  * holds its first read until `release`, and any other tool reads a memory.
  * With `holdStops`, Claude answers a Stop only when the test does. */
-async function ownerTurns(env?: Record<string, string>) {
+async function ownerTurns(
+  env?: Record<string, string>,
+  added: AddedTool[] = [],
+) {
   const { spawn, processes } = fakeSpawn();
   const stops: string[] = [];
   let holdStops = false;
@@ -460,11 +463,12 @@ async function ownerTurns(env?: Record<string, string>) {
             partial: false,
           }),
           signal,
+          callSignal: signal,
         },
       );
       const name = params.name;
       const args = name === "mem_get" ? { slug: "core" } : {};
-      return callSessionTool(client, {}, name, args).then(
+      return callSessionTool(client, {}, name, args, added).then(
         (text) => ({ jsonrpc: "2.0", id, result: { content: [{ text }] } }),
         (error: Error) => ({
           jsonrpc: "2.0",
@@ -534,6 +538,61 @@ async function ownerTurns(env?: Record<string, string>) {
     release: () => release?.(),
   };
 }
+
+it("keeps an added tool canceled after Stop while a new turn can write", async () => {
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const signals: AbortSignal[] = [];
+  const publish = vi.fn();
+  let calls = 0;
+  const t = await ownerTurns(undefined, [
+    {
+      name: "notes_write",
+      description: "Write a note.",
+      inputSchema: { type: "object" },
+      async call(client) {
+        const first = ++calls === 1;
+        if (first) entered();
+        if (!client.signal) throw new Error("No request cancellation signal");
+        const signal = client.signal;
+        signals.push(signal);
+        if (first) await waiting;
+        signal.throwIfAborted();
+        publish();
+        return "saved";
+      },
+    },
+  ]);
+  try {
+    t.fake.hold = true;
+    const stopped = t.claude.send("write");
+    await flush();
+    t.ask("r1", "notes_write");
+    await started;
+    expect(signals[0]?.aborted).toBe(false);
+    await t.claude.interrupt();
+    expect(signals[0]?.aborted).toBe(true);
+    abortTools(t.fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+    void t.claude.send("write again");
+    await flush();
+    t.ask("r2", "notes_write");
+    expect(await t.answer("r2")).toContain("saved");
+    expect(signals[1]?.aborted).toBe(false);
+    release();
+    expect(await t.answer("r1")).toContain('"isError":true');
+    expect(publish).toHaveBeenCalledOnce();
+  } finally {
+    release();
+    t.fake.finish();
+  }
+});
 
 it("withholds an owner read an unprotected Stop overtook, which later work cannot revive", async () => {
   const t = await ownerTurns();

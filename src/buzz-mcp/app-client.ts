@@ -30,6 +30,8 @@ export function appClient(
     /** Reject operations after the owning turn or community has ended. */
     check?(): void;
     signal?: AbortSignal;
+    /** Exact request cancellation exposed to added tools. */
+    callSignal?: AbortSignal;
     protectionContext?(): Promise<unknown>;
     /** The runtime reviews each tool call itself before Buzz dispatches it. */
     nativeToolGate?: boolean;
@@ -56,6 +58,7 @@ export function appClient(
     return result;
   };
   return {
+    ...(options.callSignal ? { signal: options.callSignal } : {}),
     ...(agent.protection
       ? {
           protect: async (

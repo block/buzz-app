@@ -574,6 +574,7 @@ function fixture(
     args: unknown,
     index = starts().length - 1,
     overrides = {},
+    answerAfter?: Promise<unknown>,
   ) => {
     const threadId = (
       starts()[index]?.params as { threadId: string } | undefined
@@ -593,6 +594,7 @@ function fixture(
         ...overrides,
       },
     });
+    if (answerAfter) await answerAfter;
     await vi.waitFor(
       () =>
         expect(sent.some((wire) => wire.id === id && !wire.method)).toBe(true),
@@ -4426,11 +4428,17 @@ it.each([false, true])(
       started.resolve();
       return late ? gate.promise : child;
     });
-    const reading = f.tool("send", {
-      audience: "everyone",
-      path: "answer.txt",
-      final: true,
-    });
+    const reading = f.tool(
+      "send",
+      {
+        audience: "everyone",
+        path: "answer.txt",
+        final: true,
+      },
+      undefined,
+      {},
+      gate.promise,
+    );
     await started.promise;
     f.interrupt();
     try {
@@ -4568,6 +4576,98 @@ it("always offers the attention tools, on search, keeps the thread when attentio
   expect(JSON.stringify(off)).toContain("Attention is off");
   await f.complete(1);
 });
+
+it.each(["complete", "stop-external", "stop-publish"])(
+  "keeps an added tool bound to its request across a wait: %s",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const stop = outcome !== "complete";
+    const f = fixture();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const signals: AbortSignal[] = [];
+    f.added.push({
+      name: "notes_write",
+      description: "Write a note.",
+      inputSchema: { type: "object" },
+      async call(client, _context, args) {
+        if (args.wait) entered.resolve();
+        if (!client.signal) throw new Error("No request cancellation signal");
+        const signal = client.signal;
+        signals.push(signal);
+        if (args.wait) {
+          await release.promise;
+        }
+        if (outcome !== "stop-publish") signal.throwIfAborted();
+        await client.publish({ kind: 1, content: String(args.text), tags: [] });
+        return "saved";
+      },
+    });
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await f.runtime.run({ ...f.delivery("write"), interruptible });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.emit({
+      id: "held-note",
+      method: "item/tool/call",
+      params: {
+        threadId: (f.starts()[0]?.params as { threadId: string } | undefined)
+          ?.threadId,
+        turnId: "turn-1",
+        namespace: "buzz",
+        callId: "held-note",
+        tool: "notes_write",
+        arguments: { wait: true, text: "first" },
+      },
+    });
+    try {
+      await entered.promise;
+      expect(signals[0]?.aborted).toBe(false);
+      if (stop) {
+        const accepted = deferred<void>();
+        f.held.set("turn/interrupt", accepted.promise);
+        const stopping = interruptible.mock.calls[0]?.[0]();
+        try {
+          // Stop fences the callback before the process answers it.
+          expect(signals[0]?.aborted).toBe(true);
+        } finally {
+          accepted.resolve();
+        }
+        await stopping;
+        await vi.waitFor(() =>
+          expect(
+            f.sent.some(
+              (wire) => wire.method === "thread/backgroundTerminals/list",
+            ),
+          ).toBe(true),
+        );
+        await vi.advanceTimersByTimeAsync(1_000);
+        await f.runtime.run(f.delivery("write again"));
+        await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+        expect(
+          JSON.stringify(await f.tool("notes_write", { text: "next" })),
+        ).toContain("saved");
+        expect(signals[1]?.aborted).toBe(false);
+      }
+    } finally {
+      release.resolve();
+    }
+    await vi.waitFor(() =>
+      expect(
+        f.sent.some((wire) => wire.id === "held-note" && !wire.method),
+      ).toBe(true),
+    );
+    const reply = JSON.stringify(
+      f.sent.find((wire) => wire.id === "held-note" && !wire.method),
+    );
+    expect(reply).toContain(stop ? "The owner stopped the turn" : "saved");
+    expect(
+      f.publish.mock.calls.map(
+        ([event]) => (event as { content: string }).content,
+      ),
+    ).toEqual(stop ? ["next"] : ["first"]);
+    await f.complete(undefined, "");
+  },
+);
 
 it("offers the tools plugins add, runs them as the agent here, and starts a new thread when they change", async () => {
   const f = fixture();

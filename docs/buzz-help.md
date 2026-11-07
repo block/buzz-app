@@ -803,6 +803,8 @@ available rather than silently discarding it.
   the agent’s activity or **Stop** the running request. The live indicator
   keeps its controls while recorded updates are visible. Stop availability
   depends on the agent type.
+  For native Claude and Codex, Stop also cancels pending plugin tool calls
+  that use the host signal. It cannot undo a write already sent.
 - Agent-to-agent messages stay in the conversation as collapsed history after
   work finishes or you reopen a thread. Expand them to read dispatches, handoffs,
   and results. The working indicator shows current activity separately.

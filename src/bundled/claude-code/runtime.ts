@@ -1404,6 +1404,7 @@ export class ClaudeRuntime {
             memories: (slug) => this.memories(agent, slug),
             remembered: () => this.forget(agent),
             signal,
+            callSignal: signal,
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};

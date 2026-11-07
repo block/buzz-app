@@ -1069,6 +1069,7 @@ it("labels bare message links as main's byline does, through the shared author l
   const OTHER = "8".repeat(64);
   const url = `buzz://message?channel=design&id=${LINKED}`;
   const other = `buzz://message?channel=design&id=${OTHER}`;
+  let generation = 0;
   // The linked channel is listed and confirmed; "dm" or Solo would keep the
   // existing presentation, so neither is named.
   const design: ChannelSummary = {
@@ -1108,7 +1109,12 @@ it("labels bare message links as main's byline does, through the shared author l
       subscribe: () => () => {},
       snapshot: () => 0,
     },
-    profiles: { ...h.session.profiles, ensure: vi.fn(async () => {}) },
+    profiles: {
+      ...h.session.profiles,
+      ensure: vi.fn(async () => {}),
+      generation: () => generation,
+      evictions: () => 0,
+    },
     channels: {
       ...h.session.channels,
       list: () => ({ ...h.session.channels.list(), channels: [design, solo] }),
@@ -1228,4 +1234,40 @@ it("labels bare message links as main's byline does, through the shared author l
     [url]: "Ada in #design",
     [other]: "Ada in #design",
   });
+
+  // The renderer's eligibility, not the raw text: `[url](url)` and `<url>`
+  // read as bare links and take the byline; a URL in code never starts a
+  // read, nor holds a slot. Markdown the body shows as plain text has none.
+  const CODED = "7".repeat(64);
+  const coded = `buzz://message?channel=design&id=${CODED}`;
+  h.snapshot.current = {
+    ...h.snapshot.current,
+    root: {
+      ...root(),
+      content: `[${url}](${url}) <${other}> \`${coded}\`\n\n\`\`\`\n${coded}\n\`\`\``,
+    },
+  };
+  expect(thread.snapshot().root?.linkLabels).toEqual({
+    [url]: "Ada in #design",
+    [other]: "Ada in #design",
+  });
+  await Promise.resolve();
+  expect(reads.has(CODED)).toBe(false);
+
+  // Profiles follow the directory's invalidation contract: ensured once per
+  // author while shown, again after a cache clear.
+  // (Once when first labelled; once more when its links returned after
+  // "No links" dropped the author from the shown set.)
+  const ensured = vi.mocked(session.profiles.ensure).mock.calls.length;
+  thread.snapshot();
+  expect(session.profiles.ensure).toHaveBeenCalledTimes(ensured);
+  generation = 1;
+  thread.snapshot();
+  expect(session.profiles.ensure).toHaveBeenCalledTimes(ensured + 1);
+  expect(session.profiles.ensure).toHaveBeenLastCalledWith(
+    [AUTHOR],
+    "background",
+  );
+  thread.snapshot();
+  expect(session.profiles.ensure).toHaveBeenCalledTimes(ensured + 1);
 });

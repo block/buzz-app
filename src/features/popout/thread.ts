@@ -19,6 +19,12 @@ import { currentActivity } from "../agents/current-activity";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { linkedAuthors } from "../conversation/linked-message";
 import { messageLinkParts } from "../messages/message-link-parts";
+import {
+  isLiteralMarkdownContext,
+  prepareMarkdown,
+  type LiteralRange,
+} from "../messages/markdown-preparation";
+import { scanMarkdown } from "../relay/message-content";
 import { parseBuzzLink } from "../navigation/buzz-links";
 
 const bytes = (value: string) => new TextEncoder().encode(value).length;
@@ -188,6 +194,7 @@ export function createPopoutThread(
   const linksWanted = new Map<string, () => void>();
   const MAX_LINKS = 64;
   const profilesEnsured = new Set<string>();
+  let profilesEpoch = "";
   let thread: Source | undefined;
   try {
     thread = rootId
@@ -222,30 +229,89 @@ export function createPopoutThread(
     linkAuthors.subscribe(notify),
     session.names?.subscribe(notify),
   ];
-  /** Bare `buzz://message` links in a row's text, as main's byline reads
-   * them: a labelled link keeps its label and is never looked up. */
-  function messageLinks(content: string) {
-    const links: { url: string; channelId: string; messageId: string }[] = [];
-    for (const part of messageLinkParts(content)) {
-      if (!part.url || part.label !== undefined) continue;
-      const parsed = parseBuzzLink(part.url);
+  type MessageLinkRef = { url: string; channelId: string; messageId: string };
+  /** Literal contexts the renderer never links in: code, HTML, images,
+   * definitions. Links themselves are considered by their label. */
+  function codeRanges(content: string): LiteralRange[] {
+    const ranges: LiteralRange[] = [];
+    const pending = [scanMarkdown(content).tree];
+    while (pending.length) {
+      const node = pending.pop();
+      if (!node) continue;
+      if (
+        isLiteralMarkdownContext(node.type) &&
+        node.type !== "link" &&
+        node.type !== "linkReference"
+      ) {
+        const start = node.position?.start.offset;
+        const end = node.position?.end.offset;
+        if (start !== undefined && end !== undefined)
+          ranges.push({ start, end });
+        continue;
+      }
+      pending.push(...(node.children ?? []));
+    }
+    return ranges;
+  }
+  /** Message links a row's rendered body shows as links, as `MessageMarkdown`
+   * decides: none for a body it shows as plain text; none inside code, HTML,
+   * images or definitions; a bare URL, `<url>` or `[url](url)` is looked up
+   * (the renderer treats a label equal to its URL as none); any other label
+   * stays the label. Keyed by the URL the renderer hands its link. */
+  function messageLinks(content: string): MessageLinkRef[] {
+    const prepared = prepareMarkdown(content);
+    if (prepared.kind === "plain") return [];
+    const literals = codeRanges(prepared.content);
+    const links: MessageLinkRef[] = [];
+    const consider = (start: number, end: number, url: string) => {
+      if (literals.some((range) => start < range.end && end > range.start))
+        return;
+      const parsed = parseBuzzLink(url);
       if (parsed?.format === "legacy" && parsed.messageId)
         links.push({
-          url: part.url,
+          url,
           channelId: parsed.channelId,
           messageId: parsed.messageId,
         });
-    }
+    };
+    messageLinkParts(
+      prepared.content,
+      (start, end, label, url) => {
+        if (label === url) consider(start, end, url);
+      },
+      (start, end, url) => {
+        // Labelled links report through both callbacks; only bare ones here.
+        if (!prepared.content.startsWith("[", start)) consider(start, end, url);
+      },
+    );
     return links;
   }
+  // Rows keep their text between snapshots; parse each body once while shown.
+  let linkCache = new Map<string, MessageLinkRef[]>();
+  const linksOf = (row: ChannelMessage) => {
+    let links = linkCache.get(row.content);
+    if (!links) {
+      links = messageLinks(row.content);
+      linkCache.set(row.content, links);
+    }
+    return links;
+  };
   /** Hold lookups for the links shown now, within the bound; links that left
-   * the projection release theirs first. */
+   * the projection release theirs first. Profile requests for linked authors
+   * follow the directory's invalidation contract: made again after a cache
+   * clear (`generation`) or eviction (`evictions`), and only for authors of
+   * links shown now. */
   function observeLinks(rows: readonly ChannelMessage[]) {
     if (disposed) return;
-    const shown = new Map<string, { channelId: string; messageId: string }>();
-    for (const row of rows)
-      for (const link of messageLinks(row.content))
+    const previous = linkCache;
+    linkCache = new Map();
+    const shown = new Map<string, MessageLinkRef>();
+    for (const row of rows) {
+      const links = previous.get(row.content) ?? messageLinks(row.content);
+      linkCache.set(row.content, links);
+      for (const link of links)
         shown.set(`${link.channelId}:${link.messageId}`, link);
+    }
     for (const [key, release] of linksWanted)
       if (!shown.has(key)) {
         release();
@@ -257,6 +323,18 @@ export function createPopoutThread(
       if (!linkedChannel(link.channelId)) continue;
       linksWanted.set(key, linkAuthors.want(link.channelId, link.messageId));
     }
+    const epoch = `${session.profiles.generation?.() ?? 0}:${session.profiles.evictions?.() ?? 0}`;
+    if (epoch !== profilesEpoch) {
+      profilesEpoch = epoch;
+      profilesEnsured.clear();
+    }
+    const authors = new Set<string>();
+    for (const key of shown.keys()) {
+      const author = linkAuthors.get(key);
+      if (author && !author.workflow) authors.add(author.id);
+    }
+    for (const id of profilesEnsured)
+      if (!authors.has(id)) profilesEnsured.delete(id);
   }
   /** The channel a byline names: listed, confirmed, not a DM or Solo chat. */
   function linkedChannel(id: string) {
@@ -270,7 +348,7 @@ export function createPopoutThread(
   function linkLabels(row: ChannelMessage): Record<string, string> | undefined {
     let labels: Record<string, string> | undefined;
     let count = 0;
-    for (const link of messageLinks(row.content)) {
+    for (const link of linksOf(row)) {
       // The native row takes at most 64 labels of bounded URLs.
       if (count >= MAX_LINKS) break;
       if (bytes(link.url) > 8192) continue;
@@ -280,7 +358,7 @@ export function createPopoutThread(
       let name = "";
       if (author.workflow) name = "Workflow";
       else {
-        if (!profilesEnsured.has(author.id) && profilesEnsured.size < 256) {
+        if (!profilesEnsured.has(author.id)) {
           profilesEnsured.add(author.id);
           void session.profiles
             .ensure([author.id], "background")

@@ -132,7 +132,9 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   await screen.findByRole("button", { name: "Set" });
   expect(screen.getAllByText("Anthropic API key")).toHaveLength(1);
   expect(
-    screen.getByText("Claude requires an API key to connect to your account."),
+    screen.getByText(
+      "Claude needs your Claude account or an API key to connect.",
+    ),
   ).toBeVisible();
   expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
   const add = await connectKey(user);
@@ -152,7 +154,14 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
     "aria-disabled",
     "true",
   );
-  expect(spawn).not.toHaveBeenCalled();
+  // Only the lookup for a Claude account, which needs no key.
+  expect(
+    vi
+      .mocked(spawn)
+      .mock.calls.every(
+        ([, options]) => options?.args?.join(" ") === "auth status --json",
+      ),
+  ).toBe(true);
   await user.type(add, "sk-ant-first");
   await user.click(screen.getByRole("button", { name: "Save" }));
   await savedKey();
@@ -419,12 +428,16 @@ it("treats a credential read failure as unknown and offers retry", async () => {
   native.invoke.mockImplementationOnce(() => pending);
   native.invoke.mockImplementationOnce(() => pending);
   fixture();
-  expect(screen.queryByText(/Claude requires an API key/)).toBeNull();
+  expect(
+    screen.queryByText(/Claude needs your Claude account or an API key/),
+  ).toBeNull();
   await act(async () => reject("Secure storage is unavailable"));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Secure storage is unavailable",
   );
-  expect(screen.queryByText(/Claude requires an API key/)).toBeNull();
+  expect(
+    screen.queryByText(/Claude needs your Claude account or an API key/),
+  ).toBeNull();
   expect(
     screen.queryByRole("button", { name: "API key actions" }),
   ).not.toBeInTheDocument();

@@ -60,10 +60,9 @@ export function ClaudeSettings({
     setChecking(true);
     setReadError("");
     try {
-      const account = await setup.auth.check();
-      if (request.current === current) {
-        setConfigured(account !== undefined);
-      }
+      await setup.auth.check();
+      // Claude may run on the account without a key; this group is the key's.
+      if (request.current === current) setConfigured(setup.auth.found.key);
     } catch (error) {
       if (request.current === current) {
         setReadError(String(error));
@@ -133,7 +132,7 @@ export function ClaudeSettings({
         title="Claude"
         subtitle={
           configured === false && !checking && !readError
-            ? "Claude requires an API key to connect to your account."
+            ? "Claude needs your Claude account or an API key to connect."
             : "Manage Claude’s credentials on this computer."
         }
       />

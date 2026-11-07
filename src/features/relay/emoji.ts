@@ -83,9 +83,9 @@ export const messageParts = (content: string) =>
   content.split(/(https?:\/\/[^\s<>"`]+)/g);
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
-export function* emojiMatches(
+export function* emojiMatches<T extends { readonly shortcode: string }>(
   content: string,
-  entries: readonly CustomEmoji[],
+  entries: readonly T[],
 ) {
   let end = 0;
   for (const match of content.matchAll(shortcodePattern())) {

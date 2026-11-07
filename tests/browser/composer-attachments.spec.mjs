@@ -482,6 +482,7 @@ test("preparation preserves snapshot/animation and uses lossless WebP for pixel 
   });
   await server.listen();
   try {
+    await server.transformRequest("/src/shared/styles/globals.css");
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`);
     for (const [name, type] of [
       ["still.png", "image/png"],
@@ -1213,6 +1214,7 @@ test("PNG and JPEG preparation uploads metadata-free browser-encoded bytes", asy
   });
   await server.listen();
   try {
+    await server.transformRequest("/src/shared/styles/globals.css");
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`);
     const results = await page.evaluate(async () => {
       const { prepareAttachment } = await import(

@@ -168,7 +168,11 @@ export function currentActivity(
               (!threadRootId || row.threadRootId === threadRootId) &&
               (row.state === "working" || row.state === "waiting"),
           )
-          .map((row) => row.threadRootId),
+          .map((row) =>
+            row.soloChat && !row.thread && !threadRootId
+              ? null
+              : row.threadRootId,
+          ),
       ),
     ];
     agents.set(agent, {

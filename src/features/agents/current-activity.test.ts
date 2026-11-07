@@ -273,41 +273,65 @@ it("keeps known thread work out of the channel flow without hiding channel work"
   ).toBe(true);
 });
 
-it("moves channel-started local work into its observed reply thread", () => {
-  const live = {
-    ...base,
-    local: [
-      {
-        scope: "test",
-        agent,
-        channelId: "channel",
-        messageId: root,
-        threadRootId: root,
-        state: "working" as const,
-        startedAt: 1,
-      },
-    ],
-  };
+it.each([false, true])(
+  "moves channel-started local work into its observed reply thread (Solo: %s)",
+  (soloChat) => {
+    const live = {
+      ...base,
+      local: [
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          messageId: root,
+          threadRootId: root,
+          state: "working" as const,
+          startedAt: 1,
+          ...(soloChat ? { soloChat: true as const } : {}),
+        },
+      ],
+    };
+    expect(
+      currentActivity(
+        live,
+        [],
+        new Set(),
+        "channel",
+        undefined,
+        false,
+        new Set([root]),
+      ).size,
+    ).toBe(0);
+    expect(
+      currentActivity(
+        live,
+        [],
+        new Set(),
+        "channel",
+        root,
+        false,
+        new Set([root]),
+      ).get(agent)?.roots,
+    ).toEqual([root]);
+  },
+);
+
+it("keeps top-level Solo requests in the channel conversation", () => {
   expect(
-    currentActivity(
-      live,
-      [],
-      new Set(),
-      "channel",
-      undefined,
-      false,
-      new Set([root]),
-    ).size,
-  ).toBe(0);
-  expect(
-    currentActivity(
-      live,
-      [],
-      new Set(),
-      "channel",
-      root,
-      false,
-      new Set([root]),
-    ).has(agent),
-  ).toBe(true);
+    project({
+      ...base,
+      local: [
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          threadRootId: root,
+          messageId: root,
+          state: "working",
+          startedAt: now,
+          soloChat: true,
+        },
+      ],
+    }).get(agent)?.roots,
+  ).toEqual([null]);
 });

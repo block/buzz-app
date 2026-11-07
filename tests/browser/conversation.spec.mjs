@@ -127,6 +127,7 @@ test("independent packed author consumer and native-installed contribution survi
       server: { host: "127.0.0.1", port: 0, strictPort: false },
     });
     await server.listen();
+    await server.transformRequest("/src/shared/styles/globals.css");
     const errors = watchPageErrors(page);
     await page.route("**/proof-media/**", (route) =>
       route.fulfill({

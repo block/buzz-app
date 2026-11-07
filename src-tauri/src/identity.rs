@@ -1,8 +1,8 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
-use buzz_credential_store as credentials;
 use buzz_agent_controller::LegacyHumanError;
+use buzz_credential_store as credentials;
 use nostr::{
     event::Event,
     key::{Keys, SecretKey as NostrSecretKey},

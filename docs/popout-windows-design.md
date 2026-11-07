@@ -644,3 +644,53 @@ alternative before continuing.
   read-only; Cmd+W in pop-out; dark/light, narrow, enlarged text, keyboard.
 - Not claimed: Linux/Windows native runs unless executed; browser journeys add
   nothing here and are not planned.
+
+## 11. S2 scope checkpoint — channel, DM and Solo pop-outs (2026-11-05)
+
+Requested by jaw in-thread ("please continue … implement the channel and chat
+pop outs"; Slack screenshots of a channel pop-out drilling into a thread with
+a `<` back control). Same PR as S1 by owner decision.
+
+### Required behavior
+
+- **Open a conversation in a new window**: channel, DM or Solo chat, from the
+  sidebar row menu ("Open in new window") and by **⌘/Ctrl-click** on the row.
+  One window per conversation per connection (reopen focuses it).
+- **Title and header** as Slack: title bar "#channel — Buzz" / "Ada — Buzz";
+  thread frames "Thread in #channel — Buzz"; header names what is shown.
+- **In-window drill-down**: a row's thread affordance ("N replies" / reply in
+  thread) opens that thread **in the same window** with a `<` back control
+  that returns to the conversation (hover-coloured). The window keeps a small
+  back stack; a thread pop-out opened from a message's `⋯` has no stack and
+  still never spawns windows.
+- **Parity** for the conversation frame = everything the thread frame has
+  (reply, reactions, menu actions, handoffs, voice, read state) over the
+  channel timeline, plus day dividers. Draft per conversation shared with main.
+- **Reading**: the conversation frame claims the channel's shown rows; thread
+  frames claim theirs (existing reading owner, per frame).
+
+### Approach
+
+The companion model is unchanged. A window is a stack of **frames**; each
+frame is the existing `(projection, composer owner, reading owner)` triple for
+one target. `createPopoutThread` generalizes to a conversation projection:
+with a root id its source is `session.thread`; without, `session.channels.
+window(channelId)` (top-level rows, membership/huddle rows hidden). New
+companion actions `openThread <rootId>` (push a thread frame for a shown row)
+and `back` (pop). Native: title from the view (`thread` flag), no new commands.
+Entry points reuse the sidebar row menu and the row click handler. Solo chats:
+the timeline projection only; agent reply surfaces specific to Solo are not
+re-created in the companion (named as a gap in help).
+
+### Non-goals (S2)
+
+Canvas/pages/Settings windows; restoring windows after restart; typing
+indicators and member counts in the companion; multiple frames of history
+beyond conversation → thread (one level is what Slack shows); mobile/browser.
+
+### Diff budget (production, excluding tests/docs)
+
+Projection generalization 100–150; frames/navigation in `window.ts` 150–250;
+companion UI (timeline layout, dividers, `<` back, header) 100–200; entry
+points 60–120; native title/DTO 20–40. **Total ≈ 450–750.** Same
+stop-and-show rule as §10.

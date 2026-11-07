@@ -12,6 +12,8 @@ use oauth_callback::OAuthCallbackHost;
 #[cfg(test)]
 mod browser_permissions_tests;
 mod pairing;
+#[cfg(unix)]
+mod quit_signal;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_set_media_suspended, browser_status,
@@ -940,6 +942,8 @@ pub fn run() {
                     })?;
                 }
             }
+            #[cfg(unix)]
+            quit_signal::install(app.handle());
             relay::set_user_agent(&app.package_info().version);
             app.state::<federated_identity::FederatedIdentity>()
                 .watch(app.handle().clone());

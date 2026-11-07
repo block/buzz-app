@@ -842,8 +842,8 @@ function AvatarDraft({
         )}
         {!community && (
           <p className="text-body-sm text-subtle">
-            Select a community in the sidebar to upload an image or emoji. Your
-            local default can use a public HTTPS image URL.
+            Select a community to upload an image or emoji. Your local default
+            can use a public HTTPS image URL.
           </p>
         )}
         {!(mode === "background" && customColorOpen) && (

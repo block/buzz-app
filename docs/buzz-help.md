@@ -273,7 +273,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
-- **Activity** (the bell in the sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
+- **Activity** (the bell in the app dock) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
@@ -294,7 +294,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   later. It may also be absent when unread evidence is incomplete, or when read
   intent or the read evidence needed to locate the boundary changes before it is
   established.
-- **Communities** have their own channels, people, and agents. Switching
+- **Communities** have their own channels, people, and agents. Switch with
+  the community switcher at the bottom of the dock; in **Personal space**,
+  Messages offers **Choose a community**, which opens it. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
   the person asking may have different channel access. A link alone never

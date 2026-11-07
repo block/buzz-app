@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { SettingsCardsService } from "../settings/service";
@@ -1271,6 +1271,58 @@ it("shows only the active community until opened and routes creation through Hos
       screen.queryByRole("dialog", { name: "Switch community" }),
     ).toBeNull(),
   );
+});
+
+it("returns focus to the trigger when the host reopens the switcher after a choice navigated", async () => {
+  const h = harness();
+  function Host() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        {/* The shell's content, which focus follows after a choice navigates. */}
+        <main id="main-content" tabIndex={-1} />
+        <button type="button" onClick={() => setOpen(true)}>
+          Choose a community
+        </button>
+        <CommunityPicker
+          communities={h.communities}
+          onOpenTarget={h.onOpenTarget}
+          settingsCards={{
+            subscribe: () => () => {},
+            has: (key) => key === "block.builderlab/login",
+          }}
+          open={open}
+          onOpenChange={setOpen}
+        />
+      </>
+    );
+  }
+  rtlRender(<Host />, { wrapper: ToastProvider });
+  const user = userEvent.setup();
+  await user.click(switcher());
+  await user.click(
+    await screen.findByRole("button", { name: "Create community" }),
+  );
+  expect(h.onOpenTarget).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "block.builderlab/login",
+  });
+  await waitFor(() =>
+    expect(document.getElementById("main-content")).toHaveFocus(),
+  );
+
+  // The host opens the switcher without its trigger; a dismissal without a
+  // choice still returns focus to the trigger, not to the earlier destination.
+  await user.click(screen.getByRole("button", { name: "Choose a community" }));
+  await screen.findByRole("dialog", { name: "Switch community" });
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Switch community" }),
+    ).toBeNull(),
+  );
+  await waitFor(() => expect(switcher()).toHaveFocus());
 });
 
 it("shares discovered community artwork with an already-open Settings address without another read", async () => {

@@ -268,6 +268,17 @@ function setup() {
 const recipient = () =>
   screen.getByRole("combobox", { name: "Message recipients" });
 const send = () => screen.getByRole("button", { name: "Send message" });
+/** Space completes only once the search for the typed name has settled. */
+async function searched(t: ReturnType<typeof setup>, query: string) {
+  await waitFor(() =>
+    expect(t.directMessages.people).toHaveBeenLastCalledWith(
+      query,
+      1,
+      expect.any(AbortSignal),
+    ),
+  );
+  await act(async () => {});
+}
 
 it("finds a hosted agent by its owned name and sends without local custody", async () => {
   const t = setup();
@@ -592,6 +603,7 @@ it("completes with Space only for one exact name, and with Tab", async () => {
   // Exact without accents, and no longer name continues it: Space picks.
   await t.user.type(recipient(), "jose");
   await screen.findByRole("option", { name: "Josefa" });
+  await searched(t, "jose");
   await t.user.keyboard(" ");
   expect(
     await screen.findByRole("button", { name: "Remove José" }),
@@ -1043,6 +1055,7 @@ it("finds and completes a managed agent by its own name when its profile name di
   ).toBeVisible();
   expect(screen.queryByRole("option", { name: "Person 1" })).toBeNull();
   // Space completes the agent's own name, as it does a profile name.
+  await searched(t, "jose");
   await t.user.keyboard(" ");
   expect(
     await screen.findByRole("button", { name: "Remove Person 2" }),
@@ -1261,28 +1274,26 @@ it("preserves recipients and draft after opening fails and across remount", asyn
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
 });
 
-it("filters the completed directory immediately without loading or searching again", async () => {
+it("filters the completed directory immediately and still searches by name", async () => {
   const t = setup();
   t.mount();
   await screen.findByRole("option", { name: "Person 1" });
   const requests = t.directMessages.people.mock.calls.length;
-  fireEvent.change(recipient(), { target: { value: "person 3" } });
-  expect(screen.getAllByRole("option")).toHaveLength(1);
-  expect(screen.getByRole("option", { name: "Person 3" })).toBeVisible();
-  expect(
-    screen.queryByRole("status", { name: "Loading people" }),
-  ).not.toBeInTheDocument();
-  fireEvent.change(recipient(), { target: { value: "Nobody" } });
-  expect(screen.getByText("No matching people.")).toBeVisible();
   // Drive the remote-search boundary without depending on runner speed.
   vi.useFakeTimers();
-  fireEvent.change(recipient(), { target: { value: "Still nobody" } });
   try {
+    fireEvent.change(recipient(), { target: { value: "person 3" } });
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("option", { name: "Person 3" })).toBeVisible();
+    // Browsing lists profiles only; a person known only by a verified name
+    // needs the search.
     await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   } finally {
     vi.useRealTimers();
   }
-  expect(t.directMessages.people).toHaveBeenCalledTimes(requests);
+  expect(t.directMessages.people.mock.calls.slice(requests)).toEqual([
+    ["person 3", 1, expect.any(AbortSignal)],
+  ]);
 });
 
 it("searches again for people added after a completed directory when New message reopens", async () => {
@@ -1993,6 +2004,26 @@ it.each([
     }
   },
 );
+
+it("finds a person with no profile by their verified name and names them from it", async () => {
+  const t = setup();
+  // The relay found them by a verified name alone: no profile name to show.
+  const unnamed = {
+    pubkey: aleksandr.pubkey,
+    name: aleksandr.pubkey.slice(0, 10),
+    nameIsFallback: true as const,
+  };
+  t.directMessages.people.mockImplementation(async (query) => ({
+    people: query.trim() ? [unnamed] : [],
+    hasMore: false,
+  }));
+  verifying(t, new Map([[aleksandr.pubkey, petrov]]));
+  t.mount();
+  await waitFor(() => expect(recipient()).toBeEnabled());
+  await t.user.type(recipient(), "petrov");
+  await t.user.click(await screen.findByRole("option", petrovRow));
+  await screen.findByRole("button", { name: "Remove Aleksandr" });
+});
 
 it("relabels a recipient whose verification answers late, keeping a failed send's error", async () => {
   const t = setup();

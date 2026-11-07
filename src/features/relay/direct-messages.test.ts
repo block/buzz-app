@@ -252,6 +252,65 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
   }
 });
 
+it("finds a person with only a relay-verified name, never by a forged head", async () => {
+  const viewer = keypair(),
+    relay = keypair(),
+    named = keypair(),
+    unnamed = keypair(),
+    stranger = keypair();
+  const head = (author: ReturnType<typeof keypair>, subject: string) =>
+    signed(author, {
+      kind: 30382,
+      created_at: 1_000_000,
+      content: "",
+      tags: [
+        ["d", subject],
+        ["p", subject],
+        ["active", "true"],
+        ["display_name", "Gabi"],
+        ["username", "glilienfeld"],
+        ["full_name", "Gabi Lilienfeld"],
+        ["issuer_label", "Example"],
+        ["verified_at", "1000000"],
+      ],
+    });
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async () => [],
+    searchProfiles: async () =>
+      [
+        profile(named, { name: "Gabi Zandi" }),
+        head(relay, unnamed.pubkey),
+        // Only the relay key verifies: another signer's head finds nobody.
+        head(stranger, keypair().pubkey),
+      ].map((event) => eventDto(event)),
+    verifiedProfiles: {
+      pubkey: relay.pubkey,
+      multipleIssuers: false,
+      searchable: true,
+    },
+  });
+  try {
+    const page = await owner.session.directMessages.people(
+      "gabi",
+      1,
+      new AbortController().signal,
+    );
+    expect(page.people).toEqual([
+      expect.objectContaining({ pubkey: named.pubkey, name: "Gabi Zandi" }),
+      {
+        pubkey: unnamed.pubkey,
+        name: unnamed.pubkey.slice(0, 10),
+        nameIsFallback: true,
+      },
+    ]);
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([
   ["hex", (pubkey: string) => pubkey],
   ["uppercase hex", (pubkey: string) => pubkey.toUpperCase()],

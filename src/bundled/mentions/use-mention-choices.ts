@@ -28,6 +28,7 @@ import {
 import { useListedChannel } from "../../features/relay/listed-channel";
 import { useNamesRevision } from "../../features/identity-names/react";
 import {
+  hasUnnamed,
   useVerifiedNames,
   withVerifiedNames,
   type VerifiedPerson,
@@ -500,11 +501,13 @@ export function useMentionChoices(
       });
     }
   }
+  // As in the pending resolver, someone still unnamed keeps Space undecided.
   const complete =
     !directory.loading &&
     !directory.error &&
     !directory.more &&
-    !directory.tooShort;
+    !directory.tooShort &&
+    !hasUnnamed(searched, query);
   return useMemo(() => {
     const evidence = { pending, missingNames, complete };
     const live = byKey(candidates);

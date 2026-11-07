@@ -2755,14 +2755,14 @@ it("does not answer a name search from the listing read for an empty query", asy
   );
   // The listing is a prefix of every query but is not a name search: a
   // member who joins or renames after it must still be found by name.
-  view.rerender(complete("mi"));
+  view.rerender(complete("mir"));
   expect(last()?.status).toBe("Searching community…");
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(people).toHaveBeenCalledTimes(2);
-  expect(people).toHaveBeenLastCalledWith("mi", 1, expect.any(AbortSignal));
+  expect(people).toHaveBeenLastCalledWith("mir", 1, expect.any(AbortSignal));
   expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
   // The finished name search still answers the queries extending it.
-  view.rerender(complete("mir"));
+  view.rerender(complete("mira"));
   expect(last()?.status).toBeUndefined();
   expect(last()?.items.map((item) => item.label)).toEqual(["Mira Everly"]);
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
@@ -2827,15 +2827,15 @@ it("scopes a retry to its query: later queries derive from a cached prefix page 
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(people).toHaveBeenCalledTimes(2);
   expect(last()?.status).toBe(failed);
-  // Other consumers of the session settle complete `lu` and `mira` pages and
+  // Other consumers of the session settle complete `luc` and `mira` pages and
   // then an empty `zed` search meanwhile (a read clears the refuted prefix,
   // so the empty search comes last).
   const signal = new AbortController().signal;
-  await fetchMentionDirectoryPage(session, "lu", signal);
+  await fetchMentionDirectoryPage(session, "luc", signal);
   await fetchMentionDirectoryPage(session, "mira", signal);
   await fetchMentionDirectoryPage(session, "zed", signal);
   expect(people).toHaveBeenCalledTimes(5);
-  // The retry was `mira e`'s. `lucy` is answered from the `lu` page on the
+  // The retry was `mira e`'s. `lucy` is answered from the `luc` page on the
   // keystroke, and `zedd` is refuted by the empty `zed` search; neither reads.
   view.rerender(complete("lucy"));
   expect(last()?.status).toBeUndefined();
@@ -3609,7 +3609,12 @@ it.each([
   },
 );
 type DirectoryPage = {
-  people: { pubkey: string; name: string; isAgent?: true }[];
+  people: {
+    pubkey: string;
+    name: string;
+    isAgent?: true;
+    nameIsFallback?: true;
+  }[];
   hasMore: boolean;
 };
 /** Other members map to a profile name, or null for a profile still loading. */
@@ -3851,6 +3856,35 @@ it("Space selects someone outside the channel by a pasted npub once the director
     await waitFor(() => expect(h.result()?.spaceId).toBe(outsideJose));
     expect(h.result()?.items.map((item) => item.id)).toEqual([outsideJose]);
     expect(h.canSpace(outsideJose)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+it("Space selects a nameless owner by a pasted npub in the chooser and the pending resolver", async () => {
+  const query = npubEncode(outsideJose);
+  const h = spaceFixture("Jose", {}, { query });
+  // A kind:0 without a name: the key is the only thing to go on.
+  const nameless = {
+    pubkey: outsideJose,
+    name: outsideJose.slice(0, 10),
+    nameIsFallback: true as const,
+  };
+  try {
+    await waitFor(() =>
+      expect(h.people).toHaveBeenCalledWith(query, 1, expect.anything()),
+    );
+    await h.finish({ people: [nameless], hasMore: false });
+    await waitFor(() => expect(h.result()?.spaceId).toBe(outsideJose));
+    expect(h.canSpace(outsideJose)).toBe(true);
+    // The resolver reads the same cached page.
+    await expect(
+      resolveSpaceMention(
+        h.session,
+        { channelId: "parent", selected: [] },
+        query,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ pubkey: outsideJose });
   } finally {
     h.dispose();
   }
@@ -4291,6 +4325,165 @@ it("the resolver reads a page the chooser already settled from the shared cache"
     h.dispose();
   }
 });
+const zelda = "c".repeat(64);
+const verifiedJose = {
+  displayName: "Jose",
+  username: "jose",
+  issuerLabel: "Example",
+  verifiedAt: 1,
+  status: "checked" as const,
+  multipleIssuers: false,
+};
+it.each([
+  ["selects them by it", [outsideJose], {}, true],
+  ["returns to prose while it is unknown", [], {}, false],
+  // Zelda has a profile but is verified as Jose too: a namesake.
+  [
+    "keeps a namesake with a profile ambiguous",
+    [outsideJose, zelda],
+    {},
+    false,
+  ],
+  // Zelda's profile name is Jose: unnamed, the other Jose may be a namesake.
+  [
+    "returns to prose when the read fails",
+    [outsideJose],
+    { fails: true, zeldaIsJose: true },
+    false,
+  ],
+  [
+    "returns to prose while a possible namesake is unknown",
+    [],
+    { zeldaIsJose: true },
+    false,
+  ],
+  [
+    "lets a newer shared head that withdrew it win",
+    [outsideJose],
+    { held: true },
+    false,
+  ],
+  [
+    "lets a shared head that arrives during the read win",
+    [outsideJose],
+    { arrives: true },
+    false,
+  ],
+] as [
+  string,
+  readonly string[],
+  {
+    held?: boolean;
+    arrives?: boolean;
+    fails?: boolean;
+    zeldaIsJose?: boolean;
+  },
+  boolean,
+][])(
+  "the resolver looks up the verified names on its page, and %s",
+  async (_case, answered, {
+    held = false,
+    arrives = false,
+    fails = false,
+    zeldaIsJose = false,
+  }, selects) => {
+    // The chooser is on other text, so only the resolver names this page.
+    const h = spaceFixture("Member", {}, { query: "xyz" });
+    try {
+      const authority = { pubkey: "8".repeat(64), multipleIssuers: false };
+      let revision = 0;
+      let landed = false;
+      const verified = vi.fn(async (pubkeys: readonly string[]) => {
+        if (fails) throw new Error("offline");
+        if (arrives) {
+          revision += 1;
+          landed = true;
+        }
+        return {
+          authority,
+          profiles: new Map(
+            pubkeys
+              .filter((pubkey) => answered.includes(pubkey))
+              .map((pubkey) => [pubkey, verifiedJose]),
+          ),
+        };
+      });
+      Object.assign(h.session.profiles, {
+        verifiedAuthority: () => authority,
+        verifiedRevision: () => revision,
+        verifiedHeld: (pubkey: string) => pubkey === outsideJose && held,
+        verifiedSince: (pubkey: string, since: number) =>
+          pubkey === outsideJose && landed && revision > since,
+      });
+      Object.assign(h.session.directMessages, { verified });
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+      const pending = resolver(h);
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(2));
+      await h.finish({
+        people: [
+          {
+            pubkey: outsideJose,
+            name: outsideJose.slice(0, 10),
+            nameIsFallback: true,
+          },
+          { pubkey: zelda, name: zeldaIsJose ? "Jose" : "Zelda" },
+        ],
+        hasMore: false,
+      });
+      const outcome = await pending;
+      if (selects)
+        expect(outcome).toMatchObject({ pubkey: outsideJose, name: "Jose" });
+      else expect(outcome).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+it.each([
+  ["selects a lone exact name", "none", false],
+  ["keeps Space undecided while a read is pending", "pending", true],
+  ["keeps Space undecided when a read fails", "fails", true],
+] as const)(
+  "the chooser, with someone found by a verified name alone on its page, %s",
+  async (_case, read, unnamedOnPage) => {
+    const h = spaceFixture("Member");
+    try {
+      const authority = { pubkey: "8".repeat(64), multipleIssuers: false };
+      Object.assign(h.session.profiles, {
+        verifiedAuthority: () => authority,
+      });
+      Object.assign(h.session.directMessages, {
+        verified: vi.fn(() =>
+          read === "fails"
+            ? Promise.reject(new Error("offline"))
+            : new Promise<never>(() => {}),
+        ),
+      });
+      await waitFor(() => expect(h.people).toHaveBeenCalledTimes(1));
+      await h.finish({
+        people: [
+          ...(unnamedOnPage
+            ? [
+                {
+                  pubkey: outsideJose,
+                  name: outsideJose.slice(0, 10),
+                  nameIsFallback: true as const,
+                },
+              ]
+            : []),
+          { pubkey: zelda, name: "Jose" },
+        ],
+        hasMore: false,
+      });
+      await waitFor(() =>
+        expect(h.result()?.items.some((item) => item.id === zelda)).toBe(true),
+      );
+      expect(h.canSpace(zelda)).toBe(!unnamedOnPage);
+    } finally {
+      h.dispose();
+    }
+  },
+);
 it("the resolver reads a longer name's page out of the complete page for its prefix without another read", async () => {
   const h = spaceFixture("Member");
   try {

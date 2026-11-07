@@ -253,6 +253,7 @@ function community() {
         subscribeList: () => () => {},
       },
       media: (url: string) => url,
+      profiles: { snapshot: () => new Map(), subscribe: () => () => {} },
     } as unknown as RelaySession,
     heads,
     outbox,
@@ -1019,6 +1020,64 @@ it("sends each person a message with one uploaded copy of the agent", async () =
     screen.queryByRole("region", { name: /^Sending to/ }),
   ).not.toBeInTheDocument();
 });
+
+it.each([
+  ["once their verified name is read", true],
+  ["never, while their name is unknown", false],
+])(
+  "offers a person found by a verified name alone %s",
+  async (_case, answers) => {
+    const user = userEvent.setup();
+    const { session, directMessages } = community();
+    const gabi = {
+      pubkey: "9".repeat(64),
+      name: "9".repeat(10),
+      nameIsFallback: true as const,
+    };
+    directMessages.people.mockResolvedValue({
+      people: [bea, gabi] as never,
+      hasMore: false,
+    });
+    const authority = { pubkey: "8".repeat(64), multipleIssuers: false };
+    Object.assign(session.profiles, { verifiedAuthority: () => authority });
+    Object.assign(session.directMessages, {
+      verified: vi.fn(async () => ({
+        authority,
+        profiles: new Map(
+          answers
+            ? [
+                [
+                  gabi.pubkey,
+                  {
+                    displayName: "Gabi",
+                    username: "glilienfeld",
+                    issuerLabel: "Example",
+                    verifiedAt: 1,
+                    status: "checked",
+                    multipleIssuers: false,
+                  },
+                ],
+              ]
+            : [],
+        ),
+      })),
+    });
+    share(session);
+    await choice("Bea");
+    if (answers) {
+      await user.click(await choice("Gabi"));
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      expect(await screen.findByText("Sent Ada to Gabi.")).toBeInTheDocument();
+    } else {
+      await vi.waitFor(() =>
+        expect(session.directMessages.verified).toHaveBeenCalled(),
+      );
+      expect(
+        screen.queryByRole("button", { name: /^9+$/ }),
+      ).not.toBeInTheDocument();
+    }
+  },
+);
 
 it("keeps who it couldn't reach, then confirms their message instead of resending it", async () => {
   const user = userEvent.setup();

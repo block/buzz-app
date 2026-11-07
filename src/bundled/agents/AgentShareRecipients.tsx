@@ -2,6 +2,10 @@
 // viewer belongs to, found with one search as Share access does.
 import { useSyncExternalStore, type Ref } from "react";
 import { usePeople } from "../../features/direct-messages/usePeople";
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+} from "../../features/profiles/useVerifiedNames";
 import type { RelaySession } from "../../features/relay/session";
 import { avatarMedia } from "../../shared/avatar-source";
 import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
@@ -40,15 +44,26 @@ export function AgentShareRecipients({
   onChange(targets: ShareTarget[]): void;
 }) {
   const directory = usePeople(session, query);
+  // Searched people the community verified carry their verified names, as in
+  // New message; one found by a verified name alone waits until it is named.
+  const verified = useVerifiedNames(session, directory.people, {
+    key: query,
+    settled: !directory.loading,
+  });
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
   );
   const picked = new Set(chosen.map((target) => target.id));
   const needle = query.trim().toLowerCase().replace(/^#/, "");
-  const people: ShareTarget[] = directory.people
+  const people: ShareTarget[] = withVerifiedNames(
+    directory.people,
+    verified,
+    session.profiles.snapshot(),
+  )
     .filter(
       (person) =>
+        (!person.nameIsFallback || !!person.profileNames) &&
         !person.isAgent &&
         person.pubkey !== session.viewer &&
         !picked.has(person.pubkey),

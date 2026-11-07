@@ -1,10 +1,9 @@
 import { validDirectMessageParticipants } from "./direct-message-policy";
-import { foldProfiles } from "./profiles";
 import type { ChannelQueries } from "./contracts";
 import type { ReadTransport } from "./transport";
 import type { RelayReader } from "./reader";
 import type { Outbox } from "./outbox";
-import type { ProfileSearch } from "./profile-search";
+import { searchedProfiles, type ProfileSearch } from "./profile-search";
 import type { ProfileQueries } from "./profile-directory";
 import { newer, type RelayEvent } from "./events";
 import { typedPublicKey } from "../../shared/identity/public-key";
@@ -79,12 +78,18 @@ export function createDirectMessages(
             );
       active.throwIfAborted();
       return {
-        people: [...foldProfiles(events)]
+        // A person the search found by a verified name alone has no profile
+        // name; the picker names them from the verified lookup.
+        people: [...searchedProfiles(events, verifiedAuthority())]
           .filter(([pubkey]) => pubkey !== transport?.viewer)
           .map(
-            ([pubkey, { name, username, picture, isAgent, ownerPubkey }]) => ({
+            ([
+              pubkey,
+              { name, nameIsFallback, username, picture, isAgent, ownerPubkey },
+            ]) => ({
               pubkey,
               name,
+              ...(nameIsFallback ? { nameIsFallback } : {}),
               ...(username ? { username } : {}),
               ...(picture ? { picture } : {}),
               ...(isAgent ? { isAgent } : {}),

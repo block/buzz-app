@@ -7168,7 +7168,7 @@ it("unlocks Sign out only after a reveal or copy, the key box, and the wipe phra
   vi.mocked(invoke).mockResolvedValueOnce(null);
   render(<SignOutDialog identity={identity} onClose={() => {}} />);
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
+    expect(screen.getByLabelText("Private key (nsec)")).toHaveFocus(),
   );
   const confirm = () => screen.getByRole("button", { name: /^Sign out/ });
   const haveKey = screen.getByRole("checkbox", { name: "I have my key" });

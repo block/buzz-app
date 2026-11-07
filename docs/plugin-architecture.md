@@ -1966,21 +1966,9 @@ message renderer for messages with a `plugin-request` tag. Two services,
 hold to that feature alone, so asking cannot install or delete another plugin's code
 without the review.
 
-Opening an installed plugin's details checks its remembered folder. A matching
-package shows Up to date in the pane. Local folders are checked every five seconds
-while the pane is open and the app is visible, and again when the app becomes active.
-Checks pause during review or pending management operations. Folder checks resolve
-the saved source by installed plugin ID and return only a revision or build diagnostic,
-without reserving the native import slot. Add can prepare its own preview while a
-folder check is pending. Choosing Update acquires a fresh immutable preview; checks
-never supply installation bytes. A changed package offers
-Update, which opens access review before explicit confirmation. A known update takes
-the prominent action position in both the pane and its list row; Enable/Disable
-moves into their ellipsis menus while Update is available. The row retains the latest
-check result for the installed revision and opens the pane’s review, checking the
-saved source again when the pane reopens. Known Git results remain visible on reopen;
-Git is checked explicitly through a read-only acquisition that never locks or replaces the shared import preview. Choosing
-Update reacquires the Git source with fresh authorization. Only the open pane polls local folders.
+The existing background checker checks eligible saved folder and Git sources at startup and hourly while the app is visible. Manage plugins and plugin details share its retained results; opening either view or focusing the window does not start another check. Details also offers an explicit Check for updates action for saved sources. An unchanged package shows Up to date in the pane, and an available revision offers Update immediately in both the pane and its compact list row, without a freshness label or checking status in the row.
+
+Folder checks resolve the saved source by installed plugin ID and return only a revision or build diagnostic, without reserving the native import slot. Add can prepare its own preview while a folder check is pending. Git checks use a read-only acquisition that never locks or replaces the shared import preview. Choosing Update acquires a fresh immutable preview with fresh authorization and opens access review before explicit confirmation; checks never supply installation bytes. Closing the review without installing retains the available update. Enable/Disable moves into the plugin’s ellipsis menus while Update is available.
 The menus also offer Review access, reusing the import review’s disclosures
 for the installed manifest, and Delete with confirmation. These menus appear only for
 manual/external plugins; bundled plugins keep their Enable/Disable control.
@@ -1988,8 +1976,7 @@ The list row shows no freshness status label. Failed activation shows Retry besi
 unpaused plugin. Retry activates the installed revision after its previous cleanup
 finishes; it does not acquire source files, install a package, or change saved state.
 Package freshness and activation failures are displayed separately. Update uses the same source and candidate path; changing sources
-requires deleting the plugin and adding it again. Git checks remain explicit in the
-pane, using the remembered repository and branch/tag with fresh authorization;
+requires deleting the plugin and adding it again. Git checks use the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
 usernames. [Repository access rules](repository-access.md) select the SSH user and

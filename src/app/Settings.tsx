@@ -53,6 +53,11 @@ import {
   SquaresFourIcon,
   SidebarRightIcon,
 } from "../shared/design-system/icons/index";
+import {
+  sharedPluginUpdateChecks,
+  pluginUpdateAvailable,
+  type PluginUpdateChecks,
+} from "../plugins/update-checks";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
@@ -330,10 +335,10 @@ function PluginDetails({
   onCheckAccess,
   catalog,
   authorizeGit,
-  onUpdateAvailableChange,
   reviewRequested,
   onReviewHandled,
   initialUpdateAvailable,
+  updateChecks,
   holdReview,
   openUpdateSettings = false,
   sections,
@@ -352,10 +357,10 @@ function PluginDetails({
   catalog: Catalog;
   authorizeGit: Parameters<typeof PluginImport>[0]["authorizeGit"];
   onCheckAccess(): void;
-  onUpdateAvailableChange(available: boolean): void;
   reviewRequested: boolean;
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
+  updateChecks: PluginUpdateChecks;
   holdReview: (() => () => void) | undefined;
   openUpdateSettings?: boolean;
   sections: readonly SettingsSection[];
@@ -546,7 +551,7 @@ function PluginDetails({
             key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
             initialUpdateAvailable={initialUpdateAvailable}
             actionTarget={actionTarget}
-            onUpdateAvailableChange={onUpdateAvailableChange}
+            updateChecks={updateChecks}
             reviewRequested={reviewRequested}
             onReviewHandled={onReviewHandled}
             holdReview={holdReview}
@@ -960,9 +965,15 @@ export function Settings({
     currentNavigation.current?.savePosition(PLUGIN_DETAILS, id ?? null);
   };
   const [reviewPluginId, setReviewPluginId] = useState<string>();
-  const [updateChecks, setUpdateChecks] = useState<
-    Record<string, { revision: string; available: boolean }>
-  >({});
+  const imports = plugins.imports;
+  const updateChecks = useMemo(
+    () => sharedPluginUpdateChecks(imports),
+    [imports],
+  );
+  const updateSnapshot = useSyncExternalStore(
+    updateChecks.subscribe,
+    updateChecks.snapshot,
+  );
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
@@ -1126,8 +1137,7 @@ export function Settings({
               const updateAvailable =
                 !!plugins.imports &&
                 !managedBy(managed, id) &&
-                updateChecks[id]?.revision === plugin.revision &&
-                !!updateChecks[id]?.available;
+                pluginUpdateAvailable(updateSnapshot, plugin);
               const name = (
                 <span className={styles.pluginName}>
                   <span>{plugin.manifest.name}</span>
@@ -1246,20 +1256,26 @@ export function Settings({
                         </span>
                       )}
                       {updateAvailable ? (
-                        <Button
-                          size="sm"
-                          variant="prominent"
-                          disabled={busy}
-                          aria-label={`Update ${plugin.manifest.name}`}
-                          onClick={(event) => {
-                            holdPluginRow(event.currentTarget);
-                            setActivationAttempt(undefined);
-                            showPluginDetails(id);
-                            setReviewPluginId(id);
-                          }}
+                        <Tooltip
+                          content={null}
+                          open={false}
+                          disableHoverablePopup
                         >
-                          Update
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="prominent"
+                            disabled={busy}
+                            aria-label={`Update ${plugin.manifest.name}`}
+                            onClick={(event) => {
+                              holdPluginRow(event.currentTarget);
+                              setActivationAttempt(undefined);
+                              showPluginDetails(id);
+                              setReviewPluginId(id);
+                            }}
+                          >
+                            Update
+                          </Button>
+                        </Tooltip>
                       ) : isRequiredPlugin(plugin) ? (
                         <Button variant="outline" size="sm" disabled>
                           Required
@@ -1352,12 +1368,15 @@ export function Settings({
     (pubkey: string) => keyActivity(relaySession, pubkey),
     [relaySession],
   );
-  const authorizePluginGit = async (repository: string) => {
-    const connection = communities.relay.snapshot();
-    return connection.status === "ready"
-      ? ((await connection.session.authorizeGit?.(repository)) ?? null)
-      : null;
-  };
+  const authorizePluginGit = useCallback(
+    async (repository: string) => {
+      const connection = communities.relay.snapshot();
+      return connection.status === "ready"
+        ? ((await connection.session.authorizeGit?.(repository)) ?? null)
+        : null;
+    },
+    [communities.relay],
+  );
   // Keep announcements outside filtered rows and the covered narrow catalog.
   const announcement = (
     <div
@@ -1742,28 +1761,13 @@ export function Settings({
           catalog={catalog}
           initialUpdateAvailable={
             !managedBy(managed, selectedPlugin.manifest.id) &&
-            updateChecks[selectedPlugin.manifest.id]?.revision ===
-              selectedPlugin.revision &&
-            updateChecks[selectedPlugin.manifest.id]?.available === true
+            pluginUpdateAvailable(updateSnapshot, selectedPlugin)
           }
+          updateChecks={updateChecks}
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}
           holdReview={installRequests?.holdReview}
-          onUpdateAvailableChange={(available) =>
-            setUpdateChecks((current) => {
-              const id = selectedPlugin.manifest.id;
-              if (
-                current[id]?.revision === selectedPlugin.revision &&
-                current[id]?.available === available
-              )
-                return current;
-              return {
-                ...current,
-                [id]: { revision: selectedPlugin.revision, available },
-              };
-            })
-          }
           failure={selectedFailure}
           retryable={canRetryPlugin(
             selectedPlugin,

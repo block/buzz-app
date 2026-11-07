@@ -10,6 +10,10 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import {
+  sharedPluginUpdateChecks,
+  pluginUpdateAvailable,
+} from "../plugins/update-checks";
 import { PluginUpdates, PluginUpdatesMenu } from "./PluginUpdates";
 import { PluginMenu } from "./PluginMenu";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -596,3 +600,22 @@ it("requires review when a fresh update removes a process artifact constraint", 
   fireEvent.click(confirm);
   await waitFor(() => expect(f.installImport).toHaveBeenCalledOnce());
 });
+
+it.each(["unchanged", "failed"])(
+  "shares a notification review's fresh %s result with Manage plugins",
+  async (outcome) => {
+    const f = fixture();
+    f.freshCandidate.revision = f.plugin.revision;
+    if (outcome === "failed")
+      f.imports.git.mockRejectedValueOnce(new Error("source unavailable"));
+    f.mount();
+    await screen.findByText("Update Notes");
+    const checks = sharedPluginUpdateChecks(f.manager.imports);
+    expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Update and reload" }));
+    await waitFor(() =>
+      expect(pluginUpdateAvailable(checks.snapshot(), f.plugin)).toBe(false),
+    );
+    expect(f.installImport).not.toHaveBeenCalled();
+  },
+);

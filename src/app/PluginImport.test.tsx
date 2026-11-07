@@ -17,6 +17,10 @@ import {
   type PluginInstallRequest,
 } from "../plugins/installer";
 import { PluginImport } from "./PluginImport";
+import {
+  createPluginUpdateChecks,
+  pluginUpdateAvailable,
+} from "../plugins/update-checks";
 import userEvent from "@testing-library/user-event";
 import { cloneElement, StrictMode } from "react";
 
@@ -230,6 +234,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   } as unknown as PluginManager;
   render(
     <PluginImport
+      initialUpdateAvailable
       updateId="example.plugin"
       plugins={manager}
       catalog={catalog}
@@ -584,6 +589,7 @@ it.each([
     } as unknown as PluginManager;
     render(
       <PluginImport
+        initialUpdateAvailable
         updateId="example.plugin"
         plugins={manager}
         catalog={catalog}
@@ -1007,6 +1013,7 @@ it("limits pane updates to the selected plugin without modifying the source prev
   const user = userEvent.setup();
   render(
     <PluginImport
+      initialUpdateAvailable
       updateId="example.target"
       plugins={manager}
       catalog={{ profile: "test", location: "test", plugins: [installed] }}
@@ -1352,6 +1359,7 @@ it.each([
     render(
       <StrictMode>
         <PluginImport
+          initialUpdateAvailable
           plugins={manager}
           catalog={{
             profile: "test",
@@ -1448,6 +1456,7 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   } as unknown as PluginManager;
   render(
     <PluginImport
+      initialUpdateAvailable
       plugins={manager}
       catalog={{
         profile: "test",
@@ -1650,7 +1659,7 @@ function savedFolderProps(imports: unknown) {
           ...rememberedPlugin,
           updateSource: { root: "/plugins", path: "dist" },
         },
-      ],
+      ] as [PluginInfo],
     },
     busy: false,
     updateId: rememberedManifest.id,
@@ -1664,7 +1673,9 @@ it("checks revisions without acquiring a preview and prepares fresh bytes only o
     discard: vi.fn(async () => {}),
   };
   const props = savedFolderProps(imports);
-  const view = render(<PluginImport {...props} />);
+  const checks = createPluginUpdateChecks(props.plugins.imports);
+  const view = render(<PluginImport {...props} updateChecks={checks} />);
+  await act(async () => checks.check(props.catalog.plugins[0]));
   const update = await screen.findByRole("button", { name: "Update" });
   expect(imports.checkFolder).toHaveBeenCalledExactlyOnceWith(
     rememberedManifest.id,
@@ -1682,8 +1693,7 @@ it("checks revisions without acquiring a preview and prepares fresh bytes only o
   view.unmount();
 });
 
-it("retries folder diagnostics and ignores late read-only checks after unmount", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+it("receives folder diagnostics and ignores late background checks after unmount", async () => {
   let finish!: (revision: string) => void;
   const checkFolder = vi
     .fn()
@@ -1695,33 +1705,32 @@ it("retries folder diagnostics and ignores late read-only checks after unmount",
         }),
     );
   const imports = { checkFolder, previewFolder: vi.fn(), discard: vi.fn() };
-  const changed = vi.fn();
-  const view = render(
-    <PluginImport
-      {...savedFolderProps(imports)}
-      onUpdateAvailableChange={changed}
-    />,
+  const props = savedFolderProps(imports);
+  const checks = createPluginUpdateChecks(props.plugins.imports);
+  const plugin = props.catalog.plugins[0];
+  const view = render(<PluginImport {...props} updateChecks={checks} />);
+  expect(checkFolder).not.toHaveBeenCalled();
+  await act(async () => checks.check(plugin));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "dist: plugin.js is missing",
   );
-  try {
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "dist: plugin.js is missing",
-    );
-    await act(async () => vi.advanceTimersByTime(5_000));
-    expect(checkFolder).toHaveBeenCalledTimes(2);
-    await act(async () => vi.advanceTimersByTime(10_000));
-    expect(checkFolder).toHaveBeenCalledTimes(2);
-    view.unmount();
-    await act(async () => finish("new"));
-    expect(changed).toHaveBeenLastCalledWith(false);
-    expect(imports.previewFolder).not.toHaveBeenCalled();
-    expect(imports.discard).not.toHaveBeenCalled();
-  } finally {
-    view.unmount();
-    vi.useRealTimers();
-  }
+  let pending!: Promise<void>;
+  act(() => {
+    pending = checks.check(plugin);
+  });
+  expect(checkFolder).toHaveBeenCalledTimes(2);
+  fireEvent.focus(window);
+  expect(checkFolder).toHaveBeenCalledTimes(2);
+  view.unmount();
+  await act(async () => {
+    finish("new");
+    await pending;
+  });
+  expect(imports.previewFolder).not.toHaveBeenCalled();
+  expect(imports.discard).not.toHaveBeenCalled();
 });
 
-it("keeps unchanged checks quiet until the shared one-second loading delay", async () => {
+it("keeps explicit checks quiet until the shared one-second loading delay", async () => {
   vi.useFakeTimers();
   let finish!: (revision: string) => void;
   const checkFolder = vi.fn(
@@ -1730,21 +1739,28 @@ it("keeps unchanged checks quiet until the shared one-second loading delay", asy
         finish = resolve;
       }),
   );
-  const view = render(<PluginImport {...savedFolderProps({ checkFolder })} />);
+  const props = savedFolderProps({ checkFolder });
+  const checks = createPluginUpdateChecks(props.plugins.imports);
+  const view = render(<PluginImport {...props} updateChecks={checks} />);
   try {
-    await act(async () => {});
+    let pending!: Promise<void>;
+    act(() => {
+      pending = checks.check(props.catalog.plugins[0]);
+    });
     await act(async () => vi.advanceTimersByTime(999));
     expect(screen.queryByText("Checking for updates…")).toBeNull();
     await act(async () => vi.advanceTimersByTime(1));
     expect(screen.getByRole("status")).toHaveTextContent(
       "Checking for updates…",
     );
-    await act(async () => finish("old"));
+    await act(async () => {
+      finish("old");
+      await pending;
+    });
     expect(screen.getByText("Up to date")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
     await act(async () => vi.advanceTimersByTime(4_000));
-    expect(checkFolder).toHaveBeenCalledTimes(2);
-    await act(async () => finish("old"));
+    expect(checkFolder).toHaveBeenCalledOnce();
   } finally {
     view.unmount();
     vi.useRealTimers();
@@ -1772,10 +1788,8 @@ it("retains known Git updates on reopen and reacquires before review", async () 
     },
     initialUpdateAvailable: true,
   };
-  const changed = vi.fn();
-  render(<PluginImport {...props} onUpdateAvailableChange={changed} />);
+  render(<PluginImport {...props} />);
   expect(screen.getByRole("button", { name: "Update" })).toBeVisible();
-  expect(changed).not.toHaveBeenCalled();
   expect(git).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Update" }));
   await screen.findByRole("dialog", { name: "Update Remembered" });
@@ -1795,36 +1809,29 @@ it("refreshes a stale known update from the newly acquired package", async () =>
     })),
     discard: vi.fn(async () => {}),
   };
-  const changed = vi.fn();
-  render(
-    <PluginImport
-      {...savedFolderProps(imports)}
-      onUpdateAvailableChange={changed}
-    />,
-  );
+  const props = savedFolderProps(imports);
+  const checks = createPluginUpdateChecks(props.plugins.imports);
+  render(<PluginImport {...props} updateChecks={checks} />);
+  await act(async () => checks.check(props.catalog.plugins[0]));
   fireEvent.click(await screen.findByRole("button", { name: "Update" }));
   fireEvent.click(await screen.findByRole("button", { name: "Done" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
-  expect(changed).toHaveBeenLastCalledWith(false);
   expect(imports.discard).toHaveBeenCalledExactlyOnceWith("remembered");
 });
 
-it("clears a retained update action after the saved source check fails", async () => {
-  const changed = vi.fn();
+it("clears a retained update action after the background source check fails", async () => {
+  const props = savedFolderProps({
+    checkFolder: vi.fn(async () => {
+      throw new Error("dist: invalid manifest");
+    }),
+  });
+  const checks = createPluginUpdateChecks(props.plugins.imports);
   render(
-    <PluginImport
-      {...savedFolderProps({
-        checkFolder: vi.fn(async () => {
-          throw new Error("dist: invalid manifest");
-        }),
-      })}
-      initialUpdateAvailable
-      onUpdateAvailableChange={changed}
-    />,
+    <PluginImport {...props} updateChecks={checks} initialUpdateAvailable />,
   );
+  await act(async () => checks.check(props.catalog.plugins[0]));
   await screen.findByRole("alert");
-  await waitFor(() => expect(changed).toHaveBeenLastCalledWith(false));
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
 });
 
@@ -3159,4 +3166,106 @@ it("leaves an unconstrained link editable and unpinned", async () => {
   expect(screen.getByLabelText("Git or GitHub repository")).not.toHaveAttribute(
     "readonly",
   );
+});
+
+it("keeps a known Update usable while background discovery is pending", async () => {
+  let finish!: (revision: string) => void;
+  const imports = {
+    checkFolder: vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+    previewFolder: vi.fn(async () => rememberedPreview),
+    discard: vi.fn(async () => {}),
+  };
+  const props = savedFolderProps(imports);
+  const checks = createPluginUpdateChecks(props.plugins.imports);
+  const plugin = props.catalog.plugins[0];
+  if (!plugin) throw new Error("fixture plugin missing");
+  checks.observe(plugin)("new");
+  render(<PluginImport {...props} updateChecks={checks} />);
+  act(() => {
+    void checks.check(plugin);
+  });
+  await waitFor(() => expect(imports.checkFolder).toHaveBeenCalledOnce());
+  try {
+    const update = screen.getByRole("button", { name: "Update" });
+    expect(update).toBeEnabled();
+    fireEvent.click(update);
+    await screen.findByRole("dialog", { name: "Update Remembered" });
+    expect(imports.previewFolder).toHaveBeenCalledExactlyOnceWith(
+      rememberedManifest.id,
+    );
+  } finally {
+    await act(async () => finish("new"));
+  }
+});
+
+it.each([false, true])(
+  "retains a manually discovered update without a saved source (multiple=%s)",
+  async (multiple) => {
+    const user = userEvent.setup();
+    const imports = {
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        candidates: multiple
+          ? rememberedPreview.candidates
+          : [rememberedPreview.candidates[0]],
+      })),
+      discard: vi.fn(async () => {}),
+    };
+    const manager = {
+      imports,
+      installImport: vi.fn(),
+    } as unknown as PluginManager;
+    const checks = createPluginUpdateChecks(manager.imports);
+    render(
+      <PluginImport
+        plugins={manager}
+        catalog={{
+          profile: "test",
+          location: "test",
+          plugins: [rememberedPlugin],
+        }}
+        busy={false}
+        updateId={rememberedManifest.id}
+        updateChecks={checks}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Update Remembered" }));
+    await user.click(
+      screen.getByRole("button", { name: "Browse plugin folder" }),
+    );
+    if (multiple) {
+      await user.click((await screen.findAllByRole("radio"))[1] as HTMLElement);
+      await user.click(screen.getByRole("button", { name: "Continue" }));
+    }
+    await screen.findByRole("button", { name: /^Update$/ });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(pluginUpdateAvailable(checks.snapshot(), rememberedPlugin)).toBe(
+      true,
+    );
+    expect(checks.snapshot()[rememberedManifest.id]?.revision).toBe(
+      multiple ? "alternate" : "new",
+    );
+    expect(
+      screen.getAllByRole("button", { name: /^Update(?: Remembered)?$/ }),
+    ).toHaveLength(1);
+    expect(checks.snapshot()[rememberedManifest.id]?.candidate).toEqual(
+      rememberedPreview.candidates[multiple ? 1 : 0],
+    );
+    expect(manager.installImport).not.toHaveBeenCalled();
+  },
+);
+
+it("lets the owner check a changed saved folder explicitly", async () => {
+  const checkFolder = vi.fn(async () => "new");
+  render(<PluginImport {...savedFolderProps({ checkFolder })} />);
+  expect(checkFolder).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+  expect(await screen.findByRole("button", { name: "Update" })).toBeVisible();
+  expect(checkFolder).toHaveBeenCalledExactlyOnceWith(rememberedManifest.id);
 });

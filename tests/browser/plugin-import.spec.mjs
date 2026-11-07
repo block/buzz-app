@@ -26,6 +26,15 @@ async function openPlugins(page, origin) {
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
 }
+// Advance the existing background owner's hourly eligibility without running
+// unrelated repeating timers. Visibility is the owner's normal resume entry point.
+async function refreshBackground(page) {
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.setSystemTime(new Date(now + 3_600_001));
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+}
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
 async function nativeImports(
   page,
@@ -214,6 +223,10 @@ async function nativeImports(
               ...(command === "plugin_import_url" && {
                 source: args.url,
                 commit: null,
+                candidates: preview.candidates.map((candidate) => ({
+                  ...candidate,
+                  revision: args.sha256,
+                })),
               }),
               token: `preview-${++previewSequence}`,
             };
@@ -789,8 +802,8 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.evaluate(() => {
     window.importCategory = "productivity";
   });
-  await page.clock.runFor(5_000);
-  // The open pane detects folder changes without a manual check.
+  await refreshBackground(page);
+  // The background owner supplies the open pane without a manual check.
   await expect(button(page, "Update")).toBeEnabled();
   const updatingPane = page.getByRole("complementary", {
     name: "Example two details",
@@ -1541,6 +1554,7 @@ for (const source of ["folder", "git"]) {
     page,
     app,
   }) => {
+    await page.clock.install();
     const sample = {
       path: "dist",
       revision: "one",
@@ -1562,6 +1576,7 @@ for (const source of ["folder", "git"]) {
     if (source === "git") {
       await button(page, "Check for updates").click();
     } else {
+      await refreshBackground(page);
       await expect(button(page, "Update")).toBeVisible();
     }
     await page.evaluate(() => {
@@ -1759,6 +1774,147 @@ test("a linked preview can close during acquisition and a later link still opens
   ).toEqual(["first", "next"]);
 });
 
+// App wiring: list discovery must use the native storage adapter without acquiring
+// an installation preview, then hand the update to the existing consent dialog.
+for (const source of ["folder", "git"]) {
+  test(`background ${source} discovery updates Manage plugins before opening details`, async ({
+    page,
+    app,
+  }) => {
+    await page.clock.install();
+    await nativeImports(page, [
+      {
+        path: "dist",
+        revision: "one",
+        manifest: {
+          id: "example.refresh",
+          name: "Refresh example",
+          apiVersion: 1,
+          updates: { defaultEnabled: true },
+        },
+      },
+    ]);
+    await openPlugins(page, app.origin);
+    await button(page, "Add").click();
+    if (source === "git") {
+      await page.getByLabel("Git or GitHub repository").fill("example/plugins");
+      await button(page, "Find plugins").click();
+    } else await button(page, "Browse plugin folder").click();
+    await button(page, "Install plugin").click();
+    await expectOnlySettings(page);
+    // Observe initial discovery before changing the source. This also proves
+    // the real app mounted the background owner, independently of Settings.
+    const sourceReads = () =>
+      page.evaluate(
+        (source) =>
+          window.importCalls.filter(({ command, args }) =>
+            source === "folder"
+              ? command === "plugin_update_check"
+              : command === "plugin_import_git" && args?.checkOnly,
+          ).length,
+        source,
+      );
+    await expect.poll(sourceReads).toBe(1);
+    await closeSettings(page);
+    await page.evaluate(() => {
+      window.importCategory = "productivity";
+    });
+    await refreshBackground(page);
+    await expect.poll(sourceReads).toBe(2);
+    if (source === "git")
+      await expect(
+        page.getByRole("dialog", {
+          name: "Update Refresh example",
+          exact: true,
+        }),
+      ).toBeVisible();
+    const readsBeforeOpen = await sourceReads();
+    await openSettings(page);
+    await selectSettingsSection(page, "Manage plugins");
+    await expect(button(page, "Update Refresh example")).toBeVisible();
+    await expect(
+      button(page, "View Refresh example details")
+        .locator("xpath=ancestor::article/..")
+        .locator(".buzz-loading-region"),
+    ).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    expect(await sourceReads()).toBe(readsBeforeOpen);
+    await expect(
+      page.getByRole("complementary", { name: "Refresh example details" }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () =>
+          window.importCalls.filter(
+            ({ command }) => command === "plugin_import_install",
+          ).length,
+      ),
+    ).toBe(1);
+    if (source === "git")
+      await button(page, "Dismiss plugin update notice").click();
+    await button(page, "Update Refresh example").click();
+    await expect(
+      page.getByRole("dialog", { name: "Update Refresh example", exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () =>
+          window.importCalls.filter(
+            ({ command }) => command === "plugin_import_install",
+          ).length,
+      ),
+    ).toBe(1);
+  });
+}
+
+// App wiring: refreshed source revisions cross Settings' detail host and the
+// native adapter without waiting for a second manual check in the pane.
+test("a background Git update refreshes an already open details pane", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  await nativeImports(page, [
+    {
+      path: "dist",
+      revision: "one",
+      manifest: {
+        id: "example.refresh",
+        name: "Refresh example",
+        apiVersion: 1,
+        updates: { defaultEnabled: true },
+      },
+    },
+  ]);
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await page.getByLabel("Git or GitHub repository").fill("example/plugins");
+  await button(page, "Find plugins").click();
+  await button(page, "Install plugin").click();
+  await expectOnlySettings(page);
+  await button(page, "View Refresh example details").click();
+  const pane = page.getByRole("complementary", {
+    name: "Refresh example details",
+    exact: true,
+  });
+  await button(page, "Check for updates").click();
+  await expect(pane.getByText("Up to date", { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    window.importCategory = "productivity";
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(
+    pane.getByRole("button", { name: "Update", exact: true }),
+  ).toHaveCount(0);
+  await refreshBackground(page);
+  await expect(
+    pane.getByRole("button", { name: "Update", exact: true }),
+  ).toBeVisible();
+  await expect(pane.getByText("Up to date", { exact: true })).toHaveCount(0);
+  await button(page, "Close plugin details").click();
+  await expect(button(page, "Update Refresh example")).toBeVisible();
+});
+
 const artifactSha =
   "13fca413ba8975075fdec01a0087be6114ace8d935055f7d9ab1d57dd8e706a5";
 const artifactUrl = `https://plugins.example.org/artifacts/example.artifact-${artifactSha}.json`;
@@ -1770,6 +1926,7 @@ const artifactPlugin = [
       name: "Artifact",
       apiVersion: 1,
       host: { files: true },
+      updates: { defaultEnabled: true },
     },
     revision: artifactSha,
   },
@@ -1891,6 +2048,7 @@ test("an artifact link reviews and installs the pinned URL", async ({
   page,
   app,
 }) => {
+  await page.clock.install();
   const link = `buzz://plugin-install?id=example.artifact&url=${encodeURIComponent(artifactUrl)}&sha256=${artifactSha}`;
   await nativeImports(page, artifactPlugin, { warnings: [] }, [link]);
   await servesArtifact(page);
@@ -1916,6 +2074,18 @@ test("an artifact link reviews and installs the pinned URL", async ({
   await expect(updates).toContainText(artifactUrl);
   await expect(updates).toContainText(`SHA-256: ${artifactSha}`);
   await expect(page.getByText(/No saved source/)).toHaveCount(0);
+  await refreshBackground(page);
+  await expect(
+    updates.getByRole("button", { name: "Check for updates", exact: true }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.importCalls.filter(
+        ({ command }) =>
+          command === "plugin_update_check" || command === "plugin_import_git",
+      ),
+    ),
+  ).toEqual([]);
   expect(await importCalls(page)).toEqual([
     {
       command: "plugin_import_url",
@@ -1926,4 +2096,67 @@ test("an artifact link reviews and installs the pinned URL", async ({
       args: { token: "preview-1", path: "." },
     },
   ]);
+});
+
+test("a new pinned URL link updates a URL installation without Git discovery", async ({
+  page,
+  app,
+}) => {
+  await page.clock.install();
+  const link = (sha256) =>
+    `buzz://plugin-install?id=example.artifact&url=${encodeURIComponent(artifactUrl)}&sha256=${sha256}`;
+  await nativeImports(page, artifactPlugin, { warnings: [] }, [
+    link(artifactSha),
+  ]);
+  await servesArtifact(page);
+  await page.goto(app.origin);
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  const next = "b".repeat(64);
+  await page.evaluate(
+    ({ next, link }) => {
+      window.artifactSha256 = next;
+      window.deliverPluginLink(link);
+    },
+    { next, link: link(next) },
+  );
+  const updateReview = page.getByRole("dialog", {
+    name: "Update Artifact",
+    exact: true,
+  });
+  await expect(updateReview).toBeVisible();
+  await expect(updateReview).toContainText(`SHA-256: ${next}`);
+  await updateReview
+    .getByRole("button", { name: "Update", exact: true })
+    .click();
+  await expect(updateReview).toBeHidden();
+  await settingsDialog(page)
+    .getByRole("button", { name: "View Artifact details", exact: true })
+    .click();
+  const updates = page.getByRole("region", {
+    name: "Plugin updates",
+    exact: true,
+  });
+  await expect(updates).toContainText(`SHA-256: ${next}`);
+  await expect(updates).toContainText(artifactUrl);
+  await refreshBackground(page);
+  expect(
+    await page.evaluate(() =>
+      window.importCalls.filter(
+        ({ command }) =>
+          command === "plugin_import_git" || command === "plugin_update_check",
+      ),
+    ),
+  ).toEqual([]);
+  expect(
+    (await importCalls(page)).filter(
+      ({ command }) => command === "plugin_import_install",
+    ),
+  ).toHaveLength(2);
 });

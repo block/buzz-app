@@ -851,7 +851,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Do not assume a particular optional plugin is on.
+  them. Do not assume a particular optional plugin is on. Manage plugins uses the background checker’s retained results and shows **Update** when a newer version is available. Opening the list or returning to the window does not start a separate check. Git plugins need to declare update support; saved folder and Git sources also offer **Check for updates** in their details. An **Update** button opens the review before anything is installed.
   A page whose plugin is turned off says so, and its **Manage plugins** opens
   that plugin, where **Enable** turns it back on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
@@ -862,8 +862,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without
-  update support keep their existing manual import flow. Buzz checks eligible Git
-  sources at startup and once per hour while the app is visible. Checks do not
+  update support keep their existing manual import flow. Buzz checks saved folder sources and eligible Git sources silently at startup and once per hour while the app is visible. Checks do not
   install or reload plugins. A notice
   offers **Update and reload**, or **Review permissions** when access increases.
   Click the notice body to open that plugin’s update checkbox in Manage plugins.

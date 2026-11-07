@@ -3,8 +3,8 @@ use crate::{
     access::{AccessRules, Transport},
     artifact_from_parts, err, hash, icon_revision,
     managed::{valid_commit, valid_reference},
-    Catalog, GitSource, InstallSource, Manager, Manifest, Release, ReloadSource, Result, UrlSource,
-    BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
+    prepare_reload_artifact, Catalog, GitSource, InstallSource, Manager, Manifest, Release,
+    ReloadSource, Result, UrlSource, BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
 use base64::Engine as _;
 use nostr::event::Event;
@@ -302,13 +302,34 @@ pub fn prepare_saved_folder(manager: &Manager, id: &str) -> Result<PreparedImpor
 
 /// No preview is retained, installed, or published to the native import slot.
 pub fn check_saved_folder(manager: &Manager, id: &str) -> Result<String> {
-    let prepared = prepare_saved_folder(manager, id)?;
-    prepared
-        .preview
-        .candidates
-        .first()
-        .map(|candidate| candidate.revision.clone())
-        .ok_or_else(|| "Saved source has no candidate".into())
+    let plugin = manager
+        .catalog()?
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == id)
+        .ok_or("Plugin is not installed")?;
+    let source = plugin
+        .update_source
+        .ok_or("Plugin has no saved folder source")?;
+    let InstallSource::Folder(folder) = &source else {
+        return Err("Plugin has no saved folder source".into());
+    };
+    let prefix = if folder.path == "." {
+        "Selected folder"
+    } else {
+        &folder.path
+    };
+    let release = prepare_reload_artifact(&source)
+        .and_then(|release| {
+            if release.validate()?.id != id {
+                return Err(
+                    "The saved folder no longer contains this plugin at its installed path.".into(),
+                );
+            }
+            Ok(release)
+        })
+        .map_err(|reason| format!("{prefix}: {reason}"))?;
+    Ok(hash(&release.bytes))
 }
 
 pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
@@ -2212,6 +2233,66 @@ mod tests {
         let error = check_saved_folder(&manager, "example.checked").unwrap_err();
         assert!(error.contains("dist:"), "{error}");
         assert!(error.contains("plugin.js"), "{error}");
+    }
+
+    #[test]
+    fn saved_folder_checks_ignore_sibling_discovery_limits() {
+        let root = tempfile::tempdir().unwrap();
+        plugin(root.path(), "dist", "example.checked");
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let pending = prepare_folder(root.path()).unwrap();
+        let installed = pending
+            .install(&manager, &pending.preview.token, "dist")
+            .unwrap();
+        let original = installed
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.checked")
+            .unwrap()
+            .revision
+            .clone();
+        for index in 0..MAX_PLUGINS {
+            plugin(
+                root.path(),
+                &format!("sibling-{index}"),
+                &format!("example.sibling{index}"),
+            );
+        }
+        assert!(prepare_folder(root.path()).is_err());
+        assert_eq!(
+            check_saved_folder(&manager, "example.checked").unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn saved_folder_checks_confine_replaced_paths_and_validate_package_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let source = plugin(root.path(), "dist", "example.checked");
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let pending = prepare_folder(root.path()).unwrap();
+        pending
+            .install(&manager, &pending.preview.token, "dist")
+            .unwrap();
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            let escaped = plugin(outside.path(), "dist", "example.checked");
+            fs::remove_dir_all(&source).unwrap();
+            std::os::unix::fs::symlink(&escaped, &source).unwrap();
+            assert!(check_saved_folder(&manager, "example.checked").is_err());
+            fs::remove_file(&source).unwrap();
+        }
+        plugin(root.path(), "dist", "example.changed");
+        assert!(check_saved_folder(&manager, "example.checked").is_err());
+        // A signature is verified even during discovery, before owner review.
+        plugin(root.path(), "dist", "example.checked");
+        let key = nostr::key::SecretKey::generate().to_secret_hex();
+        crate::sign_release(&source, &key).unwrap();
+        fs::write(source.join("plugin.signature.json"), "{}").unwrap();
+        assert!(check_saved_folder(&manager, "example.checked").is_err());
     }
 
     #[test]

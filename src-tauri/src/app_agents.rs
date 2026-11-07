@@ -1480,12 +1480,15 @@ fn client() -> Result<&'static reqwest::Client, String> {
     static CLIENT: OnceLock<Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            let builder = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
                 // A connection idle across sleep may be dead; open a new one.
-                .pool_idle_timeout(Duration::from_secs(30))
-                .build()
+                .pool_idle_timeout(Duration::from_secs(30));
+            #[cfg(test)]
+            let builder =
+                builder.tls_certs_only([crate::federated_identity::testing::trusted_root()]);
+            builder.build()
         })
         .as_ref()
         .map_err(|_| "Agent client unavailable".into())

@@ -20,13 +20,37 @@ fn validate(event: &Value) -> Result<(), String> {
     let Some(tag) = copies.first() else {
         return Err("A moved message needs provenance".into());
     };
-    if kind != Some(9) || copies.len() != 1 || tag.len() != 4
-        || uuid::Uuid::parse_str(&tag[1]).is_err() || !hex_key(&tag[2])
-        || tag[3].parse::<u64>().ok().filter(|n| *n <= 9_999_999_999_999).is_none()
-        || tags.iter().filter(|t| t.first().map(String::as_str) == Some("h")).count() != 1
-        || !tags.iter().any(|t| matches!(t.as_slice(), [k, id, relay, role] if k == "e" && hex_key(id) && relay.is_empty() && role == "root"))
-        || !tags.iter().any(|t| matches!(t.as_slice(), [k, id, relay, role] if k == "e" && hex_key(id) && relay.is_empty() && role == "reply"))
-    { return Err("Invalid moved message".into()); }
+    let references: Vec<_> = tags
+        .iter()
+        .filter(|tag| tag.first().map(String::as_str) == Some("e"))
+        .collect();
+    let reference = |tag: &[String], marker: &str| matches!(tag, [k, id, relay, role] if k == "e" && hex_key(id) && relay.is_empty() && role == marker);
+    let canonical_reply = match references.as_slice() {
+        [reply] => reference(reply, "reply"),
+        [root, reply] => {
+            reference(root, "root") && reference(reply, "reply") && root[1] != reply[1]
+        }
+        _ => false,
+    };
+    if kind != Some(9)
+        || copies.len() != 1
+        || tag.len() != 4
+        || uuid::Uuid::parse_str(&tag[1]).is_err()
+        || !hex_key(&tag[2])
+        || tag[3]
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n <= 9_999_999_999_999)
+            .is_none()
+        || tags
+            .iter()
+            .filter(|t| t.first().map(String::as_str) == Some("h"))
+            .count()
+            != 1
+        || !canonical_reply
+    {
+        return Err("Invalid moved message".into());
+    }
     let content = event
         .get("content")
         .and_then(Value::as_str)
@@ -73,13 +97,22 @@ pub(crate) async fn app_agent_publish_dm_move(
 }
 
 #[cfg(test)]
-mod tests {
+mod tests;
+
+#[cfg(test)]
+mod envelope_tests {
     use super::*;
     #[test]
     fn move_boundary_rejects_other_events_and_bad_provenance() {
         let key = "a".repeat(64);
-        let valid = serde_json::json!({"kind":9,"content":"Original text", "tags":[["h","channel"],["e",key,"","root"],["e",key,"","reply"],["buzz:dm-move","e44c7b53-42b2-4c5e-8051-fce508998b96",key,"1700000000000"]]});
+        let valid = serde_json::json!({"kind":9,"content":"Original text", "tags":[["h","channel"],["e","b".repeat(64),"","root"],["e",key,"","reply"],["buzz:dm-move","e44c7b53-42b2-4c5e-8051-fce508998b96",key,"1700000000000"]]});
         assert!(validate(&valid).is_ok());
+        let mut direct = valid.clone();
+        direct["tags"].as_array_mut().unwrap().remove(1);
+        assert!(validate(&direct).is_ok());
+        let mut duplicate = valid.clone();
+        duplicate["tags"][1][1] = serde_json::json!(key);
+        assert!(validate(&duplicate).is_err());
         let mut invalid = valid.clone();
         invalid["kind"] = serde_json::json!(40003);
         assert!(validate(&invalid).is_err());

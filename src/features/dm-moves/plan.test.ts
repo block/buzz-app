@@ -3,6 +3,7 @@ import { keypair, message, signed } from "../relay/testing";
 import { foldMessages } from "../relay/fold";
 import { planMove, movedTemplate } from "./plan";
 import type { MoveRequest } from "./protocol";
+import { validMessageTemplate } from "../../../browser-host/relay-broker.mjs";
 const author = keypair(),
   relay = keypair();
 const req: MoveRequest = {
@@ -81,6 +82,22 @@ it("reattaches through a deleted row withheld by the relay using IDs only", () =
   expect(() => planMove("dm", relay.pubkey, [child], req)).toThrow(
     "deleted reply",
   );
+});
+it("uses host-admitted direct and nested reply references for copied messages", () => {
+  const [message] = planMove("dm", relay.pubkey, [root], req);
+  if (!message) throw new Error("Missing source message");
+  for (const parent of [root.id, child.id]) {
+    const template = movedTemplate(req, message, root.id, parent);
+    expect(validMessageTemplate({ ...template, created_at: 110 })).toBe(true);
+    expect(template.tags.filter(([name]) => name === "e")).toEqual(
+      parent === root.id
+        ? [["e", root.id, "", "reply"]]
+        : [
+            ["e", root.id, "", "root"],
+            ["e", parent, "", "reply"],
+          ],
+    );
+  }
 });
 it("honors the inclusive scope and commit boundary", () => {
   const plan = planMove(

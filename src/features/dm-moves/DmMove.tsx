@@ -12,6 +12,10 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { RelayData } from "../relay/service";
 import { conversationTarget } from "../channel-navigation/routes";
 import { eventMs } from "../relay/message-order";
+import {
+  namedChannel,
+  useChannelReference,
+} from "../conversation/channel-reference";
 import { dmMoves, type DmMoves, type MoveSnapshot } from "./coordinator";
 import type { MoveState } from "./protocol";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -404,6 +408,10 @@ export function DmMoveCard({
   const state = snapshot.moves.find(
     (s) => s.request.event.id === message.dmMove,
   );
+  const destination = useChannelReference(
+    session.channels,
+    state?.request.control.target,
+  );
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -423,18 +431,30 @@ export function DmMoveCard({
   };
   if (!state) return <p role="status">Loading conversion request…</p>;
   const req = state.request.control;
-  const name = session.channels.get?.(req.target)?.name ?? "channel";
+  const name =
+    namedChannel(destination)?.name ?? session.channels.get?.(req.target)?.name;
   const waiting =
     state.status === "pending" && state.waiting.includes(session.viewer ?? "");
   return (
-    <section className={styles.form} aria-label={`Convert DM to #${name}`}>
+    <section
+      className={styles.form}
+      aria-label={name ? `Convert DM to #${name}` : "Convert DM to thread"}
+    >
       <p className="text-body-sm">
         Convert{" "}
         {req.from
           ? "from the selected message onward"
           : "the whole conversation"}{" "}
-        to a thread in <strong>#{name}</strong>.
+        to a thread in{" "}
+        <strong>{name ? `#${name}` : "the destination channel"}</strong>.
       </p>
+      {!name && (
+        <p role="status" className="text-body-sm text-subtle">
+          {destination.state === "withheld"
+            ? "The destination channel is unavailable."
+            : "Loading destination…"}
+        </p>
+      )}
       {state.status === "pending" && (
         <p className="text-body-sm text-subtle">
           Approve by {new Date(req.expires * 1000).toLocaleString()}.
@@ -448,7 +468,7 @@ export function DmMoveCard({
           <Button
             size="sm"
             variant="prominent"
-            disabled={busy}
+            disabled={busy || !name}
             onClick={() =>
               void action((m) => m.respond(state.request.event.id, true))
             }

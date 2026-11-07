@@ -99,7 +99,7 @@ export function movedTemplate(
     content: message.content,
     tags: [
       ["h", request.target],
-      ["e", root, "", "root"],
+      ...(root === parent ? [] : [["e", root, "", "root"]]),
       ["e", parent, "", "reply"],
       [MOVE_TAG, request.move, message.original, String(message.ms)],
       ...message.tags,

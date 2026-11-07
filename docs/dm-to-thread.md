@@ -66,7 +66,11 @@ and two real relay sessions sharing a signed fixture transport. The multi-client
 journey covers public invitations, actual copy authors, notification suppression,
 local-agent owner approval and completed restart deduplication. Presence is a
 controlled adapter in those tests; they do not prove native lifecycle behavior.
-The native test compiles the app and checks the moved-message command envelope.
+The native tests exercise the real Tauri IPC handlers with synthetic credential
+backing and a loopback TLS endpoint: custody restoration, valid signatures,
+identical retries after uncertain receipts, NIP-98 authentication, and denied
+custody. Capability tests allow the main window and reject other webviews. These
+tests do not exercise the OS Keychain or packaged webview.
 
 The browser journey targets menu portals, focus/history integration and dialog
 layout in light/dark and wide/narrow views. A fixture relay is not a production

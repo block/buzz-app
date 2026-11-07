@@ -1,5 +1,6 @@
 import type { Agents } from "../../features/agents/service";
 import { useAgentsSnapshot } from "../../features/agents/react";
+import { useAgentChoices } from "../../features/agents/use-choices";
 import { dmVoiceAgent } from "../../features/huddle/dm-agent";
 import type { ChatMenuProps } from "../../features/conversation/service";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -117,10 +118,8 @@ export function HuddleLauncher(props: Props) {
     call.destination?.scope === context.scope &&
     call.destination.viewer === context.viewer &&
     call.destination.channelId === context.channelId;
-  const choices = useSyncExternalStore(
-    connection.session.agentChoices.subscribe,
-    connection.session.agentChoices.snapshot,
-  );
+  // Load archive evidence so an archived agent is never offered or invited.
+  useAgentChoices(connection.session, false, true);
   const voiceAgent =
     props.agents && dmVoiceAgent(connection, context, props.agents);
   if (parent?.archived) return null;
@@ -163,20 +162,6 @@ export function HuddleLauncher(props: Props) {
     );
   // Keep active/incoming calls visible; idle Solo calls live in Chat actions.
   if (parent?.channelType === "solo" && !active && !joinable) return null;
-  // Human DMs keep their normal call action; unsupported agent DMs do not
-  // promise voice. Active and incoming calls remain available above.
-  const dmPeers =
-    parent?.channelType === "dm"
-      ? parent.members?.filter((key) => key !== context.viewer)
-      : undefined;
-  if (
-    !active &&
-    !joinable &&
-    dmPeers?.length === 1 &&
-    choices.identities.some((agent) => agent.pubkey === dmPeers[0]) &&
-    !voiceAgent
-  )
-    return null;
   // The header button is easy to hit by accident, so a new call asks first.
   const close = () => setConfirming(undefined);
   return (

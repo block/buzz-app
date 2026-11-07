@@ -178,7 +178,7 @@ it("moves idle Solo huddles to the menu while preserving Team's header action", 
   }
 });
 
-it("offers voice for a capable agent DM, explains automatic joining, and hides unsupported agent calls", async () => {
+it("offers voice for a capable agent DM, explains automatic joining, and keeps ordinary calls otherwise", async () => {
   const store = createRelaySession(null);
   const agent = {
     pubkey: "agent",
@@ -192,7 +192,9 @@ it("offers voice for a capable agent DM, explains automatic joining, and hides u
     ...store.session.agentChoices.snapshot(),
     identities: [agent],
     selectable: [agent],
+    archives: { status: "idle" as const, archived: [] },
   };
+  const ensure = vi.fn();
   const channel = {
     id: "dm",
     name: "Codex",
@@ -205,6 +207,7 @@ it("offers voice for a capable agent DM, explains automatic joining, and hides u
     channels: { ...store.session.channels, list: () => list },
     agentChoices: {
       ...store.session.agentChoices,
+      ensure,
       snapshot: () =>
         choices as unknown as ReturnType<
           typeof store.session.agentChoices.snapshot
@@ -262,6 +265,8 @@ it("offers voice for a capable agent DM, explains automatic joining, and hides u
   const start = vi.spyOn(huddles, "start").mockResolvedValue();
   try {
     const view = render(<HuddleLauncher {...props} />);
+    // Archive evidence loads; until then archives fail open, as elsewhere.
+    expect(ensure).toHaveBeenCalledWith(false, true);
     await userEvent.click(
       screen.getByRole("button", { name: "Talk with Codex" }),
     );
@@ -275,8 +280,8 @@ it("offers voice for a capable agent DM, explains automatic joining, and hides u
     voice = false;
     view.rerender(<HuddleLauncher {...props} />);
     expect(
-      screen.queryByRole("button", { name: /Talk with|Start or join/ }),
-    ).toBeNull();
+      screen.getByRole("button", { name: "Start or join a huddle" }),
+    ).toBeInTheDocument();
   } finally {
     await huddles.dispose();
     store.dispose();

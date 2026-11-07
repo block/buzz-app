@@ -4623,3 +4623,125 @@ it("leaving a channel whose row shows nothing new writes no seen mark", async ()
   await flush();
   expect(h.journal()).toBe(saved);
 });
+
+it.each([
+  ["at the same second", 100, 100],
+  ["backdated by a slower clock", 110, 105],
+])(
+  "a mention delivered after the visit lights the row %s",
+  async (_, seen, delivered) => {
+    const h = setup();
+    h.grant("room");
+    const mention = message(h.alice, "room", "mention", seen, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([mention, message(h.alice, "room", "ordinary", seen)]);
+    await h.session.unread.enterChannel("room");
+    h.session.unread.leaveChannel("room");
+    await vi.waitFor(() =>
+      expect(h.journal()?.state.frontiers).toMatchObject({
+        "seen:room": seen,
+        [`seen:msg:${mention.id}`]: seen,
+      }),
+    );
+    const quiet = { observedCount: 0, attentionCount: 0, threadCount: 0 };
+    expect(h.snapshot().row).toEqual(quiet);
+    // An ordinary message at the cut stays quiet: only a timestamp says so.
+    h.emit([message(h.alice, "room", "late ordinary", delivered)]);
+    expect(h.snapshot().row).toEqual(quiet);
+    h.emit([
+      message(h.alice, "room", "late mention", delivered, [
+        ["p", h.viewer.pubkey],
+      ]),
+    ]);
+    expect(h.snapshot()).toMatchObject({
+      attentionCount: 2,
+      row: { observedCount: 1, attentionCount: 1 },
+    });
+    // Receipts stay on this device: only the channel cut is published.
+    expect(Object.keys(h.journal()?.own ?? {})).toEqual(["seen:room"]);
+  },
+);
+
+it("a mention arriving while the leave saves still lights the row, also from saved marks alone", async () => {
+  const h = setup();
+  h.grant("room");
+  const seen = message(h.alice, "room", "seen mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([seen]);
+  await h.session.unread.enterChannel("room");
+  const held = h.holdSaveStarted();
+  h.session.unread.leaveChannel("room");
+  await held.started;
+  const late = message(h.alice, "room", "late mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([late]);
+  expect(h.snapshot().row?.attentionCount).toBe(1);
+  held.release();
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${seen.id}`]).toBe(100),
+  );
+  expect(h.journal()?.state.frontiers[`seen:msg:${late.id}`]).toBeUndefined();
+  expect(h.snapshot().row?.attentionCount).toBe(1);
+
+  // Without this session's visit, only the saved marks decide the row.
+  await h.clearCache();
+  h.grant("room");
+  h.emit([seen, late]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    attentionCount: 2,
+    row: { observedCount: 1, attentionCount: 1 },
+  });
+});
+
+it("a row receipt never hides a message marked unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+  );
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+  await h.session.unread.markMessageUnread("room", mention.id);
+  // Explicit intent shows the whole channel: the badge falls back from `row`.
+  expect(h.snapshot()).toMatchObject({
+    manual: "local-only",
+    attentionCount: 1,
+  });
+  expect(h.snapshot().row).toBeUndefined();
+});
+
+it("a row receipt never hides a message a peer marked unread", async () => {
+  let id = "";
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    // The message's id exists only after setup makes its keys; the owner
+    // reads the preloaded journal later, on its first load.
+    get state() {
+      return {
+        frontiers: { [`seen:msg:${id}`]: 100 },
+        // A peer's message override; the channel itself is not marked unread.
+        overrides: { [`msg:${id}`]: { set: 5, clear: 0, baseline: 0 } },
+      };
+    },
+  }));
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  id = mention.id;
+  h.grant("room");
+  h.emit([mention]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    manual: "none",
+    row: { attentionCount: 1 },
+  });
+});

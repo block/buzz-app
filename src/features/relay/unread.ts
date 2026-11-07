@@ -311,10 +311,17 @@ export function createUnread({
   // Per-visit message overlay; only the sidebar hint is persisted in read state.
   const forcedMessages = new Map<string, Set<string>>();
   const entered = new Set<string>();
-  // What each channel's row has seen this session: Infinity while a visit is
-  // open, then that visit's cut, applied before its `seen:` mark saves.
-  const seenRows = new Map<string, number>();
+  // What each channel's row has seen this session, applied before its marks
+  // save: everything while a visit is open (Infinity), then that visit's cut
+  // and the attention it showed.
+  const seenRows = new Map<
+    string,
+    Readonly<{ through: number; ids: ReadonlySet<string> }>
+  >();
   const seenKey = (channelId: string) => `seen:${channelId}`;
+  /** A row receipt for one attention message. It stays on this device, as
+   * `msg:` marks do. */
+  const receiptKey = (id: string) => `seen:msg:${id}`;
   const messageForceKey = (channelId: string) => `message-force:${channelId}`;
   const visits = new Map<string, number>();
   const mutations = new Map<string, Promise<unknown>>();
@@ -715,41 +722,68 @@ export function createUnread({
     );
     return event.created_at > caughtUp || !!forced;
   }
-  /** Through when a channel's row has seen its evidence: this session's visits,
-   * else the synced `seen:` mark. Seeing reads nothing. */
-  function seenThrough(channelId: string, state: ReadState) {
-    return Math.max(
-      seenRows.get(channelId) ?? -1,
-      state.frontiers[seenKey(channelId)] ?? -1,
-    );
+  /** Through when the channel's row has seen this entry; seeing reads nothing.
+   * Ordinary messages go by the channel's `seen:` cut. Attention goes only by
+   * its own receipt, never a timestamp: a mention delivered after the visit
+   * with an equal or older one (a retried send, a slow clock) must light the
+   * row. An open visit sees everything. */
+  function rowCut(entry: Evidence, state: ReadState, dm: boolean) {
+    const row = seenRows.get(entry.channelId);
+    if (!priority(entry, dm))
+      return Math.max(
+        row?.through ?? -1,
+        state.frontiers[seenKey(entry.channelId)] ?? -1,
+      );
+    const { id } = entry.event;
+    return row?.through === Number.POSITIVE_INFINITY ||
+      row?.ids.has(id) ||
+      state.frontiers[receiptKey(id)] !== undefined
+      ? Number.POSITIVE_INFINITY
+      : -1;
   }
-  /** Ending a visit saves what the row saw, so the row stays quiet after a
-   * reload and on other devices. A row with nothing it would show again
-   * writes nothing, so revisiting a quiet channel costs no sync. */
+  /** Ending a visit saves what the row saw, so it stays quiet after a reload:
+   * the channel's cut, synced, and a receipt for each unread attention
+   * message, kept on this device. Only marks the saved state lacks are
+   * written, so revisiting a quiet channel writes nothing. */
   function seeChannel(channelId: string) {
     const rows = byChannel.get(channelId) ?? [];
-    const cut = rows.reduce(
-      (newest, { event }) => Math.max(newest, event.created_at),
-      -1,
-    );
-    seenRows.set(channelId, cut);
-    if (closed || reads.snapshot().capability !== "frontier-sync") return;
     const state = reads.state();
     const dm = isDm(channelId);
     const saved = state.frontiers[seenKey(channelId)] ?? -1;
+    const marks: Record<string, number> = {};
+    const ids = new Set<string>();
+    let through = -1,
+      ordinary = false;
+    for (const entry of rows) {
+      const { id, created_at } = entry.event;
+      through = Math.max(through, created_at);
+      if (!isUnread(entry, state, dm)) continue;
+      if (!priority(entry, dm)) ordinary ||= created_at > saved;
+      else {
+        ids.add(id);
+        if (state.frontiers[receiptKey(id)] === undefined)
+          marks[receiptKey(id)] = created_at;
+      }
+    }
+    if (ordinary) marks[seenKey(channelId)] = through;
+    seenRows.set(channelId, { through, ids });
     if (
-      !rows.some(
-        (entry) =>
-          isUnread(entry, state, dm, saved) && !isUnread(entry, state, dm, cut),
-      )
+      closed ||
+      reads.snapshot().capability !== "frontier-sync" ||
+      !Object.keys(marks).length
     )
       return;
     const generation = epoch;
     void reads
-      .see(
-        seenKey(channelId),
-        cut,
+      .readMessages(
+        Object.entries(marks).map(([key, timestamp]) => ({
+          key,
+          timestamp,
+          channelId,
+        })),
+        undefined,
         () => !closed && generation === epoch && allowed(channelId),
+        true,
       )
       .catch(() => undefined);
   }
@@ -929,8 +963,6 @@ export function createUnread({
       rowAttention = 0;
     const rowThreads = new Set<string>();
     const dm = isDm(target.channelId);
-    const seen =
-      target.kind === "channel" ? seenThrough(target.channelId, state) : -1;
     indexEvidence();
     let latest: RelayEvent | undefined;
     for (const entry of byChannel.get(target.channelId) ?? []) {
@@ -947,7 +979,10 @@ export function createUnread({
       if (!isUnread(entry, state, dm)) continue;
       count++;
       if (priority(entry, dm)) attention++;
-      if (target.kind !== "channel" || !isUnread(entry, state, dm, seen))
+      if (
+        target.kind !== "channel" ||
+        !isUnread(entry, state, dm, rowCut(entry, state, dm))
+      )
         continue;
       rowCount++;
       if (priority(entry, dm)) rowAttention++;
@@ -2726,7 +2761,10 @@ export function createUnread({
       const visit = visits.get(channelId) ?? 0;
       // The row quiets on open; what arrives during the visit is seen too.
       if (!closed && allowed(channelId)) {
-        seenRows.set(channelId, Number.POSITIVE_INFINITY);
+        seenRows.set(channelId, {
+          through: Number.POSITIVE_INFINITY,
+          ids: new Set(),
+        });
         publish(new Set([channelId]), true);
       }
       return serialize(channelId, async () => {

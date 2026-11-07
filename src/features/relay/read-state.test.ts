@@ -497,6 +497,26 @@ describe("durable read-state owner", () => {
     );
     expect(owner.state().frontiers.room).toBe(12);
   });
+  it("a quiet save in one window leaves another window's intent revision", async () => {
+    const f = fixture();
+    const options = { broadcastName: `read-quiet:${crypto.randomUUID()}` };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.ready, b.ready]);
+    await b.read("room", 5, () => true);
+    const before = b.intentRevision();
+    await a.readMessages(
+      [{ key: "seen:room", timestamp: 12, channelId: "room" }],
+      undefined,
+      () => true,
+      true,
+    );
+    // Real BroadcastChannel delivery to the other window.
+    await expect.poll(() => b.state().frontiers["seen:room"]).toBe(12);
+    expect(b.revision()).toBe(before + 1);
+    expect(b.intentRevision()).toBe(before);
+    expect(f.journal()?.quiet).toBe(1);
+  });
   it("merges concurrent local windows against the latest transactional journal", async () => {
     const f = fixture();
     const a = f.make(),

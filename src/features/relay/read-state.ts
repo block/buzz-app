@@ -153,8 +153,6 @@ export function createReadState({
   const lifetime = new AbortController();
   const listeners = new Set<() => void>();
   let journal: ReadJournal | undefined;
-  // This session's saves that changed no unread state (`seen` marks).
-  let quietSaves = 0;
   let state: ReadState = EMPTY_READ_STATE;
   // Message evidence (and so ancestry) belongs to unread, which registers this.
   let coverage: MarkCoverage | undefined;
@@ -227,7 +225,7 @@ export function createReadState({
       ...Object.entries(own),
       ...Object.entries(frontiers),
     ])
-      if (!key.startsWith("msg:") && value > floor())
+      if (!/^(seen:)?msg:/.test(key) && value > floor())
         next[key] = Math.max(next[key] ?? 0, value);
     return next;
   };
@@ -272,7 +270,6 @@ export function createReadState({
   async function save(
     change: (current: ReadJournal) => ReadJournal,
     announce = true,
-    quiet = false,
   ) {
     if (closed) throw new Error("Read-state session closed");
     const saved = await storage.update((current) => {
@@ -282,8 +279,6 @@ export function createReadState({
     if (closed) return saved;
     journal = saved;
     state = localState(saved);
-    // Counted before listeners hear the save, so none sees it as intent.
-    if (quiet) quietSaves++;
     if (announce) broadcast?.postMessage("changed");
     emit();
     return saved;
@@ -526,15 +521,12 @@ export function createReadState({
     });
     return refreshing;
   }
-  const saveQuiet = (change: (current: ReadJournal) => ReadJournal) =>
-    save(change, true, true);
   async function mutate(
     key: string,
     timestamp: number | undefined,
     unread: boolean | undefined,
     valid: Validity,
     clearLocalKeys: readonly string[] = [key],
-    quiet = false,
   ): Promise<ReadMutationResult> {
     return queue(async () => {
       await ready;
@@ -543,7 +535,7 @@ export function createReadState({
       if (timestamp !== undefined && capability !== "frontier-sync")
         throw new Error("Read-state sync unsupported by this host");
       try {
-        const saved = await (quiet ? saveQuiet : save)((current) => {
+        const saved = await save((current) => {
           if (!valid(current)) throw new ObservationExpired();
           if (
             !contextId(key) ||
@@ -891,10 +883,9 @@ export function createReadState({
     state: () => state,
     localUnread: (key: string) => journal?.localUnread[key],
     revision: () => journal?.revision ?? 0,
-    /** `revision`, less this session's `see` saves: they change no unread
-     * state, so a reader's entry evidence outlives them. Another window's
-     * saves all count. */
-    intentRevision: () => (journal?.revision ?? 0) - quietSaves,
+    /** `revision`, less quiet saves from any window: they change no unread
+     * state, so a reader's entry evidence outlives them. */
+    intentRevision: () => (journal?.revision ?? 0) - (journal?.quiet ?? 0),
     /** Every message at or before this time counts as read. */
     floor,
     /** Lets the next save drop marks that broader marks already cover. */
@@ -939,12 +930,11 @@ export function createReadState({
         valid,
         clearLocalKeys,
       ),
-    /** Saves a row's `seen:` mark, which reads nothing (see `intentRevision`). */
-    see: (key: string, timestamp: number, valid: Validity) =>
-      mutate(key, timestamp, undefined, valid, undefined, true),
     clearLocalUnread: (key: string, keys: readonly string[], valid: Validity) =>
       mutate(key, undefined, false, valid, keys),
-    /** Atomic explicit subtree read; local-only hosts clear intent without fabricating frontiers. */
+    /** Atomic explicit subtree read; local-only hosts clear intent without
+     * fabricating frontiers. A `quiet` save (a row's `seen:` marks) reads
+     * nothing, so it is counted apart from unread intent (`intentRevision`). */
     readMessages: (
       messages: readonly Readonly<{
         key: string;
@@ -954,6 +944,7 @@ export function createReadState({
       }>[],
       clearForce: string | undefined,
       valid: Validity,
+      quiet = false,
     ) =>
       queue(async () => {
         await ready;
@@ -1011,6 +1002,7 @@ export function createReadState({
               homes: kept.homes,
               own: advanceOwn(current.own, frontiers),
               localUnread,
+              ...(quiet && { quiet: (current.quiet ?? 0) + 1 }),
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision
                 : current.acceptedRevision === current.revision

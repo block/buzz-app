@@ -297,9 +297,10 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Opening a channel or DM** clears its sidebar row: the bold name, the mention
   dot and the thread dot. The macOS Dock dot follows the rows. Nothing is marked
   read: unread threads keep their dots in the conversation and in Activity →
-  Threads, and **New messages** still marks where you left off. Anything that
-  arrives after you leave lights the row again, and **Mark as unread** still
-  shows on it.
+  Threads, and **New messages** still marks where you left off. A mention, DM or
+  reply to you that arrives after you leave lights the row again, as does any
+  newer message; **Mark as unread** still shows on it. On another device, rows
+  with unread mentions, DMs or replies to you light again until you read them.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and

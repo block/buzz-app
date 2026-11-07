@@ -304,7 +304,7 @@ export function retainLocalRead(
     );
   };
   const protectedKey = (key: string) =>
-    overrides.size > 0 && !key.startsWith("msg:");
+    overrides.size > 0 && !key.startsWith("msg:") && !key.startsWith("seen:");
   // Keep inherited floors first (a subset of the already bounded reserve), then
   // broad receipts before messages. Event age breaks ties within each scope.
   // Journal recency still controls newly read old history and sync.

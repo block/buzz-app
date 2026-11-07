@@ -138,6 +138,41 @@ it("row seen marks go last and are never override ancestry", () => {
   expect(rows.length).toBeGreaterThan(0);
   expect(rows.length).toBeLessThan(seen.length);
 });
+it("row receipts never crowd out read receipts in the local reserve", () => {
+  const hex = (n: number) => n.toString(16).padStart(64, "0");
+  const marks = (prefix: string, from: number, count: number) =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, n) => [
+        `${prefix}${hex(from + n)}`,
+        100,
+      ]),
+    );
+  // An override makes inherited floors protected; row receipts are not floors.
+  const before = retainLocalRead(
+    [
+      {
+        frontiers: marks("msg:", 0, 6500),
+        overrides: { room: { set: 1, clear: 0, baseline: 0 } },
+      },
+    ],
+    {},
+    "fixture",
+  );
+  const after = retainLocalRead(
+    [
+      before.state,
+      { frontiers: marks("seen:msg:", 10000, 1000), overrides: {} },
+    ],
+    before.recent,
+    "fixture",
+    before.reserve,
+  );
+  const reads = (kept: typeof before) =>
+    Object.keys({ ...kept.state.frontiers, ...kept.reserve }).filter((key) =>
+      key.startsWith("msg:"),
+    ).length;
+  expect(reads(after)).toBe(reads(before));
+});
 it("old broad marks never crowd out the newest read", () => {
   const hex = (n: number) => n.toString(16).padStart(64, "0");
   const uuid = (n: number) =>

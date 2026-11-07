@@ -73,6 +73,12 @@ export function viewerAppDomain(
   }
 }
 
+/** Native viewer sign-in — the Settings-credential exchange in
+ * src-tauri's browser/builderlab.rs — exists only in the macOS host. */
+export function viewerSignInSupported() {
+  return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+}
+
 /** A credential is only exchanged for app hosts in the same configured tenant. */
 export function isViewerTarget(
   target: string,

@@ -18,6 +18,7 @@ import {
   isAppUrl,
   isViewerTarget,
   viewerAppDomain,
+  viewerSignInSupported,
 } from "./environment";
 
 import { Login } from "../login/Login";
@@ -91,11 +92,19 @@ export function applyApps(
       label: appName(target),
     });
   };
+  // AppView's viewer path exchanges the Settings credential natively, which
+  // only macOS supports; elsewhere it dead-ends after a successful exchange.
+  // Links that would take it keep the external browser path until then.
+  const usesViewerSignIn = (target: string) =>
+    loginAvailable && !(viewerAppDomain() && !isViewerTarget(target));
   ctx.panels.register({
     id: "app",
     title: "App",
     keepOpen: true,
-    matches: (target) => ctx.browser.available && isAppUrl(target),
+    matches: (target) =>
+      ctx.browser.available &&
+      isAppUrl(target) &&
+      (viewerSignInSupported() || !usesViewerSignIn(target)),
     component: AppView,
   });
   const base = controlPlane();

@@ -68,6 +68,8 @@ export interface FederatedIdentity {
   subscribe(listener: () => void): () => void;
   signIn(): Promise<SessionSnapshot>;
   cancelSignIn(): Promise<void>;
+  /** The page the pending sign-in opened, to paste into a browser by hand. */
+  signInLink(): Promise<string | null>;
   /** With `revision`, only while that session is current: native leaves a
    * newer one signed in. Answers with native's own snapshot. */
   signOut(options?: { revision?: string }): Promise<SessionSnapshot>;
@@ -204,6 +206,9 @@ export class FederatedIdentityService
       throw new Error("Federated identity requires Buzz desktop");
     await invoke("federated_identity_cancel_sign_in");
     await this.operation("federated_identity_snapshot");
+  }
+  signInLink() {
+    return invoke<string | null>("federated_identity_sign_in_link");
   }
   forCommunity = (relay: string): FederatedIdentity => {
     let session = this.shared.communities.get(relay);
@@ -386,6 +391,12 @@ class CommunitySession implements FederatedIdentity {
   async cancelSignIn() {
     await invoke("federated_identity_cancel_sign_in", this.target);
     await this.operation("federated_identity_snapshot");
+  }
+  signInLink() {
+    return invoke<string | null>(
+      "federated_identity_sign_in_link",
+      this.target,
+    );
   }
   request(): Promise<HostResponse> {
     return Promise.reject(

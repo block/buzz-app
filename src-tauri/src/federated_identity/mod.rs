@@ -100,6 +100,21 @@ impl Drop for CallbackGuard {
         let _ = self.0.cancel(&self.1);
     }
 }
+const OPEN_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// macOS `open` waits for the browser to take the URL. A hung browser must
+/// not hold sign-in, so after `limit` the attempt goes on and the person can
+/// copy the link instead; only a reported failure stops it.
+fn open_within(
+    limit: std::time::Duration,
+    open: impl FnOnce() -> bool + Send + 'static,
+) -> Result<(), &'static str> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || send.send(open()));
+    match receive.recv_timeout(limit) {
+        Ok(true) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(()),
+        _ => Err("browser-unavailable"),
+    }
+}
 struct State {
     snapshot: Snapshot,
     session: Option<Arc<Session>>,
@@ -110,7 +125,8 @@ struct State {
     restore_retry_at: Option<tokio::time::Instant>,
     closed: bool,
     cancellation: CancellationToken,
-    callback: Option<CallbackGuard>,
+    /// The pending browser sign-in and the page it opened, for copying by hand.
+    callback: Option<(CallbackGuard, String)>,
     /// A sign-in started while signed in; the current session stays live.
     renewal: Option<CancellationToken>,
     /// Last account seen signed in this run; tells a refresh from a new account.
@@ -922,11 +938,15 @@ impl FederatedIdentity {
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(secret.as_bytes()));
         let login = login_start(config, &challenge, start);
         let callback = app.state::<crate::oauth_callback::OAuthCallbackHost>();
+        let mut link = String::new();
         let attempt = callback
             .begin_federated(&self.0.fingerprint, login.to_string(), |url| {
-                app.opener()
-                    .open_url(url, None::<&str>)
-                    .map_err(|_| "browser-unavailable".into())
+                link = url.to_owned();
+                let (app, url) = (app.clone(), url.to_owned());
+                open_within(OPEN_LIMIT, move || {
+                    app.opener().open_url(url, None::<&str>).is_ok()
+                })
+                .map_err(Into::into)
             })
             .map_err(|_| "browser-unavailable")?;
         // Drop guards cancel only this callback when the whole login future is canceled.
@@ -936,7 +956,7 @@ impl FederatedIdentity {
             if state.closed || state.snapshot.revision != revision || cancel.is_cancelled() {
                 return Err("sign-in-canceled".into());
             }
-            state.callback = Some(_guard.clone());
+            state.callback = Some((_guard.clone(), link));
         }
         // Serialize callback registration, not the user's browser interaction.
         drop(operation);
@@ -949,7 +969,7 @@ impl FederatedIdentity {
             if state
                 .callback
                 .as_ref()
-                .is_some_and(|guard| guard.1 == attempt.id)
+                .is_some_and(|(guard, _)| guard.1 == attempt.id)
             {
                 state.callback.take();
             }
@@ -1118,6 +1138,9 @@ impl FederatedIdentity {
         };
         self.storage(move |store| store.compare(None, Some(&replaced)))
             .await
+    }
+    pub(crate) fn sign_in_link(&self) -> Option<String> {
+        self.state().callback.as_ref().map(|(_, link)| link.clone())
     }
     pub(crate) fn cancel_sign_in(&self) {
         let mut state = self.state();
@@ -1332,6 +1355,16 @@ pub(crate) fn federated_identity_cancel_sign_in(
     host.server_for_command(relay.as_deref(), server.as_deref())?
         .cancel_sign_in();
     Ok(())
+}
+#[tauri::command]
+pub(crate) fn federated_identity_sign_in_link(
+    host: tauri::State<'_, FederatedIdentity>,
+    relay: Option<String>,
+    server: Option<String>,
+) -> Result<Option<String>, String> {
+    Ok(host
+        .server_for_command(relay.as_deref(), server.as_deref())?
+        .sign_in_link())
 }
 #[tauri::command]
 pub(crate) async fn federated_identity_sign_out(

@@ -1,4 +1,9 @@
-import { parseOpenTarget, targetKey, type OpenTarget } from "./targets";
+import {
+  coversWorkspace,
+  parseOpenTarget,
+  targetKey,
+  type OpenTarget,
+} from "./targets";
 import type {
   DismissedVisits,
   NavigationEntry,
@@ -467,12 +472,12 @@ export function createNavigationController(
           returningFocus = undefined;
           returningSidebar = undefined;
           // A passing visit leaves as a dismissal does: back to its opener when
-          // that is the page opening, else replaced by it. Settings returns to
-          // that visit, so it never replaces it. Any forward entries stay.
+          // that is the page opening, else replaced by it. Settings and the
+          // join dialog return to that visit, so they never replace it. Any
+          // forward entries stay.
           const dismiss =
             options?.dismiss ||
-            (target.kind !== "settings" &&
-              passes(history.snapshot().current.id));
+            (!coversWorkspace(target) && passes(history.snapshot().current.id));
           const previous = history.snapshot().previous;
           if (
             dismiss &&
@@ -596,7 +601,13 @@ export function createNavigationController(
         )
           return false;
         try {
-          const target = parseOpenTarget(input);
+          // A join dialog over the visit stays over the one it resolves to.
+          const join = snapshot.entry.target.join;
+          const parsed = parseOpenTarget(input);
+          const target =
+            join && !parsed.join
+              ? parseOpenTarget({ ...parsed, join })
+              : parsed;
           if (targetKey(target) === targetKey(snapshot.entry.target))
             return true;
           resolving = active;

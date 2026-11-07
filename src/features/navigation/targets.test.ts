@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  coversWorkspace,
   parseGitPluginSource,
   parseOpenTarget,
   targetKey,
+  withoutJoin,
   type OpenTarget,
 } from "./targets";
 const viewer = "a".repeat(64);
@@ -322,6 +324,56 @@ it("keeps explicit Personal space distinct from an unspecified page scope", () =
   expect(parseOpenTarget(personal)).toEqual(personal);
   expect(targetKey(personal)).not.toBe(targetKey(page));
   expect(() => parseOpenTarget({ ...conversation, scope: null })).toThrow();
+});
+
+it("bounds a join presentation to its viewer and community address, never a code", () => {
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+  } as const;
+  const joining = parseOpenTarget({
+    ...page,
+    join: {
+      viewer: "A".repeat(64),
+      visit: "v-1",
+      community: "https://RELAY.example:443/",
+    },
+  });
+  expect(joining).toEqual({
+    ...page,
+    join: { viewer, visit: "v-1", community: "https://relay.example" },
+  });
+  expect(Object.isFrozen(joining.join)).toBe(true);
+  expect(coversWorkspace(joining)).toBe(true);
+  expect(coversWorkspace(page)).toBe(false);
+  expect(withoutJoin(joining)).toEqual(page);
+  expect(targetKey(withoutJoin(joining))).toBe(targetKey(page));
+  // Join a community from the picker has no address yet.
+  expect(
+    parseOpenTarget({ ...page, join: { viewer, visit: "v-2" } }).join,
+  ).toEqual({ viewer, visit: "v-2" });
+  // The same presentation applies over any kind, Settings included.
+  expect(
+    parseOpenTarget({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+      join: { viewer, visit: "v-3" },
+    }).join,
+  ).toEqual({ viewer, visit: "v-3" });
+  for (const join of [
+    { viewer, visit: "v", community: "https://relay.example", code: "x" },
+    { visit: "v", community: "https://relay.example" },
+    { viewer, community: "https://relay.example" },
+    { viewer, visit: "Not A Token" },
+    { viewer: "not-hex", visit: "v" },
+    { viewer, visit: "v", community: 7 },
+    { viewer, visit: "v", community: "not a url" },
+    "relay.example",
+  ])
+    expect(() => parseOpenTarget({ ...page, join })).toThrow();
 });
 
 it("addresses one installed plugin only within Plugins settings", () => {

@@ -1486,3 +1486,91 @@ it.each([
     expect(await screen.findByLabelText("Invite code")).toBeVisible();
   },
 );
+
+it("reports a signed-in account's admission as a write, so Close and Back wait for the claim", async () => {
+  api.inspectProfile.mockResolvedValue({
+    exists: false,
+    existing: {},
+    profile: { name: "", picture: "" },
+  });
+  const user = userEvent.setup();
+  let answer = () => {};
+  const claimed = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({
+          name: "Fixture",
+          membershipRequired: true,
+          policy: {
+            version: "v1",
+            terms_markdown: "Terms",
+            age_attestation_required: true,
+          },
+        });
+      if (route === "accept-policy")
+        return Response.json({ receipt: "receipt-1" });
+      if (route === "claim") {
+        await claimed;
+        return Response.json({ status: "joined" });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const writing = vi.fn();
+  render(
+    <CommunityDialog
+      communities={lookupCommunities}
+      federatedIdentity={await signedInAccount()}
+      mode="join"
+      close={() => {}}
+      onWritingChange={writing}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  // From the destination step: the lookup is a read, the claim after it a write.
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => expect(writing).toHaveBeenLastCalledWith(true));
+  expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+  act(() => answer());
+  expect(await screen.findByLabelText("Display name")).toBeVisible();
+  await waitFor(() => expect(writing).toHaveBeenLastCalledWith(false));
+  expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+});
+
+it("keeps a submitted address submitted after the host withdraws its one-use connect", async () => {
+  const lookups = silentHost();
+  const view = render(
+    <CommunityDialog
+      communities={lookupCommunities}
+      mode="join"
+      close={() => {}}
+      submittedDestination
+      invite={{ community: "https://quiet.example", code: "" }}
+    />,
+  );
+  await waitFor(() => expect(lookups).toHaveLength(1));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finding your community…",
+  );
+  // The host consumes the instruction once the dialog has started it.
+  view.rerender(
+    <CommunityDialog
+      communities={lookupCommunities}
+      mode="join"
+      close={() => {}}
+      submittedDestination={false}
+      invite={{ community: "https://quiet.example", code: "" }}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finding your community…",
+  );
+  expect(screen.queryByLabelText("Community URL")).toBeNull();
+  expect(lookups).toHaveLength(1);
+});

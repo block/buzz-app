@@ -8,8 +8,14 @@ import {
   type NavigationFocus,
 } from "./controller";
 import { createBrowserHistory } from "./browser-history";
-import { createMemoryHistory } from "./history";
-import { targetKey, type JsonValue, type OpenTarget } from "./targets";
+import { createMemoryHistory, type NavigationEntry } from "./history";
+import {
+  coversWorkspace,
+  targetKey,
+  withoutJoin,
+  type JsonValue,
+  type OpenTarget,
+} from "./targets";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 
 export type PageNavigation = Readonly<{
@@ -87,6 +93,10 @@ export function provideNavigation(
         ? new AbortController().signal
         : attempt.signal;
       const visit = (key: string) => JSON.stringify([attempt.entry.id, key]);
+      // Another visit covers this page: Settings, or a join dialog opened over
+      // it. A join presented with its own page, as after reload, covers nothing.
+      const covered = (entry: NavigationEntry) =>
+        entry.id !== attempt.entry.id && coversWorkspace(entry.target);
       const sameVisit = (next: OpenAttempt) =>
         next.entry.id === attempt.entry.id &&
         targetKey(next.entry.target) === targetKey(attempt.entry.target);
@@ -99,7 +109,8 @@ export function provideNavigation(
       const presentation = bindPresentation(
         {
           entryId: attempt.entry.id,
-          target: attempt.entry.target,
+          // Presenters see the visit beneath a join dialog, never the dialog.
+          target: withoutJoin(attempt.entry.target),
           signal: retainedSignal,
           ...(attempt.traversal && { traversal: attempt.traversal }),
           get focus() {
@@ -114,7 +125,7 @@ export function provideNavigation(
           resolve: (target) => {
             if (
               retainUnderSettings &&
-              controller.navigation.snapshot().entry.target.kind === "settings"
+              covered(controller.navigation.snapshot().entry)
             ) {
               resolution = target;
               return false;
@@ -123,7 +134,7 @@ export function provideNavigation(
           },
           complete: (result) => {
             const state = controller.navigation.snapshot();
-            if (retainUnderSettings && state.entry.target.kind === "settings") {
+            if (retainUnderSettings && covered(state.entry)) {
               completion = result;
               return false;
             }
@@ -137,11 +148,7 @@ export function provideNavigation(
             if (!owner.valid()) return false;
             if (current()) return true;
             const state = controller.navigation.snapshot();
-            if (
-              retainUnderSettings &&
-              !state.ingress &&
-              state.entry.target.kind === "settings"
-            ) {
+            if (retainUnderSettings && !state.ingress && covered(state.entry)) {
               suspended = true;
               return true;
             }

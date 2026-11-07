@@ -305,6 +305,8 @@ export class ConversationService extends Service implements Conversation {
   }
   registerTool(value: ComposerTool) {
     validate(value);
+    if (value.placement !== undefined && value.placement !== "send")
+      throw new Error("Invalid tool placement");
     this.toolEntries.register(this.ctx, value);
   }
   registerCompletion(value: ComposerCompletion) {

@@ -129,7 +129,13 @@ type Workspace = {
   /** The read under way, which every agent's read meanwhile shares; it stops
    * once all of them are cancelled. */
   reading?:
-    | { done: Promise<void>; readers: number; stop: AbortController }
+    | {
+        done: Promise<void>;
+        readers: number;
+        stop: AbortController;
+        /** The earliest use it lists sessions from. */
+        since: number;
+      }
     | undefined;
 };
 /** Per history, so a plugin that reloads starts over. */
@@ -171,6 +177,10 @@ async function refresh(
       session: session && (await withRevision(session)),
     });
   }
+  // Sessions last used before `since` were not listed; a read reaching
+  // further back, such as the Usage page's, keeps what it found for them.
+  for (const [id, read] of state.reads)
+    if (read.at < since && !reads.has(id)) reads.set(id, read);
   state.reads = reads;
 }
 
@@ -192,6 +202,15 @@ export async function readUsage(
   }
   const current = state;
   let reading = current.reading;
+  // A read listing from later, such as today's spend beside Send, would miss
+  // this one's earlier sessions: it ends first, then this reads its own.
+  while (reading && !reading.stop.signal.aborted && reading.since > since) {
+    await abortable(
+      reading.done.catch(() => {}),
+      signal,
+    );
+    reading = current.reading;
+  }
   // One stopped because every agent waiting on it was cancelled is ending; a
   // read that starts meanwhile, as when the page opens again, starts anew.
   if (!reading || reading.stop.signal.aborted) {
@@ -199,6 +218,7 @@ export async function readUsage(
     const started: NonNullable<Workspace["reading"]> = {
       readers: 0,
       stop,
+      since,
       done: refresh(history, workspace, current, since, stop.signal).finally(
         () => {
           if (current.reading === started) current.reading = undefined;

@@ -217,6 +217,7 @@ async function channelsPage({ root = true, cached = false } = {}) {
   };
   const none: ReturnType<Panels["snapshot"]> = [];
   const panels: Panels = {
+    ui: { Workspace: () => null, useSplit: vi.fn(), useTabTitle: vi.fn() },
     snapshot: () => none,
     subscribe: () => () => {},
     resolve: () => undefined,

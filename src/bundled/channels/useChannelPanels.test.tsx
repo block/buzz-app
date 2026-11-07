@@ -161,6 +161,7 @@ it("keeps a side panel with its channel until closed, while bottom drawers close
   let available = [huddle, terminal];
   const listeners = new Set<() => void>();
   const panels: Panels = {
+    ui: { Workspace: () => null, useSplit: vi.fn(), useTabTitle: vi.fn() },
     snapshot: () => available,
     subscribe: (listener) => {
       listeners.add(listener);

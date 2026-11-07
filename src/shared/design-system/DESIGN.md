@@ -886,7 +886,9 @@ are unchanged. No extra hover affordance is added to static content.
 
 The floating control mappings are proposed, not an accessibility certification.
 Dark floating action fills are neutral-6/7/8 at rest/hover/press, on the
-neutral-raised (#282828) floating surface; those fill edges are below 3:1. The contextual control
+neutral-raised (#282828) floating surface; those fill edges are below 3:1.
+Light floating action fills are neutral-3/4/5, one step above the panel's
+neutral-2 subtle fill, which nearly disappears on a white floating surface. The contextual control
 stroke uses neutral-9 and clears 3:1 against that outer surface. This proof does
 not change the shared [focus appearance policy](#focus-appearance), which applies
 in both the app and viewer. Glass/inverse/media surfaces retain their existing
@@ -936,7 +938,9 @@ Floating unread cues and Jump to latest use Button's `shape="control"` with
 same radius so its painted edges align with the button.
 A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
 a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
-whose light gray fill holds up over the list where glass would disappear.
+whose light gray fill holds up over the list where glass would disappear. The
+cue opts into `interaction-floating`, so that fill steps up to the floating
+control fill instead of the panel's near-match in either theme.
 
 Arriving at a message, by link, search, the inbox or closing its thread,
 briefly marks it. A filled bubble takes `affordance-message-highlight` (your

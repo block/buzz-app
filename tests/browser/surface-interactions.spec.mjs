@@ -27,9 +27,9 @@ for (const mode of ["light", "dark"]) {
           }
         : {
             panel: "rgb(245, 245, 246)",
-            fill: "rgb(245, 245, 246)",
-            hover: "rgb(241, 241, 242)",
-            pressed: "rgb(218, 218, 218)",
+            fill: "rgb(232, 232, 232)",
+            hover: "rgb(218, 218, 218)",
+            pressed: "rgb(204, 204, 204)",
             selected: "rgb(218, 218, 218)",
             row: "rgb(245, 245, 246)",
             border: "rgb(128, 128, 128)",

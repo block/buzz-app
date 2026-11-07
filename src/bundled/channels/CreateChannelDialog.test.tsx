@@ -694,10 +694,14 @@ function agentChoices(state: {
     archived: state.archived ?? [],
   } as const;
   const error = state.status === "error" ? { error: listingFailed } : {};
+  const selectable = identities.filter(
+    (a) => !archives.archived.includes(a.pubkey),
+  );
   return {
     status: state.status,
     identities,
-    selectable: identities.filter((a) => !archives.archived.includes(a.pubkey)),
+    selectable,
+    admissible: selectable,
     archives,
     templates: {
       status: state.status,
@@ -709,6 +713,7 @@ function agentChoices(state: {
     definitions: [],
     complete: state.status === "ready",
     pending: state.status === "loading",
+    managedPending: state.status === "loading",
     ...error,
   };
 }

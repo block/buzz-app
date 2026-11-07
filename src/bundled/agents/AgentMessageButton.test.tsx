@@ -16,6 +16,7 @@ function setup() {
   const choices: {
     identities: { pubkey: string; managed: boolean; messageable?: true }[];
     pending?: boolean;
+    managedPending?: boolean;
     error?: string;
   } = { identities: [{ pubkey: "agent", managed: true }] };
   const refresh = vi.fn(async () => {});
@@ -87,18 +88,16 @@ it("reopens an existing hidden DM without agent-control evidence", async () => {
 it("offers refresh and retry when agent evidence is unavailable", async () => {
   const f = setup();
   f.choices.identities = [];
-  f.choices.pending = true;
   f.refresh.mockImplementationOnce(async () => {
     f.choices.identities = [
       { pubkey: "agent", managed: false, messageable: true },
     ];
-    f.choices.pending = false;
   });
   const user = userEvent.setup();
   render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
   await user.click(screen.getByRole("button", { name: "Message" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Agent details are still loading",
+    "This agent is unavailable in this community.",
   );
   expect(f.open).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Retry" }));
@@ -171,6 +170,57 @@ it("opens the agent conversation in the current community without sending a mess
     channelId: "dm-agent",
     scope: { viewer: "owner", communityOrigin: "https://community.example" },
   });
+});
+it.each([true, false])(
+  "waits for agents still loading before deciding: managed=%s",
+  async (managed) => {
+    const user = userEvent.setup();
+    const f = setup();
+    f.choices.identities = [];
+    f.choices.managedPending = true;
+    let finish!: () => void;
+    f.refresh.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            f.choices.identities = managed
+              ? [{ pubkey: "agent", managed }]
+              : [];
+            f.choices.managedPending = false;
+            resolve();
+          };
+        }),
+    );
+    render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
+    await user.click(screen.getByRole("button", { name: "Message" }));
+    await waitFor(() =>
+      expect(f.refresh).toHaveBeenCalledExactlyOnceWith(false),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(f.open).not.toHaveBeenCalled();
+    await act(async () => finish());
+    if (managed) await waitFor(() => expect(f.navigate).toHaveBeenCalledOnce());
+    else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "This agent is unavailable in this community.",
+      );
+      expect(f.open).not.toHaveBeenCalled();
+    }
+  },
+);
+it("does not wait for the agent library, which cannot control an agent", async () => {
+  const user = userEvent.setup();
+  const f = setup();
+  f.choices.identities = [];
+  f.choices.pending = true;
+  f.choices.managedPending = false;
+  render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
+  await user.click(screen.getByRole("button", { name: "Message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Agent details are still loading",
+  );
+  expect(f.refresh).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
 });
 it("shows an opening error and allows retry", async () => {
   const user = userEvent.setup();

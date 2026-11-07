@@ -55,6 +55,8 @@ export type AgentChoicesSnapshot = Omit<AgentLibrarySnapshot, "identities"> & {
   identities: readonly Choice[];
   /** Forward-looking choices: `identities` minus known-archived agents. */
   selectable: readonly Choice[];
+  /** `selectable` that may join a channel: library rows need a current read. */
+  admissible: readonly Choice[];
   /** Archive evidence that produced `selectable`; templates require it ready. */
   archives: IdentityArchiveSnapshot;
   /** Templates mirror Agents, including source readiness and errors. */
@@ -62,6 +64,8 @@ export type AgentChoicesSnapshot = Omit<AgentLibrarySnapshot, "identities"> & {
   /** Usable candidates do not imply complete evidence for automatic recipients. */
   complete: boolean;
   pending: boolean;
+  /** Native agents are loading; only they can make an agent `managed`. */
+  managedPending: boolean;
 };
 
 /** One read-only projection of existing sources. No directory scan, timer, runner
@@ -92,6 +96,7 @@ export function createAgentChoices({
   });
   const empty: AgentChoicesSnapshot = {
     selectable: [],
+    admissible: [],
     archives: noArchives,
     status: "unavailable",
     templates: {
@@ -104,6 +109,7 @@ export function createAgentChoices({
     identities: [],
     complete: false,
     pending: false,
+    managedPending: false,
   };
   let cached:
     | {
@@ -125,9 +131,10 @@ export function createAgentChoices({
     )
       return cached.value;
     const choices = new Map<string, Choice>();
-    if (legacy.status === "ready")
-      for (const row of legacy.identities)
-        choices.set(row.pubkey, { ...row, managed: false });
+    // The last library read stays usable while it refreshes, fails or is stale;
+    // `pending` and `complete` say it is partial.
+    for (const row of legacy.identities)
+      choices.set(row.pubkey, { ...row, managed: false });
     if (local?.status === "ready")
       for (const row of sameCommunityAgents(local.hosted ?? [], scope)) {
         choices.set(row.pubkey, {
@@ -165,7 +172,11 @@ export function createAgentChoices({
     const templates: TemplateChoices = {
       status: templateSource.status,
       identities: [...choices.values()]
-        .filter((agent) => templateSource === legacy || agent.managed)
+        .filter(
+          (agent) =>
+            (templateSource === legacy && legacy.status === "ready") ||
+            agent.managed,
+        )
         .map((agent) => ({ ...agent, name: agent.managedName ?? agent.name })),
       complete: templateSource.status === "ready" && !templateSource.error,
       pending:
@@ -174,6 +185,9 @@ export function createAgentChoices({
           : local?.status === "loading",
       ...(templateSource.error ? { error: templateSource.error } : {}),
     };
+    const selectable = [...choices.values()].filter(
+      (agent) => !archiveHides(archives, agent.pubkey, viewer),
+    );
     const value: AgentChoicesSnapshot = {
       templates,
       status: ready
@@ -189,14 +203,16 @@ export function createAgentChoices({
         legacy.status === "idle" ||
         legacy.status === "loading" ||
         local?.status === "loading",
+      managedPending: local?.status === "loading",
       complete:
         legacy.status === "ready" &&
         !legacy.error &&
         (!local || local.status === "ready" || local.status === "unavailable"),
-      definitions: legacy.status === "ready" ? legacy.definitions : [],
+      definitions: legacy.definitions,
       identities: [...choices.values()],
-      selectable: [...choices.values()].filter(
-        (agent) => !archiveHides(archives, agent.pubkey, viewer),
+      selectable,
+      admissible: selectable.filter(
+        (agent) => agent.managed || legacy.status === "ready",
       ),
       archives: archive,
       ...(errors.length ? { error: errors.join(" ") } : {}),
@@ -245,7 +261,7 @@ export function createAgentChoices({
       if (signal.aborted) return;
       await Promise.all([
         usesLegacy(source) ? library.refresh({ fresh }) : undefined,
-        usesLocal(source) ? native?.refresh() : undefined,
+        usesLocal(source) ? native?.refresh({ fresh }) : undefined,
         // Archive reads stay lazy; templates always need fresh evidence.
         source === "templates" || archives?.snapshot().status !== "idle"
           ? archives?.refresh()

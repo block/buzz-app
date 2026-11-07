@@ -1196,6 +1196,31 @@ it("opens a deep-link invite on Personal space without claiming until the user c
   expect(t.select).not.toHaveBeenCalled();
 });
 
+it("connects at once to a community the person asked to join from the app", async () => {
+  const t = harness();
+  render(
+    <CommunityPicker
+      communities={t.communities}
+      invite={{
+        community: "https://created.example",
+        code: "",
+        submitted: true,
+        requestId: 2,
+      }}
+      onInviteClose={vi.fn()}
+      onSelect={t.onSelect}
+    />,
+  );
+  // No Continue: the dialog looks the community up as soon as it opens.
+  await waitFor(() =>
+    expect(t.fetch).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent("https://created.example")}/info`,
+      expect.anything(),
+    ),
+  );
+  expect(t.select).not.toHaveBeenCalled();
+});
+
 it("labels the existing picker Communities only while no community is saved", async () => {
   const h = harness();
   h.update({ selected: null, memberships: [] });

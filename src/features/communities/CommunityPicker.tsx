@@ -29,7 +29,7 @@ import {
 } from "./departure";
 import { CommunityDialog } from "./CommunityDialog";
 import type { FederatedIdentity } from "../federated-identity/service";
-import type { InviteLink } from "./invite-link";
+import type { JoinRequest } from "./invite-intent";
 import { CommunityPickerItem, MEMBERSHIP_SECTION } from "./CommunityPickerItem";
 import { communityDestination } from "./destination";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -61,7 +61,7 @@ export function CommunityPicker({
 }: {
   communities: Communities;
   federatedIdentity?: FederatedIdentity | undefined;
-  invite?: (InviteLink & { requestId: number }) | undefined;
+  invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: Pick<SettingsCards, "subscribe" | "has"> | undefined;
   onSelect?: ((id: string | null) => void) | undefined;
@@ -338,6 +338,7 @@ export function CommunityPicker({
           federatedIdentity={federatedIdentity}
           mode="join"
           invite={invite}
+          submittedDestination={invite?.submitted === true}
           onJoined={(id) => select(id)}
           close={() => {
             setJoining(false);

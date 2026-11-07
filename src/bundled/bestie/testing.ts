@@ -356,6 +356,7 @@ export async function bestieFixture(
     pending: () => [],
     apply: async () => {},
   } satisfies KnownCommunities);
+  root.provide("communityJoin", { open: () => true });
   const pages = new PagesService(root);
   const open = vi.fn(async () => ({ status: "opened" }));
   const navigation = { open } as unknown as Navigation;

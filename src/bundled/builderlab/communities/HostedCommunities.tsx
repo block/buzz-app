@@ -69,10 +69,14 @@ type Confirm = {
 export function HostedCommunities({
   api,
   active,
+  join,
   sharedSignIn = false,
 }: {
   api: Api;
   active(): boolean;
+  /** Opens the app's join dialog on a community this account just created;
+   * false when it cannot, and the address is handed off instead. */
+  join?: (address: string) => boolean;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
 }) {
@@ -877,14 +881,28 @@ export function HostedCommunities({
             creating={action === "create"}
             onCreate={(name) =>
               run("create", async () => {
+                // `run` has just started this operation's generation.
+                const at = generation.current;
                 const reply = check(
                   await api.call("create", { name }),
                   "Could not create the community.",
                   quotaState?.limit,
                 );
-                // Hand off the address before refreshing, so a failed refresh cannot lose it.
+                // Join or hand off the address before refreshing, so a failed
+                // refresh cannot lose it. The join dialog connects at once, as
+                // first run's Create community does. Like the clipboard, a
+                // retired or replaced card (another account) opens nothing.
                 const url = reply.community && relayUrl(reply.community);
-                if (url) await copy(url);
+                if (
+                  url &&
+                  !(
+                    join &&
+                    activeRef.current() &&
+                    at === generation.current &&
+                    join(url)
+                  )
+                )
+                  await copy(url);
                 await settle();
               })
             }

@@ -71,6 +71,8 @@ export type OpenTarget =
       panel?: "members";
       /** Message selected for the forwarding dialog; never submission state. */
       forward?: string;
+      /** Convert a DM, either entirely or starting at the selected event. */
+      dmMove?: string;
       /** Read-only content selected beside this conversation; never an action. */
       detail?: Readonly<{ target: string; rootId?: string }>;
     }>;
@@ -382,6 +384,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "context",
           "panel",
           "forward",
+          "dmMove",
           "detail",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
@@ -427,6 +430,14 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.panel === "members" ? { panel: value.panel } : {}),
           ...(value.forward !== undefined
             ? { forward: text(value.forward, hex).toLowerCase() }
+            : {}),
+          ...(value.dmMove !== undefined
+            ? {
+                dmMove:
+                  value.dmMove === "all"
+                    ? "all"
+                    : text(value.dmMove, hex).toLowerCase(),
+              }
             : {}),
           ...(detail ? { detail } : {}),
         };

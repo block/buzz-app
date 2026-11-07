@@ -1,3 +1,5 @@
+import { moveControl } from "../dm-moves/protocol";
+import { movedSource } from "../dm-moves/provenance";
 import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
@@ -328,6 +330,9 @@ export function foldMessages(
   for (const event of events) {
     if (!channelRowKind(event.kind)) continue;
     if (channelRowChannel(event) !== channelId) continue;
+    const move = moveControl(event);
+    const moved = movedSource(event);
+    if (move && move.control.type !== "request") continue;
     if (
       !includeReplies &&
       event.tags.some((entry) => entry[0] === "e" && entry[3] === "reply") &&
@@ -460,6 +465,8 @@ export function foldMessages(
         workflowOwnerId: workflowOwner(event, signingAuthority),
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
+        ...(moved ? { moved } : {}),
+        ...(move ? { dmMove: move.event.id } : {}),
         content: projected.content,
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),

@@ -1,3 +1,4 @@
+import { moveOperation } from "../dm-moves/protocol";
 import { isWorkflowOperation } from "../workflows/protocol";
 import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
@@ -79,7 +80,7 @@ export interface Outbox {
     recovery: OutboxRecovery,
     consume?: () => void,
   ): Promise<void>;
-  /** An expired no-role invitation may be resolved by fresh command/roster readback. */
+  /** Expired invitations and guarded DM operations may be retired after fresh writer readback. */
   acknowledge(
     id: string,
     verifyRetirement?: (event: EventData) => Promise<"recorded" | undefined>,
@@ -978,41 +979,53 @@ export function createOutbox(
           return (
             !closed &&
             !attempts.has(id) &&
-            current?.event.kind === 9000 &&
-            current.recovery?.key.startsWith("member-add:") &&
+            !!current &&
+            ((current.event.kind === 9000 &&
+              current.recovery?.key.startsWith("member-add:") &&
+              current.event.content === "" &&
+              current.event.tags.every(
+                (tag) =>
+                  tag.length === 2 &&
+                  ["h", "p", "client-id", "ms"].includes(tag[0] ?? ""),
+              ) &&
+              current.event.tags.filter(([tag]) => tag === "h").length === 1 &&
+              current.event.tags.filter(([tag]) => tag === "p").length === 1) ||
+              (current.guarded &&
+                current.recovery?.key.startsWith("dm-move:") &&
+                moveOperation(current.event))) &&
             (current.delivery === "unknown" ||
               current.delivery === "failed" ||
               (recorded && current.delivery === "seen")) &&
-            current.event.content === "" &&
-            current.event.tags.every(
-              (tag) =>
-                tag.length === 2 &&
-                ["h", "p", "client-id", "ms"].includes(tag[0] ?? ""),
-            ) &&
-            current.event.tags.filter(([tag]) => tag === "h").length === 1 &&
-            current.event.tags.filter(([tag]) => tag === "p").length === 1 &&
             current.event.created_at < Math.floor(Date.now() / 1000) - 15 * 60
           );
         };
         // Seen may enter verification, but only fresh recorded-command evidence
         // with caller-verified membership can retire it below.
+        if (replacement && item.event.kind !== 9000)
+          throw new Error("Only an invitation supports atomic replacement");
         if (dismissing.has(id) || !eligible(true))
           throw new Error(
-            "This saved invitation may still arrive. Retry after its 15-minute delivery window ends.",
+            "This saved operation may still arrive. Retry after its 15-minute delivery window ends.",
           );
         // Fence every local replay until verification and retirement are durable.
         const work = Promise.resolve().then(async () => {
           const result = await verifyRetirement(item.event);
           if (!eligible(result === "recorded"))
             throw new Error(
-              "The invitation changed while checking it. Refresh members and try again.",
+              "The saved operation changed while checking it. Refresh and try again.",
             );
           const input = replacement?.input();
           if (input) {
             const next = enqueue(input, item.recovery, undefined, id);
             await next.persisted;
             replacement?.queued(next.id);
-          } else await persist(id, "acknowledge");
+          } else
+            await persist(
+              id,
+              moveOperation(item.event) && item.guarded
+                ? "dismiss"
+                : "acknowledge",
+            );
         });
         dismissing.set(id, work);
         try {

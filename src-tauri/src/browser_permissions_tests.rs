@@ -188,6 +188,8 @@ fn native_command_permissions_isolate_webviews() {
         "app_agent_forget",
         "app_agent_publish",
         "app_agent_publish_profile",
+        "app_agent_prepare_dm_move",
+        "app_agent_publish_dm_move",
         "app_agent_query",
         "app_agent_search_profiles",
         "app_agent_upload",

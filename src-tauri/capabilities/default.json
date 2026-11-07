@@ -151,6 +151,8 @@
     "allow-app-agent-forget",
     "allow-app-agent-publish",
     "allow-app-agent-publish-profile",
+    "allow-app-agent-prepare-dm-move",
+    "allow-app-agent-publish-dm-move",
     "allow-app-agent-query",
     "allow-app-agent-search-profiles",
     "allow-app-agent-upload",

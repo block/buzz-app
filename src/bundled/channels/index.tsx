@@ -1,3 +1,11 @@
+import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { bindDmMoves } from "../../features/dm-moves/coordinator";
+import { nativeMoveAgentHost } from "../../features/dm-moves/native";
+import {
+  DmMoveMessage,
+  canConvertDm,
+  openDmMove,
+} from "../../features/dm-moves/DmMove";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
@@ -41,6 +49,30 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ));
   const relay = ctx.relay;
   const navigator = ctx.navigation;
+  ctx.effect(() => bindDmMoves(relay, nativeMoveAgentHost()));
+  ctx.conversation.registerMessage({
+    id: "dm-move-request",
+    title: "Convert DM to thread",
+    matches: (message) => !!message.dmMove,
+    component: ({ message }) => (
+      <DmMoveMessage relay={relay} navigation={navigator} message={message} />
+    ),
+  });
+  ctx.conversation.registerMessageAction({
+    id: "dm-move-from-message",
+    title: "Convert to thread from here",
+    placement: "menu",
+    matches: (message, session) =>
+      !message.dmMove && canConvertDm(session, message.channelId),
+    component: ({ message, session, close }) => (
+      <DmMoveFromHere
+        message={message}
+        session={session}
+        navigation={navigator}
+        close={close}
+      />
+    ),
+  });
   ctx.conversation.registerMessageAction({
     id: "start-solo-chat",
     title: "Start Solo chat",
@@ -152,3 +184,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ),
   });
 };
+
+function DmMoveFromHere({
+  message,
+  session,
+  navigation,
+  close,
+}: {
+  message: import("../../features/relay/contracts").ChannelMessage;
+  session: import("../../features/relay/session").RelaySession;
+  navigation: import("../../features/navigation/controller").Navigation;
+  close(): void;
+}) {
+  return (
+    <MenuItem
+      onClick={() => {
+        close();
+        openDmMove(navigation, session, message.channelId, message.id);
+      }}
+    >
+      Convert to thread from here
+    </MenuItem>
+  );
+}

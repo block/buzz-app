@@ -130,6 +130,7 @@ const view = (h: ReturnType<typeof harness>): PopoutView => ({
   operations: [],
   following: false,
   isDm: false,
+  thread: true,
   version: 1,
   root: {
     id: "1".repeat(64),

@@ -7174,7 +7174,7 @@ it("qualifies both namesakes retroactively without changing source and removes q
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
     "@Honey @Honey  ",
-    [first.pubkey, first.pubkey],
+    [first.pubkey],
     [],
   );
 });
@@ -7558,9 +7558,15 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
   expect(h.input()).toHaveValue("x".repeat(15999));
   expect(screen.getByRole("alert")).toHaveTextContent("too long");
   h.fill("");
+  const people = Array.from({ length: 32 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `P${i}`,
+  }));
   act(() => {
-    for (let i = 0; i < 32; i++)
-      expect(h.commands().insertMention(first)).toBe(true);
+    for (const person of people)
+      expect(h.commands().insertMention(person)).toBe(true);
+    // Someone already mentioned adds no recipient.
+    expect(h.commands().insertMention(people[7] ?? first)).toBe(true);
   });
   const before = h.input().value;
   act(() => {
@@ -8105,9 +8111,9 @@ it.each([undefined, "root"])(
     h.submit();
     expect(h.input()).toHaveValue("@Honey @Honey @Honey hello");
     h.submit();
+    // Two chips for one person notify once.
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
       first.pubkey,
-      second.pubkey,
       second.pubkey,
     ]);
     expect(h.input()).toHaveValue("@Honey ");
@@ -11911,6 +11917,96 @@ it("batch insertion rejects an unavailable member atomically and does not send o
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
 });
+it("a group edit inserts one chip and sends each member once", async () => {
+  const h = mount();
+  h.fill("!Crew");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [
+        {
+          id: "team",
+          label: "Crew",
+          edit: { group: { name: "Crew", mentions: [first, second, first] } },
+        },
+      ],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("@Crew ");
+  // A member also mentioned alone is still one recipient.
+  act(() => void h.commands().insertMention(first));
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+});
+it("a group picked inside Markdown code is only its name", async () => {
+  const h = mount();
+  h.fill("!`Crew`");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [
+        {
+          id: "team",
+          label: "Crew",
+          edit: { group: { name: "Crew", mentions: [first, second] } },
+        },
+      ],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("@Crew ");
+  expect(h.commands().recipients).toEqual([]);
+});
+it("a group from the picker inside Markdown code is only its name", () => {
+  const h = mount();
+  h.fill("`ab`");
+  act(() => h.input().setSelectionRange(2, 2));
+  act(() =>
+    expect(h.commands().insertMentions([first, second], "Crew")).toBe(true),
+  );
+  expect(h.input()).toHaveValue("`a@Crew b`");
+  expect(h.commands().recipients).toEqual([]);
+});
+it("a group from the picker inside a removed link's label still notifies", () => {
+  const h = mount();
+  h.fill("see label");
+  act(() => {
+    h.input().setSelectionRange(4, 9);
+    const edit = h.input().editLink();
+    if (!edit) throw new Error("Link editing unavailable");
+    edit.remove();
+    h.input().setSelectionRange(6, 6);
+  });
+  act(() =>
+    expect(h.commands().insertMentions([first, second], "Crew")).toBe(true),
+  );
+  expect(h.commands().recipients.map(({ pubkey }) => pubkey)).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+});
+it("a group edit with an unavailable member adds nothing", async () => {
+  const h = mount({ inviteAgents: true });
+  const unavailable = { pubkey: "c".repeat(64), name: "Missing" };
+  h.fill("!Crew");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [
+        {
+          id: "team",
+          label: "Crew",
+          edit: { group: { name: "Crew", mentions: [first, unavailable] } },
+        },
+      ],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("!Crew");
+  expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
+});
 it.each(["disabled", "retarget", "unmount"])(
   "revokes batch commands after %s",
   (transition) => {
@@ -13014,6 +13110,16 @@ it("while a typed tag decides, a Solo menu toggle edits the tags, not a hidden l
   expect(sendingTo("Ada")).toBeInTheDocument();
 });
 
+it("after a Solo group chip, each picked tag joins the leading tags in order", () => {
+  const { h, ada, bea } = mountSoloAgents({ main: first.pubkey });
+  act(() => {
+    expect(h.commands().insertMentions([ada, bea], "Crew")).toBe(true);
+    h.commands().insertText("hello");
+  });
+  act(() => h.commands().insertMention(ada));
+  act(() => h.commands().insertMention(bea));
+  expect(h.input()).toHaveValue("@Crew @Ada @Bea hello");
+});
 it("while a typed tag decides, a Solo team pick replaces the tags", () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
   act(() => {
@@ -15110,7 +15216,10 @@ it.each([
       act(() => {
         h.input().insertText(
           "",
-          Array.from({ length: 32 }, () => second),
+          Array.from({ length: 32 }, (_, i) => ({
+            pubkey: i.toString(16).padStart(64, "0"),
+            name: `P${i}`,
+          })),
         );
       }),
     alert:

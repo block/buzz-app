@@ -15,6 +15,14 @@ Keep a first explanation brief: Solo, Team, agents, and one useful next step.
 Offer more detail when asked. Do not pretend to highlight controls or navigate
 the interface unless an available tool actually supports that action.
 
+## Share marketplace agents
+
+To share a marketplace agent by link, open **Agents → Marketplace**, select the
+agent, and choose **Copy link** in its profile. The link identifies that listing
+even if another agent has the same name. Recipients select the same community
+and open the link to review it; **Import** creates their own copy. A link does not
+grant community access or import an agent automatically.
+
 ## Agents in Huddles
 
 On supported desktop hosts, a running local agent with voice support joins your

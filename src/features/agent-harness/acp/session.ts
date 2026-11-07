@@ -91,9 +91,10 @@ export class AcpSession {
   private acted = false;
   private written = "";
   private closed = false;
-  /** A final message ended the work: the running turn is cancelled once the
-   * harness reports that message's result. */
-  private ending = false;
+  /** A final message ended the work: the id of its tool call, whose result
+   * cancels the running turn once the harness reports it, then `true` until
+   * that turn ends. Meanwhile the turn takes no steers. */
+  private ending: string | true | undefined;
   /** The work the owner stopped, while the harness ends it: the messages it
    * had taken, and their activity. What it wrote meanwhile is not posted, and
    * messages sent since wait for a turn of their own. `ended` is set once
@@ -194,12 +195,13 @@ export class AcpSession {
       this.generation === generation && !this.stopped && !this.quiet();
   }
 
-  /** A final message succeeded: the work counts as done at once, and its turn
-   * ends, unless another message is still waiting for its answer. */
-  finished() {
+  /** A final message succeeded: the work counts as done at once, and the
+   * turn of tool call `call` ends, unless another message is still waiting
+   * for its answer. */
+  finished(call?: string) {
     if (this.pending !== 1 || this.queue.length || this.steering.size) return;
     this.settle({ ok: true, answered: true });
-    this.ending = this.prompting;
+    if (this.prompting && call) this.ending = call;
   }
 
   /** Stops the work: the running turn, as ACP's `session/cancel` does, and
@@ -230,11 +232,12 @@ export class AcpSession {
     // call as interrupted. goose reports a batch's results together, once
     // every call in it has one, and keeps them when the turn is cancelled.
     if (
-      this.ending &&
+      typeof this.ending === "string" &&
       kind === "tool_call_update" &&
+      update.toolCallId === this.ending &&
       (update.status === "completed" || update.status === "failed")
     ) {
-      this.ending = false;
+      this.ending = true;
       this.acp.notify("session/cancel", { sessionId: this.id });
     }
     if (kind === "agent_message_chunk" && !this.acted) {
@@ -378,7 +381,7 @@ export class AcpSession {
     this.prompting = true;
     try {
       while (this.queue.length && !this.handingOff && !this.closed) {
-        this.ending = false;
+        this.ending = undefined;
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
         const {
@@ -450,7 +453,7 @@ export class AcpSession {
       }
     } finally {
       this.prompting = false;
-      this.ending = false;
+      this.ending = undefined;
       this.runId = undefined;
       this.ranAs(undefined);
     }

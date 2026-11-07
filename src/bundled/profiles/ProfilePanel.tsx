@@ -84,6 +84,8 @@ import { agentSections } from "../../features/agents/tabs";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { conversationOpener } from "../agents/routes";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import type { NavigationScope } from "../../features/navigation/targets";
 import { avatarMedia } from "../../shared/avatar-source";
 import { writeClipboardText } from "../../shared/clipboard";
 
@@ -193,6 +195,7 @@ export function ProfilePanel({
         pubkey={pubkey}
         relay={relay}
         session={connection.session}
+        scope={panelCommunity(connection.scope, connection.viewer)}
         navigation={navigation}
         context={context}
         openConversation={openConversation}
@@ -229,6 +232,7 @@ function OwnedAgentProfile({
   pubkey,
   relay,
   session,
+  scope,
   navigation,
   context,
   openConversation,
@@ -243,6 +247,7 @@ function OwnedAgentProfile({
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
+  scope: NavigationScope | undefined;
   navigation: Navigation | undefined;
   context: PanelProps["context"];
   openConversation: AgentViewProps["openConversation"];
@@ -257,9 +262,21 @@ function OwnedAgentProfile({
   if (leaving && !unsaved.dirty) setLeaving(undefined);
   if (!owned) return null;
   const address = navigation?.snapshot().entry.target;
-  const go = (link: string) => (context?.push ?? context?.open)?.(link);
+  const conversationTarget = (link: string) => {
+    const target = scope && buzzLinkTarget(link, scope);
+    return target?.kind === "conversation" ? target : undefined;
+  };
+  const go = (link: string) => {
+    const target = conversationTarget(link);
+    if (target && navigation) {
+      void navigation.open(target);
+      return true;
+    }
+    return (context?.push ?? context?.open)?.(link);
+  };
   const openLink = (link: string) => {
-    if (!context?.canOpen(link)) return false;
+    if (!context?.canOpen(link) && !(navigation && conversationTarget(link)))
+      return false;
     if (!unsaved.saving && !unsaved.dirty) return !!go(link);
     if (!unsaved.saving) setLeaving(link);
     return false;

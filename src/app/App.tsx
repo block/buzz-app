@@ -691,7 +691,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
           selected={workspace.selected}
-          target={workspace.target}
           navigationAttempt={workspace.attempt}
           onSelect={select}
           tone={presentation.tone}

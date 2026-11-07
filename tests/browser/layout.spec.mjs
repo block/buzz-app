@@ -27,7 +27,9 @@ import {
 } from "./timeline.mjs";
 
 // These layout/navigation journeys exercise opt-in page surfaces.
-test.use({ enabledPlugins: ["buzz.bestie", "buzz.workflows"] });
+test.use({
+  enabledPlugins: ["buzz.bestie", "buzz.workflows", "buzz.drafts-and-sent"],
+});
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 const companionTest = test.extend({ companionFixture: true });

@@ -523,7 +523,7 @@ it.each([
   // Channels, DMs, threads and Solo chats all open the Messages page, which
   // has no row of its own in the sidebar.
   ["a conversation", "buzz.channels/channels", undefined],
-  ["Drafts & sent", "buzz.drafts-sent/drafts-sent", "Drafts & sent"],
+  ["Drafts & sent", "buzz.drafts-and-sent/drafts-sent", "Drafts & sent"],
   // A third-party page with `primary: true` and no `placement` or `sidebar`.
   ["a third-party plugin page", "example.pr-status/pr-status", "PR status"],
 ])(
@@ -537,7 +537,7 @@ it.each([
       { id: "inbox", pluginId: "buzz.inbox", title: "Activity" },
       {
         id: "drafts-sent",
-        pluginId: "buzz.drafts-sent",
+        pluginId: "buzz.drafts-and-sent",
         title: "Drafts & sent",
       },
       { id: "pr-status", pluginId: "example.pr-status", title: "PR status" },
@@ -685,7 +685,11 @@ it("opens the narrow navigation drawer from Drafts & sent", async () => {
   services = current;
   const pages = [
     { id: "channels", pluginId: "buzz.channels", title: "Channels" },
-    { id: "drafts-sent", pluginId: "buzz.drafts-sent", title: "Drafts & sent" },
+    {
+      id: "drafts-sent",
+      pluginId: "buzz.drafts-and-sent",
+      title: "Drafts & sent",
+    },
   ].map((page) => ({
     ...page,
     key: `${page.pluginId}/${page.id}`,
@@ -697,7 +701,7 @@ it("opens the narrow navigation drawer from Drafts & sent", async () => {
     <ToastProvider>
       <AppShell
         pages={pages}
-        selected="buzz.drafts-sent/drafts-sent"
+        selected="buzz.drafts-and-sent/drafts-sent"
         navigationAttempt=""
         onSelect={() => {}}
         tone="default"
@@ -721,7 +725,7 @@ it("opens the narrow navigation drawer from Drafts & sent", async () => {
   );
 });
 
-it.each(["sidebar", "topbar", "toolbar"] as const)(
+it.each(["sidebar", "dock", "topbar", "toolbar"] as const)(
   "keeps %s plugin icons, badge failures, selection and removal at the navigation boundary",
   async (placement) => {
     const current = createServices();

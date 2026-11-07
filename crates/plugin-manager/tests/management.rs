@@ -1155,6 +1155,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.workflows"
                 | "buzz.mesh-compute"
                 | "buzz.focus"
+                | "buzz.drafts-and-sent"
         );
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {

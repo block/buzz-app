@@ -1,6 +1,6 @@
 # Drafts & sent
 
-Built into Messages, with the conversation sidebar retained while you browse. Brings the messages you started but did not send, and the ones you did, together in one place. Each sent message shows who replied after you, so you can see which conversations are waiting on you.
+Off by default; turn it on in Settings → Plugins. Opens inside Messages, with the conversation sidebar retained while you browse. Brings the messages you started but did not send, and the ones you did, together in one place. Each sent message shows who replied after you, so you can see which conversations are waiting on you.
 
 ## Getting started
 

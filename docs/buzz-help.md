@@ -516,7 +516,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages has All / Solo / Team sidebar filters; other apps use their main
   view unless they provide their own sidebar. Pages listed in the Messages
-  sidebar, such as Drafts & sent, keep Messages selected in the dock. The
+  sidebar, such as the Drafts & sent plugin, keep Messages selected in the dock. The
   Messages sidebar stays open unless the page provides its own sidebar, which
   replaces it.
   The sidebar and message pane share one surface with a persistent divider;
@@ -532,8 +532,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   approval, Buzz opens the approval page in your default browser, where you
   are signed in to Builderlab. Approve it there, return to Buzz and click
   **Reload** to open the app.
-- **Drafts & sent** is part of Messages. Opening it keeps the conversation
-  sidebar available, so you can switch straight back to a chat. Use the **Drafts**
+- **Drafts & sent** is an optional plugin, off by default. Turn it on in
+  **Settings → Plugins**, and it appears in the Messages sidebar. Opening it keeps
+  the conversation sidebar available, so you can switch straight back to a chat.
+  Saved links to it open the plugin, or offer to turn it on. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
   Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest

@@ -12,6 +12,7 @@ test.use({
   ownSoloChannels: [solo],
   dmLabels: true,
   historyCounts: { [solo]: 1, beta: 1 },
+  enabledPlugins: ["buzz.drafts-and-sent"],
 });
 
 // Real paint geometry: DOM emulators cannot detect padding or baseline drift.

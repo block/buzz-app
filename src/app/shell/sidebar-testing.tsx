@@ -18,7 +18,6 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import { NewMenu } from "./NewMenu";
 import type { Agents } from "../../features/agents/service";
 import { PrimarySidebar } from "./PrimarySidebar";
-import { DraftsSentNavigation } from "../../features/drafts-sent/DraftsSentNavigation";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { conversationTarget } from "../../features/channel-navigation/routes";
@@ -249,11 +248,6 @@ export function fixture(
                     ? { federatedIdentity: host.federatedIdentity }
                     : {})}
                 >
-                  <DraftsSentNavigation
-                    relay={relay}
-                    navigator={navigator}
-                    target={target}
-                  />
                   <button type="button">Inbox</button>
                 </PrimarySidebar>
               )

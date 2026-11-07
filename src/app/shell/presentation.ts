@@ -7,6 +7,7 @@ import {
   GearIcon,
   LightningIcon,
   RobotIcon,
+  SendIcon,
 } from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 
@@ -22,6 +23,7 @@ export const shellPresentation = {
 const bundledOrder = [
   "buzz.channels/channels",
   "buzz.inbox/inbox",
+  "buzz.drafts-and-sent/drafts-sent",
   "buzz.reminders/reminders",
   "buzz.bestie/bestie",
 ];
@@ -53,6 +55,7 @@ export function orderPages(
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
+  ["buzz.drafts-and-sent/drafts-sent", SendIcon],
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
@@ -68,9 +71,12 @@ export function pagePlacement(page: RegisteredPage) {
     case "buzz.reminders/reminders":
     case "buzz.agents/agents":
     case "buzz.workflows/workflows":
-      return "topbar";
+      return "dock";
     default:
-      return page.placement ?? "sidebar";
+      // `topbar` and `toolbar` predate the dock; both mean it.
+      return page.placement === undefined || page.placement === "sidebar"
+        ? "sidebar"
+        : "dock";
   }
 }
 

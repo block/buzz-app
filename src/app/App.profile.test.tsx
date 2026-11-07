@@ -936,7 +936,7 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
 it.each(["pending", "unavailable"] as const)(
   "retains a dirty Profile through a same-scope %s Settings destination",
   async (state) => {
-    const user = await setup();
+    await setup();
     if (!services) throw new Error("Missing app services");
     const current = services;
     const profile = {
@@ -959,8 +959,7 @@ it.each(["pending", "unavailable"] as const)(
     act(() => current.navigation.back());
     const name = await screen.findByRole("textbox", { name: "Display name" });
     await waitFor(() => expect(name).toHaveValue("Community name"));
-    await user.clear(name);
-    await user.type(name, "Keep this draft");
+    fireEvent.change(name, { target: { value: "Keep this draft" } });
     if (state === "pending") {
       const snapshot = current.plugins.snapshot();
       const sidebar = snapshot.activation["test.sidebar"];

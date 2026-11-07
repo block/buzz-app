@@ -74,8 +74,9 @@ export function HostedCommunities({
 }: {
   api: Api;
   active(): boolean;
-  /** Opens the app's join dialog on a community this account just created. */
-  join?: (address: string) => void;
+  /** Opens the app's join dialog on a community this account just created;
+   * false when it cannot, and the address is handed off instead. */
+  join?: (address: string) => boolean;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
 }) {
@@ -892,14 +893,16 @@ export function HostedCommunities({
                 // first run's Create community does. Like the clipboard, a
                 // retired or replaced card (another account) opens nothing.
                 const url = reply.community && relayUrl(reply.community);
-                if (url && !join) await copy(url);
-                else if (
+                if (
                   url &&
-                  join &&
-                  activeRef.current() &&
-                  at === generation.current
+                  !(
+                    join &&
+                    activeRef.current() &&
+                    at === generation.current &&
+                    join(url)
+                  )
                 )
-                  join(url);
+                  await copy(url);
                 await settle();
               })
             }

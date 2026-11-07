@@ -201,7 +201,7 @@ export function createServices() {
   ctx.provide("communityJoin", {
     open(address: string) {
       const { viewer } = communities.snapshot();
-      if (!viewer) return;
+      if (!viewer) return false;
       invites.open(
         {
           community: communityDestination(address).url,
@@ -210,6 +210,7 @@ export function createServices() {
         },
         viewer,
       );
+      return true;
     },
   });
   // OS deep links; a no-op in the browser build. Invite admission remains in

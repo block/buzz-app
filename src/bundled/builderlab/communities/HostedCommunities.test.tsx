@@ -630,7 +630,7 @@ it("opens the join for a created community instead of handing off its address", 
   });
   const writeText = vi.fn(async () => {});
   vi.stubGlobal("navigator", { clipboard: { writeText } });
-  const join = vi.fn();
+  const join = vi.fn(() => true);
   render(
     <StrictMode>
       <HostedCommunities api={brokerApi} active={() => true} join={join} />
@@ -650,6 +650,25 @@ it("opens the join for a created community instead of handing off its address", 
   );
   expect(writeText).not.toHaveBeenCalled();
   expect(screen.queryByText(/Address copied/)).not.toBeInTheDocument();
+});
+
+it("hands off the address when the app cannot open the join", async () => {
+  routes["/api/builderlab/availability"] = () => ({ available: true });
+  routes["/api/builderlab/create"] = () => ({
+    community: { id: "c1", normalized_host: "north.communities.buzz.xyz" },
+  });
+  const writeText = vi.fn(async () => {});
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  const join = vi.fn(() => false);
+  render(<HostedCommunities api={brokerApi} active={() => true} join={join} />);
+  await typeName("north");
+  await screen.findByText("That address is available.", {}, { timeout: 2000 });
+  fireEvent.click(screen.getByRole("button", { name: "Create community" }));
+  await waitFor(() =>
+    expect(writeText).toHaveBeenCalledWith("wss://north.communities.buzz.xyz"),
+  );
+  expect(join).toHaveBeenCalledOnce();
+  expect(await screen.findByText(/Address copied/)).toBeInTheDocument();
 });
 
 it("keeps the address visible when the clipboard rejects", async () => {
@@ -766,7 +785,7 @@ for (const ending of ["retires", "unmounts"] as const)
     let live = true;
     routes["/api/builderlab/availability"] = () => ({ available: true });
     routes["/api/builderlab/create"] = create.answer as Handler;
-    const join = vi.fn();
+    const join = vi.fn(() => true);
     const { unmount } = render(
       <HostedCommunities api={brokerApi} active={() => live} join={join} />,
     );

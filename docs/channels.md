@@ -607,10 +607,20 @@ confirmed `41010` open, including New message Send, unhides the DM, and its row
 returns when visibility next refreshes.
 
 A definitive rejection offers retry without optimistic removal. If publication or
-confirmation has an uncertain outcome, the dialog warns that the command may have
-taken effect, disables blind resubmission and asks the user to close and refresh
-channels. Cancellation/cache clear/session replacement fence late results but cannot
-retract a request already sent. Cancellation returns focus to the originating row;
+confirmation has an uncertain outcome, the failure toast warns that the command may
+have taken effect and disables blind resubmission. That toast, and the "no longer
+permitted" toast shown when signed channel state no longer allows the action, offer
+**Refresh channels**: a writer-consistent channel list read that closes the toast.
+The permission check behind "no longer permitted", before signing and again before
+publishing, reads the writer, so a lagging replica cannot refuse an action Settings
+offers after a refresh. Settings' channel actions follow the refreshed channel state.
+Refresh channels returns focus to the failed action's control. If the refreshed
+permissions remove that Settings action, focus moves to the Settings-tab close control,
+unless the person has already moved focus elsewhere.
+After a failed Hide, Refresh channels also rereads DM visibility from the writer:
+whether a conversation is hidden is not part of the channel list.
+Other failures offer only Dismiss. Cancellation/cache clear/session replacement
+fence late results but cannot retract a request already sent. Cancellation returns focus to the originating row;
 confirmed Delete, Leave or Hide moves an active conversation to another available destination
 (or the neutral Messages page) with a visible sidebar-row focus fallback. Last-row
 Delete/Leave/Hide completion uses the explicit version-1 Channels route `"empty"`, which bypasses

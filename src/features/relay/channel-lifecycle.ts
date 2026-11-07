@@ -6,7 +6,7 @@ import { PublishRejected } from "./outbox";
 import { isTransientFailure, readErrorKind } from "./errors";
 import { retryRead } from "./read-retry";
 import { yieldToHost } from "./yield";
-import { hasTag, newer, type RelayEvent } from "./events";
+import { hasTag, newer, type ReadFilter, type RelayEvent } from "./events";
 import { openMetadata } from "./discovery";
 import {
   channelTypeTag,
@@ -21,8 +21,17 @@ import {
   type ChannelLifecycleSettings,
 } from "./channel-lifecycle-protocol";
 
+/** The channel state the action relied on may be out of date; refreshing
+ * channels is the recovery. */
+export class ChannelLifecycleStale extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChannelLifecycleStale";
+  }
+}
+
 /** No automatic or same-dialog retry after a request may have reached the relay. */
-export class ChannelLifecycleUnconfirmed extends Error {
+export class ChannelLifecycleUnconfirmed extends ChannelLifecycleStale {
   constructor(reason: unknown) {
     super(
       `The request may have taken effect. Refresh channels before trying again. ${reason instanceof Error ? reason.message : String(reason)}`,
@@ -54,7 +63,11 @@ export interface ChannelLifecycleCapability {
   ): Promise<void>;
   snapshot(): DmVisibility;
   subscribe(listener: () => void): () => void;
-  refreshVisibility(signal?: AbortSignal): Promise<void>;
+  refreshVisibility(
+    signal?: AbortSignal,
+    /** "strong" reads the writer and does not join a replica-backed refresh. */
+    options?: Pick<ReadFilter, "consistency">,
+  ): Promise<void>;
   observeRemoval(listener: (channelId: string) => void): () => void;
 }
 
@@ -94,6 +107,7 @@ export function createChannelLifecycle({
   let refresh: Promise<void> | undefined;
   let refreshSignal: AbortSignal | undefined;
   let refreshController: AbortController | undefined;
+  let refreshStrong = false;
   const available = !!reader && !!writer;
   const emit = (next: DmVisibility) => {
     snapshot = Object.freeze(next);
@@ -179,9 +193,11 @@ export function createChannelLifecycle({
     // the channel's state allows and false skips the optional profile reads.
     need: OwnedAgentAction | "any" | false = "any",
     records?: readonly RelayEvent[],
+    strong = false,
   ) {
     assertAccess(id);
-    const events = records ?? (await read([39000, 39001, 39002], id, signal));
+    const events =
+      records ?? (await read([39000, 39001, 39002], id, signal, false, strong));
     assertAccess(id);
     const settings = lifecycleSettings(events, id, viewer, relayAuthor);
     const metadata = lifecycleRecord(events, 39000, id, relayAuthor);
@@ -222,6 +238,7 @@ export function createChannelLifecycle({
             reader.read(
               batch.map((pubkey) => ({
                 kinds: [0],
+                ...(strong ? { consistency: "strong" as const } : {}),
                 authors: [pubkey],
                 limit: 1,
               })),
@@ -313,9 +330,17 @@ export function createChannelLifecycle({
         listeners.delete(listener);
       };
     },
-    refreshVisibility(caller?: AbortSignal) {
+    refreshVisibility(
+      caller?: AbortSignal,
+      options?: Pick<ReadFilter, "consistency">,
+    ) {
       if (!reader || closed || caller?.aborted) return Promise.resolve();
-      if (refresh && !refreshSignal?.aborted) return refresh;
+      const strong = options?.consistency === "strong";
+      // A replica-backed refresh can predate the write a strong one checks;
+      // retire it instead of joining it.
+      if (refresh && !refreshSignal?.aborted && (refreshStrong || !strong))
+        return refresh;
+      refreshController?.abort();
       const started = epoch;
       const controller = new AbortController();
       refreshController = controller;
@@ -324,13 +349,16 @@ export function createChannelLifecycle({
         ...(caller ? [caller] : []),
       ]);
       refreshSignal = signal;
+      refreshStrong = strong;
       emit({ status: "loading", hidden: snapshot.hidden });
       // Exhausted errors omit `transient`, so session recovery cannot restart
       // them. A read retired by another channel's access change (`cancelled`)
       // retries within the same budget.
       const operation = retryRead(
         async () => {
-          await owned({ caller: signal }, readVisibility);
+          await owned({ caller: signal }, (signal) =>
+            readVisibility(signal, strong),
+          );
         },
         signal,
         isTransientFailure,
@@ -433,6 +461,8 @@ export function createChannelLifecycle({
             if (action === "join") return joined();
             if (action === "auto-join-on" || action === "auto-join-off")
               return flaggable();
+            // Read the writer: a refusal that sends the viewer to Refresh
+            // channels must not come from a replica older than that refresh.
             const settings = await load(
               id,
               signal,
@@ -441,6 +471,8 @@ export function createChannelLifecycle({
                 action === "delete"
                 ? action
                 : false,
+              undefined,
+              true,
             );
             if (settings.deleteUnavailable)
               throw new Error(
@@ -454,11 +486,11 @@ export function createChannelLifecycle({
               hide: settings.canHide,
             }[action];
             if (!permitted)
-              throw new Error(
-                action === "leave" && settings.leaveReason
-                  ? settings.leaveReason
-                  : "This action is no longer permitted. Refresh channel permissions.",
-              );
+              throw action === "leave" && settings.leaveReason
+                ? new Error(settings.leaveReason)
+                : new ChannelLifecycleStale(
+                    "This action is no longer permitted. Refresh channels to see what you can do now.",
+                  );
           };
           if (await authorize()) return;
           const fresh = lifecycleTemplate(action, id);
@@ -552,7 +584,7 @@ export function createChannelLifecycle({
             }
           }
           throw new Error(
-            "The relay accepted the request, but the change is not confirmed. Refresh channels before trying again.",
+            "The relay accepted the request, but the change is not confirmed.",
           );
         });
       } catch (error) {

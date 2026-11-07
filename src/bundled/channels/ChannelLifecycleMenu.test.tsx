@@ -14,6 +14,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { ContextMenuRoot, MenuPopup } from "../../shared/design-system/ui/Menu";
 import {
+  ChannelLifecycleStale,
   ChannelLifecycleUnconfirmed,
   type ChannelLifecycleCapability,
 } from "../../features/relay/channel-lifecycle";
@@ -499,6 +500,42 @@ it("uncertain delivery reports refresh guidance in a toast without offering blin
   expect(lifecycle.run).toHaveBeenCalledOnce();
 });
 
+it.each([
+  [
+    "a permission that changed",
+    new ChannelLifecycleStale(
+      "This action is no longer permitted. Refresh channels to see what you can do now.",
+    ),
+  ],
+  ["an unconfirmed result", new ChannelLifecycleUnconfirmed("connection lost")],
+])("flags %s for a channel refresh", async (_, error) => {
+  const lifecycle = capability();
+  lifecycle.run.mockRejectedValueOnce(error);
+  const failed = vi.fn();
+  render(
+    <ToastProvider>
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Fixture"
+        action="archive"
+        lifecycle={lifecycle}
+        close={() => {}}
+        completed={() => {}}
+        failed={failed}
+      />
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Archive channel" }));
+  await waitFor(() =>
+    expect(failed).toHaveBeenCalledExactlyOnceWith(
+      "Archive channel failed",
+      error.message,
+      true,
+    ),
+  );
+});
+
 it.each(
   ([{ action: "delete", label: "Delete channel" }] as const).flatMap(
     ({ action, label }) =>
@@ -683,8 +720,8 @@ it("chat archive runs without confirmation, then Undo unarchives from its result
               completed();
               setOpen(false);
             }}
-            failed={(title, message) => {
-              failed(title, message);
+            failed={(title, message, refresh) => {
+              failed(title, message, refresh);
               setOpen(false);
             }}
             undo={() => {
@@ -735,6 +772,8 @@ it("chat archive runs without confirmation, then Undo unarchives from its result
     expect(failed).toHaveBeenCalledExactlyOnceWith(
       "Unarchive chat failed",
       "Relay rejected the request.",
+      // A refusal is not stale state; refreshing channels would not help.
+      false,
     ),
   );
   await waitFor(() =>

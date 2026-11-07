@@ -95,6 +95,35 @@ it("replaces Archive with Unarchive when the live channel is archived", () => {
     screen.getByRole("button", { name: "Unarchive channel" }),
   ).toBeVisible();
 });
+it("keeps focus in the pane when a role change retires the focused action, unless it moved", async () => {
+  const host = session();
+  const pane = (role: ChannelSummary["viewerRole"]) => (
+    <>
+      <aside>
+        <button type="button">Settings tab</button>
+        <ChannelLifecycleActions
+          channel={channel({ viewerRole: role })}
+          session={host}
+          choose={vi.fn()}
+        />
+      </aside>
+      <input aria-label="Elsewhere" />
+    </>
+  );
+  const view = render(pane("admin"));
+  screen.getByRole("button", { name: "Archive channel" }).focus();
+  view.rerender(pane("member"));
+  expect(screen.queryByRole("button", { name: "Archive channel" })).toBeNull();
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Settings tab" })).toHaveFocus(),
+  );
+  view.rerender(pane("admin"));
+  screen.getByRole("button", { name: "Archive channel" }).focus();
+  screen.getByRole("textbox", { name: "Elsewhere" }).focus();
+  view.rerender(pane("member"));
+  await Promise.resolve();
+  expect(screen.getByRole("textbox", { name: "Elsewhere" })).toHaveFocus();
+});
 it("explains an unsupported host without a lookup or write", () => {
   const host = session(false);
   render(

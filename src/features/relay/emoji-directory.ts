@@ -12,6 +12,7 @@ import {
   type CustomEmoji,
 } from "./emoji";
 import { eventDto, newer, type RelayEvent } from "./events";
+import { relayRefusal } from "./outbox";
 import type { Priority, RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
@@ -239,13 +240,16 @@ export function createEmojiDirectory(
       signal.throwIfAborted();
       accept([event]);
       return shortcode;
-    } catch {
+    } catch (error) {
+      const refusal = relayRefusal(error);
       throw new Error(
         timeout.aborted
           ? url === undefined
             ? "Timed out while removing emoji."
             : "Timed out while adding emoji."
-          : failure,
+          : refusal
+            ? `${failure} ${refusal}`
+            : failure,
       );
     }
   }

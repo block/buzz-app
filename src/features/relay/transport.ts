@@ -65,7 +65,12 @@ import {
   type LiveSubscription,
 } from "./live";
 import { subscribeBrokerTraffic } from "./broker-live";
-import { PublishNotSent, PublishRejected } from "./outbox";
+import {
+  KEPT_PREFIXES,
+  NIP01_PREFIX,
+  PublishNotSent,
+  PublishRejected,
+} from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
@@ -1582,11 +1587,6 @@ export async function acceptReadStatePublish(response: Response, id: string) {
 }
 
 const REFUSAL_STATUSES = [400, 401, 403, 404, 413, 422];
-/** NIP-01 machine-readable prefixes: the shape of a relay's own refusal. */
-const NIP01_PREFIX =
-  /^(invalid|blocked|restricted|error|pow|duplicate|rate-limited|conflict|auth-required):\s*/;
-/** Prefixes writers match on, so the text is shown as sent. */
-const KEPT_PREFIXES = new Set(["rate-limited", "conflict", "auth-required"]);
 /** The relay's own `{error}` text for a refused write. Admission otherwise
  * reduces every upstream body to a status summary, so a signed publish asks
  * it to keep this one, bounded by `readApiFailure`. A gateway or VPN edge

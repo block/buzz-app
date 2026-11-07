@@ -1909,7 +1909,8 @@ function ChannelWorkspace({
         (!current.readOnly || current.viewerRole === "guest") &&
         current.channelType !== "dm" && (
           <ChannelLifecycleActions
-            key={`${current.id}:${!!current.archived}`}
+            // A changed archive state or role re-reads channel permissions.
+            key={`${current.id}:${!!current.archived}:${current.viewerRole}`}
             channel={current}
             session={queries}
             noun={lifecycleNoun(current)}

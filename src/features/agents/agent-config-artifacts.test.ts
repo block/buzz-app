@@ -284,6 +284,9 @@ describe("delivery", () => {
     expect(refusal("conflict: prev is not current")).toBe("conflict");
     expect(refusal("duplicate: already have this event")).toBe("duplicate");
     expect(refusal("restricted: not a member")).toBe("permission");
+    expect(refusal("forbidden: not a member of this channel")).toBe(
+      "permission",
+    );
     expect(refusal("restricted: channel is archived")).toBe("archived");
     expect(refusal("invalid: event too large")).toBe("too-large");
     expect(refusal("invalid: bad envelope")).toBe("invalid");
@@ -320,6 +323,9 @@ describe("delivery", () => {
     });
     expect(
       await through(body(403, "blocked: you are banned from this community")),
+    ).toMatchObject({ status: "refused", refusal: "permission" });
+    expect(
+      await through(body(400, "forbidden: not a member of this channel")),
     ).toMatchObject({ status: "refused", refusal: "permission" });
     expect(await through(body(500, "internal server error"))).toMatchObject({
       status: "uncertain",

@@ -70,11 +70,11 @@ must not let them manufacture relay-authored authority.
 
 `fresh: true` prevents sharing an older in-flight request; it does not select
 the writer. Channel creation/admission and recovery, DM opening, channel edits,
-member administration, lifecycle confirmations, and mention preflights request
-`consistency: "strong"` on their authoritative filters. Signed evidence remains
-required; an accepted command is not membership, and writer routing does not
-wait for asynchronous relay side effects. Existing cancellation and bounded
-confirmation retries are unchanged.
+member administration, lifecycle permission preflights and confirmations, and
+mention preflights request `consistency: "strong"` on their authoritative
+filters. Signed evidence remains required; an accepted command is not
+membership, and writer routing does not wait for asynchronous relay side
+effects. Existing cancellation and bounded confirmation retries are unchanged.
 
 Channel discovery accepts an explicit consistency option for post-write exact
 reads and the full-roster fallback. A queued writer-backed refresh survives an
@@ -87,8 +87,15 @@ confirmations queues a writer-backed pass to settle those grants. If list failur
 disconnect or cache clear retires queued or in-flight hint confirmations, the store
 retains their writer requirement for the next deliberate refresh, Retry or
 establishment, without starting an automatic recovery pass or bypassing cooldown.
-Ordinary startup, browsing, reconnect, and DM visibility refresh stay replica-
-eligible. The details editor and member-administration capability use writer-backed
+A lifecycle failure toast's Refresh channels requests a writer-backed discovery
+pass. The Archive/Unarchive/Delete/Leave/Hide preflight always reads
+`39000`/`39001`/`39002` and owner-agent kind-0 profiles from the writer. After a failed
+Hide, the same control also rereads DM visibility (`30622`) from the writer; that
+read never joins a replica-backed visibility refresh in flight, though an
+ordinary refresh started during it joins it. Ordinary startup, browsing,
+reconnect, the row and header Channel actions menus, and ordinary DM visibility
+refreshes stay replica-eligible.
+The details editor and member-administration capability use writer-backed
 state for their shared load/preflight/confirmation reads; the member dialog's
 separate display-roster load remains replica-eligible. Channel-write membership
 preflights (including session sends and canvas saves) also use the writer, so a
@@ -159,7 +166,12 @@ shortcode, and republishes the whole set with a strictly newer `created_at`.
 Adds within a session run one at a time, so a stale read cannot drop an earlier
 add. The signed echo must match the template before publishing, the accepted set
 joins the palette immediately, and failures surface as the reference
-`Failed to add emoji.` / `Timed out while adding emoji.` copy. The development
+`Failed to add emoji.` / `Timed out while adding emoji.` copy. On the native
+host, a relay refusal appends the relay's reason, clipped to 256 characters,
+such as `Failed to add emoji. You are banned from this community`. The browser
+host's broker reports a socket `forbidden:`, `blocked:` or `restricted:` refusal
+as not sent, so that host shows `Failed to add emoji.` for those and appends
+only `invalid:` reasons; this host difference is unresolved. The development
 broker admits kind 30030 only for the canonical own-set template
 (`validEmojiSetTemplate`).
 

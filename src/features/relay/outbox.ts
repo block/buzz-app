@@ -124,6 +124,54 @@ export class PublishRejected extends Error {
  * device, or the relay asked it to wait. Retrying may succeed. */
 export class PublishNotSent extends PublishRejected {}
 
+/** NIP-01 machine-readable prefixes: the shape of a relay's own refusal. */
+export const NIP01_PREFIX =
+  /^(invalid|blocked|restricted|forbidden|error|pow|duplicate|rate-limited|conflict|auth-required):\s*/;
+/** Prefixes writers match on, so the text is shown as sent. */
+export const KEPT_PREFIXES = new Set([
+  "rate-limited",
+  "conflict",
+  "auth-required",
+]);
+
+/** Whether `message` is the relay's own words for a refusal: the write was
+ * sent and its `reason` is relay-shaped text. Status summaries, client-side
+ * rejections and prefixed text kept for writers to match on are not, so
+ * writers show their fixed copy for those. */
+export function isRelayRefusal(error: unknown): error is PublishRejected {
+  if (!(error instanceof PublishRejected) || error instanceof PublishNotSent)
+    return false;
+  const prefix = NIP01_PREFIX.exec(error.reason ?? "");
+  return (
+    !!prefix &&
+    !KEPT_PREFIXES.has(prefix[1] ?? "") &&
+    !!error.reason?.slice(prefix[0].length).trim()
+  );
+}
+
+/** The relay's refusal words to show, clipped like stored diagnostics, or
+ * undefined when `error` is not the relay's own refusal. */
+export function relayRefusal(error: unknown): string | undefined {
+  return isRelayRefusal(error) ? clip(error.message) : undefined;
+}
+
+/** The relay's words, without their prefix and clipped like relayRefusal,
+ * when it refuses the sign-in rather than the write: a sent `auth-required:`
+ * refusal. That prefix is kept for writers to match on, so it is never a
+ * relayRefusal. */
+export function authRefusal(error: unknown): string | undefined {
+  if (!(error instanceof PublishRejected) || error instanceof PublishNotSent)
+    return undefined;
+  const prefix = NIP01_PREFIX.exec(error.reason ?? "");
+  const words =
+    prefix?.[1] === "auth-required"
+      ? error.reason?.slice(prefix[0].length).trim()
+      : undefined;
+  return words
+    ? clip(words.charAt(0).toUpperCase() + words.slice(1))
+    : undefined;
+}
+
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
@@ -172,7 +220,13 @@ export function createOutbox(
     timeoutMs?: number;
     /** Commands await their receipt even after a verified echo. Never persisted. */
     needsReceipt?: (event: EventData) => boolean;
-    onReceipt?: (event: EventData, message: string | undefined) => void;
+    /** `refusal` is the relay's display text for a refused command. The journal
+     * keeps fixed copy, because relay text can quote event content. */
+    onReceipt?: (
+      event: EventData,
+      message: string | undefined,
+      refusal?: string,
+    ) => void;
     /** `acknowledged` is false when the publisher was entered but delivery is `unknown`. */
     onAccepted?: (event: RelayEvent, acknowledged: boolean) => void;
     profiling?: RelayProfiler;
@@ -646,8 +700,6 @@ export function createOutbox(
       // A verified observation ends the attempt even if its HTTP ACK never arrives.
       total(!closed && !latest ? "ok" : "error");
       if (closed) return;
-      if (latest && awaitsReceipt(latest.event))
-        onReceipt(latest.signed ?? latest.event, undefined);
       const delivery: Delivery | undefined =
         latest &&
         (latest.delivery === "seen" || attempt.previousDelivery === "seen"
@@ -657,6 +709,13 @@ export function createOutbox(
             : publishing && !(error instanceof PublishRejected)
               ? "unknown"
               : failedDelivery(attempt));
+      // Only a failed attempt was refused; an echoed command stays unknown.
+      if (latest && awaitsReceipt(latest.event))
+        onReceipt(
+          latest.signed ?? latest.event,
+          undefined,
+          delivery === "failed" ? relayRefusal(error) : undefined,
+        );
       if (latest && delivery)
         saveStatus({
           ...latest,

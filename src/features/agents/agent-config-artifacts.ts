@@ -277,6 +277,7 @@ export function refusal(message: string): Refusal {
   if (/archived/i.test(message)) return "archived";
   if (
     prefix === "restricted" ||
+    prefix === "forbidden" ||
     prefix === "auth-required" ||
     prefix === "blocked"
   )

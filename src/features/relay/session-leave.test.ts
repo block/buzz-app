@@ -112,9 +112,11 @@ it.each(cases)(
     expect(owner.session.channels.list().channels).toHaveLength(0);
     expect(outcome).toBe("confirmed");
     if (visibility === "private") expect(content.snapshot().events).toEqual([]);
+    // Leave's permission preflights also read the writer, but by `#d` alone;
+    // only the post-publish roster confirmation names the viewer.
     const confirmations = query.mock.calls
       .flatMap(([filters]) => filters)
-      .filter((filter) => filter.consistency === "strong");
+      .filter((filter) => filter.consistency === "strong" && filter["#p"]);
     expect(confirmations).toHaveLength(ordering === "before ACK" ? 1 : 2);
     for (const filter of confirmations)
       expect(filter).toEqual({

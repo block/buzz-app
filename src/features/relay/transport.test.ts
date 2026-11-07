@@ -9,7 +9,12 @@ import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
-import { PublishRejected } from "./outbox";
+import {
+  authRefusal,
+  isRelayRefusal,
+  PublishRejected,
+  relayRefusal,
+} from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
@@ -148,6 +153,10 @@ it.each([
   ],
   ["blocked:   you are banned", "You are banned"],
   ["restricted: not a channel member", "Not a channel member"],
+  [
+    "forbidden: workflow is disabled or inactive",
+    "Workflow is disabled or inactive",
+  ],
   ["error: internal failure", "Internal failure"],
   ["pow: difficulty too low", "Difficulty too low"],
   ["duplicate: already accepted", "Already accepted"],
@@ -241,6 +250,65 @@ it("carries the relay's refusal text through both publish transports", async () 
     message: shown,
     reason: error,
   });
+});
+it("keeps a forbidden: refusal as relay text through acceptPublish and the signed writer", async () => {
+  const error =
+    "forbidden: workflows with call_webhook actions require the owner or admin role";
+  const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
+  const transport = await connectSignedTransport(
+    hostSigner(key),
+    "https://relay.test",
+    "relay",
+  );
+  assert.exists(transport.writer);
+  vi.stubGlobal("fetch", async () => Response.json({ error }, { status: 400 }));
+  for (const result of [
+    await refusal(400, { error }),
+    await transport.writer
+      .publish(event, new AbortController().signal)
+      .catch((reason: unknown) => reason),
+  ]) {
+    expect(result).toBeInstanceOf(PublishRejected);
+    expect(result).toMatchObject({
+      message:
+        "Workflows with call_webhook actions require the owner or admin role",
+      reason: error,
+    });
+    expect(isRelayRefusal(result)).toBe(true);
+  }
+});
+it.each([
+  ["forbidden: not a member of this DM", true],
+  // Empty text leaves the status summary.
+  ["invalid:  ", false],
+  // Text writers match on stays machine text, not display words.
+  ["auth-required: sign in", false],
+  // Without a NIP-01 prefix the text is not the relay's.
+  ["Forbidden by proxy", false],
+])(
+  "counts only the relay's own words as its refusal: %j",
+  async (error, words) => {
+    expect(isRelayRefusal(await refusal(403, { error }))).toBe(words);
+  },
+);
+it("keeps a long refusal's whole reason but clips its display words", async () => {
+  // Admission keeps up to 4 KB of `{error}` text, so the bound is the display's.
+  const error = `invalid: ${"x".repeat(1000)}`;
+  const result = await refusal(400, { error });
+  expect(result).toMatchObject({ reason: error });
+  expect(relayRefusal(result)).toBe(`X${"x".repeat(255)}`);
+});
+it("reads a 401 sign-in refusal as the relay's words, clipped, never as a refusal of the write", async () => {
+  // NIP-FI's missing-evidence denial on an HTTP publish.
+  const error = "auth-required: authentication required";
+  const result = await refusal(401, { error });
+  expect(result).toMatchObject({ message: error, reason: error });
+  expect(relayRefusal(result)).toBeUndefined();
+  expect(authRefusal(result)).toBe("Authentication required");
+  const long = await refusal(401, {
+    error: `auth-required: ${"x".repeat(1000)}`,
+  });
+  expect(authRefusal(long)).toBe(`X${"x".repeat(255)}`);
 });
 it("keeps the conflict refusal and the raw reason for classifying writers", async () => {
   const conflict = await refusal(409, { error: "invalid: whatever" });

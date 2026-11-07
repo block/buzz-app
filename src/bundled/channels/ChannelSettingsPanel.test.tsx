@@ -517,10 +517,30 @@ it("runs the matching command, stays pending until it settles, then follows the 
 });
 
 it.each([
+  // As the transport shows a refusal: the relay's words without their prefix.
   [
     "the relay's own reason",
-    new PublishRejected("rejected", "invalid: actor not authorized"),
-    "invalid: actor not authorized",
+    new PublishRejected(
+      "Actor not authorized",
+      "invalid: actor not authorized",
+    ),
+    "Actor not authorized",
+  ],
+  [
+    "the relay's forbidden reason",
+    new PublishRejected(
+      "Only owners and admins can change auto-join",
+      "forbidden: only owners and admins can change auto-join",
+    ),
+    "Only owners and admins can change auto-join",
+  ],
+  [
+    "a long relay reason, clipped,",
+    new PublishRejected(
+      `Actor not authorized ${"x".repeat(1000)}`,
+      `invalid: actor not authorized ${"x".repeat(1000)}`,
+    ),
+    `Actor not authorized ${"x".repeat(1000)}`.slice(0, 256),
   ],
   [
     "the default reason",
@@ -528,11 +548,29 @@ it.each([
     "Only community owners and admins can change this.",
   ],
   [
+    "the default reason for text that is not the relay's",
+    new PublishRejected(
+      "Relay rejected the message (403)",
+      "Forbidden by proxy",
+    ),
+    "Only community owners and admins can change this.",
+  ],
+  // `auth-required:` stays prefixed for writers to match on; it refuses the
+  // sign-in, so an owner is not told they lack the role.
+  [
+    "the relay's sign-in refusal",
+    new PublishRejected(
+      "auth-required: authentication required",
+      "auth-required: authentication required",
+    ),
+    "Authentication required",
+  ],
+  [
     "a retry for an unconfirmed outcome",
     // As the lifecycle owner throws it when readback never shows the flag.
     new ChannelLifecycleUnconfirmed(
       new Error(
-        "The relay accepted the request, but the change is not confirmed. Refresh channels before trying again.",
+        "The relay accepted the request, but the change is not confirmed.",
       ),
     ),
     "Saved, but not confirmed yet. Try again to check.",

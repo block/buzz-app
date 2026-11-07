@@ -22,6 +22,7 @@ import type {
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import {
   createRelaySession,
   type RelaySession,
@@ -309,9 +310,18 @@ function workspace(
   {
     membership,
     lifecycle,
+    handoff = false,
+    replica,
+    hold,
   }: {
     membership?: CommunityMembership;
     lifecycle?: (event: RelayEvent) => Promise<void>;
+    /** Mount the shell's channel navigation, which owns lifecycle actions. */
+    handoff?: boolean;
+    /** What reads that are not strong see; `events` is the writer. */
+    replica?: RelayEvent[];
+    /** Reads wait for a returned gate. */
+    hold?: () => Promise<void> | undefined;
   } = {},
 ) {
   const owner = createRelaySession(
@@ -319,10 +329,22 @@ function workspace(
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) =>
-        events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
-        ),
+      query: async (filters) => {
+        await hold?.();
+        return replica
+          ? [
+              ...new Set(
+                filters.flatMap((filter) =>
+                  (filter.consistency === "strong" ? events : replica).filter(
+                    (event) => matchesEvent(event, filter),
+                  ),
+                ),
+              ),
+            ]
+          : events.filter((event) =>
+              filters.some((filter) => matchesEvent(event, filter)),
+            );
+      },
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},
@@ -363,8 +385,8 @@ function workspace(
   const navigator = createNavigationController(
     createMemoryHistory(),
   ).navigation;
-  const page = (navigation?: PageNavigation) => (
-    <ToastProvider>
+  const page = (navigation?: PageNavigation) => {
+    const content = (
       <ChannelsPage
         relay={relay}
         panels={panels}
@@ -372,8 +394,19 @@ function workspace(
         navigation={navigation}
         membership={membership}
       />
-    </ToastProvider>
-  );
+    );
+    return (
+      <ToastProvider>
+        {handoff ? (
+          <ChannelNavigationProvider relay={relay}>
+            {content}
+          </ChannelNavigationProvider>
+        ) : (
+          content
+        )}
+      </ToastProvider>
+    );
+  };
   const { rerender } = render(page());
   /** Re-route the mounted page; `undefined` returns to the unrouted workspace. */
   const visit = (target?: OpenTarget) =>
@@ -462,6 +495,179 @@ it("hands the community roster to Channel settings and follows the republished f
   await vi.waitFor(() => expect(control).toBeChecked());
   expect(control).not.toHaveAttribute("aria-busy");
   expect(control.closest("dd")?.querySelector("[role=alert]")).toBeNull();
+});
+
+it("a refreshed roster that demotes the viewer retires Archive and Delete in Channel settings, keeping focus there", async () => {
+  const viewer = keypair(),
+    authority = keypair(),
+    other = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  // Both records carry roles, as the relay re-signs them on a role change.
+  const roles = (role: "owner" | "member", at: number) => [
+    signed(authority, {
+      kind: 39001,
+      created_at: at,
+      content: "",
+      tags: [
+        ["d", id],
+        ["p", other.pubkey, "owner"],
+        ...(role === "owner" ? [["p", viewer.pubkey, "owner"]] : []),
+      ],
+    }),
+    signed(authority, {
+      kind: 39002,
+      created_at: at,
+      content: "",
+      tags: [
+        ["d", id],
+        ["p", other.pubkey, "", "owner"],
+        ["p", viewer.pubkey, "", role],
+      ],
+    }),
+  ];
+  const events = [
+    metadata(authority, id, "Alpha", undefined, [["t", "stream"]]),
+    ...roles("owner", 1_700_000_000),
+  ];
+  const publish = vi.fn(async () => {});
+  let gate: Promise<void> | undefined;
+  let held = 0;
+  workspace(events, viewer, authority, {
+    lifecycle: publish,
+    handoff: true,
+    hold: () => {
+      if (gate) held += 1;
+      return gate;
+    },
+  });
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View channel details" }),
+  );
+  const settings = await screen.findByRole("complementary", {
+    name: "Channel settings",
+  });
+  await within(settings).findByRole("button", { name: "Delete channel" });
+  // Another owner demotes the viewer; this page has not seen it.
+  events.splice(1, 2, ...roles("member", 1_700_000_100));
+  await user.click(
+    within(settings).getByRole("button", { name: "Archive channel" }),
+  );
+  const confirm = await screen.findByRole("dialog", {
+    name: "Archive channel: Alpha",
+  });
+  await user.click(
+    within(confirm).getByRole("button", { name: "Archive channel" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Archive channel failed",
+  });
+  expect(toast).toHaveAccessibleDescription(
+    "This action is no longer permitted. Refresh channels to see what you can do now.",
+  );
+  const archive = within(settings).getByRole("button", {
+    name: "Archive channel",
+  });
+  await vi.waitFor(() => expect(archive).toHaveFocus());
+  const refresh = within(toast).getByRole("button", {
+    name: "Refresh channels",
+  });
+  act(() => refresh.focus());
+  let release = () => {};
+  gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(held).toBeGreaterThan(0));
+    expect(
+      screen.queryByRole("dialog", { name: "Archive channel failed" }),
+    ).toBeNull();
+    // The refresh is held, so Settings still offers Archive.
+    expect(archive).toHaveFocus();
+  } finally {
+    gate = undefined;
+    release();
+  }
+  // The refreshed role remounts the actions; Leave arrives with fresh permissions.
+  await within(settings).findByRole("button", { name: "Leave channel" });
+  expect(archive).not.toBeInTheDocument();
+  expect(
+    within(settings).queryByRole("button", { name: "Archive channel" }),
+  ).toBeNull();
+  expect(
+    within(settings).queryByRole("button", { name: "Delete channel" }),
+  ).toBeNull();
+  // The retired trigger hands focus to the Settings tab, not the document.
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Close Channel settings tab" }),
+    ).toHaveFocus(),
+  );
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it("Refresh channels after an unconfirmed Hide rereads DM visibility from the writer", async () => {
+  const viewer = keypair(),
+    authority = keypair(),
+    alice = keypair();
+  const id = "22222222-2222-4222-8222-222222222222";
+  const events = [
+    signed(authority, {
+      kind: 39000,
+      content: "",
+      tags: [["d", id], ["t", "dm"], ["hidden"]],
+    }),
+    signed(authority, { kind: 39001, content: "", tags: [["d", id]] }),
+    roster(authority, id, [viewer.pubkey, alice.pubkey]),
+  ];
+  const replica = [...events];
+  // The relay hides the DM, but its reply is lost: the outcome is uncertain.
+  const publish = vi.fn(async () => {
+    events.push(
+      signed(authority, {
+        kind: 30622,
+        content: "",
+        tags: [
+          ["d", viewer.pubkey],
+          ["p", viewer.pubkey],
+          ["h", id],
+        ],
+      }),
+    );
+    throw new Error("Relay connection lost");
+  });
+  const { owner } = workspace(events, viewer, authority, {
+    lifecycle: publish,
+    handoff: true,
+    replica,
+  });
+  await screen.findByRole("textbox", { name: /^Message / });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Hide conversation" }),
+  );
+  const confirm = await screen.findByRole("dialog", {
+    name: /^Hide conversation: /,
+  });
+  await user.click(
+    within(confirm).getByRole("button", { name: "Hide conversation" }),
+  );
+  const toast = await screen.findByRole("dialog", {
+    name: "Hide conversation failed",
+  });
+  expect(owner.session.channelLifecycle.snapshot().hidden).toEqual([]);
+  fireEvent.click(
+    within(toast).getByRole("button", { name: "Refresh channels" }),
+  );
+  // Only the writer has the hide; the replica still predates it.
+  await vi.waitFor(() =>
+    expect(owner.session.channelLifecycle.snapshot().hidden).toEqual([id]),
+  );
+  expect(publish).toHaveBeenCalledOnce();
 });
 
 it("selects a default channel the relay adds after the page opened", async () => {

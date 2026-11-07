@@ -264,6 +264,7 @@ test("a page sidebar uses the shell slot, generic toggle, theme, and narrow draw
           "fixture.page-placement": true,
           "buzz.reminders": true,
           "buzz.workflows": true,
+          "buzz.drafts-and-sent": true,
         },
       }),
     );

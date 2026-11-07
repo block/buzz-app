@@ -1271,8 +1271,9 @@ export class ClaudeRuntime {
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     // Sharing a session does not mean it has seen every thread in the channel.
+    // A DM's top-level turns read the whole DM, so they keep its one timestamp.
     const contextRoot =
-      scope === "channel" && !dm && !topLevel ? rootId : undefined;
+      scope === "channel" && !topLevel && (!dm || thread) ? rootId : undefined;
     const seen = fresh ? 0 : entry.sessions.seen(key, contextRoot);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);

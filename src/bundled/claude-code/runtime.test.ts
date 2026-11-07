@@ -1712,6 +1712,68 @@ it.each(["live", "reload", "legacy"])(
   },
 );
 
+it("keeps each thread's unseen context in a DM", async () => {
+  const reply = (id: string, root: EventData, content: string, at: number) =>
+    message(id, content, {
+      created_at: at,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const aRoot = message("1", "Task A", { created_at: 80 });
+  const bRoot = message("2", "Task B", { created_at: 90 });
+  const bNote = reply("3", bRoot, "B must use staging only", 100);
+  const aNote = reply("4", aRoot, "A must include refunds", 115);
+  const history = [aRoot, bRoot, bNote, aNote];
+  const f = setup();
+  vi.spyOn(f.session.channels, "list").mockReturnValue({
+    channels: [{ id: channel, name: "DM", channelType: "dm", members: [] }],
+  } as never);
+  f.read.mockImplementation(async (filters) =>
+    history.filter((event) =>
+      filters.some(
+        (filter) =>
+          filter.ids?.includes(event.id) ||
+          event.tags.some(
+            (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+          ),
+      ),
+    ),
+  );
+  const deliver = async (event: RelayEvent) => {
+    const before = f.workingUntil.mock.calls.length;
+    await f.deliver({ type: "mention", event });
+    await vi.waitFor(() =>
+      expect(f.workingUntil).toHaveBeenCalledTimes(before + 1),
+    );
+    await f.workingUntil.mock.calls[before]?.[0];
+    return (
+      f
+        .claudes()
+        .find((process) => process.prompts.length)
+        ?.prompts.at(-1) ?? ""
+    );
+  };
+  try {
+    await deliver(reply("5", aRoot, "@Claude work on A", 110));
+    expect(await deliver(reply("6", bRoot, "@Claude do B now", 120))).toContain(
+      bNote.content,
+    );
+    expect(
+      await deliver(reply("7", bRoot, "@Claude continue B", 130)),
+    ).not.toContain(bNote.content);
+    expect(
+      await deliver(reply("8", aRoot, "@Claude continue A", 140)),
+    ).toContain(aNote.content);
+    expect(
+      f.claudes().filter((process) => process.prompts.length),
+    ).toHaveLength(1);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("shows a thread's later turns only what the session has not seen", async () => {
   const root = message("1", "first", {
     tags: [

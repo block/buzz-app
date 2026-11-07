@@ -31,6 +31,7 @@ import watchingManifest from "./watching/manifest.json";
 import * as watching from "./watching";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
+import { leadsHarnesses as claudeLeadsHarnesses } from "./claude-code/auth";
 import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
@@ -69,6 +70,17 @@ import * as pluginDevelopment from "./plugin-development";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
+
+const codexHarness: BundledPlugin = {
+  manifest: { ...codexManifest, apiVersion: 1 },
+  module: codex,
+  enabledByDefault: true,
+};
+const claudeHarness: BundledPlugin = {
+  manifest: { ...claudeCodeManifest, apiVersion: 1 },
+  module: claudeCode,
+  enabledByDefault: true,
+};
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   {
@@ -197,18 +209,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: watching,
     enabledByDefault: true,
   },
-  // Codex leads the Harness list and is new agents' default: Claude asks
-  // for an API key before its first agent.
-  {
-    manifest: { ...codexManifest, apiVersion: 1 },
-    module: codex,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...claudeCodeManifest, apiVersion: 1 },
-    module: claudeCode,
-    enabledByDefault: true,
-  },
+  // The first of Codex and Claude leads the Harness list and is new agents'
+  // default: Codex, unless Claude's auth seam says Claude may.
+  ...(claudeLeadsHarnesses
+    ? [claudeHarness, codexHarness]
+    : [codexHarness, claudeHarness]),
   {
     manifest: { ...gooseManifest, apiVersion: 1 },
     module: goose,

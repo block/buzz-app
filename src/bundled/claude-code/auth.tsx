@@ -70,6 +70,12 @@ const nativeStore = ():
       }
     : undefined;
 
+/** Whether Claude leads the Harness list and is new agents' default
+ * (`src/bundled/index.ts`). Not here: Claude asks for an API key before its
+ * first agent, so Codex leads. A build whose Claude signs in without that
+ * friction can put it first. */
+export const leadsHarnesses = false;
+
 /** Claude's credentials on this computer. */
 export class ClaudeAuth {
   /** Which way this build authenticates. */

@@ -127,13 +127,22 @@ function ConnectedComposer({
     void modelRevision;
     return (keys: readonly string[]) => client.models(keys);
   }, [client, modelRevision]);
-  const keys = JSON.stringify([data?.tools ?? [], data?.completions ?? []]);
+  const keys = JSON.stringify([
+    data?.tools ?? [],
+    data?.completions ?? [],
+    data?.links ?? [],
+  ]);
   const capture = presentation?.capture ?? false;
   const extensions = useMemo(() => {
-    const [tools, completions] = JSON.parse(keys) as [string[], string[]];
+    const [tools, completions, links] = JSON.parse(keys) as [
+      string[],
+      string[],
+      string[],
+    ];
     return huddleComposerExtensions({
       tools,
       completions,
+      links,
       gifRequests: client.gifs,
       capture,
     });

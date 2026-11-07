@@ -28,6 +28,9 @@ export type CompanionRow = {
   text: string;
   mentions?: readonly string[];
   mentionNames?: Record<string, string>;
+  /** Display labels main resolved for `buzz://message` links in `text`, by
+   * URL ("<author> in #<channel>"), once main has read the linked message. */
+  linkLabels?: Record<string, string>;
   edited?: boolean;
   attachmentSeams?: readonly number[];
   mentionReferences?: readonly string[];

@@ -224,8 +224,12 @@ export function useLinkedMessageByline(
   return channel && name ? `${name} in #${channel}` : undefined;
 }
 
-function authorsFor(session: RelaySession) {
+/** The session's linked-message authors, shared with every mounted link. A
+ * non-React projection (a pop-out window's rows) holds `want` for each link it
+ * shows and reads `get` by `"<channelId>:<messageId>"`. */
+export function linkedAuthors(session: RelaySession) {
   const owner = authors.get(session) ?? lookups(session);
   authors.set(session, owner);
   return owner;
 }
+const authorsFor = linkedAuthors;

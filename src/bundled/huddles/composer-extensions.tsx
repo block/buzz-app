@@ -2,6 +2,7 @@ import type {
   ConversationExtensions,
   ComposerTool,
   ComposerCompletion,
+  LinkRenderer,
 } from "../../features/conversation/contracts";
 import type { Contribution } from "../../plugins/contributions";
 import type { GifRequests } from "../../features/relay/gifs";
@@ -16,6 +17,7 @@ import { ChannelCompletion } from "../channels/ChannelCompletion";
 import { channelQuery } from "../channels/channel-query";
 import { ResourcePicker } from "../repos/ResourcePicker";
 import { voiceRecorderTool } from "../voice-notes/recorder-tool";
+import { linkRenderer } from "../links";
 
 /** Native companions reuse bundled tools only while their main-app contribution is enabled. */
 const tools = (
@@ -90,9 +92,15 @@ const completions: Record<string, ComposerCompletion> = {
     component: ChannelCompletion,
   },
 };
+// Buzz-entity and service link labels, in messages and composer decorations.
+const links: Record<string, LinkRenderer> = {
+  "buzz.links/links": linkRenderer,
+};
 export function huddleComposerExtensions(enabled: {
   tools: readonly string[];
   completions: readonly string[];
+  /** Enabled link renderers, as main projects them; none by default. */
+  links?: readonly string[];
   gifRequests?: GifRequests;
   /** This window may record voice notes (pop-outs; never the Huddle). */
   capture?: boolean;
@@ -116,5 +124,6 @@ export function huddleComposerExtensions(enabled: {
     tools: reader(tools(enabled.gifRequests, enabled.capture), enabled.tools),
     completions: reader(completions, enabled.completions),
     inline: reader({}, []),
+    links: reader(links, enabled.links ?? []),
   };
 }

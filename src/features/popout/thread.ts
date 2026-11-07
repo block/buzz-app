@@ -17,6 +17,11 @@ import { createAgentOwnerEvidence } from "../profiles/agent-owner-evidence";
 import { knownAgentsOf } from "../messages/TypingIndicator";
 import { currentActivity } from "../agents/current-activity";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import { linkedAuthors } from "../conversation/linked-message";
+import { messageLinkParts } from "../messages/message-link-parts";
+import { parseBuzzLink } from "../navigation/buzz-links";
+
+const bytes = (value: string) => new TextEncoder().encode(value).length;
 
 /** What a pop-out window shows for one thread. Bounded like the native DTO. */
 export type PopoutThreadView = {
@@ -175,6 +180,14 @@ export function createPopoutThread(
     ReturnType<typeof createAgentOwnerEvidence>
   >();
   const MAX_EVIDENCE = 32;
+  // Authors of messages the shown rows link to, read through the same shared
+  // lookups main's links use, so a bare `buzz://message` link labels
+  // "<author> in #<channel>" here as it does there. Bounded; a link that
+  // leaves the projection releases its lookup first.
+  const linkAuthors = linkedAuthors(session);
+  const linksWanted = new Map<string, () => void>();
+  const MAX_LINKS = 64;
+  const profilesEnsured = new Set<string>();
   let thread: Source | undefined;
   try {
     thread = rootId
@@ -206,7 +219,85 @@ export function createPopoutThread(
     session.typing.subscribe(notify),
     session.agentActivity.subscribe(notify),
     session.agentChoices.subscribe(notify),
+    linkAuthors.subscribe(notify),
+    session.names?.subscribe(notify),
   ];
+  /** Bare `buzz://message` links in a row's text, as main's byline reads
+   * them: a labelled link keeps its label and is never looked up. */
+  function messageLinks(content: string) {
+    const links: { url: string; channelId: string; messageId: string }[] = [];
+    for (const part of messageLinkParts(content)) {
+      if (!part.url || part.label !== undefined) continue;
+      const parsed = parseBuzzLink(part.url);
+      if (parsed?.format === "legacy" && parsed.messageId)
+        links.push({
+          url: part.url,
+          channelId: parsed.channelId,
+          messageId: parsed.messageId,
+        });
+    }
+    return links;
+  }
+  /** Hold lookups for the links shown now, within the bound; links that left
+   * the projection release theirs first. */
+  function observeLinks(rows: readonly ChannelMessage[]) {
+    if (disposed) return;
+    const shown = new Map<string, { channelId: string; messageId: string }>();
+    for (const row of rows)
+      for (const link of messageLinks(row.content))
+        shown.set(`${link.channelId}:${link.messageId}`, link);
+    for (const [key, release] of linksWanted)
+      if (!shown.has(key)) {
+        release();
+        linksWanted.delete(key);
+      }
+    for (const [key, link] of shown) {
+      if (linksWanted.has(key) || linksWanted.size >= MAX_LINKS) continue;
+      // A link to a channel the byline never names needs no read.
+      if (!linkedChannel(link.channelId)) continue;
+      linksWanted.set(key, linkAuthors.want(link.channelId, link.messageId));
+    }
+  }
+  /** The channel a byline names: listed, confirmed, not a DM or Solo chat. */
+  function linkedChannel(id: string) {
+    const c = session.channels.list().channels.find((item) => item.id === id);
+    return c && !c.cached && c.channelType !== "dm" && c.channelType !== "solo"
+      ? c
+      : undefined;
+  }
+  /** "<author> in #<channel>" for each bare message link in a row whose
+   * author main has read and can name; the same words its own links show. */
+  function linkLabels(row: ChannelMessage): Record<string, string> | undefined {
+    let labels: Record<string, string> | undefined;
+    let count = 0;
+    for (const link of messageLinks(row.content)) {
+      // The native row takes at most 64 labels of bounded URLs.
+      if (count >= MAX_LINKS) break;
+      if (bytes(link.url) > 8192) continue;
+      const channel = linkedChannel(link.channelId);
+      const author = linkAuthors.get(`${link.channelId}:${link.messageId}`);
+      if (!channel || !author) continue;
+      let name = "";
+      if (author.workflow) name = "Workflow";
+      else {
+        if (!profilesEnsured.has(author.id) && profilesEnsured.size < 256) {
+          profilesEnsured.add(author.id);
+          void session.profiles
+            .ensure([author.id], "background")
+            .catch(() => {});
+        }
+        name =
+          session.names?.resolve(author.id, "", channel.members ?? []) ?? "";
+      }
+      if (!name) continue;
+      const label = `${name} in #${channel.name}`;
+      if (bytes(label) > 1000) continue;
+      labels ??= {};
+      labels[link.url] = label;
+      count++;
+    }
+    return labels;
+  }
   /** Typing and agent work for this frame, from the same stores and pure
    * classification main's indicator uses; no step details are projected. */
   function typing(): CompanionTyping | undefined {
@@ -505,18 +596,18 @@ export function createPopoutThread(
             .map((row) => row.authorId),
         ),
       );
+      observeLinks(shownRows as ChannelMessage[]);
       const c = channel();
       const joined =
         !!c && !c.cached && (!c.readOnly || c.viewerRole === "guest");
       const channelWritable = !!c && !c.readOnly && !c.cached;
       const archived = !!c?.archived;
       const project = (row: ChannelMessage) => {
-        const projected = projectCompanionRow(
-          session,
-          profiles,
-          row,
-          channelId,
-        );
+        const labels = linkLabels(row);
+        const projected = {
+          ...projectCompanionRow(session, profiles, row, channelId),
+          ...(labels ? { linkLabels: labels } : {}),
+        };
         const delivered =
           !row.delivery || ["accepted", "seen"].includes(row.delivery);
         if (!joined || row.membership || row.diff || !delivered)
@@ -616,6 +707,8 @@ export function createPopoutThread(
       for (const stop of stops) stop?.();
       for (const store of evidence.values()) store.dispose();
       evidence.clear();
+      for (const release of linksWanted.values()) release();
+      linksWanted.clear();
       thread?.dispose();
     },
   };

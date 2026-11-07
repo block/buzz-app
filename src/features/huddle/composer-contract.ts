@@ -25,6 +25,8 @@ export type ComposerSnapshot = {
   media: ReadonlyMap<string, string | undefined>;
   tools: readonly string[];
   completions: readonly string[];
+  /** Enabled link renderers, so a companion labels links as main does. */
+  links?: readonly string[];
 };
 export type ComposerOperations = {
   models: {
@@ -165,5 +167,5 @@ export type ComposerResponse =
   | { kind: "closed"; client: string };
 export type ComposerReader = Pick<
   ConversationExtensions,
-  "tools" | "completions"
+  "tools" | "completions" | "links"
 >;

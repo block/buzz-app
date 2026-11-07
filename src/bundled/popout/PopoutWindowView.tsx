@@ -146,7 +146,10 @@ export function PopoutWindowView({
     client?.revision ?? zero,
   );
   const bridgeSession = client?.snapshot().session;
-  const toolKeys = JSON.stringify(client?.snapshot().data?.tools ?? []);
+  const toolKeys = JSON.stringify([
+    client?.snapshot().data?.tools ?? [],
+    client?.snapshot().data?.links ?? [],
+  ]);
   const reactions = useMemo(() => {
     if (!client || !bridgeSession) return undefined;
     const session = createCompanionOperations(bridgeSession, client, {
@@ -161,12 +164,19 @@ export function PopoutWindowView({
         return row?.editable?.sourceContent ?? row?.text;
       },
     });
+    const [tools, links] = JSON.parse(toolKeys) as [string[], string[]];
     const extensions = huddleComposerExtensions({
-      tools: JSON.parse(toolKeys) as string[],
+      tools,
       completions: [],
+      links,
       gifRequests: client.gifs,
     });
-    return { session, tools: extensions.tools, inline: extensions.inline };
+    return {
+      session,
+      tools: extensions.tools,
+      inline: extensions.inline,
+      links: extensions.links,
+    };
   }, [client, bridgeSession, toolKeys]);
   useEffect(() => {
     setOperationsSession(reactions?.session);

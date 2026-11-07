@@ -28,3 +28,20 @@ it("offers the voice recorder only to a window that may capture, and only while 
     ),
   ).toEqual(["buzz.emoji/picker"]);
 });
+
+it("reuses the bundled link renderer only while main enables it; none by default", () => {
+  const links = (extensions: ReturnType<typeof huddleComposerExtensions>) =>
+    extensions.links?.snapshot().map((link) => link.key);
+  expect(
+    links(huddleComposerExtensions({ tools: [], completions: [] })),
+  ).toEqual([]);
+  expect(
+    links(
+      huddleComposerExtensions({
+        tools: [],
+        completions: [],
+        links: ["buzz.links/links", "buzz.github/pull"],
+      }),
+    ),
+  ).toEqual(["buzz.links/links"]);
+});

@@ -704,6 +704,20 @@ re-created in the companion (named as a gap in help).
   timeline projection; the companion renders `MembershipRow` groups and a
   text status line in main's words. Agent response previews and stop
   controls stay in main.
+- jaw's tryout: a pasted `buzz://message` link rendered as a raw URL in a
+  pop-out's rows and as plain text in its editor, where main shows "‹author›
+  in #‹channel›" / a chip with the Links plugin's icon. Two causes: the
+  companion had no `links` renderers (its extensions carried only
+  tools/completions/inline), and its rows had no reference directory (no
+  channel list; and the byline needs a `RelaySession` to read the linked
+  message, which a companion never has). Fix: main projects enabled link
+  renderer keys in the composer snapshot (`links`), the companion table maps
+  `buzz.links/links` to the plugin's exported `linkRenderer`; `CompanionRows`
+  passes the bridge session as `references` (channel names, Solo chips) and
+  the thread projection adds `linkLabels` per row, resolved in main through
+  the same shared `linkedAuthors` lookups and `session.names` the main
+  byline uses (bounded: 64 links per window, released as links leave the
+  view; native DTO `link_labels` ≤64 × ≤1000 bytes).
 
 ### Non-goals (S2)
 

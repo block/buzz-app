@@ -410,7 +410,9 @@ export function CommunityRefusalNotice({
     );
   const server = serverName(authority);
   const signedIn = state.status === "signed-in";
-  if (refusal === "access" && !signedIn)
+  // A switch signs out first, so its progress and recovery come before the
+  // signed-out answer.
+  if (refusal === "access" && !signedIn && !switching)
     return (
       <ToastNotice
         title={NO_ACCESS}

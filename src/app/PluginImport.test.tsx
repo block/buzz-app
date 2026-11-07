@@ -3160,3 +3160,23 @@ it("leaves an unconstrained link editable and unpinned", async () => {
     "readonly",
   );
 });
+
+it("limits a saved update review to diagnostics for its installed folder", async () => {
+  const unrelated = "src/bundled/other: Missing plugin manifest";
+  const relevant = "dist: Optional asset was skipped";
+  const props = savedFolderProps({
+    checkFolder: vi.fn(async () => "new"),
+    previewFolder: vi.fn(async () => ({
+      ...rememberedPreview,
+      warnings: [unrelated, relevant],
+    })),
+    discard: vi.fn(async () => {}),
+  });
+  render(<PluginImport {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Update" }));
+  const review = await screen.findByRole("dialog", {
+    name: "Update Remembered",
+  });
+  expect(within(review).queryByText(unrelated)).toBeNull();
+  expect(within(review).getByText(relevant)).toBeVisible();
+});

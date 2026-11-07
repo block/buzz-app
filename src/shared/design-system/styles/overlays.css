@@ -743,6 +743,11 @@ html[data-keyboard-navigation]
     }
 
     > .buzz-dialog-header {
+      --scroll-edge-fill: linear-gradient(
+        to bottom,
+        var(--surface-popover) calc(100% - var(--space-6)),
+        transparent
+      );
       top: calc(-1 * var(--dialog-padding));
       margin-top: calc(-1 * var(--dialog-padding));
       padding-top: var(--dialog-padding);
@@ -752,6 +757,7 @@ html[data-keyboard-navigation]
     > .buzz-dialog-header:has(
         + .buzz-dialog-content[data-header-gap="compact"]
       ) {
+      --scroll-edge-fill: var(--surface-popover);
       padding-bottom: 0;
     }
 

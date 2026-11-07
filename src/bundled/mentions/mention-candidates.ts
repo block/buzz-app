@@ -8,6 +8,8 @@ import {
 import { knownAgentPubkeys } from "../../features/agents/known";
 import type { Agent } from "../../features/agents/service";
 import { communityHost } from "../../features/messages/community-host";
+import { matchPerson, normalizeName } from "../../features/search/person-match";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import {
   allowsOutsideMentions,
   archivedMention,
@@ -71,6 +73,78 @@ type DirectoryPerson = MentionRecipient & {
 };
 type ElsewhereAgent = Pick<Agent, "pubkey" | "name" | "relay">;
 const none: readonly never[] = [];
+
+/**
+ * The owner's agents from their other communities that the chooser offers for
+ * `query` (README section 1): none named like one of the owner's unarchived
+ * agents here, which already has that name, except the one whose exact public
+ * key `query` is: a key names only its owner. Teams still reach them by key.
+ * None until a complete read lists the owner's agents here (`elsewhereMatches`):
+ * a failed or partial one may omit the agent here that has the name, or the
+ * key, which then takes its row here.
+ */
+export function offeredElsewhere(
+  session: ComposerSession,
+  elsewhere: readonly ElsewhereAgent[] | undefined,
+  query = "",
+) {
+  if (!elsewhere?.length) return elsewhere;
+  const agents = session.agentChoices.snapshot();
+  if (!agents.complete) return none;
+  const here = new Set(
+    agents.identities
+      .filter((agent) => !archivedMention(session, agent.pubkey))
+      .map((agent) => normalizeName(agent.name)),
+  );
+  const key = typedPublicKey(query);
+  return elsewhere.filter(
+    (agent) => agent.pubkey === key || !here.has(normalizeName(agent.name)),
+  );
+}
+
+/**
+ * Whether the chooser would offer here one of the owner's agents from other
+ * communities that `query` matches (any, for no query). Their name rule needs
+ * the owner's agents here, so the chooser loads those and holds such agents
+ * until they are known (README section 6). Meanwhile, for a query they match,
+ * the agent list is loading: Space waits as for invited agents. After a failed
+ * read only local choices here can take Space. An agent matches by the names
+ * its row has without the directory (`buildCandidates` aliases), such as the
+ * name cached here for one archived here, or by its exact public key
+ * (`matchingMentions`), which no name matches.
+ */
+export function elsewhereMatches(
+  session: ComposerSession,
+  channelId: string,
+  inviteAgents: boolean | undefined,
+  roster: readonly MentionRecipient[] | undefined,
+  elsewhere: readonly ElsewhereAgent[] | undefined,
+  query = "",
+) {
+  if (roster || inviteAgents || !elsewhere?.length) return false;
+  const channel = session.channels
+    .list()
+    .channels.find((c) => c.id === channelId);
+  const profiles = session.profiles.snapshot();
+  const here = session.agentChoices.snapshot().identities;
+  const key = typedPublicKey(query);
+  return availableMentionAgents(
+    channel,
+    elsewhere,
+    session.outbox?.supports(9000),
+  ).some((agent) => {
+    if (key !== undefined) return agent.pubkey === key;
+    const profile = profiles.get(agent.pubkey);
+    return [
+      agent.name,
+      profile?.name,
+      profile?.verified?.fullName,
+      profile?.verified?.username,
+      ...here.flatMap((a) => (a.pubkey === agent.pubkey ? [a.name] : [])),
+    ].some((name) => name !== undefined && !!matchPerson(name, query));
+  });
+}
+
 // Rows change only with their sources, not with each keystroke. Snapshots are
 // immutable, so identity is their revision; `joinable()` copies on each call.
 // Each directory array keeps its own rows: the chooser and its team rows pass

@@ -75,7 +75,11 @@ archived and not read-only, the choice set is:
 1. the channel's members;
 2. the agents that the client offers for mention in this channel;
 3. the viewer's own agents from their other communities, which the client can
-   bring into this one (section 7); and
+   bring into this one (section 7), except one whose name equals, after
+   normalization (section 3), the name of one of the viewer's unarchived agents
+   in this community: that agent already has the name here. A query that is
+   the exact public key (Terms) of such an agent still includes it, because a
+   key has no namesakes (section 5); and
 4. people and agents found by a community directory search for the current query.
 
 Solo chats MUST NOT add directory people or agents from other communities. This
@@ -222,8 +226,8 @@ has no namesakes. Nor does a saved team with the same or a longer name keep it
 from selecting. The steps below then apply as for a name.
 
 The **local** choices are the ones known without the directory search: the
-channel's members and the agents the client offers for mention (section 1, items
-1 to 3, or a Solo chat's own agent list). The client selects:
+channel's members and the agents the client offers for mention (section 1,
+items 1 to 3, or a Solo chat's own agent list). The client selects:
 
 1. the exact name among the local choices, once every member's name is known
    or known to be absent; otherwise
@@ -233,6 +237,17 @@ channel's members and the agents the client offers for mention (section 1, items
 
 In both cases the choice must be shown and can still be chosen. Check against
 the whole set, not only the shown rows.
+
+Both steps apply this precedence. When a local choice in this community
+(section 1, item 1 or 2) has an alias or label equal to the query, the viewer's
+agents from their other communities (item 3) cannot be the exact name.
+Otherwise, when one of those agents has one, directory results cannot. So a
+member named `Jitter` selects although the viewer's agent `Jitter` from
+another community is also a choice. When nothing local in this community is
+named `Jitter`, that agent selects at once: a directory result named `Jitter`
+cannot make it ambiguous. In step 2, a local choice in this community and a
+directory result with the same name are still namesakes. Every choice's longer
+names still continue the query.
 
 Local choices show before directory results (section 6), so a unique local name
 selects at once: directory results cannot make it ambiguous, whether or not the
@@ -303,9 +318,29 @@ mention is never a recipient or a reference (section 8).
 These rules keep a row from moving under the user's pointer or keyboard.
 
 - Members and offered agents SHOULD show without waiting for the directory.
+- The viewer's agents from their other communities (section 1, item 3) SHOULD
+  show only while the viewer's agents in this community are known from a
+  complete read, so that, once those are known, the name exception in section 1
+  does not disable a shown row. A failed or partial read is not evidence: it
+  may omit the agent here that has the name. Until such a read, a query that
+  matches (section 3) a name of one of the viewer's agents from other
+  communities holds them, and directory people with them, so those agents
+  still show before directory people. Its names are the ones its row has
+  without the directory search, including aliases cached in this community,
+  such as the profile name of an agent archived here; its exact public key
+  (Terms) holds it too, even when the name exception leaves it out of name
+  queries: only that read shows whether the key is one of the viewer's agents
+  here, which then has its row here. While the read runs, the agent list is
+  still loading (section 5). Once it fails, the full choice set stays unknown
+  for that query: only the local step of section 5 applies, over the local
+  choices the client has, and a retry reads again. A client SHOULD start
+  loading the viewer's agents here when a composer that offers such agents
+  opens, so that this wait is rare.
 - A shown row MUST NOT move while the query and the open chooser stay the same.
   New rows are added only at the bottom. Directory people come after the rows
-  already shown.
+  already shown. Offered agents (section 1, item 2) that load after the list
+  is shown are added too, before the viewer's agents from other communities
+  and the directory people added with them.
 - A row that becomes unavailable stays in place and is disabled. Enter and Tab
   MUST NOT select it or fall through to Send.
 - A client MAY show at most 50 rows and ask the user to type more.
@@ -398,14 +433,14 @@ each choice supplies its own label.
 | --- | --- |
 | `matching` | Section 3. `expected` is the tier of `label` for `query` (0 to 3), or `null` when it does not match. |
 | `ranking` | Sections 3 and 4. `expected` is the full ordered key list. |
-| `space` | Section 5 exact name among one complete choice set. The local-first step is tested only in the desktop UI tests. `expected` is a key or `null`. |
+| `space` | Section 5 step 2 over one complete choice set, with its precedence. Members, choices with `offered` (section 1, item 2) and choices with `elsewhere` (item 3) are local; other non-members are directory results. The local-first step is tested only in the desktop UI tests. `expected` is a key or `null`. |
 | `query` | Section 2 syntax. `expected` is `{start, end, query}` or `null`. |
 | `admission` | Section 2 multi-word rule. `expected` is a boolean. |
 | `tags.write` | Section 8 writer. `expected` is the ordered `p` and `mention` tags, or an error class: `not_member`, `invalid`, or `too_many`. The sender is a member in addition to `members`. |
 | `tags.read` | Section 8 reader. `expected` is `{mentions, references}`. |
 
 Choice defaults: `label` is `name`, `aliases` is `[name]`, and `agent`, `owned`,
-and `managed` are false. `elsewhere` (the host of another community) is absent. `history` maps a key to recency (higher is newer).
+`managed` and `offered` are false. `elsewhere` (the host of another community) is absent. `history` maps a key to recency (higher is newer).
 `presence` maps a key to `online` or `away`; a missing key is unknown.
 
 Section 6 and the prompt in section 7 are interaction rules. Test them with

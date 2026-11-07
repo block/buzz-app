@@ -9,6 +9,7 @@ import {
   type MentionChoice,
 } from "./mention-ranking";
 import { fixtureChoice, mentionConformance } from "./mention-rules.conformance";
+import { spaceMention } from "./use-mention-choices";
 import { matchPerson, nameStarts } from "../../features/search/person-match";
 const choice = (
   key: string,
@@ -246,8 +247,21 @@ it.each(mentionConformance.ranking)(
 it.each(mentionConformance.space)(
   "conforms to the portable Space contract: $name",
   (fixture) => {
+    // Step 2 of section 5 over the complete choice set: members, offered
+    // agents and agents from other communities are local; other choices are
+    // directory results.
+    const choices = fixture.choices.map(fixtureChoice);
+    const local = new Set(
+      fixture.choices
+        .filter((c) => c.member || c.offered || c.elsewhere)
+        .map((c) => c.pubkey),
+    );
     expect(
-      exactMention(fixture.choices.map(fixtureChoice), fixture.query) ?? null,
+      spaceMention(choices, local, fixture.query, {
+        pending: false,
+        missingNames: true,
+        complete: true,
+      }) ?? null,
     ).toBe(fixture.expected);
   },
 );

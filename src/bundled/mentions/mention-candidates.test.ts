@@ -1,5 +1,11 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { expect, it } from "vitest";
-import { directoryChanges, mentionCandidates } from "./mention-candidates";
+import {
+  directoryChanges,
+  elsewhereMatches,
+  mentionCandidates,
+  offeredElsewhere,
+} from "./mention-candidates";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import {
   type NamePreference,
@@ -177,4 +183,89 @@ it("shows the verified name each row is not, and matches every verified name", (
   } finally {
     setNamePreference("username");
   }
+});
+
+it("holds an agent from another community for every name its row has without the directory", () => {
+  const far = key(7);
+  const session = fresh();
+  // Archived here under another name, it still takes its row from the other
+  // community, with the names cached here.
+  Object.assign(session, {
+    profiles: {
+      snapshot: () =>
+        new Map<string, unknown>([
+          ...profiles,
+          [
+            far,
+            {
+              name: "Old",
+              verified: {
+                displayName: "farh",
+                username: "farh",
+                fullName: "Faraday",
+              },
+            },
+          ],
+        ]),
+    },
+    agentChoices: {
+      snapshot: () => ({
+        identities: [...agents, { pubkey: far, name: "Renamed" }],
+      }),
+    },
+    archives: {
+      snapshot: () => ({ status: "ready", archived: [key(5), far] }),
+    },
+  });
+  const row = mentionCandidates(
+    session,
+    "c",
+    false,
+    undefined,
+    undefined,
+    elsewhere,
+  ).find((c) => c.recipient.pubkey === far);
+  expect(row?.elsewhere).toBe("other.example");
+  expect([...(row?.aliases ?? [])].sort()).toEqual(
+    ["Far", "Faraday", "Old", "Renamed", "farh"].sort(),
+  );
+  for (const name of row?.aliases ?? [])
+    expect(
+      elsewhereMatches(session, "c", false, undefined, elsewhere, name),
+    ).toBe(true);
+  // Its exact key names only it, as it does for Space.
+  for (const typed of [far, npubEncode(far), `nostr:${npubEncode(far)}`])
+    expect(
+      elsewhereMatches(session, "c", false, undefined, elsewhere, typed),
+    ).toBe(true);
+  for (const typed of ["Ada", key(3), npubEncode(key(3))])
+    expect(
+      elsewhereMatches(session, "c", false, undefined, elsewhere, typed),
+    ).toBe(false);
+});
+
+it("offers an agent from another community named like one of the owner's agents here only for its exact key, after a complete read", () => {
+  const namesake = {
+    pubkey: key(8),
+    name: " helper ",
+    relay: "wss://o.example",
+  };
+  const listed = [...elsewhere, namesake];
+  let complete = true;
+  const session = fresh();
+  Object.assign(session, {
+    agentChoices: { snapshot: () => ({ identities: agents, complete }) },
+  });
+  const offered = (query?: string) =>
+    offeredElsewhere(session, listed, query)?.map((agent) => agent.pubkey);
+  // "Helper" here already has the name.
+  for (const query of [undefined, "", "helper", "Helper", key(7)])
+    expect(offered(query)).toEqual([key(7)]);
+  // A key has no namesakes: it names only its owner.
+  const npub = npubEncode(key(8));
+  for (const typed of [key(8), key(8).toUpperCase(), npub, `nostr:${npub}`])
+    expect(offered(typed)).toEqual([key(7), key(8)]);
+  // A failed or partial read may omit the agent here that has its key.
+  complete = false;
+  expect(offered(key(8))).toEqual([]);
 });

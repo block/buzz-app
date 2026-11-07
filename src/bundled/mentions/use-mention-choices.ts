@@ -22,10 +22,13 @@ import { archivedMention } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
 import {
   directoryChanges,
+  elsewhereMatches,
   managedByDetail,
   mentionCandidates,
+  offeredElsewhere,
 } from "./mention-candidates";
 import { useListedChannel } from "../../features/relay/listed-channel";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import { useNamesRevision } from "../../features/identity-names/react";
 import {
   useVerifiedNames,
@@ -35,6 +38,7 @@ import {
 import {
   exactMention,
   matchingMentions,
+  namesQuery,
   rankMentions,
   type MentionChoice,
 } from "./mention-ranking";
@@ -213,13 +217,16 @@ export type SpaceEvidence = {
   pending: boolean;
   /** A member's name is neither known nor known to be absent. */
   missingNames: boolean | undefined;
-  /** The directory search for this query settled with no more pages. */
+  /** The full choice set is known: the directory search for this query
+   * settled with no more pages, and no agents from other communities are held. */
   complete: boolean;
 };
 /**
  * Space (README section 5): once every member is named, an exact local name
  * selects at once. Any other exact name needs the full choice set: while the
  * directory search runs, failed, or has more pages, a namesake may be missing.
+ * For one name, a local choice here outranks the owner's agents from other
+ * communities, and they outrank directory results.
  */
 export function spaceMention(
   all: readonly MentionChoice[],
@@ -229,11 +236,20 @@ export function spaceMention(
 ) {
   if (pending) return undefined;
   const choices = matchingMentions(all, query);
+  const isLocal = (c: MentionChoice) => local.has(c.recipient.pubkey);
+  const named = choices.filter((c) => namesQuery(c, query));
+  const among: (c: MentionChoice) => boolean = named.some(
+    (c) => isLocal(c) && !c.elsewhere,
+  )
+    ? (c) => !c.elsewhere
+    : named.some((c) => c.elsewhere)
+      ? (c) => !!c.elsewhere
+      : () => true;
   return (
     (missingNames
       ? undefined
-      : exactMention(choices, query, (c) => local.has(c.recipient.pubkey))) ??
-    (complete ? exactMention(choices, query) : undefined)
+      : exactMention(choices, query, (c) => isLocal(c) && among(c))) ??
+    (complete ? exactMention(choices, query, among) : undefined)
   );
 }
 /**
@@ -252,10 +268,31 @@ export function useMentionChoices(
   const draft = useContext(DraftMentionRoster);
   const roster = draft?.recipients;
   const selected = useContext(SelectedMentionContext);
-  const agents = useAgentChoices(session, !!invite && open);
   // The owner's agents in their other communities; the snapshot is the revision.
   const community = useContext(AgentsContext);
   const revision = useAgentsSnapshot(community);
+  // Offering them needs the owner's agents here for the name rule (README
+  // section 1): load those, as inviting agents does. A closed chooser loads
+  // them too: the composer's picker mounts with it, before the first `@`.
+  const includeLegacy =
+    (open && !!invite) ||
+    elsewhereMatches(session, channelId, invite, roster, community?.joinable());
+  const agents = useAgentChoices(session, includeLegacy);
+  // Until a complete read lists those, they are held, and directory people
+  // with them, for a query one of them matches (README section 6). Only a read
+  // in progress is loading: after a failure, local choices stay usable and
+  // Retry reads again.
+  const held =
+    open &&
+    !agents.complete &&
+    elsewhereMatches(
+      session,
+      channelId,
+      invite,
+      roster,
+      community?.joinable(),
+      query,
+    );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -328,6 +365,9 @@ export function useMentionChoices(
       ...carried.filter((person) => !known.has(person.pubkey)),
     ];
   }, [searched, carried]);
+  // Of the owner's agents from other communities, only an exact public key
+  // changes which are offered, so other keystrokes keep the choice set.
+  const typedKey = typedPublicKey(query);
   const current = useCallback(
     () =>
       namedCandidates(
@@ -337,9 +377,9 @@ export function useMentionChoices(
         roster,
         selected,
         people,
-        community?.joinable(),
+        offeredElsewhere(session, community?.joinable(), typedKey),
       ),
-    [session, channelId, invite, roster, selected, people, community],
+    [session, channelId, invite, roster, selected, people, community, typedKey],
   );
   // Keys known without the directory search: members and agent choices.
   const localKeys = useCallback(() => {
@@ -349,14 +389,14 @@ export function useMentionChoices(
       invite,
       roster,
       undefined,
-      community?.joinable(),
+      offeredElsewhere(session, community?.joinable(), typedKey),
     );
     const cached = keySets.get(local);
     if (cached) return cached;
     const keys = new Set(local.map((c) => c.recipient.pubkey));
     keySets.set(local, keys);
     return keys;
-  }, [session, channelId, invite, roster, community]);
+  }, [session, channelId, invite, roster, community, typedKey]);
   const { candidates, local } = useMemo(() => {
     // Source revisions invalidate the projection; selection reads them again synchronously.
     void profiles;
@@ -393,7 +433,8 @@ export function useMentionChoices(
   const pending =
     membersPending ||
     !!draft?.pending ||
-    (!roster && !!invite && agents.pending && agents.status !== "ready");
+    (!roster && !!invite && agents.pending && agents.status !== "ready") ||
+    (held && agents.pending);
   let rows = same ? installed.rows : undefined;
   if (!same && installed) install(undefined);
   // Only choices the query can match; ranking reads no others.
@@ -449,12 +490,19 @@ export function useMentionChoices(
       (key) => session.presence?.status(key) ?? "unknown",
       MENTION_ROWS,
     );
-  // Ranked only when read: a full set of installed rows never needs outside choices.
+  // Rows that may arrive after the list installs: the owner's agents from
+  // other communities once no longer held, then directory people, which wait
+  // with them so that local rows stay above (README section 6). Ranked only
+  // when read: a full set of installed rows never needs outside choices.
   let outsideRows: readonly MentionChoice[] | undefined;
   const outside = () =>
-    (outsideRows ??= open
-      ? rank(matches.filter((c) => !local.has(c.recipient.pubkey)))
-      : []);
+    (outsideRows ??=
+      open && !held
+        ? [
+            ...rank(matches.filter((c) => c.elsewhere)),
+            ...rank(matches.filter((c) => !local.has(c.recipient.pubkey))),
+          ]
+        : []);
   // A member a completed read found no profile for has no name to be a namesake.
   const missingNames =
     open &&
@@ -476,10 +524,23 @@ export function useMentionChoices(
     }
   }
   if (rows && rows.length < MENTION_ROWS) {
-    // Append-only: late invited agents and directory pages never move shown rows.
+    // Append-only: late invited or offered agents and `outside` rows never
+    // move shown rows. Offered agents here come first: they are local.
     // Member-list changes keep their installed set until the query changes.
     const shown = new Set(rows.map((row) => row.recipient.pubkey));
-    const added = (invite ? rank(matches.filter((c) => c.agent)) : outside())
+    const added = (
+      invite
+        ? rank(matches.filter((c) => c.agent))
+        : [
+            ...rank(
+              matches.filter(
+                (c) =>
+                  !c.member && !c.elsewhere && local.has(c.recipient.pubkey),
+              ),
+            ),
+            ...outside(),
+          ]
+    )
       .filter((c) => !shown.has(c.recipient.pubkey))
       .slice(0, MENTION_ROWS - rows.length);
     if (added.length) {
@@ -501,6 +562,7 @@ export function useMentionChoices(
     }
   }
   const complete =
+    !held &&
     !directory.loading &&
     !directory.error &&
     !directory.more &&
@@ -530,6 +592,8 @@ export function useMentionChoices(
       managedBy,
       list,
       agents,
+      /** Whether this chooser reads the legacy agent library; Retry rereads it. */
+      includeLegacy,
       channel,
       roster,
       candidates,
@@ -564,6 +628,7 @@ export function useMentionChoices(
     managedBy,
     list,
     agents,
+    includeLegacy,
     channel,
     roster,
     pending,

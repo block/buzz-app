@@ -225,11 +225,6 @@ export function AgentsPage({
       navigator &&
       navigation.target.kind === "page"
     ) {
-      if (
-        navigation.signal.aborted ||
-        navigator.snapshot().entry.id !== navigation.entryId
-      )
-        return;
       const page = agentProviderTarget(navigation.target);
       const pageKey = targetKey(page);
       navigator.dismiss(
@@ -556,6 +551,9 @@ export function AgentsPage({
   // The listing and its trigger go with it, so focus follows to the tab now
   // shown.
   const leaveListing = () => {
+    // The operation may finish after its editor was revoked by a reconnect or
+    // community/account change. Only its original session can end its visits.
+    if (relay.snapshot().session !== connection.session) return;
     if (linked) closeShared();
     flushSync(() => {
       setSharedSelection(undefined);

@@ -15,6 +15,8 @@ import { buzzLinkTarget } from "../../src/features/navigation/buzz-links";
 import type { PageNavigation } from "../../src/features/navigation/service";
 import { createRelaySession } from "../../src/features/relay/session";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
+import { Button } from "../../src/shared/design-system/ui/Button";
+import { Input } from "../../src/shared/design-system/ui/Input";
 import { AgentSaveButton } from "../../src/features/agents/AgentSaveButton";
 import { CreationReview } from "../../src/bundled/agents/CreationReview";
 import { UpdateReview } from "../../src/bundled/agents/UpdateReview";
@@ -536,6 +538,7 @@ const relay = {
 // catalog/session only. Other agent-library scenarios remain disconnected.
 const marketplace = new URLSearchParams(location.search).has("marketplace");
 function Marketplace() {
+  const [link, setLink] = useState("");
   const [host] = useState(() => {
     const scope = {
       viewer: "f".repeat(64),
@@ -576,19 +579,18 @@ function Marketplace() {
       snapshot: () => snapshot,
       subscribe: () => () => {},
     } as unknown as RelayData;
-    Object.assign(window, {
-      openMarketplaceLink: (href: string) => {
-        const target = buzzLinkTarget(href, scope);
-        // The app's page resolver turns a plugin target into its registered page.
-        if (target?.kind !== "plugin" || target.pluginId !== "buzz.agents")
-          throw new Error("Not an Agents link");
-        return host.navigation.open({
-          ...base,
-          route: { version: 1, params: target.params ?? {} },
-        });
-      },
-    });
-    return { ...host, relay, session };
+    const openMarketplaceLink = (href: string) => {
+      const target = buzzLinkTarget(href, scope);
+      // The app's page resolver turns a plugin target into its registered page.
+      if (target?.kind !== "plugin" || target.pluginId !== "buzz.agents")
+        throw new Error("Not an Agents link");
+      return host.navigation.open({
+        ...base,
+        route: { version: 1, params: target.params ?? {} },
+      });
+    };
+    Object.assign(window, { openMarketplaceLink });
+    return { ...host, relay, session, openMarketplaceLink };
   });
   const { entry, attempt } = useSyncExternalStore(
     host.navigation.subscribe,
@@ -620,6 +622,25 @@ function Marketplace() {
   );
   return (
     <ToastProvider>
+      {new URLSearchParams(location.search).has("manual") && (
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void host.openMarketplaceLink(link);
+          }}
+        >
+          <label htmlFor="marketplace-link">Marketplace link</label>
+          <Input
+            id="marketplace-link"
+            value={link}
+            onChange={(event) => setLink(event.target.value)}
+          />
+          <Button type="submit" disabled={!link}>
+            Open link
+          </Button>
+        </form>
+      )}
       <AgentsPage
         agents={agents}
         relay={host.relay}

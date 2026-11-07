@@ -1098,11 +1098,6 @@ async function openDeletion() {
 
 async function confirmDeletion(host = archived.normalized_host) {
   const dialog = await openDeletion();
-  await waitFor(() =>
-    expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
-    ).toHaveFocus(),
-  );
   fireEvent.change(within(dialog).getByLabelText("Type the exact host"), {
     target: { value: host },
   });
@@ -1118,6 +1113,17 @@ async function confirmDeletion(host = archived.normalized_host) {
 
 const deletionPosts = () =>
   calls.filter(([url]) => url === "/api/builderlab/delete");
+
+it("starts permanent deletion on Cancel", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  renderCard();
+  const dialog = await openDeletion();
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+});
 
 async function startUncertainDeletion() {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });

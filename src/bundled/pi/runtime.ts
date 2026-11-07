@@ -599,9 +599,18 @@ export class PiRuntime {
       );
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
+      // Sharing a conversation does not mean it has seen every thread in the
+      // channel. A DM's top-level turns read the whole DM, so they keep its one
+      // timestamp.
+      const dm = (await this.reads(agent.key)?.channel(channel))?.dm === true;
+      const thread =
+        key === channel && !topLevel && (!dm || threadReference(event))
+          ? root
+          : undefined;
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.key,
         key,
+        ...(thread ? { thread } : {}),
       });
       const prompt = async () =>
         this.review(
@@ -659,6 +668,7 @@ export class PiRuntime {
         {
           agent: agent.key,
           key,
+          ...(thread ? { thread } : {}),
           at: event.created_at,
           context,
           text,

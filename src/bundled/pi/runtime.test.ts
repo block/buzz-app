@@ -459,6 +459,94 @@ it("shows a conversation only the messages it was not shown, nor its own replies
   expect(text).not.toContain("Earlier from Pi");
 });
 
+it.each([false, true])(
+  "keeps each thread's unseen context in a shared conversation (dm: %s)",
+  async (dm) => {
+    // As host.mjs keeps it: a key's `seen`, and each thread's in that key.
+    const seen = new Map<string, number>();
+    const { host, deliver, session } = setup({
+      place: ({ key, thread }) => ({
+        seen: seen.get(thread ? `${key}/${thread}` : String(key)) ?? 0,
+      }),
+      deliver: ({ key, thread, at }) => {
+        for (const kept of [
+          String(key),
+          ...(thread ? [`${key}/${thread}`] : []),
+        ])
+          seen.set(kept, Math.max(Number(at), seen.get(kept) ?? 0));
+        return { submission: Number(at), conversation: CONVERSATION };
+      },
+      wait: () => ({ status: "done", answer: 5, text: "ok" }),
+    });
+    if (dm)
+      vi.spyOn(session.channels, "list").mockReturnValue({
+        channels: [{ id: channel, name: "DM", channelType: "dm", members: [] }],
+      } as never);
+    const under = (id: string, top: RelayEvent, content: string, at: number) =>
+      message(id, content, {
+        created_at: at,
+        tags: [
+          ["h", channel],
+          ["e", top.id, "", "reply"],
+          ["p", self],
+        ],
+      });
+    const aRoot = message("2", "Task A", { created_at: 80 });
+    const bRoot = message("3", "Task B", { created_at: 90 });
+    const bNote = under("4", bRoot, "B must use staging only", 100);
+    // A DM's top-level turn reads the whole DM, so A starts in a thread there.
+    const first = dm
+      ? under("5", aRoot, "@Pi work on A", 110)
+      : message("5", "@Pi work on A", {
+          created_at: 110,
+          tags: [
+            ["h", channel],
+            ["p", self],
+          ],
+        });
+    const aTop = dm ? aRoot : first;
+    const aNote = under("6", aTop, "A must include refunds", 115);
+    const history = [aRoot, bRoot, bNote, first, aNote];
+    session.read.mockImplementation((async (
+      filters: readonly { ids?: string[]; "#e"?: string[] }[],
+    ) =>
+      history.filter((event) =>
+        filters.some(
+          (filter) =>
+            filter.ids?.includes(event.id) ||
+            event.tags.some(
+              (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+            ),
+        ),
+      )) as never);
+    const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+    const text = async (event: RelayEvent) => {
+      const before = host.requests("deliver").length;
+      await deliver({ type: "mention", event }, { config }).run;
+      await vi.waitFor(() =>
+        expect(host.requests("deliver")).toHaveLength(before + 1),
+      );
+      return String(host.requests("deliver").at(-1)?.params.text);
+    };
+    await text(first);
+    expect(await text(under("7", bRoot, "@Pi do B now", 120))).toContain(
+      bNote.content,
+    );
+    expect(await text(under("8", bRoot, "@Pi continue B", 130))).not.toContain(
+      bNote.content,
+    );
+    expect(await text(under("9", aTop, "@Pi continue A", 140))).toContain(
+      aNote.content,
+    );
+    expect(await text(under("a", bRoot, "@Pi finish B", 150))).not.toContain(
+      bNote.content,
+    );
+    expect(
+      new Set(host.requests("deliver").map(({ params }) => params.key)),
+    ).toEqual(new Set([channel]));
+  },
+);
+
 it("ignores a mention from someone who is not the owner", async () => {
   const { host, deliver } = setup();
   const turn = deliver({

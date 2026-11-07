@@ -524,10 +524,13 @@ and kept, so an approval given to it lasts across rebuilds and worktrees.
 
 Only `me` turns it on. Before launching, it:
 
-1. installs the helper at `~/.buzz-foundation/dev-credential-helper/` if none is
-   there, or if the installed one reports an older `--version` protocol than this
-   checkout's. Otherwise it keeps the installed one, even if this worktree's source
-   differs, since a new helper needs every item approved again;
+1. installs the helper for this checkout's protocol as
+   `~/.buzz-foundation/dev-credential-helper/buzz-dev-credential-helper-v<protocol>`
+   if none is there or it does not report that `--version` protocol. Otherwise it
+   keeps the installed one, even if this worktree's source differs, since a new
+   helper needs every item approved again. Each protocol has its own helper, so
+   switching between worktrees on different protocols replaces neither; a new
+   protocol's helper needs every item approved once;
 2. creates a self-signed code-signing certificate, **Buzz Dev Signing**, in the
    login Keychain if there is none, and records the code requirement
    `identifier "xyz.block.buzz.desktop.dev" and certificate leaf = H"…"` beside the

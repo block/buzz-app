@@ -30,8 +30,8 @@ function run(command, args, options = {}) {
   return result;
 }
 
-// The protocol this checkout's helper speaks; an installed helper that reports
-// an older one is replaced.
+// The protocol this checkout's helper speaks. Each protocol has its own installed
+// helper, so worktrees on different protocols never replace each other's.
 function protocol(root) {
   const source = readFileSync(
     join(root, "crates/dev-credential-helper/src/policy.rs"),
@@ -156,11 +156,11 @@ export function prepareCredentialHelper(root) {
   );
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
-  const helper = join(directory, "buzz-dev-credential-helper");
   const needed = protocol(root);
-  if (installedProtocol(helper) < needed) {
+  const helper = join(directory, `buzz-dev-credential-helper-v${needed}`);
+  if (installedProtocol(helper) !== needed) {
     install(root, helper);
-    if (installedProtocol(helper) < needed)
+    if (installedProtocol(helper) !== needed)
       throw new Error("the installed helper did not start");
     console.log(
       "Installed the Keychain helper. Click Always Allow on each Keychain dialog this launch; later launches won't ask.",

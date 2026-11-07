@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { portForPath } from "../../scripts/worktree-port.mjs";
 
 function recipe(name, ...args) {
@@ -641,6 +642,57 @@ for (const [name, args, settings, expected] of [
       assert.match(result.stderr, /Keychain helper unavailable \(no helper\)/);
   });
 }
+
+// The signed app's agents and plugins inherit its environment, so the runner
+// must not leave itself configured there: their own `cargo run` would fail.
+test("dev-sign-run.sh signs the app and drops its runner settings", {
+  skip: process.platform !== "darwin",
+}, () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-dev-sign-run-"));
+  try {
+    const binary = path.join(directory, "env");
+    copyFileSync("/usr/bin/env", binary);
+    const runner = fileURLToPath(
+      new URL("../../scripts/dev-sign-run.sh", import.meta.url),
+    );
+    const result = spawnSync(runner, [binary], {
+      env: {
+        PATH: process.env.PATH,
+        // Ad hoc, so the test needs no certificate.
+        BUZZ_DEV_HELPER_SIGNING: "-",
+        BUZZ_DEV_CREDENTIAL_HELPER: "/helper",
+        BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE: "1",
+        CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER: runner,
+        CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER: runner,
+      },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const launched = Object.fromEntries(
+      result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => [
+          line.slice(0, line.indexOf("=")),
+          line.slice(line.indexOf("=") + 1),
+        ]),
+    );
+    assert.equal(launched.BUZZ_DEV_CREDENTIAL_HELPER, "/helper");
+    assert.equal(launched.BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE, "1");
+    for (const name of [
+      "BUZZ_DEV_HELPER_SIGNING",
+      "CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER",
+      "CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER",
+    ])
+      assert.ok(!(name in launched), `${name} reached the app`);
+    const signed = spawnSync("/usr/bin/codesign", ["-dv", binary], {
+      encoding: "utf8",
+    });
+    assert.match(signed.stderr, /Identifier=xyz\.block\.buzz\.desktop\.dev/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("desktop refuses me after other arguments", () => {
   const result = recipe("desktop", "--port", "1430", "me");

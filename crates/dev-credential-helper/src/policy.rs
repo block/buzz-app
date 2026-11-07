@@ -1,16 +1,21 @@
 //! What the helper may be asked for. Everything here is pure, so it is tested
 //! on every platform; the macOS adapter only runs requests this module accepts.
 
-/// Bumped when the request format or the set of served items changes, so
-/// `just desktop me` reinstalls a helper that is too old for its checkout.
+/// Bumped when the request format or the set of served items changes.
+/// `just desktop me` installs one helper per protocol, so checkouts on
+/// different protocols each keep a helper that understands them.
 pub const PROTOCOL: u32 = 1;
 
 /// Largest value read or written, in either direction.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const LIMIT: usize = 2 * 1024 * 1024;
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const ABSENT: i32 = 10;
 pub const DENIED: i32 = 11;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const CORRUPT: i32 = 12;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const OCCUPIED: i32 = 13;
 pub const UNAVAILABLE: i32 = 1;
 
@@ -33,6 +38,7 @@ impl Operation {
         })
     }
     /// Whether the app sends a value for this operation.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn takes_value(self) -> bool {
         matches!(self, Self::Add | Self::Replace)
     }

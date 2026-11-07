@@ -403,6 +403,21 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
 ];
 /// The matching Builderlab API base path, or empty when unconfigured.
 pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");
+/// The `BUZZ_AGENT_GATEWAY` descriptor's gateway origin, or empty when
+/// gateway routing is off in this build.
+pub const AGENT_GATEWAY_ORIGIN: &str = env!("BUZZ_AGENT_GATEWAY_ORIGIN");
+/// The bundled Agents plugin, which may reach the agent gateway for its
+/// access check: that origin and nothing more.
+fn agents_manifest(gateway: &str) -> Manifest {
+    let mut agents: Manifest =
+        serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
+            .expect("agents manifest");
+    if !gateway.is_empty() {
+        let host = agents.host.as_mut().expect("agents host grants");
+        host.network_origins.push(gateway.into());
+    }
+    agents
+}
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
@@ -486,8 +501,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/repos/manifest.json"))
             .expect("projects manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
-            .expect("agents manifest"),
+        agents_manifest(AGENT_GATEWAY_ORIGIN),
         serde_json::from_str(include_str!("../../../src/bundled/watching/manifest.json"))
             .expect("watching manifest"),
         serde_json::from_str(include_str!(
@@ -2460,6 +2474,31 @@ mod tests {
         assert_eq!(grants.network_origins, ["https://two.example"]);
         manager.change("disable", "example.page").unwrap();
         assert!(manager.host_grants("example.page", &second).is_err());
+    }
+
+    #[test]
+    fn agents_reach_only_the_agent_gateway_origin() {
+        assert!(super::agents_manifest("")
+            .host
+            .unwrap()
+            .network_origins
+            .is_empty());
+        let host = super::agents_manifest("https://gateway.example")
+            .host
+            .unwrap();
+        assert_eq!(host.network_origins, ["https://gateway.example"]);
+        assert!(host.mcp && host.files && host.federated_identity.is_none());
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let grants = manager.host_grants("buzz.agents", "bundled").unwrap();
+        assert_eq!(
+            grants.network_origins,
+            if super::AGENT_GATEWAY_ORIGIN.is_empty() {
+                vec![]
+            } else {
+                vec![super::AGENT_GATEWAY_ORIGIN.to_owned()]
+            }
+        );
     }
 
     #[test]

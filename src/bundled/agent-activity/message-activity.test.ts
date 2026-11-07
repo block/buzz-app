@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { messageActivity } from "./message-activity";
+import { messageActivity, messageWork } from "./message-activity";
 import type { RelaySession } from "../../features/relay/session";
 const request = "a".repeat(64),
   sibling = "b".repeat(64);
@@ -151,4 +151,35 @@ it("passes stoppable through from the chosen local row and hides it once stopped
       request,
     ).map(({ state, stoppable }) => [state, stoppable]),
   ).toEqual([["working", true]]);
+});
+
+it("keeps a finished request noted only when it carries a notice", () => {
+  const local = {
+    scope: "scope",
+    agent: "agent",
+    channelId: "channel",
+    messageId: request,
+    threadRootId: request,
+    startedAt: 1000,
+    state: "done",
+  } as const;
+  const source = (row: NonNullable<Snapshot["local"]>[number]): Snapshot => ({
+    ...fixture(),
+    records: [],
+    turns: [],
+    local: [row],
+  });
+  expect(messageWork(source(local), "channel", request)).toEqual({
+    live: [],
+    stopped: [],
+  });
+  const noted = messageWork(
+    source({ ...local, notice: "Ran without the gateway." }),
+    "channel",
+    request,
+  );
+  expect(noted.live).toEqual([]);
+  expect(noted.stopped).toMatchObject([
+    { agent: "agent", state: "done", notice: "Ran without the gateway." },
+  ]);
 });

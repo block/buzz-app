@@ -203,6 +203,12 @@ import {
 } from "../solo/default-agent";
 import type { AgentPlugins } from "../../plugins/requests";
 import type { DeviceSettings } from "../../shared/device-settings";
+import type { TurnContext } from "./gateway/contract";
+import {
+  type BlockedReason,
+  type EligibleRoute,
+  gatewayRoutes,
+} from "./gateway/route";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -713,6 +719,22 @@ export type Delivery<Config = unknown> = Readonly<{
   named?(title: string): void;
   /** Rebuilds an addressed subscription prompt after harness readiness or a queue wait. */
   wakeText?(): Promise<string | undefined>;
+  /** This membership routes inference through the agent gateway: its
+   * eligible route, this turn's context and the upstream base this build
+   * configures for the type's harness, all frozen at dispatch. Absent when it
+   * doesn't: an external community, gateway routing off in this build, a
+   * type that names no harness, one this build gives no upstream or one the
+   * gateway doesn't enable, or a blocked route (see `gatewayFallback`). */
+  gateway?: Readonly<{
+    route: EligibleRoute;
+    turn: TurnContext;
+    upstream: Readonly<{ base: string }>;
+  }>;
+  /** A blocked route sent this turn to the type's own configuration, decided
+   * before dispatch; never with `gateway`. The host owns the decision and
+   * `notice`; a type shows `notice` in this turn's visible activity where the
+   * host can't (any turn but a mention, whose request it already notes). */
+  gatewayFallback?: Readonly<{ reason: BlockedReason; notice: string }>;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
@@ -974,6 +996,12 @@ export type AgentType<Config = unknown> = {
    * again marked `resumed` if the owner chooses to resume it, to carry on in
    * the conversation's saved session, or in a new one shown the conversation. */
   resumes?: boolean;
+  /** The type can route inference through the agent gateway with
+   * `Delivery.gateway`, under this stable harness name (e.g. "pi"). It does
+   * only when this build configures an upstream for the harness and the
+   * membership's gateway enables it; otherwise, and for types without it,
+   * turns keep their existing behavior. */
+  gateway?: Readonly<{ harness: string }>;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */
   remote?: RemoteAgentType;
@@ -1717,6 +1745,8 @@ type Binding = {
   origin: string;
   viewer: string;
   session: RelaySession;
+  /** The community UUID the session's transport read from NIP-11, if any. */
+  communityId?: string | undefined;
   /** Aborts when this binding is replaced, so no work outlives its session. */
   controller: AbortController;
   stopLive: () => void;
@@ -1942,6 +1972,8 @@ export class AgentsService extends Service implements Agents {
   private state: AgentsSnapshot;
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
+  /** The local memberships gateway routing was last told about. */
+  private gatewayKeys = new Set<AgentKey>();
   private readonly runners: AgentRunners;
   private readonly coreMemory: CoreMemoryCache;
   /** Counts list requests, so only the latest one is applied. */
@@ -2133,6 +2165,11 @@ export class AgentsService extends Service implements Agents {
         const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
         const session = this.bindingOf(agent)?.session;
         return !channel || !session || session.unattended(channel, live);
+      },
+      flat: (agent, channelId) => {
+        const { channelType } =
+          this.channelOf(agent, { tags: [["h", channelId]] }) ?? {};
+        return channelType === "dm" || channelType === "solo";
       },
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
@@ -6152,6 +6189,33 @@ export class AgentsService extends Service implements Agents {
       ? binding
       : undefined;
   }
+  /** Tells gateway routing each local membership and the community ID its
+   * live relay session's transport read. Hosted agents never route there. */
+  private syncGateway(identities: readonly Member[]) {
+    if (!gatewayRoutes.configured) return;
+    const types = new Map(this.types().map((type) => [type.key, type]));
+    const present = new Set<AgentKey>();
+    for (const identity of identities) {
+      const origin = originOf(identity.relay);
+      if (identity.deleting || !origin || types.get(identity.type)?.remote)
+        continue;
+      const binding = this.bindingOf(identity);
+      present.add(identity.key);
+      gatewayRoutes.setMembership({
+        key: identity.key,
+        origin,
+        owner: identity.owner,
+        pubkey: identity.pubkey,
+        community: binding && {
+          id: binding.communityId,
+          session: binding.session,
+        },
+      });
+    }
+    for (const key of this.gatewayKeys)
+      if (!present.has(key)) gatewayRoutes.removeMembership(key);
+    this.gatewayKeys = present;
+  }
   /** Whether the agent stays running: it is the viewer's, and its community is
    * joined and not disconnected. A reconnect does not stop it. */
   private alive({ relay, owner }: AgentIdentity) {
@@ -6410,6 +6474,7 @@ export class AgentsService extends Service implements Agents {
             origin: snapshot.origin,
             viewer: snapshot.viewer,
             session: snapshot.session,
+            communityId: snapshot.communityId,
             controller: new AbortController(),
           }
         : undefined;
@@ -6602,6 +6667,7 @@ export class AgentsService extends Service implements Agents {
         })),
       new Map(this.types().map((type) => [type.key, type])),
     );
+    this.syncGateway(identities);
     const left = this.runners.interrupted();
     // Only the copy that holds an agent may resume or forget its turns.
     const interrupted = running.filter(

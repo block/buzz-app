@@ -17,6 +17,8 @@ export type RequestWork = {
   stoppable?: boolean;
   /** This local request can be asked again once it fails. */
   retryable?: boolean;
+  /** How this local request's turn ran, such as without its gateway. */
+  notice?: string;
   selected: ReturnType<typeof requestActivity>;
   turns: Snapshot["turns"];
   working: boolean;
@@ -78,6 +80,7 @@ export function requestWork(
           ...(chosen.dismissed ? { dismissed: true } : {}),
           ...(chosen.stoppable ? { stoppable: true } : {}),
           ...(chosen.retryable ? { retryable: true } : {}),
+          ...(chosen.notice ? { notice: chosen.notice } : {}),
         },
       ];
     }

@@ -100,6 +100,8 @@ import {
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
+import { fallbackNotice, gatewayRoutes } from "./gateway/route";
+import { turnContextFor } from "./gateway/turn";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -436,6 +438,9 @@ export type RunnerHost = {
   /** Whether the event came as it would have with no watch keeping channels
    * live or looking them up; one heard `live`, or read by catch-up. */
   unattended(agent: Agent, event: RelayEvent, live: boolean): boolean;
+  /** Whether the channel is flat, with no threads: a DM of any size or a
+   * Solo chat. */
+  flat(agent: Agent, channelId: string): boolean;
   /** While the owner is still starting this chat, settles once it can take
    * the agent's events; undefined otherwise. */
   starting?(agent: Agent, channelId: string): Promise<void> | undefined;
@@ -2624,6 +2629,45 @@ export class AgentRunners {
     );
     return timer && { lane: lane(timer), job: timer };
   }
+  /** The membership's gateway route, this turn's context and its harness's
+   * upstream base, frozen before the type is asked to run, as `gateway`. It
+   * never waits on the gateway. A type that names no harness, whose harness
+   * this build gives no upstream, or whose harness the gateway doesn't
+   * enable for this membership keeps its existing behavior, without a
+   * notice. A blocked membership, including one whose readiness is still
+   * pending, runs it with its own configuration and none of the Buzz
+   * context, as `gatewayFallback`, and notes that on a mention's request.
+   * The choice is made here, before dispatch, so nothing is ever replayed. A
+   * turn whose access is revoked after dispatch is the harness's to fail
+   * visibly. */
+  private gatewayRouting(
+    agent: Agent,
+    type: RegisteredAgentType,
+    job: Job,
+    anchor: ConversationWake | undefined,
+  ) {
+    const harness = type.gateway?.harness;
+    const upstream = harness && gatewayRoutes.upstream(harness);
+    if (!upstream) return {};
+    const route = gatewayRoutes.routeForTurn(agent.key);
+    if (route.kind === "external") return {};
+    if (route.kind === "blocked") {
+      const notice = fallbackNotice(route);
+      job.work?.notice(notice);
+      return {
+        gatewayFallback: Object.freeze({ reason: route.reason, notice }),
+      };
+    }
+    if (!route.harnesses.includes(harness)) return {};
+    const { trigger } = job;
+    const turn = turnContextFor(trigger, {
+      channelId: job.channelId,
+      wake: anchor,
+      flat: (channelId) => this.host.flat(agent, channelId),
+    });
+    return { gateway: Object.freeze({ route, turn, upstream }) };
+  }
+
   /** Runs `job` in `lane`, holding the lane until it may take another. */
   private start(
     runner: Runner,
@@ -2674,6 +2718,8 @@ export class AgentRunners {
     };
     const completion = Promise.resolve().then(async () => {
       this.assertProtected(agent, type, handle);
+      // Before any type code (its models included) runs for this turn.
+      const routing = this.gatewayRouting(agent, type, job, anchor);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
@@ -2682,6 +2728,7 @@ export class AgentRunners {
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
+        ...routing,
         agent: handle,
         config: start.config,
         revisions: start.revisions,

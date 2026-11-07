@@ -66,6 +66,11 @@ const noSubscribe = () => () => {};
 export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 const noWork: RequestWork[] = [];
+/** A noted request's outcome, then how its turn ran, each kept. */
+const noteText = ({ state, notice }: RequestWork) =>
+  [state === "stopped" ? "Stopped" : undefined, notice]
+    .filter(Boolean)
+    .join(" · ");
 /** Activity belongs to the exact triggering message, not the composer. Once an
  * agent has publicly replied, its outcome follows that reply instead. */
 export function ActivityAccessory(props: ActivityProps) {
@@ -179,7 +184,8 @@ function MessageActivity(
       recorded.has(entry.agent) &&
       entry.state !== "error" &&
       entry.state !== "unknown" &&
-      entry.state !== "stopped"
+      entry.state !== "stopped" &&
+      !entry.notice
     )
       return false;
     const threadScoped =
@@ -242,6 +248,7 @@ function MessageActivity(
         ...(entry.step ? { step: entry.step } : {}),
         ...(entry.stoppable ? { stoppable: true } : {}),
         ...(entry.retryable ? { retryable: true } : {}),
+        ...(entry.notice ? { notice: entry.notice } : {}),
         lifecycle: entry.lifecycle,
         records: entry.selected.records,
         turns: entry.turns,
@@ -299,7 +306,8 @@ function MessageActivity(
       entry.state === "error" ||
       entry.state === "unknown",
   );
-  // Once its own live bubble has left, a stopped request stays noted here. It sits
+  // Once its own live bubble has left, a stopped request, or a finished one
+  // with a notice about how it ran, stays noted here. It sits
   // in the incoming message frame without a gutter, so it starts at the reply
   // avatars' edge.
   const noted = stopped.filter(
@@ -329,9 +337,16 @@ function MessageActivity(
           />
         )}
         <span>
-          {!stoppedAgent &&
-            `${noted.map(({ agent }) => named(agent)).join(", ")} · `}
-          Stopped
+          {[...new Set(noted.map(noteText))]
+            .map((text) =>
+              stoppedAgent
+                ? text
+                : `${noted
+                    .filter((entry) => noteText(entry) === text)
+                    .map(({ agent }) => named(agent))
+                    .join(", ")} · ${text}`,
+            )
+            .join(" · ")}
         </span>
       </div>
     </div>
@@ -447,6 +462,7 @@ type Entry = {
   step?: WorkStep;
   stoppable?: boolean;
   retryable?: boolean;
+  notice?: string;
   lifecycle: boolean;
   records: ReturnType<typeof activityRecords>;
   turns: readonly ActivityTurn[];
@@ -573,6 +589,7 @@ function ActivityBubble({
                 : entry.state,
           ...(entry.reason ? { error: entry.reason } : {}),
           ...(entry.step ? { step: entry.step } : {}),
+          ...(entry.notice ? { notice: entry.notice } : {}),
         })
       : entry.state === "error"
         ? "failed"

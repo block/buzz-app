@@ -17,12 +17,16 @@ export function messageActivity(...args: Parameters<typeof requestWork>) {
   return messageWork(...args).live;
 }
 
-/** Live work, and the local requests the owner stopped: those stay noted under
- * their message until it is handled again. */
+/** Live work, and the settled local requests that stay noted under their
+ * message until it is handled again: those the owner stopped, and finished
+ * ones with a notice about how they ran. */
 export function messageWork(...args: Parameters<typeof requestWork>) {
   const work = requestWork(...args);
   return {
     live: work.filter(live),
-    stopped: work.filter(({ state }) => state === "stopped"),
+    stopped: work.filter(
+      ({ state, notice }) =>
+        state === "stopped" || (state === "done" && !!notice),
+    ),
   };
 }

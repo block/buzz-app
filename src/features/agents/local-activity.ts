@@ -45,6 +45,8 @@ export type LocalWork = Readonly<{
   stoppable?: true;
   /** It can be asked again once it fails. */
   retryable?: true;
+  /** Host-owned note about how this turn ran, kept after it settles. */
+  notice?: string;
 }>;
 const settled = (state: LocalWorkState) =>
   state === "done" ||
@@ -151,6 +153,7 @@ export function createLocalAgentActivity() {
         | "dismissed"
         | "stoppable"
         | "retryable"
+        | "notice"
       >,
       retry?: () => void,
     ) {
@@ -380,6 +383,14 @@ export function createLocalAgentActivity() {
               ? undefined
               : result.error || "Could not finish this request",
           ),
+        /** Notes how this turn ran, such as without its gateway. */
+        notice: (text: string) => {
+          const current = entries.get(id);
+          const notice = text.trim().slice(0, 500);
+          if (!current || !notice || current.notice === notice) return;
+          entries.set(id, Object.freeze({ ...current, notice }));
+          publish();
+        },
         /** The harness's way to stop this request's turn, offered as Stop. */
         interruptible: (stop: () => Promise<void>) => {
           const current = entries.get(id);
@@ -451,7 +462,7 @@ export function localActivity(
   return agents;
 }
 export function localWorkLabel(
-  row: Pick<LocalWork, "state" | "error" | "step">,
+  row: Pick<LocalWork, "state" | "error" | "step" | "notice">,
 ) {
   if (row.state === "superseded") return "Continued on a later message";
   if (row.state === "stopped") return "Stopped";
@@ -462,7 +473,10 @@ export function localWorkLabel(
         ? stepText(row.step)
         : "Starting"
       : row.state === "error"
-        ? row.error || "Could not finish this request"
+        ? // A failure keeps how its turn ran, such as without its gateway.
+          [row.error || "Could not finish this request", row.notice]
+            .filter(Boolean)
+            .join(" · ")
         : "Finished";
 }
 

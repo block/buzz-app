@@ -413,3 +413,43 @@ it("retires plugin chat menu contributions when their plugin is disabled", async
     expect(h.service.chatMenus.snapshot()).toHaveLength(0),
   );
 });
+
+it("owns selection previews through disable and re-enable, and rejects invalid orders", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      for (const order of [NaN, Infinity]) {
+        expect(() =>
+          ctx.conversation.registerSelectionPreview({
+            id: "bad",
+            title: "Bad",
+            order,
+            matches: () => true,
+            component: Component,
+          }),
+        ).toThrow("finite order");
+      }
+      ctx.conversation.registerSelectionPreview({
+        id: "id",
+        title: "Example ID",
+        matches: ({ text }) => text === "EX-42",
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.selections.snapshot()).toHaveLength(1),
+  );
+  const first = h.service.selections.snapshot()[0];
+  expect(first?.pluginId).toBe(h.plugin.manifest.id);
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.selections.snapshot()).toHaveLength(0),
+  );
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.selections.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.selections.snapshot()[0]).not.toBe(first);
+});

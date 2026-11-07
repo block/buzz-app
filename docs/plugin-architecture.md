@@ -2844,3 +2844,40 @@ change to the plugin-facing matching rules and is deliberately not part of the
 Settings page.
 
 Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).
+
+## Previews for selected message text
+
+`conversation.registerSelectionPreview({ id, title, order?, matches, component })`
+contributes to a host-owned popup after the viewer finishes selecting text within
+one message body. It applies in channel timelines, Solo chats and thread views.
+No matching contribution means no popup. One match opens its preview directly;
+several matches open a chooser. Lower `order` sorts first (default zero), with
+contribution keys breaking ties. Ordering never hides another matching preview.
+The compact chooser shows each title; plugin IDs distinguish duplicate titles
+and remain available as hints. A selected preview can return to the chooser
+through **Other previews**.
+
+`matches({ text, message })` must be synchronous and local. It receives visible
+selected text, bounded to 4096 UTF-16 units, and its message. A throwing matcher is
+skipped. The host excludes editors, unavailable content, selections across messages
+and selections outside a message body. The plugin receives no DOM nodes or live
+browser selection objects.
+
+The component receives `{ text, message, session, close, canOpen, open }`. Supply
+only the preview body: the host provides the popup frame, title, dismissal and
+viewport placement. Use the existing opener for targets. Fetching live details
+belongs in the preview, with the plugin's own declared access and cleanup. Matchers
+must not make requests. The example in `examples/plugins/selection-preview` needs
+no native capabilities.
+
+Automatic opening preserves focus and the browser selection so copying continues
+to work. Keyboard selection also opens matching previews; Tab reaches their
+controls and Escape dismisses. The popup closes on an outside press, history
+scroll, window resize, conversation change, hidden presentation or invalidated
+message. Disabling or replacing a contribution revokes its preview and callbacks.
+A failed component leaves a dismissible **Preview unavailable** state.
+
+This contract is additive and requires a host that implements it; the example
+cannot run on older hosts. It does not implement quoting or change the separate
+selected-text Quote proposal. Any integration with that proposal needs to share
+selection presentation rather than mount competing popups.

@@ -238,6 +238,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   creates the direct message for you. The link previews the original message;
   the recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
+- Enabled plugins can recognize text you select within a message and show a
+  preview beside it. Ordinary text with no match shows nothing. If several
+  previews match, choose one. Copy works while the preview is open. Escape or
+  the close button closes it; the back arrow returns to the chooser.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

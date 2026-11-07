@@ -29,6 +29,7 @@ import type {
   LinkRenderer,
   MessageRenderer,
   MessageAction,
+  SelectionPreview,
   ContributionReader,
   PageTabsProps,
 } from "./contracts";
@@ -74,6 +75,8 @@ export type Conversation = {
   registerLink(renderer: LinkRenderer): void;
   codeBlocks: ContributionReader<CodeBlockRenderer>;
   registerCodeBlock(renderer: CodeBlockRenderer): void;
+  selections: ContributionReader<SelectionPreview>;
+  registerSelectionPreview(preview: SelectionPreview): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
   ui: {
@@ -123,7 +126,8 @@ function validate(
     | LinkRenderer
     | CodeBlockRenderer
     | MessageRenderer
-    | MessageAction,
+    | MessageAction
+    | SelectionPreview,
 ) {
   if (
     !value ||
@@ -153,6 +157,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly linkEntries;
   readonly codeBlocks;
   private readonly codeBlockEntries;
+  readonly selections;
+  private readonly selectionEntries;
   readonly actions;
   private readonly actionEntries;
   private readonly tabEntries;
@@ -201,6 +207,12 @@ export class ConversationService extends Service implements Conversation {
     this.codeBlocks = {
       snapshot: codeBlocks.snapshot,
       subscribe: codeBlocks.subscribe,
+    };
+    const selections = createContributions<SelectionPreview>(ctx);
+    this.selectionEntries = selections;
+    this.selections = {
+      snapshot: selections.snapshot,
+      subscribe: selections.subscribe,
     };
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
@@ -258,6 +270,15 @@ export class ConversationService extends Service implements Conversation {
     if (typeof component !== "function")
       throw new Error("A chat icon needs a component");
     this.chatIconEntries.register(this.ctx, { id: "chat-icon", component });
+  }
+  registerSelectionPreview(value: SelectionPreview) {
+    validate(value);
+    if (
+      typeof value.matches !== "function" ||
+      (value.order !== undefined && !Number.isFinite(value.order))
+    )
+      throw new Error("A selection preview needs a matcher and a finite order");
+    this.selectionEntries.register(this.ctx, value);
   }
   registerMessageAction(value: MessageAction) {
     validate(value);

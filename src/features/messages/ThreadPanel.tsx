@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { SelectionPreviews } from "./SelectionPreviews";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -2003,6 +2004,16 @@ function ThreadMessages({
       </section>
       {/* After the scroller, so its ref is attached when this registers. */}
       <MessageSelection list={scroller} rows={rows} session={session} />
+      <SelectionPreviews
+        active={active}
+        list={scroller}
+        rows={rows}
+        session={session}
+        scope={scope}
+        channelId={channelId}
+        threadRootId={snapshot.root?.id ?? messageId}
+        registry={extensions?.selections}
+      />
       {preview && (
         <ChannelJoinNotice
           ready={

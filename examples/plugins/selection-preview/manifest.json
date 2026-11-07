@@ -1,0 +1,6 @@
+{
+  "id": "example.selection-preview",
+  "name": "Example ID preview",
+  "apiVersion": 1,
+  "description": "Preview EX-123 identifiers when selected in message text."
+}

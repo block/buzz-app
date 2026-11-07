@@ -76,3 +76,5 @@ Explore a plugin page with a simple click counter.
 See [plugin README guidance](../../docs/plugin-architecture.md#writing-the-plugin-readme)
 and [packaging limits](../../docs/plugin-architecture.md#loading-from-folders-and-repositories)
 before adding README or branding files to a build.
+
+- [Selection preview](selection-preview/): a local matcher and preview for selected `EX-123` identifiers. Requires the selection-preview host contract.

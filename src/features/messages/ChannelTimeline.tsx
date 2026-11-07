@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { SelectionPreviews } from "./SelectionPreviews";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
@@ -2035,6 +2036,14 @@ function Timeline({
             />
           </div>
         )}
+      <SelectionPreviews
+        list={scroller}
+        rows={rows}
+        session={queries}
+        scope={scope}
+        channelId={channelId}
+        registry={extensions?.selections}
+      />
     </section>
   );
 }

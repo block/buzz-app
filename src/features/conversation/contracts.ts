@@ -244,10 +244,31 @@ export type MessageAction = Readonly<{
    */
   marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
 }>;
+/** A snapshot of visible text selected within one message body (at most 4096 UTF-16 units). */
+export type MessageTextSelection = Readonly<{
+  text: string;
+  message: ChannelMessage;
+}>;
+export type SelectionPreviewProps = MessageTextSelection &
+  TargetOpener &
+  Readonly<{
+    session: RelaySession;
+    close(): void;
+  }>;
+/** The host owns one selection popup. Matching is synchronous and must stay local. */
+export type SelectionPreview = Readonly<{
+  id: string;
+  title: string;
+  /** Lower values appear first; ties use the contribution key. Never hides other matches. */
+  order?: number;
+  matches(selection: MessageTextSelection): boolean;
+  component: ComponentType<SelectionPreviewProps>;
+}>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;
+  selections?: ContributionReader<SelectionPreview>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

@@ -1,3 +1,5 @@
+import * as selectionPreview from "../../examples/plugins/selection-preview/plugin.js";
+import selectionManifest from "../../examples/plugins/selection-preview/manifest.json";
 // Installed fixture code only; app composition, manager, contributions and UI remain production.
 import { soloRegionFixture } from "./solo-region-fixture";
 import { companionPlugins } from "./companion-fixture";
@@ -137,6 +139,31 @@ const fill = (background: string, zIndex?: number) => () => (
 );
 
 export const fixturePlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...selectionManifest, apiVersion: 1 },
+    enabledByDefault: false,
+    module: selectionPreview,
+  },
+  {
+    manifest: {
+      id: "fixture.selection-alternate",
+      name: "Alternate selection preview",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["conversation"],
+      apply(ctx) {
+        ctx.conversation.registerSelectionPreview({
+          id: "alternate",
+          title: "Alternate ID",
+          order: -10,
+          matches: ({ text }) => text === "EX-42",
+          component: ({ text }) => <p>Alternate identifier: {text}</p>,
+        });
+      },
+    },
+  },
   soloRegionFixture,
   {
     manifest: {

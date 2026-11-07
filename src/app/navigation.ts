@@ -501,6 +501,7 @@ export function useAppNavigation(
         section: _section,
         provider: _provider,
         pluginId: _pluginId,
+        pluginImport: _pluginImport,
         ...dialog
       } = current;
       const dialogKey = targetKey(dialog);
@@ -511,6 +512,7 @@ export function useAppNavigation(
             section: _section,
             provider: _provider,
             pluginId: _pluginId,
+            pluginImport: _pluginImport,
             ...dialog
           } = target;
           return targetKey(dialog) === dialogKey;

@@ -36,8 +36,9 @@ and reported as migration errors.
 
 The shared tools offer `agent_types` to list installed local runtimes and
 `agent_create` to submit an unsaved creation draft using a listed type key and a display name,
-optionally with a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
-the usual Create agent form, may edit the name, runtime and settings, and creates
+optionally with instructions for types that take them and a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+the usual Create agent form, filled in with any requested instructions and picture, may edit
+the name, runtime and settings, and creates
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
 Approval binds the identity to the requesting agent's owner and community, even

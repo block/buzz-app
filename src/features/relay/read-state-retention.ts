@@ -131,6 +131,7 @@ export function retainRead(
   }
   const nextRecent: Record<string, number> = { ...recent };
   const byUse = ([a, av]: [string, number], [b, bv]: [string, number]) =>
+    Number(a.startsWith("seen:")) - Number(b.startsWith("seen:")) ||
     (nextRecent[b] ?? 0) - (nextRecent[a] ?? 0) ||
     bv - av ||
     a.localeCompare(b);
@@ -250,24 +251,43 @@ export function retainReadState(
 /** Local-only receipts evicted from the sync journal. Never passed to publication. */
 export const READ_RESERVE_KEYS = 5000;
 export const READ_RESERVE_BYTES = 512 * 1024;
+/**
+ * The local read set: the journal (`retainRead`) plus the reserve, with a
+ * read-through `floor`. Every message at or before the floor counts as read
+ * on this installation, so a mark that capacity drops raises the floor to its
+ * own time rather than making what it read unread again. The reserve keeps
+ * the newest marks, so the floor rises as little as it can. A mark at or
+ * below the floor reads nothing more and is dropped, unless overrides make
+ * inherited marks load-bearing.
+ */
 export function retainLocalRead(
   states: readonly ReadState[],
   recent: Readonly<Record<string, number>>,
   clientId: string,
   reserve: Readonly<Record<string, number>> = {},
   covered?: CoveredFrontier,
+  floor = 0,
 ) {
-  const frontiers = new Map(Object.entries(reserve));
   const overrides = new Set(
     states.flatMap((state) => Object.keys(state.overrides)),
   );
+  const below = (value: number) => !overrides.size && value <= floor;
+  const frontiers = new Map(
+    Object.entries(reserve).filter(([, value]) => !below(value)),
+  );
   const returning: Record<string, number> = {};
-  for (const state of states)
+  const current: ReadState[] = [];
+  for (const state of states) {
+    const kept: Record<string, number> = {};
     for (const [key, value] of Object.entries(state.frontiers)) {
+      if (below(value)) continue;
+      kept[key] = value;
       const previous = frontiers.get(key);
       if (previous !== undefined) returning[key] = previous;
       frontiers.set(key, Math.max(previous ?? 0, value));
     }
+    current.push({ frontiers: kept, overrides: state.overrides });
+  }
   // Direct override floors belong in the journal. Possible inherited floors
   // stay protected in the reserve instead of overflowing the smaller journal.
   for (const key of overrides) {
@@ -275,7 +295,7 @@ export function retainLocalRead(
     if (value !== undefined) returning[key] = value;
   }
   const kept = retainRead(
-    [...states, { frontiers: returning, overrides: {} }],
+    [...current, { frontiers: returning, overrides: {} }],
     recent,
     clientId,
     undefined,
@@ -287,8 +307,9 @@ export function retainLocalRead(
   const entries: [string, number][] = [];
   const accepted = new Map<string, number>();
   // A mark that a kept broader mark already reads is redundant here too, as
-  // in the journal: keep it and it only takes room from real reads. Covers
-  // always have a broader scope, so they are accepted before what they cover.
+  // in the journal: keep it and it only takes room from real reads. A cover
+  // reads through at least the time of what it covers, so newest first,
+  // then broader scope at equal times, accepts it before what it covers.
   // Overrides make inherited ancestry load-bearing; keep everything then.
   const coveredBy = overrides.size ? undefined : covered;
   const redundant = (key: string, value: number) => {
@@ -306,15 +327,24 @@ export function retainLocalRead(
   const protectedKey = (key: string) =>
     overrides.size > 0 && !key.startsWith("msg:") && !key.startsWith("seen:");
   // Keep inherited floors first (a subset of the already bounded reserve), then
-  // broad receipts before messages. Event age breaks ties within each scope.
-  // Journal recency still controls newly read old history and sync.
+  // the newest read marks, so a drop raises the floor as little as it can.
+  // Row hints read nothing: keep them last and never raise the floor for them.
+  // Journal recency still controls newly read old history.
+  let raised = floor;
+  let full = false;
   for (const [key, value] of [...frontiers].sort(
     ([a, av], [b, bv]) =>
       Number(protectedKey(b)) - Number(protectedKey(a)) ||
-      scope(a) - scope(b) ||
+      Number(a.startsWith("seen:")) - Number(b.startsWith("seen:")) ||
       bv - av ||
+      scope(a) - scope(b) ||
       a.localeCompare(b),
   )) {
+    // Once one mark does not fit, every later one is dropped too.
+    if (full) {
+      if (!key.startsWith("seen:")) raised = Math.max(raised, value);
+      continue;
+    }
     if (redundant(key, value)) continue;
     const cost =
       encoder.encode(JSON.stringify(key)).byteLength +
@@ -324,11 +354,27 @@ export function retainLocalRead(
     if (
       entries.length >= READ_RESERVE_KEYS ||
       bytes + cost > READ_RESERVE_BYTES
-    )
-      break;
+    ) {
+      // Protected-first ordering is not newest-first: a dropped message can
+      // be newer than every retained ancestor. Never raise the floor then.
+      if (overrides.size) {
+        if (protectedKey(key))
+          throw new Error(
+            "Read override ancestry capacity reached; saved floors retained",
+          );
+        break;
+      }
+      full = true;
+      if (!key.startsWith("seen:")) raised = Math.max(raised, value);
+      continue;
+    }
     entries.push([key, value]);
     accepted.set(key, value);
     bytes += cost;
   }
-  return { ...kept, reserve: Object.freeze(Object.fromEntries(entries)) };
+  return {
+    ...kept,
+    reserve: Object.freeze(Object.fromEntries(entries)),
+    floor: raised,
+  };
 }

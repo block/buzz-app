@@ -474,13 +474,13 @@ async fn cancel_releases_the_native_callback_before_a_replacement_login() {
     let callbacks = crate::oauth_callback::OAuthCallbackHost::default();
     let url = "https://identity.example/v1/login/start";
     let attempt = callbacks
-        .begin_federated(server, url.into(), |_| Ok(()))
+        .begin_federated(server, url.into(), |_| Ok(()), None)
         .unwrap();
     // A peer server's sign-in has its own slot and survives this server's cleanup.
     let peer = callbacks
-        .begin_federated("peer", url.into(), |_| Ok(()))
+        .begin_federated("peer", url.into(), |_| Ok(()), None)
         .unwrap();
-    let guard = CallbackGuard(callbacks.clone(), attempt.id);
+    let guard = CallbackGuard(callbacks.clone(), attempt.id.clone());
     {
         let mut state = owner.state();
         state.restored = true;
@@ -489,11 +489,14 @@ async fn cancel_releases_the_native_callback_before_a_replacement_login() {
     }
     owner.cancel_sign_in();
     let replacement = callbacks
-        .begin_federated(server, url.into(), |_| Ok(()))
+        .begin_federated(server, url.into(), |_| Ok(()), None)
         .unwrap();
+    owner.state().callback = Some(CallbackGuard(callbacks.clone(), replacement.id.clone()));
+    owner.clear_callback(&attempt.id);
+    assert_eq!(owner.state().callback.as_ref().unwrap().1, replacement.id);
     drop(guard); // The old future's cleanup cannot cancel the replacement.
     assert!(callbacks
-        .begin_federated(server, url.into(), |_| Ok(()))
+        .begin_federated(server, url.into(), |_| Ok(()), None)
         .is_err());
     callbacks.cancel(&replacement.id).unwrap();
     let peer_url = url::Url::parse(&peer.callback_url).unwrap();
@@ -898,6 +901,45 @@ pub(super) fn at_adapter(store: Arc<Memory>, base: String) -> FederatedIdentity 
         .adapter_base = base;
     owner
 }
+// Accept a real loopback handoff without launching a browser; retain the FI guard.
+async fn received_callback(owner: &FederatedIdentity) -> CallbackGuard {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let callbacks = crate::oauth_callback::OAuthCallbackHost::default();
+    let attempt = callbacks
+        .begin_federated(
+            &owner.0.fingerprint,
+            "https://identity.example/v1/login/start".into(),
+            |_| Ok(()),
+            Some("synthetic-browser".into()),
+        )
+        .unwrap();
+    let guard = CallbackGuard(callbacks.clone(), attempt.id.clone());
+    owner.state().callback = Some(guard.clone());
+    let url = url::Url::parse(&attempt.callback_url).unwrap();
+    let browser = async {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", url.port().unwrap()))
+            .await
+            .unwrap();
+        stream
+            .write_all(
+                format!(
+                    "GET {}?code=fixture HTTP/1.1\r\nHost: {}\r\n\r\n",
+                    url.path(),
+                    url.authority()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut html = String::new();
+        stream.read_to_string(&mut html).await.unwrap();
+        assert!(html.starts_with("HTTP/1.1 200"));
+    };
+    let (result, _) = tokio::join!(callbacks.wait(&attempt.id), browser);
+    assert!(result.is_ok());
+    guard
+}
+
 #[tokio::test]
 async fn native_exchange_verification_persistence_and_restart_use_the_standard_contract() {
     let store = Arc::new(Memory::default());
@@ -908,6 +950,7 @@ async fn native_exchange_verification_persistence_and_restart_use_the_standard_c
     ]).await;
     let owner = at_adapter(store.clone(), base.clone());
     let revision = owner.snapshot().revision;
+    let guard = received_callback(&owner).await;
     owner
         .finish_login(
             "single-use-code",
@@ -917,6 +960,9 @@ async fn native_exchange_verification_persistence_and_restart_use_the_standard_c
         )
         .await
         .unwrap();
+    assert_eq!(owner.state().callback.as_ref().unwrap().1, guard.1);
+    owner.clear_callback(&guard.1);
+    assert!(owner.state().callback.is_none());
     let signed_in = owner.snapshot();
     assert!(signed_in.status == Status::SignedIn);
     assert!(signed_in.email.is_none());
@@ -1420,6 +1466,7 @@ async fn signing_in_again_keeps_the_session_until_the_new_one_is_installed() {
     .await;
     let store = Arc::new(Memory::default());
     let (host, old) = signed_in_at(store.clone(), base, "a@example.com");
+    let guard = received_callback(&host).await;
     let changes = host.account_changes();
     let retirements = host.retirements();
     let revision = host.snapshot().revision;
@@ -1444,6 +1491,7 @@ async fn signing_in_again_keeps_the_session_until_the_new_one_is_installed() {
     assert_ne!(snapshot.revision, revision);
     assert_eq!(snapshot.expires_at.as_deref(), Some("2099-02-01T00:00:00Z"));
     assert!(host.state().renewal.is_none());
+    assert_eq!(host.state().callback.as_ref().unwrap().1, guard.1);
     assert_eq!(
         host.with_session(|token, _, _| token.to_string())
             .as_deref(),
@@ -1452,6 +1500,8 @@ async fn signing_in_again_keeps_the_session_until_the_new_one_is_installed() {
     assert_ne!(store.raw.lock().unwrap().as_deref(), Some(&*old.raw));
     assert_eq!(*changes.borrow(), Some(SessionChange::Refreshed));
     assert_eq!(host.retirements(), retirements);
+    host.retire(Status::SignedOut, None);
+    assert!(host.state().callback.is_none());
     server.await.unwrap();
 }
 

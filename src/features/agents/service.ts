@@ -793,6 +793,8 @@ export type AgentVoiceSeat<Config = unknown> = Readonly<
     output(samples: number[]): Promise<void>;
     /** Idempotent disconnect notification, ignored after signal aborts. */
     ended(error?: Error): void;
+    /** Presentation only; never authorizes work. */
+    thinking?(active: boolean): void;
   } & Pick<Delivery<Config>, "config" | "revisions" | "synced" | "team">
 >;
 
@@ -868,15 +870,13 @@ export type AgentType<Config = unknown> = {
     AgentCreateProps<Config> & {
       harnessControl: ReactNode;
       onReadyChange?: (ready: boolean) => void;
-      /** Present while the person has just switched to this harness from
-       * another: returns them to it, as they had it, such as when they turn
-       * down setup this harness asks for on arrival. */
-      onDecline?: () => void;
     }
   >;
   /** Compact provider-owned action beside Harness. Readiness belongs to
    * CreateConfiguration; this slot only presents the provider's action. */
   CreateAction?: ComponentType<{
+    /** The agent being edited, as CreateConfiguration has it. */
+    agent?: AgentCreateProps<Config>["agent"];
     disabled: boolean;
   }>;
   /** Provider-owned account notice, pinned outside the agent's tab content.
@@ -1082,7 +1082,11 @@ export type RetypePreview = Readonly<{
 /** A proposal's picture: uploads it once the proposal is valid, giving its
  * HTTPS image URL. */
 export type ProposedPicture = () => Promise<string>;
-type AgentCreation = Readonly<{ type: string; name: string }>;
+type AgentCreation = Readonly<{
+  type: string;
+  name: string;
+  instructions?: string;
+}>;
 /** A requested agent. */
 export type AgentCreationInput = AgentCreation &
   Readonly<{ picture?: ProposedPicture }>;
@@ -2235,6 +2239,8 @@ export class AgentsService extends Service implements Agents {
           if (!kind) throw new Error("That agent type is not available");
           if (kind.remote)
             throw new Error("A hosted agent's key stays with its provider");
+          if (input.instructions && !kind.adopt)
+            throw new Error(`${kind.title} agents have no instructions to set`);
           if (this.pendingRequests() >= 16)
             throw new Error("Review the pending agent requests first");
           return {
@@ -2245,6 +2251,7 @@ export class AgentsService extends Service implements Agents {
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
+            ...(input.instructions && { instructions: input.instructions }),
             ...(picture && { picture }),
           };
         };

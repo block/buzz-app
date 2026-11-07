@@ -6,6 +6,7 @@ struct Memory {
     write_denied: Mutex<bool>,
     reads: Mutex<usize>,
     legacy: Mutex<Option<String>>,
+    legacy_busy: Mutex<bool>,
     legacy_reads: Mutex<usize>,
     previous: Mutex<Option<Vec<u8>>>,
     deletes: Mutex<Vec<&'static str>>,
@@ -37,14 +38,23 @@ impl Store for Arc<Memory> {
         *saved = Some(value.to_vec());
         Ok(())
     }
-    fn legacy(&self) -> Result<Zeroizing<String>> {
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
         *self.legacy_reads.lock().unwrap() += 1;
+        if *self.legacy_busy.lock().unwrap() {
+            return Err(LegacyHumanError {
+                message: "busy".into(),
+                transient: true,
+            });
+        }
         self.legacy
             .lock()
             .unwrap()
             .clone()
             .map(Zeroizing::new)
-            .ok_or_else(|| "No identity from the earlier Buzz app was found".into())
+            .ok_or_else(|| LegacyHumanError {
+                message: "No identity from the earlier Buzz app was found".into(),
+                transient: false,
+            })
     }
     fn delete(&self) -> Result<()> {
         if *self.write_denied.lock().unwrap() {
@@ -73,6 +83,7 @@ fn identity(store: &Arc<Memory>) -> Identity {
     Identity {
         state: State::Unread,
         store: Box::new(store.clone()),
+        legacy: None,
     }
 }
 fn fixture() -> Key {
@@ -110,7 +121,7 @@ fn legacy_import_adopts_only_a_valid_old_key_and_never_replaces_one() {
         *store.saved.lock().unwrap() = saved.clone().map(String::into_bytes);
         *store.denied.lock().unwrap() = denied;
         *store.legacy.lock().unwrap() = legacy;
-        let result = identity(&store).import_legacy();
+        let result = identity(&store).import_legacy(None);
         assert_eq!(result.is_ok(), imports, "{result:?}");
         assert_eq!(
             *store.legacy_reads.lock().unwrap(),
@@ -128,6 +139,99 @@ fn legacy_import_adopts_only_a_valid_old_key_and_never_replaces_one() {
             );
         }
     }
+}
+#[test]
+fn legacy_binding_signs_with_the_old_key_but_never_saves_it() {
+    let nsec = fixture().nsec().unwrap();
+    let other = Key::new(Zeroizing::new([2; 32])).nsec().unwrap();
+    let template = || {
+        parse_challenge(builderlab_challenge())
+            .template(1_700_000_000, "")
+            .unwrap()
+    };
+    // An unreadable old key is Ok(None), so first run makes a new key; a
+    // saved key is an error, so nothing falls back.
+    // (saved, legacy entry, signs, unreadable, reads legacy)
+    for (saved, legacy, signs, unreadable, reads_legacy) in [
+        (None, Some(format!(" {nsec}\n")), true, false, true),
+        (None, None, false, true, true),
+        (None, Some("not-a-key".into()), false, true, true),
+        (Some(other.clone()), Some(nsec.clone()), false, false, false),
+    ] {
+        let store = Arc::new(Memory::default());
+        *store.saved.lock().unwrap() = saved.clone().map(String::into_bytes);
+        *store.legacy.lock().unwrap() = legacy;
+        let result = identity(&store).sign_legacy(template());
+        assert_eq!(matches!(result, Ok(Some(_))), signs, "{result:?}");
+        assert_eq!(matches!(result, Ok(None)), unreadable, "{result:?}");
+        if let Ok(Some(value)) = result {
+            let event: Event = serde_json::from_value(value).unwrap();
+            event.verify().unwrap();
+            assert_eq!(event.kind.as_u16(), 24243);
+            assert_eq!(event.pubkey.to_hex(), fixture().viewer().unwrap());
+        }
+        assert_eq!(
+            *store.legacy_reads.lock().unwrap(),
+            usize::from(reads_legacy)
+        );
+        // Signing never saves: the store holds exactly what it held before.
+        assert_eq!(*store.saved.lock().unwrap(), saved.map(String::into_bytes));
+    }
+}
+#[test]
+fn a_busy_legacy_store_is_an_error_so_a_retry_signs_with_the_old_key() {
+    let store = Arc::new(Memory::default());
+    *store.legacy.lock().unwrap() = Some(fixture().nsec().unwrap());
+    *store.legacy_busy.lock().unwrap() = true;
+    let mut owner = identity(&store);
+    let template = || {
+        parse_challenge(builderlab_challenge())
+            .template(1_700_000_000, "")
+            .unwrap()
+    };
+    assert_eq!(owner.sign_legacy(template()).unwrap_err(), "busy");
+    assert!(owner.legacy.is_none());
+    *store.legacy_busy.lock().unwrap() = false;
+    assert!(owner.sign_legacy(template()).unwrap().is_some());
+    assert_eq!(*store.legacy_reads.lock().unwrap(), 2);
+    assert_eq!(*store.saved.lock().unwrap(), None);
+}
+#[test]
+fn a_linked_legacy_key_is_saved_from_the_one_read_that_signed() {
+    let nsec = fixture().nsec().unwrap();
+    let store = Arc::new(Memory::default());
+    *store.legacy.lock().unwrap() = Some(nsec.clone());
+    let mut owner = identity(&store);
+    let template = parse_challenge(builderlab_challenge())
+        .template(1_700_000_000, "")
+        .unwrap();
+    owner.sign_legacy(template).unwrap();
+    // Old Buzz's storage changing after the link can't change what is saved.
+    *store.legacy.lock().unwrap() = Some(Key::new(Zeroizing::new([2; 32])).nsec().unwrap());
+    assert_eq!(
+        owner.import_legacy(None).unwrap(),
+        Some(fixture().viewer().unwrap())
+    );
+    assert_eq!(*store.legacy_reads.lock().unwrap(), 1);
+    assert_eq!(*store.saved.lock().unwrap(), Some(nsec.into_bytes()));
+    assert!(owner.legacy.is_none());
+}
+#[test]
+fn an_expected_legacy_import_saves_only_that_key() {
+    let nsec = fixture().nsec().unwrap();
+    let store = Arc::new(Memory::default());
+    *store.legacy.lock().unwrap() = Some(nsec.clone());
+    let mut owner = identity(&store);
+    let other = Key::new(Zeroizing::new([2; 32])).viewer().unwrap();
+    // Another account's key: nothing is saved, and the one read is kept.
+    assert_eq!(owner.import_legacy(Some(&other)).unwrap(), None);
+    assert_eq!(*store.saved.lock().unwrap(), None);
+    assert!(owner.legacy.is_some());
+    let viewer = fixture().viewer().unwrap();
+    assert_eq!(owner.import_legacy(Some(&viewer)).unwrap(), Some(viewer));
+    assert_eq!(*store.legacy_reads.lock().unwrap(), 1);
+    assert_eq!(*store.saved.lock().unwrap(), Some(nsec.into_bytes()));
+    assert!(owner.legacy.is_none());
 }
 #[test]
 fn denied_and_corrupt_reads_cannot_create_or_overwrite() {
@@ -513,7 +617,7 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
     let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .unwrap();
-    let invoke = |challenge: serde_json::Value| {
+    let invoke_with = |body: serde_json::Value| {
         get_ipc_response(
             &view,
             tauri::webview::InvokeRequest {
@@ -521,12 +625,14 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
                 url: view.url().unwrap(),
-                body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "challenge": challenge })),
+                body: tauri::ipc::InvokeBody::Json(body),
                 headers: Default::default(),
                 invoke_key: INVOKE_KEY.into(),
             },
         )
     };
+    let invoke =
+        |challenge: serde_json::Value| invoke_with(serde_json::json!({ "challenge": challenge }));
     let event: Event = invoke(builderlab_challenge())
         .unwrap()
         .deserialize()
@@ -537,6 +643,11 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
     let mut foreign = builderlab_challenge();
     foreign["origin"] = "https://example.com".into();
     assert!(invoke(foreign).is_err());
+    // Old Buzz's key signs only while no key is saved here; this host has one.
+    assert!(invoke_with(
+        serde_json::json!({ "challenge": builderlab_challenge(), "legacy": true })
+    )
+    .is_err());
 }
 
 #[test]

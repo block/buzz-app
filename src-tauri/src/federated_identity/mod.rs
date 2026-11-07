@@ -1023,11 +1023,16 @@ impl FederatedIdentity {
         let login = login_start(config, &challenge, start);
         let callback = app.state::<crate::oauth_callback::OAuthCallbackHost>();
         let attempt = callback
-            .begin_federated(&self.0.fingerprint, login.to_string(), |url| {
-                app.opener()
-                    .open_url(url, None::<&str>)
-                    .map_err(|_| "browser-unavailable".into())
-            })
+            .begin_federated(
+                &self.0.fingerprint,
+                login.to_string(),
+                |url| {
+                    app.opener()
+                        .open_url(url, None::<&str>)
+                        .map_err(|_| "browser-unavailable".into())
+                },
+                crate::oauth_callback::capture_browser(app, login.as_str()),
+            )
             .map_err(|_| "browser-unavailable")?;
         // Drop guards cancel only this callback when the whole login future is canceled.
         let _guard = CallbackGuard(callback.inner().clone(), attempt.id.clone());
@@ -1044,30 +1049,42 @@ impl FederatedIdentity {
             _ = cancel.cancelled() => Err(Failure::from("sign-in-canceled")),
             result = callback.wait(&attempt.id) => result.map_err(|error| Failure::from(callback_failure(&error))),
         };
-        {
-            let mut state = self.state();
-            if state
-                .callback
-                .as_ref()
-                .is_some_and(|guard| guard.1 == attempt.id)
-            {
-                state.callback.take();
+        let result = async {
+            let response = response?;
+            if response.parameters.iter().any(|(name, _)| name == "error") {
+                return Err("login-refused".into());
             }
+            let mut codes = response
+                .parameters
+                .into_iter()
+                .filter(|(name, _)| name == "code");
+            let code = Zeroizing::new(codes.next().ok_or("callback-refused")?.1);
+            if codes.next().is_some() || code.is_empty() || code.len() > 4096 {
+                return Err("callback-refused".into());
+            }
+            self.finish_login(code.as_str(), secret.as_str(), revision, cancel)
+                .await
         }
-        let response = response?;
-        if response.parameters.iter().any(|(name, _)| name == "error") {
-            return Err("login-refused".into());
+        .await;
+        if result.is_ok() {
+            let (callback, app, owner) = (callback.inner().clone(), app.clone(), self.clone());
+            // Publish sign-in immediately; the existing return owner handles its reading delay.
+            tauri::async_runtime::spawn(async move {
+                callback.complete(app, attempt.id.clone()).await;
+                owner.clear_callback(&attempt.id);
+                drop(_guard);
+            });
+        } else {
+            self.clear_callback(&attempt.id);
         }
-        let mut codes = response
-            .parameters
-            .into_iter()
-            .filter(|(name, _)| name == "code");
-        let code = Zeroizing::new(codes.next().ok_or("callback-refused")?.1);
-        if codes.next().is_some() || code.is_empty() || code.len() > 4096 {
-            return Err("callback-refused".into());
+        result
+    }
+
+    fn clear_callback(&self, id: &str) {
+        let mut state = self.state();
+        if state.callback.as_ref().is_some_and(|guard| guard.1 == id) {
+            state.callback.take();
         }
-        self.finish_login(code.as_str(), secret.as_str(), revision, cancel)
-            .await
     }
 
     // Verified exchange and conditional installation form one native transaction.
@@ -1186,7 +1203,10 @@ impl FederatedIdentity {
             let mut state = self.state();
             if state.snapshot.revision == revision && !state.closed {
                 if state.session.is_some() {
+                    // A committed renewal keeps its return permission through the session reset.
+                    let callback = state.callback.take();
                     self.reset(&mut state);
+                    state.callback = callback;
                 }
                 self.install_session(&mut state, session.clone());
                 self.publish(&state);

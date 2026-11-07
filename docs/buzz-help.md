@@ -20,9 +20,13 @@ the interface unless an available tool actually supports that action.
 On supported desktop hosts, a running local agent with voice support joins your
 connected Huddle when it is also a member of that Huddle's room. Membership of
 the parent conversation alone is insufficient. Several agents can participate.
-Your own active agents show “listening to you” in the Huddle. Remote participants
-see no listening badge: the agent’s own client enforces who it hears, and other
-clients cannot verify that. Each filters for audio from your connected devices
+Starting a Huddle in a one-to-one DM with your running voice-capable agent
+adds it to the Huddle room; joining an existing Huddle does not. You can also
+add agents through the Huddle's member controls. On the hosting computer, a
+seated agent shows a smaller avatar, a rotating ring while it works (activity
+dots in the compact player), and its normal size while speaking. This state is
+not shared with remote participants. The agent’s own client enforces who it
+hears. Each filters for audio from your connected devices
 and speaks to everyone. The current audio protocol can briefly misattribute delayed
 audio when a connection slot is reused; this is not a strict privacy guarantee.
 Other people or speakers near your microphones can also be heard. Simultaneous
@@ -114,6 +118,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
+  The callback tab attempts to close after three seconds. On macOS, Buzz can
+  regain focus after verification while the sign-in browser is still foreground.
+  If the tab stays open, you can close it yourself.
   **Not now** opens Buzz anyway, but that organization's communities stay
   unavailable until you sign in. Sign-in, sign-out and when the current
   sign-in ends also live under
@@ -746,8 +753,17 @@ available rather than silently discarding it.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there (or when creating a Claude agent), once for every Claude agent. Buzz
-  keeps it in the system's secure credential store (Keychain on macOS) and
+  there, once for every Claude agent. When creating a Claude agent or editing
+  one that runs on this computer, click **Add key** beside **Harness** to open
+  **Set up Claude**. Builds with interactive authentication show **Sign in**
+  instead. Selecting Claude does not open setup automatically; closing setup
+  keeps Claude selected. An interactive sign-in continues if you navigate Back;
+  returning to creation restores its pending controls with **Cancel**, without
+  starting another sign-in. Explicitly closing setup cancels a pending sign-in.
+  **Model**, **Thinking**, and agent creation wait until credentials are saved.
+  Agents on execution targets use that target's credentials, not a key on this
+  computer. Buzz keeps the API key in the system's secure credential store
+  (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Commands a
   Claude agent runs inherit it, so they can read the key. Until a key is
   saved, Claude agents don't answer and Claude reviews fail closed.

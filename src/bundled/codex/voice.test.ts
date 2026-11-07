@@ -44,13 +44,17 @@ function fixture(resume = Promise.resolve()) {
     }),
     createMediaStreamSource: () => node(),
   };
+  const events = {
+    onmessage: null as null | ((event: { data: string }) => void),
+  };
+  const thinking = vi.fn();
   const peer = {
     connectionState: "new",
     onconnectionstatechange: () => {},
     ontrack: () => {},
     close: vi.fn(),
     addTrack: vi.fn(),
-    createDataChannel: vi.fn(),
+    createDataChannel: vi.fn(() => events),
     createOffer: async () => ({ type: "offer", sdp: "offer" }),
     setLocalDescription: vi.fn(async () => {}),
     localDescription: { sdp: "offer" },
@@ -113,9 +117,12 @@ function fixture(resume = Promise.resolve()) {
       send,
       ended,
       "instructions",
+      thinking,
     );
   return {
     open,
+    events,
+    thinking,
     abort,
     ended,
     output,
@@ -258,6 +265,7 @@ it("delivers every captured frame through the real seat during a slow bridge sen
       }),
       subscribe,
       voiceListening: vi.fn(),
+      voiceThinking: vi.fn(),
     },
     {
       snapshot: () => ({
@@ -325,4 +333,26 @@ it("delivers every captured frame through the real seat during a slow bridge sen
     gate.resolve();
     await dispose();
   }
+});
+
+it("projects realtime thinking until speech, completion or interruption, and ignores closed events", async () => {
+  const f = fixture();
+  const connection = await f.open();
+  for (const end of [
+    "output_audio_buffer.started",
+    "response.done",
+    "input_audio_buffer.speech_started",
+  ]) {
+    f.events.onmessage?.({
+      data: JSON.stringify({ type: "response.created" }),
+    });
+    expect(f.thinking).toHaveBeenLastCalledWith(true);
+    f.events.onmessage?.({ data: JSON.stringify({ type: end }) });
+    expect(f.thinking).toHaveBeenLastCalledWith(false);
+  }
+  f.events.onmessage?.({ data: "invalid" });
+  await connection.close();
+  f.thinking.mockClear();
+  f.events.onmessage?.({ data: JSON.stringify({ type: "response.created" }) });
+  expect(f.thinking).not.toHaveBeenCalled();
 });

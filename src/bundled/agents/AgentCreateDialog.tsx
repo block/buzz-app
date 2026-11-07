@@ -125,17 +125,22 @@ export function AgentCreateDialog({
   };
   /** The agent's settings in `item`, or a new agent's defaults, with the
    * requested instructions. */
-  const seed = (item: RegisteredAgentType | undefined) => {
-    const instructions = update
-      ? update.request.instructions
-      : (request?.instructions ?? draft?.instructions);
-    const config = !update
-      ? startingConfig(item)
-      : item?.key === update.agent.type
-        ? update.agent.config
+  const seed = (item: RegisteredAgentType | undefined, initial = true) => {
+    if (!update) {
+      const config = startingConfig(item);
+      const instructions =
+        (initial ? request?.instructions : undefined) ?? draft?.instructions;
+      return instructions && item?.adopt
+        ? item.adopt({ instructions }, config)
+        : config;
+    }
+    const { agent, request: proposed } = update;
+    const config =
+      item?.key === agent.type
+        ? agent.config
         : (migration(item)?.config ?? startingConfig(item));
-    return instructions !== undefined && item?.adopt
-      ? item.adopt({ instructions }, config)
+    return proposed.instructions !== undefined && item?.adopt
+      ? item.adopt({ instructions: proposed.instructions }, config)
       : config;
   };
   const [config, setConfig] = useState(() => seed(type));
@@ -196,12 +201,13 @@ export function AgentCreateDialog({
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
     if (!item || key === type?.key) return;
-    // A new agent's request or card seeds only the first harness; from then
-    // on its instructions are what the owner left, cleared ones included.
-    const next = update ? seed(item) : startingConfig(item);
+    // A creation request seeds only the first harness, not later choices.
+    const next = seed(item, false);
+    // Carry the owner's edits, including an explicit clear, across harnesses.
     const carried =
       update || !type?.carry ? undefined : type.carry(config).instructions;
-    const instructions = carried || (draft && type?.carry ? "" : undefined);
+    const instructions =
+      carried || ((draft || request) && type?.carry ? "" : undefined);
     restoreHarnessFocus.current = item.key;
     setConfigurationReady(false);
     chooseModel(

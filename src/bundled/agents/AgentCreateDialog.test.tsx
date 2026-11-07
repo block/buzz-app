@@ -1401,7 +1401,6 @@ it("keeps requested instructions the owner cleared when choosing a harness", asy
     ...notes,
     key,
     title,
-    defaults: () => ({ config: { notes: "start", instructions: "" } }),
     carry: (config) => {
       const { instructions } = config as Notes;
       return instructions.trim() ? { instructions } : {};

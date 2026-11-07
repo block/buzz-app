@@ -377,7 +377,7 @@ it("creates with a custom emoji on a chosen background", async () => {
     within(
       within(dialog).getByRole("group", { name: "Avatar background" }),
     ).getAllByRole("button"),
-  ).toHaveLength(20);
+  ).toHaveLength(21);
   await user.click(
     within(dialog).getByRole("button", { name: "Use #0090FF background" }),
   );

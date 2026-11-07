@@ -352,6 +352,17 @@
   width: 100%;
   height: 100%;
 }
+.avatarDock [data-color-swatch="transparent"] {
+  background:
+    repeating-conic-gradient(
+      var(--border-primary) 0 25%,
+      var(--surface-panel) 0 50%
+    )
+    50% / 0.75rem 0.75rem;
+}
+.avatarDock [data-color-swatch="transparent"] > [class~="buzz-button-label"] {
+  color: var(--text-primary);
+}
 /* Round focus ring, as IconButton's avatar variant; only the artwork is masked. */
 .emojiAvatarButton {
   border-radius: var(--radius-pill);

@@ -23,6 +23,9 @@ export function policyRelay({
   // deliver it to, so publish skips its delivery check for that community.
   let closedAcceptance;
   let presenceHeld = false;
+  // A NIP-FI front-door refusal: every signed request gets the relay's exact
+  // plain-text denial (buzz-auth `nip_fi/denial.rs`) until cleared.
+  let refusal;
   const presenceWaiters = [];
   report.presenceSnapshots = [];
   report.presencePublications = [];
@@ -189,6 +192,9 @@ export function policyRelay({
     quotaNextOlder(channel, seconds = 1) {
       quotas.set(`older:${channel}`, seconds);
     },
+    refuseSigned(status, body) {
+      refusal = status ? { status, body } : undefined;
+    },
     async fetch(url, init) {
       try {
         if (latencyMs)
@@ -199,6 +205,11 @@ export function policyRelay({
           expect(new URL(url).pathname).toBe("/");
           return Response.json(discovery?.(communityOf(url)) ?? {});
         }
+        if (refusal)
+          return new Response(refusal.body, {
+            status: refusal.status,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          });
         expect([
           "/query",
           "/profiles/search",

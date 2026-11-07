@@ -54,6 +54,7 @@ import {
   readApiFailure,
   presenceFilter,
   presenceText,
+  type CommunityRefusal,
 } from "./http-admission";
 import { yieldToHost } from "./yield";
 import { clientMetrics } from "../developer/client-metrics";
@@ -89,6 +90,12 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  /** Hear the relay refuse this account for the whole community, on any
+   * request after connecting: its sign-in ended, or it has no access. One
+   * item's refusal (a gated channel, say) stays with whoever asked for it. */
+  readonly observeRefusal?: (
+    listener: (kind: CommunityRefusal) => void,
+  ) => () => void;
   readonly artifactIncremental?: ArtifactIncrementalReader;
   readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
@@ -465,12 +472,39 @@ async function readResponseError(response: Response) {
   );
 }
 
+/** The broker answers a community refusal with the JSON its own admission
+ * classified. The connection hears it before the feature that asked handles
+ * its error. */
+function brokerRefusals() {
+  const listeners = new Set<(kind: CommunityRefusal) => void>();
+  return {
+    observe(listener: (kind: CommunityRefusal) => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    async fetch(input: RequestInfo | URL, init?: RequestInit) {
+      const response = await fetch(input, init);
+      if (
+        listeners.size &&
+        (response.status === 401 || response.status === 403)
+      ) {
+        const { admission } = await readApiFailure(response.clone());
+        if (admission)
+          for (const listener of [...listeners]) listener(admission);
+      }
+      return response;
+    },
+  };
+}
+
 /** Dev-only: a same-origin broker (see browser-host/relay-broker.mjs) holds the key and signs reads. */
 export async function connectBrokerTransport(
   base = "",
   signal?: AbortSignal,
   community?: string,
 ): Promise<ReadTransport> {
+  // Every broker read below, the session's included, goes through here.
+  const { fetch, observe: observeRefusal } = brokerRefusals();
   if (community) await registerBrokerCommunity(community, signal, base);
   const endpoint = `${base}/api/relay${community ? `/${encodeURIComponent(community)}` : ""}`;
   const profiling = createRelayProfiler();
@@ -589,6 +623,7 @@ export async function connectBrokerTransport(
   });
   return {
     profiling,
+    observeRefusal,
     ...(session.attachmentUploads === true && session.relayUrl
       ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
       : {}),
@@ -1375,6 +1410,8 @@ export async function connectSignedTransport(
       ? { verifyStored: (values) => parseEvents(values, verify) }
       : {}),
     ...(upload ? { uploadAttachment: hostUpload(upload, httpOrigin) } : {}),
+    observeRefusal: (listener) =>
+      signedAdmissions.observeRefusal(httpOrigin, viewer, listener),
     observePresence: presence.observe,
     async presenceSnapshot(authors, signal) {
       const filters = [{ kinds: [20001], authors, limit: authors.length }];

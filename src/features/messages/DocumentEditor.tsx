@@ -1,6 +1,7 @@
 import {
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -102,11 +103,13 @@ export function DocumentEditor({
   const [formats, setFormats] = useState<readonly ComposerFormat[]>([]);
   const [link, setLink] = useState<ComposerLinkEdit>();
   const emitted = useRef(value);
-  useEffect(() => {
-    if (value === emitted.current) return;
+  // A rich edit renders even when its onChange is declined. Reconcile every
+  // committed render so only accepted content survives, before the next paint.
+  useLayoutEffect(() => {
+    if (source || value === emitted.current) return;
     emitted.current = value;
     setDraft(documentEditorDraft(value));
-  }, [value]);
+  });
   useEffect(() => {
     if (!linkOpen) {
       setLink(undefined);
@@ -159,9 +162,7 @@ export function DocumentEditor({
                 }
               }}
               onChange={(event) => {
-                emitted.current = event.target.value;
                 onChange(event.target.value);
-                setDraft(documentEditorDraft(event.target.value));
               }}
             />
           ) : (
@@ -178,8 +179,10 @@ export function DocumentEditor({
                 onDraftChange={(next) => {
                   setDraft(next);
                   const markdown = composerMarkdown(next);
-                  emitted.current = markdown;
-                  onChange(markdown);
+                  if (markdown !== value) {
+                    emitted.current = markdown;
+                    onChange(markdown);
+                  }
                 }}
                 onFormatsChange={setFormats}
                 onEditLink={editLink}

@@ -268,6 +268,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...communityManifest, apiVersion: 1, ...communityAccess },
     module: communityPlugins,
-    enabledByDefault: false,
+    enabledByDefault: true,
   },
 ];

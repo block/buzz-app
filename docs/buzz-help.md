@@ -249,7 +249,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   level rather than requiring a new thread for each reply. Where available, use
   **Model and effort** in the composer before sending; Solo keeps those choices
   for that chat until you reset them in the same control, even if its available
-  models change. Wait for saved choices to load before sending; an unreadable
+  models change. If a loaded catalog no longer offers a saved choice, the
+  control explains what Send will use or which overrides it omits without
+  clearing the saved selection. If no supported model is listed, Send omits
+  model and effort overrides and uses the agent's defaults.
+  Wait for saved choices to load before sending; an unreadable
   store never silently falls back to defaults. If choices cannot be read, use
   **Retry saved choices** before sending. If their agent catalog cannot be loaded, retry
   or reset them in the model control. If New chat cannot clear

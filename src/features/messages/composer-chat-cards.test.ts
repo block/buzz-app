@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { stageChatCards } from "./composer-chat-cards";
 import { mentionDraft } from "./mention-draft";
 import { composerMarkdown } from "./composer-markdown";
+import {
+  projectComposerDocument,
+  readComposerDocument,
+} from "./composer-document";
 
 const link = "[Session: Fix](buzz://channel/session-id)";
 describe("staged session references", () => {
@@ -30,6 +34,44 @@ describe("staged session references", () => {
       expect(draft.chatCards).toBeUndefined();
     },
   );
+});
+
+it("stages a card from document data another build saved and keeps it unsupported", () => {
+  const own = projectComposerDocument(
+    readComposerDocument(mentionDraft(`Fix ${link}`), []),
+  ).draft;
+  const content = own.document?.content as {
+    content: { content: unknown[] }[];
+  };
+  const token = {
+    type: "token",
+    attrs: { source: "@repo", semantic: { kind: "nexus.repository" } },
+  };
+  for (const document of [
+    { ...content, attrs: { projects: [{ id: "p", label: "Project" }] } },
+    {
+      ...content,
+      content: [
+        {
+          ...content.content[0],
+          content: [token, ...(content.content[0]?.content ?? [])],
+        },
+      ],
+    },
+  ]) {
+    const draft = stageChatCards(
+      mentionDraft({ ...own, document: { version: 1, content: document } }),
+      [],
+    );
+    expect(draft.chatCards).toEqual([link]);
+    expect(draft.unsupported).toBe(true);
+    expect(mentionDraft(JSON.parse(JSON.stringify(draft))).unsupported).toBe(
+      true,
+    );
+  }
+  const staged = stageChatCards(own, []);
+  expect(staged.chatCards).toEqual([link]);
+  expect(staged.unsupported).toBeUndefined();
 });
 
 it("retains explicit recipients in a legacy draft on either side of a staged card", () => {

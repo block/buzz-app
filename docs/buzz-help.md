@@ -259,6 +259,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   message, attachments, and choices while this window stays open. Retry never
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
+  If an app provides task drafts, retry an interrupted submission from the same
+  draft. Buzz keeps its saved first message. It does not send it on restart.
+  If another window completes the task, Send opens that task and keeps this
+  window's text and files as a draft. It does not replace an existing draft.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.
 - **Team** contains community channels and their threads. Use the **@** picker

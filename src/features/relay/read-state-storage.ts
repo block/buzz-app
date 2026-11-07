@@ -28,6 +28,9 @@ export type ReadJournal = Readonly<{
   recent?: Readonly<Record<string, number>>;
   /** Local-only evicted receipts, deleted with this partition even by old builds. */
   reserve?: Readonly<Record<string, number>>;
+  /** Local-only: every message at or before this time counts as read here.
+   * Raised to the time of the newest mark that the reserve had no room for. */
+  floor?: number;
   /** Local-only: the channel of each message that a kept mark names (see
    * `markMessage`), taken from a signed event. A mark does not carry its
    * channel, so this lets a channel mark cover it while the message is not
@@ -160,6 +163,8 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
       ))
   )
     throw new Error("Invalid saved own read state");
+  if (raw.floor !== undefined && !uint32(raw.floor))
+    throw new Error("Invalid saved read floor");
   const spill = raw.spill ?? [];
   if (
     !Array.isArray(spill) ||
@@ -223,6 +228,7 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
       ...(raw.reserve as Record<string, number> | undefined),
     }),
     homes: Object.freeze(homes),
+    ...(raw.floor ? { floor: raw.floor } : {}),
     own: Object.freeze({ ...own }),
     spill: Object.freeze([...(spill as string[])]),
     revision: raw.revision as number,
@@ -271,6 +277,10 @@ export function browserReadStateStorage(
 ): ReadStateStorage {
   let database: Promise<IDBDatabase> | undefined;
   let closed = false;
+  // The record this handle last wrote, already validated, under a random
+  // token saved with it. Another window or build writes without the token,
+  // so finding it again proves the stored record is this one.
+  let written: { token: string; journal: ReadJournal } | undefined;
   function open() {
     if (closed) return Promise.reject(new Error("Read-state storage closed"));
     database ??= openDatabase();
@@ -290,20 +300,27 @@ export function browserReadStateStorage(
         let error: unknown;
         request.onsuccess = () => {
           try {
+            const stored: unknown = request.result;
             const current =
-              request.result === undefined
+              stored === undefined
                 ? undefined
-                : readJournal(request.result, viewer);
+                : written && record(stored) && stored.written === written.token
+                  ? written.journal
+                  : readJournal(stored, viewer);
             result = readJournal(change(current), viewer);
-            store.put(result, scope);
+            const token = crypto.randomUUID();
+            store.put({ ...result, written: token }, scope);
+            written = { token, journal: result };
           } catch (cause) {
             error = cause;
             tx.abort();
           }
         };
         tx.oncomplete = () => resolve(result);
-        tx.onabort = () =>
+        tx.onabort = () => {
+          written = undefined;
           reject(error ?? tx.error ?? new Error("Read-state save aborted"));
+        };
         tx.onerror = () => reject(tx.error);
       });
     },

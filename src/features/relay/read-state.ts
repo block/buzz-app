@@ -253,6 +253,7 @@ export function createReadState({
       current.clientId,
       current.reserve,
       coveredWith(home),
+      current.floor,
     );
     const homes: Record<string, string> = {};
     for (const key of [
@@ -554,6 +555,7 @@ export function createReadState({
                   recent,
                   reserve: current.reserve ?? {},
                   homes: current.homes ?? {},
+                  floor: current.floor ?? 0,
                 }
               : retainMarks(
                   current,
@@ -575,6 +577,7 @@ export function createReadState({
             recent: kept.recent,
             reserve: kept.reserve,
             homes: kept.homes,
+            floor: kept.floor,
             own: advanceOwn(
               current.own,
               timestamp === undefined ? {} : { [key]: timestamp },
@@ -883,8 +886,10 @@ export function createReadState({
     state: () => state,
     localUnread: (key: string) => journal?.localUnread[key],
     revision: () => journal?.revision ?? 0,
-    /** Every message at or before this time counts as read. */
-    floor,
+    /** Every message at or before this time counts as read: the retention
+     * window, or the local floor that dropped marks raised, whichever is
+     * later. Publication uses only the retention window. */
+    floor: () => Math.max(floor(), journal?.floor ?? 0),
     /** Lets the next save drop marks that broader marks already cover. */
     setCoverage(next: MarkCoverage | undefined) {
       coverage = next;
@@ -986,6 +991,7 @@ export function createReadState({
                   recent,
                   reserve: current.reserve ?? {},
                   homes: current.homes ?? {},
+                  floor: current.floor ?? 0,
                 };
             return {
               ...current,
@@ -994,6 +1000,7 @@ export function createReadState({
               recent: kept.recent,
               reserve: kept.reserve,
               homes: kept.homes,
+              floor: kept.floor,
               own: advanceOwn(current.own, frontiers),
               localUnread,
               acceptedRevision: Object.keys(frontiers).length

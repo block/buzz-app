@@ -257,7 +257,7 @@ it("a cover that replaces a fresh read keeps its recency at the synced limit", (
   expect(stillRead(published, marks)).toBe(true);
 });
 
-it("bounds the local reserve by entries and bytes, dropping oldest receipts deterministically", () => {
+it("bounds the local reserve by entries and bytes, dropping oldest receipts deterministically and raising the floor over them", () => {
   for (const width of [64, 240]) {
     const frontiers = Object.fromEntries(
       Array.from({ length: 8000 }, (_, n) => [
@@ -278,8 +278,23 @@ it("bounds the local reserve by entries and bytes, dropping oldest receipts dete
       expect(frontiers[key]).toBe(value);
       expect(kept.state.frontiers[key]).toBeUndefined();
     }
+    // Every dropped receipt is at or below the floor, so it stays read.
+    const local = { ...kept.reserve, ...kept.state.frontiers };
+    const dropped = Object.entries(frontiers).filter(
+      ([key]) => !(key in local),
+    );
+    expect(dropped.length).toBeGreaterThan(0);
+    expect(kept.floor).toBe(Math.max(...dropped.map(([, value]) => value)));
+    expect(Math.min(...Object.values(kept.reserve))).toBe(kept.floor + 1);
     expect(
-      retainLocalRead([kept.state], kept.recent, "fixture", kept.reserve),
+      retainLocalRead(
+        [kept.state],
+        kept.recent,
+        "fixture",
+        kept.reserve,
+        undefined,
+        kept.floor,
+      ),
     ).toEqual(kept);
   }
 });
@@ -332,7 +347,7 @@ it("promotes archived override floors before reserve pressure can reactivate the
     ).toBe(false);
 });
 
-it("keeps archived quiet-channel catch-up ahead of newer message churn", () => {
+it("drops archived quiet-channel catch-up before newer message churn, under the floor", () => {
   const frontiers = Object.fromEntries(
     Array.from({ length: 8000 }, (_, n) => [
       `msg:${n.toString(16).padStart(64, "0")}`,
@@ -342,9 +357,38 @@ it("keeps archived quiet-channel catch-up ahead of newer message churn", () => {
   const kept = retainLocalRead([{ frontiers, overrides: {} }], {}, "fixture", {
     "activity:quiet": 1,
   });
-  expect(kept.reserve["activity:quiet"]).toBe(1);
+  expect(kept.reserve["activity:quiet"]).toBeUndefined();
   expect(kept.state.frontiers["activity:quiet"]).toBeUndefined();
+  expect(kept.floor).toBeGreaterThanOrEqual(100);
   expect(Object.keys(kept.reserve)).toHaveLength(READ_RESERVE_KEYS);
+});
+it("drops marks at or below the floor, unless overrides make them load-bearing", () => {
+  const state = { frontiers: { room: 10, "msg:new": 30 }, overrides: {} };
+  const kept = retainLocalRead(
+    [state],
+    {},
+    "fixture",
+    { "msg:old": 20 },
+    undefined,
+    20,
+  );
+  expect(kept.state.frontiers).toEqual({ "msg:new": 30 });
+  expect(kept.reserve).toEqual({});
+  expect(kept.floor).toBe(20);
+  const overrides = { "msg:child": { set: 1, clear: 0, baseline: 0 } };
+  const guarded = retainLocalRead(
+    [{ ...state, overrides }],
+    {},
+    "fixture",
+    { "msg:old": 20 },
+    undefined,
+    20,
+  );
+  expect({ ...guarded.reserve, ...guarded.state.frontiers }).toEqual({
+    room: 10,
+    "msg:new": 30,
+    "msg:old": 20,
+  });
 });
 it("a large inherited reserve does not overflow the journal on remote override ingest", () => {
   const reserve = Object.fromEntries(

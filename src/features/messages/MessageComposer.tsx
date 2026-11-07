@@ -1138,20 +1138,6 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     if (save && !editing.target) {
-      if (taskChannel || taskDraft) {
-        if (
-          projectComposerDocument(
-            readComposerDocument(captured, []),
-          ).tokens.some(
-            (item) =>
-              !item.node.attrs.recipient &&
-              identityLink(item.node.attrs.source),
-          )
-        )
-          throw new Error(
-            "Select an eligible task agent from the chooser before sending this identity link.",
-          );
-      }
       if (submission) {
         const saved = writeView(scope, draftKey, next);
         unsavedDraft.current = !saved;
@@ -2854,6 +2840,20 @@ function Composer({
         throw new Error(
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
+      if (taskChannel || taskDraft) {
+        if (
+          projectComposerDocument(
+            readComposerDocument(captured, []),
+          ).tokens.some(
+            (item) =>
+              !item.node.attrs.recipient &&
+              identityLink(item.node.attrs.source),
+          )
+        )
+          throw new Error(
+            "Select an eligible task agent from the chooser before sending this identity link.",
+          );
+      }
       if (submission) {
         // SoloDraft filters the captured choices against its final recipient set.
         submission.submit(

@@ -549,7 +549,8 @@ with a dialog. A denied dialog is an error. Release builds ignore the helper.
 With `BUZZ_DEV_CREDENTIAL_HELPER` set (an absolute path) in a macOS debug build,
 every `buzz-credential-store` read, add, replace and delete goes through it: the
 human key, including the release key `me` reads, agents, federated sessions, the
-Jev and Claude keys, paired tools and external-app pairings. A helper failure is
+Jev and Claude keys, paired tools and external-app pairings. Bringing over old
+Buzz's items still reads them directly, since that happens once. A helper failure is
 returned as is; the app never retries through direct Keychain access, and keeps
 its own locks, create-only rules, validation and read-back checks. The app passes
 `[--authorize] --item <read|add|replace|delete> <service> <account>`, with a fresh

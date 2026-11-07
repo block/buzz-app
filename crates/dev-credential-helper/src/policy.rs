@@ -4,7 +4,7 @@
 /// Bumped when the request format or the set of served items changes.
 /// `just desktop me` installs one helper per protocol, so checkouts on
 /// different protocols each keep a helper that understands them.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// Largest value read or written, in either direction.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -106,15 +106,12 @@ fn plain(account: &str, prefix: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b".-_:".contains(&byte))
 }
 
-/// The exact debug-build items `just desktop me` reads and writes, and the
-/// release human key, which it may only read.
+/// The exact debug-build items `just desktop me` reads and writes. The release
+/// human key is not one: `me` reads it directly, so it keeps the release app's
+/// own Keychain approval.
 pub fn allowed(operation: Operation, service: &str, account: &str) -> bool {
     use Operation::*;
     match service {
-        // The release build's key, for `me`: read only, never copied or changed.
-        "xyz.block.buzz.desktop.identity" | "dev.local.buzz.foundation.identity" => {
-            operation == Read && account == "human"
-        }
         // The debug build's own key is create-only; paired-tool records beside it are mutable.
         "xyz.block.buzz.desktop.identity.debug" | "dev.local.buzz.foundation.identity.debug" => {
             if account == "human" {
@@ -149,12 +146,12 @@ mod tests {
         assert_eq!(parse(&args("--version")), Ok(Command::Version));
         assert_eq!(
             parse(&args(
-                "--authorize --item read xyz.block.buzz.desktop.identity human"
+                "--authorize --item read xyz.block.buzz.desktop.identity.debug human"
             )),
             Ok(Command::Item(Request {
                 authorize: true,
                 operation: Operation::Read,
-                service: "xyz.block.buzz.desktop.identity".into(),
+                service: "xyz.block.buzz.desktop.identity.debug".into(),
                 account: "human".into(),
             }))
         );
@@ -192,8 +189,6 @@ mod tests {
         use Operation::*;
         let hex = "0123456789abcdef".repeat(4);
         for (operation, service, account) in [
-            (Read, "xyz.block.buzz.desktop.identity", "human"),
-            (Read, "dev.local.buzz.foundation.identity", "human"),
             (Read, "xyz.block.buzz.desktop.identity.debug", "human"),
             (Add, "xyz.block.buzz.desktop.identity.debug", "human"),
             (Delete, "xyz.block.buzz.desktop.identity.debug", "human"),
@@ -235,7 +230,9 @@ mod tests {
         }
         let upper = "0123456789ABCDEF".repeat(4);
         for (operation, service, account) in [
-            // The release key is never written, copied over or deleted.
+            // The release key is never served, not even to read.
+            (Read, "xyz.block.buzz.desktop.identity", "human"),
+            (Read, "dev.local.buzz.foundation.identity", "human"),
             (Add, "xyz.block.buzz.desktop.identity", "human"),
             (Replace, "xyz.block.buzz.desktop.identity", "human"),
             (Delete, "xyz.block.buzz.desktop.identity", "human"),

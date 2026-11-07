@@ -163,7 +163,7 @@ export function prepareCredentialHelper(root) {
     if (installedProtocol(helper) !== needed)
       throw new Error("the installed helper did not start");
     console.log(
-      "Installed the Keychain helper. Click Always Allow on each Keychain dialog this launch; later launches won't ask.",
+      "Installed the Keychain helper. Click Always Allow on each Keychain dialog this launch; later launches ask only for your installed Buzz's key.",
     );
   }
   const identity = findIdentity() ?? createIdentity();

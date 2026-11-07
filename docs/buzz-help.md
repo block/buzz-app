@@ -991,6 +991,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
 On macOS, `just desktop me` debug builds keep their Keychain items through a local
 credential helper, so Keychain asks once per item rather than after each rebuild.
+Your installed Buzz's key, which `me` signs in with, is not one of them: Keychain
+still asks for it after each rebuild.
 See [local credential helper](identity.md#local-credential-helper-on-macos).
 Release builds ignore it.
 

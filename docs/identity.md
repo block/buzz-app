@@ -78,8 +78,8 @@ community requires Builderlab sign-in, so it starts at once there, exactly as
 the welcome screen's own button does, and the welcome screen shows it pending
 (**Cancel sign-in**, with the field disabled); setup then lands on **Join
 Community** for the address, and it is never offered a key of the user's own
-instead. Cancel sign-in, and **Back** from a sign-in or setup failure, return
-to the welcome screen with the address kept and do not look it up again. A
+instead. Cancel sign-in, **Back** from a sign-in failure, and **Use a
+different account** from a setup failure, return to the welcome screen with the address kept and do not look it up again. A
 canceled sign-in that finishes later is ignored: it cannot restart setup or use
 a later sign-in's account. Any other found community, including one run by
 another Builderlab deployment, pauses on **Connect to {host}**: nothing a relay publishes names its sign-in portal, so the user
@@ -160,16 +160,41 @@ unless that key already has a backup. An import without Builderlab
 sign-in skips linking and backup. Importing without a Builderlab account never uploads the key.
 
 **Another account's key on this device** (a relaunch sign-in as someone else)
-is signed out before the account's lane runs, as **Sign out of Buzz** does
-without erase. Buzz restarts and signs in again by itself (a one-time note
-honoured for two minutes), now on the lane for a device with no key. The key is
-signed out without asking only when this device has confirmed a stored backup
-of it (`nsec_backup_confirmed`: a backup record here, under any account, that
-the service receipted or a restore wrote). Otherwise **A different account is
-saved on this computer** asks first: **Replace** signs it out, and **Cancel**
+is never replaced without asking: **A different account is saved on this
+computer** asks first. **Replace** signs it out, as **Sign out of Buzz** does
+without erase; Buzz restarts and signs in again by itself (a one-time note
+honoured for two minutes), now on the lane for a device with no key. **Cancel**
 signs out of the new account and returns to the welcome screen with the
-device's key in place. Creating or importing a key still refuses while one is on
-the device.
+device's key in place. When this device has confirmed a stored backup of the key
+(`nsec_backup_confirmed`: a backup record here, under any account, that the
+service receipted or a restore wrote), the question says the key is backed up
+in Builderlab and that signing in to its account again restores it; otherwise
+it says the key may not be backed up. A local receipt is not consent, and the
+backup may since have been deleted, so it only changes the wording. Creating or
+importing a key still refuses while one is on the device.
+
+An account with no key takes this device's key, else old Buzz's, else a new
+one, without asking. When the account holds no key, the account check can't
+tell whose this device's key is, but the link can: kgoose refusing it as
+another account's (`pubkey_already_bound`), or finding the account linked to
+another key meanwhile (`identity_already_bound`), makes it another account's
+key on this device, handled as above rather than failing setup. Old Buzz's key is
+linked before it is saved: native signs the link challenge with it straight
+from old Buzz's storage (`identity_sign_builderlab_binding` with `legacy`,
+only while no key is saved here, and saving nothing), and first run saves it
+only once the account holds it, from that same read (native holds the key in
+memory between the signature and the save, so the OS asks for old Buzz's
+storage once). When kgoose refuses it as another account's, or it can't be
+read (a denied OS prompt included, which native answers with null), first run
+makes a new key instead, so a key that can't be linked never reaches this
+device. Any other failure, such as a challenge that expired before native
+signed it, fails setup with Try again, which links old Buzz's key again. A run that linked it and then
+stopped before the save (a failed save, or Buzz quit in between) leaves the
+account holding a key this device lacks. When that key isn't backed up, the
+next sign-in checks old Buzz's key before resting on Welcome back
+(`identity_import_legacy` with `expected`, which saves it only when it is the
+account's key and otherwise saves nothing), then saves and backs it up and
+continues as a returning account would.
 
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
@@ -243,7 +268,17 @@ account, **Continue without backup** skips only that backup step and runs the
 remaining community setup. It retains the saved linked key and does not persist
 a backup opt-out. Transient backup failures remain retry-only; linking cannot
 be bypassed.
-Before a key exists, the page also offers **Back** to the welcome screen.
+After a Builderlab sign-in, including the one a relaunch waits on, the page
+offers **Use a different account** in place of Back: it signs out of the
+account and returns to the welcome screen, keeping any key here, as a relaunch
+shows it. Back alone would sign in to the same account again from the
+browser's session. That screen's **Sign in** asks for credentials and checks
+the key with the next account, and **Continue without signing in** opens the
+app with a key already here, as on any relaunch; the account is checked at the
+next launch. A link kgoose refuses because the key or the account is already
+bound elsewhere (`pubkey_already_bound`, `identity_already_bound`) is not
+offered Try again, which would get the same answer; Use a different account is
+the only way on. Failures before any sign-in keep **Back**.
 
 Within one first-run session the Join page exits only through a join or a
 restored community; there is no skip. That holds only while the app stays

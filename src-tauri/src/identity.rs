@@ -362,6 +362,10 @@ enum State {
 struct Identity {
     state: State,
     store: Box<dyn Store>,
+    /// Old Buzz's key as `sign_legacy` read it, held only in memory so the
+    /// import that follows a link saves that same key without a second read
+    /// (and a second OS prompt).
+    legacy: Option<Key>,
 }
 impl Identity {
     fn restore(&mut self) -> Result<Option<String>> {
@@ -395,19 +399,54 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
+        self.legacy = None;
         Ok(viewer)
     }
     /// Adopts the key installed old Buzz saved, exactly as a pasted import would.
-    fn import_legacy(&mut self) -> Result<String> {
+    /// With `expected`, only when it is that key: another key is kept in memory,
+    /// unsaved, and nothing is returned.
+    fn import_legacy(&mut self, expected: Option<&str>) -> Result<Option<String>> {
         if self.restore()?.is_some() {
             return Err("An identity is already saved; nothing was overwritten".into());
         }
-        let nsec = self.store.legacy()?;
-        let nsec = nsec.trim();
-        if Key::parse(nsec).is_err() {
-            return Err("The earlier Buzz app's identity is malformed; nothing was changed".into());
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => Key::parse(self.store.legacy()?.trim())
+                .map_err(|_| "The earlier Buzz app's identity is malformed; nothing was changed")?,
+        };
+        if let Some(expected) = expected {
+            if key.viewer()? != expected {
+                self.legacy = Some(key);
+                return Ok(None);
+            }
         }
-        self.save(Some(nsec))
+        let nsec = Zeroizing::new(key.nsec()?);
+        self.save(Some(&nsec)).map(Some)
+    }
+    /// Signs with the key installed old Buzz saved, read from its storage and
+    /// never saved here, so first run can link it before adopting it: a key
+    /// that can't be linked never lands on this device. `None` when that key
+    /// can't be read (absent, denied or malformed), so first run makes a new
+    /// one; any other failure is an error, so a retry still links old Buzz's.
+    fn sign_legacy(&mut self, event: EventTemplate) -> Result<Option<serde_json::Value>> {
+        if self.restore()?.is_some() {
+            return Err("An identity is already saved; nothing was signed".into());
+        }
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => match self
+                .store
+                .legacy()
+                .ok()
+                .and_then(|nsec| Key::parse(nsec.trim()).ok())
+            {
+                Some(key) => key,
+                None => return Ok(None),
+            },
+        };
+        let signed = key.sign(event);
+        self.legacy = Some(key);
+        signed.map(Some)
     }
     fn require_missing(&mut self) -> Result<()> {
         if self.restore()?.is_some() || self.store.read()?.is_some() {
@@ -425,10 +464,12 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key);
+        self.legacy = None;
         Ok(viewer)
     }
     fn close(&mut self) {
         self.state = State::Closed;
+        self.legacy = None;
     }
     fn export(&mut self) -> Result<String> {
         self.restore()?;
@@ -808,6 +849,7 @@ impl IdentityHost {
         Self(Arc::new(Mutex::new(Identity {
             state,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 
@@ -1150,6 +1192,7 @@ impl Default for IdentityHost {
         Self(Arc::new(Mutex::new(Identity {
             state: State::Unread,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 }
@@ -1233,17 +1276,29 @@ impl BuilderlabChallenge {
     }
 }
 /// Signs only a valid Builderlab binding challenge; never a general event signer.
+/// `legacy` signs with installed old Buzz's key instead, only while no key is
+/// saved here, and saves nothing; it answers null when that key can't be read.
 #[tauri::command]
 pub async fn identity_sign_builderlab_binding(
     host: tauri::State<'_, IdentityHost>,
     challenge: BuilderlabChallenge,
+    legacy: Option<bool>,
 ) -> Result<serde_json::Value> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "System clock is before 1970")?
         .as_secs();
-    host.sign(challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?)
+    let event = challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?;
+    if legacy == Some(true) {
+        with_identity(host.inner().clone(), move |identity| {
+            identity
+                .sign_legacy(event)
+                .map(|signed| signed.unwrap_or(serde_json::Value::Null))
+        })
         .await
+    } else {
+        host.sign(event).await
+    }
 }
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {
@@ -1274,15 +1329,23 @@ pub fn identity_legacy_available<R: tauri::Runtime>(app: tauri::AppHandle<R>) ->
             .is_dir()
     })
 }
+/// `expected` saves old Buzz's key only when it is that key, as setup does for
+/// the key an account already holds; otherwise nothing is saved or returned.
 #[tauri::command]
 pub async fn identity_import_legacy(
     host: tauri::State<'_, IdentityHost>,
     backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
-) -> Result<String> {
-    let public = with_identity(host.inner().clone(), Identity::import_legacy).await?;
-    let backup = backup.inner().clone();
-    let identity = host.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    expected: Option<String>,
+) -> Result<Option<String>> {
+    let public = with_identity(host.inner().clone(), move |identity| {
+        identity.import_legacy(expected.as_deref())
+    })
+    .await?;
+    if public.is_some() {
+        let backup = backup.inner().clone();
+        let identity = host.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    }
     Ok(public)
 }
 #[tauri::command]

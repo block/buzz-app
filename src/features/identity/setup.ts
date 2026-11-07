@@ -47,6 +47,8 @@ export type SetupSnapshot = Readonly<
       retryable: boolean;
       /** Continuing past the failure skips the link, so the key stays unlinked. */
       skipsLink: boolean;
+      /** Builderlab refused the link for good, so Try again cannot help. */
+      bound: boolean;
       unsupportedBackup?: boolean;
     }
   | { status: "done" }
@@ -56,6 +58,18 @@ export type Resting = Extract<
   SetupSnapshot,
   { status: "idle" | "paused" | "done" }
 >;
+
+/**
+ * Builderlab's refusal of a link because the key is another account's, or the
+ * account holds another key: asking again gets the same answer.
+ */
+export function boundElsewhere(error: unknown) {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return (
+    error.code === "pubkey_already_bound" ||
+    error.code === "identity_already_bound"
+  );
+}
 
 /** The key now on this device, which the account steps act on. */
 function viewer(identity: Identity) {
@@ -90,22 +104,51 @@ function vacant(identity: Identity) {
 /**
  * The key for an account that has none: old Buzz's, when it was used on this
  * device, so someone who used Buzz before stays the same person; otherwise a
- * new one. Reading old Buzz's secure storage may bring up an OS prompt, and if
- * it can't be read a new key is made rather than stopping setup.
+ * new one. Old Buzz's key is linked first and saved only once the account
+ * holds it, so a key kgoose refuses as another account's never lands here:
+ * then, as when it can't be read, a new key is made rather than stopping
+ * setup. Reading old Buzz's secure storage may bring up an OS prompt.
  */
-export function keyForAccount(identity: Identity): SetupStep {
+export function keyForAccount(
+  identity: Identity,
+  account: FirstRunAccount,
+): SetupStep {
   return {
     label: "Preparing your identity…",
     run: async () => {
       vacant(identity);
       if (await identity.legacyAvailable().catch(() => false)) {
-        await identity.importLegacy();
-        if (identity.snapshot().status === "ready") return;
+        const linked = await account.bindLegacy();
+        if (linked) {
+          await identity.importLegacy();
+          // A refused save reports its own reason, such as a denied read.
+          saved(identity);
+          if (viewer(identity) !== linked)
+            throw new Error("Your key could not be saved on this device.");
+          return;
+        }
       }
       await identity.create();
       saved(identity);
     },
   };
+}
+
+/**
+ * Saves old Buzz's key when it is `linked`, the key the account holds but this
+ * device lacks: a first run that linked it and stopped before saving it (a
+ * failed save, or Buzz quit in between) leaves exactly that. Another key, no
+ * old Buzz, or a refused read saves nothing, and the account's pages follow.
+ */
+export async function adoptLinkedLegacy(
+  identity: Identity,
+  linked: string,
+): Promise<boolean> {
+  if (identity.snapshot().status !== "missing") return false;
+  if (!(await identity.legacyAvailable().catch(() => false))) return false;
+  await identity.importLegacy(linked);
+  const here = identity.snapshot();
+  return here.status === "ready" && here.viewer === linked;
 }
 
 /** Creates a key on this device, which the account steps then act on. */
@@ -383,6 +426,7 @@ export function createSetup() {
             "retryable" in error &&
             error.retryable === true,
           skipsLink: left.some((step) => step.links === true),
+          bound: boundElsewhere(error),
           ...(step.backup &&
           !left.some((step) => step.links) &&
           error instanceof BackupError &&

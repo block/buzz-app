@@ -20,9 +20,6 @@ export type CheckedSource = Readonly<{
 export type CheckResult =
   | { ok: true; source: CheckedSource }
   | { ok: false; message: string };
-export type SubmitResult =
-  | { ok: true; status: "queued" | "listed"; slug?: string; name: string }
-  | { ok: false; message: string };
 
 const NAME = /^[A-Za-z0-9_.-]{1,100}$/;
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
@@ -191,75 +188,28 @@ export async function checkSource(
   }
 }
 
-export async function submitSource(
-  host: Requester,
-  origin: string,
-  source: CheckedSource,
-): Promise<SubmitResult> {
-  if (!origin)
-    return {
-      ok: false,
-      message: "This build of Buzz has no community index.",
-    };
-  try {
-    const response = await host.request({
-      url: `${origin}/v1/sources`,
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        repository: `${source.owner}/${source.repo}`,
-        ref: source.ref,
-        ...(source.path ? { path: source.path } : {}),
-      }),
-      timeoutMs: 60000,
-    });
-    if (response.status === 429)
-      return {
-        ok: false,
-        message: "You've submitted a lot today. Try again tomorrow.",
-      };
-    if (response.status === 503)
-      return {
-        ok: false,
-        message:
-          "The index couldn't check GitHub just now. Try again in a few minutes.",
-      };
-    let body: {
-      status?: unknown;
-      listing?: { slug?: unknown; name?: unknown };
-      detail?: unknown;
-    } = {};
-    try {
-      body = JSON.parse(response.body) as typeof body;
-    } catch {}
-    if (
-      response.status === 200 &&
-      (body.status === "queued" || body.status === "listed")
-    )
-      return {
-        ok: true,
-        status: body.status,
-        ...(typeof body.listing?.slug === "string"
-          ? { slug: body.listing.slug }
-          : {}),
-        name:
-          typeof body.listing?.name === "string"
-            ? body.listing.name
-            : source.name,
-      };
-    if (response.status === 422 && typeof body.detail === "string")
-      return {
-        ok: false,
-        message: `The index couldn't list it: ${body.detail}`,
-      };
-    return {
-      ok: false,
-      message: `The index didn't accept it (HTTP ${response.status}). Try again later.`,
-    };
-  } catch {
-    return {
-      ok: false,
-      message: "Couldn't reach the index. Check your connection and try again.",
-    };
-  }
+/** The source as a line of the listing repository's `sources.txt`. */
+export const sourceLine = (
+  source: Pick<CheckedSource, "owner" | "repo" | "ref" | "path">,
+) =>
+  `https://github.com/${source.owner}/${source.repo} ${source.ref}${source.path ? ` ${source.path}` : ""}`;
+
+/** The index's listing key for a source. */
+export const sourceKey = (
+  source: Pick<SourceInput, "owner" | "repo" | "path">,
+) =>
+  `github.com/${source.owner}/${source.repo}${source.path ? `/${source.path}` : ""}`;
+
+/** Where to ask for a listing on GitHub: an edit of `sources.txt`, which
+ * GitHub turns into a pull request, or the list-plugin issue form filled in. */
+export function listingLinks(repository: string, source: CheckedSource) {
+  const issue = new URLSearchParams({
+    template: "list-plugin.yml",
+    title: `List: ${source.name}`,
+    source: sourceLine(source),
+  });
+  return {
+    pullRequest: `https://github.com/${repository}/edit/main/sources.txt`,
+    issue: `https://github.com/${repository}/issues/new?${issue}`,
+  };
 }

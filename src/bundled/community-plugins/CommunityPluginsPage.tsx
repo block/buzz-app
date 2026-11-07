@@ -60,9 +60,10 @@ import {
   type CheckedSource,
   checkSource,
   describeSource,
+  listingLinks,
   parseSourceInput,
-  type SubmitResult,
-  submitSource,
+  sourceKey,
+  sourceLine,
 } from "./submit";
 import type { Recorder } from "./recorder";
 import styles from "./CommunityPluginsPage.module.css";
@@ -82,7 +83,9 @@ const trustLabel = (listing: Listing) =>
 const noSubscription = () => () => {};
 
 export type CommunityPluginsPageProps = {
-  origin: string;
+  indexUrl: string;
+  /** The GitHub repository, `owner/repo`, that takes listing requests. */
+  listingRepository?: string | undefined;
   host: Requester | undefined;
   installer: PluginInstaller | undefined;
   relay?: RelayData | undefined;
@@ -91,7 +94,8 @@ export type CommunityPluginsPageProps = {
 };
 
 export function CommunityPluginsPage({
-  origin,
+  indexUrl,
+  listingRepository,
   host,
   installer,
   relay,
@@ -102,7 +106,7 @@ export function CommunityPluginsPage({
     index?: Index | undefined;
     error?: string | undefined;
     loading: boolean;
-  }>({ loading: !!origin && !!host });
+  }>({ loading: !!indexUrl && !!host });
   const [version, setVersion] = useState(0);
   const [selected, setSelected] = useState<string>();
   const [adding, setAdding] = useState(false);
@@ -112,10 +116,10 @@ export function CommunityPluginsPage({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh and Retry read the index again.
   useEffect(() => {
-    if (!origin || !host) return;
+    if (!indexUrl || !host) return;
     let current = true;
     setState((old) => ({ ...old, loading: true, error: undefined }));
-    loadIndex(host, origin).then(
+    loadIndex(host, indexUrl).then(
       (index) => current && setState({ index, loading: false }),
       (error: unknown) =>
         current &&
@@ -131,7 +135,7 @@ export function CommunityPluginsPage({
     return () => {
       current = false;
     };
-  }, [origin, host, version]);
+  }, [indexUrl, host, version]);
 
   const install = async (listing: Listing) => {
     if (!installer || phases.get(listing.slug) === "review") return;
@@ -160,7 +164,7 @@ export function CommunityPluginsPage({
   };
 
   let body: ReactNode;
-  if (!origin)
+  if (!indexUrl)
     body = (
       <EmptyState
         icon={<StorefrontIcon size="1.5rem" />}
@@ -179,13 +183,15 @@ export function CommunityPluginsPage({
         description="This Buzz can't reach the community index."
       />
     );
-  else if (adding)
+  else if (adding && listingRepository)
     body = (
       <AddPlugin
         host={host}
-        origin={origin}
-        canOpen={(slug) =>
-          !!state.index?.plugins.some((item) => item.slug === slug)
+        repository={listingRepository}
+        listed={(key) =>
+          state.index?.plugins.find(
+            (item) => item.key.toLowerCase() === key.toLowerCase(),
+          )
         }
         onOpen={(slug) => {
           setAdding(false);
@@ -218,7 +224,7 @@ export function CommunityPluginsPage({
         counts={counts}
         onRetry={() => setVersion((old) => old + 1)}
         onOpen={setSelected}
-        onAdd={() => setAdding(true)}
+        onAdd={listingRepository ? () => setAdding(true) : undefined}
         regionRef={listRegion}
       />
     );
@@ -234,7 +240,7 @@ export function CommunityPluginsPage({
             />
           }
           actions={
-            origin &&
+            indexUrl &&
             host && (
               <IconButton
                 hint="familiar"
@@ -270,7 +276,7 @@ function Browse({
   counts: CommunityCountsView;
   onRetry(): void;
   onOpen(slug: string): void;
-  onAdd(): void;
+  onAdd?: (() => void) | undefined;
   regionRef: Ref<HTMLElement>;
 }) {
   const [query, setQuery] = useState("");
@@ -329,7 +335,7 @@ function Browse({
             },
           ]}
         />
-        <Button onClick={onAdd}>Add your plugin</Button>
+        {onAdd && <Button onClick={onAdd}>Add your plugin</Button>}
       </div>
       <LoadingRegion
         pending={loading && !index}
@@ -753,58 +759,46 @@ type AddState =
   | { step: "invalid" }
   | { step: "checking" }
   | { step: "rejected"; message: string }
-  | { step: "submitting"; source: CheckedSource }
-  | { step: "failed"; source: CheckedSource; message: string }
-  | {
-      step: "done";
-      source: CheckedSource;
-      result: Extract<SubmitResult, { ok: true }>;
-    };
+  | { step: "ready"; source: CheckedSource; listing?: Listing | undefined };
 
 function AddPlugin({
   host,
-  origin,
-  canOpen,
+  repository,
+  listed,
   onOpen,
   onBack,
 }: {
   host: Requester;
-  origin: string;
-  canOpen(slug: string): boolean;
+  repository: string;
+  listed(key: string): Listing | undefined;
   onOpen(slug: string): void;
   onBack(): void;
 }) {
-  const [repository, setRepository] = useState("");
+  const [repositoryInput, setRepositoryInput] = useState("");
   const [ref, setRef] = useState("");
   const [state, setState] = useState<AddState>({ step: "idle" });
-  const busy = state.step === "checking" || state.step === "submitting";
+  const busy = state.step === "checking";
   const run = async () => {
-    const input = parseSourceInput(repository, ref);
+    const input = parseSourceInput(repositoryInput, ref);
     if (!input) return setState({ step: "invalid" });
     setState({ step: "checking" });
     const checked = await checkSource(host, input);
     if (!checked.ok)
       return setState({ step: "rejected", message: checked.message });
-    setState({ step: "submitting", source: checked.source });
-    const result = await submitSource(host, origin, checked.source);
-    setState(
-      result.ok
-        ? { step: "done", source: checked.source, result }
-        : { step: "failed", source: checked.source, message: result.message },
-    );
+    setState({
+      step: "ready",
+      source: checked.source,
+      listing: listed(sourceKey(checked.source)),
+    });
   };
-  const found = "source" in state ? state.source : undefined;
-  const listedSlug =
-    state.step === "done" &&
-    state.result.status === "listed" &&
-    state.result.slug &&
-    canOpen(state.result.slug)
-      ? state.result.slug
-      : undefined;
+  const found = state.step === "ready" ? state.source : undefined;
+  const existing = state.step === "ready" ? state.listing : undefined;
+  const links =
+    found && !existing ? listingLinks(repository, found) : undefined;
   const error =
     state.step === "invalid"
       ? "Enter a GitHub repository as owner/repo, owner/repo/folder or a github.com link."
-      : state.step === "rejected" || state.step === "failed"
+      : state.step === "rejected"
         ? state.message
         : undefined;
   return (
@@ -844,12 +838,12 @@ function AddPlugin({
       >
         <Field label="Repository">
           <Input
-            value={repository}
+            value={repositoryInput}
             placeholder="owner/repo or owner/repo/path/to/plugin"
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
-            onChange={(event) => setRepository(event.target.value)}
+            onChange={(event) => setRepositoryInput(event.target.value)}
           />
         </Field>
         <Field label="Branch or tag" optional>
@@ -881,17 +875,20 @@ function AddPlugin({
               )}
             </div>
           )}
-          {state.step === "submitting" && (
-            <p className="text-body-sm text-secondary">
-              Found it. Sending it to the index…
-            </p>
+          {existing && (
+            <p className="text-body-sm">{existing.name} is already listed.</p>
           )}
-          {state.step === "done" && (
-            <p className="text-body-sm">
-              {state.result.status === "listed"
-                ? `${state.result.name} is already listed.`
-                : `Submitted. ${state.result.name} will appear after the next index update.`}
-            </p>
+          {links && found && (
+            <>
+              <p className="text-body-sm">
+                It can be listed. Add this line to{" "}
+                <code className="text-mono-sm">sources.txt</code> in a pull
+                request, or ask for it in an issue:
+              </p>
+              <code className={`text-mono-sm ${styles.sourceLine}`}>
+                {sourceLine(found)}
+              </code>
+            </>
           )}
         </div>
         {error && (
@@ -904,20 +901,44 @@ function AddPlugin({
           plugin can access, and the exact commit, before anyone installs it.
         </p>
         <div className={styles.actions}>
-          {listedSlug ? (
-            <Button variant="prominent" onClick={() => onOpen(listedSlug)}>
+          {existing ? (
+            <Button variant="prominent" onClick={() => onOpen(existing.slug)}>
               View listing
             </Button>
-          ) : state.step === "done" ? (
-            <Button onClick={onBack}>Done</Button>
+          ) : links ? (
+            <>
+              <Button
+                nativeButton={false}
+                role="link"
+                render={
+                  <a href={links.issue} target="_blank" rel="noreferrer" />
+                }
+              >
+                Request in an issue
+              </Button>
+              <Button
+                variant="prominent"
+                nativeButton={false}
+                role="link"
+                render={
+                  <a
+                    href={links.pullRequest}
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
+              >
+                Open a pull request
+              </Button>
+            </>
           ) : (
             <Button
               type="submit"
               variant="prominent"
               loading={busy}
-              disabled={!repository.trim()}
+              disabled={!repositoryInput.trim()}
             >
-              Check and submit
+              Check
             </Button>
           )}
         </div>

@@ -18,21 +18,33 @@ const BUILDERLAB_APPS_CONTROL_PLANE_KEY: &str = "BUZZ_BUILDERLAB_APPS_CONTROL_PL
 const REPOSITORY_ACCESS_KEY: &str = "BUZZ_BUILD_REPOSITORY_ACCESS";
 const COMMUNITY_PLUGIN_INDEX_KEY: &str = "BUZZ_COMMUNITY_PLUGIN_INDEX_URL";
 
-/// The community plugin index origin, or empty when the build has none.
-fn community_plugin_index(local: &Path, process: Option<String>) -> Result<String, &'static str> {
+/// The community plugin index URL and its origin, or empty when the build has none.
+fn community_plugin_index(
+    local: &Path,
+    process: Option<String>,
+) -> Result<(String, String), &'static str> {
     let values = build_env::load(local, &[COMMUNITY_PLUGIN_INDEX_KEY], |_| process.clone())?;
     let Some(raw) = values
         .get(COMMUNITY_PLUGIN_INDEX_KEY)
         .filter(|raw| !raw.is_empty())
         .cloned()
     else {
-        return Ok(String::new());
+        return Ok(Default::default());
     };
     let url = url::Url::parse(&raw).map_err(|_| "Invalid community plugin index URL")?;
-    if url.scheme() != "https" || url.origin().ascii_serialization() != raw {
-        return Err("Community plugin index URL must be an exact HTTPS origin");
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || raw.contains('#')
+        || url.path() == "/"
+        || url.as_str() != raw
+    {
+        return Err(
+            "Community plugin index URL must be the HTTPS URL of index.json, without credentials or a fragment",
+        );
     }
-    Ok(raw)
+    let origin = url.origin().ascii_serialization();
+    Ok((raw, origin))
 }
 
 /// Default repository access rules, in `repository-access.json`'s schema. Every rule
@@ -259,9 +271,9 @@ fn main() {
     let managed = packaged_managed_plugins_url(&local, process(MANAGED_PLUGINS_URL_KEY))
         .expect("Invalid packaged managed plugin policy URL");
     println!("cargo:rustc-env={MANAGED_PLUGINS_URL_KEY}={managed}");
-    let index = community_plugin_index(&local, process(COMMUNITY_PLUGIN_INDEX_KEY))
+    let (_, index_origin) = community_plugin_index(&local, process(COMMUNITY_PLUGIN_INDEX_KEY))
         .unwrap_or_else(|reason| panic!("Invalid {COMMUNITY_PLUGIN_INDEX_KEY}: {reason}"));
-    println!("cargo:rustc-env={COMMUNITY_PLUGIN_INDEX_KEY}={index}");
+    println!("cargo:rustc-env=BUZZ_COMMUNITY_PLUGIN_INDEX_ORIGIN={index_origin}");
 }
 
 #[cfg(test)]
@@ -338,24 +350,46 @@ mod tests {
     }
 
     #[test]
-    fn community_plugin_index_is_an_exact_https_origin_or_empty() {
+    fn community_plugin_index_is_an_https_index_url_or_empty() {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
-        assert_eq!(community_plugin_index(&local, None).unwrap(), "");
+        let none = (String::new(), String::new());
+        assert_eq!(community_plugin_index(&local, None).unwrap(), none);
         assert_eq!(
             community_plugin_index(&local, Some(String::new())).unwrap(),
-            ""
+            none
         );
-        assert_eq!(
-            community_plugin_index(&local, Some("https://plugins.example".into())).unwrap(),
-            "https://plugins.example"
-        );
+        for (raw, origin) in [
+            (
+                "https://raw.githubusercontent.com/block/buzz-plugins/index/index.json",
+                "https://raw.githubusercontent.com",
+            ),
+            (
+                "https://plugins.example:8443/v1/index.json",
+                "https://plugins.example:8443",
+            ),
+            (
+                "https://plugins.example/index.json?v=1",
+                "https://plugins.example",
+            ),
+        ] {
+            assert_eq!(
+                community_plugin_index(&local, Some(raw.into())).unwrap(),
+                (raw.to_string(), origin.to_string()),
+                "{raw}"
+            );
+        }
         for raw in [
-            "http://plugins.example",
+            "http://plugins.example/index.json",
+            "https://plugins.example",
             "https://plugins.example/",
-            "https://plugins.example/v1",
-            "https://user@plugins.example",
-            "plugins.example",
+            "https://user@plugins.example/index.json",
+            "https://user:pass@plugins.example/index.json",
+            "https://plugins.example/index.json#top",
+            "https://plugins.example/index.json#",
+            "https://Plugins.Example/index.json",
+            "https://plugins.example/a b.json",
+            "plugins.example/index.json",
         ] {
             assert!(
                 community_plugin_index(&local, Some(raw.into())).is_err(),
@@ -364,12 +398,12 @@ mod tests {
         }
         std::fs::write(
             &local,
-            "BUZZ_COMMUNITY_PLUGIN_INDEX_URL=https://index.example\n",
+            "BUZZ_COMMUNITY_PLUGIN_INDEX_URL=https://index.example/index.json\n",
         )
         .unwrap();
         assert_eq!(
-            community_plugin_index(&local, None).unwrap(),
-            "https://index.example"
+            community_plugin_index(&local, None).unwrap().0,
+            "https://index.example/index.json"
         );
     }
 

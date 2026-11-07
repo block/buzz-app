@@ -91,21 +91,21 @@ it("summarizes counts and access in plain language", () => {
   ).toEqual(["Connect to api.example", "Read files with your access"]);
 });
 
-it("reads the index from the configured origin and reports bad answers", async () => {
+it("reads the index from the configured URL and reports bad answers", async () => {
   const request = vi.fn(async () => ({
     status: 200,
     headers: {},
     body: JSON.stringify(rawIndex([listing()])),
   }));
   await expect(
-    loadIndex({ request }, "https://plugins.example"),
+    loadIndex({ request }, "https://plugins.example/index.json?v=1"),
   ).resolves.toMatchObject({ plugins: [{ id: "octo.notes" }] });
   expect(request).toHaveBeenCalledWith({
-    url: "https://plugins.example/v1/index.json",
+    url: "https://plugins.example/index.json?v=1",
     timeoutMs: 8000,
   });
   request.mockResolvedValueOnce({ status: 503, headers: {}, body: "" });
   await expect(
-    loadIndex({ request }, "https://plugins.example"),
+    loadIndex({ request }, "https://plugins.example/index.json"),
   ).rejects.toThrow("The community index answered 503.");
 });

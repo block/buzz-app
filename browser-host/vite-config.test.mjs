@@ -185,8 +185,10 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
               delete process.env[name];
             }
+            const published = 'https://raw.githubusercontent.com/block/buzz-plugins/index/index.json';
             for (const [origin, expected] of [
-              ['https://plugins.example', 'https://plugins.example'],
+              [published, published],
+              ['https://plugins.example/index.json?v=1', 'https://plugins.example/index.json?v=1'],
               ['', ''],
               [undefined, ''],
             ]) {
@@ -198,7 +200,15 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 JSON.stringify(expected),
               );
             }
-            for (const invalid of ['http://plugins.example', 'https://plugins.example/', 'https://plugins.example/v1', 'plugins.example']) {
+            for (const invalid of [
+              'http://plugins.example/index.json',
+              'https://plugins.example',
+              'https://plugins.example/',
+              'https://user:secret@plugins.example/index.json',
+              'https://plugins.example/index.json#top',
+              'https://Plugins.Example/index.json',
+              'plugins.example/index.json',
+            ]) {
               process.env.BUZZ_COMMUNITY_PLUGIN_INDEX_URL = invalid;
               await assert.rejects(
                 loadConfigFromFile({ command: 'build', mode: 'production' }, configFile),

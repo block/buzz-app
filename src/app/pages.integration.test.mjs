@@ -94,11 +94,16 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.mesh-compute",
           "buzz.focus",
           "buzz.pins",
+          "buzz.drafts-and-sent",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
     }
-    for (const id of ["buzz.reminders", "buzz.workflows"]) {
+    for (const id of [
+      "buzz.reminders",
+      "buzz.workflows",
+      "buzz.drafts-and-sent",
+    ]) {
       assert.equal(
         services.pages.snapshot().some((page) => page.pluginId === id),
         false,
@@ -131,7 +136,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .snapshot()
       .find((page) => page.key === "buzz.channels/channels");
     assert.equal(messages.primary, true);
-    assert.equal(messages.placement, "topbar");
+    assert.equal(messages.placement, "dock");
     assert.equal(
       services.pages.snapshot().some((p) => p.key === "buzz.agents/attention"),
       false,

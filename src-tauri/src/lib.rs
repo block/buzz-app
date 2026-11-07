@@ -52,6 +52,7 @@ use nsec_backup::{
     nsec_restore_install, nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
+mod claude_key;
 mod clipboard;
 mod jev;
 mod keep_awake;
@@ -806,6 +807,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_remember,
         app_agents::app_agent_claim,
         app_agents::app_agent_release,
+        claude_key::claude_api_key_status,
+        claude_key::claude_api_key_set,
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
@@ -1122,6 +1125,7 @@ pub fn run() {
         .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
+        .manage(claude_key::ClaudeKey::new())
         .manage(decisions::DecisionsHost::new())
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())

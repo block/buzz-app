@@ -236,9 +236,9 @@ it("discards the preview when the review is cancelled", async () => {
     screen.getByRole("button", { name: "Review and install example.managed" }),
   );
   const dialog = await screen.findByRole("dialog");
-  fireEvent.click(
-    await within(dialog).findByRole("button", { name: "Cancel" }),
-  );
+  const cancel = await within(dialog).findByRole("button", { name: "Cancel" });
+  await waitFor(() => expect(cancel).toHaveFocus());
+  fireEvent.click(cancel);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(imports.discard).toHaveBeenCalledWith("preview");
   expect(manager.installImport).not.toHaveBeenCalled();

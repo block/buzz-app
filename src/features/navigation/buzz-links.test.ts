@@ -232,6 +232,36 @@ it.each([
     fail: "invalid-target",
   });
 });
+it("opens Settings links, an agent type's setup included, without a community", () => {
+  const link =
+    "buzz://settings?section=agents&provider=buzz.claude-code%2Fclaude-code";
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "agents",
+    provider: "buzz.claude-code/claude-code",
+  };
+  expect(buzzLinkKind(link)).toBe("buzz");
+  expect(buzzLinkTarget(link, scope)).toEqual(target);
+  expect(deepLinkStep(link, { selected: null })).toEqual({ open: target });
+  expect(buzzLinkTarget("buzz://settings", scope)).toEqual({
+    version: 1,
+    kind: "settings",
+  });
+  expect(buzzLinkTarget("buzz://settings/?section=plugins", scope)).toEqual({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
+});
+it.each([
+  "buzz://settings?provider=buzz.claude-code%2Fclaude-code",
+  "buzz://settings?section=agents&section=plugins",
+  "buzz://settings?section=Agents!",
+  "buzz://settings/other?section=agents",
+])("rejects invalid or ambiguous Settings links: %s", (href) => {
+  expect(parseBuzzLink(href)).toBeNull();
+});
 const commit = "0123456789abcdef0123456789abcdef01234567";
 it("carries an optional plugin folder and pinned commit in plugin links", () => {
   const pinned = `${pluginLink}&path=plugins%2Fone&commit=${commit.toUpperCase()}`;

@@ -514,7 +514,8 @@
     margin-inline-start: -1px;
   }
   /* The focused half's ring stays above its neighbour. */
-  .buzz-split-button > .buzz-button:focus-visible {
+  .buzz-split-button > .buzz-button:focus-visible,
+  :where(.buzz-dialog) .buzz-split-button > .buzz-button:focus {
     z-index: 1;
   }
   /* Preserve fill avatars and pointer-origin Tab traversal in WebKit. */
@@ -2116,10 +2117,18 @@
   }
 
   html[data-keyboard-navigation] .buzz-surface-button:focus-visible,
-  html[data-keyboard-navigation] .buzz-button:focus-visible,
   html[data-keyboard-navigation] .navigation-item:focus-visible,
   html[data-keyboard-navigation] .buzz-tabs-tab:focus-visible {
     outline: 2px solid var(--text-standard);
+    outline-offset: 2px;
+  }
+
+  /* Dialog autofocus identifies what Enter will press, even after pointer entry.
+     Keep that focus indicator separate from the button's action hierarchy. */
+  html[data-keyboard-navigation] .buzz-button:focus-visible,
+  .buzz-dialog .buzz-button:focus {
+    outline: 2px solid var(--border-focus);
+    /* Fit the existing 4px focus allowance in scrolling dialog footers. */
     outline-offset: 2px;
   }
 

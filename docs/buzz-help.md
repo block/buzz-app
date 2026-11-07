@@ -203,6 +203,14 @@ revokes all of them, and a pairing unused for 30 days expires.
 
 ## Conversations and communities
 
+- In dialogs, a ring shows which button has keyboard focus, including when the
+  dialog opens after a click. Enter or Space activates that button; Tab moves
+  focus. The filled action button can be different from the focused button.
+  Simple confirmations generally focus Cancel or the equivalent safe dismissal
+  action, so Enter cancels. Some intentionally focus their primary action.
+  Confirmations with a required field or checkbox start at the relevant control;
+  the action stays gated until its requirements are met.
+
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
@@ -519,10 +527,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   Activity second, followed by the other apps. Community and profile controls
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages has All / Solo / Team sidebar filters; other apps use their main
-  view unless they provide their own sidebar. The sidebar and message pane
-  share one surface with a persistent divider; panel headers also have bottom
-  hairlines. Dock icons stay still, highlight on hover, and show instant labels
-  to their right. Bestie uses your configured avatar.
+  view unless they provide their own sidebar. Pages listed in the Messages
+  sidebar, such as the Drafts & sent plugin, keep Messages selected in the dock. The
+  Messages sidebar stays open unless the page provides its own sidebar, which
+  replaces it.
+  The sidebar and message pane share one surface with a persistent divider;
+  panel headers also have bottom hairlines. Dock icons stay still, highlight
+  on hover, and show instant labels to their right. Bestie uses your
+  configured avatar.
   The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
   the current app has a creation sidebar.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
@@ -532,8 +544,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   approval, Buzz opens the approval page in your default browser, where you
   are signed in to Builderlab. Approve it there, return to Buzz and click
   **Reload** to open the app.
-- **Drafts & sent** is part of Messages. Opening it keeps the conversation
-  sidebar available, so you can switch straight back to a chat. Use the **Drafts**
+- **Drafts & sent** is an optional plugin, off by default. Turn it on in
+  **Settings → Plugins**, and it appears in the Messages sidebar. Opening it keeps
+  the conversation sidebar available, so you can switch straight back to a chat.
+  Saved links to it open the plugin, or offer to turn it on. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
   Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
@@ -727,10 +741,12 @@ available rather than silently discarding it.
   depend on the type. Do not assume a provider is configured or signed in.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
-  On macOS, Claude security reviews need their own sign-in: run
-  `claude setup-token` in Terminal and paste its token under **Sign in for
-  reviews** in Claude's **Edit configuration**. Until it is saved, Claude
-  reviews fail closed. It needs a Claude subscription and lasts a year.
+  Claude runs with an Anthropic API key pasted under **Anthropic API key**
+  there (or when creating a Claude agent), once for every Claude agent. Buzz
+  keeps it in the system's secure credential store (Keychain on macOS) and
+  gives it to every Claude process, security reviews included. Commands a
+  Claude agent runs inherit it, so they can read the key. Until a key is
+  saved, Claude agents don't answer and Claude reviews fail closed.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key

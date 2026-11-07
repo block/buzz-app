@@ -254,15 +254,10 @@ export function RemoteBestieConfirm({
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button
-            ref={cancel}
-            variant="prominent"
-            disabled={pending}
-            onClick={onClose}
-          >
+          <Button ref={cancel} disabled={pending} onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={pending} onClick={onConfirm}>
+          <Button variant="prominent" loading={pending} onClick={onConfirm}>
             Use as bestie
           </Button>
         </>
@@ -298,15 +293,11 @@ function RemoveBestie({
       {...(error && { children: <p role="alert">{error}</p> })}
       actions={
         <>
-          <Button
-            ref={keep}
-            variant="prominent"
-            disabled={pending}
-            onClick={onClose}
-          >
+          <Button ref={keep} disabled={pending} onClick={onClose}>
             Cancel
           </Button>
           <Button
+            variant="prominent"
             loading={pending}
             onClick={() => {
               setPending(true);

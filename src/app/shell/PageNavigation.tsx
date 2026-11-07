@@ -33,12 +33,15 @@ import {
 export function PageNavigation({
   pages,
   selected,
+  currentPage = selected,
   onSelect,
   placement = "sidebar",
   previews = false,
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
+  /** The open destination when `selected` is the app that lists it. */
+  currentPage?: string;
   onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
   /** The app dock is a vertical icon tablist; the sidebar lists rows. */
   placement?: "sidebar" | "dock";
@@ -57,6 +60,10 @@ export function PageNavigation({
         orientation="vertical"
         value={pages.some((page) => page.key === selected) ? selected : null}
         onValueChange={(key) => onSelect(key, { focus: "preserve" })}
+        // The selected app returns from a page opened in its navigation.
+        onReselect={(key) => {
+          if (key !== currentPage) onSelect(key, { focus: "preserve" });
+        }}
         items={pages.map((page) => {
           const Badge = page.badge;
           const Preview = page.preview;

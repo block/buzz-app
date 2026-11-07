@@ -44,9 +44,9 @@ semantic tokens, UI authoring rules and the local component reference.
   Messages comes first, then Inbox, Reminders and Bestie; other contributed pages
   follow by displayed label with a full contribution-key tie-breaker. Sidebar
   navigation and page search share this ordering, independent of plugin
-  activation/re-enable order. Primary pages choose `sidebar` (default), `topbar`
-  or `toolbar` placement for contributed pages; the host groups the latter two
-  in its left app dock.
+  activation/re-enable order. Primary pages choose `sidebar` (default, a row in
+  the Messages sidebar) or `dock` (an app in the left dock) placement for
+  contributed pages. `topbar` and `toolbar` are accepted aliases for `dock`.
   `PrimarySidebar` is the conversation sidebar: a capsule All / Solo / Team
   filter above one shared scrollport, Solo projects and chats above Team's channel
   sections, one relay-recovery notice, and the connection fallback. The filter
@@ -56,7 +56,10 @@ semantic tokens, UI authoring rules and the local component reference.
   channel sidebar's surface, resize owner, row treatment and section recipes.
   Bestie and Inbox lead the left app dock, followed by Messages and the other
   dock destinations. Sidebar-placed contributions remain in the conversation
-  sidebar. Its plus opens New for chat, project, DM and channel creation;
+  sidebar; while one is open, `navigationOwner` keeps Messages selected in the
+  dock and the conversation sidebar stays open unless the page supplies its own
+  sidebar, which replaces it. The conversation sidebar's plus opens New for
+  chat, project, DM and channel creation;
   Cmd/Ctrl+N opens that menu only where the current app has a creation sidebar. Every conversation, Solo or Team, opens in Messages; see
   [Solo](solo/README.md) for the Solo treatment, placement and the relay privacy
   boundary. Messages is the default destination.
@@ -132,10 +135,10 @@ semantic tokens, UI authoring rules and the local component reference.
   focus to main once retry removes it, even if reconnect temporarily remounts
   the shell. A new opening or focus elsewhere cancels this
   handoff. A selected dock page is a separately focusable, labelled tabpanel.
-  Dock destinations retain exact selection; sidebar/default-placement pages and
-  missing destinations leave every dock tile unselected. Sidebar page links retain
-  their exact route and focus main content when selected. Dock destinations never
-  become companion launchers.
+  Dock destinations retain exact selection; sidebar-placed pages select Messages,
+  and non-primary or missing destinations leave every dock tile unselected.
+  Sidebar page links retain their exact route and focus main content when
+  selected. Dock destinations never become companion launchers.
   The shell owns one joined Panel around navigation and page content, with a
   panel-gap outer gutter beside the dock, at the right and below. Nested Panels
   keep their opaque fill and clipping but drop individual borders, radii, and shadows. Layout

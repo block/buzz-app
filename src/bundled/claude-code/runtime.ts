@@ -205,13 +205,16 @@ export class ClaudeRuntime {
   >();
   /** Solo chats whose title was already offered to the host this app run. */
   private readonly titled = new Set<string>();
+  /** Counts changes of credentials, which start processes again. */
+  private credentials = 0;
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
     (_conversation, message) =>
       respond(undefined, {}, message, this.added(), listing(this.added())),
     undefined,
-    () => addedKey(this.added()),
+    // A spare started with old credentials is not handed over either.
+    () => JSON.stringify([addedKey(this.added()), this.credentials]),
   );
 
   constructor(
@@ -242,6 +245,10 @@ export class ClaudeRuntime {
     private readonly target?: AgentExecution,
     private readonly targetKey?: string,
   ) {}
+
+  /** A failed turn's error as its report says it, such as where to fix
+   * Claude's credentials. */
+  explain: (error: string) => string = (error) => error;
 
   private executionKey(agent: AgentKey, conversation: string) {
     const scope = this.reads(agent)?.scope;
@@ -823,6 +830,13 @@ export class ClaudeRuntime {
     });
   }
 
+  /** The credentials changed: idle sessions stop, to start again with the new
+   * ones, and busy ones when they next fall idle. */
+  restart() {
+    this.credentials++;
+    for (const entry of this.agents.values()) entry.sessions.reconfigure();
+  }
+
   dispose() {
     this.disposed = true;
     for (const pending of this.opening.values())
@@ -1209,7 +1223,7 @@ export class ClaudeRuntime {
     return agent
       .publish({
         kind: 9,
-        content: `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+        content: `⚠️ I couldn't finish that: ${this.explain(error.slice(0, 500))}`,
         tags: [
           ["h", channel],
           ...(topLevel
@@ -1438,6 +1452,7 @@ export class ClaudeRuntime {
           entry.team,
           entry.name,
           addedKey(this.added()),
+          this.credentials,
         ]),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;

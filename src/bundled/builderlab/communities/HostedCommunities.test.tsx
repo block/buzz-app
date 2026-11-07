@@ -350,6 +350,9 @@ it("attributes transfer limit_reached to the recipient, not this owner's quota",
     Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
   fireEvent.click(await screen.findByRole("button", { name: "Transfer" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Recipient npub")).toHaveFocus(),
+  );
   fireEvent.change(screen.getByPlaceholderText("npub1…"), {
     target: { value: npubEncode(other) },
   });
@@ -1110,6 +1113,19 @@ async function confirmDeletion(host = archived.normalized_host) {
 
 const deletionPosts = () =>
   calls.filter(([url]) => url === "/api/builderlab/delete");
+
+it("starts permanent deletion in the host field with submission gated", async () => {
+  routes["/api/builderlab/list"] = () => ({ communities: [archived] });
+  renderCard();
+  const dialog = await openDeletion();
+  await waitFor(() =>
+    expect(within(dialog).getByLabelText("Type the exact host")).toHaveFocus(),
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Start deletion" }),
+  ).toBeDisabled();
+  expect(deletionPosts()).toEqual([]);
+});
 
 async function startUncertainDeletion() {
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });

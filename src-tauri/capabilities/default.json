@@ -158,6 +158,8 @@
     "allow-app-agent-remember",
     "allow-app-agent-claim",
     "allow-app-agent-release",
+    "allow-claude-api-key-status",
+    "allow-claude-api-key-set",
     "allow-jev-classifier-status",
     "allow-jev-classifier-set-key",
     "allow-jev-classifier-clear-key",

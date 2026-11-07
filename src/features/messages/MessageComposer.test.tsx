@@ -10389,9 +10389,9 @@ it.each([
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Honey is in oss.example.com. Bringing it here adds the same agent",
     );
-    // Enter on the highlighted Don't bring declines: nothing joins, sends, or is lost.
+    // Enter on the focused Don't bring declines: nothing joins, sends, or is lost.
     const safe = screen.getByRole("button", { name: "Don't bring" });
-    expect(safe).toHaveAttribute("data-variant", "prominent");
+    expect(safe).toHaveAttribute("data-variant", "subtle");
     await waitFor(() => expect(safe).toHaveFocus());
     await userEvent.setup().keyboard("{Enter}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

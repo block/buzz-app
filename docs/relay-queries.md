@@ -689,8 +689,9 @@ incoming events, finite reads and own echoes enter the same session reconciliati
 path. Reconnect performs bounded replay and revalidates retained channel heads and
 filtered views. History bounds still come from finite channel reads; replay does
 not claim complete history. Each global route reports at establishment whether it
-stayed continuous: it resumed from an earlier connection's cursor and its replay
-ended below the limit. Held profiles and the roster are read in full again only
+stayed continuous: it resumed from an earlier connection's cursor, its replay
+ended below the limit, and the session decoded every replay event (a rejected
+event also counts against the limit). Held profiles and the roster are read in full again only
 when their route (`profiles`, `membership`) was not continuous, failed or went
 unreported, or when the last full read has not succeeded yet. Continuity is a skip
 rule, not a delivery proof: the relay can drop a live frame for a slow client
@@ -1008,6 +1009,89 @@ keeps it); the re-read pages past the retained range until it reaches one of
 them, within the thread page bound. Past it, the replies it never reached go
 and the view settles back on the range the reader had, so later refreshes stay
 proportional to it.
+
+A channel route also reports at establishment which of its channels stayed
+continuous: the channel resumed from an earlier connection's cursor, its replay
+covers the full 960 s resume lag before that cursor, its own filter's replay
+ended below that filter's limit (an event that names no single channel of a
+batch counts against each of them), and the session could apply every event of
+that replay by itself. A replay is not continuous for a channel when it carries
+a reply or a deletion (each changes a thread summary, kind 39005, which the
+relay never stores, so no replay carries the new one), an edit or reaction that
+arrives before the message it targets (the replay is newest first, and the
+session drops an auxiliary event whose target it does not hold), an event the
+session could not decode, or an event whose `h` tag names none of the route's
+channels. A reaction or edit to a message held before the drop, a new
+top-level message and a membership notice keep it continuous. The broker
+reports no channel of a batch continuous when one of its channels is no longer
+current, because it drops that batch's untagged traffic.
+
+A batch of more than 10 channels sends its REQ live-only and replays through
+separate history routes, so at its EOSE it establishes only the channels no
+history route still replays. Each other channel establishes when its replay
+ends, with that replay's continuity: a combined replay counts a channel
+continuous only on the page where its paging ends below the limit, a split one
+by its own filter's count, and the same repairs apply. A replay that fails or
+is stopped establishes its channels at once with nothing continuous, so they
+catch up. A connection that drops before a channel's replay ends sets no cursor
+for it: the next connection resumes from the older cursor. A channel whose
+live batch is not live when its replay ends (the batch failed or is being
+retried) establishes at that batch's next EOSE, with nothing continuous. A
+grant re-sends the batch live-only, so it also ends the continuity of every
+channel of that batch whose history replay has started and not ended.
+
+When access ends, the relay leaves the channel out of its batch with no frame,
+and the channel's cursor stays. A grant that restores access may reach the
+broker after the batch's EOSE, for example in the membership replay of the
+same reconnect, so the batch can first report that channel continuous. The grant then re-sends the batch, whose EOSE reports it
+again with nothing continuous. The grant reaches the session before anything
+the re-sent batch delivers, and before any report the browser broker holds back
+under backpressure (it writes live events at once). The window keeps the rows it
+holds when the grant arrives: while the relay left the channel out, the stream
+delivered nothing for it and a read was denied. Until a catch-up started after
+the grant takes those rows (one already running may have read its head first), a continuous report does not resume the window, and
+the next catch-up (or the next drop's) pages back to them, past the rows the
+re-sent batch delivered. A report with nothing continuous and no grant since
+pages back to the rows held when it arrives, so a routine re-send after a
+continuous resume reads only the head.
+
+A retained window that was verified when the stream dropped, and a thread view
+that was settled then, each holding rows from a read started at most 15 minutes
+before the drop, skip the head, page and thread reads for such a channel (a
+head read the window never took, such as a prefetch, does not count): the replay already delivered every channel event since the drop,
+including ones backdated within the resume lag, and the live stream had
+delivered everything before it. The window becomes verified at once, and a
+membership notice read that failed or was cut before the drop resumes (it reads
+nothing when none is owed). Any other case keeps the catch-up above: a replay
+at the limit, a channel with no cursor, a window restored or read before the
+stream was up, a window or thread read again while the stream was down, a
+window still owed a catch-up from an earlier drop, and a live-only renewal,
+including a batch re-sent for a grant (it replays nothing, so it proves nothing), and, on an ordinary reconnect, a channel granted while its batch was not yet live (its replay starts from a cursor of a stream the relay may have left that channel out of, even when the REQ follows the grant). A planned renewal is the exception: its carried replay is trusted to cover the renewal, so its batch stays quiet when that replay ends below the limit, even for a channel granted before its REQ, unless the replay carried a repair above: then it establishes, and those channels catch up. A grant also ends that channel's cursor, and no connection sets it again until a REQ sent after the grant reaches EOSE, so a rebuilt batch or a later connection cannot restore it. While the session's initial five-minute
+floor truncates the resume lag, channel and global routes keep their reconnect
+repair reads even when the replay ends below the limit, so the skip applies
+only once the live connection is about 11 minutes old.
+
+An event that neither the live stream nor the replay carries is no longer
+repaired by that reconnect's head read for a continuous channel. In general, a
+replay with fewer events than its limit is complete only if the relay applies
+every filter before the limit. Known cases where it does not: the relay omits a
+channel deleted during the outage from the replay without a frame, so it
+reports continuous (the recovery tick's roster read removes it); the relay
+checks some per-reader visibility (`event_visible_to_reader`) after the limit,
+so a replay the limit cut can arrive with fewer events than the limit; and
+the relay drops a live frame without notice when the connection's send buffer
+is full (`try_send_ws_message`, `BUZZ_SEND_BUFFER`), most likely while batch
+replays fill it, so the live stream before a drop can have a gap that no replay
+covers. The 15-minute head read age bounds that gap: a frame dropped before the
+latest head read is in that read, and one dropped after it is newer than the
+replay's start, unless its author backdated it by more than a minute. The live
+batch refresh re-sends each batch every 15 minutes with nothing continuous, so
+its head reads keep most windows within that age, and a reconnect then reads
+nothing. The live connection has that same gap between refreshes with no
+reconnect at all; the fix belongs in the relay (end the subscription when it
+drops a frame). The count
+also requires a relay that sends `CLOSED`, not `EOSE`, after a failed history
+read (block/buzz #8692).
 
 Removing a batch member rebuilds only that batch's survivor scope. One established
 source overlaps its zero-replay replacement until EOSE; another removal supersedes

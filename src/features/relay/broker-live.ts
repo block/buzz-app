@@ -13,6 +13,7 @@ import {
   liveJoined,
   liveProvenance,
   liveGlobal,
+  liveContinuous,
   type LiveCallbacks,
   type LiveSnapshot,
   type LiveRoute,
@@ -388,15 +389,32 @@ export function subscribeBrokerTraffic(
                 const ids = (data as { channels?: unknown }).channels;
                 const revision = (data as { interestRevision?: unknown })
                   .interestRevision;
+                const continuous = (current: readonly string[]) =>
+                  liveContinuous(
+                    (data as { continuous?: unknown }).continuous,
+                    current,
+                  );
                 if (ids !== undefined) {
-                  const current = liveChannels(ids).filter((id) =>
+                  const all = liveChannels(ids);
+                  const current = all.filter((id) =>
                     currentChannel(id, revision),
                   );
-                  if (current.length) callbacks.established(current);
+                  // Traffic naming a channel no longer current was dropped
+                  // for the whole batch, so no channel of it is continuous.
+                  const resumed =
+                    current.length < all.length ? [] : continuous(current);
+                  if (resumed.length)
+                    callbacks.established(current, undefined, resumed);
+                  else if (current.length) callbacks.established(current);
                 } else {
                   const id = channelField(data);
                   if (id) {
-                    if (currentChannel(id, revision)) callbacks.established(id);
+                    if (currentChannel(id, revision)) {
+                      const resumed = continuous([id]);
+                      if (resumed.length)
+                        callbacks.established(id, undefined, resumed);
+                      else callbacks.established(id);
+                    }
                   } else
                     callbacks.established(
                       undefined,

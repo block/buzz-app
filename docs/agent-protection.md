@@ -194,23 +194,32 @@ runtime dependency graph or defend against other unsandboxed same-user programs.
 Claude's protected agents and security reviews run its pinned release this way:
 the host runs only its own verified copy, so a changed file in the download
 folder never runs. Both ignore Claude settings files, though Claude still reads
-its folder's sign-in and cached managed settings. Security reviews also have
-their own sign-in, in a Claude folder of their own that Buzz Security
-hides from contained agents (`~/Library/Application Support/Buzz/claude-code-review-home`).
-To set it up, run `claude setup-token` in Terminal, then paste the token it
-prints under **Sign in for reviews** in **Settings → Agent setup → Harness
-defaults → Claude → Edit configuration**. It needs a Claude Pro, Max, Team or
-Enterprise subscription, not an API key or gateway, and lasts a year. Until it
-is saved, and once it expires or is revoked, Claude reviews fail closed; save a
-new token or choose another review model. A review's 60-second budget includes
+its folder's cached managed settings. Security reviews also run in a Claude
+folder of their own that Buzz Security hides from contained agents
+(`~/Library/Application Support/Buzz/claude-code-review-home`), with the
+Anthropic API key saved in **Settings → Agent setup → Harness defaults →
+Claude → Edit configuration**, and no other credentials or API endpoint from
+the environment. The key is not in a file: Buzz keeps it in the OS credential
+store (Keychain on macOS, readable without a prompt only by Buzz itself), and
+native code sets it as `ANTHROPIC_API_KEY` only in the Claude processes the
+Claude plugin starts (`claude_key.rs`). Those processes pass it on to what
+they start: commands a Claude agent runs, its hooks and its MCP servers can
+read the key from their environment. Buzz does not set Claude's
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, which would also strip `SSH_AUTH_SOCK`,
+`GIT_*` and every `*TOKEN` and `*KEY` variable. Keeping the key out of the
+app's web view is the Claude plugin's own rule, not one native code enforces;
+native code only refuses the key to other plugins and processes. Until a key is saved, and once
+Anthropic rejects it, Claude reviews fail closed; save a working key or choose
+another review model. A review's 60-second budget includes
 waiting for Buzz to download that release the first time; a longer download
 fails the review closed and carries on for later reviews.
 Known Claude gaps: while a review runs, other processes of yours, likely
 contained agents too (not checked against the pinned release), can read its
-sign-in from the review's process environment. Protected Claude agents, unlike
+API key from the review's process environment, as every Claude agent has it in
+its own. Protected Claude agents, unlike
 reviews, still use `~/.claude`, which other contained agents can write, so one
-can plant a sign-in there, or cached managed settings that carry hooks and env
-into a protected run's checks. Their transcripts live in `~/.claude/projects`
+can plant cached managed settings there that carry hooks and env into a
+protected run's checks. Their transcripts live in `~/.claude/projects`
 too, so a contained agent can swap one between a run's checks or before it
 resumes.
 Broader restrictions on workspace writes, startup files and login jobs belong to

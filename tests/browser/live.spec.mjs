@@ -214,10 +214,9 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   ).toBeInViewport();
 });
 
-test("post-reconnect finite catch-up keeps paged history, cursor and reading position", async ({
-  page,
-  app,
-}) => {
+/** Page once into alpha's history and read from its upper edge, so a
+ * reconnect must keep both the paged range and the reading position. */
+async function pagedReader(page, app) {
   await ready(page, app);
   await edge(page, -1);
   await expect.poll(() => app.pending.length).toBe(1);
@@ -230,7 +229,23 @@ test("post-reconnect finite catch-up keeps paged history, cursor and reading pos
   ).toBeAttached();
   await settle(page);
   await expectAnchor(page, before);
-  const reading = await upper(page);
+  return { pageOne, reading: await upper(page) };
+}
+
+/** The paged cursor survived: the next older page continues below page one. */
+async function pageOnward(page, app, pageOne) {
+  await edge(page, -1);
+  await expect.poll(() => app.pending.length).toBe(1);
+  const pageTwo = app.pending.shift();
+  expect(pageTwo.filter.until).toBeLessThan(pageOne.filter.until);
+  pageTwo.release();
+}
+
+test("post-reconnect finite catch-up after a cut replay keeps paged history, cursor and reading position", async ({
+  page,
+  app,
+}) => {
+  const { pageOne, reading } = await pagedReader(page, app);
   const calls = heads(app, "alpha").length;
   app.relay.disconnect("primary");
   const missed = app.append(
@@ -239,18 +254,54 @@ test("post-reconnect finite catch-up keeps paged history, cursor and reading pos
     "Reconnect gap repaired",
     false,
   );
+  // A replay that reaches the filter's limit may have lost older events.
+  app.relay.replayNext(
+    "primary",
+    "alpha",
+    Array.from({ length: 500 }, () => missed),
+  );
   await expect.poll(() => heads(app, "alpha").length).toBeGreaterThan(calls);
   await expect(notice(page)).toHaveCount(0);
   await settle(page);
   await expectAnchor(page, reading);
-  await edge(page, -1);
-  await expect.poll(() => app.pending.length).toBe(1);
-  const pageTwo = app.pending.shift();
-  expect(pageTwo.filter.until).toBeLessThan(pageOne.filter.until);
-  pageTwo.release();
+  await pageOnward(page, app, pageOne);
   await end(page);
   await expect(
     history(page).locator(`[data-message-id="${missed.id}"]`),
+  ).toBeInViewport();
+});
+
+test("a reconnect near startup repairs an under-limit replay and keeps paged history, cursor and reading position", async ({
+  page,
+  app,
+}) => {
+  const { pageOne, reading } = await pagedReader(page, app);
+  const calls = heads(app, "alpha").length;
+  app.relay.disconnect("primary");
+  const missed = app.append(
+    "primary",
+    "alpha",
+    "Reconnect gap replayed",
+    false,
+  );
+  app.relay.replayNext("primary", "alpha", [missed]);
+  // The session's startup floor truncates the full backdate allowance, so
+  // even this under-limit replay needs a repair read.
+  await expect.poll(() => heads(app, "alpha").length).toBeGreaterThan(calls);
+  await expect(
+    history(page).locator(`[data-message-id="${missed.id}"]`),
+  ).toBeAttached();
+  await expect(notice(page)).toHaveCount(0);
+  await settle(page);
+  await expectAnchor(page, reading);
+  await pageOnward(page, app, pageOne);
+  await end(page);
+  await expect(
+    history(page).locator(`[data-message-id="${missed.id}"]`),
+  ).toBeInViewport();
+  const after = app.append("primary", "alpha", "Live after the replay");
+  await expect(
+    history(page).locator(`[data-message-id="${after.id}"]`),
   ).toBeInViewport();
 });
 

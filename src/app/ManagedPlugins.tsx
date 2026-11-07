@@ -248,6 +248,7 @@ export function ManagedPluginReview({
   onInstalled?: () => void;
   onClose: () => void;
 }) {
+  const cancel = useRef<HTMLButtonElement>(null);
   const imports = plugins.imports;
   const key = entry && entryKey(entry);
   useEffect(() => holdReview?.(), [holdReview]);
@@ -411,6 +412,7 @@ export function ManagedPluginReview({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
+      initialFocus={cancel}
       title={
         ready
           ? updating
@@ -448,7 +450,7 @@ export function ManagedPluginReview({
               Try again
             </Button>
           )}
-          <Button disabled={installing} onClick={onClose}>
+          <Button ref={cancel} disabled={installing} onClick={onClose}>
             {ready ? "Cancel" : "Close"}
           </Button>
           {ready && (

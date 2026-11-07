@@ -584,17 +584,22 @@ function legacyPageTarget(
       ...scope,
     };
   }
+  // Drafts & sent was briefly a Messages route, before that its own plugin.
   if (
-    (target.kind === "page" || target.kind === "plugin") &&
-    target.pluginId === "buzz.drafts-sent" &&
-    (target.pageId === undefined || target.pageId === "drafts-sent")
+    (target.kind === "page" &&
+      target.pluginId === "buzz.channels" &&
+      target.pageId === "channels" &&
+      target.route?.version === 1 &&
+      target.route.params === "drafts-sent") ||
+    ((target.kind === "page" || target.kind === "plugin") &&
+      target.pluginId === "buzz.drafts-sent" &&
+      (target.pageId === undefined || target.pageId === "drafts-sent"))
   ) {
     return {
       version: 1,
       kind: "page",
-      pluginId: "buzz.channels",
-      pageId: "channels",
-      route: { version: 1, params: "drafts-sent" },
+      pluginId: "buzz.drafts-and-sent",
+      pageId: "drafts-sent",
       ...scope,
     };
   }

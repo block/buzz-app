@@ -256,6 +256,15 @@ until focus enters. This preserves body-field or first-action focus; Base UI
 retains ownership of touch behavior. Explicit `initialFocus` overrides remain
 authoritative. Close then participates in the normal Tab cycle.
 
+For a simple confirmation, generally pass an explicit `initialFocus` ref to
+Cancel (or its equivalent safe dismissal action), so the focused footer action
+makes it clear that Enter cancels. Preserve intentional primary-action defaults.
+When a confirmation requires a field or checkbox gate, start at the relevant
+body control instead; the gate prevents accidental submission. Keep existing
+form-field focus targets. Do not let header Close become an accidental
+alternative default when Cancel is the intended starting point. A dialog
+without a separate cancellation action can retain Close as its starting point.
+
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
 behavior explicitly. An asynchronous operation must not gain a dismissal path that
 loses work. Keep failure and recovery in the modal with entered values intact.
@@ -753,10 +762,17 @@ panel grid must have a shrinkable column so tabs do not widen other content.
 ## Focus appearance
 
 Keyboard focus is visible, and the component recipes in this guide own the ring.
-Every recipe is gated on the app-root modality fact `html[data-keyboard-navigation]`,
-so a pointer press leaves nothing behind. Keep focusability, Tab order, input
-modality, selection, and focus restoration intact, and do not add a local
-replacement ring where a component recipe already exists.
+Buttons use a 2px `border-focus` outline with a 2px offset, fitting the existing
+4px focus allowance in scrolling dialog footers. In Dialog and AlertDialog,
+the focused button always shows this ring, including automatic focus after pointer
+entry: it identifies what Enter will activate without changing the primary and
+secondary action styling. This applies to focused body and header buttons as well
+as footer actions. A focused split-button half paints its ring above its neighbour.
+Other button contexts and control recipes are gated on
+the app-root modality fact `html[data-keyboard-navigation]`, so ordinary pointer
+use leaves no keyboard ring. Keep focusability, Tab order, input modality, selection,
+and focus restoration intact, and do not add a local replacement ring where a
+component recipe already exists.
 
 Shared text fields are the one deliberate exception, and they replace the ring
 rather than removing it. `styles/forms.css` drops the outline for editable
@@ -1983,7 +1999,7 @@ Reuse and compose existing components before adding another.
 - **Variants:** add a missing visual variant for a real use and mark it proposed. Do not cancel several existing states to force an unsuitable variant to fit.
 - **Props:** use named variants for visual differences, never a new boolean appearance prop. Keep data and behavior props distinct from appearance choices.
 - **Ownership:** keep a component with its first feature. A second real use can justify proposing it as shared.
-- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
+- **Focus recipes:** require `html[data-keyboard-navigation]` and `:focus-visible` on the control, except the always-visible focused dialog Button ring documented above. Do not rely on a base-layer reset to override component-layer styles, and do not add a `:focus-within` ring around a container that already has a control recipe. Where a scrolling list would clip an offset ring, inset it with `outline-offset: -2px` instead of shrinking it. Shared fields and the composer follow the exceptions documented above.
 
 ## Using the system
 

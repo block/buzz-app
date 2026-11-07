@@ -61,7 +61,7 @@ type Confirm = {
   title: string;
   description: string;
   action: string;
-  /** Both start on Cancel: permanent shows the action in red, guarded highlights Cancel. */
+  /** Both start on Cancel; permanent also shows the action in red. */
   caution?: "permanent" | "guarded";
   run(): Promise<void>;
 };
@@ -89,6 +89,7 @@ export function HostedCommunities({
   const [action, setAction] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   const proceed = useRef<HTMLButtonElement>(null);
   const [transfer, setTransfer] = useState<Community | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Community | null>(null);
@@ -954,13 +955,13 @@ export function HostedCommunities({
           title={confirm.title}
           description={confirm.description}
           pending={busy}
-          initialFocus={confirm.caution ? undefined : proceed}
+          initialFocus={confirm.caution ? cancel : proceed}
           onClose={() => setConfirm(null)}
           {...(failure ? { children: failure } : {})}
           actions={
             <>
               <Button
-                variant={confirm.caution === "guarded" ? "prominent" : "subtle"}
+                ref={cancel}
                 disabled={busy}
                 onClick={() => setConfirm(null)}
               >
@@ -969,11 +970,7 @@ export function HostedCommunities({
               <Button
                 ref={proceed}
                 variant={
-                  confirm.caution === "permanent"
-                    ? "destructive"
-                    : confirm.caution
-                      ? "subtle"
-                      : "prominent"
+                  confirm.caution === "permanent" ? "destructive" : "prominent"
                 }
                 loading={busy}
                 onClick={() =>
@@ -1033,6 +1030,7 @@ function DeleteCommunityDialog({
   close(): void;
   onDelete(): void;
 }) {
+  const hostInput = useRef<HTMLInputElement>(null);
   const [host, setHost] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
   const expected = community.normalized_host ?? "";
@@ -1043,6 +1041,7 @@ function DeleteCommunityDialog({
       open
       onOpenChange={(open) => !open && close()}
       size="compact"
+      initialFocus={hostInput}
       title={`Permanently delete ${name}?`}
       description="This starts an irreversible deletion."
       preventClose={pending}
@@ -1070,6 +1069,7 @@ function DeleteCommunityDialog({
         </p>
         <Field label="Type the exact host">
           <Input
+            ref={hostInput}
             autoComplete="off"
             spellCheck={false}
             value={host}
@@ -1156,6 +1156,7 @@ function TransferDialog({
   close(): void;
   onTransfer(npub: string): void;
 }) {
+  const recipientInput = useRef<HTMLInputElement>(null);
   const [recipient, setRecipient] = useState("");
   const valid = /^npub1[02-9ac-hj-np-z]{58}$/.test(recipient);
   return (
@@ -1163,6 +1164,7 @@ function TransferDialog({
       open
       onOpenChange={(open) => !open && close()}
       preventClose={busy}
+      initialFocus={recipientInput}
       title="Transfer ownership"
       description={`Transfer ${name} to another person. You become a regular member. The recipient needs a connected Buzz identity first, and this can’t be undone.`}
       actions={
@@ -1191,6 +1193,7 @@ function TransferDialog({
         }
       >
         <Input
+          ref={recipientInput}
           autoComplete="off"
           spellCheck={false}
           placeholder="npub1…"

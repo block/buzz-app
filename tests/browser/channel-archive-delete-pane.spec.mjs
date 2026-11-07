@@ -125,7 +125,7 @@ for (const action of ["archive", "delete"]) {
         dialog.getByRole("button", { name: label, exact: true }),
       ).toHaveAttribute(
         "data-variant",
-        action === "delete" ? "destructive" : "subtle",
+        action === "delete" ? "destructive" : "prominent",
       );
       await expect(
         dialog.getByRole("button", {

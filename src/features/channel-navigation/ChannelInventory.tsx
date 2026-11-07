@@ -48,6 +48,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../relay/contracts";
+import { MAX_ALL_POSTS_CHANNELS } from "../notifications/preferences";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useRecoveryOwns } from "../relay/RecoveryNotice";
@@ -130,6 +131,8 @@ type Inventory = {
 };
 
 const noSubscription = () => () => {};
+const noPosts: readonly string[] = [];
+type AlertLevel = "all" | "mentions" | "mute";
 const emptyContributions: readonly RegisteredSidebarSection[] = [];
 const noSidebarSections = () => emptyContributions;
 const emptyRowContributions: readonly RegisteredSidebarRows[] = [];
@@ -211,6 +214,11 @@ export function ChannelInventory({
   }, [list.activityStatus]);
   const handoff = useChannelNavigation();
   const mute = handoff?.session === queries ? handoff.mute : undefined;
+  const alerts = handoff?.alerts;
+  const allPosts = useSyncExternalStore(
+    alerts?.subscribe ?? noSubscription,
+    () => alerts?.snapshot().preferences.allPosts ?? noPosts,
+  );
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
@@ -897,11 +905,76 @@ export function ChannelInventory({
     const muteable =
       queries.sidebarPreferences.muteWritable && !!preferences.data;
     const readable = queries.unread.sync().capability === "frontier-sync";
-    if (muteable && mute) {
-      const intent = mute.intents.get(channel.id);
-      const muted = intent?.pending
-        ? intent.muted
-        : (preferences.data?.muted.includes(channel.id) ?? false);
+    const intent = mute?.intents.get(channel.id);
+    const muted = intent?.pending
+      ? intent.muted
+      : (preferences.data?.muted.includes(channel.id) ?? false);
+    // Every DM message already alerts; Solo chats own their completion alerts.
+    if (
+      alerts &&
+      channel.channelType !== "dm" &&
+      channel.channelType !== "solo"
+    ) {
+      const level: AlertLevel = muted
+        ? "mute"
+        : allPosts.includes(channel.id)
+          ? "all"
+          : "mentions";
+      // Leaving Mute needs the same confirmed write as entering it.
+      const writable = muteable && !!mute;
+      actions.push(
+        <MenuSubmenu key="notifications">
+          <MenuSubmenuTrigger
+            disabled={surface?.pending ?? readWrite?.pending ?? false}
+          >
+            <MenuIcon>
+              {muted ? <BellSlashIcon size={14} /> : <BellIcon size={14} />}
+            </MenuIcon>
+            Notifications
+          </MenuSubmenuTrigger>
+          <MenuSubmenuPopup
+            aria-label={`Notifications for ${channel.name}`}
+            finalFocus={false}
+          >
+            <MenuGroup>
+              <MenuGroupLabel>Notify you about…</MenuGroupLabel>
+            </MenuGroup>
+            <MenuRadioGroup
+              value={level}
+              onValueChange={(next: AlertLevel) =>
+                changeAlertLevel(channel, level, next, surface)
+              }
+            >
+              <MenuRadioItem
+                value="all"
+                closeOnClick={false}
+                disabled={
+                  (muted && !writable) ||
+                  (!allPosts.includes(channel.id) &&
+                    allPosts.length >= MAX_ALL_POSTS_CHANNELS)
+                }
+              >
+                All new posts
+              </MenuRadioItem>
+              <MenuRadioItem
+                value="mentions"
+                closeOnClick={false}
+                disabled={muted && !writable}
+              >
+                Just mentions
+              </MenuRadioItem>
+              <MenuRadioItem
+                value="mute"
+                closeOnClick={false}
+                disabled={!writable}
+              >
+                Mute
+              </MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuSubmenuPopup>
+        </MenuSubmenu>,
+      );
+    } else if (muteable && mute) {
       actions.push(
         <MenuItem
           key="mute"
@@ -1106,15 +1179,54 @@ export function ChannelInventory({
     name: string,
     muted: boolean,
     surface?: ChannelMenuSurface,
+    settled?: (saved: boolean) => void,
   ) => {
-    if (!mute) return;
-    mute.change(channelId, name, muted);
+    if (!mute) return settled?.(false);
+    mute.change(channelId, name, muted, settled);
     if (surface) {
       surface.close();
       surface.focus();
     } else {
       setRowFocus(channelId);
       closeRowMenu();
+    }
+  };
+  /** Mute stays the synced sidebar preference; All new posts is local to
+   * this device's notification preferences, so either half can change alone. */
+  const changeAlertLevel = (
+    channel: ChannelSummary,
+    from: AlertLevel,
+    to: AlertLevel,
+    surface?: ChannelMenuSurface,
+  ) => {
+    if (!alerts || from === to) return;
+    const choose = () => {
+      if (to === "mute") return;
+      const posts = alerts.snapshot().preferences.allPosts;
+      const listed = posts.includes(channel.id);
+      if (to === "all" && !listed)
+        alerts.updatePreferences({ allPosts: [...posts, channel.id] });
+      else if (to === "mentions" && listed)
+        alerts.updatePreferences({
+          allPosts: posts.filter((id) => id !== channel.id),
+        });
+    };
+    if (to === "mute") changeMute(channel.id, channel.name, true, surface);
+    // Leaving Mute changes the device's level only once unmute is confirmed,
+    // so a failed unmute keeps the earlier choice. Its Retry only unmutes.
+    else if (from === "mute")
+      changeMute(channel.id, channel.name, false, surface, (saved) => {
+        if (saved) choose();
+      });
+    else {
+      choose();
+      if (surface) {
+        surface.close();
+        surface.focus();
+      } else {
+        setRowFocus(channel.id);
+        closeRowMenu();
+      }
     }
   };
   // Publish presentation callbacks, not a second mutation owner. Header renders

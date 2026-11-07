@@ -53,6 +53,8 @@ import {
   ChannelNavigationProvider,
   useChannelNavigation,
 } from "./ChannelNavigationState";
+import type { ChannelAlerts } from "./ChannelNavigationState";
+import { DEFAULT_NOTIFICATION_PREFERENCES } from "../notifications/preferences";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "../../app/shell/PrimarySidebar.module.css";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
@@ -222,9 +224,10 @@ function fixture(
       </nav>
     ),
     sidebarVisible = true,
+    alerts?: ChannelAlerts,
   ) => (
     <ToastProvider>
-      <ChannelNavigationProvider relay={relay}>
+      <ChannelNavigationProvider relay={relay} alerts={alerts}>
         {sidebarVisible && (
           <PrimarySidebar
             relay={relay}
@@ -496,6 +499,125 @@ it.each(["Retry", "Dismiss"] as const)(
     }
   },
 );
+
+/** Account-local alert choices, as NotificationsService exposes them. */
+function alertsFixture() {
+  let preferences = DEFAULT_NOTIFICATION_PREFERENCES;
+  const listeners = new Set<() => void>();
+  let snapshot = { preferences };
+  return {
+    snapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    updatePreferences(patch: Partial<typeof preferences>) {
+      preferences = { ...preferences, ...patch };
+      snapshot = { preferences };
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+      return true;
+    },
+  } as unknown as ChannelAlerts;
+}
+
+it("chooses All new posts, Mute and Just mentions for a channel; DMs keep the Mute toggle", async () => {
+  let muted: string[] = [];
+  const write = vi.fn(
+    async ({ channelId, muted: next }: { channelId: string; muted: boolean }) =>
+      (muted = next
+        ? [...muted, channelId]
+        : muted.filter((id) => id !== channelId)),
+  );
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted,
+    }),
+    available: true,
+    writeMute: write,
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    { id: "dm", name: "Alice", channelType: "dm" },
+  ]);
+  const alerts = alertsFixture();
+  const user = userEvent.setup();
+  const level = async (name: string) => {
+    // A muted row's name also carries its crossed-out bell.
+    fireEvent.keyDown(screen.getByRole("button", { name: /^alpha/ }), {
+      key: "ContextMenu",
+    });
+    await user.hover(
+      await screen.findByRole("menuitem", { name: "Notifications" }),
+    );
+    expect(
+      await screen.findByRole("menu", { name: "Notifications for alpha" }),
+    ).toHaveTextContent("Notify you about…");
+    const checked = screen
+      .getAllByRole("menuitemradio")
+      .filter((item) => item.getAttribute("aria-checked") === "true")
+      .map((item) => item.textContent);
+    fireEvent.click(screen.getByRole("menuitemradio", { name }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menu", { name: "Actions for alpha" }),
+      ).toBeNull(),
+    );
+    return checked;
+  };
+  try {
+    render(h.view("alpha", undefined, true, alerts));
+    await screen.findByRole("button", { name: "alpha" });
+    expect(await level("All new posts")).toEqual(["Just mentions"]);
+    expect(alerts.snapshot().preferences.allPosts).toEqual(["alpha"]);
+    expect(write).not.toHaveBeenCalled();
+
+    expect(await level("Mute")).toEqual(["All new posts"]);
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledExactlyOnceWith(
+        { channelId: "alpha", muted: true },
+        expect.any(AbortSignal),
+      ),
+    );
+    // Mute wins in the alert gate; the device keeps the earlier choice.
+    expect(alerts.snapshot().preferences.allPosts).toEqual(["alpha"]);
+
+    await waitFor(() =>
+      expect(preferences.queries.snapshot().data?.muted).toEqual(["alpha"]),
+    );
+    // A failed unmute stays muted and keeps the device's earlier choice.
+    write.mockRejectedValueOnce(new Error("offline"));
+    expect(await level("Just mentions")).toEqual(["Mute"]);
+    await screen.findByRole("dialog", { name: "Couldn’t unmute alpha" });
+    expect(alerts.snapshot().preferences.allPosts).toEqual(["alpha"]);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(await level("Just mentions")).toEqual(["Mute"]);
+    await waitFor(() =>
+      expect(alerts.snapshot().preferences.allPosts).toEqual([]),
+    );
+    expect(write).toHaveBeenLastCalledWith(
+      { channelId: "alpha", muted: false },
+      expect.any(AbortSignal),
+    );
+
+    // Every DM message already alerts, so a DM offers only Mute.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Alice" }), {
+      key: "ContextMenu",
+    });
+    expect(await screen.findByRole("menuitem", { name: "Mute" })).toBeVisible();
+    expect(
+      screen.queryByRole("menuitem", { name: "Notifications" }),
+    ).toBeNull();
+  } finally {
+    preferences.dispose();
+  }
+});
 
 it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
   const user = userEvent.setup();

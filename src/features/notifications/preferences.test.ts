@@ -18,11 +18,18 @@ it("values saved before per-category sounds restore with the defaults", () => {
 });
 
 it.each([
-  { mention: "ping", direct: "unison", thread: "doop", agent: "doodone" },
+  {
+    mention: "ping",
+    direct: "unison",
+    thread: "doop",
+    post: "soft",
+    agent: "doodone",
+  },
   {
     mention: "silent",
     direct: "silent",
     thread: "silent",
+    post: "silent",
     agent: "silent",
   },
 ])(
@@ -40,3 +47,16 @@ it.each([
     ).toThrow("Invalid notification sounds");
   },
 );
+
+it("channels set to All new posts round-trip; older values restore none", () => {
+  expect(parsePreferences(stored).allPosts).toEqual([]);
+  expect(
+    parsePreferences(
+      JSON.parse(JSON.stringify({ ...stored, allPosts: ["c1", "c2"] })),
+    ).allPosts,
+  ).toEqual(["c1", "c2"]);
+  for (const allPosts of ["c1", [""], ["c1", "c1"], [7]])
+    expect(() => parsePreferences({ ...stored, allPosts })).toThrow(
+      "Invalid notification channels",
+    );
+});

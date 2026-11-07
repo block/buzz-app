@@ -34,9 +34,11 @@ export function useOptimisticMute(
     channelId: string,
     name: string,
     muted: boolean,
+    /** Told whether the session confirmed this write. */
+    settled?: (saved: boolean) => void,
   ) {
     const active = lifetime.current;
-    if (!active) return;
+    if (!active) return settled?.(false);
     const intent: MuteIntent = { channelId, name, muted, pending: true };
     setIntents((current) => new Map(current).set(channelId, intent));
     const finish = (error?: string) => {
@@ -56,8 +58,10 @@ export function useOptimisticMute(
         // The session owns saving; leaving Messages must not cancel the intent.
         await active.write(channelId, muted);
         finish();
+        settled?.(true);
       } catch (error) {
         finish(error instanceof Error ? error.message : String(error));
+        settled?.(false);
       }
     })();
   }, []);

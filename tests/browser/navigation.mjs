@@ -1,5 +1,32 @@
 import { expect } from "@playwright/test";
 
+/** Opens a channel menu's Notifications submenu: All new posts, Just mentions, Mute. */
+export async function notificationLevels(page, menu) {
+  // Keyboard, not hover: a pointer already resting on the trigger cannot reopen it.
+  await menu
+    .getByRole("menuitem", { name: "Notifications", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  const levels = page.getByRole("menu", { name: /^Notifications for / });
+  await expect(levels).toBeVisible();
+  return levels;
+}
+
+export function notificationLevel(levels, name) {
+  return levels.getByRole("menuitemradio", { name, exact: true });
+}
+
+/** Checks the open row menu's level, then returns focus to the parent menu. */
+export async function expectNotificationLevel(page, menu, name) {
+  await expect(
+    notificationLevel(await notificationLevels(page, menu), name),
+  ).toBeChecked();
+  await page.keyboard.press("ArrowLeft");
+  await expect(
+    page.getByRole("menu", { name: /^Notifications for / }),
+  ).toHaveCount(0);
+}
+
 export async function pageChoices(page, query = "") {
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });

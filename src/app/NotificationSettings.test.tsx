@@ -463,6 +463,7 @@ it("selects and restores Silent for every category, stops previews, and can rest
     direct: "silent",
     mention: "silent",
     thread: "silent",
+    post: "flutter",
     agent: "flutter",
   });
   expect(play).toHaveBeenCalledOnce();

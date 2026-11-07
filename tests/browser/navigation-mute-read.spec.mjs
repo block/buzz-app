@@ -1,4 +1,9 @@
-import { openPage } from "./navigation.mjs";
+import {
+  expectNotificationLevel,
+  notificationLevel,
+  notificationLevels,
+  openPage,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
@@ -48,13 +53,13 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   // menu offers none beside the others.
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
-    "Mute",
+    "Notifications",
     "Mark as read",
     "Copy link",
   ]);
   await expect(menu.getByRole("alert")).toHaveCount(0);
   await expect(menu.getByRole("separator")).toHaveCount(0);
-  for (const name of ["Mute", "Mark as read"]) {
+  for (const name of ["Notifications", "Mark as read"]) {
     await expect(
       menu
         .getByRole("menuitem", { name, exact: true })
@@ -84,7 +89,10 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     });
   });
   try {
-    await menu.getByRole("menuitem", { name: "Mute", exact: true }).click();
+    await notificationLevel(
+      await notificationLevels(page, menu),
+      "Mute",
+    ).click();
     await requested;
     await expect(menu).toHaveCount(0);
     await expect(beta).toBeFocused();
@@ -96,9 +104,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     );
     // Reopening is usable while the relay is still held; no frozen Saving menu.
     await page.keyboard.press("Shift+F10");
-    await expect(
-      menu.getByRole("menuitem", { name: "Unmute", exact: true }),
-    ).toBeEnabled();
+    await expectNotificationLevel(page, menu, "Mute");
     await expect(
       menu.getByRole("menuitem", { name: "Mark as read" }),
     ).toBeEnabled();
@@ -110,9 +116,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await expect(failure).toContainText("Relay request failed (502)");
   await beta.focus();
   await page.keyboard.press("Shift+F10");
-  await expect(
-    menu.getByRole("menuitem", { name: "Mute", exact: true }),
-  ).toBeEnabled();
+  await expectNotificationLevel(page, menu, "Just mentions");
   await page.keyboard.press("Escape");
   await page.unroute("**/sidebar-mute");
   // Session-owned retry UI remains usable while the sidebar is hidden.
@@ -139,9 +143,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
       blob: { channels: { beta: { muted: true } } },
     });
   await page.keyboard.press("ContextMenu");
-  await expect(
-    menu.getByRole("menuitem", { name: "Unmute", exact: true }),
-  ).toBeVisible();
+  await expectNotificationLevel(page, menu, "Mute");
   // The explicit cut is the click, not the newest loaded message: capture the
   // page clock on both sides of it rather than tolerating an arbitrary range.
   const seconds = () => page.evaluate(() => Math.floor(Date.now() / 1000));
@@ -171,9 +173,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.reload();
   await openPage(page, "Messages");
   await beta.click({ button: "right" });
-  await expect(
-    menu.getByRole("menuitem", { name: "Unmute", exact: true }),
-  ).toBeEnabled();
+  await expectNotificationLevel(page, menu, "Mute");
   await page.keyboard.press("Escape");
   await expect(beta).toBeFocused();
   await expect(beta.getByLabel(/^(Muting;|Muted;)/)).toHaveCount(0);
@@ -245,14 +245,15 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   const unmute = holdResponse(page, "**/sidebar-mute");
   await unmute.ready;
   try {
-    await menu.getByRole("menuitem", { name: "Unmute", exact: true }).click();
+    await notificationLevel(
+      await notificationLevels(page, menu),
+      "Just mentions",
+    ).click();
     await unmute.started;
     await expect(menu).toHaveCount(0);
     await expect(beta).toBeFocused();
     await page.keyboard.press("Shift+F10");
-    await expect(
-      menu.getByRole("menuitem", { name: "Mute", exact: true }),
-    ).toBeEnabled();
+    await expectNotificationLevel(page, menu, "Just mentions");
     await page.keyboard.press("Escape");
   } finally {
     unmute.release();
@@ -267,9 +268,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.reload();
   await openPage(page, "Messages");
   await beta.click({ button: "right" });
-  await expect(
-    menu.getByRole("menuitem", { name: "Mute", exact: true }),
-  ).toBeVisible();
+  await expectNotificationLevel(page, menu, "Just mentions");
   await page.keyboard.press("Escape");
   // A click in the same instant as Escape can be lost while the row menu
   // dismisses. Open the next menu only after this one has closed.
@@ -279,7 +278,7 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await beta.click({ button: "right" });
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Move channel",
-    "Mute",
+    "Notifications",
     "Mark as unread",
     "Copy link",
   ]);
@@ -375,7 +374,13 @@ test("muted bell stays visible while pressing an unselected channel", async ({
   const alpha = sidebar.locator('[data-channel-id="alpha"]');
   const bell = beta.getByRole("img", { name: "Muted", exact: true });
   await beta.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Mute", exact: true }).click();
+  await notificationLevel(
+    await notificationLevels(
+      page,
+      page.getByRole("menu", { name: "Actions for Beta" }),
+    ),
+    "Mute",
+  ).click();
   await expect(bell).toBeVisible();
   const settledColor = () =>
     bell.evaluate((element) => {

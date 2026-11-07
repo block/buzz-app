@@ -864,6 +864,58 @@ it.each(["direct", "thread"] as const)(
   },
 );
 
+it("All new posts alerts top-level posts in that channel only; mute and Just mentions quiet them", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+  const h = await setup(Promise.resolve(), undefined, undefined, {
+    decode: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    write: async ({ muted }) => (muted ? ["room"] : []),
+  });
+  await h.owner.session.sidebarPreferences.ensure();
+  const post = (text: string) => message(h.peer, "room", text, 1_780_000_000);
+  // Just mentions (the default): an ordinary post stays quiet. The mention is
+  // a presentation barrier behind it.
+  h.emit([post("default quiet")], "live");
+  h.emit([h.make("first mention")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].body).toBe("first mention");
+
+  h.notifications.updatePreferences({ allPosts: ["room"] });
+  const root = post("audible post");
+  h.emit([root], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(2));
+  expect(h.show.mock.calls[1]?.[0]).toMatchObject({
+    title: expect.stringMatching(/ posted in #/),
+    body: "audible post",
+  });
+  // Replies keep thread rules; the viewer is not in this conversation.
+  h.emit(
+    [
+      message(h.peer, "room", "other thread", 1_780_000_000, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ],
+    "live",
+  );
+  // Mute wins over a remembered All new posts choice.
+  await h.owner.session.sidebarPreferences.setMute("room", true);
+  h.emit([post("muted post")], "live");
+  h.emit([h.make("second mention")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(3));
+  expect(h.show.mock.calls[2]?.[0].body).toBe("second mention");
+  await h.owner.session.sidebarPreferences.setMute("room", false);
+  // Switching back to Just mentions quiets posts again.
+  h.notifications.updatePreferences({ allPosts: [] });
+  h.emit([post("quiet again")], "live");
+  h.emit([h.make("third mention")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(4));
+  expect(h.show.mock.calls[3]?.[0].body).toBe("third mention");
+});
+
 it("a confirmed mute cancels an alert waiting on permission, even after unmute", async () => {
   vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
   const h = await setup(Promise.resolve(), undefined, undefined, {

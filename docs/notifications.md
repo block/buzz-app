@@ -79,8 +79,7 @@ checks, not that an OS banner was displayed or read.
 - Channel Mute/Unmute uses the session's confirmed, encrypted `channel-mutes`
   preference, independently of whether Channels is mounted. Muted channels suppress
   DM and participating-thread alerts; explicit mentions still pass the channel-mute
-  gate, not global off/category/read/access/permission gates. This does not introduce
-  a broadcast notification category. Confirmed mute quiets ordinary channel unread
+  gate, not global off/category/read/access/permission gates. Confirmed mute quiets ordinary channel unread
   styling and offscreen cues without clearing unread evidence. Muted channel and
   DM sidebar rows show a crossed-out bell immediately after their names and hide
   unread dots, including thread dots. Manual unread can still emphasize
@@ -93,6 +92,17 @@ checks, not that an OS banner was displayed or read.
   does not replay cancelled alerts. Existing shown OS banners are not withdrawn.
   Hosts without preference decoding retain existing notification behavior; this
   slice adds no native preference adapter or automatic cross-device synchronization.
+- A channel's **Notifications** submenu offers All new posts, Just mentions
+  (default) and Mute; DMs keep the single Mute/Unmute item. Mute is the synced
+  `channel-mutes` preference above. All new posts is an account-local list in
+  the existing notification preferences (`allPosts`), so it does not sync across
+  devices and adds no relay coordinate. In those channels, someone else's
+  top-level post (unread attention `post: true`) alerts under the `post`
+  category, **Channel posts**, with its own switch and sound. Replies keep
+  thread rules, mentions stay mentions, and confirmed mute cancels pending post
+  candidates; switching back to Just mentions cancels them too. Muting keeps the
+  device's All new posts choice; leaving Mute applies the picked level only after
+  unmute is confirmed, so a failed unmute (and its Retry) keeps the earlier choice.
 - Permission is requested explicitly from Settings where a browser needs a user
   gesture. A fresh pending candidate is reconsidered after Allow; a newer off
   choice still wins. Observable API errors are reported, never auto-retried.

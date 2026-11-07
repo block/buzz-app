@@ -22,6 +22,7 @@ import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
+import type { NotificationsService } from "../notifications/service";
 
 /** The session owns writes/recovery; each menu owns its focus and read status. */
 export type ChannelMenuSurface = {
@@ -99,9 +100,15 @@ type ActivityAgent = {
   /** The one conversation the agent works in, whose transcript to open. */
   transcript?: { rootId?: string };
 };
+/** Account-local alert choices, including which channels alert on every post. */
+export type ChannelAlerts = Pick<
+  NotificationsService,
+  "snapshot" | "subscribe" | "updatePreferences"
+>;
 type Handoff = State & {
   menuActions: ReturnType<typeof createMenuActions>;
   mute: ReturnType<typeof useOptimisticMute>;
+  alerts: ChannelAlerts | undefined;
   muteRecovery: RefObject<
     { focus(channelId: string): void; closeMenu(): void } | undefined
   >;
@@ -133,9 +140,11 @@ export const useChannelNavigation = () => useContext(ChannelNavigationContext);
 // Session replacement resets this state, not the independent page subtree.
 export function ChannelNavigationProvider({
   relay,
+  alerts,
   children,
 }: {
   relay: RelayData;
+  alerts?: ChannelAlerts | undefined;
   children: ReactNode;
 }) {
   const connection = useRelayConnection(relay);
@@ -219,6 +228,7 @@ export function ChannelNavigationProvider({
       ...state,
       menuActions,
       mute,
+      alerts,
       muteRecovery,
       lifecycleCallbacks,
       soloNeighbors,
@@ -310,6 +320,7 @@ export function ChannelNavigationProvider({
       state,
       menuActions,
       mute,
+      alerts,
       connection.session,
       connection.viewer,
       update,

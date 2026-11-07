@@ -32,6 +32,7 @@ export const DEFAULT_CATEGORY_SOUNDS: CategorySounds = Object.freeze({
   mention: DEFAULT_SOUND,
   direct: DEFAULT_SOUND,
   thread: DEFAULT_SOUND,
+  post: DEFAULT_SOUND,
   agent: DEFAULT_SOUND,
 });
 
@@ -40,6 +41,7 @@ export const CATEGORY_SOUND_LABELS: Record<NotificationCategory, string> = {
   direct: "Direct messages",
   mention: "@Mentions",
   thread: "Thread replies",
+  post: "Channel posts",
   agent: "Solo chat completions",
 };
 export const RECOMMENDED_SOUND_BY_CATEGORY: Record<
@@ -49,6 +51,7 @@ export const RECOMMENDED_SOUND_BY_CATEGORY: Record<
   direct: "unison",
   mention: "ping",
   thread: "doop",
+  post: "soft",
   agent: "doodone",
 };
 

@@ -47,6 +47,10 @@ export type MessageAttention = Readonly<{
   category?: "mention" | "direct" | "thread";
   /** The event mentions the viewer, excluding trusted workflow-owner attribution. */
   mentioned?: boolean;
+  /** Someone else's top-level post in a channel (not a DM). It earns no
+   * attention category, so its status stays "ineligible"; per-channel
+   * "All new posts" alerts consume it. */
+  post?: boolean;
   rootId?: string;
   /** The reply's conversation is still being looked up; it may become thread
    * attention when the lookup finishes. */
@@ -826,6 +830,7 @@ export function createUnread({
       ...(kind ? { category: kind } : {}),
       ...(pending ? { pending: true } : {}),
       ...(entry.mentioned ? { mentioned: true } : {}),
+      ...(!dm && !entry.parentId ? { post: true } : {}),
       ...(entry.rootId ? { rootId: entry.rootId } : {}),
       unread: isUnread(entry, reads.state(), dm),
       forced: forcedMessages.get(channelId)?.has(messageId) ?? false,

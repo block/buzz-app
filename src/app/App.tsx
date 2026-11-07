@@ -600,7 +600,10 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           communities={client.memberships.map((membership) => membership.id)}
         />
       )}
-      <ChannelNavigationProvider relay={services.relay}>
+      <ChannelNavigationProvider
+        relay={services.relay}
+        alerts={services.notifications}
+      >
         <AppShell
           creationInSidebar={!workspace.page?.sidebar}
           creationAction={(open, onOpenChange, triggerContainer) => (

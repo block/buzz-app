@@ -31,7 +31,7 @@ export type NotificationInput = Readonly<{
   title?: string;
   body?: string;
 }>;
-/** Narrows which targets may alert: banners, sounds and the Dock unread dot. */
+/** Narrows which targets may alert: banners, sounds and the Dock unread badge. */
 export type NotificationGate = Readonly<{
   id: string;
   /** A throwing gate is skipped. */

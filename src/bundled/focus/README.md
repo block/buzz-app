@@ -9,7 +9,7 @@ Work with your agents without the rest of Buzz competing for attention.
    then choose **Start focus**. Or press ⌥F (Alt+F) to focus for an hour, and
    again to end it.
 3. The sidebar now shows only your Solo chats, and only Solo chats in the
-   selected community can show banners, play sounds or light the Dock dot. Search (⌘K) and links still open any
+   selected community can show banners, play sounds or light the Dock badge. Search (⌘K) and links still open any
    channel or DM. Your status becomes 🔭 Focusing.
 4. Focus ends by itself, or choose **End** in the sidebar. Your tabs and
    earlier status come back.

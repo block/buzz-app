@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   createUnreadIndicator,
   type IndicatorPermission,
+  type UnreadBadge,
 } from "../features/notifications/indicator";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 
@@ -42,7 +43,9 @@ it("requests permission only through the explicit Settings button and updates st
   const h = setup("default");
   await act(() => h.dock.refresh());
   expect(h.permission.mock.calls).toEqual([[false]]);
-  expect(screen.getByText(/doesn’t show a message count/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/Counts unread direct messages and mentions of you/),
+  ).toBeInTheDocument();
   let resolve!: (permission: IndicatorPermission) => void;
   h.permission.mockImplementationOnce(
     () =>
@@ -145,7 +148,7 @@ it.each([
       <UnreadIndicatorSettings indicator={indicator} />,
     );
     await act(async () => {
-      indicator.setUnread(true);
+      indicator.setUnread({ unread: true, count: 1 });
       await indicator.refresh();
       await indicator.request();
       await indicator.dispose();
@@ -156,7 +159,7 @@ it.each([
 );
 
 it("shows a Dock write error and retries through the existing permission check", async () => {
-  const set = vi.fn(async (_unread: boolean) => {});
+  const set = vi.fn(async (_badge: UnreadBadge) => {});
   const indicator = createUnreadIndicator({
     permission: async () => "enabled",
     set,
@@ -168,7 +171,7 @@ it("shows a Dock write error and retries through the existing permission check",
   await act(() => indicator.refresh());
   set.mockRejectedValueOnce(new Error("Dock unavailable"));
   await act(async () => {
-    indicator.setUnread(true);
+    indicator.setUnread({ unread: true, count: 1 });
   });
   expect(await screen.findByRole("dialog")).toHaveTextContent(
     "Dock unavailable",
@@ -176,6 +179,6 @@ it("shows a Dock write error and retries through the existing permission check",
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Check Dock permission" }));
-  expect(set).toHaveBeenLastCalledWith(true);
+  expect(set).toHaveBeenLastCalledWith({ unread: true, count: 1 });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

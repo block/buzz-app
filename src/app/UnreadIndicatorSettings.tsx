@@ -23,7 +23,7 @@ export function UnreadIndicatorSettings({
         <p className="text-body-sm text-subtle">
           {state.permission === "unavailable"
             ? "Dock badges require a bundled macOS app and aren’t available from the development server."
-            : "Shows a dot for unread activity in the selected community. It doesn’t show a message count."}
+            : "Counts unread direct messages and mentions of you in the selected community, or shows a dot for other unread messages. Muted channels count only mentions."}
         </p>
         {state.permission !== "unavailable" && (
           <p role="status" className="text-body-sm text-muted">
@@ -31,8 +31,8 @@ export function UnreadIndicatorSettings({
               ? "Waiting for system permission…"
               : {
                   default:
-                    "Allow notifications and badges to show the unread dot.",
-                  setup: "Set up Dock badges to show the unread dot.",
+                    "Allow notifications and badges to show unread counts.",
+                  setup: "Set up Dock badges to show unread counts.",
                   enabled: "Buzz can show Dock badges.",
                   disabled:
                     "Dock badges are off. Turn them on in macOS System Settings.",

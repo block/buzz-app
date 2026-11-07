@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createUnreadIndicator, type IndicatorPermission } from "./indicator";
+import {
+  createUnreadIndicator,
+  NO_BADGE as OFF,
+  type IndicatorPermission,
+  type UnreadBadge,
+} from "./indicator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -10,6 +15,7 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+const ON: UnreadBadge = { unread: true, count: 0 };
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const stop of cleanups.splice(0)) await stop();
@@ -18,7 +24,7 @@ function setup(initial: IndicatorPermission = "enabled") {
   const permission = vi.fn(
     async (_request: boolean): Promise<IndicatorPermission> => initial,
   );
-  const set = vi.fn(async (_unread: boolean) => {});
+  const set = vi.fn(async (_badge: UnreadBadge) => {});
   const host = new EventTarget();
   const dock = createUnreadIndicator({ permission, set }, host);
   cleanups.push(dock.dispose);
@@ -26,36 +32,36 @@ function setup(initial: IndicatorPermission = "enabled") {
 }
 it("silently checks on startup and projects unread after allow, independently of alert preferences", async () => {
   const h = setup("default");
-  h.dock.setUnread(true);
+  h.dock.setUnread(ON);
   await h.dock.refresh();
   expect(h.permission.mock.calls).toEqual([[false]]);
-  expect(h.set.mock.calls).toEqual([[false]]);
+  expect(h.set.mock.calls).toEqual([[OFF]]);
   h.permission.mockResolvedValueOnce("enabled");
   await h.dock.request();
   expect(h.permission.mock.calls).toEqual([[false], [true]]);
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
-  h.dock.setUnread(false);
+  expect(h.set.mock.calls).toEqual([[OFF], [ON]]);
+  h.dock.setUnread(OFF);
   await h.dock.dispose();
-  expect(h.set).toHaveBeenLastCalledWith(false);
+  expect(h.set).toHaveBeenLastCalledWith(OFF);
 });
 it.each(["default", "setup", "disabled", "denied", "unavailable"] as const)(
   "withholds the dot for %s and clears on changed system permission",
   async (permission) => {
     const h = setup();
     await h.dock.refresh();
-    h.dock.setUnread(true);
-    await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(true));
+    h.dock.setUnread(ON);
+    await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(ON));
     h.permission.mockResolvedValueOnce(permission);
     await h.dock.refresh();
-    expect(h.set).toHaveBeenLastCalledWith(false);
-    h.dock.setUnread(true);
-    expect(h.set).toHaveBeenLastCalledWith(false);
+    expect(h.set).toHaveBeenLastCalledWith(OFF);
+    h.dock.setUnread(ON);
+    expect(h.set).toHaveBeenLastCalledWith(OFF);
   },
 );
 it("refreshes on focus, fails closed, reports errors, and only retries on a later action", async () => {
   const h = setup();
   await h.dock.refresh();
-  h.dock.setUnread(true);
+  h.dock.setUnread(ON);
   const count = h.permission.mock.calls.length;
   h.permission.mockRejectedValueOnce(new Error("OS unavailable"));
   h.host.dispatchEvent(new Event("focus"));
@@ -64,34 +70,55 @@ it("refreshes on focus, fails closed, reports errors, and only retries on a late
     permission: "unavailable",
     error: "OS unavailable",
   });
-  expect(h.set).toHaveBeenLastCalledWith(false);
+  expect(h.set).toHaveBeenLastCalledWith(OFF);
   expect(h.permission).toHaveBeenCalledTimes(count + 1);
   await h.dock.refresh();
   expect(h.dock.snapshot()).toMatchObject({
     permission: "enabled",
     error: null,
   });
-  expect(h.set).toHaveBeenLastCalledWith(true);
+  expect(h.set).toHaveBeenLastCalledWith(ON);
 });
 it("coalesces rapid changes behind one pending native write and makes teardown clear win", async () => {
   const h = setup();
   await h.dock.refresh();
   const pending = deferred<void>();
   h.set.mockImplementationOnce(() => pending.promise);
-  h.dock.setUnread(true);
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
-  h.dock.setUnread(false);
-  h.dock.setUnread(true);
+  h.dock.setUnread(ON);
+  expect(h.set.mock.calls).toEqual([[OFF], [ON]]);
+  h.dock.setUnread(OFF);
+  h.dock.setUnread(ON);
   const closing = h.dock.dispose();
-  h.dock.setUnread(true);
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
+  h.dock.setUnread(ON);
+  expect(h.set.mock.calls).toEqual([[OFF], [ON]]);
   pending.resolve();
   await closing;
-  expect(h.set.mock.calls).toEqual([[false], [true], [false]]);
+  expect(h.set.mock.calls).toEqual([[OFF], [ON], [OFF]]);
   const count = h.permission.mock.calls.length;
   h.host.dispatchEvent(new Event("focus"));
   await h.dock.refresh();
   expect(h.permission).toHaveBeenCalledTimes(count);
+});
+it("writes count changes and skips equal badges", async () => {
+  const h = setup();
+  await h.dock.refresh();
+  h.dock.setUnread({ unread: true, count: 2 });
+  await vi.waitFor(() =>
+    expect(h.set).toHaveBeenLastCalledWith({ unread: true, count: 2 }),
+  );
+  h.dock.setUnread({ unread: true, count: 2 });
+  h.dock.setUnread({ unread: true, count: 3 });
+  await vi.waitFor(() =>
+    expect(h.set).toHaveBeenLastCalledWith({ unread: true, count: 3 }),
+  );
+  h.dock.setUnread(ON);
+  await vi.waitFor(() => expect(h.set).toHaveBeenLastCalledWith(ON));
+  expect(h.set.mock.calls).toEqual([
+    [OFF],
+    [{ unread: true, count: 2 }],
+    [{ unread: true, count: 3 }],
+    [ON],
+  ]);
 });
 it("late permission completion cannot revive a disposed badge", async () => {
   const h = setup();
@@ -99,23 +126,23 @@ it("late permission completion cannot revive a disposed badge", async () => {
   const pending = deferred<IndicatorPermission>();
   h.permission.mockImplementationOnce(() => pending.promise);
   const check = h.dock.request();
-  h.dock.setUnread(true);
+  h.dock.setUnread(ON);
   await h.dock.dispose();
   pending.resolve("enabled");
   await check;
-  expect(h.set).toHaveBeenLastCalledWith(false);
+  expect(h.set).toHaveBeenLastCalledWith(OFF);
 });
 it("reports native write failure without a retry loop and accepts a later current-intent action", async () => {
   const h = setup();
   await h.dock.refresh();
   h.set.mockRejectedValueOnce(new Error("Dock unavailable"));
-  h.dock.setUnread(true);
+  h.dock.setUnread(ON);
   await vi.waitFor(() =>
     expect(h.dock.snapshot().error).toBe("Dock unavailable"),
   );
-  expect(h.set.mock.calls).toEqual([[false], [true]]);
+  expect(h.set.mock.calls).toEqual([[OFF], [ON]]);
   await h.dock.refresh();
-  expect(h.set.mock.calls).toEqual([[false], [true], [true]]);
+  expect(h.set.mock.calls).toEqual([[OFF], [ON], [ON]]);
 });
 it("keeps an explicit request when a focus check was already pending", async () => {
   const h = setup("default");

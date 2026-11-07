@@ -779,7 +779,7 @@ them the banner reads `Buzz` / `New <label>`. The host applies no age limit to
 plugin submissions; the plugin decides what is still worth announcing.
 
 `notifications.gate({ id, allows(target) })` narrows which targets may alert.
-While any gate is registered, a banner, its sound and the Dock unread dot need
+While any gate is registered, a banner, its sound and the Dock unread badge need
 every gate to allow the target; the Dock asks about each conversation as a
 `conversation` target. Pending alerts are rechecked when a gate is added or
 removed. A throwing gate is skipped. `gate` returns a remover, and disabling the

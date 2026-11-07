@@ -104,7 +104,10 @@ it("macOS banner permission reads the native authorization independently of Dock
   expect(sdk.show).not.toHaveBeenCalled();
   expect(sdk.permission).toHaveBeenCalledExactlyOnceWith({ request: false });
   expect(service.indicator.snapshot().permission).toBe("enabled");
-  expect(sdk.indicator).toHaveBeenCalledExactlyOnceWith({ unread: false });
+  expect(sdk.indicator).toHaveBeenCalledExactlyOnceWith({
+    unread: false,
+    count: 0,
+  });
   await submit("first");
   await flush();
   expect(sdk.show).toHaveBeenCalledOnce();
@@ -366,7 +369,7 @@ it.each(["Win32", "Linux x86_64"])(
         createElement(NotificationSettings, { notifications: service }),
       ),
     ).not.toContain("Dock unread badge");
-    service.indicator.setUnread(true);
+    service.indicator.setUnread({ unread: true, count: 2 });
     await flush();
     await service.indicator.request();
     expect(sdk.permission).not.toHaveBeenCalled();
@@ -382,7 +385,7 @@ it.each(["Win32", "Linux x86_64"])(
 it("browser runs create no shell indicator", async () => {
   native.value = false;
   const { service, ctx } = setup();
-  service.indicator.setUnread(true);
+  service.indicator.setUnread({ unread: true, count: 2 });
   await service.indicator.refresh();
   await ctx.fiber.dispose();
   expect(service.indicator.available).toBe(false);
@@ -393,17 +396,17 @@ it("browser runs create no shell indicator", async () => {
 it("the macOS default binds explicit permission and ordered unread/clear commands", async () => {
   sdk.permission.mockResolvedValueOnce("default");
   const { service, ctx } = setup();
-  service.indicator.setUnread(true);
+  service.indicator.setUnread({ unread: true, count: 2 });
   await service.indicator.refresh();
-  expect(sdk.indicator.mock.calls).toEqual([[{ unread: false }]]);
+  expect(sdk.indicator.mock.calls).toEqual([[{ unread: false, count: 0 }]]);
   await service.indicator.request();
   expect(sdk.permission.mock.calls).toEqual([
     [{ request: false }],
     [{ request: true }],
   ]);
-  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, count: 2 });
   service.updatePreferences({ enabled: false });
-  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, count: 2 });
   await ctx.fiber.dispose();
-  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false });
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false, count: 0 });
 });

@@ -116,6 +116,7 @@ vi.mock("./MessageComposer", () => ({
       data-placeholder={placeholder}
       data-focus-request={focusRequest}
     >
+      <textarea aria-label="Reply" />
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
       </button>
@@ -2041,6 +2042,75 @@ it("a retained reader reveals its exact selected message, again for each new req
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(revealedReply()).toBe(false);
 });
+
+it.each(["route", "reveal request"] as const)(
+  "a %s into the open thread leaves focus in the editor the person typed into while it retargets",
+  async (kind) => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 500),
+    );
+    const h = messagesHarness();
+    const reply = { ...row, id: "d".repeat(64), content: "the reply" };
+    h.snapshot.replies = [reply];
+    h.snapshot.target = reply;
+    h.snapshot.targetStatus = "ready";
+    const props = h.props as ThreadPanelProps;
+    Object.assign(props, { retainThread: true });
+    h.render();
+    const editor = screen.getByRole("textbox", { name: "Reply" });
+    let release!: (value: "selected") => void;
+    h.view.retarget.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const navigation = { ...ordinaryNavigation(), entryId: "reply" };
+    navigation.target.messageId = reply.id;
+    Object.assign(
+      props,
+      { messageId: reply.id },
+      kind === "route"
+        ? { navigation }
+        : { revealSelected: true, revealRequest: 1 },
+    );
+    h.rerenderProps();
+    expect(h.view.retarget).toHaveBeenCalledOnce();
+    // The editor stays usable during the read: the person clicks into it,
+    // with the browser's own focus move, and types.
+    act(() => {
+      fireEvent.pointerDown(editor);
+      editor.focus();
+      fireEvent.pointerUp(editor);
+      fireEvent.click(editor);
+      fireEvent(
+        editor,
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: "a",
+        }),
+      );
+    });
+    await act(async () => release("selected"));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(HTMLElement.prototype.scrollIntoView)
+          .mock.contexts.some(
+            (context) =>
+              (context as HTMLElement).dataset.messageId === reply.id,
+          ),
+      ).toBe(true),
+    );
+    if (kind === "route")
+      await waitFor(() =>
+        expect(navigation.complete).toHaveBeenCalledWith({ status: "opened" }),
+      );
+    expect(editor).toHaveFocus();
+  },
+);
 
 it("reopens collapsed activity for a new reveal of the same step", async () => {
   const h = messagesHarness();

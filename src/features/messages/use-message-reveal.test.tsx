@@ -1,10 +1,20 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import styles from "./Messages.module.css";
 import { HIGHLIGHT_MAX_WAIT_MS, HIGHLIGHT_QUIET_MS } from "./message-highlight";
-import { useMessageReveal } from "./use-message-reveal";
+import {
+  useMessageReveal,
+  watchArrival,
+  type RevealArrival,
+} from "./use-message-reveal";
 
 // Control frame/mutation ordering; browser journeys own real layout and inert focus.
 const frames = new Map<number, FrameRequestCallback>();
@@ -65,11 +75,13 @@ function mount(
     prepare = undefined,
     rowKey = 0,
     messageId = "target",
+    arrival = undefined,
   }: {
     signal?: AbortSignal;
     prepare?: () => void;
     rowKey?: number;
     messageId?: string;
+    arrival?: RevealArrival;
   }) {
     const scroller = useRef<HTMLDivElement>(null);
     const settled = useRef(false);
@@ -84,6 +96,7 @@ function mount(
       ...(mark === undefined ? {} : { mark }),
       ...(prepare ? { prepare } : {}),
       ...(hold ? { hold } : {}),
+      ...(arrival ? { arrival } : {}),
     });
     return (
       <>
@@ -98,22 +111,30 @@ function mount(
           </div>
         </div>
         <button type="button">Elsewhere</button>
+        <textarea aria-label="Composer" />
       </>
     );
   }
   const result = render(<Surface />);
   const row = screen.getByText("Target");
   const outside = screen.getByRole("button", { name: "Elsewhere" });
+  const composer = screen.getByRole("textbox", { name: "Composer" });
   return {
     ...result,
     request,
     complete,
     row,
     outside,
+    composer,
     restart: () => result.rerender(<Surface prepare={() => {}} />),
     remountRow: () => result.rerender(<Surface rowKey={1} />),
-    next: () =>
-      result.rerender(<Surface signal={new AbortController().signal} />),
+    next: (arrival?: RevealArrival) =>
+      result.rerender(
+        <Surface
+          signal={new AbortController().signal}
+          {...(arrival ? { arrival } : {})}
+        />,
+      ),
     other: () =>
       result.rerender(
         <Surface signal={new AbortController().signal} messageId="other" />,
@@ -222,6 +243,295 @@ it("marks a reveal beside the reader only once its row is uncovered", async () =
   expect(complete).toHaveBeenCalledOnce();
   expect(highlighted(row)).toBe(true);
   expect(document.activeElement).toBe(outside);
+});
+
+it("focuses the revealed row when nothing claimed focus since the request", async () => {
+  const { row, complete } = mount();
+  await frame(); // Attach observers.
+  await frame(); // Reveal.
+  expect(document.activeElement).toBe(row);
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+// The browser's own focus move for each press, which jsdom does not make.
+const moves = {
+  click(composer: HTMLElement) {
+    fireEvent.pointerDown(composer);
+    composer.focus();
+    fireEvent.pointerUp(composer);
+    fireEvent.click(composer);
+  },
+  tap(composer: HTMLElement) {
+    fireEvent.pointerDown(composer);
+    fireEvent.pointerUp(composer);
+    composer.focus();
+    fireEvent.click(composer);
+  },
+  Tab(composer: HTMLElement) {
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    composer.focus();
+    fireEvent.keyUp(composer, { key: "Tab" });
+  },
+  "Shift+Tab"(composer: HTMLElement) {
+    fireEvent.keyDown(document.body, { key: "Shift", shiftKey: true });
+    fireEvent.keyDown(document.body, { key: "Tab", shiftKey: true });
+    composer.focus();
+    fireEvent.keyUp(composer, { key: "Tab", shiftKey: true });
+    fireEvent.keyUp(composer, { key: "Shift" });
+  },
+};
+
+it.each(Object.keys(moves) as (keyof typeof moves)[])(
+  "leaves focus with a composer the person moved to before the reveal lands (%s)",
+  async (input) => {
+    const { row, composer, complete } = mount();
+    const focus = vi.spyOn(row, "focus");
+    await frame(); // Attach observers; the target is still loading.
+    moves[input](composer);
+    await frame(); // Reveal.
+    expect(row.scrollIntoView).toHaveBeenCalled();
+    expect(document.activeElement).toBe(composer);
+    await mutate(row); // Another reveal attempt still leaves the composer.
+    await frame();
+    await frame();
+    expect(document.activeElement).toBe(composer);
+    expect(focus).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
+    await idle();
+    expect(highlighted(row)).toBe(true);
+  },
+);
+
+it("takes focus the app handed to another control without the person's input", async () => {
+  const { row, composer, complete } = mount();
+  await frame();
+  composer.focus(); // Such as a closing dialog's focus return.
+  await frame();
+  expect(document.activeElement).toBe(row);
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+it.each(["Shift", "ArrowDown", "Escape"])(
+  "takes focus the app handed off when a key moved nothing (%s)",
+  async (key) => {
+    const { row, composer, complete } = mount();
+    await frame();
+    composer.focus();
+    fireEvent.keyDown(composer, { key });
+    fireEvent.keyUp(composer, { key });
+    await frame();
+    expect(document.activeElement).toBe(row);
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([false, true])(
+  "takes focus an app handler moved in answer to a key other than Tab (later: %s)",
+  async (later) => {
+    const { row, outside, composer, complete } = mount();
+    await frame();
+    outside.focus(); // Such as a dialog's close button.
+    // A dialog closing on Escape returns focus at once or, as Base UI does,
+    // in a later task.
+    outside.addEventListener("keydown", () =>
+      later ? setTimeout(() => composer.focus()) : composer.focus(),
+    );
+    fireEvent.keyDown(outside, { key: "Escape" });
+    fireEvent.keyUp(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve)));
+    expect(document.activeElement).toBe(composer);
+    await frame();
+    expect(document.activeElement).toBe(row);
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+it("takes focus an app handler moved in answer to a press on another control", async () => {
+  const { row, outside, composer, complete } = mount();
+  await frame();
+  outside.addEventListener("pointerdown", () => composer.focus());
+  fireEvent.pointerDown(outside);
+  fireEvent.pointerUp(outside);
+  fireEvent.click(outside);
+  expect(document.activeElement).toBe(composer);
+  await frame();
+  expect(document.activeElement).toBe(row);
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+it("takes focus the app handed off after a key that moved nothing", async () => {
+  const { row, composer, complete } = mount();
+  await frame();
+  fireEvent.keyDown(document.body, { key: "Shift" });
+  fireEvent.keyUp(document.body, { key: "Shift" });
+  composer.focus();
+  await frame();
+  expect(document.activeElement).toBe(row);
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+// A click inside a composer that already has focus moves nothing, and the
+// reveal takes focus as it would without the click unless the person types.
+it("takes focus from a composer the app focused when the person only clicks in it", async () => {
+  const { row, composer, complete } = mount();
+  await frame();
+  composer.focus();
+  fireEvent.pointerDown(composer);
+  fireEvent.pointerUp(composer);
+  fireEvent.click(composer);
+  await frame();
+  expect(document.activeElement).toBe(row);
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+it.each([
+  [
+    "click",
+    (composer: HTMLElement) => {
+      composer.focus();
+      fireEvent.pointerDown(composer);
+      fireEvent.pointerUp(composer);
+      fireEvent.click(composer);
+      composer.blur();
+    },
+  ],
+  [
+    "Tab",
+    () => {
+      fireEvent.keyDown(document.body, { key: "Tab" });
+      fireEvent.keyUp(document.body, { key: "Tab" });
+    },
+  ],
+] as const)(
+  "does not count a %s that ended without moving focus as a later claim",
+  async (_, press) => {
+    const { row, composer, complete } = mount();
+    await frame();
+    press(composer);
+    composer.focus(); // A later hand-off by the app.
+    await frame();
+    expect(document.activeElement).toBe(row);
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+// A press with another button ends without a click, so focus the app later
+// returns to the pressed control, such as a context menu closing, is not the
+// person's.
+it.each([
+  [
+    "contextmenu",
+    (composer: HTMLElement) => {
+      fireEvent.pointerDown(composer, { button: 2 });
+      fireEvent.pointerUp(composer, { button: 2 });
+      fireEvent.contextMenu(composer, { button: 2 });
+    },
+  ],
+  [
+    "auxclick",
+    (composer: HTMLElement) => {
+      fireEvent.pointerDown(composer, { button: 1 });
+      fireEvent.pointerUp(composer, { button: 1 });
+      fireEvent(
+        composer,
+        new MouseEvent("auxclick", { bubbles: true, button: 1 }),
+      );
+    },
+  ],
+] as const)(
+  "does not count a press that ended at its %s as a later claim",
+  async (_, press) => {
+    const { row, outside, composer, complete } = mount();
+    await frame();
+    press(composer);
+    outside.focus(); // Such as the menu taking focus.
+    composer.focus(); // Its focus return as it closes.
+    await frame();
+    expect(document.activeElement).toBe(row);
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["Escape", "pointer"])(
+  "takes focus moved to the surface around the scroller (%s)",
+  async (input) => {
+    const { row, container, complete } = mount();
+    container.tabIndex = -1;
+    await frame();
+    if (input === "pointer") {
+      // The browser focuses the surface for a press on a row's text.
+      fireEvent.pointerDown(row);
+      container.focus();
+      fireEvent.pointerUp(row);
+      fireEvent.click(row);
+    } else {
+      fireEvent.keyDown(document.body, { key: input });
+      container.focus();
+      fireEvent.keyUp(container, { key: input });
+    }
+    expect(document.activeElement).toBe(container);
+    await frame();
+    expect(document.activeElement).toBe(row);
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+it("leaves focus with a composer the app focused once the person types into it", async () => {
+  const { row, composer, complete } = mount();
+  const focus = vi.spyOn(row, "focus");
+  await frame();
+  composer.focus();
+  fireEvent.keyDown(composer, { key: "a" });
+  fireEvent(
+    composer,
+    new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: "a",
+    }),
+  );
+  await frame();
+  expect(row.scrollIntoView).toHaveBeenCalled();
+  expect(document.activeElement).toBe(composer);
+  expect(focus).not.toHaveBeenCalled();
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+// A thread retargeting in place records the arrival before the read and hands
+// it to the reveal that follows; the next request records its own.
+it("adopts an arrival recorded before the signal, for that request only", async () => {
+  const { row, composer, complete, next } = mount();
+  await idle();
+  expect(document.activeElement).toBe(row);
+  const arrival = { element: document.activeElement, input: false };
+  const stop = watchArrival(arrival);
+  try {
+    moves.click(composer);
+    next(arrival);
+    await idle();
+    expect(document.activeElement).toBe(composer);
+    expect(complete).toHaveBeenCalledTimes(2);
+    next(arrival);
+    await idle();
+    expect(document.activeElement).toBe(row);
+    expect(complete).toHaveBeenCalledTimes(3);
+  } finally {
+    stop();
+  }
 });
 
 it.each([false, true])(

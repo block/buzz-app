@@ -15,6 +15,7 @@ export function useMessageReveal({
   hold,
   focus = true,
   mark = focus,
+  arrival,
 }: {
   scroller: RefObject<HTMLElement | null>;
   settled: RefObject<boolean>;
@@ -36,6 +37,11 @@ export function useMessageReveal({
    * it out of view. The owner ends the hold on reader intent.
    */
   hold?: () => boolean;
+  /**
+   * Focus as the request reached an owner that forwards its signal only after
+   * confirming the target, such as a thread retargeting in place.
+   */
+  arrival?: RevealArrival | undefined;
 }) {
   const revealed = useRef<AbortSignal | undefined>(undefined);
   const focused = useRef<{ signal: AbortSignal; row: HTMLElement } | undefined>(
@@ -53,6 +59,25 @@ export function useMessageReveal({
     },
     [],
   );
+  // Focus as each request arrives, recorded before the target loads, however
+  // late. An arrival handed in by the owner serves only the first new signal
+  // after it.
+  const opener = useRef<{ signal: AbortSignal; arrival: RevealArrival }>(
+    undefined,
+  );
+  const adopted = useRef<RevealArrival>(undefined);
+  useLayoutEffect(() => {
+    if (!signal) return;
+    if (opener.current?.signal !== signal) {
+      const handed = arrival !== adopted.current ? arrival : undefined;
+      if (handed) adopted.current = handed;
+      opener.current = {
+        signal,
+        arrival: handed ?? { element: document.activeElement, input: false },
+      };
+    }
+    return watchArrival(opener.current.arrival);
+  }, [signal, arrival]);
   useLayoutEffect(() => {
     if (
       !ready ||
@@ -91,15 +116,26 @@ export function useMessageReveal({
       });
       placed?.();
       settled.current = true;
-      // A replacement may recover lost focus, but must not take it from another
-      // control after this request already focused a row successfully.
+      // The first focus yields to a control the person moved to, or typed
+      // into, after the request arrived, such as the composer of a
+      // still-loading conversation, so their typing stays there. Focus the
+      // app handed off without such input, or left on the opener or the
+      // surface around the scroller, is still taken.
+      // A replacement may recover lost focus, but must not take it from
+      // another control after this request already focused a row successfully.
+      const active = document.activeElement;
+      const lost = !active || active === document.body;
+      const claimed =
+        !lost &&
+        !active.contains(container) &&
+        active !== opener.current?.arrival.element &&
+        !!opener.current?.arrival.input;
       let focusPending = false;
       if (
         focus &&
-        (focused.current?.signal !== signal ||
-          (focused.current.row !== row &&
-            (!document.activeElement ||
-              document.activeElement === document.body)))
+        (focused.current?.signal !== signal
+          ? !claimed
+          : focused.current.row !== row && lost)
       ) {
         row.focus({ preventScroll: true });
         focusPending = document.activeElement !== row;
@@ -180,6 +216,66 @@ export function useMessageReveal({
     hold,
   ]);
   return revealed;
+}
+
+/**
+ * Focus as a reveal request arrived: the control that opened it, or none once
+ * that control unmounted. `input` marks that the person has since moved focus
+ * or typed into the focused control.
+ */
+export type RevealArrival = { element: Element | null; input: boolean };
+
+/**
+ * Until stopped, set `input` when the person moves focus or types into the
+ * focused control. Only a move the browser makes for a press counts: focus
+ * landing on or around the pointer's target before its click, or Tab. Focus an
+ * app handler moves in answer to another key or a click, such as a dialog
+ * closing on Escape, is not the person's.
+ */
+export function watchArrival(arrival: RevealArrival): () => void {
+  // A press is pending until it ends. A tap focuses after pointerup, so a
+  // pointer press ends at its click, or, for another button, at its
+  // contextmenu or auxclick.
+  let pointer: Node | null = null;
+  let tab = false;
+  const pressed = (event: Event) => {
+    pointer = event.target instanceof Node ? event.target : null;
+  };
+  const released = () => {
+    pointer = null;
+  };
+  const keyed = (event: Event) => {
+    const { key, altKey, ctrlKey, metaKey } = event as KeyboardEvent;
+    tab = key === "Tab" && !altKey && !ctrlKey && !metaKey;
+  };
+  const unkeyed = () => {
+    tab = false;
+  };
+  const moved = (event: Event) => {
+    const target = event.target;
+    if (tab || (pointer && target instanceof Node && target.contains(pointer)))
+      arrival.input = true;
+  };
+  const typed = (event: Event) => {
+    if (event.target === document.activeElement) arrival.input = true;
+  };
+  const listeners = [
+    ["pointerdown", pressed],
+    ["click", released],
+    ["contextmenu", released],
+    ["auxclick", released],
+    ["pointercancel", released],
+    ["keydown", keyed],
+    ["keyup", unkeyed],
+    ["focusin", moved],
+    ["beforeinput", typed],
+  ] as const;
+  for (const [type, listener] of listeners)
+    document.addEventListener(type, listener, true);
+  return () => {
+    for (const [type, listener] of listeners)
+      document.removeEventListener(type, listener, true);
+  };
 }
 
 /** Undo layout drift of a revealed row until its owner, request or viewport ends the hold. */

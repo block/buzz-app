@@ -497,13 +497,23 @@ export function useAppNavigation(
     leaveSettings() {
       const current = navigation.snapshot().entry.target;
       if (current.kind !== "settings") return;
+      const selectedClient = services.communities.snapshot();
+      const scope =
+        selectedClient.viewer && selectedClient.selected
+          ? {
+              viewer: selectedClient.viewer,
+              communityOrigin: communityDestination(selectedClient.selected)
+                .url,
+            }
+          : null;
       const {
         section: _section,
         provider: _provider,
         pluginId: _pluginId,
         ...dialog
       } = current;
-      const dialogKey = targetKey(dialog);
+      // Unscoped visits (⌘, and some links) show the selected scope's Settings.
+      const dialogKey = targetKey({ scope, ...dialog });
       const dismiss = (fallback: OpenTarget) =>
         navigation.dismiss((target) => {
           if (target.kind !== "settings") return false;
@@ -513,29 +523,20 @@ export function useAppNavigation(
             pluginId: _pluginId,
             ...dialog
           } = target;
-          return targetKey(dialog) === dialogKey;
+          return targetKey({ scope, ...dialog }) === dialogKey;
         }, fallback);
       const previous = lastNonSettings.current;
       if (previous) {
         dismiss(previous.target);
         return;
       }
-      const selectedClient = services.communities.snapshot();
       if (!selectedClient.viewer) return;
       dismiss({
         version: 1,
         kind: "page",
         pluginId: "buzz.channels",
         pageId: "channels",
-        ...(selectedClient.selected
-          ? {
-              scope: {
-                viewer: selectedClient.viewer,
-                communityOrigin: communityDestination(selectedClient.selected)
-                  .url,
-              },
-            }
-          : { scope: null }),
+        scope,
       });
     },
     retry() {

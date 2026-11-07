@@ -866,3 +866,133 @@ it("Back closes Settings onto the view beneath and Forward reopens it; other sho
   fireEvent.keyDown(document.body, { ctrlKey: true, key: "]" });
   expect(await screen.findByRole("dialog", { name: "Settings" })).toBeVisible();
 });
+
+it("Close retires the unscoped Settings visit ⌘, opens along with its section visits", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).not.toBe("opening"),
+  );
+  const earlier = current.navigation.snapshot().entry;
+  void current.navigation.open({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    scope: null,
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.id).not.toBe(earlier.id),
+  );
+  const beneath = current.navigation.snapshot().entry;
+  const dialog = () => screen.queryByRole("dialog", { name: "Settings" });
+  const press = (key: string) =>
+    fireEvent.keyDown(dialog() ?? document.body, { ctrlKey: true, key });
+  const target = () => current.navigation.snapshot().entry.target;
+  const openSection = async (name: string, section: string) => {
+    fireEvent.click(
+      within(dialog() as HTMLElement).getByRole("button", { name }),
+    );
+    await waitFor(() =>
+      expect(target()).toEqual({
+        version: 1,
+        kind: "settings",
+        section,
+        scope: null,
+      }),
+    );
+  };
+  // ⌘, opens Settings without a scope; its section buttons record one.
+  press(",");
+  await screen.findByRole("dialog", { name: "Settings" });
+  expect(target()).toEqual({ version: 1, kind: "settings" });
+  await openSection("Appearance", "appearance");
+  await openSection("Notifications", "notifications");
+  press("[");
+  await waitFor(() =>
+    expect(target()).toMatchObject({ section: "appearance" }),
+  );
+  expect(dialog()).toBeVisible();
+  press("]");
+  await waitFor(() =>
+    expect(target()).toMatchObject({ section: "notifications" }),
+  );
+  fireEvent.keyDown(dialog() as HTMLElement, { key: "Escape" });
+  await waitFor(() => expect(dialog()).toBeNull());
+  press("[");
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry).toEqual(earlier),
+  );
+  expect(dialog()).toBeNull();
+  press("]");
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry).toEqual(beneath),
+  );
+  expect(dialog()).toBeNull();
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+  // Reopened, then closed from its own visit after Back from a section.
+  press(",");
+  await screen.findByRole("dialog", { name: "Settings" });
+  await openSection("Appearance", "appearance");
+  press("[");
+  await waitFor(() =>
+    expect(target()).toEqual({ version: 1, kind: "settings" }),
+  );
+  fireEvent.keyDown(dialog() as HTMLElement, { key: "Escape" });
+  await waitFor(() => expect(dialog()).toBeNull());
+  expect(current.navigation.snapshot().entry).toEqual(beneath);
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+});
+
+it("Close after ⌘, keeps another community's Settings visit for Back", async () => {
+  const fixture = membershipFixture();
+  fixture.owner();
+  const current = restoreMembership();
+  await screen.findByRole("heading", { name: "Membership" });
+  const membership = current.navigation.snapshot().entry;
+  act(() => {
+    current.communities.select(secondary);
+    void current.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope: { viewer: viewer.pubkey, communityOrigin: secondary },
+    });
+  });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  const beneath = current.navigation.snapshot().entry;
+  fireEvent.keyDown(document.body, { ctrlKey: true, key: "," });
+  const dialog = await screen.findByRole("dialog", { name: "Settings" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Appearance" }));
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toMatchObject({
+      section: "appearance",
+      scope: { viewer: viewer.pubkey, communityOrigin: secondary },
+    }),
+  );
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry).toEqual(beneath),
+  );
+  fireEvent.keyDown(document.body, { ctrlKey: true, key: "[" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry).toEqual(membership),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Membership" }),
+  ).toBeVisible();
+  expect(current.communities.snapshot().selected).toBe(primary);
+});

@@ -13,7 +13,11 @@ import type {
   Delivery,
   StandaloneTurn,
 } from "../../features/agents/service";
-import type { EventData, RelayEvent } from "../../features/relay/events";
+import type {
+  EventData,
+  ReadFilter,
+  RelayEvent,
+} from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { deferred, fakeHost, type Handler } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -2510,3 +2514,45 @@ it.each(["stop", "retire"])(
     expect(check).not.toHaveBeenCalled();
   },
 );
+
+it("shows a new turn's history as the thread shows it now", async () => {
+  const note = reply("2", "Use the red palette", 105);
+  const dropped = reply("3", "Drop the staging tables", 106);
+  const change = (id: string, kind: number, target: EventData, content = "") =>
+    message(id, content, {
+      kind,
+      created_at: 107,
+      tags: [
+        ["h", channel],
+        ["e", target.id],
+      ],
+    });
+  const mention = reply("6", "@Pi go");
+  const events = [
+    root,
+    note,
+    dropped,
+    change("4", 40003, note, "Use the blue palette"),
+    change("5", 5, dropped),
+    mention,
+  ];
+  const { host, deliver, session } = setup();
+  session.read.mockImplementation(async (filters?: readonly ReadFilter[]) =>
+    events.filter((event) =>
+      (filters ?? []).some(
+        (filter) =>
+          (!filter.kinds || filter.kinds.includes(event.kind)) &&
+          (filter.ids?.includes(event.id) ||
+            event.tags.some(
+              (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+            )),
+      ),
+    ),
+  );
+  await deliver({ type: "mention", event: mention }).run;
+  const text = String(host.requests("deliver")[0]?.params.text);
+  expect(text).toContain("Build is red");
+  expect(text).toContain("Use the blue palette");
+  expect(text).not.toContain("Use the red palette");
+  expect(text).not.toContain("Drop the staging tables");
+});

@@ -147,3 +147,6 @@ function PanelSplitHandle({
     />
   );
 }
+
+/** Attach ref to the layout container and render handle beside the secondary pane. */
+export type PanelSplit = ReturnType<typeof usePanelSplit>;

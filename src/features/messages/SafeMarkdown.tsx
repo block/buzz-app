@@ -9,6 +9,14 @@ import { labelText } from "./label-text";
 /** The remark plugins `SafeMarkdown` renders with; guards parse with the same. */
 export const safeMarkdownPlugins = [remarkGfm];
 
+/** Host Markdown content and link dispatch shared by documents and plugins. */
+export type SafeMarkdownProps = {
+  content: string;
+  openLink(url: string): boolean;
+  /** Lets links show what they point to in this session. */
+  session?: RelaySession | undefined;
+};
+
 /**
  * A Markdown document with the link and image trust rules shared by Notes and
  * Canvas: no raw HTML, images shown as their alt text, and only Buzz or safe
@@ -18,12 +26,7 @@ export function SafeMarkdown({
   content,
   openLink,
   session,
-}: {
-  content: string;
-  openLink(url: string): boolean;
-  /** Lets links show what they point to in this session. */
-  session?: RelaySession | undefined;
-}) {
+}: SafeMarkdownProps) {
   return (
     <Markdown
       remarkPlugins={safeMarkdownPlugins}

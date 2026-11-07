@@ -70,7 +70,7 @@ const sameActivity = (
 type AgentSession = ComposerSession &
   Partial<Pick<RelaySession, "agentActivity">>;
 // Public identity classifies typing only; it grants no access to step details.
-function knownAgentsOf(
+export function knownAgentsOf(
   choices: ReturnType<AgentSession["agentChoices"]["snapshot"]>,
   entries: ReturnType<AgentSession["typing"]["snapshot"]>,
   profiles: ReturnType<AgentSession["profiles"]["snapshot"]>,

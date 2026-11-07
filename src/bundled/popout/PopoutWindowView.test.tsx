@@ -215,3 +215,42 @@ it("shows a conversation as a timeline with day dividers, drills into a row's th
   fireEvent.click(screen.getByRole("button", { name: "Back to conversation" }));
   expect(act).toHaveBeenCalledWith("back");
 });
+
+it("shows membership activity as one notice per run and says who is typing or working, in main's words", () => {
+  const act = vi.fn();
+  const ada = "a".repeat(64);
+  const bob = "b".repeat(64);
+  const carol = "c".repeat(64);
+  const conversation = view({
+    thread: false,
+    root: undefined,
+    replies: [
+      row("1".repeat(64), "Hello"),
+      {
+        ...row("2".repeat(64), ""),
+        authorId: ada,
+        membership: { type: "member_joined", actor: carol, target: ada },
+        mentionNames: { [ada]: "Ada", [carol]: "Carol" },
+      },
+      {
+        ...row("3".repeat(64), ""),
+        authorId: bob,
+        membership: { type: "member_joined", actor: carol, target: bob },
+        mentionNames: { [bob]: "Bob", [carol]: "Carol" },
+      },
+      row("4".repeat(64), "Welcome"),
+    ],
+    typing: { humans: ["Ada", "Bob"], more: 1, agents: ["Echo"] },
+  });
+  render(<PopoutWindowView view={conversation} act={act} />);
+  expect(screen.getByText("Hello")).toBeTruthy();
+  expect(screen.getByText("Welcome")).toBeTruthy();
+  const notices = document.querySelectorAll("[data-membership-row]");
+  expect(notices).toHaveLength(1);
+  expect(notices[0]?.textContent).toMatch(/Carol/);
+  expect(notices[0]?.textContent).toMatch(/Ada/);
+  expect(notices[0]?.textContent).toMatch(/Bob/);
+  expect(
+    document.querySelector("[data-conversation-activity]")?.textContent,
+  ).toBe("Echo is working. Ada, Bob and 1 others are typing");
+});

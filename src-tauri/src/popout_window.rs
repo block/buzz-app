@@ -99,6 +99,27 @@ pub(crate) struct View {
     /// The frame was opened from the previous one; `back` returns there.
     #[serde(default)]
     can_go_back: bool,
+    /// People typing and agents working here, as names.
+    #[serde(default)]
+    typing: Option<Typing>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Typing {
+    humans: Vec<String>,
+    more: u32,
+    agents: Vec<String>,
+}
+impl Typing {
+    fn valid(&self) -> bool {
+        self.humans.len() <= 2
+            && self.agents.len() <= 8
+            && self
+                .humans
+                .iter()
+                .chain(&self.agents)
+                .all(|n| n.len() <= 1024)
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -218,6 +239,7 @@ fn validate(view: &View) -> Result<()> {
     if view.title.len() > 4096
         || view.scope.len() > 4096
         || view.appearance.as_ref().is_some_and(|a| !a.valid())
+        || view.typing.as_ref().is_some_and(|t| !t.valid())
         || view.error.as_ref().is_some_and(|e| e.len() > 8192)
         || !matches!(view.status.as_str(), "loading" | "ready" | "error")
         || [&view.composer, &view.reading].iter().any(|t| {
@@ -702,6 +724,7 @@ mod tests {
             is_dm: false,
             thread: true,
             can_go_back: false,
+            typing: None,
         }
     }
     #[test]

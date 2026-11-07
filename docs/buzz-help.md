@@ -929,9 +929,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   an agent you own, plugin actions (Start Solo chat, Remind me — these run in
   the main window), View activity, and voice notes all work there. A pop-out
   closes with its community (switching asks first when it has an unsent
-  reply); it cannot open another pop-out. Solo chats show the conversation as
-  messages; agent-specific surfaces stay in the main window. Not available
-  in the browser build.
+  reply); it cannot open another pop-out. A conversation window shows who
+  joined or left and who is typing or working, as the main window does. Solo
+  chats show the conversation as messages; agent-specific surfaces (response
+  previews, stop controls) stay in the main window. Not available in the
+  browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking

@@ -697,11 +697,20 @@ re-created in the companion (named as a gap in help).
   companion asks to discard a recording before navigating. Reviewer: all S2
   findings closed at source/test level. Native acceptance open.
 
+- Follow-up requested by jaw: typing indicator and join/leave notice rows in
+  conversation windows. Main projects `typing` (two human names + count,
+  agent names; from `session.typing`/`agentActivity` with the same pure
+  classification as `TypingIndicator`) and keeps membership rows in the
+  timeline projection; the companion renders `MembershipRow` groups and a
+  text status line in main's words. Agent response previews and stop
+  controls stay in main.
+
 ### Non-goals (S2)
 
-Canvas/pages/Settings windows; restoring windows after restart; typing
-indicators and member counts in the companion; multiple frames of history
-beyond conversation → thread (one level is what Slack shows); mobile/browser.
+Canvas/pages/Settings windows; restoring windows after restart; member
+counts in the companion; agent response previews/stop controls in the
+companion; multiple frames of history beyond conversation → thread (one
+level is what Slack shows); mobile/browser.
 
 ### Diff budget (production, excluding tests/docs)
 

@@ -789,6 +789,7 @@ it("projects a conversation frame from the channel window: top-level rows, no ro
   };
   const ensure = vi.fn();
   const loadOlder = vi.fn();
+  const joiner = "e".repeat(64);
   const listeners = new Set<() => void>();
   const session = {
     ...h.session,
@@ -825,9 +826,11 @@ it("projects a conversation frame from the channel window: top-level rows, no ro
     rows: [
       row("a".repeat(64), "First"),
       {
-        ...row("b".repeat(64), "joined"),
-        membership: { kind: "join" },
+        ...row("b".repeat(64), ""),
+        authorId: joiner,
+        membership: { type: "member_joined", actor: joiner, target: joiner },
       } as never,
+      { ...row("f".repeat(64), "huddle"), huddle: {} } as never,
       row("c".repeat(64), "Second"),
     ],
   };
@@ -836,12 +839,74 @@ it("projects a conversation frame from the channel window: top-level rows, no ro
   expect(snap.status).toBe("ready");
   expect(snap.writable).toBe(true);
   expect(snap.canLoadMore).toBe(true);
-  expect(snap.replies.map((r) => r.text)).toEqual(["First", "Second"]);
+  // A timeline keeps membership activity as notice rows (a thread frame
+  // never shows them) and hides Huddle rows.
+  expect(snap.replies.map((r) => r.text)).toEqual(["First", "", "Second"]);
+  expect(snap.replies[1]?.membership).toEqual({
+    type: "member_joined",
+    actor: joiner,
+    target: joiner,
+  });
   expect(frame.shown("c".repeat(64))?.content).toBe("Second");
   expect(frame.rootVerified()).toBe(true);
   frame.older();
   expect(loadOlder).toHaveBeenCalledWith("channel");
-  expect([...frame.known()]).toEqual(["a".repeat(64), "c".repeat(64)]);
+  expect([...frame.known()]).toEqual([
+    "a".repeat(64),
+    "b".repeat(64),
+    "c".repeat(64),
+  ]);
+});
+
+it("projects who is typing and which agents are working in the frame's conversation, by name", () => {
+  const h = fixture();
+  const typer = "1".repeat(64);
+  const other = "2".repeat(64);
+  const agent = "3".repeat(64);
+  let entries: { channelId: string; threadRootId?: string; pubkey: string }[] =
+    [];
+  const listeners = new Set<() => void>();
+  const session = {
+    ...h.session,
+    typing: {
+      snapshot: () => entries,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    profiles: {
+      ...h.session.profiles,
+      snapshot: () =>
+        new Map([
+          [typer, { name: "Ada" }],
+          [agent, { name: "Echo", isAgent: true }],
+        ]),
+    },
+  } as unknown as RelaySession;
+  const thread = createPopoutThread(session, "channel", ROOT, () => {});
+  clean.push(thread.dispose);
+  expect(thread.snapshot().typing).toBeUndefined();
+  // Typing elsewhere (the channel, another thread) is not this thread's.
+  entries = [
+    { channelId: "channel", pubkey: typer },
+    { channelId: "channel", threadRootId: "9".repeat(64), pubkey: other },
+  ];
+  for (const listener of listeners) listener();
+  expect(thread.snapshot().typing).toBeUndefined();
+  entries = [
+    { channelId: "channel", threadRootId: ROOT, pubkey: typer },
+    { channelId: "channel", threadRootId: ROOT, pubkey: other },
+    { channelId: "channel", threadRootId: ROOT, pubkey: "4".repeat(64) },
+    // An agent typing is working, not a human typing.
+    { channelId: "channel", threadRootId: ROOT, pubkey: agent },
+  ];
+  for (const listener of listeners) listener();
+  const typing = thread.snapshot().typing;
+  expect(typing?.humans).toHaveLength(2);
+  expect(typing?.humans[0]).toBe("Ada");
+  expect(typing?.more).toBe(1);
+  expect(typing?.agents).toEqual(["Echo"]);
 });
 
 it("a conversation frame's owner admits sends and message actions against its shown rows without a roster", async () => {

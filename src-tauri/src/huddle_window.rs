@@ -103,9 +103,30 @@ pub(crate) struct DiscussionRow {
     /// Replies in this message's thread (pop-out conversation frames).
     #[serde(default)]
     reply_count: u32,
+    /// Relay-authored membership activity shown as a notice row (pop-outs).
+    #[serde(default)]
+    membership: Option<Membership>,
     /// Plugin actions main would offer, for a labelled main-window handoff.
     #[serde(default)]
     actions: Vec<HandoffAction>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Membership {
+    #[serde(rename = "type")]
+    kind: String,
+    actor: String,
+    target: String,
+}
+impl Membership {
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        matches!(
+            self.kind.as_str(),
+            "member_joined" | "member_left" | "member_removed"
+        ) && hex(&self.actor)
+            && hex(&self.target)
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -205,6 +226,7 @@ impl DiscussionRow {
             && self.editable.as_ref().is_none_or(|e| {
                 e.source_content.len() <= 65536 && e.attachment_source_id.len() <= 128
             })
+            && self.membership.as_ref().is_none_or(|m| m.valid())
             && self.actions.len() <= 32
             && self
                 .actions
@@ -753,6 +775,7 @@ mod tests {
                 editable: None,
                 author_is_agent: false,
                 reply_count: 0,
+                membership: None,
                 actions: vec![],
             }],
         });

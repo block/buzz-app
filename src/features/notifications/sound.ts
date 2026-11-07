@@ -62,30 +62,88 @@ export function resolveCategorySound(
   );
 }
 
-const cache = new Map<SoundName, HTMLAudioElement>();
+/** A short sound effect, without registering an HTML media element. */
+export type SoundPlayback = { stop(): void; finished: Promise<void> };
 
-function getAudio(name: SoundName): HTMLAudioElement {
-  let audio = cache.get(name);
-  if (!audio) {
-    audio = new Audio(`/sounds/${name}.mp3`);
-    cache.set(name, audio);
-  }
-  return audio;
-}
+let context: AudioContext | undefined;
+const buffers = new Map<SoundName, Promise<AudioBuffer>>();
+const playing = new Map<SoundName, SoundPlayback>();
 
-export function playNotificationSound(
-  name: SoundName,
-): HTMLAudioElement | null {
+export function playSoundEffect(name: SoundName): SoundPlayback | null {
   if (name === "silent") return null;
   try {
-    const audio = getAudio(name);
-    audio.currentTime = 0;
-    audio.play().catch(() => {
-      // Best-effort — user may not have interacted with the page yet.
+    if (!context || context.state === "closed") {
+      context = new AudioContext();
+      buffers.clear();
+    }
+    const audio = context;
+    // Resume inside the initiating gesture, before fetching/decoding the clip.
+    const ready =
+      audio.state === "running" ? Promise.resolve() : audio.resume();
+    let source: AudioBufferSourceNode | undefined;
+    let stopped = false;
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
     });
-    return audio;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      if (source) {
+        source.onended = null;
+        try {
+          source.stop();
+        } catch {
+          // A source whose start failed has nothing left to stop.
+        } finally {
+          source.disconnect();
+          finish();
+        }
+      }
+      finish();
+    };
+    let buffer = buffers.get(name);
+    if (!buffer) {
+      buffer = fetch(`/sounds/${name}.mp3`).then(async (response) => {
+        if (!response.ok) throw new Error("Notification sound unavailable");
+        return audio.decodeAudioData(await response.arrayBuffer());
+      });
+      buffers.set(name, buffer);
+      const loading = buffer;
+      void buffer.catch(() => {
+        if (buffers.get(name) === loading) buffers.delete(name);
+      });
+    }
+    void Promise.all([ready, buffer])
+      .then(([, decoded]) => {
+        if (stopped) return;
+        source = audio.createBufferSource();
+        source.buffer = decoded;
+        source.connect(audio.destination);
+        source.onended = () => {
+          source?.disconnect();
+          source = undefined;
+          stopped = true;
+          finish();
+        };
+        source.start();
+      })
+      .catch(stop);
+    return { stop, finished };
   } catch {
-    // Best-effort only.
+    // Best-effort only (including hosts without Web Audio).
     return null;
   }
+}
+
+export function playNotificationSound(name: SoundName): SoundPlayback | null {
+  playing.get(name)?.stop();
+  const playback = playSoundEffect(name);
+  if (playback) {
+    playing.set(name, playback);
+    void playback.finished.then(() => {
+      if (playing.get(name) === playback) playing.delete(name);
+    });
+  }
+  return playback;
 }

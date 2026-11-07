@@ -176,10 +176,10 @@ export function parseIndex(value: unknown): Index | null {
 
 export async function loadIndex(
   host: Pick<Host, "request">,
-  origin: string,
+  url: string,
 ): Promise<Index> {
   const response = await host.request({
-    url: `${origin}/v1/index.json`,
+    url,
     timeoutMs: 8000,
   });
   if (response.status !== 200)

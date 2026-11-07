@@ -48,7 +48,7 @@ function sharedAppsControlPlane(login: string) {
   return raw;
 }
 
-/** The community plugin index origin, checked as native's `build.rs` checks it. */
+/** The community plugin index URL, checked as native's `build.rs` checks it. */
 function sharedCommunityPluginIndex() {
   const raw = sharedBuildValue("BUZZ_COMMUNITY_PLUGIN_INDEX_URL") ?? "";
   if (!raw) return "";
@@ -56,8 +56,17 @@ function sharedCommunityPluginIndex() {
   try {
     url = new URL(raw);
   } catch {}
-  if (url?.protocol !== "https:" || url.origin !== raw)
-    throw new Error("Community plugin index URL must be an exact HTTPS origin");
+  if (
+    url?.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    raw.includes("#") ||
+    url.pathname === "/" ||
+    url.href !== raw
+  )
+    throw new Error(
+      "Community plugin index URL must be the HTTPS URL of index.json, without credentials or a fragment",
+    );
   return raw;
 }
 

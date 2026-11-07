@@ -1,18 +1,49 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { bundledPlugins } from "..";
-import { communityIndexOrigin, communityPluginsAccess } from "./config";
+import {
+  communityIndexUrl,
+  communityPluginsAccess,
+  listingRepository,
+} from "./config";
+
+const published =
+  "https://raw.githubusercontent.com/block/buzz-plugins/index/index.json";
 
 afterEach(() => vi.unstubAllEnvs());
 
-it("grants network access only to a configured index and GitHub's API", () => {
+it("grants network access only to the index's origin and GitHub's API", () => {
   expect(communityPluginsAccess("")).toEqual({});
-  expect(communityPluginsAccess("https://plugins.example")).toEqual({
+  expect(communityPluginsAccess(published)).toEqual({
     host: {
-      networkOrigins: ["https://plugins.example", "https://api.github.com"],
+      networkOrigins: [
+        "https://raw.githubusercontent.com",
+        "https://api.github.com",
+      ],
     },
   });
-  vi.stubEnv("VITE_BUZZ_COMMUNITY_PLUGIN_INDEX_URL", "https://plugins.example");
-  expect(communityIndexOrigin()).toBe("https://plugins.example");
+  expect(
+    communityPluginsAccess("https://plugins.example:8443/v1/index.json?v=2"),
+  ).toEqual({
+    host: {
+      networkOrigins: [
+        "https://plugins.example:8443",
+        "https://api.github.com",
+      ],
+    },
+  });
+  vi.stubEnv("VITE_BUZZ_COMMUNITY_PLUGIN_INDEX_URL", published);
+  expect(communityIndexUrl()).toBe(published);
+});
+
+it("takes the listing repository from an index on raw.githubusercontent.com", () => {
+  expect(listingRepository(published)).toBe("block/buzz-plugins");
+  expect(listingRepository("https://plugins.example/index.json")).toBe(
+    undefined,
+  );
+  expect(listingRepository("https://raw.githubusercontent.com/block")).toBe(
+    undefined,
+  );
+  expect(listingRepository("")).toBe(undefined);
 });
 
 it("ships on by default with no access in a build without an index", () => {

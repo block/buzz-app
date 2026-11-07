@@ -1,6 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
 import type { PluginInstaller } from "../../plugins/installer";
-import { communityIndexOrigin } from "./config";
+import { communityIndexUrl, listingRepository } from "./config";
 import { CommunityPluginsPage } from "./CommunityPluginsPage";
 import { createRecorder } from "./recorder";
 
@@ -12,7 +12,7 @@ export const inject = [
   "pluginInventory",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  const origin = communityIndexOrigin();
+  const indexUrl = communityIndexUrl();
   const host = ctx.host;
   const installer = ctx.reflect.get("pluginInstaller") as
     | PluginInstaller
@@ -39,7 +39,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     primary: true,
     component: () => (
       <CommunityPluginsPage
-        origin={origin}
+        indexUrl={indexUrl}
+        listingRepository={listingRepository(indexUrl)}
         host={host}
         installer={installer}
         relay={ctx.relay}

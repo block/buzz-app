@@ -2,11 +2,12 @@ import { expect, it, vi } from "vitest";
 import {
   checkSource,
   describeSource,
+  listingLinks,
   parseSourceInput,
-  submitSource,
+  sourceKey,
+  sourceLine,
 } from "./submit";
 
-const origin = "https://plugins.example";
 const api = "https://api.github.com/repos/octo/notes";
 type Answer = { status: number; body?: string };
 
@@ -135,47 +136,33 @@ const source = {
   description: "",
 };
 
-it("submits a checked source to the configured index", async () => {
-  const host = fakeHost({
-    [`${origin}/v1/sources`]: {
-      status: 200,
-      body: '{"status":"queued","listing":{"slug":"octo-notes","name":"Octo notes"}}',
-    },
-  });
-  expect(await submitSource(host, origin, source)).toEqual({
-    ok: true,
-    status: "queued",
-    slug: "octo-notes",
-    name: "Octo notes",
-  });
-  expect(host.request).toHaveBeenCalledWith(
-    expect.objectContaining({
-      url: `${origin}/v1/sources`,
-      method: "POST",
-      body: JSON.stringify({ repository: "octo/notes", ref: "main" }),
-    }),
+it("writes the source as a sources.txt line and a listing key", () => {
+  expect(sourceLine(source)).toBe("https://github.com/octo/notes main");
+  expect(sourceLine({ ...source, ref: "v2", path: "plugins/a" })).toBe(
+    "https://github.com/octo/notes v2 plugins/a",
+  );
+  expect(sourceKey(source)).toBe("github.com/octo/notes");
+  expect(sourceKey({ ...source, path: "plugins/a" })).toBe(
+    "github.com/octo/notes/plugins/a",
   );
 });
 
-it.each([
-  [
-    {
-      status: 422,
-      body: '{"reason":"denylisted","detail":"It is denylisted."}',
-    },
-    "The index couldn't list it: It is denylisted.",
-  ],
-  [{ status: 429 }, "Try again tomorrow"],
-  [{ status: 503 }, "couldn't check GitHub just now"],
-  [{ status: 500 }, "HTTP 500"],
-])("reports an index that doesn't accept a source", async (answer, message) => {
-  const host = fakeHost({ [`${origin}/v1/sources`]: answer });
-  const result = await submitSource(host, origin, source);
-  expect(!result.ok && result.message).toContain(message);
-});
-
-it("sends nothing without a configured index", async () => {
-  const host = fakeHost({});
-  expect((await submitSource(host, "", source)).ok).toBe(false);
-  expect(host.request).not.toHaveBeenCalled();
+it("links to a sources.txt pull request and a filled-in issue form", () => {
+  const links = listingLinks("block/buzz-plugins", {
+    ...source,
+    name: "Notes & more",
+    path: "plugins/a",
+  });
+  expect(links.pullRequest).toBe(
+    "https://github.com/block/buzz-plugins/edit/main/sources.txt",
+  );
+  const issue = new URL(links.issue);
+  expect(`${issue.origin}${issue.pathname}`).toBe(
+    "https://github.com/block/buzz-plugins/issues/new",
+  );
+  expect(Object.fromEntries(issue.searchParams)).toEqual({
+    template: "list-plugin.yml",
+    title: "List: Notes & more",
+    source: "https://github.com/octo/notes main plugins/a",
+  });
 });

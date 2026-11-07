@@ -71,7 +71,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function fixture(upload?: () => Promise<UploadedAttachment>) {
+function fixture(
+  upload?: () => Promise<UploadedAttachment>,
+  observeSeek = false,
+) {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   vi.stubGlobal(
@@ -96,6 +99,7 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   ];
   let emit: (events: readonly RelayEvent[]) => void = () => {};
   let fail = false;
+  let failOlder = false;
   let gate: Promise<void> | undefined;
   let historyGate: Promise<void> | undefined;
   let historyStarted = () => {};
@@ -116,6 +120,8 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
         (
           await Promise.all(
             filters.map(async (filter) => {
+              if (failOlder && filter.top_level && filter.until !== undefined)
+                throw new Error("older page failed");
               if (
                 historyGate &&
                 (filter.top_level ||
@@ -208,7 +214,10 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   );
   owners.push(owner);
   emit(events);
-  const session = owner.session;
+  const seek = vi.fn(owner.session.channels.seek);
+  const session = observeSeek
+    ? { ...owner.session, channels: { ...owner.session.channels, seek } }
+    : owner.session;
   const connection: RelaySnapshot = {
     status: "ready",
     generation: 1,
@@ -232,6 +241,7 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   } as unknown as Panels;
   return {
     session,
+    seek,
     relay,
     holdHistory: () => {
       let release!: () => void;
@@ -254,6 +264,16 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
       events.push(next);
       emit([next]);
       return next;
+    },
+    failOlder: (failed: boolean) => {
+      failOlder = failed;
+    },
+    seedDenseHistory: () => {
+      events.push(
+        ...Array.from({ length: 220 }, (_, i) =>
+          message(other, "room", `Dense ${i}`, 25),
+        ),
+      );
     },
     seedHistory: (thread: boolean) => {
       const history = Array.from({ length: 150 }, (_, i) =>
@@ -1338,4 +1358,51 @@ it("can select another older Sent message in the same channel after restoring it
     ).not.toBeNull();
     expect(h.session.channels.window("room").hasNewer).toBe(true);
   });
+});
+
+it("reopens a retained Sent target after a dense-second older retry", async () => {
+  const h = fixture(undefined, true);
+  h.seedDenseHistory();
+  const sent = h.seedSent(false);
+  h.session.channels.ensure("room");
+  await waitFor(() =>
+    expect(h.session.channels.window("room").status).toBe("ready"),
+  );
+  h.failOlder(true);
+  act(() => h.session.channels.loadOlder("room"));
+  await waitFor(() =>
+    expect(h.session.channels.window("room").error).toBeDefined(),
+  );
+  h.failOlder(false);
+  for (
+    let page = 0;
+    h.session.channels.window("room").hasMore && page < 30;
+    page++
+  ) {
+    act(() => h.session.channels.loadOlder("room"));
+    await waitFor(() =>
+      expect(h.session.channels.window("room").loadingOlder).toBe(false),
+    );
+  }
+  expect(h.session.channels.window("room").hasMore).toBe(false);
+  expect(
+    h.session.channels.window("room").rows.some((row) => row.id === sent.id),
+  ).toBe(true);
+  const seek = h.seek;
+  h.render();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /View message.*Already sent/ }),
+  );
+  const region = screen.getByRole("region", {
+    name: "Sent message in #Design",
+  });
+  await waitFor(() => expect(seek).toHaveBeenCalled());
+  await act(async () => {
+    await Promise.allSettled(seek.mock.results.map((result) => result.value));
+  });
+  expect(within(region).queryByText(/could not be found/)).toBeNull();
+  expect(
+    region.querySelector(`[data-message-id="${sent.id}"]`),
+  ).toBeInTheDocument();
 });

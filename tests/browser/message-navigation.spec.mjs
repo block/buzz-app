@@ -2,7 +2,7 @@ import { hoverMessage } from "./message-actions.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, end, settle, wheel } from "./timeline.mjs";
+import { open, end, settle, wheel, anchor, expectAnchor } from "./timeline.mjs";
 import {
   holdReadingFocus,
   releaseReadingFocus,
@@ -1308,4 +1308,43 @@ test("opening another message in the same thread keeps the reply editor mounted"
   ).toBe(true);
   await expect(composer).toHaveText("Keep my unfinished reply");
   await expect(replyTarget).toHaveText(chosenTarget);
+});
+
+// Native focus scrolling and Virtua measurement must retire end alignment
+// when keyboard message selection moves the reader into history.
+test("keyboard message selection leaves bottom follow before a live append", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const history = page.getByRole("region", { name: "Channel message history" });
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await settle(page, history);
+  await composer.press("ArrowUp");
+  for (let step = 0; step < 10; step++) await page.keyboard.press("ArrowUp");
+  await expect
+    .poll(() =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeGreaterThan(80);
+  await settle(page, history);
+  const reading = await anchor(page);
+  const live = app.append(
+    "primary",
+    "alpha",
+    "Live after keyboard history selection",
+  );
+  await expect(
+    history.locator("button[data-jump-to-latest]"),
+  ).toHaveAccessibleName("1 new message");
+  await settle(page, history);
+  await expectAnchor(page, reading);
+  await expect(
+    history.locator(`[data-message-id="${live.id}"]`),
+  ).not.toBeInViewport();
 });

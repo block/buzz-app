@@ -15,6 +15,17 @@ export class ReadError extends Error {
     this.name = "ReadError";
   }
 }
+/** A valid response can exceed admission capacity; request fewer rows. */
+export class ReadBudgetError extends ReadError {
+  constructor() {
+    super("invalid-response", "Relay response exceeds the read budget");
+  }
+}
+export function isReadBudgetError(error: unknown): boolean {
+  return (
+    error instanceof ReadBudgetError || error === "Relay response is too large"
+  );
+}
 /** HTTP statuses where the same request can succeed later unchanged. */
 export function transientStatus(status: number) {
   return status === 408 || status === 429 || status >= 500;

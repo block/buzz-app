@@ -753,8 +753,7 @@ loading. Restored operations are never published automatically.
 Delivery status changes preserve unaffected row/event identities. Per-window event
 and overlay indexes fold only affected message content; signing and ACK transitions
 never refold history. Incoming traffic updates the same channel preview and views.
-When live traffic fills a retained history budget, oldest remote inputs are trimmed
-and history is marked limited; new traffic continues to arrive.
+When live traffic fills a retained history budget, oldest remote inputs are trimmed and remain available through older paging. Older paging makes room at the newest end instead of stopping at the budget. Scrolling down loads the next newer segment; Jump to latest returns to the current head. Both directions keep the existing row and byte budgets.
 
 `outbox.test.ts` covers immediate views, stale reads, echo-before-ACK, explicit
 rejection, exact-event retry, persistence failures, restart, timeout/unknown outcomes,

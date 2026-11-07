@@ -63,18 +63,22 @@ import { useMessageVisit } from "./MessageManagement";
 // Inner scrollports own the key while they can move. At their top boundary,
 // native keyboard chaining differs by engine/OS, even with CSS containment.
 // Admit a candidate there; only observed history movement can leave follow.
-function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
+function scrollsHistory(event: KeyboardEvent<HTMLElement>, up = true): boolean {
   if (event.defaultPrevented) return false;
   const modified = event.altKey || event.ctrlKey || event.metaKey;
   // ArrowUp includes native Command/Option/Control+Up variants; Control+Home
   // is the Windows/Linux start chord. These are intent candidates: only an
   // observed upward history scroll can actually leave bottom follow.
-  const upward =
-    event.key === "ArrowUp" ||
-    (!modified &&
-      (["PageUp", "Home"].includes(event.key) ||
-        (event.key === " " && event.shiftKey))) ||
-    (event.key === "Home" && event.ctrlKey && !event.altKey && !event.metaKey);
+  const upward = up
+    ? event.key === "ArrowUp" ||
+      (!modified &&
+        (["PageUp", "Home"].includes(event.key) ||
+          (event.key === " " && event.shiftKey))) ||
+      (event.key === "Home" && event.ctrlKey && !event.altKey && !event.metaKey)
+    : event.key === "ArrowDown" ||
+      (!modified &&
+        !event.shiftKey &&
+        ["PageDown", "End", " "].includes(event.key));
   if (!upward) return false;
   let target = event.target instanceof HTMLElement ? event.target : null;
   if (!target || !event.currentTarget.contains(target)) return false;
@@ -86,15 +90,33 @@ function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
       (event.key === " " && target.matches("button, [role='button']"))
     )
       return false;
-    const style = getComputedStyle(target);
-    if (
-      ["auto", "scroll", "overlay"].includes(style.overflowY) &&
-      target.scrollTop > 0
-    )
-      return false;
+    if (consumesScroll(target, up)) return false;
     target = target.parentElement;
   }
   return target === event.currentTarget;
+}
+
+function consumesScroll(target: HTMLElement, up: boolean) {
+  return (
+    ["auto", "scroll", "overlay"].includes(
+      getComputedStyle(target).overflowY,
+    ) &&
+    (up
+      ? target.scrollTop > 0
+      : target.scrollTop + target.clientHeight < target.scrollHeight)
+  );
+}
+function scrollsTimeline(
+  target: EventTarget,
+  scroller: HTMLElement,
+  up: boolean,
+) {
+  let element = target instanceof HTMLElement ? target : null;
+  while (element && element !== scroller) {
+    if (consumesScroll(element, up)) return false;
+    element = element.parentElement;
+  }
+  return element === scroller;
 }
 
 type ReadingPosition = {
@@ -126,6 +148,9 @@ const visitBoundaries = new WeakMap<
 >();
 const unknownUnreadSync = Object.freeze({ completeness: "unknown" as const });
 const TIMELINE_PLACE = "timeline";
+const paragraphTop = (row: Element) =>
+  (row.querySelector("p") ?? row).getBoundingClientRect().top;
+
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -725,21 +750,29 @@ function Timeline({
     ids: ReadonlySet<string>;
     floor: number;
     paging: boolean;
+    newer: boolean;
   }>({
     order: [],
     containedOwners: new Map(),
     ids: new Set(),
     floor: 0,
     paging: false,
+    newer: false,
   });
   // The reader's anchor row and its offset before this render's rows.
-  const reader = useRef<{ id: string | undefined; top: number; y: number }>({
+  const reader = useRef<{
+    id: string | undefined;
+    top: number;
+    y: number;
+    inset: number;
+  }>({
     id: undefined,
     top: 0,
     y: 0,
+    inset: 0,
   });
   const heldReader = useRef<
-    { id: string; y: number; intent: number } | undefined
+    { id: string; y: number; inset: number; intent: number } | undefined
   >(undefined);
   const previousBoundaryId = useRef<string | undefined>(undefined);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
@@ -759,6 +792,13 @@ function Timeline({
   // reader input. Its own end alignment and Virtua's offset corrections can
   // scroll upward before rows re-measure; only reader input may cancel follow.
   const layoutCorrection = useRef(false);
+  const hadNewer = useRef(window.hasNewer);
+  useLayoutEffect(() => {
+    // Removing the forward control can clamp the scrollport upward at the head.
+    if (hadNewer.current && !window.hasNewer) layoutCorrection.current = true;
+    hadNewer.current = window.hasNewer;
+  }, [window.hasNewer]);
+
   // A held pointer can drag the scrollbar without directional input events.
   const pointerHeld = useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -833,6 +873,7 @@ function Timeline({
       // Restoration can scroll before Virtua measures rows beneath the anchor,
       // briefly reaching the estimated bottom. Only reader input may follow.
       if (restoredAnchor.current) position.bottom = false;
+      if (window.hasNewer && userScrolled.current) position.bottom = false;
       if (pendingRestore.current !== intent.current)
         savedPosition.current = position;
       follow.current = position.bottom;
@@ -843,7 +884,7 @@ function Timeline({
         viewport: element.clientHeight,
       };
     },
-    [rows],
+    [rows, window.hasNewer],
   );
   const updateJumpToLatest = useCallback((element: HTMLElement) => {
     const bottom =
@@ -852,7 +893,7 @@ function Timeline({
     if (bottom) setNewMessageCount(0);
   }, []);
   const jumpToLatest = useCallback(() => {
-    if (!handle.current || !rows.length) return;
+    queries.channels.attach?.(channelId);
     intent.current++;
     follow.current = true;
     restoredAnchor.current = undefined;
@@ -862,13 +903,14 @@ function Timeline({
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     layoutCorrection.current = true;
+    if (!handle.current || !rows.length) return;
     const tailHeight =
       activityTail.current?.getBoundingClientRect().height ?? 0;
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
       ...(tailHeight ? { offset: tailHeight } : {}),
     });
-  }, [rows.length]);
+  }, [rows.length, queries, channelId]);
   const inlineSignal = inlineTarget?.signal;
   const targetIndex = rows.findIndex(
     (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
@@ -1072,6 +1114,7 @@ function Timeline({
       .filter((row) => !row.membership && !row.huddle)
       .at(-1)?.id,
     enabled: marksRead,
+    atHead: !window.hasNewer,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
@@ -1091,7 +1134,18 @@ function Timeline({
   const held = previous.indexOf(
     edges.current.containedOwners.get(heldId ?? "") ?? heldId ?? "",
   );
+  const priorRow = heldId
+    ? Array.from(
+        scroller.current?.querySelectorAll<HTMLElement>("[data-message-id]") ??
+          [],
+      ).find((row) => row.dataset.messageId === heldId)
+    : undefined;
   reader.current = {
+    inset:
+      retained?.inset ??
+      (priorRow
+        ? paragraphTop(priorRow) - priorRow.getBoundingClientRect().top
+        : 0),
     id: held < 0 ? undefined : heldId,
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
     y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
@@ -1130,11 +1184,15 @@ function Timeline({
       return;
     const moved = handle.current.getItemOffset(index) - reader.current.top;
     const id = reader.current.id;
+    const prefixChanged = rows
+      .slice(0, index)
+      .some((row, position) => row.id !== previous[position]);
     if (
       !id ||
       (!moved &&
         !boundaryChanged &&
         rows.length <= edges.current.order.length &&
+        !prefixChanged &&
         !(
           heldReader.current?.id === id &&
           heldReader.current.intent === intent.current
@@ -1146,26 +1204,39 @@ function Timeline({
     const row = element.querySelector<HTMLElement>(
       `[data-message-id="${CSS.escape(id)}"]`,
     );
-    // A divider changes the anchor's inset inside its virtual item before
-    // Virtua commits the new item height. Hold the same message through both.
+    // Prepending and trimming can change both an item's offset and its inset
+    // before Virtua commits the new height. Hold the rendered message through both.
+    const trimmed =
+      previous.length > 0 &&
+      (!rows.some((row) => row.id === previous[0]) ||
+        !rows.some((row) => row.id === previous.at(-1)));
     const delta =
-      boundaryChanged && row
-        ? row.getBoundingClientRect().top -
+      row && (boundaryChanged || (prefixChanged && trimmed))
+        ? paragraphTop(row) -
           element.getBoundingClientRect().top -
-          reader.current.y
+          reader.current.y -
+          reader.current.inset
         : moved;
     // WebKit truncates fractional scrollTop writes; use the nearest pixel
     // when a caption's fractional line height changes the message inset.
+    if (delta) layoutCorrection.current = true;
     correctScrollTop(element, boundaryChanged ? Math.round(delta) : delta);
     // The row's offset from the viewport, as last placed by the reader.
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
-    const anchor = { id, y: reader.current.y, intent: intent.current };
+    const anchor = {
+      id,
+      y: reader.current.y,
+      inset: reader.current.inset,
+      intent: intent.current,
+    };
     heldReader.current = anchor;
-    const top = () =>
-      element
-        .querySelector(`[data-message-id="${CSS.escape(anchor.id)}"]`)
-        ?.getBoundingClientRect().top;
+    const top = () => {
+      const row = element.querySelector(
+        `[data-message-id="${CSS.escape(anchor.id)}"]`,
+      );
+      return row ? paragraphTop(row) - anchor.inset : undefined;
+    };
     const logicalTop = () => {
       const index = rows.findIndex((row) => row.id === anchor.id);
       const virtualizer = handle.current;
@@ -1216,7 +1287,15 @@ function Timeline({
       // consumeMovement keeps the ideal Y through scrollTop rounding. Only a
       // handover to another row adopts rendered geometry.
       if (position) {
-        if (position.id !== anchor.id) Object.assign(anchor, position);
+        if (position.id !== anchor.id) {
+          Object.assign(anchor, position);
+          const row = element.querySelector(
+            `[data-message-id="${CSS.escape(anchor.id)}"]`,
+          );
+          anchor.inset = row
+            ? paragraphTop(row) - row.getBoundingClientRect().top
+            : 0;
+        }
         readerMoved = false;
       }
       logical = logicalTop();
@@ -1255,6 +1334,7 @@ function Timeline({
         // Follow the same item's delta without mixing its inner DOM offset in.
         if (row === undefined && next !== undefined && logical !== undefined)
           delta = next - logical;
+        if (delta) layoutCorrection.current = true;
         correctScrollTop(element, boundaryChanged ? Math.round(delta) : delta);
         lastScrollTop = element.scrollTop;
       }
@@ -1292,7 +1372,7 @@ function Timeline({
     element.ownerDocument.addEventListener("pointerup", done);
     element.ownerDocument.addEventListener("pointercancel", done);
     return () => release(true);
-  }, [rows, prepend, containedOwners, newMessageBoundaryId]);
+  }, [rows, prepend, containedOwners, newMessageBoundaryId, previous]);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -1371,6 +1451,11 @@ function Timeline({
     loadingOlder.current = window.loadingOlder;
     if (window.loadingOlder) edges.current.paging = true;
   }, [window.loadingOlder]);
+  const loadingNewer = useRef(false);
+  useLayoutEffect(() => {
+    loadingNewer.current = !!window.loadingNewer;
+    if (window.loadingNewer) edges.current.newer = true;
+  }, [window.loadingNewer]);
   useLayoutEffect(() => {
     if (
       pendingReveal.current &&
@@ -1399,18 +1484,21 @@ function Timeline({
     const { floor, order } = edges.current;
     const paged = edges.current.paging && !loadingOlder.current;
     const tail = rows.findIndex((row) => row.id === order.at(-1));
-    const arrivals = rows.filter(
-      (row, index) =>
-        !previousIds.has(row.id) &&
-        (!paged || index > tail) &&
-        (row.createdAt > floor || (row.createdAt === floor && !paged)),
-    ).length;
+    const arrivals = edges.current.newer
+      ? 0
+      : rows.filter(
+          (row, index) =>
+            !previousIds.has(row.id) &&
+            (!paged || index > tail) &&
+            (row.createdAt > floor || (row.createdAt === floor && !paged)),
+        ).length;
     edges.current = {
       order: rows.map((row) => row.id),
       containedOwners,
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
       paging: loadingOlder.current,
+      newer: loadingNewer.current,
     };
     if (
       arrivals > 0 &&
@@ -1607,6 +1695,15 @@ function Timeline({
   useLayoutEffect(() => {
     if (!window.loadingOlder) edges.current.paging = false;
   }, [window.loadingOlder]);
+  useLayoutEffect(() => {
+    if (!window.loadingNewer) edges.current.newer = false;
+  }, [window.loadingNewer]);
+  const readingAnchor = useCallback(() => {
+    const id = scroller.current
+      ? positionAt(scroller.current).anchor?.id
+      : undefined;
+    return containedOwners.get(id ?? "") ?? id;
+  }, [containedOwners]);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
       olderDemand.current = false;
@@ -1628,7 +1725,7 @@ function Timeline({
         olderDemand.current = true;
         return;
       }
-      queries.channels.loadOlder(channelId);
+      queries.channels.loadOlder(channelId, readingAnchor());
       const after = queries.channels.window(channelId);
       olderDemand.current =
         window.freshness === "cached" &&
@@ -1638,12 +1735,22 @@ function Timeline({
         !after.historyLimited &&
         !after.error;
     },
-    [window, queries, channelId],
+    [window, queries, channelId, readingAnchor],
   );
   useLayoutEffect(() => {
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
+  const loadNearBottom = (element: HTMLElement) => {
+    if (
+      window.hasNewer &&
+      !window.loadingNewer &&
+      !window.loadingOlder &&
+      !window.error &&
+      element.scrollHeight - element.clientHeight - element.scrollTop < 800
+    )
+      queries.channels.loadNewer?.(channelId, readingAnchor());
+  };
   const gesture = (upward = false) => {
     const restoring = pendingRestore.current === intent.current;
     restoredAnchor.current = undefined;
@@ -1671,7 +1778,7 @@ function Timeline({
           upwardGesture.current = false;
       });
     // At a restored top edge, input cannot move the DOM and emits no scroll.
-    if (scroller.current && scroller.current.scrollTop <= 0)
+    if (upward && scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
   return (
@@ -1684,7 +1791,15 @@ function Timeline({
       data-activity-history-scope=""
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
       data-jump-visible={showJumpToLatest || undefined}
-      onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
+      onWheel={(event) => {
+        gesture(event.deltaY < 0 && !event.ctrlKey);
+        if (
+          event.deltaY > 0 &&
+          !event.ctrlKey &&
+          scrollsTimeline(event.target, event.currentTarget, false)
+        )
+          loadNearBottom(event.currentTarget);
+      }}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
       }}
@@ -1695,11 +1810,22 @@ function Timeline({
             touchY.current !== undefined &&
             next > touchY.current,
         );
+        if (
+          next !== undefined &&
+          touchY.current !== undefined &&
+          next < touchY.current &&
+          scrollsTimeline(event.target, event.currentTarget, false)
+        )
+          loadNearBottom(event.currentTarget);
         touchY.current = next;
       }}
       onKeyDown={(event) => {
-        moveMessageSelection(event);
-        gesture(scrollsHistoryUp(event));
+        const selected = moveMessageSelection(event, !window.hasNewer);
+        const upward = scrollsHistory(event);
+        const downward = scrollsHistory(event, false);
+        if (upward || downward || selected)
+          gesture(upward || (selected && event.key === "ArrowUp"));
+        if (downward) loadNearBottom(event.currentTarget);
       }}
       onPointerDown={() => {
         pointerHeld.current = true;
@@ -1713,6 +1839,10 @@ function Timeline({
         document?.addEventListener("pointerup", up);
         document?.addEventListener("pointercancel", up);
         gesture();
+      }}
+      onPointerMove={(event) => {
+        if (pointerHeld.current && (event.movementX || event.movementY))
+          gesture();
       }}
       onPointerUp={() => {
         pointerHeld.current = false;
@@ -1757,6 +1887,9 @@ function Timeline({
       onScroll={(event) => {
         // React may receive this event before Virtua updates its handle metrics.
         const element = event.currentTarget;
+        const downward =
+          element.scrollTop >
+          (measuredPosition.current?.offset ?? element.scrollTop);
         const v = handle.current;
         if (
           v &&
@@ -1770,7 +1903,9 @@ function Timeline({
           );
           updateJumpToLatest(element);
         }
-        loadNearTop(element);
+        if (!downward && !layoutCorrection.current) loadNearTop(element);
+        if (downward && userScrolled.current && !layoutCorrection.current)
+          loadNearBottom(element);
       }}
     >
       <div
@@ -1788,7 +1923,7 @@ function Timeline({
             type="button"
             disabled={window.loadingOlder}
             onClick={() => {
-              queries.channels.loadOlder(channelId);
+              queries.channels.loadOlder(channelId, readingAnchor());
               const after = queries.channels.window(channelId);
               if (after.loadingOlder || after.error || after.status !== "ready")
                 olderDemand.current = false;
@@ -1796,7 +1931,7 @@ function Timeline({
           >
             {window.loadingOlder
               ? "Loading older…"
-              : window.error
+              : window.error && window.errorDirection !== "newer"
                 ? "Retry older messages"
                 : "Load older messages"}
           </Button>
@@ -1805,7 +1940,7 @@ function Timeline({
         ) : null}
       </div>
       <JumpToLatestButton
-        visible={showJumpToLatest}
+        visible={showJumpToLatest || !!window.hasNewer}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
       />
@@ -1997,6 +2132,27 @@ function Timeline({
         </Virtualizer>
       )}
       <div ref={activityTail}>
+        {window.hasNewer && (
+          <div className={styles.edge}>
+            {historyControl === "button" || window.error ? (
+              <Button
+                type="button"
+                disabled={window.loadingNewer}
+                onClick={() =>
+                  queries.channels.loadNewer?.(channelId, readingAnchor())
+                }
+              >
+                {window.loadingNewer
+                  ? "Loading newer…"
+                  : window.error && window.errorDirection !== "older"
+                    ? "Retry newer messages"
+                    : "Load newer messages"}
+              </Button>
+            ) : window.loadingNewer ? (
+              <span role="status">Loading newer…</span>
+            ) : null}
+          </div>
+        )}
         <AgentConnectionSetup
           key={channelId}
           session={queries}

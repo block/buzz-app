@@ -333,7 +333,7 @@ it("live activity obeys the same retained row budget as messages", async () => {
       addition(brain.pubkey, 3),
     ]);
     expect(owner.session.channels.window("a")).toMatchObject({
-      historyLimited: true,
+      historyLimited: false,
     });
     expect(
       owner.session.channels.window("a").rows.map((r) => r.createdAt),

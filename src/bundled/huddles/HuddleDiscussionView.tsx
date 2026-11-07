@@ -15,6 +15,7 @@ export function HuddleDiscussionView({
   discussion,
   composer,
   older,
+  latest,
   retry,
   recover,
   openLink,
@@ -25,6 +26,7 @@ export function HuddleDiscussionView({
   composer: ReactNode;
   openLink?: ((target: string) => boolean) | undefined;
   older(): void;
+  latest(): void;
   retry(): void;
   recover(id: string, dismiss?: boolean): void;
 }) {
@@ -47,9 +49,9 @@ export function HuddleDiscussionView({
   const following = useRef(true);
   const newest = discussion.rows.at(-1)?.id;
   useEffect(() => {
-    if (newest && tab === "thread" && following.current)
+    if (newest && tab === "thread" && following.current && !discussion.hasNewer)
       tail.current?.scrollIntoView({ block: "end" });
-  }, [newest, tab]);
+  }, [newest, tab, discussion.hasNewer]);
   return (
     <div className={styles.discussion}>
       <div className={styles.tabs}>
@@ -102,6 +104,18 @@ export function HuddleDiscussionView({
           {discussion.hasMore && (
             <Button size="sm" onClick={older}>
               Load earlier messages
+            </Button>
+          )}
+          {discussion.hasNewer && (
+            <Button
+              size="sm"
+              onClick={() => {
+                log.current?.focus({ preventScroll: true });
+                following.current = true;
+                latest();
+              }}
+            >
+              Jump to latest
             </Button>
           )}
           {!discussion.rows.length &&

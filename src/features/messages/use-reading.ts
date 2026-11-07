@@ -22,6 +22,8 @@ type Reading = {
   restoring?: (() => boolean) | undefined;
   /** False: this list marks nothing read; its owner decides what was read. */
   enabled?: boolean | undefined;
+  /** Detached history can acknowledge visible rows, never the live bottom. */
+  atHead?: boolean | undefined;
 };
 /** `useReading` for an owner that renders its own `MessageEditScope`. */
 export function Reading(props: Reading) {
@@ -42,6 +44,7 @@ export function useReading({
   settled,
   restoring,
   enabled = true,
+  atHead = true,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
   // Read at measurement time: a new latest message mutates the list, which
@@ -153,6 +156,7 @@ export function useReading({
     function bottomId() {
       const latest = latestId();
       if (
+        !atHead ||
         !latest ||
         element.scrollHeight - element.clientHeight - element.scrollTop > 1
       )
@@ -323,6 +327,7 @@ export function useReading({
   }, [
     session,
     channelId,
+    atHead,
     rootId,
     scroller,
     settled,

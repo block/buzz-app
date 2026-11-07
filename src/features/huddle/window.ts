@@ -40,6 +40,7 @@ export type HuddleAction =
   | "thread"
   | "send"
   | "older"
+  | "latest"
   | "retry"
   | "retryMessage"
   | "discardMessage";
@@ -385,6 +386,7 @@ export function createHuddleWindow(
           } else if (action === "send" && typeof text === "string")
             void discussion?.send(text);
           else if (action === "older") discussion?.older();
+          else if (action === "latest") discussion?.latest();
           else if (action === "retry") discussion?.retry();
           else if (
             (action === "retryMessage" || action === "discardMessage") &&

@@ -563,6 +563,9 @@ export function policyRelay({
             pending.push({
               community,
               channel,
+              get aborted() {
+                return init.signal.aborted;
+              },
               filter,
               events: result.filter((event) => event.kind === 9),
               release() {

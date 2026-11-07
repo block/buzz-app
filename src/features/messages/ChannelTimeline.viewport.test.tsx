@@ -1,3 +1,4 @@
+import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { cloneElement } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -9,7 +10,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
 import { ChannelTimeline } from "./ChannelTimeline";
@@ -1260,3 +1261,282 @@ it("keeps positioning idle when an unrelated activity update leaves the shown ro
     owner.dispose();
   }
 });
+
+it.each(["scroll", "button"] as const)(
+  "newer history respects %s controls and retains retry",
+  (historyControl) => {
+    const { owner, updates, content } = activityFixture();
+    const loadNewer = vi.fn();
+    const queries = {
+      ...owner.session,
+      channels: { ...owner.session.channels, loadNewer },
+    };
+    const base = content(updates(2), undefined, true, queries);
+    const show = (loadingNewer = false, error?: string) =>
+      cloneElement(base, {
+        historyControl,
+        window: { ...base.props.window, hasNewer: true, loadingNewer, error },
+      });
+    try {
+      const view = render(show());
+      expect(
+        screen.queryByRole("button", {
+          name: "Load newer messages",
+        }) !== null,
+      ).toBe(historyControl === "button");
+      view.rerender(show(true));
+      if (historyControl === "scroll") {
+        expect(screen.getByRole("status")).toHaveTextContent("Loading newer…");
+        expect(
+          screen.queryByRole("button", { name: "Loading newer…" }),
+        ).toBeNull();
+      } else {
+        expect(
+          screen.getByRole("button", { name: "Loading newer…" }),
+        ).toBeDisabled();
+      }
+      view.rerender(show(false, "Read failed"));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Retry newer messages",
+        }),
+      );
+      expect(loadNewer).toHaveBeenCalledTimes(1);
+      expect(loadNewer.mock.calls[0]?.[0]).toBe("alpha");
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it.each(["wheel", "key", "shift-space", "button-key"])(
+  "keeps paging direction owned by the %s gesture when both edges fit",
+  (input) => {
+    const { owner, updates, content } = activityFixture();
+    const loadOlder = vi.fn(),
+      loadNewer = vi.fn();
+    const queries = {
+      ...owner.session,
+      channels: { ...owner.session.channels, loadOlder, loadNewer },
+    };
+    const base = content(updates(2), undefined, true, queries);
+    try {
+      render(
+        cloneElement(base, {
+          window: { ...base.props.window, hasMore: true, hasNewer: true },
+        }),
+      );
+      const scroller = screen.getByRole("region", {
+        name: "Channel message history",
+      });
+      if (input === "wheel") fireEvent.wheel(scroller, { deltaY: 100 });
+      if (input === "key") fireEvent.keyDown(scroller, { key: "End" });
+      if (input === "shift-space")
+        fireEvent.keyDown(scroller, { key: " ", shiftKey: true });
+      if (input === "button-key") {
+        const button = screen.getAllByRole("button")[0];
+        assert.exists(button);
+        fireEvent.keyDown(button, { key: " " });
+      }
+      expect(loadOlder).toHaveBeenCalledTimes(input === "shift-space" ? 1 : 0);
+      expect(loadNewer).toHaveBeenCalledTimes(
+        ["wheel", "key"].includes(input) ? 1 : 0,
+      );
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it("requests attachment when Jump to latest has no displayed rows", () => {
+  const { owner, content } = activityFixture();
+  const attach = vi.fn();
+  const queries = {
+    ...owner.session,
+    channels: { ...owner.session.channels, attach },
+  };
+  const base = content([], undefined, true, queries);
+  try {
+    render(
+      cloneElement(base, { window: { ...base.props.window, hasNewer: true } }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /jump to latest/i }));
+    expect(attach).toHaveBeenCalledWith("alpha");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each(["older", "newer"] as const)(
+  "labels only the failed %s direction as Retry",
+  (errorDirection) => {
+    const { owner, updates, content } = activityFixture();
+    const base = content(updates(2));
+    try {
+      render(
+        cloneElement(base, {
+          historyControl: "button",
+          window: {
+            ...base.props.window,
+            hasMore: true,
+            hasNewer: true,
+            error: "Read failed",
+            errorDirection,
+          },
+        }),
+      );
+      expect(
+        screen.getByRole("button", {
+          name:
+            errorDirection === "older"
+              ? "Retry older messages"
+              : "Load older messages",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name:
+            errorDirection === "newer"
+              ? "Retry newer messages"
+              : "Load newer messages",
+        }),
+      ).toBeInTheDocument();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it("resumes paging on continued pointer movement after a scroll correction", () => {
+  const { owner, updates, content } = activityFixture();
+  const loadNewer = vi.fn();
+  const queries = {
+    ...owner.session,
+    channels: { ...owner.session.channels, loadNewer },
+  };
+  const base = content(updates(2), undefined, true, queries);
+  try {
+    render(
+      cloneElement(base, { window: { ...base.props.window, hasNewer: true } }),
+    );
+    const scroller = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    Object.defineProperty(scroller, "scrollHeight", {
+      value: 1000,
+      configurable: true,
+    });
+    fireEvent.pointerDown(scroller);
+    fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+    fireEvent(
+      scroller,
+      Object.assign(new Event("pointermove", { bubbles: true }), {
+        movementY: 10,
+      }),
+    );
+    scroller.scrollTop = 100;
+    fireEvent.scroll(scroller);
+    expect(loadNewer).toHaveBeenCalledOnce();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each(["wheel", "touch"])(
+  "keeps %s inside an overflowing Raw diff before forward paging",
+  (input) => {
+    const { owner, updates, content } = activityFixture();
+    const loadNewer = vi.fn();
+    const queries = {
+      ...owner.session,
+      channels: { ...owner.session.channels, loadNewer },
+    };
+    const base = content(updates(2), undefined, true, queries);
+    try {
+      render(
+        cloneElement(base, {
+          window: { ...base.props.window, hasMore: true, hasNewer: true },
+        }),
+      );
+      const scroller = screen.getByRole("region", {
+        name: "Channel message history",
+      });
+      const inner = document.createElement("pre");
+      inner.className = styles.rawDiff ?? "";
+      inner.style.overflowY = "auto";
+      Object.defineProperties(inner, {
+        clientHeight: { value: 100 },
+        scrollHeight: { value: 1000 },
+      });
+      inner.scrollTop = 100;
+      scroller.appendChild(inner);
+      if (input === "wheel") fireEvent.wheel(inner, { deltaY: 100 });
+      else {
+        fireEvent.touchStart(inner, { touches: [{ clientY: 300 }] });
+        fireEvent.touchMove(inner, { touches: [{ clientY: 200 }] });
+      }
+
+      expect(loadNewer).not.toHaveBeenCalled();
+      inner.scrollTop = 900;
+      if (input === "wheel") fireEvent.wheel(inner, { deltaY: 100 });
+      else fireEvent.touchMove(inner, { touches: [{ clientY: 100 }] });
+      expect(loadNewer).toHaveBeenCalledOnce();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+function TailComposer() {
+  const scope = useMessageEditScope();
+  return (
+    <textarea
+      aria-label="Tail composer"
+      ref={(node) => {
+        if (scope) scope.input.current = node;
+      }}
+    />
+  );
+}
+
+it.each([false, true])(
+  "pages forward at a detached selected tail (detached=%s)",
+  (detached) => {
+    const { owner, updates, content } = activityFixture();
+    const loadNewer = vi.fn();
+    const queries = {
+      ...owner.session,
+      channels: { ...owner.session.channels, loadNewer },
+    };
+    try {
+      const base = content(
+        updates(2).map(({ audience: _audience, ...row }) => row),
+        undefined,
+        false,
+        queries,
+      );
+      render(
+        <MessageEditScope>
+          {cloneElement(base, {
+            window: { ...base.props.window, hasNewer: detached },
+          })}
+          <TailComposer />
+        </MessageEditScope>,
+      );
+      const scroller = screen.getByRole("region", {
+        name: "Channel message history",
+      });
+      const row = scroller.querySelector<HTMLElement>(
+        '[data-message-id="activity-1"]',
+      );
+      assert.exists(row);
+      row.tabIndex = -1;
+      row.focus();
+      expect(row).toHaveFocus();
+      fireEvent.keyDown(row, { key: "ArrowDown" });
+      expect(loadNewer).toHaveBeenCalledTimes(detached ? 1 : 0);
+    } finally {
+      owner.dispose();
+    }
+  },
+);

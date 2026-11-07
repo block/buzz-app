@@ -15,6 +15,7 @@ export type HuddleDiscussion = {
   sending: boolean;
   sent: number;
   hasMore: boolean;
+  hasNewer?: boolean | undefined;
   rows: {
     id: string;
     author: string;
@@ -153,6 +154,7 @@ export function createHuddleDiscussion(
         sending,
         sent,
         hasMore: resolved && window.hasMore && rows.length < 200,
+        hasNewer: resolved && window.hasNewer,
         rows: (available() ? rows : []).slice(-200).map((r) => {
           const profile = profiles.get(r.authorId);
           const pictureUrl = avatarSource(profile?.picture);
@@ -280,10 +282,15 @@ export function createHuddleDiscussion(
         });
       else if (writable()) session.outbox?.retry(id, writable);
     },
+    latest: () => {
+      if (available()) session.channels.attach?.(room);
+    },
     retry: () => {
       const window = session.channels.window(room);
       if (available() && window.status === "ready" && window.error) {
-        session.channels.loadOlder(room);
+        if (window.hasNewer && !window.errorDirection)
+          session.channels.attach?.(room);
+        else session.channels.loadOlder(room);
         return;
       }
       void load();

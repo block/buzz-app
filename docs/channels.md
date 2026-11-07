@@ -1224,6 +1224,13 @@ The port retains the prepared-store implementation and its behavior tests:
 - 64 prepared heads / 4 MiB serialized memory budget, separate from history.
 - Three unpinned history windows; each caps at 2,400 rows or 8 MiB. Mounted readers
   are not evicted by speculative preparation. A budget cap is distinct from EOF.
+  Sliding pages preserve a contiguous segment, including accepted edits, reactions
+  and deletions while a read is pending. Isolated search results cannot advance
+  its paging bounds. A reconnect settles the live head separately from a cached
+  historical segment; opening an exact message can reattach before searching.
+  Detached readers acknowledge visible messages without claiming the live bottom.
+  Seek budgets include transport retries, and rejected oversized pages preserve
+  the committed window. Huddle readers offer Jump to latest after sliding.
 - Three read slots, at most one background request, with foreground promotion and
   deduplication. Hover/focus prepares at most one speculative head at a time;
   superseded hints do not form a backlog. That shared head keeps foreground

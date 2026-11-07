@@ -235,6 +235,7 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
                 }}
                 composer={composer}
                 older={() => act("older")}
+                latest={() => act("latest")}
                 retry={() => act("retry")}
                 recover={(id, dismiss) =>
                   act(dismiss ? "discardMessage" : "retryMessage", id)

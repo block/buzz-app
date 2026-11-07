@@ -235,8 +235,9 @@ async function pagedReader(page, app) {
 /** The paged cursor survived: the next older page continues below page one. */
 async function pageOnward(page, app, pageOne) {
   await edge(page, -1);
-  await expect.poll(() => app.pending.length).toBe(1);
-  const pageTwo = app.pending.shift();
+  const pending = () => app.pending.filter((read) => !read.aborted);
+  await expect.poll(() => pending().length).toBe(1);
+  const pageTwo = pending()[0];
   expect(pageTwo.filter.until).toBeLessThan(pageOne.filter.until);
   pageTwo.release();
 }

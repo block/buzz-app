@@ -156,7 +156,10 @@ export function replyTrigger(element: HTMLElement) {
  * Up at the oldest rendered row stays native so history can load, as does
  * Down at the last rendered row while newer ones are unmounted.
  */
-export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
+export function moveMessageSelection(
+  event: KeyboardEvent<HTMLElement>,
+  attached = true,
+) {
   if (
     event.defaultPrevented ||
     event.altKey ||
@@ -183,10 +186,10 @@ export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
   if (next) {
     event.preventDefault();
     selectMessage(next);
-    return;
+    return true;
   }
   // Past the last rendered row, native scrolling brings newer rows in.
-  if (event.key === "ArrowDown" && showsNewest(owner)) {
+  if (event.key === "ArrowDown" && attached && showsNewest(owner)) {
     const composer = selected.list.composer();
     if (!composer) return;
     event.preventDefault();

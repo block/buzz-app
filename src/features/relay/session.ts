@@ -404,7 +404,11 @@ export function createRelaySession(
   }
   const canReadRemote = (id: string) =>
     !options.cachedOnly && canAccess(id) && !channels.queries.get?.(id)?.cached;
-  function visibility(events: readonly EventData[] = [], remote = false) {
+  function visibility(
+    events: readonly EventData[] = [],
+    remote = false,
+    access?: (channelId: string) => boolean,
+  ) {
     const evidence = new Map(
       [...rawLocal().map((item) => item.event), ...events].map((event) => [
         event.id,
@@ -414,7 +418,7 @@ export function createRelaySession(
     return eventVisibility(
       // Remote visibility filters one accept() batch and is never retained.
       // Remote access builds the channel's discovery summary: read it once.
-      remote ? accessOnce(canReadRemote) : canAccess,
+      access ?? (remote ? accessOnce(canReadRemote) : canAccess),
       // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
@@ -935,7 +939,8 @@ export function createRelaySession(
         if (epoch !== accessEpoch) return;
         statuses.accept(visible);
         if (epoch !== accessEpoch) return;
-        if (channelTraffic) channels.accept(visible);
+        if (channelTraffic)
+          channels.accept(visible, false, incomingPhase === "live");
         for (const listener of observations) {
           if (closed || epoch !== accessEpoch) return;
           listener(visible);
@@ -1114,6 +1119,8 @@ export function createRelaySession(
             for (const id of ids) knownToViewer(id);
           },
           visible: (events) => events.filter(visibility(events)),
+          foreign: (channelId, events) =>
+            visibility(events, false, (id) => id !== channelId),
           restored: (events) => unread.accept(events),
           verifyStored: transport.verifyStored?.bind(transport),
           demand: (channelId) => demandChannel(channelId),

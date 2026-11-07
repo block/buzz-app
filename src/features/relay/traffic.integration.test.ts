@@ -710,7 +710,7 @@ it("continues incoming traffic at the history budget and applies live membership
   expect(h.session.channels.window("c").rows.map((row) => row.content)).toEqual(
     ["two", "three"],
   );
-  expect(h.session.channels.window("c").historyLimited).toBe(true);
+  expect(h.session.channels.window("c").historyLimited).toBe(false);
   h.emit([roster(relay, "c", [], 1800000000)]);
   expect(h.session.channels.window("c").rows).toHaveLength(0);
   h.emit([message(other, "c", "late revoked traffic", 4)]);

@@ -71,6 +71,7 @@ export function HuddlePanel({
         />
       }
       older={owner.older}
+      latest={owner.latest}
       retry={owner.retry}
       recover={owner.recover}
     />

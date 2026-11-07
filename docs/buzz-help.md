@@ -460,6 +460,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
   time beside each message everywhere or only in Solo chats; day dividers and
   screen-reader dates remain.
+- **Older messages**: scrolling back keeps a bounded window of history. Scroll
+  forward to reload newer messages, or choose **Jump to latest** to return to
+  the current conversation. Huddle conversations also offer **Jump to latest**
+  when older paging has moved their window away from the latest messages.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe

@@ -220,7 +220,7 @@ describe("prepared channel working sets", () => {
     expect(store.diagnostics().heads.entries).toBe(0);
     store.dispose();
   });
-  it("enforces a history budget without pretending it reached EOF or evicting the reading rows", async () => {
+  it("makes room for older history and retains a route back to newer rows", async () => {
     const { queries, next, store } = setup({
       prepared: false,
       maxHistoryRows: 1,
@@ -247,9 +247,10 @@ describe("prepared channel working sets", () => {
     ]);
     await flush();
     expect(queries.window("a")).toMatchObject({
-      historyLimited: true,
-      hasMore: true,
-      rows: [{ content: "new" }],
+      historyLimited: false,
+      hasMore: false,
+      hasNewer: true,
+      rows: [{ content: "old" }],
     });
     store.dispose();
   });

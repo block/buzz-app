@@ -103,6 +103,7 @@ export function ConversationTab({
     channel.id,
     target,
     revealRequest,
+    session.read,
   );
   const [reveal, setReveal] = useState<{
     key: string;

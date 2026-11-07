@@ -329,7 +329,7 @@ function DraftChannel({
       return () => request.abort();
     }
     void session.channels
-      .seek?.(channelId, target.createdAt ?? 0, request.signal)
+      .seek?.(channelId, target.createdAt ?? 0, request.signal, target.id)
       .then(() => {
         if (!request.signal.aborted)
           setSeekError(

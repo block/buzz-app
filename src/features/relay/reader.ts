@@ -6,7 +6,7 @@ import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { ReadTransport } from "./transport";
 import { byteSize } from "./budget";
-import { ReadError } from "./errors";
+import { ReadError, ReadBudgetError } from "./errors";
 import type { AgentLibrary } from "../agents/library";
 
 export type Priority = "foreground" | "background";
@@ -209,10 +209,7 @@ export function createRelayReader(
         void query
           .then(async (events) => {
             if (byteSize(events) > RELAY_READ_BYTES)
-              throw new ReadError(
-                "invalid-response",
-                "Relay response exceeds the read budget",
-              );
+              throw new ReadBudgetError();
             await verifyThreadWindows(
               job.filters,
               events,

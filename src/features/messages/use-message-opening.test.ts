@@ -7,6 +7,7 @@ import type {
   ChannelWindow,
 } from "../relay/contracts";
 import { ReadError } from "../relay/errors";
+import type { RelaySession } from "../relay/session";
 import type { LiveCallbacks } from "../relay/live";
 import { createRelaySession } from "../relay/session";
 import {
@@ -55,6 +56,7 @@ function channel(pages: string[][], replies: Record<string, string> = {}) {
   } as unknown as ChannelQueries;
   return {
     queries,
+    set: (patch: Partial<ChannelWindow>) => act(() => set(patch)),
     loadOlder,
     /** A cached window: readable rows, not yet verified against the relay. */
     cached(ids: string[], error?: string) {
@@ -170,16 +172,28 @@ it("reads no window without a message", () => {
 
 /** A real relay session with one channel, "a", whose head the test scripts.
  * `head(...)` is a first page whose oldest row has more history before it. */
-async function relayChannel() {
+async function relayChannel(withLive = false) {
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
   const time = { now: 1_000_000 };
   const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const store = createRelaySession(scripted.transport, {
-    prepared: true,
-    now: () => time.now,
-  });
+  let live!: LiveCallbacks;
+  const store = createRelaySession(
+    withLive
+      ? {
+          ...scripted.transport,
+          subscribe(callbacks) {
+            live = callbacks;
+            return { update() {}, retry() {}, dispose() {} };
+          },
+        }
+      : scripted.transport,
+    {
+      prepared: true,
+      now: () => time.now,
+    },
+  );
   store.session.channels.ensureList();
   scripted
     .next()
@@ -188,6 +202,7 @@ async function relayChannel() {
   return {
     store,
     channels: store.session.channels,
+    live,
     pending: scripted.pending,
     time,
     post: (content: string, at: number) => message(alice, "a", content, at),
@@ -203,6 +218,16 @@ async function relayChannel() {
         }),
       ];
     },
+    older: (
+      before: ReturnType<typeof message>,
+      row: ReturnType<typeof message>,
+    ) => [
+      row,
+      bounds(relay, "a", `${before.created_at}:${before.id}`, {
+        has_more: true,
+        next_cursor: { created_at: row.created_at, id: row.id },
+      }),
+    ],
     end: (
       before: ReturnType<typeof message>,
       ...rows: ReturnType<typeof message>[]
@@ -533,3 +558,527 @@ it("reads an empty channel again when the stream drops before its queued retry r
     owner.dispose();
   }
 });
+
+it.each(["cached", "verified"] as const)(
+  "reattaches %s sliding history before deciding an evicted newer message is a thread",
+  (freshness) => {
+    const c = channel([["target"]]);
+    const attach = vi.fn(() => c.set({ refreshing: true }));
+    const queries = { ...c.queries, attach };
+    const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+    c.set({
+      status: "ready",
+      rows: [],
+      freshness,
+      hasMore: false,
+      hasNewer: true,
+    });
+    expect(attach).toHaveBeenCalledWith("c");
+    expect(c.loadOlder).not.toHaveBeenCalled();
+    expect(view.result.current).toBeUndefined();
+    c.set({
+      refreshing: false,
+      hasNewer: false,
+      freshness: "verified",
+      rows: [{ id: "target" } as ChannelMessage],
+    });
+    expect(view.result.current).toBe(true);
+    expect(attach).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("does not reattach an already decided request when its row is later evicted", () => {
+  const c = channel([["target"]]);
+  const attach = vi.fn();
+  const view = renderHook(() =>
+    useMessageOpening({ ...c.queries, attach }, "c", "target"),
+  );
+  c.head();
+  expect(view.result.current).toBe(true);
+  c.set({ rows: [], hasNewer: true });
+  expect(view.result.current).toBe(true);
+  expect(attach).not.toHaveBeenCalled();
+});
+
+it.each([true, false])(
+  "revalidates a retained cached target with hasNewer=%s",
+  async (hasNewer) => {
+    const c = channel([["target"]]);
+    const attach = vi.fn();
+    const target = { id: "target", createdAt: 123 } as ChannelMessage;
+    const seek = vi.fn(async () => {
+      c.set({ freshness: "verified", rows: [target] });
+      return target.id;
+    });
+    const queries = { ...c.queries, attach, seek };
+    const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+    c.set({
+      status: "ready",
+      rows: [target],
+      freshness: "cached",
+      hasMore: true,
+      hasNewer,
+    });
+    expect(seek).toHaveBeenCalledWith(
+      "c",
+      123,
+      expect.any(AbortSignal),
+      "target",
+    );
+    expect(attach).not.toHaveBeenCalled();
+    await act(flush);
+    expect(view.result.current).toBe(true);
+  },
+);
+
+it.each(["unmount", "target"])(
+  "cancels cached-target revalidation on %s retirement",
+  async (retirement) => {
+    const c = channel([["target"]]);
+    let signal!: AbortSignal;
+    const seek = vi.fn(
+      (_channel: string, _from: number, current: AbortSignal) => {
+        signal = current;
+        return new Promise<string | undefined>(() => {});
+      },
+    );
+    const queries = { ...c.queries, attach: vi.fn(), seek };
+    const view = renderHook(
+      ({ target }) => useMessageOpening(queries, "c", target),
+      {
+        initialProps: { target: "target" },
+      },
+    );
+    c.set({
+      status: "ready",
+      freshness: "cached",
+      hasNewer: true,
+      rows: [{ id: "target", createdAt: 123 } as ChannelMessage],
+    });
+    expect(seek).toHaveBeenCalledOnce();
+    expect(signal.aborted).toBe(false);
+    if (retirement === "unmount") view.unmount();
+    else view.rerender({ target: "another" });
+    expect(signal.aborted).toBe(true);
+  },
+);
+
+it("opens a missing older target without discarding its retained search edge", async () => {
+  const target = message(keypair(), "c", "target", 10);
+  const c = channel([[target.id], ["retained"]]);
+  const attach = vi.fn(() =>
+    c.set({ rows: [], hasMore: false, hasNewer: false }),
+  );
+  const read = vi.fn(async () => [target]);
+  const seek = vi.fn(async () => {
+    c.set({ rows: [{ id: target.id } as ChannelMessage], hasNewer: true });
+    return target.id;
+  });
+  c.head();
+  c.set({ hasNewer: true });
+  const queries = { ...c.queries, attach, seek };
+  const view = renderHook(() =>
+    useMessageOpening(queries, "c", target.id, undefined, read),
+  );
+  await act(flush);
+  if (c.loadOlder.mock.calls.length) c.deliver();
+  expect(view.result.current).toBe(true);
+  expect(attach).not.toHaveBeenCalled();
+});
+
+it.each(["unmount", "target"])(
+  "cancels a missing target read on %s retirement",
+  async (retirement) => {
+    const target = message(keypair(), "c", "target", 10);
+    const c = channel([[target.id], ["retained"]]);
+    c.head();
+    c.set({ hasNewer: true });
+    let signal!: AbortSignal;
+    let release!: (events: readonly (typeof target)[]) => void;
+    const read = vi.fn<RelaySession["read"]>((_filters, options) => {
+      assert.exists(options?.signal);
+      signal = options.signal;
+      return new Promise<readonly (typeof target)[]>((resolve) => {
+        release = resolve;
+      });
+    });
+    const seek = vi.fn();
+    const queries = { ...c.queries, attach: vi.fn(), seek };
+    const view = renderHook(
+      ({ id }) => useMessageOpening(queries, "c", id, undefined, read),
+      { initialProps: { id: target.id } },
+    );
+    expect(read).toHaveBeenCalledOnce();
+    expect(signal.aborted).toBe(false);
+    const pending = { signal, release };
+    if (retirement === "unmount") view.unmount();
+    else view.rerender({ id: "another" });
+    // Keep the old operation's resolver even if the replacement starts a read.
+    expect(pending.signal.aborted).toBe(true);
+    await act(async () => {
+      pending.release([target]);
+      await flush();
+    });
+    expect(seek).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["missing", "failed"])(
+  "settles a %s signed target read without replacing retained history",
+  async (outcome) => {
+    const c = channel([["old"], ["retained"]]);
+    c.head();
+    c.set({ hasNewer: true });
+    const read = vi.fn(async () => {
+      if (outcome === "failed") throw new Error("offline");
+      return [];
+    });
+    const queries = { ...c.queries, attach: vi.fn(), seek: vi.fn() };
+    const view = renderHook(() =>
+      useMessageOpening(queries, "c", "target", undefined, read),
+    );
+    await act(flush);
+    expect(view.result.current).toBe(false);
+    expect(queries.attach).not.toHaveBeenCalled();
+    expect(queries.seek).not.toHaveBeenCalled();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual(["retained"]);
+  },
+);
+
+it.each([true, false])(
+  "settles a retained target after an attached older-page retry (present=%s)",
+  async (present) => {
+    const c = await relayChannel();
+    try {
+      const newest = c.post("newest", 30);
+      const target = c.post("target", 20);
+      const oldest = c.post("oldest", 10);
+      c.channels.ensure("a");
+      c.read().respond(c.head(newest));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().respond(c.older(newest, target));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().fail(new Error("older page failed"));
+      await flush();
+      expect(c.channels.window("a").freshness).toBe("cached");
+      c.channels.loadOlder("a");
+      c.read().respond(c.end(target, oldest));
+      await flush();
+      expect(c.channels.window("a")).toMatchObject({
+        freshness: "cached",
+        error: undefined,
+      });
+      expect(c.channels.window("a").hasNewer).toBeFalsy();
+      const view = renderHook(() =>
+        useMessageOpening(c.channels, "a", target.id),
+      );
+      expect(view.result.current).toBeUndefined();
+      for (let page = 0; page < (present ? 2 : 1); page++) {
+        const read = c.read();
+        await act(async () => {
+          read.respond(
+            c.head(...(present ? [newest, target, oldest] : [oldest])),
+          );
+          await flush();
+        });
+      }
+      expect(view.result.current).toBe(present);
+      view.unmount();
+    } finally {
+      c.store.dispose();
+    }
+  },
+);
+
+it("settles retained cached revalidation when seeking installs no segment", async () => {
+  const c = channel([["target"]]);
+  const target = { id: "target", createdAt: 123 } as ChannelMessage;
+  const seek = vi.fn(async () => "target");
+  const queries = { ...c.queries, attach: vi.fn(), seek };
+  const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+  c.set({
+    status: "ready",
+    rows: [target],
+    freshness: "cached",
+    hasMore: true,
+  });
+  await act(async () => {
+    await flush();
+  });
+  expect(seek).toHaveBeenCalledTimes(1);
+  expect(view.result.current).toBe(false);
+});
+
+it.each([true, false])(
+  "keeps a retained-target seek pending through concurrent verification (present=%s)",
+  async (present) => {
+    const c = channel([["target"]]);
+    const target = { id: "target", createdAt: 123 } as ChannelMessage;
+    let release!: (id: string | undefined) => void;
+    const seek = vi.fn(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          release = resolve;
+        }),
+    );
+    c.set({ status: "ready", freshness: "cached", rows: [target] });
+    const queries = { ...c.queries, attach: vi.fn(), seek };
+    const view = renderHook(() => useMessageOpening(queries, "c", "target"));
+    try {
+      expect(seek).toHaveBeenCalledOnce();
+      c.set({ freshness: "verified" });
+      expect(view.result.current).toBeUndefined();
+      await act(async () => {
+        c.set({ freshness: "verified", rows: present ? [target] : [] });
+        release(present ? target.id : undefined);
+        await flush();
+      });
+      expect(view.result.current).toBe(present);
+    } finally {
+      release(undefined);
+      view.unmount();
+    }
+  },
+);
+
+it("settles a lookup-admitted target when seeking leaves attached history cached", async () => {
+  const c = await relayChannel();
+  try {
+    const newest = c.post("newest", 20);
+    const oldest = c.post("oldest", 10);
+    const target = c.post("deleted before seek", 30);
+    c.channels.ensure("a");
+    c.read().respond(c.head(newest));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().fail(new Error("older page failed"));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().respond(c.end(newest, oldest));
+    await flush();
+    expect(c.channels.window("a")).toMatchObject({
+      freshness: "cached",
+      error: undefined,
+    });
+    expect(c.channels.window("a").hasNewer).toBeFalsy();
+    const view = renderHook(() =>
+      useMessageOpening(
+        c.channels,
+        "a",
+        target.id,
+        undefined,
+        c.store.session.read,
+      ),
+    );
+    try {
+      const lookup = c.read();
+      expect(lookup.filters[0]?.ids).toEqual([target.id]);
+      await act(async () => {
+        lookup.respond([target]);
+        await flush();
+      });
+      expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+        target.id,
+      );
+      expect(view.result.current).toBeUndefined();
+      await act(async () => {
+        c.read().respond(c.head(newest, oldest));
+        await flush();
+      });
+      expect(c.channels.window("a").freshness).toBe("cached");
+      expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+        target.id,
+      );
+      expect(view.result.current).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  } finally {
+    c.store.dispose();
+  }
+});
+
+it("rejects a lookup target when unrelated reconnect verification precedes a no-install seek", async () => {
+  const c = await relayChannel(true);
+  try {
+    const newest = c.post("newest", 20),
+      oldest = c.post("oldest", 10),
+      target = c.post("gone before seek", 30);
+    c.channels.ensure("a");
+    c.read().respond(c.head(newest));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().fail(new Error("older page failed"));
+    await flush();
+    c.channels.loadOlder("a");
+    c.read().respond(c.end(newest, oldest));
+    await flush();
+    c.live.state({ status: "connected", routes: [] });
+    c.live.established("a");
+    await flush();
+    const reconnectRead = c.read();
+    const view = renderHook(() =>
+      useMessageOpening(
+        c.channels,
+        "a",
+        target.id,
+        undefined,
+        c.store.session.read,
+      ),
+    );
+    try {
+      await act(async () => {
+        c.read().respond([target]);
+        await flush();
+      });
+      const seekRead = c.read();
+      expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+        target.id,
+      );
+      await act(async () => {
+        reconnectRead.respond(c.head(newest, oldest));
+        await flush();
+      });
+      expect(c.channels.window("a").freshness).toBe("verified");
+      expect(view.result.current).toBeUndefined();
+      await act(async () => {
+        seekRead.respond(c.head(newest, oldest));
+        await flush();
+      });
+      expect(view.result.current).toBe(false);
+    } finally {
+      view.unmount();
+    }
+  } finally {
+    c.store.dispose();
+  }
+});
+
+it.each([true, false])(
+  "validates a lookup target against the installed seek response (present=%s)",
+  async (present) => {
+    const c = await relayChannel();
+    try {
+      const newest = c.post("newest", 40);
+      const oldest = c.post("oldest", 10);
+      const target = c.post("deleted before seek", 30);
+      c.channels.ensure("a");
+      c.read().respond(c.head(newest));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().fail(new Error("older page failed"));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().respond(c.end(newest, oldest));
+      await flush();
+      expect(c.channels.window("a")).toMatchObject({
+        freshness: "cached",
+        error: undefined,
+      });
+      expect(c.channels.window("a").hasNewer).toBeFalsy();
+      const view = renderHook(() =>
+        useMessageOpening(
+          c.channels,
+          "a",
+          target.id,
+          undefined,
+          c.store.session.read,
+        ),
+      );
+      try {
+        const lookup = c.read();
+        expect(lookup.filters[0]?.ids).toEqual([target.id]);
+        await act(async () => {
+          lookup.respond([target]);
+          await flush();
+        });
+        expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+          target.id,
+        );
+        expect(view.result.current).toBeUndefined();
+        await act(async () => {
+          c.read().respond(c.head(newest, oldest));
+          await flush();
+          c.read().respond(
+            c.head(newest, ...(present ? [target] : []), oldest),
+          );
+          await flush();
+        });
+        expect(c.channels.window("a").freshness).toBe("verified");
+        expect(c.channels.window("a").rows.map((row) => row.id)).toContain(
+          target.id,
+        );
+        expect(view.result.current).toBe(present);
+      } finally {
+        view.unmount();
+      }
+    } finally {
+      c.store.dispose();
+    }
+  },
+);
+
+it.each([true, false])(
+  "validates delayed lookup after reconnect wins (present=%s)",
+  async (present) => {
+    const c = await relayChannel(true);
+    try {
+      const newest = c.post("newest", 20),
+        oldest = c.post("oldest", 10),
+        target = c.post("gone before seek", 30);
+      c.channels.ensure("a");
+      c.read().respond(c.head(newest));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().fail(new Error("older page failed"));
+      await flush();
+      c.channels.loadOlder("a");
+      c.read().respond(c.end(newest, oldest));
+      await flush();
+      c.live.state({ status: "connected", routes: [] });
+      c.live.established("a");
+      await flush();
+      const reconnectRead = c.read();
+      const view = renderHook(() =>
+        useMessageOpening(
+          c.channels,
+          "a",
+          target.id,
+          undefined,
+          c.store.session.read,
+        ),
+      );
+      try {
+        const lookup = c.read();
+        await act(async () => {
+          reconnectRead.respond(c.head(newest, oldest));
+          await flush();
+        });
+        expect(c.channels.window("a").freshness).toBe("verified");
+        expect(view.result.current).toBeUndefined();
+        await act(async () => {
+          lookup.respond([target]);
+          await flush();
+        });
+        expect(view.result.current).toBeUndefined();
+        await act(async () => {
+          c.read().respond(
+            c.head(...(present ? [target] : []), newest, oldest),
+          );
+          await flush();
+          if (present) {
+            c.read().respond(c.head(target, newest, oldest));
+            await flush();
+          }
+        });
+        expect(view.result.current).toBe(present);
+      } finally {
+        view.unmount();
+      }
+    } finally {
+      c.store.dispose();
+    }
+  },
+);

@@ -45,7 +45,10 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
   const ensure = vi.fn();
   const loadOlder = vi.fn();
   let hasMore = true;
+  let hasNewer = false;
+  const attach = vi.fn();
   let historyError: string | undefined;
+  let errorDirection: "older" | undefined;
   const profiles = new Map<string, { name: string; picture: string }>();
   const session = {
     ...owner.session,
@@ -76,6 +79,7 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
       resolve: async () => {},
       ensure,
       loadOlder,
+      attach,
       subscribeWindow: (_id: string, fn: () => void) => {
         listeners.add(fn);
         return () => {
@@ -88,7 +92,9 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
         rows,
         loadingOlder: false,
         hasMore,
+        hasNewer,
         error: historyError,
+        errorDirection,
       }),
     },
   };
@@ -101,8 +107,13 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
     ensure,
     discussion,
     loadOlder,
-    historyError: (value: string) => {
+    attach,
+    hasNewer: (value: boolean) => {
+      hasNewer = value;
+    },
+    historyError: (value: string, older = true) => {
       historyError = value;
+      errorDirection = older ? "older" : undefined;
     },
     hasMore: (value: boolean) => {
       hasMore = value;
@@ -544,8 +555,42 @@ it("retries a failed older page instead of reloading metadata", async () => {
   try {
     await vi.waitFor(() => expect(h.ensure).toHaveBeenCalled());
     h.historyError("Page unavailable");
+    h.hasNewer(true);
     h.discussion.retry();
     expect(h.loadOlder).toHaveBeenCalledOnce();
+    expect(h.attach).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it("offers attachment when the shared byte budget detaches a small Huddle reader", async () => {
+  const h = harness();
+  try {
+    await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
+    h.hasNewer(true);
+    expect(h.discussion.snapshot()).toMatchObject({ hasNewer: true });
+    h.historyError("Page unavailable");
+    h.discussion.latest();
+    expect(h.attach).toHaveBeenCalledWith("room");
+    expect(h.loadOlder).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it("retries a failed Jump at the head instead of reading older", async () => {
+  const h = harness();
+  try {
+    await vi.waitFor(() => expect(h.ensure).toHaveBeenCalled());
+    h.hasNewer(true);
+    h.hasMore(false);
+    h.discussion.latest();
+    expect(h.attach).toHaveBeenCalledOnce();
+    h.historyError("Head unavailable", false);
+    h.discussion.retry();
+    expect(h.attach).toHaveBeenCalledTimes(2);
+    expect(h.loadOlder).not.toHaveBeenCalled();
   } finally {
     h.dispose();
   }

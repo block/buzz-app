@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, expect, it, vi, assert } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import { invoke } from "@tauri-apps/api/core";
@@ -54,6 +60,7 @@ it.each(["buzz-media://localhost/authorized-avatar", null])(
         discussion={value}
         composer={null}
         older={() => {}}
+        latest={() => {}}
         retry={() => {}}
         recover={() => {}}
       />,
@@ -82,6 +89,7 @@ it.each(["failed", "unknown"] as const)(
         discussion={value}
         composer={<textarea aria-label="Message this Huddle" />}
         older={() => {}}
+        latest={() => {}}
         retry={() => {}}
         recover={recover}
       />
@@ -117,6 +125,7 @@ it("hands focus to the message log when discarding in a read-only room", () => {
       discussion={value}
       composer={null}
       older={() => {}}
+      latest={() => {}}
       retry={() => {}}
       recover={() => {
         value = { ...value, rows: [] };
@@ -144,6 +153,7 @@ it("keeps a surviving focus target across load retry success and failure", () =>
       discussion={value}
       composer={<textarea aria-label="Message this Huddle" />}
       older={() => {}}
+      latest={() => {}}
       recover={() => {}}
       retry={() => {
         value = { ...value, error: undefined, status: "loading" };
@@ -192,6 +202,7 @@ it("renders Markdown and downloads the resolved attachment, without falling back
       discussion={value}
       composer={null}
       older={() => {}}
+      latest={() => {}}
       retry={() => {}}
       recover={() => {}}
     />
@@ -229,6 +240,7 @@ it("routes internal links and signed mentions while leaving unbound or edited na
       discussion={value}
       composer={null}
       older={() => {}}
+      latest={() => {}}
       retry={() => {}}
       recover={() => {}}
       openLink={openLink}
@@ -247,4 +259,76 @@ it("routes internal links and signed mentions while leaving unbound or edited na
   mounted.rerender(view());
   expect(chip()).toBeUndefined();
   expect(screen.getByText(/@Taylor/)).toBeTruthy();
+});
+
+it("keeps Jump to latest available in a byte-limited historical Huddle", () => {
+  const value = {
+    ...discussion("failed"),
+    hasNewer: true,
+    error: "Page unavailable",
+  };
+  const retry = vi.fn();
+  const latest = vi.fn();
+  render(
+    <HuddleDiscussionView
+      discussion={value}
+      composer={null}
+      older={() => {}}
+      latest={latest}
+      retry={retry}
+      recover={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+  expect(latest).toHaveBeenCalledOnce();
+  expect(retry).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(screen.getByRole("alert")).getByRole("button", {
+      name: /^Retry$/,
+    }),
+  );
+  expect(retry).toHaveBeenCalledOnce();
+  expect(latest).toHaveBeenCalledOnce();
+});
+
+it("resumes bottom following after Jump to latest from scrolled history", () => {
+  let value = { ...discussion("failed"), hasNewer: true };
+  const retry = vi.fn();
+  const row = value.rows[0];
+  assert.exists(row);
+  const view = () => (
+    <HuddleDiscussionView
+      discussion={value}
+      composer={null}
+      older={() => {}}
+      latest={() => {}}
+      retry={retry}
+      recover={() => {}}
+    />
+  );
+  const mounted = render(view());
+  const log = screen.getByRole("log");
+  Object.defineProperties(log, {
+    scrollHeight: { value: 2000 },
+    clientHeight: { value: 500 },
+  });
+  fireEvent.scroll(log, { target: { scrollTop: 100 } });
+  vi.mocked(Element.prototype.scrollIntoView).mockClear();
+  const jump = screen.getByRole("button", { name: "Jump to latest" });
+  jump.focus();
+  fireEvent.click(jump);
+  expect(document.activeElement).toBe(log);
+  value = { ...value, hasNewer: false, rows: [{ ...row, id: "latest" }] };
+  mounted.rerender(view());
+  expect(document.activeElement).toBe(log);
+  expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+    block: "end",
+  });
+  vi.mocked(Element.prototype.scrollIntoView).mockClear();
+  value = { ...value, rows: [...value.rows, { ...row, id: "live" }] };
+  mounted.rerender(view());
+  expect(document.activeElement).toBe(log);
+  expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+    block: "end",
+  });
 });

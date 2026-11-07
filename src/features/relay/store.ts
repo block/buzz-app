@@ -51,7 +51,13 @@ import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
-import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
+import {
+  locate,
+  SEEK_PAGE,
+  SEEK_READS,
+  SeekLimitError,
+  type SeekRead,
+} from "./history-seek";
 import type { WindowPage } from "./window";
 import { MatchRank, matchRank } from "../search/match";
 import { RESUME_READ_AGE } from "./live";
@@ -64,10 +70,15 @@ type WindowState = {
   snapshot: ChannelWindow;
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
+  joining?: Map<string, RelayEvent> | undefined;
   atHead: boolean;
   /** Detached: rows created at or after this (unix seconds) are not loaded;
    * the window holds a seek segment below it. Undefined at the head. */
   ceiling?: number | undefined;
+  /** An inclusive row boundary when paging older trims within one second. */
+  ceilingId?: string | undefined;
+  /** Paging detachment survives reconnect; explicit timestamp seeks return to the head. */
+  sliding?: boolean;
   /** Live rows above the ceiling that arrived while a newer page loads: the
    * page that reaches the head may predate them. */
   above?: Map<string, RelayEvent> | undefined;
@@ -239,6 +250,11 @@ export function createChannelStore(
          * left out may still list the viewer; `unlisted` asks the writer. */
         rosterComplete?(): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
+        /** Proves foreign-only auxiliary scope; unresolved targets return false. */
+        foreign?(
+          channelId: string,
+          events: readonly RelayEvent[],
+        ): (event: RelayEvent) => boolean;
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
         verifyStored?: ReadTransport["verifyStored"];
@@ -494,8 +510,10 @@ export function createChannelStore(
   /** A head read replaces a detached segment: its rows and floor go with it.
    * Live rows that arrived above it during the read join the head. */
   function attached(state: WindowState) {
+    state.sliding = false;
     if (state.ceiling === undefined) return;
     state.ceiling = undefined;
+    state.ceilingId = undefined;
     state.floor = undefined;
     if (state.above?.size)
       state.events = [
@@ -512,6 +530,18 @@ export function createChannelStore(
     state.cursor = cursor;
     state.floor = Math.min(state.floor ?? Infinity, cursor?.createdAt ?? 0);
   }
+  function belowCeiling(
+    state: WindowState,
+    event: Pick<RelayEvent, "created_at" | "id">,
+  ) {
+    return (
+      state.ceiling === undefined ||
+      event.created_at < state.ceiling ||
+      (event.created_at === state.ceiling &&
+        state.ceilingId !== undefined &&
+        event.id >= state.ceilingId)
+    );
+  }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
@@ -525,7 +555,7 @@ export function createChannelStore(
         (floor: number | undefined) => (event: import("./events").EventData) =>
           !channelRowKind(event.kind) ||
           ((floor === undefined || event.created_at >= floor) &&
-            (state.ceiling === undefined || event.created_at < state.ceiling));
+            belowCeiling(state, event));
       const combined = new Map(
         [...state.events, ...state.notices.values(), ...state.traffic.values()]
           .filter(shown(more ? state.floor : undefined))
@@ -580,6 +610,7 @@ export function createChannelStore(
     }
     const next = {
       ...state.snapshot,
+      ...("error" in patch ? { errorDirection: undefined } : {}),
       ...patch,
       rows,
       hasNewer: state.ceiling !== undefined || undefined,
@@ -764,8 +795,8 @@ export function createChannelStore(
    * over from them. A failed read only leaves notices out until the next page
    * or head read. */
   async function fillNotices(state: WindowState, head: boolean) {
-    // Notices are read down from the head; a detached segment shows none.
-    if (state.ceiling !== undefined) return;
+    // Explicit seeks omit notices; a sliding reader continues their descent.
+    if (state.ceiling !== undefined && !state.sliding) return;
     if (head) state.noticeHead = true;
     const reading = state.noticeRead;
     if (
@@ -936,6 +967,10 @@ export function createChannelStore(
         state.controller?.abort();
         state.noticeRead?.controller.abort();
         state.events = [];
+        state.above = undefined;
+        attached(state);
+        state.atHead = true;
+        state.kept = undefined;
         state.notices.clear();
         state.noticeCursor = undefined;
         state.floor = undefined;
@@ -945,6 +980,7 @@ export function createChannelStore(
           rows: EMPTY_ROWS,
           error: describe(error),
           loadingOlder: false,
+          loadingNewer: undefined,
         });
       }
       setList(
@@ -1058,9 +1094,17 @@ export function createChannelStore(
     if (intent === channelId) prepareMedia(channelId);
     return head;
   }
-  async function loadPage(state: WindowState, cursor: WindowCursor | null) {
+  async function loadPage(
+    state: WindowState,
+    cursor: WindowCursor | null,
+    anchorId?: string,
+  ) {
     if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
+    const joining = cursor
+      ? new Map(state.events.map((event) => [event.id, event]))
+      : undefined;
+    state.joining = joining;
     const controller = new AbortController();
     state.controller = controller;
     // Shown rows wait on this head read; a seek must not treat it as the end.
@@ -1078,11 +1122,35 @@ export function createChannelStore(
       });
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
+      const interrupted = !!cursor && state.cursor !== cursor;
+      // Live roots below the old cursor wait until this page proves their range.
+      const pending = [...(joining?.values() ?? [])];
+      const boundary = page.cursor;
+      const roots = new Set(
+        [...pending, ...page.events]
+          .filter(
+            (event) =>
+              channelRowKind(event.kind) &&
+              (!boundary ||
+                event.created_at > boundary.createdAt ||
+                (event.created_at === boundary.createdAt &&
+                  event.id <= boundary.eventId)),
+          )
+          .map((event) => event.id),
+      );
       const combined = new Map(
-        (cursor ? state.events : []).map((event) => [event.id, event]),
+        (cursor
+          ? [
+              ...relatedEvents(pending, roots),
+              ...(interrupted ? [] : state.events),
+            ]
+          : []
+        ).map((event) => [event.id, event]),
       );
       for (const event of page.events) combined.set(event.id, event);
-      const retained = [...combined.values()];
+      const retained = cursor
+        ? trimWindow(state, [...combined.values()], "oldest", anchorId)
+        : [...combined.values()];
       const rows = Object.freeze(
         foldChannelMessages(state.channelId, transport.relayAuthor, retained),
       );
@@ -1097,10 +1165,40 @@ export function createChannelStore(
         });
         return;
       }
+      if (interrupted && state.ceiling === undefined) {
+        const boundary = retained
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst)[0];
+        if (boundary) {
+          state.sliding = true;
+          state.ceiling = boundary.created_at;
+          state.ceilingId = boundary.id;
+        }
+      }
       state.events = retained;
       state.atHead = !cursor;
       if (!cursor) attached(state);
-      moveCursor(state, page.cursor);
+      const retainedIds = new Set(retained.map((event) => event.id));
+      const clipped = page.events.some(
+        (event) => channelRowKind(event.kind) && !retainedIds.has(event.id),
+      );
+      const oldest = clipped
+        ? page.events
+            .filter(
+              (event) =>
+                channelRowKind(event.kind) && retainedIds.has(event.id),
+            )
+            .sort(newestFirst)
+            .at(-1)
+        : undefined;
+      moveCursor(
+        state,
+        oldest
+          ? { createdAt: oldest.created_at, eventId: oldest.id }
+          : clipped
+            ? cursor
+            : page.cursor,
+      );
       state.restored = false;
       if (dropped && !cursor) {
         state.kept = rowIds(state);
@@ -1110,10 +1208,14 @@ export function createChannelStore(
       setWindow(state, {
         status: "ready",
         rows,
-        hasMore: page.hasMore && page.cursor !== null,
+        hasMore: clipped || (page.hasMore && page.cursor !== null),
         loadingOlder: false,
+        historyLimited: false,
         error: undefined,
-        freshness: "verified",
+        freshness:
+          cursor && state.snapshot.freshness === "cached"
+            ? "cached"
+            : "verified",
       });
       void fillNotices(state, !cursor);
       void fetchProfiles(rows);
@@ -1128,7 +1230,12 @@ export function createChannelStore(
       setWindow(
         state,
         cursor || state.snapshot.rows.length
-          ? { loadingOlder: false, error: describe(error), freshness: "cached" }
+          ? {
+              loadingOlder: false,
+              error: describe(error),
+              errorDirection: cursor ? "older" : undefined,
+              freshness: "cached",
+            }
           : {
               status: "error",
               rows: EMPTY_ROWS,
@@ -1137,7 +1244,13 @@ export function createChannelStore(
             },
       );
     } finally {
-      if (state.controller === controller) state.controller = undefined;
+      if (state.joining === joining) {
+        state.joining = undefined;
+      }
+      if (state.controller === controller) {
+        state.controller = undefined;
+        if (live(state, generation)) setWindow(state, { loadingOlder: false });
+      }
       // Aborted reads end here too; a newer head read keeps the flag.
       if (
         !state.controller &&
@@ -1149,20 +1262,20 @@ export function createChannelStore(
     }
   }
   /** Seek reads: window pages of `SEEK_PAGE` rows, bare for probes. */
-  const seekRead =
-    (channelId: string, signal: AbortSignal): SeekRead =>
-    async (cursor, full) => {
+  const seekRead = (channelId: string, signal: AbortSignal): SeekRead => {
+    let reads = 0;
+    return async (cursor, full, limit = SEEK_PAGE) => {
       if (!transport) throw new Error("Relay is unavailable");
       const source = transport;
-      const events = await retryRead(
-        (attempt) =>
-          source.read([windowFilter(channelId, cursor, SEEK_PAGE, full)], {
-            signal: attempt,
-          }),
-        signal,
-      );
+      const events = await retryRead((attempt) => {
+        if (++reads > SEEK_READS) throw new SeekLimitError();
+        return source.read([windowFilter(channelId, cursor, limit, full)], {
+          signal: attempt,
+        });
+      }, signal);
       return parseWindow(channelId, cursor, source.relayAuthor, events);
     };
+  };
   const nowSeconds = () => Math.floor(now() / 1000);
   /** Message rows, oldest first; the first at or after `from`, else the newest. */
   function landing(state: WindowState, from: number) {
@@ -1188,21 +1301,70 @@ export function createChannelStore(
     state: WindowState,
     page: WindowPage,
     ceiling: number | null,
+    ceilingId?: string,
+    targetId?: string,
   ) {
+    const bounded = {
+      ...state,
+      events: [],
+      traffic: new Map(),
+      ceiling: ceiling ?? undefined,
+      ceilingId,
+    };
+    const candidates = new Map(page.events.map((event) => [event.id, event]));
+    for (const event of state.traffic.values()) {
+      const cursor = page.cursor;
+      if (
+        !channelRowKind(event.kind) ||
+        (belowCeiling(bounded, event) &&
+          (!cursor ||
+            event.created_at > cursor.createdAt ||
+            (event.created_at === cursor.createdAt &&
+              event.id <= cursor.eventId)))
+      )
+        candidates.set(event.id, event);
+    }
+    const roots = [...candidates.values()]
+      .filter((event) => channelRowKind(event.kind))
+      .sort(newestFirst);
+    const admitted = relatedEvents(
+      [...candidates.values()],
+      new Set(roots.map((event) => event.id)),
+    );
+    const retained = trimWindow(bounded, admitted, "newest", targetId);
+    if (listByteSize(retained) > maxHistoryBytes)
+      throw new Error("Message exceeds the history window budget");
+    const kept = retained
+      .filter((event) => channelRowKind(event.kind))
+      .sort(newestFirst);
+    const newerClipped = roots[0]?.id !== kept[0]?.id;
+    const olderClipped = roots.at(-1)?.id !== kept.at(-1)?.id;
+    if (newerClipped && kept[0]) {
+      ceiling = kept[0].created_at;
+      ceilingId = kept[0].id;
+    }
+    const oldest = kept.at(-1);
+    const cursor =
+      olderClipped && oldest
+        ? { createdAt: oldest.created_at, eventId: oldest.id }
+        : page.cursor;
     state.controller?.abort();
     state.controller = undefined;
     state.generation++;
-    state.events = page.events;
+    state.events = retained;
+    state.traffic.clear();
     state.atHead = ceiling === null;
+    state.sliding = false;
     state.ceiling = ceiling ?? undefined;
+    state.ceilingId = ceilingId;
     state.floor = undefined;
     state.kept = undefined;
     state.grantKept = undefined;
     state.restored = false;
-    moveCursor(state, page.cursor);
+    moveCursor(state, cursor);
     setWindow(state, {
       status: "ready",
-      hasMore: page.hasMore && page.cursor !== null,
+      hasMore: olderClipped || (page.hasMore && page.cursor !== null),
       loadingOlder: false,
       loadingNewer: undefined,
       refreshing: undefined,
@@ -1212,9 +1374,39 @@ export function createChannelStore(
     });
     void fetchProfiles(state.snapshot.rows);
   }
-  /** Keep a detached window within the history budget by dropping its oldest
-   * rows: the next older page continues from the oldest row kept. */
-  function trimOldest(state: WindowState, events: readonly RelayEvent[]) {
+  /** Keep overlays and their deletions together, independent of response order. */
+  function relatedEvents(
+    events: readonly RelayEvent[],
+    roots: ReadonlySet<string>,
+  ) {
+    const ids = new Set(roots);
+    const dependents = new Map<string, RelayEvent[]>();
+    for (const event of events) {
+      if (channelRowKind(event.kind)) continue;
+      for (const [name, id] of event.tags) {
+        if (name !== "e" || !id) continue;
+        const entries = dependents.get(id) ?? [];
+        entries.push(event);
+        dependents.set(id, entries);
+      }
+    }
+    const pending = [...ids];
+    for (const id of pending) {
+      for (const event of dependents.get(id) ?? []) {
+        if (ids.has(event.id)) continue;
+        ids.add(event.id);
+        pending.push(event.id);
+      }
+    }
+    return events.filter((event) => ids.has(event.id));
+  }
+  /** Retain the end being read and its overlays; the opposite end can be paged back. */
+  function trimWindow(
+    state: WindowState,
+    events: readonly RelayEvent[],
+    end: "oldest" | "newest",
+    anchorId?: string,
+  ) {
     const rows = events
       .filter((event) => channelRowKind(event.kind))
       .sort(newestFirst);
@@ -1223,23 +1415,49 @@ export function createChannelStore(
       listByteSize(events) <= maxHistoryBytes
     )
       return events;
-    let kept = rows.slice(0, maxHistoryRows);
-    const retain = (ids: ReadonlySet<string>) =>
-      events.filter(
-        (event) =>
-          ids.has(event.id) ||
-          (!channelRowKind(event.kind) &&
-            event.tags.some((tag) => tag[0] === "e" && ids.has(tag[1] ?? ""))),
-      );
+    if (end === "oldest") rows.reverse();
+    const anchor = rows.findIndex((event) => event.id === anchorId);
+    const previous = new Set(state.events.map((event) => event.id));
+    const edge = rows.findIndex((event) => previous.has(event.id));
+    const slice = (count: number) => {
+      let start = Math.max(0, anchor - count + 1);
+      // Hand off an anchor that would discard every row beyond the old edge.
+      if (edge > 0 && start >= edge) start = Math.max(0, edge - count);
+      return rows.slice(start, start + count);
+    };
+    let kept = slice(maxHistoryRows);
+    const retain = (ids: ReadonlySet<string>) => relatedEvents(events, ids);
     let retained = retain(new Set(kept.map((event) => event.id)));
     while (kept.length > 1 && listByteSize(retained) > maxHistoryBytes) {
-      kept = kept.slice(0, -Math.max(1, Math.ceil(kept.length / 4)));
+      kept = slice(kept.length - Math.max(1, Math.ceil(kept.length / 4)));
       retained = retain(new Set(kept.map((event) => event.id)));
     }
-    const oldest = kept.at(-1);
-    state.floor = undefined;
-    if (oldest)
-      moveCursor(state, { createdAt: oldest.created_at, eventId: oldest.id });
+    // Rejected admission must leave the committed window and bounds intact.
+    if (listByteSize(retained) > maxHistoryBytes) return retained;
+    const boundary = kept.at(-1);
+    if (boundary && end === "newest") {
+      state.floor = undefined;
+      // Live roots beyond the read cursor do not prove the intervening
+      // history was loaded. A trim may move the cursor only toward the head.
+      const cursor = state.cursor;
+      if (
+        !cursor ||
+        boundary.created_at > cursor.createdAt ||
+        (boundary.created_at === cursor.createdAt &&
+          boundary.id < cursor.eventId)
+      )
+        moveCursor(state, {
+          createdAt: boundary.created_at,
+          eventId: boundary.id,
+        });
+    } else if (boundary) {
+      state.sliding = true;
+      state.ceiling = boundary.created_at;
+      state.ceilingId = boundary.id;
+    }
+    const ids = new Set(retained.map((event) => event.id));
+    for (const id of state.traffic.keys())
+      if (!ids.has(id)) state.traffic.delete(id);
     return retained;
   }
   async function hydrate() {
@@ -3653,7 +3871,7 @@ export function createChannelStore(
         setWindow(state, { status: "loading", error: undefined });
       void loadPage(state, null);
     },
-    loadOlder(channelId: string) {
+    loadOlder(channelId: string, anchorId?: string) {
       if (disposed || !transport) return;
       if (!canReadRemote(channelId)) {
         revalidateCached(channelId);
@@ -3664,15 +3882,20 @@ export function createChannelStore(
         state?.snapshot.status !== "ready" ||
         !state.snapshot.hasMore ||
         state.snapshot.loadingOlder ||
-        state.snapshot.historyLimited ||
         !state.cursor ||
         state.controller
       )
         return;
       setWindow(state, { loadingOlder: true, error: undefined });
-      void loadPage(state, state.cursor);
+      void loadPage(state, state.cursor, anchorId);
     },
-    async seek(channelId: string, from: number, signal: AbortSignal) {
+    async seek(
+      channelId: string,
+      from: number,
+      signal: AbortSignal,
+      fromId?: string,
+      revalidate = false,
+    ) {
       const state = windows.get(channelId);
       if (
         disposed ||
@@ -3686,11 +3909,14 @@ export function createChannelStore(
       // Held rows answer when they reach below `from` and either hold a row
       // at or after it or end at the head.
       if (
+        !revalidate &&
+        state.snapshot.freshness !== "cached" &&
+        (!fromId || rows.some((row) => row.id === fromId)) &&
         (!state.snapshot.hasMore || rows.some((row) => row.createdAt < from)) &&
         (state.ceiling === undefined ||
           rows.some((row) => row.createdAt >= from))
       )
-        return landing(state, from);
+        return fromId ?? landing(state, from);
       const generation = state.generation;
       const controller = new AbortController();
       const abort = () => controller.abort();
@@ -3699,7 +3925,7 @@ export function createChannelStore(
       try {
         signal.throwIfAborted();
         const read = seekRead(channelId, controller.signal);
-        let located = await locate(read, from, nowSeconds(), from > 0);
+        let located = await locate(read, from, nowSeconds(), from > 0, fromId);
         if (located.kind === "newest" && state.ceiling !== undefined)
           located = {
             kind: "segment",
@@ -3710,14 +3936,33 @@ export function createChannelStore(
         if (!live(state, generation))
           throw new DOMException("Stale history seek", "AbortError");
         if (located.kind === "segment")
-          install(state, located.page, located.ceiling);
-        return landing(state, from);
+          install(
+            state,
+            located.page,
+            located.ceiling,
+            located.ceilingId,
+            fromId,
+          );
+        return fromId
+          ? located.kind === "segment" &&
+            located.page.events.some((event) => event.id === fromId)
+            ? state.snapshot.rows.find((row) => row.id === fromId)?.id
+            : undefined
+          : landing(state, from);
+      } catch (error) {
+        if (
+          !controller.signal.aborted &&
+          live(state, generation) &&
+          readErrorKind(error) === "denied"
+        )
+          denyChannel(channelId, error);
+        throw error;
       } finally {
         signal.removeEventListener("abort", abort);
         controllers.delete(controller);
       }
     },
-    loadNewer(channelId: string) {
+    loadNewer(channelId: string, anchorId?: string) {
       const state = windows.get(channelId);
       const from = state?.ceiling;
       if (
@@ -3736,27 +3981,113 @@ export function createChannelStore(
       setWindow(state, { loadingNewer: true, error: undefined });
       void (async () => {
         try {
-          const located = await locate(
-            seekRead(state.channelId, controller.signal),
-            from,
-            nowSeconds(),
-            true,
-          );
-          if (!live(state, generation) || controller.signal.aborted) return;
+          const read = seekRead(state.channelId, controller.signal);
+          let start = from;
+          let startId = state.ceilingId;
+          let located: Awaited<ReturnType<typeof locate>>;
+          for (;;) {
+            located = await locate(
+              read,
+              start,
+              nowSeconds(),
+              true,
+              startId ?? "f".repeat(64),
+            );
+            if (!live(state, generation) || controller.signal.aborted) return;
+            if (state.ceiling === start && state.ceilingId === startId) break;
+            if (state.ceiling === undefined) return;
+            start = state.ceiling;
+            startId = state.ceilingId;
+          }
           // Nothing at or after the ceiling: the segment already ends at the head.
           const page = located.kind === "segment" ? located.page : undefined;
+          // A seek can return much more than a byte-limited window can hold.
+          // Advance from its near edge so trimming cannot skip the reader's next rows.
+          const newer = (page?.events ?? [])
+            .filter(
+              (event) =>
+                channelRowKind(event.kind) && !belowCeiling(state, event),
+            )
+            .sort(newestFirst)
+            .reverse();
+          let advancing = newer.slice(
+            0,
+            Math.max(1, Math.floor(maxHistoryRows / 2)),
+          );
+          const overlap = (page?.events ?? []).filter(
+            (event) =>
+              channelRowKind(event.kind) &&
+              belowCeiling(state, event) &&
+              (!state.cursor ||
+                event.created_at > state.cursor.createdAt ||
+                (event.created_at === state.cursor.createdAt &&
+                  event.id <= state.cursor.eventId)),
+          );
+          const retain = () => {
+            const ids = new Set(
+              [...state.events, ...overlap, ...advancing].map(
+                (event) => event.id,
+              ),
+            );
+            return relatedEvents(page?.events ?? [], ids);
+          };
+          let incoming = retain();
           const merged = new Map(
             state.events.map((event) => [event.id, event]),
           );
-          for (const event of page?.events ?? []) merged.set(event.id, event);
-          const head = located.kind !== "segment" || located.ceiling === null;
+          while (
+            advancing.length > 1 &&
+            listByteSize(incoming.filter((event) => !merged.has(event.id))) >
+              maxHistoryBytes / 2
+          ) {
+            advancing = advancing.slice(
+              0,
+              Math.max(1, Math.floor(advancing.length / 2)),
+            );
+            incoming = retain();
+          }
+          const partial = advancing.length < newer.length;
+          for (const event of incoming) merged.set(event.id, event);
+          let head =
+            !partial &&
+            (located.kind !== "segment" || located.ceiling === null);
           if (head)
             for (const event of state.above?.values() ?? [])
               merged.set(event.id, event);
-          const trimmed = trimOldest(state, [...merged.values()]);
+          const trimmed = trimWindow(
+            state,
+            [...merged.values()],
+            "newest",
+            anchorId,
+          );
+          if (listByteSize(trimmed) > maxHistoryBytes)
+            throw new Error("Message exceeds the history window budget");
+          const retainedIds = new Set(trimmed.map((event) => event.id));
+          const clipped = [
+            ...advancing,
+            ...(head ? (state.above?.values() ?? []) : []),
+          ].some(
+            (event) => channelRowKind(event.kind) && !retainedIds.has(event.id),
+          );
+          head &&= !clipped;
           const dropped = trimmed.length < merged.size;
           state.events = trimmed;
-          state.ceiling = head ? undefined : (located.ceiling ?? undefined);
+          const boundary = clipped
+            ? trimmed
+                .filter((event) => channelRowKind(event.kind))
+                .sort(newestFirst)[0]
+            : partial
+              ? advancing.at(-1)
+              : undefined;
+          state.sliding = !head;
+          state.ceiling =
+            boundary?.created_at ??
+            (head || located.kind !== "segment"
+              ? undefined
+              : (located.ceiling ?? undefined));
+          state.ceilingId =
+            boundary?.id ??
+            (located.kind === "segment" ? located.ceilingId : undefined);
           setWindow(state, {
             loadingNewer: undefined,
             freshness: "verified",
@@ -3765,18 +4096,37 @@ export function createChannelStore(
           void fetchProfiles(state.snapshot.rows);
         } catch (error) {
           if (isAbort(error) || !live(state, generation)) return;
-          setWindow(state, { loadingNewer: undefined, error: describe(error) });
+          if (readErrorKind(error) === "denied") {
+            denyChannel(channelId, error);
+            return;
+          }
+          setWindow(state, {
+            loadingNewer: undefined,
+            error: describe(error),
+            errorDirection: "newer",
+          });
         } finally {
           if (state.controller === controller) {
             state.controller = undefined;
             state.above = undefined;
+            if (live(state, generation))
+              setWindow(state, { loadingNewer: undefined });
           }
         }
       })();
     },
     attach(channelId: string) {
       const state = windows.get(channelId);
-      if (disposed || !transport || state?.ceiling === undefined) return;
+      if (disposed || !transport || !state) return;
+      if (state.ceiling === undefined) {
+        if (state.snapshot.loadingOlder) {
+          state.controller?.abort();
+          state.controller = undefined;
+          state.joining = undefined;
+          setWindow(state, { loadingOlder: false });
+        }
+        return;
+      }
       void reattach(state);
     },
   });
@@ -3886,7 +4236,7 @@ export function createChannelStore(
     }
   });
   /** Verified traffic shares the same fold as reads and local intent. Window bounds remain read-owned. */
-  function accept(events: readonly RelayEvent[]) {
+  function accept(events: readonly RelayEvent[], paged = false, live = false) {
     if (disposed || !transport) return;
     const generation = epoch;
     const changedChannels = new Set(
@@ -3924,6 +4274,62 @@ export function createChannelStore(
     for (const state of windows.values()) {
       if (disposed || generation !== epoch) return;
       if (!authorized(state.channelId)) continue;
+      if (state.joining) {
+        const foreign = transport.foreign?.(state.channelId, events);
+        // Keep deleted roots with their tombstones until commit: they still
+        // define the pending read's overlap interval.
+        const joiningRoots = [...state.joining.values()]
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst);
+        const newest = joiningRoots[0],
+          oldest = joiningRoots.at(-1);
+        const known = new Set(
+          (tails.peek(state.channelId)?.events ?? []).map((event) => event.id),
+        );
+        // Buffer live roots until the pending page establishes its older bound.
+        // Isolated lookup results still need to lie within the retained overlap.
+        for (const event of events)
+          if (
+            (([40003, 5, 9005, 7, 39005].includes(event.kind) ||
+              (channelRowKind(event.kind) &&
+                newest &&
+                oldest &&
+                newestFirst(newest, event) <= 0 &&
+                (newestFirst(event, oldest) <= 0 || live))) &&
+              event.tags.some(
+                ([name, id]) =>
+                  (name === "h" && id === state.channelId) ||
+                  (name === "e" && known.has(id ?? "")),
+              )) ||
+            ([40003, 5, 9005, 7, 39005].includes(event.kind) &&
+              !event.tags.some(([name]) => name === "h") &&
+              event.tags.some(([name]) => name === "e") &&
+              !foreign?.(event))
+          )
+            // Reference-only overlays may precede their incoming page's roots.
+            // The scoped fold associates them only after the page arrives.
+            state.joining.set(event.id, event);
+        const roots = new Set(
+          [...state.joining.values()]
+            .filter((event) => channelRowKind(event.kind))
+            .map((event) => event.id),
+        );
+        for (const event of relatedEvents(
+          [...state.joining.values(), ...events],
+          roots,
+        ))
+          state.joining.set(event.id, event);
+        if (listByteSize([...state.joining.values()]) > maxHistoryBytes) {
+          state.joining.clear();
+          state.joining = undefined;
+          state.controller?.abort();
+          setWindow(state, {
+            loadingOlder: false,
+            error: "History changed while loading. Try again.",
+            errorDirection: "older",
+          });
+        }
+      }
       const ids = new Set(state.events.map((event) => event.id));
       const incomingIds = new Set(ids);
       const incoming: RelayEvent[] = [];
@@ -3947,11 +4353,24 @@ export function createChannelStore(
             )
           )
             continue;
+          // An isolated exact/search result below the paged range is not
+          // continuity evidence. Its ordinary page will admit it later.
+          if (
+            channelRowKind(event.kind) &&
+            !paged &&
+            !ids.has(event.id) &&
+            state.cursor &&
+            (event.created_at < state.cursor.createdAt ||
+              (!live &&
+                event.created_at === state.cursor.createdAt &&
+                event.id > state.cursor.eventId))
+          )
+            continue;
           // Rows above a detached segment would show past its gap.
           if (
             state.ceiling !== undefined &&
             channelRowKind(event.kind) &&
-            event.created_at >= state.ceiling
+            !belowCeiling(state, event)
           ) {
             state.above?.set(event.id, event);
             continue;
@@ -3991,8 +4410,17 @@ export function createChannelStore(
                 (tag) => tag[0] === "e" && keep.has(tag[1] ?? ""),
               )),
         );
-        while (retained.length && listByteSize(retained) > maxHistoryBytes)
-          retained.splice(0, Math.max(1, Math.ceil(retained.length / 4)));
+        const roots = retained
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst);
+        while (retained.length && listByteSize(retained) > maxHistoryBytes) {
+          const count = Math.max(1, Math.ceil(roots.length / 4));
+          roots.splice(state.ceiling === undefined ? -count : 0, count);
+          retained = relatedEvents(
+            retained,
+            new Set(roots.map((event) => event.id)),
+          );
+        }
         const retainedIds = new Set(retained.map((event) => event.id));
         for (const id of state.traffic.keys())
           if (!retainedIds.has(id)) state.traffic.delete(id);
@@ -4001,7 +4429,39 @@ export function createChannelStore(
       for (const event of incoming)
         if (retainedIds.has(event.id)) state.traffic.set(event.id, event);
       state.events = retained;
-      setWindow(state, limited ? { historyLimited: true } : {});
+      if (limited) {
+        if (state.ceiling !== undefined) {
+          const newest = retained
+            .filter((event) => channelRowKind(event.kind))
+            .sort(newestFirst)[0];
+          if (newest) {
+            state.ceiling = newest.created_at;
+            state.ceilingId = newest.id;
+          }
+        }
+        const oldest = retained
+          .filter((event) => channelRowKind(event.kind))
+          .sort(newestFirst)
+          .at(-1);
+        // Only a page proves continuity beyond the committed cursor. A live
+        // arrival in its second can render without proving intervening IDs.
+        const cursor = state.cursor;
+        if (
+          oldest &&
+          (paged ||
+            !cursor ||
+            oldest.created_at > cursor.createdAt ||
+            (oldest.created_at === cursor.createdAt &&
+              oldest.id <= cursor.eventId))
+        ) {
+          state.floor = undefined;
+          moveCursor(state, {
+            createdAt: oldest.created_at,
+            eventId: oldest.id,
+          });
+        }
+      }
+      setWindow(state, limited ? { historyLimited: false, hasMore: true } : {});
       if (disposed || generation !== epoch) return;
       void fetchProfiles(state.snapshot.rows.slice(-12));
     }
@@ -4084,13 +4544,21 @@ export function createChannelStore(
         state.generation++;
         state.controller?.abort();
         state.controller = undefined;
+        state.above = undefined;
+        state.joining = undefined;
         state.events = [];
+        attached(state);
+        state.atHead = true;
+        state.kept = undefined;
+        state.cursor = null;
         state.notices.clear();
         state.noticeCursor = undefined;
         state.traffic.clear();
         setWindow(state, {
           rows: EMPTY_ROWS,
           loadingOlder: false,
+          loadingNewer: undefined,
+          refreshing: undefined,
           status: "idle",
         });
         continue;
@@ -4098,6 +4566,8 @@ export function createChannelStore(
       state.generation++;
       state.controller?.abort();
       state.controller = undefined;
+      state.above = undefined;
+      state.joining = undefined;
       state.events = visible([...state.events, ...state.traffic.values()]);
       state.notices = new Map(
         visible([...state.notices.values()]).map((event) => [event.id, event]),
@@ -4105,6 +4575,8 @@ export function createChannelStore(
       state.traffic.clear();
       setWindow(state, {
         loadingOlder: false,
+        loadingNewer: undefined,
+        refreshing: undefined,
         status: state.events.length ? "ready" : "idle",
       });
     }
@@ -4306,12 +4778,13 @@ export function createChannelStore(
       if (!retained) return false;
       // A detached segment is not what the head reaches: return to the head,
       // keeping the segment until the head lands.
-      if (retained.ceiling !== undefined) {
+      if (retained.ceiling !== undefined && !retained.sliding) {
         await reattach(retained);
         return retained.ceiling === undefined;
       }
       const epochAtStart = epoch;
       const generation = retained.generation;
+      const headOnly = retained.sliding;
       const valid = () => epoch === epochAtStart && live(retained, generation);
       if (!retained.snapshot.rows.length)
         setWindow(retained, { status: "loading", error: undefined });
@@ -4335,6 +4808,9 @@ export function createChannelStore(
        * by exclusion so rows the stream delivered meanwhile stay, and the
        * window continues from the last page. */
       const settle = (last: Page) => {
+        // A sliding reader is a separate bounded segment; head continuity
+        // cannot invalidate it when the catch-up budget stops above it.
+        if (retained.sliding) return;
         // An older read in flight continues from the cursor this replaces;
         // its rows would merge below the hole and move the floor past it.
         if (retained.snapshot.loadingOlder) retained.controller?.abort();
@@ -4359,9 +4835,13 @@ export function createChannelStore(
         const head = await requestHead(channelId, priority);
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
+        if (headOnly && !retained.sliding) {
+          retained.kept = keptAfter();
+          return true;
+        }
         retained.restored = false;
         retained.readAt = head.readAt;
-        accept(head.events);
+        accept(head.events, !retained.sliding);
         page = head;
         const reached = (last: Page) =>
           !last.hasMore ||
@@ -4369,7 +4849,11 @@ export function createChannelStore(
             (event) => channelRowKind(event.kind) && kept.has(event.id),
           );
         contiguous = !kept.size || reached(page);
-        for (let pages = 0; !contiguous && page.cursor; pages++) {
+        for (
+          let pages = 0;
+          !retained.sliding && !contiguous && page.cursor;
+          pages++
+        ) {
           if (pages >= CATCH_UP_PAGES) {
             settle(page);
             break;
@@ -4382,7 +4866,7 @@ export function createChannelStore(
           ).page;
           if (!valid())
             throw new DOMException("Stale live catch-up", "AbortError");
-          accept(page.events);
+          accept(page.events, true);
           contiguous = reached(page);
         }
         if (!valid())
@@ -4391,17 +4875,26 @@ export function createChannelStore(
         retained.kept = keptAfter();
         // Live replay covers minutes; notices from a longer drop come by read.
         void fillNotices(retained, true);
+        // A discarded head gap is settled; a preserved sliding segment still waits.
+        const complete = contiguous || !retained.sliding;
         // A drop mid-fill has marked the window cached; the stream is retrying.
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),
           status: "ready",
-          freshness: streamDrops === dropsAtStart ? "verified" : "cached",
+          freshness:
+            streamDrops === dropsAtStart && complete ? "verified" : "cached",
           error: undefined,
         });
+        // The live head is settled even when the independent historical
+        // segment remains cached. Reopening must not repeat an unreachable fill.
         return true;
       } catch (error) {
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
+        if (headOnly && !retained.sliding) {
+          retained.kept = keptAfter();
+          return true;
+        }
         // A denied head has purged in requestHead; a page denied after it must too.
         if (readErrorKind(error) === "denied") {
           denyChannel(channelId, error);
@@ -4473,7 +4966,9 @@ export function createChannelStore(
     retainedEvent(id: string) {
       for (const state of windows.values()) {
         if (!authorized(state.channelId)) continue;
-        const event = state.events.find((candidate) => candidate.id === id);
+        const event =
+          state.events.find((candidate) => candidate.id === id) ??
+          state.joining?.get(id);
         if (event) return event;
       }
     },

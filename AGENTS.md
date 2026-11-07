@@ -79,6 +79,9 @@ other ignored paths: Keychain credentials and pnpm's package cache are
 machine-shared, while dependencies and build output are regenerated. Git hooks
 need no per-worktree setup; see [Git hooks](docs/contributing.md#git-hooks).
 
+Agents run the desktop app with plain `just desktop`, never `just desktop me`:
+`me` signs in with the owner's release key and sets up their Keychain helper.
+
 ## Engineering standard
 
 When changing a shipped plugin to default-off, follow the

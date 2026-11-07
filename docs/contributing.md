@@ -108,9 +108,11 @@ need their own validation.
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
   `just desktop me` signs in with your installed Buzz's key, read-only, instead
-  of the debug build's own; macOS asks for your Keychain password after each
-  rebuild. Agents and tests use plain `just desktop`. See
-  [the identity docs](identity.md).
+  of the debug build's own. On macOS it also sets up, on first use, a Keychain
+  helper and a local signing certificate: click **Always Allow** on each Keychain
+  dialog that first launch, and later launches, rebuilds and new worktrees show
+  none. Agents and tests use plain `just desktop`. See
+  [the local credential helper](identity.md#local-credential-helper-on-macos).
   On macOS, `just desktop profile` uses Instruments' Time Profiler to launch and
   record only the Buzz native parent process, not every process on the desktop.
   WebKit subprocesses and the Vite broker are outside this native trace; use web

@@ -470,8 +470,9 @@ an absent one falls back to the debug item. Only the `me` argument sets
 `BUZZ_DEV_RELEASE_KEY`: the launcher drops it from `.env.local` and the shell,
 since bootstrap copies `.env.local` into agent worktrees, and refuses `me`
 anywhere but first. On macOS the release
-item trusts only the release app, so Keychain asks for your password after each
-rebuild. macOS keeps its existing default
+item trusts only the release app; `me` reads it through the
+[local credential helper](#local-credential-helper-on-macos), so Keychain asks
+once rather than after each rebuild. macOS keeps its existing default
 file Keychain/security-framework implementation. Windows uses Credential Manager;
 Linux uses Secret Service through keyring 3.6.3, as old Buzz does. Linux requires
 a running desktop Secret Service with a default collection (for example GNOME
@@ -512,90 +513,68 @@ only the selected old Buzz service/account and copy the selected agent key into
 this app's separate agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
-## Local restore helper on macOS
+## Local credential helper on macOS
 
-macOS builds with Rust debug assertions accept `BUZZ_DEV_CREDENTIAL_HELPER` as an
-absolute executable path. When set, `read_human()`, native agent storage, and
-federated session storage use this helper.
-The helper replaces both the normal read and the copy from the previous service.
-Its setup must select the intended saved identity, including its service name.
-Exit 10 declares that identity absent; it does not start a Keychain migration.
-Release builds ignore it. With no setting, the normal Keychain read is unchanged.
-Human import, creation, and deletion keep their own owners.
-Legacy agent import also keeps its exact-source read owner.
+Keychain approvals belong to the program that asks, and a debug build is a
+different program after every rebuild, so without help Keychain asks again for
+every saved item after each rebuild. On macOS, `just desktop me` avoids this with
+a helper: a small program, `crates/dev-credential-helper`, that does the debug
+build's Keychain reads and writes. It is installed once outside the repository
+and kept, so an approval given to it lasts across rebuilds and worktrees.
 
-The helper receives a fresh Unix socket as stdout and no stdin. It must return
-exactly 63 bytes of nsec text with no newline, then close stdout and exit zero.
-The native identity owner still validates the nsec checksum and scalar. Exit 10
-means absent, 11 means denied, and 12 means corrupt. Other failures stop restore.
-Only absence permits identity creation. The app clears the returned buffer when
-its owner releases it. It does not log helper output or stderr.
+Only `me` turns it on. Before launching, it:
 
-Normal reads have a five-second limit. For first approval only, set
-`BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`. This passes `--authorize` and allows
-two minutes. Remove that setting after approval. A failed helper never triggers
-a second credential read.
+1. installs the helper at `~/.buzz-foundation/dev-credential-helper/` if none is
+   there, or if the installed one reports an older `--version` protocol than this
+   checkout's. Otherwise it keeps the installed one, even if this worktree's source
+   differs, since a new helper needs every item approved again;
+2. creates a self-signed code-signing certificate, **Buzz Dev Signing**, in the
+   login Keychain if there is none, and records the code requirement
+   `identifier "xyz.block.buzz.desktop.dev" and certificate leaf = H"…"` beside the
+   helper;
+3. starts the debug build through `scripts/dev-sign-run.sh`, a Cargo runner that
+   signs it with that certificate, and sets `BUZZ_DEV_CREDENTIAL_HELPER` to the
+   helper and `BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`.
 
-The helper is trusted local code. Keep its setup and signing keys outside this
-repository. It must read only the exact debug human item in the default Keychain
-and disable Keychain dialogs during normal reads. Before it sends a key, it must
-verify the socket peer's audit token, parent PID, and live code signature against
-the configured app identifier and certificate. A PID check alone is insufficient.
-Reject pipes and sockets created before exec. Sign both processes with hardened
-runtime and without entitlements that allow code injection. These access controls
-need native tests; the app hook does not supply them.
+If any step fails, it warns and launches without the helper. As with
+`BUZZ_DEV_RELEASE_KEY`, the launcher drops these variables from `.env.local` and
+the shell, so agent worktrees and plain `just desktop` never use the helper.
 
-For native agents, the app passes `--agent-store <operation> <service> <account>`
-after the optional `--authorize`. Operations are `read`, `replace`, and `delete`.
-The service is `xyz.block.buzz.desktop.agents` or
-`dev.local.buzz.foundation.agents`. The account is `agent-bundle-v1` or the exact
-`agent:<credential-id>` selected by the bundle owner. The helper must reject
-other services, accounts, and operations. A helper that supports only human
-restore must reject agent requests. It must never return a human key for them.
+On the first launch, click **Always Allow** on each dialog: one for `codesign` to
+use the new certificate, then one per saved item. Later launches, rebuilds and new
+worktrees show none. Each helper request first runs with Keychain dialogs off;
+only an item not yet approved for the helper, under `--authorize`, is retried once
+with a dialog. A denied dialog is an error. Release builds ignore the helper.
 
-The fresh stdout socket carries data in both directions. Stdin stays closed.
-For `replace`, the app sends the bundle bytes, then closes its write side.
-The helper must authenticate the peer before it reads these bytes. It reads to
-EOF before it sends a response. For `read`, it returns the exact item bytes.
-Successful writes and deletes return no bytes. Each direction has a 2 MiB limit.
-The app uses the same deadline and exit codes as human restore. Exit 13 means
-occupied. A helper failure stops the operation without a direct Keychain retry.
+With `BUZZ_DEV_CREDENTIAL_HELPER` set (an absolute path) in a macOS debug build,
+every `buzz-credential-store` read, add, replace and delete goes through it: the
+human key, including the release key `me` reads, agents, federated sessions, the
+Jev and Claude keys, paired tools and external-app pairings. A helper failure is
+returned as is; the app never retries through direct Keychain access, and keeps
+its own locks, create-only rules, validation and read-back checks. The app passes
+`[--authorize] --item <read|add|replace|delete> <service> <account>`, with a fresh
+Unix socket as stdout and no stdin. For `add` and `replace` it sends the value and
+closes its write side; for `read` the helper returns the exact item bytes. Each
+direction has a 2 MiB limit. Exit 0 is success, 10 absent, 11 denied, 12 corrupt
+and 13 occupied; other failures are unavailable. Requests time out after five
+seconds, or two minutes under `BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`.
 
-The helper must use the default Keychain and the same peer checks as human
-restore. It must preserve item access controls on replacement and confirm a
-deleted item is absent. Normal operations must disable Keychain dialogs.
-The app retains bundle validation, create-only agent writes, migration order,
-locks, cache epochs, and read-back checks. The helper does not store keys in
-files or change their access controls to avoid approval. Configure its signed
-binary outside this repository. Do not copy existing keys into its setup.
+The helper serves only an exact list of items and refuses any other service or
+account. It may only read the release key, never write, copy over or delete it, and
+it never replaces the debug human key, which stays create-only. Before it reads a
+value or touches the Keychain, it checks that stdout is a Unix socket whose peer is
+its parent process, by audit token, and that the peer's live code signature meets
+the recorded requirement. The requirement file must belong to the user and be
+writable by no one else. It uses the default Keychain, updates items in place so
+they keep their access lists, and confirms that a deleted item is gone. It logs
+nothing.
 
-For federated sessions, the app passes `--session-store <operation> <service>
-<account>`. It uses the same socket protocol as agent storage. Operations are
-`read`, `replace`, and `delete`. The only service is
-`xyz.block.buzz.desktop.federated-session.debug`. Accounts contain exactly 64
-lowercase hexadecimal characters. The session owner derives them from the
-profile and deployment, or from the exact agent grant. Each direction has a
-1 MiB limit. The helper must restrict access to the exact configured accounts.
-It must retain peer checks, item access controls, and disabled normal dialogs.
-The app retains session locks, compare-before-write, refusal records, and
-validation. An older helper that rejects session requests stops the operation;
-the app never retries through direct Keychain access.
-
-Independent worktrees have separate app identifiers. A helper must admit each
-exact identifier and certificate before it serves that app. Preserve the helper's
-code identity across compatible updates. An ad hoc signed helper has a code-hash
-requirement; a rebuild cannot establish that it retains existing item approval.
-Verify normal launch and restart without approval mode before claiming success.
-
-Before a real test, wait for green CI. Obtain explicit consent for first approval.
-Then use a disposable agent to check creation, restore after restart, and deletion.
-Check denied access and an invalid helper path too. Confirm no normal operation
-shows a Keychain dialog. These native checks and a human check are required;
-synthetic helper tests do not prove signature or Keychain enforcement.
-
-The certificate check trusts access to its signing key. Another program that can
-use that key and app identifier can satisfy the same requirement. Approval to use
-the signing key across rebuilds therefore extends trust to those programs.
+The helper's source is in the repository. Its installed binary, the requirement,
+the certificate and its private key stay on each Mac, never in the repository.
+The certificate check trusts access to its signing key: any program running as you
+that can sign code with that key and identifier passes it, and the key lets
+`codesign` use it without asking. On that Mac, approving the helper's items
+therefore extends trust to those programs. Don't use `me` on a shared account.
 
 ## Automatic backup and optional recovery
 

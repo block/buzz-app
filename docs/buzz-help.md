@@ -989,9 +989,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
 
-On macOS, debug builds can use a trusted local credential helper for human restore
-and agent creation, restore, and deletion. See [local helper setup](identity.md#local-restore-helper-on-macos).
-Release builds ignore this optional helper.
+On macOS, `just desktop me` debug builds keep their Keychain items through a local
+credential helper, so Keychain asks once per item rather than after each rebuild.
+See [local credential helper](identity.md#local-credential-helper-on-macos).
+Release builds ignore it.
 
 ### Builderlab in development
 

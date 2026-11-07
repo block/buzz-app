@@ -66,7 +66,7 @@ export function apply(ctx) {
 | `navigation` | Open destinations | `await ctx.navigation.open(target)` returns `{ status: "opened" \| "failed" \| "superseded" \| "cancelled" }`. Targets: `{ version: 1, kind: "plugin", pluginId, pageId?, params? }`, `{ version: 1, kind: "home" }`, `{ version: 1, kind: "settings", section? }`. |
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
-| `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })` resolves `{ outcome: "answered", backend, model, answers }` or `{ outcome: "failed", backend, reason }` and never rejects. Builderlab or TypeSafe answers with the Jev model. See [Decisions](#decisions) below. |
+| `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })` resolves `{ outcome: "answered", backend, model, answers }` or `{ outcome: "failed", backend, reason }` and never rejects. By default Builderlab or TypeSafe answers, with Jev. See [Decisions](#decisions) below. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
 | `pluginInstaller` (optional) | Ask the owner to install another plugin or check installation status | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. |
 
@@ -95,6 +95,8 @@ ctx.effect(() => {
   return unsubscribe;
 });
 ```
+
+The table above covers the services most plugins use. The full contract for every service, with TypeScript types and examples, is in [Plugin architecture](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md); the types are exported from [`src/plugins/author.ts`](https://github.com/block/buzz-app/blob/main/src/plugins/author.ts). Read it before you use a service that is not in this table. It describes the latest Buzz, which can have services this app does not. If a service in `inject` is missing, `apply` never runs, so check `plugin_status` after you install.
 
 ### Decisions
 
@@ -138,9 +140,7 @@ if (result.outcome === "answered") {
 
 Each answer has its question's `type`: `yes_no` gives `probability`; `choice` gives `choice`, `confidence` and `probabilities`; `score` gives a 0-based `score` (it can be fractional), `confidence` and `probabilities`. A failed call is not retried and does not fall back to another provider. On failure, `backend` is undefined when no provider is registered.
 
-The owner chooses the provider in Settings → Decisions API. Until they do, Builderlab answers when this build includes it and the owner's account is allowed decisions, else TypeSafe with the owner's TypeSafe key. Both answer with the Jev model; `result.model` names the model that answered. If the owner chose another provider and it is off, calls fail as `unavailable`. `ctx.decisions.status()` returns `"checking"`, `"ready"`, `"unconfirmed"`, `"needs-setup"` or `"unavailable"`; compare it to `"ready"` before you offer a feature that depends on it, and use `ctx.decisions.subscribe(listener)` to hear when it changes.
-
-The table above covers the services most plugins use. The full contract for every service, with TypeScript types and examples, is in [Plugin architecture](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md); the types are exported from [`src/plugins/author.ts`](https://github.com/block/buzz-app/blob/main/src/plugins/author.ts). Read it before you use a service that is not in this table. It describes the latest Buzz, which can have services this app does not. If a service in `inject` is missing, `apply` never runs, so check `plugin_status` after you install.
+The owner chooses the provider in Settings → Decisions API. Until they do, Builderlab answers when this build includes it and the owner's account is allowed decisions, else TypeSafe with the owner's TypeSafe key. Both answer with the Jev model; `result.model` names the model that answered. If the owner chose another provider and it is off, calls fail as `unavailable`. `ctx.decisions.status()` returns `"checking"`, `"ready"`, `"unconfirmed"`, `"needs-setup"` or `"unavailable"`; treat `"ready"` as usable and `"unconfirmed"` as possibly usable (it could not check, for example while the keychain is locked), wait while it is `"checking"`, and use `ctx.decisions.subscribe(listener)` to hear when it changes.
 
 ## Host access (`manifest.host`)
 

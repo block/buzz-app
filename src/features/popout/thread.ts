@@ -223,6 +223,10 @@ export function createPopoutThread(
       session.typing.snapshot(),
       profiles,
     );
+    // As main's indicator: a conversation frame hands work at a shown root
+    // with replies to that thread, and an agent live activity identifies is
+    // never a typing human, whatever its profile says so far.
+    const rows = thread?.snapshot().rows ?? [];
     const details = currentActivity(
       session.agentActivity.snapshot(),
       session.typing.snapshot(),
@@ -230,6 +234,11 @@ export function createPopoutThread(
       channelId,
       rootId,
       false,
+      rootId
+        ? undefined
+        : new Set(
+            rows.filter((row) => row.replyCount > 0).map((row) => row.id),
+          ),
     );
     const name = (pubkey: string) =>
       (
@@ -239,7 +248,10 @@ export function createPopoutThread(
       ).slice(0, 200);
     const humans = entries
       .filter(
-        (entry) => !known.has(entry.pubkey) && entry.pubkey !== session.viewer,
+        (entry) =>
+          !known.has(entry.pubkey) &&
+          !details.has(entry.pubkey) &&
+          entry.pubkey !== session.viewer,
       )
       .map((entry) => entry.pubkey);
     const agents = [...details.keys()].sort().slice(0, 8).map(name);

@@ -22,7 +22,8 @@ import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
-import { createOutbox } from "../relay/outbox";
+import { createOutbox, type Outbox } from "../relay/outbox";
+import { createMessages } from "../relay/messages";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
 import { setDefaultAgent } from "./default-agent";
@@ -187,6 +188,7 @@ function setup(available = true) {
   const messages = {
     send: vi.fn<RelaySession["messages"]["send"]>(() => "d".repeat(64)),
   };
+  const enqueue = vi.fn<Outbox["send"]>(() => "d".repeat(64));
   const viewer = "f".repeat(64);
   let channelSnapshot = {
     channels: [
@@ -244,6 +246,7 @@ function setup(available = true) {
       ensure: async () => {},
     },
     outbox: {
+      send: enqueue,
       ready: async () => {},
       whenPrepared: vi.fn(async () => ({})),
       supports: () => true,
@@ -253,7 +256,18 @@ function setup(available = true) {
     },
     media: (url: string) => url,
   } as unknown as RelaySession;
-  return { session, channelWrites, messages };
+  Object.assign(messages, {
+    prepareNewChat: createMessages(
+      session.outbox,
+      viewer,
+      () => undefined,
+      () => [],
+      () => {},
+      () => true,
+      "https://relay.test",
+    ).prepareNewChat,
+  });
+  return { session, channelWrites, messages, enqueue };
 }
 it("uses restored explicit mentions, not a separate picker", async () => {
   const test = setup(),
@@ -3448,7 +3462,7 @@ it.each(["projects", "token"] as const)(
         await user.click(screen.getByRole("button", { name: "Send message" }));
         expect(prepare).not.toHaveBeenCalled();
         expect(f.channelWrites.start).not.toHaveBeenCalled();
-        expect(f.messages.send).not.toHaveBeenCalled();
+        expect(f.enqueue).not.toHaveBeenCalled();
         view.unmount();
         expect(localStorage.getItem(storage)).toBe(saved);
       }
@@ -3539,10 +3553,12 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
       attachments: [],
     });
     expect(f.channelWrites.start.mock.calls[0]?.[2]).toEqual([agent]);
-    expect(f.messages.send.mock.calls[0]?.[2]).toEqual([agent]);
-    expect(f.messages.send.mock.calls[0]?.slice(5)).toEqual([[], {}]);
-    expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(workspace.label);
-    const recovery = f.messages.send.mock.calls[0]?.[4];
+    expect(f.enqueue.mock.calls[0]?.[0].tags).toEqual([
+      ["h", "22222222-2222-4222-8222-222222222222"],
+      ["p", agent],
+    ]);
+    expect(f.enqueue.mock.calls[0]?.[0].content).not.toContain(workspace.label);
+    const recovery = f.enqueue.mock.calls[0]?.[1];
     expect(JSON.parse(recovery?.value ?? "null")).toMatchObject({
       draftId: route.draftId,
       revision: prepared?.revision,
@@ -3620,7 +3636,7 @@ it("rejects multiple task targets before preparation or creation and retains the
     );
     expect(prepare).not.toHaveBeenCalled();
     expect(f.channelWrites.start).not.toHaveBeenCalled();
-    expect(f.messages.send).not.toHaveBeenCalled();
+    expect(f.enqueue).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox")).toHaveTextContent("Help");
     expect(
       readView("task-many", `solo:task:${route.draftId}:new-draft`, null),
@@ -3847,7 +3863,7 @@ it.each(["text", "foreign", "workspace"] as const)(
       await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
       expect(prepare).not.toHaveBeenCalled();
       expect(f.channelWrites.start).not.toHaveBeenCalled();
-      expect(f.messages.send).not.toHaveBeenCalled();
+      expect(f.enqueue).not.toHaveBeenCalled();
       expect(resumeStart).toHaveBeenCalledWith(
         create.id,
         channelId,
@@ -4021,7 +4037,7 @@ it.each(["resume", "already_sent"])(
       await user.click(
         within(first.container).getByRole("button", { name: "Send message" }),
       );
-      await waitFor(() => expect(a.messages.send).toHaveBeenCalledOnce());
+      await waitFor(() => expect(a.enqueue).toHaveBeenCalledOnce());
       expect(
         readView("window-a", `solo:task:${route.draftId}:new-draft`, null),
       ).toMatchObject({ text: expect.stringContaining("Frozen request") });
@@ -4039,7 +4055,7 @@ it.each(["resume", "already_sent"])(
         ),
       );
       expect(b.channelWrites.start).not.toHaveBeenCalled();
-      expect(b.messages.send).not.toHaveBeenCalled();
+      expect(b.enqueue).not.toHaveBeenCalled();
       expect(startedB).not.toHaveBeenCalled();
       release();
       await waitFor(() => expect(startedA).toHaveBeenCalledOnce());
@@ -4100,7 +4116,6 @@ it.each([
       draftId: "33333333-3333-4333-8333-333333333333",
     };
     const channelId = "22222222-2222-4222-8222-222222222222";
-    const { attachmentMessage } = await import("../relay/attachments");
     const upload = vi.fn(async () => notes);
     Object.assign(f.session, { attachments: { uploadForNewChat: upload } });
     const files = attachmentDraft(
@@ -4130,25 +4145,16 @@ it.each([
     Object.assign(f.session.channelWrites, {
       resumeStart: () => ({ create: "c".repeat(64), ready: Promise.resolve() }),
     });
-    f.messages.send.mockImplementation(
-      (id, content, recipients, uploaded, recovery) => {
-        const message = attachmentMessage(content, uploaded ?? [], notes.url);
-        const event = {
-          id: eventId,
-          kind: 9,
-          pubkey: viewer,
-          content: message.content,
-          created_at: 1,
-          tags: [
-            ["h", id],
-            ...(recipients ?? []).map((key) => ["p", key]),
-            ...message.tags,
-          ],
-        };
-        operations = [{ event, recovery, delivery: "failed" }];
-        return eventId;
-      },
-    );
+    f.enqueue.mockImplementation((input, recovery) => {
+      const event = {
+        ...input,
+        id: eventId,
+        pubkey: viewer,
+        created_at: 1,
+      };
+      operations = [{ event, recovery, delivery: "failed" }];
+      return eventId;
+    });
     const started = vi.fn();
     try {
       render(
@@ -4196,12 +4202,14 @@ it.each([
         .click(screen.getByRole("button", { name: "Send message" }));
       await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
       expect(prepare).toHaveBeenCalledTimes(1);
-      expect(f.messages.send).toHaveBeenCalledTimes(1);
+      expect(f.enqueue).toHaveBeenCalledTimes(1);
       if (implicit) {
-        expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(
+        expect(f.enqueue.mock.calls[0]?.[0].content).not.toContain(
           "@Member agent",
         );
-        expect(f.messages.send.mock.calls[0]?.[2]).toEqual(["a".repeat(64)]);
+        expect(
+          f.enqueue.mock.calls[0]?.[0].tags.filter(([name]) => name === "p"),
+        ).toEqual([["p", "a".repeat(64)]]);
       }
       expect(retry).toHaveBeenCalledWith(eventId, expect.any(Function));
       expect(JSON.stringify(operations[0]?.event)).toBe(savedBytes);
@@ -5045,11 +5053,13 @@ it.each([
       expect(prepare.mock.calls[0]?.[0].workspace).toEqual(
         removed ? undefined : project,
       );
-      expect(f.messages.send.mock.calls[0]?.[1]).toBe(prose);
-      expect(f.messages.send.mock.calls[0]?.[2]).toEqual([primary]);
-      expect(f.messages.send.mock.calls[0]?.slice(5)).toEqual([[], {}]);
+      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(prose);
+      expect(f.enqueue.mock.calls[0]?.[0].tags).toEqual([
+        ["h", "22222222-2222-4222-8222-222222222222"],
+        ["p", primary],
+      ]);
       expect(readView(scope, "solo:default-agent", null)).toBe(b);
-      expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(project.label);
+      expect(f.enqueue.mock.calls[0]?.[0].content).not.toContain(project.label);
     } finally {
       adopt?.(b);
       cleanup();
@@ -5154,7 +5164,7 @@ it.each([
         ),
       );
       expect(f.channelWrites.start).not.toHaveBeenCalled();
-      expect(f.messages.send).not.toHaveBeenCalled();
+      expect(f.enqueue).not.toHaveBeenCalled();
       expect(prepare.mock.calls.every(([input]) => input.primary === a)).toBe(
         true,
       );
@@ -5432,11 +5442,12 @@ it.each(["selected", "refused", "typed later"] as const)(
         screen.getByRole("button", { name: "Send message" }),
       );
       await waitFor(() => expect(started).toHaveBeenCalledOnce());
-      expect(f.messages.send.mock.calls[0]?.[1]).toBe(
-        mode === "typed later" ? ` @A ${before}` : before,
+      expect(f.enqueue.mock.calls[0]?.[0].content).toBe(
+        mode === "typed later" ? `@A ${before}` : before,
       );
-      expect(f.messages.send.mock.calls[0]?.[2]).toEqual([
-        refused || mode === "typed later" ? a : b,
+      expect(f.enqueue.mock.calls[0]?.[0].tags).toEqual([
+        ["h", "22222222-2222-4222-8222-222222222222"],
+        ["p", refused || mode === "typed later" ? a : b],
       ]);
       expect(
         mentionDraft(readView(scope, `${key}:new-draft`, "")).recipients,

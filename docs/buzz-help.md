@@ -318,6 +318,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   name, or **Open in channel** in the thread tab's menu, to open the thread in
   Channels beside its original message, which the channel history shows and
   highlights.
+- **Sidebar activity**: rest the pointer on a sidebar row to list its unread
+  mentions of you and its unread threads, mentions first. Open one or mark it
+  read from the list; just looking marks nothing read.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.

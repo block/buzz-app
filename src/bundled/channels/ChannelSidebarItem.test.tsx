@@ -122,6 +122,7 @@ function itemProps(
     selected: undefined,
     onSelect: vi.fn(),
     onOpenThread: vi.fn(),
+    onOpenMessage: vi.fn(),
   };
 }
 
@@ -270,6 +271,7 @@ it("keeps live unread updates and uses replacement session callbacks across row 
     selected: undefined,
     onSelect,
     onOpenThread: vi.fn(),
+    onOpenMessage: vi.fn(),
   };
   const view = render(<ChannelSidebarItem {...props} />);
   const row = screen.getByRole("button", { name: "Alpha" });
@@ -348,6 +350,7 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
     selected: undefined,
     onSelect: vi.fn(),
     onOpenThread: vi.fn(),
+    onOpenMessage: vi.fn(),
   };
   const view = render(<ChannelSidebarItem {...props} />);
   const row = screen.getByRole("button", { name: /^Alice$/ });
@@ -443,6 +446,7 @@ it.each(["ContextMenu", "F10"])(
         selected={undefined}
         onSelect={onSelect}
         onOpenThread={vi.fn()}
+        onOpenMessage={vi.fn()}
         menuEnabled
         sectionKey="group:work"
         onOpenMenu={onOpenMenu}

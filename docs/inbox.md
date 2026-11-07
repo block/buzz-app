@@ -50,8 +50,11 @@ Resting a pointer on the sidebar's Activity row opens a card of recent conversat
 through the page contract's `preview`. It reads the same `session.unread.inbox()`
 and `session.inboxFeed` projection as the page, with All activity and Everyone,
 newest first and bounded to 50 rows after mixing conversations and reactions, as on the
-page. The header counts unread
-conversations once each, as a DM, mention or thread. Unread only is the card's own
+page. The header leads with the number of
+unread conversations, then counts each once by its most specific kind: DM, then
+mention, then thread. A mention counts only while it is unread, as Mentions with
+Unread only would list it; a Solo chat's flat row has no kind, so only the total
+counts it. Unread only is the card's own
 choice, saved on this device per account and community, and never changes the
 page's filters. A row opens its conversation directly, through the same
 conversation target as the page's fallback, and closes the card without opening

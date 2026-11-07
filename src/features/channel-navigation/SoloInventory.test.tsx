@@ -162,6 +162,43 @@ it("offers unread thread navigation and mark-read through the shared activity po
     }),
   );
 });
+it("opens an unread mention from the shared activity popover at its message, with no thread root", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const message = "e".repeat(64);
+  f.threads({
+    channelId: id,
+    items: [],
+    mentions: [
+      {
+        channelId: id,
+        messageId: message,
+        authorId: agent,
+        preview: "Can you sign off?",
+        createdAt: 1,
+      },
+    ],
+    coverage: "observed",
+    freshness: "observed",
+  });
+  screen.getByRole("button", { name: /^Planning/ }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(
+    within(
+      screen.getByRole("dialog", { name: "Activity in Planning" }),
+    ).getByRole("button", {
+      name: "Open unread mention from Owned Agent: Can you sign off?",
+    }),
+  );
+  expect(f.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      kind: "conversation",
+      channelId: id,
+      messageId: message,
+    }),
+  );
+  expect(f.open.mock.lastCall?.[0]).not.toHaveProperty("threadRootId");
+});
 it("opens a typing-only agent's profile activity in its Solo chat", async () => {
   const f = fixture();
   f.typing([{ channelId: id, pubkey: agent }]);

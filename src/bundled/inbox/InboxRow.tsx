@@ -30,6 +30,18 @@ type ResolveName = (
 export const hasUnread = (item: InboxItem) =>
   item.unreadCount > 0 || item.manual;
 
+/** What a preview shows instead of a body whose stored edits or deletions are
+ * not settled yet, or undefined when none of `ids` is incomplete. */
+export const incompletePreview = (
+  feed: InboxFeedSnapshot,
+  ids: readonly (string | undefined)[],
+) =>
+  ids.some((id) => id !== undefined && feed.incomplete.includes(id))
+    ? feed.status === "error"
+      ? "Preview unavailable. Retry activity."
+      : "Preview updating…"
+    : undefined;
+
 /** Who sent a row and where, as the Inbox page and its sidebar preview name it. */
 export function rowIdentity(
   item: InboxItem,
@@ -119,13 +131,8 @@ export function InboxRowButton({
       unread={unread}
       previewId={previewId}
       preview={
-        [item.previewMessageId, ...item.messageIds].some(
-          (id) => id !== undefined && feed.incomplete.includes(id),
-        )
-          ? feed.status === "error"
-            ? "Preview unavailable. Retry activity."
-            : "Preview updating…"
-          : messagePreview(item.preview)
+        incompletePreview(feed, [item.previewMessageId, ...item.messageIds]) ??
+        messagePreview(item.preview)
       }
     />
   );

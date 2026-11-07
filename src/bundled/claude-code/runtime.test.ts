@@ -67,6 +67,8 @@ function setup(
   thread: readonly EventData[] = [],
   options: Readonly<{
     hold?: boolean;
+    /** Every process stops answering, as a stuck Claude would. */
+    mute?: boolean;
     starting?: Promise<void>;
     workflowAuthority?: string;
     signal?: AbortSignal;
@@ -111,6 +113,7 @@ function setup(
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
+    if (options.mute && started) started.emit = () => {};
     return process;
   };
   const host = { spawn, request: vi.fn() } as unknown as Host;
@@ -1115,6 +1118,32 @@ it("refuses a watch's standalone turn on a synced effort its model lacks", async
   expect(prompt).not.toHaveBeenCalled();
   await expect(turn()).resolves.toMatchObject({ ok: true });
   expect(claudes().some((process) => process.prompts.length)).toBe(true);
+  runtime.dispose();
+});
+it("ends a watch's standalone turn at its deadline while Claude doesn't answer the effort check", async () => {
+  const { runtime, claudes, agent } = setup([], { mute: true });
+  const config = { ...DEFAULT_CONFIG, model: "haiku", effort: "low" };
+  runtime.sync([{ pubkey: self, config } as Agent]);
+  const deadline = new AbortController();
+  const prompt = vi.fn(() => "check the build");
+  const turn = runtime.runOnce({
+    delivery: { agent, config, synced: { effort: "low" } },
+    key: "watch",
+    signal: deadline.signal,
+    prompt,
+  } as unknown as Parameters<typeof runtime.runOnce>[0]);
+  await flush();
+  const alive = () => claudes().filter((process) => !process.killed);
+  // The shared spare, and the lookup's own process.
+  expect(alive()).toHaveLength(2);
+  const lookup = claudes().at(-1);
+  const ended = expect(turn).rejects.toThrow("deadline");
+  deadline.abort(new Error("The turn ran past its 300s deadline"));
+  await flush();
+  expect(lookup?.killed).toBe(true);
+  expect(alive()).toHaveLength(1);
+  await ended;
+  expect(prompt).not.toHaveBeenCalled();
   runtime.dispose();
 });
 it("puts the agent's teams in its system prompt, resuming idle sessions when they change", async () => {

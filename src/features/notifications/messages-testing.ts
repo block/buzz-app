@@ -223,7 +223,7 @@ export async function setup(
       dispose() {},
     },
     preferences,
-    (target) => notificationAuthorized(communities, target),
+    (target, category) => notificationAuthorized(communities, target, category),
   );
   const discover = () =>
     callbacks.receive([

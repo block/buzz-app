@@ -6,6 +6,7 @@ import { provideNavigation } from "../navigation/service";
 import { NotificationsService, type Notifications } from "./service";
 import { createNotificationPreferences } from "./preferences";
 import type {
+  NotificationFailureStage,
   NotificationPlatform,
   NotificationPermissionState,
 } from "./platform";
@@ -39,7 +40,8 @@ function setup() {
   const preferences = createNotificationPreferences(host);
   const navigation = provideNavigation(ctx);
   const clicks: (() => void)[] = [];
-  const failures: ((error: Error) => void)[] = [];
+  const failures: ((error: Error, stage?: NotificationFailureStage) => void)[] =
+    [];
   let permission: NotificationPermissionState = "granted";
   const platform: NotificationPlatform = {
     label: "Test",
@@ -75,13 +77,19 @@ function setup() {
     permission(value: NotificationPermissionState) {
       permission = value;
     },
-    submit(id = "event", eligible: () => boolean | "wait" = () => true) {
+    submit(
+      id = "event",
+      eligible: () => boolean | "wait" = () => true,
+      fallback?: (activate: () => void) => void,
+    ) {
       return service.admit(
         "mention",
         "Mentions",
         { sourceKey: id, target },
         () => true,
         eligible,
+        undefined,
+        fallback,
       );
     },
     install(value: PluginModule) {
@@ -138,6 +146,91 @@ it("retains a fresh candidate for explicit permission, without prompting on arri
   await flush();
   expect(t.platform.show).toHaveBeenCalledTimes(1);
 });
+it("uses an in-app fallback once when native permission is unavailable", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  t.permission("default");
+  expect(await t.submit("fallback", () => true, fallback)).toBe(true);
+  await flush();
+  expect(fallback).toHaveBeenCalledOnce();
+  expect(t.platform.show).not.toHaveBeenCalled();
+  expect(t.plays).toEqual(["flutter"]);
+  t.permission("granted");
+  await t.service.requestPermission();
+  await flush();
+  expect(fallback).toHaveBeenCalledOnce();
+  expect(t.platform.show).not.toHaveBeenCalled();
+});
+it("falls back after a native submission failure without replaying sound", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  await t.submit("failed-native", () => true, fallback);
+  await flush();
+  expect(t.platform.show).toHaveBeenCalledOnce();
+  expect(t.plays).toEqual(["flutter"]);
+  t.failures[0]?.(new Error("Native presentation failed"));
+  expect(fallback).toHaveBeenCalledOnce();
+  expect(t.plays).toEqual(["flutter"]);
+  t.failures[0]?.(new Error("Duplicate failure"));
+  expect(fallback).toHaveBeenCalledOnce();
+});
+it("preserves the submission sound decision when native delivery fails late", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  t.service.updatePreferences({ sound: false });
+  await t.submit("late-failure-muted", () => true, fallback);
+  await flush();
+  expect(t.platform.show).toHaveBeenCalledOnce();
+  t.service.updatePreferences({ sound: true });
+  t.failures[0]?.(new Error("Late native failure"));
+  expect(fallback).toHaveBeenCalledOnce();
+  expect(t.plays).toEqual([]);
+});
+it("keeps current Sound off authoritative for a late fallback", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  let release!: () => void;
+  let visible = false;
+  vi.mocked(t.platform.show).mockImplementationOnce(
+    (_item, activate, failed) =>
+      new Promise<void>((resolve) => {
+        t.clicks.push(activate);
+        t.failures.push(failed);
+        release = resolve;
+      }),
+  );
+  await t.submit("late-failure-currently-muted", () => !visible, fallback);
+  await flush();
+  visible = true;
+  release();
+  await flush();
+  visible = false;
+  t.service.updatePreferences({ sound: false });
+  t.failures[0]?.(new Error("Late native failure"), "delivery");
+  expect(fallback).toHaveBeenCalledOnce();
+  expect(t.plays).toEqual([]);
+});
+it("reports activation failures without showing a delivery fallback", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  await t.submit("activation-failure", () => true, fallback);
+  await flush();
+  t.failures[0]?.(new Error("Window focus failed"), "activation");
+  t.clicks[0]?.();
+  expect(fallback).not.toHaveBeenCalled();
+  expect(t.service.snapshot().error).toBe("Window focus failed");
+  expect(t.navigation.navigation.snapshot().entry.target).toEqual(target);
+});
+it("ignores activation failures owned by a previous account", async () => {
+  const t = setup();
+  const fallback = vi.fn();
+  await t.submit("old-account-activation", () => true, fallback);
+  await flush();
+  t.service.selectViewer("b".repeat(64));
+  t.failures[0]?.(new Error("Old account focus failed"), "activation");
+  expect(fallback).not.toHaveBeenCalled();
+  expect(t.service.snapshot().error).toBeNull();
+});
 it("an off/on transition during a permission probe cancels the old candidate", async () => {
   const t = setup();
   await flush();
@@ -153,6 +246,24 @@ it("an off/on transition during a permission probe cancels the old candidate", a
   expect(release).toBeTypeOf("function");
   t.service.updatePreferences({ enabled: false });
   t.service.updatePreferences({ enabled: true });
+  release("granted");
+  await flush();
+  expect(t.platform.show).not.toHaveBeenCalled();
+});
+it("rechecks visibility after a delayed permission probe", async () => {
+  const t = setup();
+  await flush();
+  let release!: (value: NotificationPermissionState) => void;
+  let visible = false;
+  vi.mocked(t.platform.permission).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  await t.submit("visibility", () => !visible);
+  await flush();
+  visible = true;
   release("granted");
   await flush();
   expect(t.platform.show).not.toHaveBeenCalled();

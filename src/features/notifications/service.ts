@@ -61,6 +61,13 @@ type Candidate = {
   valid(): boolean;
   eligible(): NotificationEligibility;
   text(): NotificationText;
+  fallback?: (activate: () => void) => void;
+  fallbackShown: boolean;
+  soundPlayed: boolean;
+};
+type SoundingDecision = {
+  item: Candidate;
+  cancelled: boolean;
 };
 const categories = Object.freeze([
   { key: "mention", label: "Mentions" },
@@ -91,10 +98,7 @@ export class NotificationsService extends Service implements Notifications {
   private readonly pending = new Set<Candidate>();
   // Outstanding audio decisions for submissions awaiting platform acceptance.
   // Revalidation cancels them stickily; cancellation never affects the banner.
-  private readonly sounding = new Set<{
-    item: Candidate;
-    cancelled: boolean;
-  }>();
+  private readonly sounding = new Set<SoundingDecision>();
   private readonly seen = new Map<string, number>();
   private closed = false;
   private readonly lifetime = new AbortController();
@@ -108,8 +112,10 @@ export class NotificationsService extends Service implements Notifications {
     private readonly navigation: Navigation,
     private readonly platform: NotificationPlatform = createNotifications(),
     private readonly preferences = createNotificationPreferences(),
-    private readonly authorized: (target: OpenTarget) => boolean = (target) =>
-      !("scope" in target && target.scope),
+    private readonly authorized: (
+      target: OpenTarget,
+      category: string,
+    ) => boolean = (target) => !("scope" in target && target.scope),
     private readonly playSound: (name: SoundName) => void = (name) =>
       void playNotificationSound(name),
   ) {
@@ -251,7 +257,7 @@ export class NotificationsService extends Service implements Notifications {
       item.viewer === this.state.viewer &&
       item.expires > Date.now() &&
       item.valid() &&
-      this.authorized(item.target) &&
+      this.authorized(item.target, item.category) &&
       this.state.preferences.enabled &&
       this.state.preferences.categories[item.category] !== false &&
       this.gated(item.target)
@@ -365,6 +371,7 @@ export class NotificationsService extends Service implements Notifications {
       title: "Buzz",
       body: `New ${label.toLowerCase()}`,
     }),
+    fallback?: (activate: () => void) => void,
   ) {
     const viewer = this.state.viewer;
     if (this.closed || !viewer || !valid()) return false;
@@ -398,6 +405,9 @@ export class NotificationsService extends Service implements Notifications {
       valid,
       eligible,
       text,
+      ...(fallback ? { fallback } : {}),
+      fallbackShown: false,
+      soundPlayed: false,
       expires: now + FRESH_MS,
       cancelled: false,
       submitting: false,
@@ -428,6 +438,29 @@ export class NotificationsService extends Service implements Notifications {
       })
       .catch(this.reportError);
   }
+  private presentFallback(
+    item: Candidate,
+    generation: number,
+    activate: () => void,
+    soundAllowed = this.soundEnabled(item.category),
+  ) {
+    if (
+      !item.fallback ||
+      item.fallbackShown ||
+      generation !== this.generation ||
+      !this.allowed(item) ||
+      item.eligible() !== true
+    )
+      return;
+    item.fallbackShown = true;
+    item.fallback(activate);
+    if (!item.soundPlayed && soundAllowed && this.soundEnabled(item.category)) {
+      item.soundPlayed = true;
+      this.playSound(
+        resolveCategorySound(this.state.preferences.sounds, item.category),
+      );
+    }
+  }
   private async deliver(item: Candidate) {
     if (!this.allowed(item) || item.eligible() === false) {
       this.pending.delete(item);
@@ -436,6 +469,13 @@ export class NotificationsService extends Service implements Notifications {
     if (item.eligible() === "wait") return;
     item.submitting = true;
     const generation = this.generation;
+    let decision: SoundingDecision | null | undefined;
+    const activate = () => {
+      if (this.closed || generation !== this.generation) return;
+      // Opening may switch to an already joined community. Navigation owns
+      // current membership/channel access after admission.
+      void this.navigation.open(item.target).catch(this.reportError);
+    };
     try {
       const permissionGeneration = this.permissionGeneration;
       const probed = await this.platform.permission();
@@ -448,7 +488,10 @@ export class NotificationsService extends Service implements Notifications {
         return;
       }
       if (permission !== "granted" && permission !== "unknown") {
-        if (permission !== "default") this.pending.delete(item);
+        if (item.fallback) {
+          this.pending.delete(item);
+          this.presentFallback(item, generation, activate);
+        } else if (permission !== "default") this.pending.delete(item);
         return;
       }
       if (item.eligible() !== true) {
@@ -460,7 +503,7 @@ export class NotificationsService extends Service implements Notifications {
       // The item is out of `pending`, so register its audio decision for
       // sticky cancellation by `revalidate` while the submission is
       // outstanding. Sound off at submission means no decision at all.
-      const decision = this.soundEnabled(item.category)
+      decision = this.soundEnabled(item.category)
         ? { item, cancelled: false }
         : null;
       if (decision) this.sounding.add(decision);
@@ -469,22 +512,31 @@ export class NotificationsService extends Service implements Notifications {
           {
             id: crypto.randomUUID(),
             ...item.text(),
+            foregroundBanner: item.category === "agent",
           },
-          () => {
-            if (this.closed || generation !== this.generation) return;
-            // Opening may switch to an already joined community. Navigation
-            // owns current membership/channel access; admission's
-            // selected-session gate must not turn a still-valid prior
-            // notification into a dead click.
-            void this.navigation.open(item.target).catch(this.reportError);
-          },
-          (error) => {
+          activate,
+          (error, stage = "delivery") => {
+            if (stage === "activation") {
+              if (!this.closed && generation === this.generation)
+                this.reportError(error);
+              return;
+            }
             // Native failure can arrive before `show` resolves. Cancellation is
             // about this submission's audio decision, not whether its account
             // still owns visible error reporting.
+            const fallbackSoundAllowed = Boolean(
+              decision && !decision.cancelled,
+            );
             if (decision) decision.cancelled = true;
-            if (!this.closed && generation === this.generation)
+            if (!this.closed && generation === this.generation) {
+              this.presentFallback(
+                item,
+                generation,
+                activate,
+                fallbackSoundAllowed,
+              );
               this.reportError(error);
+            }
           },
         );
       } finally {
@@ -501,13 +553,24 @@ export class NotificationsService extends Service implements Notifications {
         generation === this.generation &&
         this.soundEnabled(item.category) &&
         this.allowed(item) &&
-        item.eligible() === true
-      )
+        item.eligible() === true &&
+        !item.soundPlayed
+      ) {
+        item.soundPlayed = true;
         this.playSound(
           resolveCategorySound(this.state.preferences.sounds, item.category),
         );
+      }
     } catch (error) {
       this.pending.delete(item);
+      this.presentFallback(
+        item,
+        generation,
+        activate,
+        decision === undefined
+          ? this.soundEnabled(item.category)
+          : Boolean(decision && !decision.cancelled),
+      );
       this.reportError(error);
     } finally {
       item.submitting = false;

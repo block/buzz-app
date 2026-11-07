@@ -80,9 +80,12 @@ it("the default service sends desktop banners via the native bridge and shared p
   await submit("first");
   await flush();
   expect(sdk.show).toHaveBeenCalledExactlyOnceWith("notification_show", {
-    title: "Buzz",
-    body: "New mentions",
-    id: expect.any(String),
+    presentation: {
+      title: "Buzz",
+      body: "New mentions",
+      id: expect.any(String),
+      foregroundBanner: false,
+    },
     onEvent: expect.objectContaining({ onmessage: expect.any(Function) }),
   });
   service.updatePreferences({ enabled: false });
@@ -213,9 +216,32 @@ it("the production desktop adapter forwards the message title and preview unchan
   );
   await flush();
   expect(sdk.show).toHaveBeenCalledExactlyOnceWith("notification_show", {
-    title: "Pinky mentioned you in #Room",
-    body: "Hello Wes",
-    id: expect.any(String),
+    presentation: {
+      title: "Pinky mentioned you in #Room",
+      body: "Hello Wes",
+      id: expect.any(String),
+      foregroundBanner: false,
+    },
+    onEvent: expect.objectContaining({ onmessage: expect.any(Function) }),
+  });
+});
+
+it("marks only agent completions for foreground native banners", async () => {
+  const { service } = setup();
+  await service.admit(
+    "agent",
+    "Solo chat completions",
+    { sourceKey: "agent", target: { version: 1, kind: "settings" } },
+    () => true,
+  );
+  await flush();
+  expect(sdk.show).toHaveBeenCalledExactlyOnceWith("notification_show", {
+    presentation: {
+      title: "Buzz",
+      body: "New solo chat completions",
+      id: expect.any(String),
+      foregroundBanner: true,
+    },
     onEvent: expect.objectContaining({ onmessage: expect.any(Function) }),
   });
 });
@@ -224,13 +250,13 @@ function presentation(index = 0) {
   const call = sdk.show.mock.calls[index] as unknown as [
     string,
     {
-      id: string;
+      presentation: { id: string };
       onEvent: {
         onmessage(response: { id: string; kind: string; error?: string }): void;
       };
     },
   ];
-  return call[1];
+  return { ...call[1].presentation, onEvent: call[1].onEvent };
 }
 
 it("the production default returns each native click to its exact navigation callback once", async () => {
@@ -316,7 +342,11 @@ it("the click channel exists before native submission, including immediate activ
   const open = vi.fn();
   navigation.subscribe(() => open(navigation.snapshot().entry.target));
   sdk.show.mockImplementationOnce(async (...args: unknown[]) => {
-    const { id, onEvent } = args[1] as ReturnType<typeof presentation>;
+    const { presentation: item, onEvent } = args[1] as {
+      presentation: { id: string };
+      onEvent: ReturnType<typeof presentation>["onEvent"];
+    };
+    const { id } = item;
     onEvent.onmessage({ id, kind: "activated" });
     return null;
   });
@@ -333,7 +363,7 @@ it("macOS admits a 129th request and retires the oldest native callback", async 
   const activate = vi.fn(),
     failed = vi.fn();
   sdk.show.mockImplementation(async (...args: unknown[]) => {
-    const id = (args[1] as { id: string }).id;
+    const id = (args[1] as { presentation: { id: string } }).presentation.id;
     return id === "128" ? "0" : null;
   });
   for (let i = 0; i < 129; i++)

@@ -8,6 +8,7 @@ import {
 } from "./EmbeddedThread";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
+import { SLASH_SCOPES } from "./slash-command";
 import {
   MessageComposer,
   type MessageComposerProps,
@@ -345,7 +346,21 @@ export class ConversationService extends Service implements Conversation {
       throw new Error(
         "A command needs an id, a lowercase name, a usage, a description and run",
       );
-    this.commandEntries.register(this.ctx, value);
+    if (
+      value.scopes !== undefined &&
+      (!Array.isArray(value.scopes) ||
+        !value.scopes.length ||
+        !value.scopes.every((scope) => SLASH_SCOPES.includes(scope)))
+    )
+      throw new Error(
+        `A command's scopes must list ${SLASH_SCOPES.join(", ")} or be omitted`,
+      );
+    this.commandEntries.register(
+      this.ctx,
+      value.scopes
+        ? { ...value, scopes: Object.freeze([...value.scopes]) }
+        : value,
+    );
   }
   registerInline(value: InlineRenderer) {
     validate(value);

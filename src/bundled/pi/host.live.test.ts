@@ -437,6 +437,37 @@ out.refresh = { calls: promptCalls, entries: JSON.stringify((await pi.rpc("entri
 out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
 out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
 await pi.stop();
+// A steering wake names the run it joins as that run is once its prompt is
+// refreshed: here the run ended meanwhile, and Pi ran the queued steer apart.
+{
+  const asked = held(), answered = held(), ending = held(), working = held();
+  pi = start(async () => { asked.release(); await answered.gate; return { text: "wake", steer: "steer: wake" }; });
+  await pi.rpc("open", { agent: promptAgent, tools });
+  faux.setResponses([
+    async () => { await ending.gate; return fauxAssistantMessage("Done"); },
+    async () => { await working.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    (context) => { out.woken = context.messages.filter((m) => m.role === "user").map((m) => m.content).at(-1); return fauxAssistantMessage("Answer"); },
+  ]);
+  const shared = (request, scope, more) => ({ ...turn(request, request), agent: promptAgent, key: "wake", context: { channel: "chan" }, scope, ...more });
+  const delivered = [];
+  try {
+    delivered.push(await pi.rpc("deliver", shared("W1", "A")));
+    await started(pi.events, "W1");
+    delivered.push(await pi.rpc("deliver", shared("W2", "C")));
+    const woken = pi.rpc("deliver", shared("W3", "B", { refresh: true }));
+    await asked.gate;
+    ending.release();
+    await started(pi.events, "W2");
+    answered.release();
+    delivered.push(await woken);
+  } finally {
+    ending.release();
+    answered.release();
+    working.release();
+  }
+  for (const x of delivered) await pi.rpc("wait", { agent: promptAgent, submission: x.submission });
+  await pi.stop();
+}
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
 const auth = new AuthFile(data + "/auth.json");
@@ -734,6 +765,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       `steer: other\n\nThe reply target above is for the new message only. ${running}`,
     );
     expect(out.promotedSteer).toBe("steer: more");
+    expect(out.woken).toBe("steer: wake");
     expect(out.after).toBe("later");
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.unfinished).toEqual([

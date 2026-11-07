@@ -1138,11 +1138,11 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude, and one from another `scope` than the run's, `running`, is
-   * told where the run's results still go. The agent's `core` memory read
-   * for it is the conversation's latest; a failed read shows it none if not
-   * yet shown. */
-  async function submit(opened, conversation, turn, busy, refresh, running) {
+   * as in Claude, and one from another `scope` than the run's, as `watched`
+   * holds it, is told where the run's results still go. The agent's `core`
+   * memory read for it is the conversation's latest; a failed read shows it
+   * none if not yet shown. */
+  async function submit(opened, conversation, turn, busy, refresh, watched) {
     opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
@@ -1166,8 +1166,10 @@ export function serve({
       if (!prompt) return;
       turn = { ...turn, ...prompt };
     }
-    // Pi runs a steer as a run of its own when the run ends before taking
-    // it, so the added line is worded to hold then too.
+    // Read after the waits above, in which the run may have ended. Pi runs a
+    // steer as a run of its own when the run ends before taking it, so the
+    // added line is worded to hold then too.
+    const running = watched?.scope;
     const content = !steers
       ? turn.text
       : running && turn.scope && running !== turn.scope
@@ -1440,7 +1442,7 @@ export function serve({
         opened.conversations.add(conversation.id);
         opened.contexts.set(conversation.id, tools);
         const watched = await watch(opened, conversation.id);
-        const { busy, scope: running } = watched;
+        const { busy } = watched;
         // Read before the turn is submitted: what Pi then holds decides it.
         const session =
           !busy && (await firstTurn(opened, conversation.id))
@@ -1458,7 +1460,7 @@ export function serve({
           refresh
             ? () => call("prompt", { agent, request: turn.request })
             : undefined,
-          running,
+          watched,
         );
         if (!submitted) return false;
         // The scope of the run this turn starts.

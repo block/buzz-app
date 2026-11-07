@@ -32,6 +32,8 @@ commit cutoff bounds which original messages participate; edits are refreshed
 before copying. Copies preserve the original author, text, mention display
 bindings, emoji, order and reply parents. They do not repeat mention pings.
 Provenance changes display order, never event timestamps or read-cursor evidence.
+Each copy displays its original date and time in the viewer’s local time zone as
+“Originally sent”; its ordinary message timestamp remains the copy’s posting time.
 Deleted parents are followed using IDs previously observed by the device. If a
 deleted link is missing and a surviving ancestor cannot be verified, the move
 stops instead of guessing the reply structure. The ancestry cache retains no deleted content; pending delivery receipts are retained until resolved.

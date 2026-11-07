@@ -227,6 +227,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   to verify, Buzz stops the move and explains why. The initiator can cancel
   until posting starts. The request card shows progress, retry, and the new
   thread’s link. Reopening the app resumes saved work without posting it twice.
+  Each copy shows **Originally sent** with its original date and time in your
+  local time zone. Its normal message timestamp shows when the copy was posted.
 
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into

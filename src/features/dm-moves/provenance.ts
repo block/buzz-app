@@ -3,7 +3,7 @@ const MOVE_TAG = "buzz:dm-move";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const hex = /^[0-9a-f]{64}$/;
 const integer = (n: number) => Number.isSafeInteger(n) && n >= 0;
-/** Provenance changes display order only, never the signed publication time or read cursor. */
+/** Original chronology is display metadata, never the signed publication time or read cursor. */
 export function movedSource(event: Pick<EventData, "tags">) {
   const tags = event.tags.filter((t) => t[0] === MOVE_TAG);
   const t = tags[0];

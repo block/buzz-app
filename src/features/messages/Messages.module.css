@@ -3058,6 +3058,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin-block: var(--space-1);
 }
 
+.movedTimestamp {
+  margin-block-start: var(--space-1);
+}
+
 .workflowOwner {
   color: var(--text-subtle);
   min-width: 0;

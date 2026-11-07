@@ -454,47 +454,83 @@ async fn nothing_is_written_once_the_owner_or_agent_stops_acting() {
     assert_eq!(std::fs::read_dir(dir.path()).map_or(0, Iterator::count), 0);
 }
 
-/// Publication takes the identity, then the agent tokens' locks; sign-out
-/// and deletion take them in that order or unnested. Racing them all must
-/// finish, each publication writing all of its file or none of it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn publication_keeps_the_credential_lock_order_under_sign_out_and_deletion() {
-    for round in 0..8 {
+/// Publishes `agent`'s staged body on a blocking thread, as its command runs.
+fn publishing(
+    host: &AppAgentHost,
+    identity: &IdentityHost,
+    dir: &Path,
+    agent: &AppAgent,
+) -> tokio::task::JoinHandle<Result<(), String>> {
+    let (host, identity, dir) = (host.clone(), identity.clone(), dir.to_owned());
+    let (pubkey, relay) = (agent.pubkey.clone(), agent.relay.clone());
+    tokio::task::spawn_blocking(move || publish(&host, &identity, &dir, &pubkey, &relay, "one"))
+}
+async fn signalled(signal: std::sync::mpsc::Receiver<()>) {
+    tokio::task::spawn_blocking(move || signal.recv_timeout(Duration::from_secs(10)))
+        .await
+        .unwrap()
+        .expect("signalled");
+}
+async fn finished<T>(task: tokio::task::JoinHandle<T>) -> T {
+    tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .expect("finished")
+        .unwrap()
+}
+
+/// Deletion, sign-out or a closed identity that comes after the review, while
+/// publication is on its way to the fence, refuses it: nothing is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_retirement_before_the_fence_refuses_publication() {
+    for change in ["delete", "sign-out", "identity-closed"] {
         let identity = IdentityHost::fixture();
         let (f, host, agent, _store) = staged_for().await;
         let dir = tempfile::tempdir().unwrap();
-        let publishing = {
-            let (host, identity, path) = (host.clone(), identity.clone(), dir.path().to_owned());
-            let (pubkey, relay) = (agent.pubkey.clone(), agent.relay.clone());
-            tokio::task::spawn_blocking(move || {
-                publish(&host, &identity, &path, &pubkey, &relay, "one")
-            })
-        };
-        let stopping = {
-            let (tokens, identity) = (f.tokens.clone(), identity.clone());
-            let (owner, pubkey) = (agent.owner.clone(), agent.pubkey.clone());
-            tokio::spawn(async move {
-                if round % 2 == 0 {
-                    tokens.forget(&owner, &pubkey).await.unwrap();
-                } else {
-                    tokens.sign_out(None).await.unwrap();
-                    identity.close();
-                }
-            })
-        };
-        let (published, stopped) = tokio::time::timeout(Duration::from_secs(10), async {
-            (publishing.await.unwrap(), stopping.await)
-        })
-        .await
-        .expect("no lock-order deadlock");
-        stopped.unwrap();
-        let written = std::fs::read_dir(dir.path()).unwrap().count();
-        match published {
-            Ok(()) => assert_eq!(
-                std::fs::read(dir.path().join("blob.png")).unwrap(),
-                PNG.as_bytes()
-            ),
-            Err(_) => assert_eq!(written, 0),
+        let (arrived, release) = host.owner_media.hold_at(Pause::Peeked);
+        let published = publishing(&host, &identity, dir.path(), &agent);
+        signalled(arrived).await;
+        match change {
+            "delete" => f.tokens.forget(&agent.owner, &agent.pubkey).await.unwrap(),
+            "sign-out" => drop(f.tokens.sign_out(None).await.unwrap()),
+            _ => identity.close(),
         }
+        release.send(()).unwrap();
+        assert!(finished(published).await.is_err(), "{change}");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).map_or(0, Iterator::count),
+            0,
+            "{change}"
+        );
+        assert_eq!(
+            host.owner_media.held(),
+            (0, 0),
+            "{change}: the body is dropped"
+        );
     }
+}
+
+/// A sign-out that comes while publication holds the fence waits for it, so
+/// the whole file is written, and then completes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sign_out_waits_for_publication_holding_the_fence() {
+    let identity = IdentityHost::fixture();
+    let (f, host, agent, _store) = staged_for().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (arrived, release) = host.owner_media.hold_at(Pause::Fenced);
+    let published = publishing(&host, &identity, dir.path(), &agent);
+    signalled(arrived).await;
+    let contended = f.tokens.on_sign_out_contended();
+    let tokens = f.tokens.clone();
+    let signing_out = tokio::spawn(async move { tokens.sign_out(None).await.map(drop) });
+    // The sign-out found the retirement lock held by the publication.
+    signalled(contended).await;
+    assert!(!signing_out.is_finished());
+    release.send(()).unwrap();
+    finished(published).await.unwrap();
+    assert_eq!(
+        std::fs::read(dir.path().join("blob.png")).unwrap(),
+        PNG.as_bytes()
+    );
+    finished(signing_out).await.unwrap();
+    assert_eq!(host.owner_media.held(), (0, 0));
 }

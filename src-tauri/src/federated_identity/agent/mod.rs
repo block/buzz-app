@@ -474,6 +474,13 @@ impl AgentTokens {
     pub(crate) fn mark_retirement_pending(&self) {
         lock(&self.0.retired).pending = Some(true);
     }
+    /// Signals once the next sign-out finds the retirement lock taken.
+    #[cfg(test)]
+    pub(crate) fn on_sign_out_contended(&self) -> std::sync::mpsc::Receiver<()> {
+        let (contended, waiting) = std::sync::mpsc::channel();
+        *lock(&self.0.contended) = Some(contended);
+        waiting
+    }
     /// The owner's retirements so far: sign-out, another account, or a
     /// retired grant each add one.
     pub(crate) fn retirements(&self) -> u64 {

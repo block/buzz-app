@@ -76,9 +76,23 @@ impl State {
     }
 }
 
+/// Where a test holds a publication: past its peek, or inside the fence.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq)]
+enum Pause {
+    Peeked,
+    Fenced,
+}
+#[cfg(test)]
+type Gate = Option<(
+    Pause,
+    std::sync::mpsc::Sender<()>,
+    std::sync::mpsc::Receiver<()>,
+)>;
+
 /// Owner media between its read and its publication, in memory only.
 #[derive(Default)]
-pub(crate) struct OwnerMedia(Mutex<State>);
+pub(crate) struct OwnerMedia(Mutex<State>, #[cfg(test)] Mutex<Gate>);
 impl OwnerMedia {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.0
@@ -227,6 +241,22 @@ impl OwnerMedia {
         }
         state.cancelled.clear();
     }
+    /// Holds the next publication at `at`: returns its arrival and its release.
+    #[cfg(test)]
+    fn hold_at(&self, at: Pause) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (reached, arrived) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        *self.1.lock().unwrap() = Some((at, reached, released));
+        (arrived, release)
+    }
+    #[cfg(test)]
+    fn pause(&self, at: Pause) {
+        let gate = self.1.lock().unwrap().take_if(|(point, ..)| *point == at);
+        if let Some((_, reached, release)) = gate {
+            let _ = reached.send(());
+            let _ = release.recv_timeout(Duration::from_secs(10));
+        }
+    }
     #[cfg(test)]
     fn held(&self) -> (usize, u64) {
         let state = self.lock();
@@ -369,6 +399,8 @@ fn publish(
 ) -> Result<(), String> {
     valid_id(id)?;
     let (owner, stamp, retirements) = host.owner_media.peek(id, pubkey, relay)?;
+    #[cfg(test)]
+    host.owner_media.pause(Pause::Peeked);
     // Declared first, so dropped after the body it keeps counted.
     let _published = Published(&host.owner_media, id);
     // The order every credential owner takes: identity, then the agent tokens'
@@ -383,6 +415,8 @@ fn publish(
         Ok(_held) => host
             .tokens
             .commit_caller(pubkey, relay, stamp, retirements, || {
+                #[cfg(test)]
+                host.owner_media.pause(Pause::Fenced);
                 let staged = host.owner_media.take(id, pubkey, relay)?;
                 std::fs::create_dir_all(dir).map_err(|_| "Media storage unavailable")?;
                 let mut file = tempfile::NamedTempFile::new_in(dir)

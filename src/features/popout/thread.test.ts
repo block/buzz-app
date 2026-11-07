@@ -994,3 +994,69 @@ it("a conversation frame's owner admits sends and message actions against its sh
     /thread replies/,
   );
 });
+
+it("classifies typing as main's indicator does: thread work at a shown root is the thread's, and an agent live activity identifies is never a human typer", () => {
+  const h = fixture();
+  const agent = "3".repeat(64);
+  const root = {
+    ...(h.snapshot.current.root as ChannelMessage),
+    replyCount: 2,
+  };
+  const activity = {
+    ...h.session.agentActivity.snapshot(),
+    local: [
+      {
+        scope: h.session.scope,
+        agent,
+        channelId: "channel",
+        messageId: ROOT,
+        threadRootId: ROOT,
+        thread: true as const,
+        state: "working" as const,
+        startedAt: Date.now(),
+      },
+    ],
+  };
+  // Echo also sends typing into the thread, and its profile does not yet say
+  // it is an agent.
+  const entries = [{ channelId: "channel", threadRootId: ROOT, pubkey: agent }];
+  const session = {
+    ...h.session,
+    channels: {
+      ...h.session.channels,
+      ensure() {},
+      refresh() {},
+      window: () => ({
+        channelId: "channel",
+        status: "ready" as const,
+        rows: [root],
+        loadingOlder: false,
+        hasMore: false,
+        error: undefined,
+      }),
+      subscribeWindow: () => () => {},
+    },
+    typing: { ...h.session.typing, snapshot: () => entries },
+    profiles: {
+      ...h.session.profiles,
+      snapshot: () => new Map([[agent, { name: "Echo" }]]),
+    },
+    agentActivity: { ...h.session.agentActivity, snapshot: () => activity },
+  } as unknown as RelaySession;
+  const conversation = createPopoutThread(
+    session,
+    "channel",
+    undefined,
+    () => {},
+  );
+  const thread = createPopoutThread(session, "channel", ROOT, () => {});
+  clean.push(conversation.dispose, thread.dispose);
+  expect(thread.snapshot().typing).toEqual({
+    humans: [],
+    more: 0,
+    agents: ["Echo"],
+  });
+  // The conversation frame shows that root with replies: the work belongs to
+  // its thread, not the channel's status line.
+  expect(conversation.snapshot().typing).toBeUndefined();
+});

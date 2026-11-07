@@ -15,6 +15,8 @@ import {
   HEX,
   messageLine,
   pubkey,
+  type Reply,
+  shownImage,
   type Tool,
   time,
   unixTime,
@@ -128,10 +130,50 @@ export const OWNER_TOOLS: readonly Tool[] = [
     { channel, before, before_id: beforeId },
     ["channel"],
   ),
+  tool(
+    "owner_media_get",
+    "Get a file from a Buzz media URL in this community with your owner's access, as media_get does with yours: saves it locally and gives its path; an image is also shown.",
+    {
+      url: {
+        type: "string",
+        description: "A media URL in this community, or its sha256[.ext].",
+      },
+    },
+    ["url"],
+  ),
 ];
 
 export const isOwnerTool = (name: string) =>
   OWNER_TOOLS.some((tool) => tool.name === name);
+
+/** The owner tools a client with `ownerAccess` lists: owner_media_get only
+ * where it can hold media for review. */
+export const ownerTools = (
+  ownerAccess: Pick<OwnerAccess, "media"> | undefined,
+): readonly Tool[] =>
+  ownerAccess
+    ? OWNER_TOOLS.filter(
+        (tool) => tool.name !== "owner_media_get" || !!ownerAccess.media,
+      )
+    : [];
+
+/** `holder` without owner media: for an agent whose files are on a remote
+ * target, where a path saved here means nothing. */
+export function withoutOwnerMedia<
+  T extends Readonly<{ ownerAccess?: OwnerAccess | undefined }>,
+>(holder: T): T {
+  if (!holder.ownerAccess?.media) return holder;
+  const { media: _, ...ownerAccess } = holder.ownerAccess;
+  return { ...holder, ownerAccess };
+}
+
+/** An owner tool's reply, and its release: it is sent only once `held`
+ * settles, and `discard` drops what it holds when it is not. */
+export type OwnerAnswer = Readonly<{
+  reply: Reply;
+  held(): void | Promise<void>;
+  discard?(): void;
+}>;
 
 /** Runs owner tool `name`. Throws, before reading anything, when this
  * client has no owner access, as a plugin's or another host's has not. */
@@ -139,7 +181,7 @@ export async function callOwnerTool(
   client: BuzzClient,
   name: string,
   args: Readonly<Record<string, unknown>>,
-): Promise<Readonly<{ text: string; held(): void }>> {
+): Promise<OwnerAnswer> {
   const tool = OWNER_TOOLS.find((tool) => tool.name === name);
   if (!tool) throw new Error(`No tool ${name}`);
   const { ownerAccess } = client;
@@ -170,6 +212,27 @@ export async function callOwnerTool(
     });
   }
   if (name === "owner_read") return read(ownerAccess, args);
+  if (name === "owner_media_get") {
+    if (!ownerAccess.media)
+      throw new Error(
+        "owner_media_get is not available to this agent here; nothing was read.",
+      );
+    const url = optionalText(args.url, "url");
+    if (!url) throw new Error("url is required.");
+    const media = await ownerAccess.media(url);
+    const text = JSON.stringify({
+      executedAs: media.execution,
+      path: media.path,
+      type: media.type,
+      size: media.size,
+    });
+    const type = shownImage(media);
+    return {
+      reply: type ? { data: media.data as string, type, text } : text,
+      held: () => media.release(),
+      discard: () => media.discard(),
+    };
+  }
   const id = optionalText(args.channel, "channel");
   if (!id) throw new Error("channel is required.");
   if (name === "owner_canvas_get") {
@@ -346,7 +409,7 @@ function answer(
   fields: object,
 ) {
   return {
-    text: JSON.stringify({ executedAs: execution, ...fields }),
+    reply: JSON.stringify({ executedAs: execution, ...fields }),
     held: () => ownerAccess.held(execution),
   };
 }

@@ -115,6 +115,16 @@ export type AgentMedia = Readonly<{
   size: number;
   data?: string;
 }>;
+/** The agent's owner media, in native memory between its read and its
+ * publication. `id` names one request; a discard for it may come first. */
+export type OwnerMediaNative = Readonly<{
+  /** Reads a media blob of the agent's community with its signed-in owner's
+   * access; nothing is at the `path` it gives yet. */
+  stage(member: Membership, id: string, url: string): Promise<AgentMedia>;
+  /** Saves it to its path, only while the owner and agent still act. */
+  publish(member: Membership, id: string): Promise<void>;
+  discard(id: string): Promise<void>;
+}>;
 /** A repository's URL and the `Authorization` header Git sends there. */
 export type GitAuth = Readonly<{ url: string; header: string }>;
 export type AgentsNative = {
@@ -205,6 +215,7 @@ export type AgentsNative = {
   /** A repository's URL in the agent's community and the Git header that
    * authorizes it there as the agent for a minute. */
   gitAuth(member: Membership, owner: string, repo: string): Promise<GitAuth>;
+  ownerMedia?: OwnerMediaNative;
   /** Writes memory entry `slug`, encrypted to the owner, newer than `after`;
    * a `null` body deletes it. */
   remember(
@@ -324,6 +335,13 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_media", { pubkey, relay, url }),
         gitAuth: ({ pubkey, relay }, owner, repo) =>
           invoke("app_agent_git_auth", { pubkey, relay, owner, repo }),
+        ownerMedia: {
+          stage: ({ pubkey, relay }, id, url) =>
+            invoke("app_agent_owner_media_stage", { pubkey, relay, id, url }),
+          publish: ({ pubkey, relay }, id) =>
+            invoke("app_agent_owner_media_publish", { pubkey, relay, id }),
+          discard: (id) => invoke("app_agent_owner_media_discard", { id }),
+        },
         remember: ({ pubkey, relay }, slug, body, after) =>
           invoke("app_agent_remember", { pubkey, relay, slug, body, after }),
         publishProfile: ({ pubkey, relay }) =>

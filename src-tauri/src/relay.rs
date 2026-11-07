@@ -1137,8 +1137,19 @@ async fn blossom_auth(
     url: &Url,
     verb: &str,
     content: &str,
-    mut tags: Vec<Vec<String>>,
+    tags: Vec<Vec<String>>,
 ) -> Result<String> {
+    blossom_header(
+        host.sign(blossom_template(url, verb, content, tags)?)
+            .await?,
+    )
+}
+fn blossom_template(
+    url: &Url,
+    verb: &str,
+    content: &str,
+    mut tags: Vec<Vec<String>>,
+) -> Result<EventTemplate> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "System clock is unavailable")?
@@ -1151,14 +1162,14 @@ async fn blossom_auth(
         // The relay's strict NIP-FI window is 60 seconds.
         vec!["expiration".into(), (now + 60).to_string()],
     ]);
-    let event = host
-        .sign(EventTemplate {
-            kind: 24242,
-            created_at: now,
-            content: content.into(),
-            tags,
-        })
-        .await?;
+    Ok(EventTemplate {
+        kind: 24242,
+        created_at: now,
+        content: content.into(),
+        tags,
+    })
+}
+fn blossom_header(event: serde_json::Value) -> Result<String> {
     Ok(format!(
         "Nostr {}",
         STANDARD.encode(
@@ -2209,6 +2220,16 @@ async fn send_media(
     let auth = blossom_auth(host, &url, "get", "Get buzz-media", Vec::new())
         .await
         .map_err(|_| 401u16)?;
+    send_signed(host, fi, assertion, url, range, auth).await
+}
+async fn send_signed(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
+    url: Url,
+    range: Option<&str>,
+    auth: String,
+) -> std::result::Result<reqwest::Response, u16> {
     let mut request = client()
         .map_err(|_| 502u16)?
         .get(url)
@@ -2236,6 +2257,76 @@ async fn send_media(
         return Err(status);
     }
     Ok(upstream)
+}
+
+/// One of an agent's community media blobs, read into memory with its owner's
+/// own access: the request is signed only while `owner` is signed in. `reserve`
+/// takes the bytes the body may use, its `Content-Length` or else `limit`,
+/// before any is read; a body past that is refused. Returns its `Content-Type`.
+pub(crate) async fn owner_media(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    owner: &str,
+    url: Url,
+    limit: u64,
+    reserve: impl FnOnce(u64) -> Result<()>,
+) -> Result<(Option<String>, Vec<u8>)> {
+    // Signed first: nothing, not even discovery, is sent for another owner.
+    let template = blossom_template(&url, "get", "Get buzz-media", Vec::new())?;
+    let auth = blossom_header(host.sign_owner_media_get(owner.into(), template).await?)?;
+    let assertion = evidence(host, fi, &url).await?;
+    let operation = async {
+        let mut upstream = send_signed(host, fi, assertion.as_ref(), url, None, auth)
+            .await
+            .map_err(|status| match status {
+                401 | 403 => "Your owner may not read this media".to_owned(),
+                404 => "The community has no such media".to_owned(),
+                502 => "The media request failed".to_owned(),
+                status => format!("The community refused the media: status {status}"),
+            })?;
+        if upstream.status().as_u16() != 200 {
+            return Err("The community sent part of the media".into());
+        }
+        let declared = upstream.content_length();
+        let reserved = declared.unwrap_or(limit);
+        let too_large = || format!("Media over {} MiB cannot be saved", limit / 1024 / 1024);
+        if reserved > limit {
+            return Err(too_large());
+        }
+        reserve(reserved)?;
+        let kind = upstream
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let mut body = Vec::new();
+        if declared.is_some() {
+            // One buffer of the declared size, so the body is never copied to grow it.
+            body.try_reserve_exact(reserved as usize)
+                .map_err(|_| "Not enough memory for the media")?;
+        }
+        while let Some(chunk) = upstream
+            .chunk()
+            .await
+            .map_err(|_| "The media request failed")?
+        {
+            if (body.len() + chunk.len()) as u64 > reserved {
+                return Err(match declared {
+                    Some(_) => "The media was larger than the community said".into(),
+                    None => too_large(),
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok((kind, body))
+    };
+    match (fi, assertion.as_ref()) {
+        (Some(fi), Some(assertion)) => {
+            fi.during_admitted_operation(host, assertion, false, operation)
+                .await?
+        }
+        _ => operation.await,
+    }
 }
 
 /// The response type of an upstream media response, as `media_type` decides it.

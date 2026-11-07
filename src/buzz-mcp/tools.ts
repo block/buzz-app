@@ -51,6 +51,7 @@ import type {
   ChannelTemplate,
   Context,
   Filter,
+  Media,
   Memory,
   Upload,
 } from "./client";
@@ -1497,14 +1498,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async media_get(tools, args) {
     const media = await tools.client.media(required(args, "url"));
     const saved = `Saved ${media.path} (${media.type}, ${media.size} bytes).`;
-    if (media.data) {
-      // The first 12 bytes name the type.
-      const head = atob(media.data.slice(0, 16));
-      const type = sniff(Uint8Array.from(head, (c) => c.charCodeAt(0)));
-      if (type?.startsWith("image/"))
-        return { data: media.data, type, text: saved };
-    }
-    return `${saved} Open it with your own tools.`;
+    const type = shownImage(media);
+    return type
+      ? { data: media.data as string, type, text: saved }
+      : `${saved} Open it with your own tools.`;
   },
 
   async tabs(tools, args) {
@@ -2294,6 +2291,15 @@ function proposedPicture(client: BuzzClient, path: unknown) {
       throw new Error("picture must be a PNG, JPEG, GIF or WebP image");
     return (await upload(data, type)).url;
   };
+}
+
+/** The type of `media`'s shown image, by its own leading bytes (the first
+ * 12 name it), when it has one. */
+export function shownImage(media: Media) {
+  if (!media.data) return undefined;
+  const head = atob(media.data.slice(0, 16));
+  const type = sniff(Uint8Array.from(head, (c) => c.charCodeAt(0)));
+  return type?.startsWith("image/") ? type : undefined;
 }
 
 /** An image or MP4's type, by the file's leading bytes. */

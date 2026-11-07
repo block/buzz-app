@@ -20,6 +20,8 @@ use crate::federated_identity::{
     assertion,
 };
 
+pub(crate) mod owner_media;
+
 /// A NIP-98 `Authorization` header for one signed HTTP auth event.
 fn authorization(event: Value) -> Result<String, String> {
     use base64::Engine;
@@ -56,6 +58,8 @@ pub(crate) struct AppAgentHost {
     tokens: AgentTokens,
     /// Serializes owner prompts, without holding cross-process identity/custody locks.
     protection_upgrade: Arc<Mutex<()>>,
+    /// Owner media read for review and not yet published.
+    owner_media: Arc<owner_media::OwnerMedia>,
 }
 impl AppAgentHost {
     /// `packaged` is false for a dev build, which steps aside for a packaged app.
@@ -103,6 +107,7 @@ impl AppAgentHost {
             }),
             tokens,
             protection_upgrade: Arc::default(),
+            owner_media: Arc::default(),
         }
     }
     /// The saved identities, for readers outside Agents such as the inventory.
@@ -119,6 +124,12 @@ impl AppAgentHost {
         let mut removals = self.removals();
         removals.page += 1;
         removals.held.clear();
+        drop(removals);
+        self.owner_media.clear();
+    }
+    /// Drops held owner media, as the window closing publishes none.
+    pub(crate) fn owner_media_clear(&self) {
+        self.owner_media.clear();
     }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
         self.keys
@@ -1412,19 +1423,7 @@ async fn save_media_admitted(
         }
     }
     agent.verify_media_hash(url, &format!("{:x}", hash.finalize()))?;
-    // The blob's own name, so the same media is saved once; with an extension
-    // from its type when the URL gives none.
-    let mut name = url.rsplit('/').next().unwrap_or_default().to_owned();
-    if !name.contains('.') {
-        if let Some(ext) = mime
-            .split_once('/')
-            .map(|(_, subtype)| subtype)
-            .filter(|ext| ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()))
-        {
-            name = format!("{name}.{ext}");
-        }
-    }
-    let path = dir.join(name);
+    let path = dir.join(media_name(url, &mime));
     let persist = || {
         file.persist(&path)
             .map(drop)
@@ -1442,6 +1441,22 @@ async fn save_media_admitted(
         mime,
         size,
     })
+}
+
+/// The blob's own name, so the same media is saved once; with an extension
+/// from its type when the URL gives none.
+fn media_name(url: &str, mime: &str) -> String {
+    let mut name = url.rsplit('/').next().unwrap_or_default().to_owned();
+    if !name.contains('.') {
+        if let Some(ext) = mime
+            .split_once('/')
+            .map(|(_, subtype)| subtype)
+            .filter(|ext| ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()))
+        {
+            name = format!("{name}.{ext}");
+        }
+    }
+    name
 }
 
 /// Writes one memory entry, encrypted to the agent's owner; a null body
@@ -1743,6 +1758,7 @@ mod tests {
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: AgentTokens::unconfigured(),
             protection_upgrade: Arc::default(),
+            owner_media: Arc::default(),
         };
         let agent = AppAgent {
             pubkey: key.pubkey().into(),
@@ -1932,6 +1948,7 @@ mod tests {
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
             protection_upgrade: Arc::default(),
+            owner_media: Arc::default(),
         };
         let import = |key: &Secret| {
             let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
@@ -2028,6 +2045,7 @@ mod tests {
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
             protection_upgrade: Arc::default(),
+            owner_media: Arc::default(),
         };
         let agents = host.agents().unwrap();
 
@@ -2073,6 +2091,7 @@ mod tests {
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
             protection_upgrade: Arc::default(),
+            owner_media: Arc::default(),
         };
         let import = || {
             let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
@@ -2523,6 +2542,7 @@ mod tests {
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: AgentTokens::unconfigured(),
             protection_upgrade: Arc::default(),
+            owner_media: Arc::default(),
         };
         let import = || {
             let prepared = AppAgents::adopt(

@@ -20,10 +20,13 @@ deliberately.
   `settings_set`). The settings themselves are the host's catalog
   (`src/app/device-settings.ts`); the tools never name one.
 - `owner.ts`: the owner tools (`owner_channel_list`, `owner_channel_get`,
-  `owner_member_list`, `owner_read`, `owner_canvas_get`, `owner_canvas_history`),
-  which read with the owner's access where the host gives
+  `owner_member_list`, `owner_read`, `owner_canvas_get`, `owner_canvas_history`,
+  `owner_media_get`), which read with the owner's access where the host gives
   the client `ownerAccess`; `src/features/agents/owner-access.ts` owns the
-  reads and their binding. Plugins' clients never have it.
+  reads and their binding. Plugins' clients never have it. `owner_media_get`
+  is listed only where `ownerAccess.media` exists: native
+  (`src-tauri/src/app_agents/owner_media.rs`) holds the bytes until the
+  reviewed answer's release saves them; remote-target runtimes strip it.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.
 - `prompt.md`: the posting conventions every agent gets after the shared base

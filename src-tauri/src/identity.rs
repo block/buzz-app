@@ -781,7 +781,12 @@ pub struct IdentityHost(Arc<Mutex<Identity>>);
 impl IdentityHost {
     #[cfg(test)]
     pub(crate) fn fixture() -> Self {
-        Self::fixture_in(State::Ready(Key::new(Zeroizing::new([1; 32]))))
+        Self::fixture_signed_in_as(1)
+    }
+    /// Signed in with the key of 32 `byte`s.
+    #[cfg(test)]
+    pub(crate) fn fixture_signed_in_as(byte: u8) -> Self {
+        Self::fixture_in(State::Ready(Key::new(Zeroizing::new([byte; 32]))))
     }
     /// No saved key, or a key that cannot be read (a signing-out host refuses every read).
     #[cfg(test)]
@@ -1127,7 +1132,51 @@ impl IdentityHost {
         .await
     }
 }
+/// The identity lock, held while `owner` is the signed-in identity, for an
+/// agent's owner media to be written; signing out waits for it. It holds no key.
+pub(crate) struct OwnerHeld<'a>(#[allow(dead_code)] std::sync::MutexGuard<'a, Identity>);
+
+const NOT_OWNER: &str = "Your owner is not signed in to Buzz here now";
+
 impl IdentityHost {
+    /// Signs a Blossom media read (kind 24242, `t` `get` only) for an agent's
+    /// owner media, only while `owner` is the signed-in identity.
+    pub(crate) async fn sign_owner_media_get(
+        &self,
+        owner: String,
+        event: EventTemplate,
+    ) -> Result<serde_json::Value> {
+        let verbs: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().is_some_and(|name| name == "t"))
+            .collect();
+        if event.kind != 24242 || verbs.is_empty() || verbs.iter().any(|tag| tag[1..] != ["get"]) {
+            return Err("Only a media read is signed for owner media".into());
+        }
+        with_identity(self.clone(), move |identity| {
+            if identity.restore()?.as_deref() != Some(owner.as_str()) {
+                return Err(NOT_OWNER.into());
+            }
+            match &identity.state {
+                State::Ready(key) => key.sign(event),
+                _ => Err(NOT_OWNER.into()),
+            }
+        })
+        .await
+    }
+    /// Blocks on the identity lock: call off the async runtime. Refuses unless
+    /// `owner` is signed in.
+    pub(crate) fn hold_owner(&self, owner: &str) -> Result<OwnerHeld<'_>> {
+        let mut identity = self
+            .0
+            .lock()
+            .map_err(|_| "Identity is unavailable; restart the app")?;
+        if identity.restore()?.as_deref() != Some(owner) {
+            return Err(NOT_OWNER.into());
+        }
+        Ok(OwnerHeld(identity))
+    }
     /// Close signing for the rest of this process. Taken under the same lock
     /// every operation holds while it runs, so jobs already queued refuse too.
     pub(crate) fn close(&self) {

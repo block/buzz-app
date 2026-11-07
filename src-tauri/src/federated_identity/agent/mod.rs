@@ -436,6 +436,38 @@ impl AgentTokens {
             && !row.closed
             && row.generation == incarnation.row
     }
+    /// Runs `write` only while a local caller's work stamped `incarnation` at
+    /// `retirements` still acts, holding the locks [`Admission::commit`] holds in
+    /// the same order, so deletion, sign-out and a change of account either
+    /// precede it or wait for it. `write` must not reenter the credential owners.
+    pub(crate) fn commit_caller<T>(
+        &self,
+        agent: &str,
+        relay: &str,
+        incarnation: Stamp,
+        retirements: u64,
+        write: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let row = row_key(agent, relay)?;
+        let _retired = lock(&self.0.retired);
+        let incarnations = lock(&self.0.incarnations);
+        let (at, row) = (
+            incarnations.get(agent).copied().unwrap_or_default(),
+            incarnations.get(&row).copied().unwrap_or_default(),
+        );
+        let state = self.0.identity.state();
+        if at.closed
+            || at.generation != incarnation.key
+            || row.closed
+            || row.generation != incarnation.row
+        {
+            return Err(DELETED.into());
+        }
+        if state.closed || state.retirements != retirements {
+            return Err(CHANGED.into());
+        }
+        write()
+    }
     /// The owner's retirements so far: sign-out, another account, or a
     /// retired grant each add one.
     pub(crate) fn retirements(&self) -> u64 {

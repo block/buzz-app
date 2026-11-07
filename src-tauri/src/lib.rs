@@ -803,6 +803,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_search_profiles,
         app_agents::app_agent_upload,
         app_agents::app_agent_media,
+        app_agents::owner_media::app_agent_owner_media_stage,
+        app_agents::owner_media::app_agent_owner_media_publish,
+        app_agents::owner_media::app_agent_owner_media_discard,
         app_agents::app_agent_git_auth,
         app_agents::app_agent_remember,
         app_agents::app_agent_claim,
@@ -1195,7 +1198,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); window.state::<app_agents::AppAgentHost>().owner_media_clear(); }
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {

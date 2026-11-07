@@ -195,13 +195,12 @@ fn read_legacy() -> Result<Zeroizing<String>> {
 #[cfg(all(target_os = "macos", not(test)))]
 mod platform {
     use super::*;
-    use security_framework::os::macos::keychain::SecKeychain;
-    fn error(error: security_framework::base::Error) -> String {
-        match error.code() {
-            -25299 => {
+    fn error(error: credentials::Error) -> String {
+        match error {
+            credentials::Error::Occupied => {
                 "An identity is already saved; nothing was overwritten. Restart to restore it."
             }
-            -128 | -25293 | -25308 => {
+            credentials::Error::Denied => {
                 "Keychain access was denied. Allow access and retry; no identity was created."
             }
             _ => "Your identity could not be accessed in Keychain. Retry without changing keys.",
@@ -222,14 +221,12 @@ mod platform {
             read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
-            SecKeychain::default()
-                .map_err(error)?
-                .add_generic_password(
-                    credentials::HUMAN_SERVICE,
-                    credentials::HUMAN_ACCOUNT,
-                    value,
-                )
-                .map_err(error)
+            credentials::add(
+                credentials::HUMAN_SERVICE,
+                credentials::HUMAN_ACCOUNT,
+                value,
+            )
+            .map_err(error)
         }
         fn delete(&self) -> Result<()> {
             delete(credentials::HUMAN_SERVICE)

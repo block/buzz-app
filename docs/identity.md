@@ -470,9 +470,9 @@ an absent one falls back to the debug item. Only the `me` argument sets
 `BUZZ_DEV_RELEASE_KEY`: the launcher drops it from `.env.local` and the shell,
 since bootstrap copies `.env.local` into agent worktrees, and refuses `me`
 anywhere but first. On macOS the release
-item trusts only the release app, and `me` reads it directly, never through the
+item trusts only the release app; `me` reads it through the
 [local credential helper](#local-credential-helper-on-macos), so Keychain asks
-for it after each rebuild. macOS keeps its existing default
+once rather than after each rebuild. macOS keeps its existing default
 file Keychain/security-framework implementation. Windows uses Credential Manager;
 Linux uses Secret Service through keyring 3.6.3, as old Buzz does. Linux requires
 a running desktop Secret Service with a default collection (for example GNOME
@@ -519,7 +519,7 @@ Keychain approvals belong to the program that asks, and a debug build is a
 different program after every rebuild, so without help Keychain asks again for
 every saved item after each rebuild. On macOS, `just desktop me` avoids this with
 a helper: a small program, `crates/dev-credential-helper`, that does the debug
-build's Keychain reads and writes, except for the release human key. It is installed once outside the repository
+build's Keychain reads and writes. It is installed once outside the repository
 and kept, so an approval given to it lasts across rebuilds and worktrees.
 
 Only `me` turns it on. Before launching, it:
@@ -545,17 +545,15 @@ the shell, so agent worktrees and plain `just desktop` never use the helper.
 
 On the first launch, click **Always Allow** on each dialog: one for `codesign` to
 use the new certificate, then one per saved item. Later launches, rebuilds and new
-worktrees show only the release human key's dialog, since `me` reads that key
-directly. Each helper request first runs with Keychain dialogs off;
+worktrees show none. Each helper request first runs with Keychain dialogs off;
 only an item not yet approved for the helper, under `--authorize`, is retried once
 with a dialog. A denied dialog is an error. Release builds ignore the helper.
 
 With `BUZZ_DEV_CREDENTIAL_HELPER` set (an absolute path) in a macOS debug build,
 every `buzz-credential-store` read, add, replace and delete goes through it: the
-debug human key, agents, federated sessions, the Jev and Claude keys, paired tools
-and external-app pairings. Two reads still go to the Keychain directly: the release
-human key `me` signs in with, so it keeps the release app's own approval, and
-bringing over old Buzz's items, since that happens once. A helper failure is
+human key, including the release key `me` reads, agents, federated sessions, the
+Jev and Claude keys, paired tools and external-app pairings. Bringing over old
+Buzz's items still reads them directly, since that happens once. A helper failure is
 returned as is; the app never retries through direct Keychain access, and keeps
 its own locks, create-only rules, validation and read-back checks. The app passes
 `[--authorize] --item <read|add|replace|delete> <service> <account>`, with a fresh
@@ -566,8 +564,8 @@ and 13 occupied; other failures are unavailable. Requests time out after five
 seconds, or two minutes under `BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`.
 
 The helper serves only an exact list of items and refuses any other service or
-account. It never serves the release human key, not even to read it, and it never
-replaces the debug human key, which stays create-only. Before it reads a
+account. It may only read the release key, never write, copy over or delete it, and
+it never replaces the debug human key, which stays create-only. Before it reads a
 value or touches the Keychain, it checks that stdout is a Unix socket whose peer is
 its parent process, by audit token, and that the peer's live code signature meets
 the recorded requirement. The requirement file must belong to the user and be
@@ -577,23 +575,10 @@ nothing.
 
 The helper's source is in the repository. Its installed binary, the requirement,
 the certificate and its private key stay on each Mac, never in the repository.
-Once you approve the helper's items, any program running as you can read and
-change them without a dialog. It can sign itself with the local certificate, whose
-key `codesign` uses without asking, or rewrite the requirement file, which belongs
-to you. The helper's checks keep out other users and code started by them, not
-your own programs, including agents. That covers the agent store
-(`xyz.block.buzz.desktop.agents` and `dev.local.buzz.foundation.agents`), which
-has no debug variant: the release app's agent keys can be read, replaced and
-deleted this way. Only the release human key is outside it. Don't use `me` on a
-shared account, or where programs running as you aren't trusted with agent keys.
-
-Protocol 1 helpers also served the release human key. A newer helper is installed
-beside the old one, which stays approved and still serves that key. If you
-approved one, delete `buzz-dev-credential-helper-v1` (or, from before versioned
-names, `buzz-dev-credential-helper`) in `~/.buzz-foundation/dev-credential-helper/`,
-then in Keychain Access, for each of `xyz.block.buzz.desktop.identity` and
-`dev.local.buzz.foundation.identity` (account `human`), remove it under
-**Access Control**.
+The certificate check trusts access to its signing key: any program running as you
+that can sign code with that key and identifier passes it, and the key lets
+`codesign` use it without asking. On that Mac, approving the helper's items
+therefore extends trust to those programs. Don't use `me` on a shared account.
 
 ## Automatic backup and optional recovery
 

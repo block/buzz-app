@@ -310,15 +310,9 @@ pub fn reads_release_human() -> bool {
 /// key saved it falls back to its own.
 #[cfg(not(test))]
 pub fn read_human() -> Result<Zeroizing<Vec<u8>>> {
-    // On macOS the release key bypasses the development credential helper, so
-    // it keeps the release app's own Keychain approval.
-    #[cfg(target_os = "macos")]
-    let read_release = read_keychain;
-    #[cfg(not(target_os = "macos"))]
-    let read_release = read;
     release_or_own(
         reads_release_human(),
-        |service| read_release(service, HUMAN_ACCOUNT),
+        |service| read(service, HUMAN_ACCOUNT),
         read_own_human,
     )
 }
@@ -377,12 +371,6 @@ pub fn read(service: &str, account: &str) -> Result<Zeroizing<Vec<u8>>> {
     if let Some(result) = dev_item("read", service, account, &[]) {
         return result;
     }
-    read_keychain(service, account)
-}
-
-/// [`read`] straight from the Keychain, never through the development helper.
-#[cfg(all(not(test), target_os = "macos"))]
-fn read_keychain(service: &str, account: &str) -> Result<Zeroizing<Vec<u8>>> {
     use security_framework::os::macos::keychain::SecKeychain;
     SecKeychain::default()
         .map_err(mac_error)?

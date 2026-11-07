@@ -14,8 +14,6 @@ fn human_restore_uses_the_selected_helper_and_fails_closed() {
     let helper = directory.path().join("helper");
     std::env::set_var("BUZZ_DEV_CREDENTIAL_HELPER", &helper);
     std::env::remove_var("BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE");
-    // A `me` release read goes straight to the real Keychain; never here.
-    std::env::remove_var("BUZZ_DEV_RELEASE_KEY");
     assert_eq!(read_human(), Err(Error::Unavailable));
 
     let payload = "x".repeat(63);
@@ -59,9 +57,25 @@ fn human_restore_uses_the_selected_helper_and_fails_closed() {
     assert!(read_human().is_ok());
     std::env::remove_var("BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE");
 
-    // `just desktop me` reads the release key straight from the Keychain, never
-    // through the helper; that routing is unit-tested with fake readers, since
-    // exercising it here would read the real login Keychain.
+    // `just desktop me` reads the release key through the helper too, and a
+    // refused release read never falls back to the debug key.
+    std::env::set_var("BUZZ_DEV_RELEASE_KEY", "1");
+    fs::write(
+        &helper,
+        format!(
+            "#!/bin/sh\n[ \"$*\" = '--item read xyz.block.buzz.desktop.identity human' ] || exit 12\nprintf '{payload}'\n"
+        ),
+    )
+    .unwrap();
+    assert_eq!(&*read_human().unwrap(), payload.as_bytes());
+    fs::write(
+        &helper,
+        format!("#!/bin/sh\ncase \"$4\" in *.debug) printf '{payload}' ;; *) exit 11 ;; esac\n"),
+    )
+    .unwrap();
+    assert_eq!(read_human(), Err(Error::Denied));
+    std::env::remove_var("BUZZ_DEV_RELEASE_KEY");
+
     fs::write(
         &helper,
         format!("#!/bin/sh\n/bin/sleep 60 &\necho $! > \"$0.child\"\nprintf '{payload}'\n"),

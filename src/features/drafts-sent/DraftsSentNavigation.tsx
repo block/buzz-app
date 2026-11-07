@@ -38,7 +38,11 @@ export function DraftsSentNavigation({
   return (
     <NavigationItem
       label="Drafts & sent"
-      icon={<SendIcon size={16} strokeWidth={2.5} aria-hidden="true" />}
+      icon={
+        <span className="shell-page-icon">
+          <SendIcon size={16} strokeWidth={2.5} aria-hidden="true" />
+        </span>
+      }
       selected={
         target.kind === "page" &&
         target.pluginId === "buzz.channels" &&

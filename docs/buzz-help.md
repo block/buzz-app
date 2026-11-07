@@ -726,7 +726,8 @@ available rather than silently discarding it.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
   there (or when creating a Claude agent), once for every Claude agent. Buzz
   keeps it in the system's secure credential store (Keychain on macOS) and
-  gives it to every Claude process, security reviews included. Until a key is
+  gives it to every Claude process, security reviews included. Commands a
+  Claude agent runs inherit it, so they can read the key. Until a key is
   saved, Claude agents don't answer and Claude reviews fail closed.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another

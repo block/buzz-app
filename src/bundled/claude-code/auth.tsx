@@ -52,7 +52,9 @@ async function output(spawn: Spawn, id: string) {
 }
 
 /** The key's native store (`claude_key.rs`): the OS credential store,
- * which hands the key to the processes that ask for it and never back. */
+ * which hands the key to the Claude processes that ask for it. Nothing
+ * here reads it back; native code relies on that, as it gives the key to
+ * `claude-sh`, which runs whatever script it is given. */
 const nativeStore = ():
   | Readonly<{
       /** Whether a key is saved. */
@@ -307,7 +309,7 @@ function KeyForm({
         label={replace ? "Replace API key" : "Anthropic API key"}
         {...(replace && {
           description:
-            "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude.",
+            "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude, so commands your Claude agents run can read it.",
         })}
       >
         <Input

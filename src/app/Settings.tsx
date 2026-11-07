@@ -1568,7 +1568,7 @@ export function Settings({
             )}
             {catalog && linkedPlugin && "url" in linkedPlugin && (
               <UrlPluginInstallReview
-                key={navigation?.entryId}
+                key={`url:${navigation?.entryId}`}
                 plugins={plugins}
                 catalog={catalog}
                 busy={busy}
@@ -1581,7 +1581,11 @@ export function Settings({
             )}
             {catalog ? (
               <PluginImport
-                key={linkedPlugin ? navigation?.entryId : "add"}
+                key={
+                  linkedPlugin && !("url" in linkedPlugin)
+                    ? navigation?.entryId
+                    : "add"
+                }
                 initialGit={
                   linkedPlugin && !("url" in linkedPlugin)
                     ? linkedPlugin

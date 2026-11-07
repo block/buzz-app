@@ -12,7 +12,7 @@ export type NotificationText = Readonly<{ title: string; body: string }>;
 const loneSurrogate =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-function shortText(value: string, limit: number) {
+export function shortText(value: string, limit: number) {
   const points = Array.from(
     value
       .replace(loneSurrogate, "\uFFFD")
@@ -46,11 +46,12 @@ function prose(node: TextNode): string {
   return (node.children ?? []).map(prose).join(separator);
 }
 
-type PreviewOptions = Readonly<{ storedPreview?: boolean }>;
+type PreviewOptions = Readonly<{ storedPreview?: boolean; limit?: number }>;
 
 /** Flattened, bounded prose; empty when nothing displayable remains.
  * Stored previews have lost code/escape provenance and may have been cut. */
 export function plainText(content: string, options: PreviewOptions = {}) {
+  const limit = options.limit ?? 200;
   // Cut the source on a whole code point, never between a surrogate pair.
   const end = /[\uD800-\uDBFF]/.test(content.charAt(4095)) ? 4095 : 4096;
   let bounded = content.slice(0, end);
@@ -61,7 +62,7 @@ export function plainText(content: string, options: PreviewOptions = {}) {
   if (opener >= 0) bounded = `${bounded.slice(0, opener)}[Spoiler]`;
   const original = scanMarkdown(bounded);
   if (original.tooDeep) return "";
-  if (!bounded.includes("||")) return shortText(prose(original.tree), 200);
+  if (!bounded.includes("||")) return shortText(prose(original.tree), limit);
   const prepared = prepareMarkdown(bounded);
   if (prepared.kind === "plain") return "";
   // Protect only authored spoiler delimiters, using the renderer's source
@@ -77,7 +78,7 @@ export function plainText(content: string, options: PreviewOptions = {}) {
     source = source.slice(0, offset) + delimiter + source.slice(offset + 2);
   const { tree, tooDeep } = scanMarkdown(source);
   if (!tooDeep) remarkSpoilers(delimiter, content.length > end)(tree);
-  return tooDeep ? "" : shortText(prose(tree), 200);
+  return tooDeep ? "" : shortText(prose(tree), limit);
 }
 
 /** Bounded CommonMark text, not rendered HTML or a fetch of linked/attached content. */

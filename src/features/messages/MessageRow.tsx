@@ -22,7 +22,7 @@ import {
 } from "../../shared/design-system/icons";
 import { useProfileOwner } from "../profiles/useProfileOwner";
 import { RemoteAgentHint, RemoteWorkIcon } from "./RemoteAgentHint";
-import { messagePreviewText } from "../conversation/message-preview-text";
+import { activityPreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
 import { addressedMessage } from "./audience-address";
 import { WorkflowByline } from "./WorkflowByline";
@@ -1722,13 +1722,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   const to = recipients.map((pubkey) =>
     person(pubkey, directory.profiles.get(pubkey)),
   );
-  const excerpt = Array.from(
-    messagePreviewText(body.content).replace(/\s+/g, " "),
-  );
-  const preview =
-    excerpt.length > 280
-      ? `${excerpt.slice(0, 279).join("")}…`
-      : excerpt.join("");
+  const preview = activityPreviewText(body.content);
   const addressedPreview = Array.from(
     `${to.length ? `${to.map((who) => `@${who.name}`).join(", ")} ` : ""}${preview}`,
   );

@@ -3438,7 +3438,7 @@ it("shows a message for agents as one line from its author to whom it addresses"
       />,
     );
     const line = screen.getByRole("button", {
-      name: "Morgarita to Rivet: **run** the suite…",
+      name: "Morgarita to Rivet: run the suite…",
     });
     expect(line).toHaveAttribute("aria-expanded", "false");
     expect(line.parentElement?.querySelector("time")).toBeNull();

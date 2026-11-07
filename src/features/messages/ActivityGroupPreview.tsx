@@ -14,7 +14,7 @@ import type { ActivityPresentation } from "./activity-presentation";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { avatarMedia } from "../../shared/avatar-source";
-import { messagePreviewText } from "../conversation/message-preview-text";
+import { activityPreviewText } from "../conversation/message-preview-text";
 import styles from "./Messages.module.css";
 
 /** One stable disclosure for a run of activity, showing its latest speaker. */
@@ -74,9 +74,7 @@ export function ActivityGroupPreview({
     resolveName(id, profiles.get(id)?.name ?? id.slice(0, 10));
   const name = named(primary);
   const speaker = named(row.authorId);
-  const text = Array.from(messagePreviewText(row.content).replace(/\s+/g, " "));
-  const preview =
-    text.length > 280 ? `${text.slice(0, 279).join("")}…` : text.join("");
+  const preview = activityPreviewText(row.content);
   const content = (
     <div
       className={styles.audienceRow}

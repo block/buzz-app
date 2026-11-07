@@ -405,3 +405,26 @@ it("follows live work for collapsed request controls only once they are shown", 
     owner.dispose();
   }
 });
+
+it("shows the latest step's Markdown as prose in the collapsed line", () => {
+  const group = activityPresentation(
+    [{ ...step, content: "Pushed [the fix](https://example.com) at `abc123`" }],
+    undefined,
+    new Set(["agent"]),
+  ).groups[0];
+  if (!group) throw new Error("Missing group");
+  render(
+    <ActivityGroupPreview
+      group={group}
+      profiles={new Map()}
+      media={() => undefined}
+      expanded={false}
+      onToggle={() => {}}
+    />,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "Show activity history: agent: Pushed the fix at abc123",
+    }),
+  ).toHaveTextContent(/^Pushed the fix at abc123$/);
+});

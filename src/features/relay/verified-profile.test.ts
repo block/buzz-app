@@ -1,9 +1,11 @@
 import { assert, expect, it, vi } from "vitest";
+import { PROFILE_CACHE_MAX } from "./budget";
 import { eventDto } from "./events";
 import { keypair, signed } from "./testing";
 import { createVerifiedProfileDirectory } from "./verified-profile-directory";
 import {
   VERIFIED_PROFILE_BATCH,
+  VERIFIED_PROFILE_MAX_SYNCS,
   verifiedProfile,
   verifiedProfileAuthority,
   verifiedProfileDiscovery,
@@ -813,43 +815,220 @@ it("keeps batch membership and checked status stable when subjects are added or 
     first.sink.eose();
     h.directory.ensure([bob.pubkey]);
     await Promise.resolve();
-    // The open batch is reissued with the new subject; its replacement covers alice.
+    // A new subject gets its own REQ; the answered batch is not replayed.
+    expect(first.stopped).toBe(false);
     expect(active().map((item) => item.subjects)).toEqual([
-      [alice.pubkey, bob.pubkey],
+      [alice.pubkey],
+      [bob.pubkey],
     ]);
     expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("checked");
-    // A full replacement response that omits alice cannot reconfirm her.
-    const replacement = active()[0];
-    assert(replacement);
-    replacement.sink.event(projection(10, bob.pubkey));
-    replacement.sink.event(projection(11, bob.pubkey));
-    replacement.sink.eose();
-    expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("cached");
-    expect(h.directory.snapshot().get(bob.pubkey)?.status).toBe("checked");
     h.directory.ensure(
       Array.from({ length: 1022 }, (_, index) =>
         (index + 1).toString(16).padStart(64, "0"),
       ),
     );
     await Promise.resolve();
-    const full = active();
-    expect(full.map((item) => item.subjects.length)).toEqual(
-      Array(8).fill(128),
-    );
+    expect(active().map((item) => item.subjects.length)).toEqual([
+      1,
+      1,
+      ...Array(7).fill(128),
+      126,
+    ]);
     const issued = h.subscriptions.length;
-    // Evicting alice and adding one key reissues only alice's batch.
+    // Evicting alice empties her batch, which stops; the new key gets a REQ.
     h.directory.ensure(["f".repeat(64)]);
     await Promise.resolve();
-    const stopped = full.filter((item) => item.stopped);
-    expect(stopped).toHaveLength(1);
-    expect(stopped[0]?.subjects).toContain(alice.pubkey);
-    expect(h.subscriptions).toHaveLength(issued + 1);
-    expect(h.subscriptions.at(-1)?.subjects).not.toContain(alice.pubkey);
-    expect(h.subscriptions.at(-1)?.subjects).toContain("f".repeat(64));
+    expect(first.stopped).toBe(true);
+    expect(h.subscriptions.slice(issued).map((item) => item.subjects)).toEqual([
+      ["f".repeat(64)],
+    ]);
     // A re-wanted evicted subject needs a fresh REQ, not its retired slot.
     h.directory.ensure([alice.pubkey]);
     await Promise.resolve();
     expect(h.subscriptions.at(-1)?.subjects).toContain(alice.pubkey);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("packs the smallest batches to half the spare past the budget and keeps checked status until the merged REQ answers", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  const keys = Array.from({ length: 9 }, (_, index) =>
+    (index + 1).toString(16).padStart(64, "0"),
+  );
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const first = h.subscriptions[0];
+    assert(first);
+    first.sink.event(projection());
+    first.sink.eose();
+    // One wanted batch plus eight spare. The tenth single-subject batch
+    // packs the smallest in pairs until half the spare is free.
+    for (const key of keys.slice(0, 8)) {
+      h.directory.ensure([key]);
+      await Promise.resolve();
+    }
+    expect(active()).toHaveLength(9);
+    expect(first.stopped).toBe(false);
+    h.directory.ensure([keys[8] as string]);
+    await Promise.resolve();
+    expect(active()).toHaveLength(5);
+    expect(first.stopped).toBe(true);
+    const merged = active().find((item) =>
+      item.subjects.includes(alice.pubkey),
+    );
+    assert(merged);
+    expect(merged.subjects).toEqual([alice.pubkey, keys[0]]);
+    expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("checked");
+    // A full replacement response that omits alice cannot reconfirm her.
+    merged.sink.event(projection(10, keys[0]));
+    merged.sink.event(projection(11, keys[0]));
+    merged.sink.eose();
+    expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("cached");
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("packs the smallest batches together when no two fit in one", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  try {
+    h.directory.resize(PROFILE_CACHE_MAX);
+    // Batches just over half full cannot merge in pairs.
+    const size = VERIFIED_PROFILE_BATCH / 2 + 1;
+    for (let batch = 0; batch < 40; batch++) {
+      h.directory.ensure(
+        Array.from({ length: size }, (_, index) =>
+          (batch * size + index + 1).toString(16).padStart(64, "0"),
+        ),
+      );
+      await Promise.resolve();
+      const subjects = (batch + 1) * size;
+      const fewest = Math.ceil(subjects / VERIFIED_PROFILE_BATCH);
+      expect(active().length).toBeLessThanOrEqual(fewest + 8);
+      expect(new Set(active().flatMap((item) => item.subjects)).size).toBe(
+        subjects,
+      );
+    }
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("frees relay slots before asking for new ones at the session's capacity", async () => {
+  // The relay session refuses a profile sync past its capacity, later, and a
+  // refused batch is not retried until another ensure.
+  const live = new Set<{ subjects: readonly string[] }>();
+  const directory = createVerifiedProfileDirectory(
+    authority,
+    (filter, sink) => {
+      if (live.size >= VERIFIED_PROFILE_MAX_SYNCS) {
+        queueMicrotask(() =>
+          sink.closed("error: profile sync capacity reached"),
+        );
+        return () => {};
+      }
+      const item = { subjects: filter["#d"] };
+      live.add(item);
+      return () => live.delete(item);
+    },
+    vi.fn(),
+  );
+  const key = (n: number) => n.toString(16).padStart(64, "0");
+  const settle = async () => {
+    for (let turn = 0; turn < 4; turn++) await Promise.resolve();
+  };
+  try {
+    directory.resize(PROFILE_CACHE_MAX);
+    const full = (VERIFIED_PROFILE_MAX_SYNCS - 8) * VERIFIED_PROFILE_BATCH;
+    directory.ensure(Array.from({ length: full }, (_, n) => key(n + 1)));
+    await settle();
+    for (let n = 1; n <= 8; n++) {
+      directory.ensure([key(100_000 + n)]);
+      await settle();
+    }
+    expect(live.size).toBe(VERIFIED_PROFILE_MAX_SYNCS);
+    const arrivals = Array.from({ length: VERIFIED_PROFILE_BATCH }, (_, n) =>
+      key(200_000 + n),
+    );
+    directory.ensure(arrivals);
+    await settle();
+    const covered = new Set([...live].flatMap((item) => item.subjects));
+    expect(arrivals.filter((subject) => !covered.has(subject))).toEqual([]);
+    expect(live.size).toBeLessThanOrEqual(VERIFIED_PROFILE_MAX_SYNCS);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("keeps subscriptions and replays bounded under sustained arrivals", async () => {
+  const h = harness();
+  const key = (n: number) => n.toString(16).padStart(64, "0");
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  const requested = () =>
+    h.subscriptions.reduce((sum, item) => sum + item.subjects.length, 0);
+  try {
+    h.directory.resize(4096);
+    h.directory.ensure(Array.from({ length: 4096 }, (_, n) => key(n + 1)));
+    await Promise.resolve();
+    for (const item of active()) item.sink.eose();
+    const before = requested();
+    // Subscriptions live after each schedule settles.
+    let peak = 0;
+    // Every arrival evicts the least recent subject from an answered batch.
+    for (let n = 1; n <= 4096; n++) {
+      h.directory.ensure([key(100_000 + n)]);
+      await Promise.resolve();
+      for (const item of active()) item.sink.eose();
+      peak = Math.max(peak, active().length);
+    }
+    expect(peak).toBeLessThanOrEqual(4096 / VERIFIED_PROFILE_BATCH + 8);
+    // Resending a whole batch for each arrival would be 128 per arrival.
+    expect((requested() - before) / 4096).toBeLessThan(32);
+    const covered = new Set(active().flatMap((item) => item.subjects));
+    for (let n = 1; n <= 4096; n++)
+      expect(covered.has(key(100_000 + n))).toBe(true);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("re-requests few subjects as new people arrive one at a time", async () => {
+  const h = harness();
+  const key = (n: number) => n.toString(16).padStart(64, "0");
+  const requested = () =>
+    h.subscriptions.reduce((sum, item) => sum + item.subjects.length, 0);
+  const answer = () => {
+    for (const item of h.subscriptions) if (!item.stopped) item.sink.eose();
+  };
+  try {
+    // Filling a batch one subject at a time used to resend the open batch
+    // each time: 1 + 2 + … + 128 subjects.
+    for (let n = 1; n <= VERIFIED_PROFILE_BATCH; n++) {
+      h.directory.ensure([key(n)]);
+      await Promise.resolve();
+      answer();
+    }
+    expect(requested()).toBeLessThan(VERIFIED_PROFILE_BATCH * 10);
+    // A full directory used to resend a whole batch for each new person.
+    h.directory.ensure(
+      Array.from({ length: 1024 }, (_, index) => key(10_000 + index)),
+    );
+    await Promise.resolve();
+    answer();
+    const before = requested();
+    for (let n = 1; n <= 20; n++) {
+      h.directory.ensure([key(20_000 + n)]);
+      await Promise.resolve();
+      answer();
+    }
+    expect(requested() - before).toBeLessThan(20 * 4);
+    expect(
+      h.subscriptions.filter((item) => !item.stopped).length,
+    ).toBeLessThanOrEqual(1024 / VERIFIED_PROFILE_BATCH + 8);
   } finally {
     h.directory.dispose();
   }
@@ -869,12 +1048,11 @@ it("notifies when ensure evicts a subject, not when it only adds one", async () 
     h.directory.ensure([keys[1024] as string]);
     await Promise.resolve();
     expect(h.changed).toHaveBeenCalledTimes(1);
-    const wanted = h.subscriptions
-      .filter((item) => !item.stopped)
-      .flatMap((item) => item.subjects);
-    expect(wanted).toHaveLength(1024);
-    expect(wanted).toContain(keys[0]);
-    expect(wanted).not.toContain(keys[1]);
+    // The new key gets its own REQ; the evicted one stays on its answered
+    // batch until that batch merges, and no batch is sent again.
+    expect(h.subscriptions.filter((item) => item.stopped)).toHaveLength(0);
+    expect(h.subscriptions.at(-1)?.subjects).toEqual([keys[1024]]);
+    expect(h.directory.snapshot().size).toBe(0);
   } finally {
     h.directory.dispose();
   }
@@ -1045,7 +1223,7 @@ it("publishes a pre-EOSE change after a second renewal", async () => {
   }
 });
 
-it("publishes a pre-EOSE change after an open batch is rebuilt", async () => {
+it("publishes a pre-EOSE change after its batch is merged", async () => {
   const h = harness();
   const active = () => h.subscriptions.filter((item) => !item.stopped);
   try {
@@ -1061,14 +1239,21 @@ it("publishes a pre-EOSE change after an open batch is rebuilt", async () => {
     assert(renewed);
     renewed.sink.event(projection(12));
     h.changed.mockClear();
-    h.directory.ensure([bob.pubkey]);
-    await Promise.resolve();
-    const rebuilt = active()[0];
-    assert(rebuilt && rebuilt !== renewed);
+    // Nine more single-subject batches pass the spare budget and merge the
+    // two smallest, alice's renewed batch first.
+    for (let n = 1; n <= 9; n++) {
+      h.directory.ensure([n.toString(16).padStart(64, "0")]);
+      await Promise.resolve();
+    }
+    expect(renewed.stopped).toBe(true);
+    const merged = active().find((item) =>
+      item.subjects.includes(alice.pubkey),
+    );
+    assert(merged && merged !== renewed);
     // An incomplete replay that flips no checked status.
-    rebuilt.sink.event(projection(12));
-    rebuilt.sink.event(projection(12));
-    rebuilt.sink.eose();
+    merged.sink.event(projection(12));
+    merged.sink.event(projection(12));
+    merged.sink.eose();
     expect(h.changed).toHaveBeenCalledTimes(1);
     expect(h.directory.snapshot().get(alice.pubkey)?.verifiedAt).toBe(12);
   } finally {

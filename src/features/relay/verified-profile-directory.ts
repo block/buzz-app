@@ -2,6 +2,7 @@ import { ByteLru, PROFILE_CACHE_BASE, PROFILE_ENTRY_BYTES } from "./budget";
 import { newer, type RelayEvent } from "./events";
 import {
   VERIFIED_PROFILE_BATCH,
+  VERIFIED_PROFILE_MAX_SYNCS,
   verifiedProfile,
   verifiedProfileFilter,
   verifiedProfileSubject,
@@ -10,6 +11,9 @@ import {
   type VerifiedProfileFilter,
   type VerifiedProfileSink,
 } from "./verified-profile";
+
+/** Batches allowed past the fewest that fit every wanted subject. */
+const SPARE_BATCHES = 8;
 
 /** One community/session owns this cache. No persistence across relay identities. */
 export function createVerifiedProfileDirectory(
@@ -37,6 +41,12 @@ export function createVerifiedProfileDirectory(
     pending(): boolean;
   };
   const batches = new Set<Batch>();
+  /** A batch to keep, or subjects to start as a new one. */
+  type Planned = {
+    subjects: readonly string[];
+    pending: boolean;
+    batch?: Batch;
+  };
   // Every profile publish projects every head: reuse the last projection of
   // an unchanged event so publishes skip revalidation and compare by identity.
   const projections = new WeakMap<
@@ -238,41 +248,77 @@ export function createVerifiedProfileDirectory(
       queued = false;
       if (closed || !online || !enabled || !authority) return;
       const currentAuthority = authority;
-      // Membership is stable: new subjects fill an open batch or a new one, and
-      // evicted subjects leave membership but stay on the wire until their batch
-      // is rebuilt. A rebuilt batch keeps checked status until its replacement
-      // REQ responds; an incomplete response clears it for omitted keys.
+      // Membership is stable. New subjects start their own batch instead of
+      // reissuing one the relay already answered, which would replay every
+      // subject in it again. Evicted subjects leave membership but stay on
+      // the wire until their batch is merged. A merged batch keeps checked
+      // status until its replacement REQ responds; an incomplete response
+      // clears it for omitted keys.
       const assigned = new Set<string>();
-      const open: Batch[] = [];
+      const plan: Planned[] = [];
       for (const batch of batches) {
         for (const subject of batch.subjects) assigned.add(subject);
-        if (!batch.subjects.length) {
-          batch.stop();
-          batches.delete(batch);
-        } else if (batch.subjects.length < VERIFIED_PROFILE_BATCH)
-          open.push(batch);
+        if (batch.subjects.length)
+          plan.push({
+            subjects: batch.subjects,
+            pending: batch.pending(),
+            batch,
+          });
       }
       const unassigned = [...wanted.keys()].filter(
         (subject) => !assigned.has(subject),
       );
-      for (const batch of open) {
-        if (!unassigned.length) break;
+      while (unassigned.length)
+        plan.push({
+          subjects: unassigned.splice(0, VERIFIED_PROFILE_BATCH),
+          pending: false,
+        });
+      // Subscriptions stay near the fewest that fit every subject. Past the
+      // budget, the smallest batches are packed together until half the spare
+      // is free again, so the next arrivals get their own REQ instead of each
+      // forcing a merge. Packing the smallest replays few subjects.
+      const fewest = Math.ceil(wanted.size / VERIFIED_PROFILE_BATCH);
+      const budget = Math.min(
+        VERIFIED_PROFILE_MAX_SYNCS,
+        fewest + SPARE_BATCHES,
+      );
+      const target =
+        plan.length > budget
+          ? Math.max(fewest, budget - SPARE_BATCHES / 2)
+          : budget;
+      while (plan.length > target) {
+        plan.sort((x, y) => x.subjects.length - y.subjects.length);
+        let size = 0;
+        let count = 0;
+        for (const item of plan) {
+          size += item.subjects.length;
+          count++;
+          if (count > 1 && Math.ceil(size / VERIFIED_PROFILE_BATCH) < count)
+            break;
+        }
+        const chunks = Math.ceil(size / VERIFIED_PROFILE_BATCH);
+        // Unreachable: past `fewest`, the whole plan packs into fewer batches.
+        if (chunks >= count) break;
+        const group = plan.splice(0, count);
+        const pending = group.some((item) => item.pending);
+        const subjects = group.flatMap((item) => item.subjects);
+        while (subjects.length)
+          plan.push({
+            subjects: subjects.splice(0, VERIFIED_PROFILE_BATCH),
+            pending,
+          });
+      }
+      // Stopping a batch frees its relay slot at once, so stop dropped batches
+      // before starting new ones: the relay session refuses a sync past its
+      // capacity, and a refused batch is not retried.
+      const kept = new Set(plan.map((item) => item.batch));
+      for (const batch of batches) {
+        if (kept.has(batch)) continue;
         batch.stop();
         batches.delete(batch);
-        start(
-          currentAuthority,
-          [
-            ...batch.subjects,
-            ...unassigned.splice(
-              0,
-              VERIFIED_PROFILE_BATCH - batch.subjects.length,
-            ),
-          ],
-          batch.pending(),
-        );
       }
-      while (unassigned.length)
-        start(currentAuthority, unassigned.splice(0, VERIFIED_PROFILE_BATCH));
+      for (const item of plan)
+        if (!item.batch) start(currentAuthority, item.subjects, item.pending);
       // Starting REQs changes no snapshot; only eviction removes names.
       if (evicted) {
         evicted = false;

@@ -7,6 +7,7 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -21,6 +22,7 @@ import { LinkLabel, linkKind } from "../../bundled/links/InlineLink";
 import type { Agent } from "./service";
 import type { AgentScopeReader } from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
+import { PanelWorkspace } from "../panels/PanelWorkspace";
 
 afterEach(() => {
   cleanup();
@@ -244,6 +246,63 @@ it("preserves memory link focus and notice across fresh parent link props", asyn
     expect(nextOpen).toHaveBeenCalledExactlyOnceWith(buzzUrl);
     expect(open).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("status")).toBeNull();
+  } finally {
+    view.unmount();
+    session.dispose();
+  }
+});
+
+it("dismisses a hovered memory preview before closing its containing detail", async () => {
+  const session = createRelaySession(null);
+  const memories = createAgentMemories(
+    async () => ({
+      entries: [entry("core", `[Source](${buzzUrl})`)],
+      partial: false,
+    }),
+    "c".repeat(64),
+    () => true,
+  );
+  const close = vi.fn();
+  const view = render(
+    <PanelWorkspace
+      value="agent"
+      select={() => {}}
+      items={[
+        {
+          id: "agent",
+          label: "Agent",
+          close,
+          content: (
+            <MemoryPanel
+              agents={scopeAgents}
+              agent={agent}
+              memories={memories.capability}
+              links={{
+                session: session.session,
+                registry: undefined,
+                open: () => false,
+              }}
+            />
+          ),
+        },
+      ]}
+    />,
+  );
+  const user = userEvent.setup();
+  try {
+    await openCore();
+    const link = screen.getByRole("link", { name: "Source" });
+    const trigger = screen.getByRole("button", { name: "core" });
+    act(() => trigger.focus());
+    await user.hover(link);
+    await waitFor(() => expect(link).toHaveAttribute("data-popup-open"));
+    expect(trigger).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(link).not.toHaveAttribute("data-popup-open"));
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "core" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(close).toHaveBeenCalledTimes(1);
   } finally {
     view.unmount();
     session.dispose();

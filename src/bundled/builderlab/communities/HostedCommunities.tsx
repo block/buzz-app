@@ -69,10 +69,13 @@ type Confirm = {
 export function HostedCommunities({
   api,
   active,
+  join,
   sharedSignIn = false,
 }: {
   api: Api;
   active(): boolean;
+  /** Opens the app's join dialog on a community this account just created. */
+  join?: (address: string) => void;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
 }) {
@@ -882,9 +885,14 @@ export function HostedCommunities({
                   "Could not create the community.",
                   quotaState?.limit,
                 );
-                // Hand off the address before refreshing, so a failed refresh cannot lose it.
+                // Join or hand off the address before refreshing, so a failed
+                // refresh cannot lose it. The join dialog connects at once, as
+                // first run's Create community does.
                 const url = reply.community && relayUrl(reply.community);
-                if (url) await copy(url);
+                if (url) {
+                  if (join) join(url);
+                  else await copy(url);
+                }
                 await settle();
               })
             }

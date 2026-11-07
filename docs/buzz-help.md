@@ -79,7 +79,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,
   with no **Join Community** confirmation. Other Builderlab deployments do not
-  offer it during setup. When the owner of a community with no channels yet
+  offer it during setup. Later, **Create community** in **Settings → Plugins →
+  Builderlab** opens the join for the new community at once; after its profile
+  step it opens and is listed in the community picker. When the owner of a community with no channels yet
   opens Messages, Buzz creates one open **#general**, marked as the starter
   channel for new members, and opens it.
   Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore

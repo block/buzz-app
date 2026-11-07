@@ -7,6 +7,7 @@ import type { SettingsCards } from "../settings/service";
 import { CommunityDialog } from "./CommunityDialog";
 import type { FederatedIdentity } from "../federated-identity/service";
 import { type InviteLink, parsePastedInvite } from "./invite-link";
+import type { JoinRequest } from "./invite-intent";
 import type { Communities } from "./service";
 
 /** First run with no community: joining replaces the empty shell. */
@@ -21,7 +22,7 @@ export function CommunityLanding({
 }: {
   communities: Communities;
   federatedIdentity?: FederatedIdentity | undefined;
-  invite?: (InviteLink & { requestId: number }) | undefined;
+  invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose(requestId: number): void;
   settingsCards: Pick<SettingsCards, "subscribe" | "has">;
   onJoined(id: string): void;
@@ -42,7 +43,7 @@ export function CommunityLanding({
         federatedIdentity={federatedIdentity}
         mode="join"
         onboarding
-        submittedDestination={!invite}
+        submittedDestination={!invite || invite.submitted === true}
         invite={opened}
         onJoined={onJoined}
         close={() => {

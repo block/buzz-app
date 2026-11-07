@@ -623,6 +623,35 @@ it("shows an availability failure and retries the same name", async () => {
   ).toBeEnabled();
 });
 
+it("opens the join for a created community instead of handing off its address", async () => {
+  routes["/api/builderlab/availability"] = () => ({ available: true });
+  routes["/api/builderlab/create"] = () => ({
+    community: { id: "c1", normalized_host: "north.communities.buzz.xyz" },
+  });
+  const writeText = vi.fn(async () => {});
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  const join = vi.fn();
+  render(
+    <StrictMode>
+      <HostedCommunities api={brokerApi} active={() => true} join={join} />
+    </StrictMode>,
+  );
+  await typeName("north");
+  await screen.findByText("That address is available.", {}, { timeout: 2000 });
+  fireEvent.click(screen.getByRole("button", { name: "Create community" }));
+  await waitFor(() =>
+    expect(join).toHaveBeenCalledWith("wss://north.communities.buzz.xyz"),
+  );
+  expect(join).toHaveBeenCalledOnce();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Create community" }),
+    ).not.toHaveAttribute("aria-busy", "true"),
+  );
+  expect(writeText).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Address copied/)).not.toBeInTheDocument();
+});
+
 it("keeps the address visible when the clipboard rejects", async () => {
   routes["/api/builderlab/availability"] = () => ({ available: true });
   routes["/api/builderlab/create"] = () => ({

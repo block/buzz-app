@@ -56,7 +56,10 @@ restore of the account's [known communities](#known-communities) joins each
 admitted destination through the same read and call. `Welcome` is also the
 second caller of the invite intent (`invite-intent.ts`) beside OS deep links:
 an address typed on the welcome screen that the restore did not admit opens
-this dialog, prefilled, as the app opens. The relay adds a member newly admitted
+this dialog, prefilled, as the app opens. Builderlab's Settings **Create
+community** is the third: through the `communityJoin` capability it opens this
+dialog on the community just created, marked submitted, so it connects at once
+as first run's **Create a community** does, without Continue. The relay adds a member newly admitted
 by an invite claim to the community's starter channels, so they are already in
 the sidebar and Messages opens the first of them. An open community needs no
 claim: there the relay adds each person, though not agents, to the starter

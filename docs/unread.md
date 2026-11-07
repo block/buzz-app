@@ -473,10 +473,15 @@ A local-only `reserve` field in the same journal record keeps receipts evicted
 from the sync journal, up to 5,000 keys / 512 KiB of serialized JSON. It preserves
 actual frontiers, never manufactures channel cutoffs, and commits atomically with
 the journal. Local unread decisions use both sets. Returning keys take the maximum
-frontier before leaving the reserve. Its finite eviction order favors channel,
-thread, then catch-up receipts before individual messages; newest event timestamps
-win within each group. While overrides exist, inherited reserve floors stay protected
-and direct override floors return to the journal. Without overrides, the reserve
+frontier before leaving the reserve. It keeps the newest receipts by frontier time.
+A receipt it has no room for raises a local-only `floor` in the same record to that
+receipt's time: on this installation every message at or before the floor is read,
+as with the 30-day retention floor, so dropping a receipt never makes what it read
+unread again. Keeping the newest receipts raises the floor as little as possible.
+Receipts at or below the floor read nothing more and are dropped. Manual unread and
+overrides still win over the floor. Publication keeps only the retention floor. While
+overrides exist, inherited reserve floors stay protected, nothing is dropped for
+being under the floor, and direct override floors return to the journal. Without overrides, the reserve
 also drops a receipt that a kept broader receipt already covers (the same rule the
 journal uses), whether the cover is in the journal or the reserve.
 
@@ -495,11 +500,12 @@ only the message says whether catch-up reads it. Old builds discard `homes` on
 their next save, as with the reserve.
 
 This extends retention only on the same browser profile/install. It cannot recover
-already discarded receipts, prevent loss after exhausting the reserve, or improve a
-fresh profile's smaller synced copy. An automatic observation already covered by
+already discarded receipts or improve a fresh profile's smaller synced copy. Once the
+reserve is full, the floor trades old unread for capacity: a mention older than the
+floor that was never read counts as read on this installation. An automatic observation already covered by
 the reserve does not republish that receipt. Manual unread still wins. Old builds
-can load the unchanged sync journal but discard the optional reserve on their next
-save; community leave on any build deletes both together. No database migration
+can load the unchanged sync journal but discard the optional reserve and floor on
+their next save; community leave on any build deletes both together. No database migration
 or wire-format change is involved.
 
 Override groups, permanent clear floors, directly associated frontiers and possible

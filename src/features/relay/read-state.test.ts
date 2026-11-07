@@ -843,6 +843,37 @@ describe("durable read-state owner", () => {
     expect(restarted.state().frontiers[old]).toBe(1);
     expect(restarted.state().frontiers["msg:unseen"]).toBeUndefined();
   });
+  it("raises a local floor over marks the reserve drops, keeps it after restart and never publishes it", async () => {
+    const f = fixture();
+    const owner = f.make();
+    const old = `msg:${"a".repeat(64)}`;
+    await owner.ready;
+    await owner.read(old, 1, () => true);
+    const marks = Array.from({ length: 7000 }, (_, n) => ({
+      key: `msg:${n.toString(16).padStart(64, "0")}`,
+      timestamp: 10 + n,
+      channelId: "elsewhere",
+    }));
+    await owner.readMessages(marks, undefined, () => true);
+    const floor = owner.floor();
+    expect(floor).toBeGreaterThan(10);
+    expect(owner.state().frontiers[old]).toBeUndefined();
+    for (const { key, timestamp } of [{ key: old, timestamp: 1 }, ...marks])
+      expect(
+        (owner.state().frontiers[key] ?? -1) >= timestamp || timestamp <= floor,
+      ).toBe(true);
+    expect(owner.state().frontiers[marks.at(-1)?.key ?? ""]).toBe(7009);
+    // A channel mark below the local floor still publishes: publication keeps
+    // only the retention window.
+    await owner.read("room", 5, () => true);
+    expect(owner.state().frontiers.room).toBe(5);
+    await owner.flush();
+    expect(f.published()).toEqual({ room: 5 });
+    owner.dispose();
+    const restarted = f.make();
+    await restarted.ready;
+    expect(restarted.floor()).toBe(floor);
+  });
   it("preserves the reserve through remote replay, local unread and concurrent mutations", async () => {
     const f = fixture();
     f.setJournal({ ...newReadJournal(), reserve: { "msg:old": 20 } });
@@ -904,6 +935,13 @@ describe("durable read-state owner", () => {
   });
   it("validates optional reserve data without replacing corrupt saved intent", () => {
     const f = fixture();
+    expect(
+      readJournal({ ...newReadJournal(), floor: 7 }, f.key.pubkey).floor,
+    ).toBe(7);
+    for (const floor of [-1, 1.5, "7"])
+      expect(() =>
+        readJournal({ ...newReadJournal(), floor }, f.key.pubkey),
+      ).toThrow("floor");
     expect(readJournal(newReadJournal(), f.key.pubkey).reserve).toEqual({});
     for (const reserve of [
       [],

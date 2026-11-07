@@ -2706,7 +2706,11 @@ export class CodexRuntime {
               all.findIndex((other) => other.replyRoot === taken.replyRoot) ===
               index,
           )
-          .map((taken) => this.publish(taken, content)),
+          .map((taken) =>
+            this.publish(taken, content).catch((failure) =>
+              console.error("Codex could not publish its failure", failure),
+            ),
+          ),
       );
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
@@ -2905,9 +2909,7 @@ export class CodexRuntime {
       const why = explain?.();
       if (!signal.aborted) {
         const reason = `Codex could not finish: ${message(error)}.`;
-        await notify(reason).catch((failure) =>
-          console.error("Codex could not publish its failure", failure),
-        );
+        await notify(reason);
         // The denied input may have shaped the provider's reason, so it shows
         // only on the owner's Activity tab, never in the thread agents read.
         this.status(

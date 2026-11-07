@@ -3054,6 +3054,44 @@ it.each([
     );
   },
 );
+it("tells the starting thread once when a steered thread's interruption notice is refused", async () => {
+  const f = fixture();
+  vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [{ id: "channel", name: "test", channelType: "dm" }],
+  });
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  const otherRoot = "e".repeat(64);
+  await f.runtime.run(f.delivery("WORK_A"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run(f.delivery("WORK_B", otherRoot));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  f.publish.mockImplementation(async (event) => {
+    if (JSON.stringify(event).includes(otherRoot))
+      throw new Error("Signing rejected");
+    return { ...(event as object), id: "d".repeat(64) };
+  });
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  expect(
+    f.publish.mock.calls.map(
+      ([event]) => (event as { content: string }).content,
+    ),
+  ).toEqual([
+    "Codex’s turn was interrupted. Send another mention to continue.",
+    "Codex’s turn was interrupted. Send another mention to continue.",
+  ]);
+  expect(logged).toHaveBeenCalledWith(
+    "Codex could not publish its failure",
+    expect.objectContaining({ message: "Signing rejected" }),
+  );
+});
 it("refreshes a queued plugin wake's instructions when its turn starts", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("@Codex first"));

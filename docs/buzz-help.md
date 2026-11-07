@@ -738,12 +738,19 @@ available rather than silently discarding it.
   depend on the type. Do not assume a provider is configured or signed in.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
-  Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there (or when creating a Claude agent), once for every Claude agent. Buzz
-  keeps it in the system's secure credential store (Keychain on macOS) and
-  gives it to every Claude process, security reviews included. Commands a
-  Claude agent runs inherit it, so they can read the key. Until a key is
-  saved, Claude agents don't answer and Claude reviews fail closed.
+  Claude runs one of two ways, set once for every Claude agent there (or when
+  creating a Claude agent): with an Anthropic API key pasted under
+  **Anthropic API key**, or with a Claude account (Pro, Max, Team or
+  Enterprise subscription) through **Sign in**, which uses the sign-in Claude
+  Code already has or runs `claude auth login`. Saving a key switches Claude
+  to the key; **Use Claude account** and **Use your API key** switch back and
+  forth. Until one is chosen, Claude uses a saved key, or else the account
+  Claude Code is signed in to. Buzz keeps the key in the system's secure
+  credential store (Keychain on macOS) and gives it to Claude processes when
+  Claude runs with the key. Commands a Claude agent runs inherit it, so they
+  can read the key. Claude security reviews always need the key, even when
+  agents run on the account. Until Claude can sign in, Claude agents don't
+  answer and Claude reviews fail closed.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key

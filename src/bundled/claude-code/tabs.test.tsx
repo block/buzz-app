@@ -1000,7 +1000,7 @@ it("asks for an API key and is ready once one is saved", async () => {
   // The key's form takes the dialog over, saying once is enough.
   expect(
     await screen.findByText(
-      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.",
+      "Sign in with your Claude account (Pro, Max, Team or Enterprise), or create an API key at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps the key securely on this computer.",
     ),
   ).toBeVisible();
   expect(
@@ -1085,16 +1085,25 @@ it("replaces generic installation copy with the latest installer state", async (
   expect(screen.queryByLabelText("Setup output")).toBeNull();
 });
 
-it("opens its dialog for a missing key rather than running a step", async () => {
-  const { type } = installed({ keySaved: false });
-  await waitFor(() =>
-    expect(type.provider?.snapshot()).toMatchObject({
-      readiness: "attention",
-      attentionLabel: "Add Claude API key",
-    }),
-  );
-  expect(type.provider?.attentionAction).toBeUndefined();
-});
+it.each([false, true])(
+  "opens its dialog for a missing key rather than running a step, with a sign-in step: %s",
+  async (signIn) => {
+    interactive.signIn = signIn;
+    try {
+      const { type } = installed({ keySaved: false });
+      await waitFor(() =>
+        expect(type.provider?.snapshot()).toMatchObject({
+          readiness: "attention",
+          attentionLabel: "Add Claude API key",
+        }),
+      );
+      // The dialog offers the key as well as the sign-in.
+      expect(type.provider?.attentionAction).toBeUndefined();
+    } finally {
+      interactive.signIn = false;
+    }
+  },
+);
 
 it("saves settings as one config", async () => {
   const Settings = tab(installed().type, 0);
@@ -1736,7 +1745,7 @@ it("asks for the key in Set up Claude when Claude is picked, then offers its mod
   });
   expect(
     within(setupDialog).getByText(
-      "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.",
+      "Sign in with your Claude account (Pro, Max, Team or Enterprise), or create an API key at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps the key securely on this computer.",
     ),
   ).toBeVisible();
   // Turning setup down returns to the harness the person left.
@@ -1832,9 +1841,10 @@ it("offers an interactive sign-in in Set up Claude when the build has one", asyn
       </ToastProvider>,
     );
     const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
-    await userEvent
-      .setup()
-      .click(within(dialog).getByRole("button", { name: "Sign in" }));
+    const signIn = within(dialog).getByRole("button", { name: "Sign in" });
+    // Enabled once the first check, which also asks for an account, ends.
+    await waitFor(() => expect(signIn).toBeEnabled());
+    await userEvent.setup().click(signIn);
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: "Set up Claude" }),
@@ -1924,9 +1934,7 @@ it("sends a library card without a key to Claude's setup in Settings", async () 
       onChange={vi.fn()}
     />,
   );
-  expect(
-    await screen.findByText(/Claude is missing an API key\./),
-  ).toBeVisible();
+  expect(await screen.findByText(/Claude is not set up\./)).toBeVisible();
   expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
   await userEvent
     .setup()

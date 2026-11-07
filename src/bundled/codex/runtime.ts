@@ -1415,6 +1415,10 @@ export class CodexRuntime {
     const server = this.open(agent);
     let loaded: Loaded | undefined;
     let media: Awaited<ReturnType<typeof openVoice>> | undefined;
+    let delegatedThinking = false;
+    let realtimeThinking = false;
+    const thinking = () =>
+      seat.thinking?.(delegatedThinking || realtimeThinking);
     let off = () => {};
     let closing: Promise<void> | undefined;
     const close = () => {
@@ -1501,6 +1505,10 @@ export class CodexRuntime {
               }
             | undefined;
           if (signal.aborted || p?.threadId !== threadId) return;
+          if (method === "turn/started" || method === "turn/completed") {
+            delegatedThinking = method === "turn/started";
+            thinking();
+          }
           if (
             method === "turn/started" &&
             p.turn &&
@@ -1539,6 +1547,10 @@ export class CodexRuntime {
             seat.ended(error);
           },
           instructions,
+          (active) => {
+            realtimeThinking = active;
+            thinking();
+          },
         );
         signal.throwIfAborted();
         this.save(request, entry, key, {

@@ -20,7 +20,10 @@ type Seat = {
 /** The connected human call is the sole roster source on this desktop.
  * Membership is the room's signed roster; parent membership never seats an agent. */
 export function createHuddleVoices(
-  huddles: Pick<Huddles, "snapshot" | "subscribe" | "voiceListening">,
+  huddles: Pick<
+    Huddles,
+    "snapshot" | "subscribe" | "voiceListening" | "voiceThinking"
+  >,
   agents: Pick<Agents, "snapshot" | "subscribe" | "types">,
   relay: RelayData,
   bridge: HuddleBridge,
@@ -75,6 +78,7 @@ export function createHuddleVoices(
       });
       // Publishing re-enters sync: closing must already guard stop().
       huddles.voiceListening(call, agent.pubkey, false);
+      huddles.voiceThinking(call, agent.pubkey, false);
       return closing;
     }
     // Start in a microtask so the seat is recorded before callbacks can re-enter sync.
@@ -114,6 +118,10 @@ export function createHuddleVoices(
           conversation: { channelId: room },
           signal: abort.signal,
           ended: fail,
+          thinking: (active) => {
+            if (!abort.signal.aborted)
+              huddles.voiceThinking(call, agent.pubkey, active);
+          },
           output: sender.send,
         });
         if (abort.signal.aborted) await opened.close();

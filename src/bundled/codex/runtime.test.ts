@@ -5866,6 +5866,30 @@ describe("voice seats", () => {
     const connection = await f.runtime.voice(seat, delivery.agent);
     return { ...f, initial: delivery, abort, ended, connection, seat };
   }
+  it("reports thinking for a huddle work turn and clears it on completion", async () => {
+    const thinking = vi.fn();
+    const f = await seated({ thinking });
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "voice-thinking" } },
+    });
+    expect(thinking).toHaveBeenLastCalledWith(true);
+    f.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "voice-thinking", status: "completed" },
+      },
+    });
+    expect(thinking).toHaveBeenLastCalledWith(false);
+    await f.connection.close();
+    thinking.mockClear();
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "late" } },
+    });
+    expect(thinking).not.toHaveBeenCalled();
+  });
   it("uses resolved seat config and team instead of the local agent config", async () => {
     const f = await seated({
       config: { workspace: "/tmp/resolved-voice", model: "test-model" },

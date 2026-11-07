@@ -790,6 +790,8 @@ export type AgentVoiceSeat<Config = unknown> = Readonly<
     output(samples: number[]): Promise<void>;
     /** Idempotent disconnect notification, ignored after signal aborts. */
     ended(error?: Error): void;
+    /** Presentation only; never authorizes work. */
+    thinking?(active: boolean): void;
   } & Pick<Delivery<Config>, "config" | "revisions" | "synced" | "team">
 >;
 

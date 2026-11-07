@@ -123,20 +123,23 @@ export function createHuddleComposerOwner(
       !(verified ? verified() : c.huddle && c.parentChannelId === parent)
     )
       throw new Error("This Huddle conversation is no longer available.");
-    // A Huddle room's roster is always in its summary; a channel thread
-    // follows the main composer and trusts the relay's readOnly flag instead.
+    // A Huddle room's roster is always in its summary; a pop-out frame (a
+    // channel thread or conversation) follows the main composer and trusts
+    // the relay's readOnly flag instead, as `verified` already admitted it.
     if (
       write &&
       (c.archived ||
         c.readOnly ||
         c.cached ||
         !session.viewer ||
-        (!thread && !c.members?.includes(session.viewer)))
+        (!thread && !shown && !c.members?.includes(session.viewer)))
     )
       throw new Error(
         thread
           ? "This thread is read-only."
-          : "This Huddle conversation is read-only.",
+          : shown
+            ? "This conversation is read-only."
+            : "This Huddle conversation is read-only.",
       );
   }
   const send = (response: ComposerResponse) => {
@@ -355,7 +358,9 @@ export function createHuddleComposerOwner(
             request.op !== "report" &&
             request.op !== "deleteMessage",
         );
-        if (!thread || !shown)
+        // Pop-out frames (thread or conversation) admit against shown rows;
+        // the Huddle companion has no projection and offers none of these.
+        if (!shown)
           throw new Error("This action is not available in a Huddle composer.");
         const { messageId } = request.args;
         const target =
@@ -519,7 +524,6 @@ export function createHuddleComposerOwner(
         check();
         const { messageId, key, revision } = request.args;
         if (
-          !thread ||
           !shown ||
           typeof messageId !== "string" ||
           !/^[0-9a-f]{64}$/.test(messageId) ||
@@ -548,7 +552,6 @@ export function createHuddleComposerOwner(
         check(true);
         const id = request.args.id;
         if (
-          !thread ||
           !shown ||
           typeof id !== "string" ||
           !/^[0-9a-f]{64}$/.test(id) ||

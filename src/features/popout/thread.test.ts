@@ -843,3 +843,89 @@ it("projects a conversation frame from the channel window: top-level rows, no ro
   expect(loadOlder).toHaveBeenCalledWith("channel");
   expect([...frame.known()]).toEqual(["a".repeat(64), "c".repeat(64)]);
 });
+
+it("a conversation frame's owner admits sends and message actions against its shown rows without a roster", async () => {
+  const h = fixture();
+  const row = {
+    id: "a".repeat(64),
+    channelId: "channel",
+    authorId: VIEWER,
+    createdAt: 1,
+    content: "First",
+    attachments: [],
+    mentions: [],
+    reactions: [],
+    replyCount: 0,
+    participants: [],
+  };
+  const send = vi.fn(() => "sent-id");
+  const session = {
+    ...h.session,
+    channels: {
+      ...h.session.channels,
+      // A ready, writable channel whose summary carries no members.
+      get: () => ({ id: "channel", name: "Channel", channelType: "stream" }),
+      ensure: () => {},
+      loadOlder: () => {},
+      window: () => ({
+        channelId: "channel",
+        status: "ready",
+        rows: [row],
+        hasMore: false,
+        loadingOlder: false,
+        error: undefined,
+      }),
+      subscribeWindow: () => () => {},
+    },
+    messages: { ...h.session.messages, send },
+  } as unknown as RelaySession;
+  const frame = createPopoutThread(session, "channel", undefined, () => {});
+  clean.push(frame.dispose);
+  expect(frame.writable()).toBe(true);
+  const owner = createHuddleComposerOwner(
+    session,
+    "channel",
+    "channel",
+    undefined,
+    () => true,
+    () => frame.rootVerified(),
+    undefined,
+    undefined,
+    {
+      message: (id) => frame.shown(id),
+      reactionBusy: (id) => frame.reactionBusy(id),
+      retryOperation: (id) => frame.retryOperation(id),
+      version: () => frame.snapshot().version,
+      root: () => undefined,
+      admit: (id, messageId, kind) => frame.admit(id, messageId, kind),
+      acknowledge: (ids) => frame.acknowledge(ids),
+      authorization: (id) => frame.authorization(id),
+      handoff: (messageId, key, revision) =>
+        !!frame.handoff(messageId, key, revision),
+    },
+  );
+  clean.push(owner.dispose);
+  const client = createHuddleComposerClient(owner.token);
+  clean.push(client.dispose);
+  await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
+  const composer = client.snapshot().session;
+  if (!composer) throw new Error("composer session");
+  await expect(composer.messages.send("channel", "hello")).resolves.toBe(
+    "sent-id",
+  );
+  expect(send).toHaveBeenCalled();
+  await expect(
+    client.react({ messageId: row.id, content: "🎉" }),
+  ).resolves.toMatchObject({ id: "reaction-id" });
+  await expect(
+    client.markRead({ messageId: row.id, unread: true }),
+  ).resolves.toBeUndefined();
+  expect(h.markMessageUnread).toHaveBeenCalledWith("channel", row.id);
+  // Thread-only operations stay refused for a conversation frame.
+  await expect(client.follow({ following: true })).rejects.toThrow(
+    /Not a thread/,
+  );
+  await expect(client.sendToChannel({ messageId: row.id })).rejects.toThrow(
+    /thread replies/,
+  );
+});

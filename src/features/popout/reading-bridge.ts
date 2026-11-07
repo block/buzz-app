@@ -36,6 +36,11 @@ export function createReadingOwner(
   const post = (response: ReadingResponse) => {
     if (!closed) channel.postMessage(response);
   };
+  /** End every lease now; the companion re-acquires when active again. */
+  const revoke = () => {
+    for (const lease of leases.values()) lease.dispose();
+    leases.clear();
+  };
   const ids = (value: unknown) => {
     const present = known();
     return Array.isArray(value)
@@ -55,6 +60,16 @@ export function createReadingOwner(
       data.lease.length > 64
     )
       return;
+    // Enablement is re-checked on every request, not only at acquire: a
+    // frame that stopped being the window's top (or lost access) must not
+    // keep marking rows read through a lease it acquired while active.
+    if (!enabled()) {
+      revoke();
+      if (data.kind === "observe" || data.kind === "catchUp")
+        if (Number.isSafeInteger(data.id))
+          post({ kind: "result", id: data.id, error: "Reading lease ended." });
+      return;
+    }
     const handle = leases.get(data.lease);
     switch (data.kind) {
       case "acquire":
@@ -120,12 +135,14 @@ export function createReadingOwner(
   };
   return {
     token,
+    /** The owner deactivated this frame: drop its leases at once rather
+     * than at the companion's next request. */
+    revoke,
     dispose() {
       if (closed) return;
       post({ kind: "closed" });
       closed = true;
-      for (const lease of leases.values()) lease.dispose();
-      leases.clear();
+      revoke();
       channel.close();
     },
   };

@@ -114,7 +114,7 @@ function harness() {
     () => store.dispose(),
     () => owner.dispose(),
   );
-  return { owner, scope, room };
+  return { owner, scope, room, session };
 }
 const view = (h: ReturnType<typeof harness>): PopoutView => ({
   title: "Design",
@@ -183,4 +183,52 @@ it("never offers the recorder to the Huddle companion", async () => {
   expect(
     screen.queryByRole("button", { name: "Record voice note" }),
   ).toBeNull();
+});
+
+it("keeps a conversation's files and close protection while drilled into a thread, and restores them on back", async () => {
+  const h = harness();
+  // The same main session owns the thread frame's composer.
+  const threadOwner = createHuddleComposerOwner(
+    h.session,
+    h.room,
+    h.room,
+    undefined,
+    () => true,
+    () => true,
+    undefined,
+    "1".repeat(64),
+  );
+  cleanup.push(() => threadOwner.dispose());
+  const act = vi.fn();
+  const conversation = { ...view(h), thread: false, root: undefined };
+  const thread = {
+    ...view(h),
+    thread: true,
+    canGoBack: true,
+    composer: threadOwner.token,
+  };
+  const mounted = render(<PopoutWindowView view={conversation} act={act} />);
+  await screen.findByRole("textbox", { name: "Message #Design" });
+  const input = mounted.container.querySelector('input[type="file"]');
+  if (!input) throw new Error("Missing file picker");
+  fireEvent.change(input, {
+    target: {
+      files: [new File(["unsent"], "kept.txt", { type: "text/plain" })],
+    },
+  });
+  await screen.findByRole("button", { name: "Remove kept.txt" });
+  await waitFor(() => expect(act).toHaveBeenLastCalledWith("guard", "1"));
+  // Drill into a thread: the conversation's file is still this window's
+  // unsent work, so the close guard stays up.
+  mounted.rerender(<PopoutWindowView view={thread} act={act} />);
+  await screen.findByRole("textbox", { name: "Reply to thread" });
+  expect(screen.queryByRole("button", { name: "Remove kept.txt" })).toBeNull();
+  await waitFor(() => expect(act).toHaveBeenLastCalledWith("guard", "1"));
+  // Back: the file is where it was left.
+  mounted.rerender(<PopoutWindowView view={conversation} act={act} />);
+  await screen.findByRole("textbox", { name: "Message #Design" });
+  expect(
+    await screen.findByRole("button", { name: "Remove kept.txt" }),
+  ).toBeTruthy();
+  await waitFor(() => expect(act).toHaveBeenLastCalledWith("guard", "1"));
 });

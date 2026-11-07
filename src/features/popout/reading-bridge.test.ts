@@ -230,3 +230,49 @@ it("intent formed before a manual unread in main acquires nothing, however late 
   expect(h.frontier()).toBeDefined();
   wire.close();
 });
+
+it("a lease acquired while the frame was shown marks nothing once the frame is hidden, and ends on revoke", async () => {
+  const h = setup();
+  await flush();
+  let shown = true;
+  const owner = createReadingOwner(
+    h.session.unread,
+    "room",
+    h.row.id,
+    () => new Set([h.row.id]),
+    () => shown,
+  );
+  bridges.push(owner);
+  const wire = new BroadcastChannel(`buzz.popout.reading.${owner.token}`);
+  const results: { id: number; error?: string }[] = [];
+  wire.onmessage = ({ data }) => {
+    if (data.kind === "result") results.push(data);
+  };
+  wire.postMessage({
+    kind: "acquire",
+    lease: "L1",
+    revision: h.session.unread.revision(),
+  });
+  await flush();
+  // The window drilled into a thread: this conversation frame is hidden.
+  shown = false;
+  wire.postMessage({ kind: "observe", id: 1, lease: "L1", ids: [h.row.id] });
+  await vi.waitFor(() => expect(results).toHaveLength(1));
+  expect(results[0]).toMatchObject({ id: 1, error: "Reading lease ended." });
+  expect(h.unread()).toBe(true);
+  // Back again: the old lease is gone; a fresh acquire reads as before.
+  shown = true;
+  wire.postMessage({ kind: "observe", id: 2, lease: "L1", ids: [h.row.id] });
+  await vi.waitFor(() => expect(results).toHaveLength(2));
+  expect(results[1]).toMatchObject({ id: 2, error: "Reading lease ended." });
+  wire.postMessage({
+    kind: "acquire",
+    lease: "L2",
+    revision: h.session.unread.revision(),
+  });
+  wire.postMessage({ kind: "observe", id: 3, lease: "L2", ids: [h.row.id] });
+  await vi.waitFor(() => expect(results).toHaveLength(3));
+  expect(results[2]).toEqual({ kind: "result", id: 3 });
+  await vi.waitFor(() => expect(h.unread()).toBe(false));
+  wire.close();
+});

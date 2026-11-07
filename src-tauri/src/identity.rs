@@ -351,6 +351,10 @@ enum State {
 struct Identity {
     state: State,
     store: Box<dyn Store>,
+    /// Old Buzz's key as `sign_legacy` read it, held only in memory so the
+    /// import that follows a link saves that same key without a second read
+    /// (and a second OS prompt).
+    legacy: Option<Key>,
 }
 impl Identity {
     fn restore(&mut self) -> Result<Option<String>> {
@@ -384,6 +388,7 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
+        self.legacy = None;
         Ok(viewer)
     }
     /// Adopts the key installed old Buzz saved, exactly as a pasted import would.
@@ -391,12 +396,31 @@ impl Identity {
         if self.restore()?.is_some() {
             return Err("An identity is already saved; nothing was overwritten".into());
         }
-        let nsec = self.store.legacy()?;
+        let nsec = match self.legacy.take() {
+            Some(key) => Zeroizing::new(key.nsec()?),
+            None => self.store.legacy()?,
+        };
         let nsec = nsec.trim();
         if Key::parse(nsec).is_err() {
             return Err("The earlier Buzz app's identity is malformed; nothing was changed".into());
         }
         self.save(Some(nsec))
+    }
+    /// Signs with the key installed old Buzz saved, read from its storage and
+    /// never saved here, so first run can link it before adopting it: a key
+    /// that can't be linked never lands on this device.
+    fn sign_legacy(&mut self, event: EventTemplate) -> Result<serde_json::Value> {
+        if self.restore()?.is_some() {
+            return Err("An identity is already saved; nothing was signed".into());
+        }
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => Key::parse(self.store.legacy()?.trim())
+                .map_err(|_| "The earlier Buzz app's identity is malformed; nothing was signed")?,
+        };
+        let signed = key.sign(event);
+        self.legacy = Some(key);
+        signed
     }
     fn require_missing(&mut self) -> Result<()> {
         if self.restore()?.is_some() || self.store.read()?.is_some() {
@@ -414,10 +438,12 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key);
+        self.legacy = None;
         Ok(viewer)
     }
     fn close(&mut self) {
         self.state = State::Closed;
+        self.legacy = None;
     }
     fn export(&mut self) -> Result<String> {
         self.restore()?;
@@ -797,6 +823,7 @@ impl IdentityHost {
         Self(Arc::new(Mutex::new(Identity {
             state,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 
@@ -1139,6 +1166,7 @@ impl Default for IdentityHost {
         Self(Arc::new(Mutex::new(Identity {
             state: State::Unread,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 }
@@ -1222,17 +1250,27 @@ impl BuilderlabChallenge {
     }
 }
 /// Signs only a valid Builderlab binding challenge; never a general event signer.
+/// `legacy` signs with installed old Buzz's key instead, only while no key is
+/// saved here, and saves nothing.
 #[tauri::command]
 pub async fn identity_sign_builderlab_binding(
     host: tauri::State<'_, IdentityHost>,
     challenge: BuilderlabChallenge,
+    legacy: Option<bool>,
 ) -> Result<serde_json::Value> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "System clock is before 1970")?
         .as_secs();
-    host.sign(challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?)
+    let event = challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?;
+    if legacy == Some(true) {
+        with_identity(host.inner().clone(), move |identity| {
+            identity.sign_legacy(event)
+        })
         .await
+    } else {
+        host.sign(event).await
+    }
 }
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {

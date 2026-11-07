@@ -65,6 +65,7 @@ fn identity(store: &Arc<Memory>) -> Identity {
     Identity {
         state: State::Unread,
         store: Box::new(store.clone()),
+        legacy: None,
     }
 }
 fn fixture() -> Key {
@@ -120,6 +121,58 @@ fn legacy_import_adopts_only_a_valid_old_key_and_never_replaces_one() {
             );
         }
     }
+}
+#[test]
+fn legacy_binding_signs_with_the_old_key_but_never_saves_it() {
+    let nsec = fixture().nsec().unwrap();
+    let other = Key::new(Zeroizing::new([2; 32])).nsec().unwrap();
+    let template = || {
+        parse_challenge(builderlab_challenge())
+            .template(1_700_000_000, "")
+            .unwrap()
+    };
+    // (saved, legacy entry, signs, reads legacy)
+    for (saved, legacy, signs, reads_legacy) in [
+        (None, Some(format!(" {nsec}\n")), true, true),
+        (None, None, false, true),
+        (None, Some("not-a-key".into()), false, true),
+        (Some(other.clone()), Some(nsec.clone()), false, false),
+    ] {
+        let store = Arc::new(Memory::default());
+        *store.saved.lock().unwrap() = saved.clone().map(String::into_bytes);
+        *store.legacy.lock().unwrap() = legacy;
+        let result = identity(&store).sign_legacy(template());
+        assert_eq!(result.is_ok(), signs, "{result:?}");
+        if let Ok(value) = result {
+            let event: Event = serde_json::from_value(value).unwrap();
+            event.verify().unwrap();
+            assert_eq!(event.kind.as_u16(), 24243);
+            assert_eq!(event.pubkey.to_hex(), fixture().viewer().unwrap());
+        }
+        assert_eq!(
+            *store.legacy_reads.lock().unwrap(),
+            usize::from(reads_legacy)
+        );
+        // Signing never saves: the store holds exactly what it held before.
+        assert_eq!(*store.saved.lock().unwrap(), saved.map(String::into_bytes));
+    }
+}
+#[test]
+fn a_linked_legacy_key_is_saved_from_the_one_read_that_signed() {
+    let nsec = fixture().nsec().unwrap();
+    let store = Arc::new(Memory::default());
+    *store.legacy.lock().unwrap() = Some(nsec.clone());
+    let mut owner = identity(&store);
+    let template = parse_challenge(builderlab_challenge())
+        .template(1_700_000_000, "")
+        .unwrap();
+    owner.sign_legacy(template).unwrap();
+    // Old Buzz's storage changing after the link can't change what is saved.
+    *store.legacy.lock().unwrap() = Some(Key::new(Zeroizing::new([2; 32])).nsec().unwrap());
+    assert_eq!(owner.import_legacy().unwrap(), fixture().viewer().unwrap());
+    assert_eq!(*store.legacy_reads.lock().unwrap(), 1);
+    assert_eq!(*store.saved.lock().unwrap(), Some(nsec.into_bytes()));
+    assert!(owner.legacy.is_none());
 }
 #[test]
 fn denied_and_corrupt_reads_cannot_create_or_overwrite() {
@@ -505,7 +558,7 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
     let view = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .unwrap();
-    let invoke = |challenge: serde_json::Value| {
+    let invoke_with = |body: serde_json::Value| {
         get_ipc_response(
             &view,
             tauri::webview::InvokeRequest {
@@ -513,12 +566,14 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
                 url: view.url().unwrap(),
-                body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "challenge": challenge })),
+                body: tauri::ipc::InvokeBody::Json(body),
                 headers: Default::default(),
                 invoke_key: INVOKE_KEY.into(),
             },
         )
     };
+    let invoke =
+        |challenge: serde_json::Value| invoke_with(serde_json::json!({ "challenge": challenge }));
     let event: Event = invoke(builderlab_challenge())
         .unwrap()
         .deserialize()
@@ -529,6 +584,11 @@ fn builderlab_binding_reaches_signer_through_production_ipc() {
     let mut foreign = builderlab_challenge();
     foreign["origin"] = "https://example.com".into();
     assert!(invoke(foreign).is_err());
+    // Old Buzz's key signs only while no key is saved here; this host has one.
+    assert!(invoke_with(
+        serde_json::json!({ "challenge": builderlab_challenge(), "legacy": true })
+    )
+    .is_err());
 }
 
 #[test]

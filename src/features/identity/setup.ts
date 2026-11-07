@@ -90,17 +90,29 @@ function vacant(identity: Identity) {
 /**
  * The key for an account that has none: old Buzz's, when it was used on this
  * device, so someone who used Buzz before stays the same person; otherwise a
- * new one. Reading old Buzz's secure storage may bring up an OS prompt, and if
- * it can't be read a new key is made rather than stopping setup.
+ * new one. Old Buzz's key is linked first and saved only once the account
+ * holds it, so a key kgoose refuses as another account's never lands here:
+ * then, as when it can't be read, a new key is made rather than stopping
+ * setup. Reading old Buzz's secure storage may bring up an OS prompt.
  */
-export function keyForAccount(identity: Identity): SetupStep {
+export function keyForAccount(
+  identity: Identity,
+  account: FirstRunAccount,
+): SetupStep {
   return {
     label: "Preparing your identity…",
     run: async () => {
       vacant(identity);
       if (await identity.legacyAvailable().catch(() => false)) {
-        await identity.importLegacy();
-        if (identity.snapshot().status === "ready") return;
+        const linked = await account.bindLegacy();
+        if (linked) {
+          await identity.importLegacy();
+          // A refused save reports its own reason, such as a denied read.
+          saved(identity);
+          if (viewer(identity) !== linked)
+            throw new Error("Your key could not be saved on this device.");
+          return;
+        }
       }
       await identity.create();
       saved(identity);

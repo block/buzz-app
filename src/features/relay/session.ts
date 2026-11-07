@@ -1197,13 +1197,21 @@ export function createRelaySession(
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
   const channelQueries = Object.freeze({
     ...channels.queries,
-    // Only the viewer's own surfaces call it from outside the session (a
-    // scoped search, a requested channel, a repository page), so what they
-    // look up becomes the viewer's, as without any `attend`.
+    // Viewer surfaces promote their lookups by default. Explicit agent lookups
+    // extend discovery without turning watch-only channels into mention targets.
     ...(channels.queries.resolve && {
-      resolve: (ids: readonly string[], options?: ChannelReadOptions) =>
-        channels.queries.resolve?.(ids, { ...options, viewerLookup: true }) ??
-        Promise.resolve(),
+      resolve: async (ids: readonly string[], options?: ChannelReadOptions) => {
+        const viewerLookup = options?.viewerLookup !== false;
+        if (!viewerLookup) {
+          if (channels.queries.list().status !== "ready")
+            throw new ReadError(
+              "unavailable",
+              "Channels are not discovered yet.",
+            );
+          for (const id of ids) learnedByAgents(id);
+        }
+        await channels.queries.resolve?.(ids, { ...options, viewerLookup });
+      },
     }),
     list() {
       const snapshot = channels.queries.list();

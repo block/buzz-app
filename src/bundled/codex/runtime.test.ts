@@ -2980,6 +2980,150 @@ it("reports a failed wake at its thread's root, never at the wake's own id", asy
   });
   expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
 });
+it.each([
+  {
+    channelType: "stream",
+    scope: "channel",
+    status: "interrupted",
+    other: true,
+  },
+  { channelType: "stream", scope: "channel", status: "failed", other: true },
+  { channelType: "dm", scope: "thread", status: "interrupted", other: true },
+  { channelType: "dm", scope: "thread", status: "failed", other: true },
+  { channelType: "stream", scope: "thread", status: "failed", other: false },
+])(
+  "tells each thread a steered turn took in that it $status ($channelType/$scope, other thread: $other)",
+  async ({ channelType, scope, status, other }) => {
+    const f = fixture();
+    vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+      status: "ready",
+      channels: [{ id: "channel", name: "test", channelType }],
+    });
+    const otherRoot = "e".repeat(64);
+    const first = f.delivery("WORK_A");
+    await f.runtime.run({
+      ...first,
+      config: { ...(first.config as object), scope },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const steered = f.delivery("WORK_B", other ? otherRoot : root);
+    await f.runtime.run({
+      ...steered,
+      config: { ...(steered.config as object), scope },
+    });
+    await vi.waitFor(() =>
+      expect(
+        f.sent.filter((wire) => wire.method === "turn/steer"),
+      ).toHaveLength(1),
+    );
+    if (status === "interrupted") f.interrupt();
+    else
+      f.emit({
+        method: "turn/completed",
+        params: {
+          threadId: (f.starts()[0]?.params as { threadId: string } | undefined)
+            ?.threadId,
+          turn: {
+            id: "turn-1",
+            status: "failed",
+            error: { message: "model busy" },
+          },
+        },
+      });
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe(
+        status === "interrupted" ? "Interrupted" : "Needs attention",
+      ),
+    );
+    const notices = f.publish.mock.calls.map(([template]) => {
+      const { content, tags } = template as {
+        content: string;
+        tags: string[][];
+      };
+      return { content, root: tags.find((tag) => tag[0] === "e")?.[1] };
+    });
+    const content =
+      status === "interrupted"
+        ? "Codex’s turn was interrupted. Send another mention to continue."
+        : "Codex could not finish: model busy.";
+    expect(notices).toEqual(
+      (other ? [root, otherRoot] : [root]).map((thread) => ({
+        content,
+        root: thread,
+      })),
+    );
+  },
+);
+it("tells only the steered thread when the thread that started the turn already has its final reply", async () => {
+  const f = fixture();
+  vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [{ id: "channel", name: "test", channelType: "dm" }],
+  });
+  const otherRoot = "e".repeat(64);
+  await f.runtime.run(f.delivery("WORK_A"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.tool("send", { audience: "everyone", text: "A done", final: true });
+  await f.runtime.run(f.delivery("WORK_B", otherRoot));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  const [answer, ...notices] = f.publish.mock.calls.map(([event]) => {
+    const { content, tags } = event as { content: string; tags: string[][] };
+    return [content, tags.find((tag) => tag[0] === "e")?.[1]];
+  });
+  expect(answer?.[0]).toBe("A done");
+  expect(notices).toEqual([
+    [
+      "Codex’s turn was interrupted. Send another mention to continue.",
+      otherRoot,
+    ],
+  ]);
+});
+it("tells the starting thread once when a steered thread's interruption notice is refused", async () => {
+  const f = fixture();
+  vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [{ id: "channel", name: "test", channelType: "dm" }],
+  });
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  const otherRoot = "e".repeat(64);
+  await f.runtime.run(f.delivery("WORK_A"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.runtime.run(f.delivery("WORK_B", otherRoot));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  f.publish.mockImplementation(async (event) => {
+    if (JSON.stringify(event).includes(otherRoot))
+      throw new Error("Signing rejected");
+    return { ...(event as object), id: "d".repeat(64) };
+  });
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  expect(
+    f.publish.mock.calls.map(
+      ([event]) => (event as { content: string }).content,
+    ),
+  ).toEqual([
+    "Codex’s turn was interrupted. Send another mention to continue.",
+    "Codex’s turn was interrupted. Send another mention to continue.",
+  ]);
+  expect(logged).toHaveBeenCalledWith(
+    "Codex could not publish its failure",
+    expect.objectContaining({ message: "Signing rejected" }),
+  );
+});
 it("refreshes a queued plugin wake's instructions when its turn starts", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("@Codex first"));

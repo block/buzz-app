@@ -2697,6 +2697,26 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
+    // Each thread the turn still owes a final reply hears how it ended, once.
+    // When every request was answered, the latest still hears it.
+    const notify = (content: string) => {
+      const open = active.requests.filter(
+        (taken) => taken.finalDelivery !== true,
+      );
+      return Promise.all(
+        (open.length ? open : active.requests.slice(-1))
+          .filter(
+            (taken, index, all) =>
+              all.findIndex((other) => other.replyRoot === taken.replyRoot) ===
+              index,
+          )
+          .map((taken) =>
+            this.publish(taken, content).catch((failure) =>
+              console.error("Codex could not publish its failure", failure),
+            ),
+          ),
+      );
+    };
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;
@@ -2857,8 +2877,7 @@ export class CodexRuntime {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);
-        await this.publish(
-          active.reply,
+        await notify(
           "Codex’s turn was interrupted. Send another mention to continue.",
         );
         this.status(agent.key, key, "Interrupted");
@@ -2895,9 +2914,7 @@ export class CodexRuntime {
       const why = explain?.();
       if (!signal.aborted) {
         const reason = `Codex could not finish: ${message(error)}.`;
-        await this.publish(active.reply, reason).catch((failure) =>
-          console.error("Codex could not publish its failure", failure),
-        );
+        await notify(reason);
         // The denied input may have shaped the provider's reason, so it shows
         // only on the owner's Activity tab, never in the thread agents read.
         this.status(

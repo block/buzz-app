@@ -739,8 +739,17 @@ available rather than silently discarding it.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there (or when creating a Claude agent), once for every Claude agent. Buzz
-  keeps it in the system's secure credential store (Keychain on macOS) and
+  there, once for every Claude agent. When creating a Claude agent or editing
+  one that runs on this computer, click **Add key** beside **Harness** to open
+  **Set up Claude**. Builds with interactive authentication show **Sign in**
+  instead. Selecting Claude does not open setup automatically; closing setup
+  keeps Claude selected. An interactive sign-in continues if you navigate Back;
+  returning to creation restores its pending controls with **Cancel**, without
+  starting another sign-in. Explicitly closing setup cancels a pending sign-in.
+  **Model**, **Thinking**, and agent creation wait until credentials are saved.
+  Agents on execution targets use that target's credentials, not a key on this
+  computer. Buzz keeps the API key in the system's secure credential store
+  (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Commands a
   Claude agent runs inherit it, so they can read the key. Until a key is
   saved, Claude agents don't answer and Claude reviews fail closed.

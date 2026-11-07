@@ -77,6 +77,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 // ClaudeAuth has a sign-in step, which here saves the credentials.
 const interactive = vi.hoisted(() => ({
   signIn: false,
+  /** Exercise setup's real process-step and cancellation path. */
+  process: false,
   /** Holds sign-in open until it is called. */
   hold: undefined as Promise<void> | undefined,
 }));
@@ -84,8 +86,10 @@ vi.mock("./auth", async (actual) => {
   const real = await actual<typeof import("./auth")>();
   class ClaudeAuth extends real.ClaudeAuth {
     override readonly signIn = interactive.signIn
-      ? async () => {
-          await interactive.hold;
+      ? async (step: import("./auth").Step) => {
+          if (interactive.process)
+            await step("claude", ["auth", "login"], "Sign-in");
+          else await interactive.hold;
           nativeKey.saved = true;
         }
       : undefined;
@@ -254,7 +258,8 @@ function applied({
     const streaming = args.includes("--input-format stream-json");
     let kill: () => void = () => undefined;
     const exited = new Promise<number | null>((resolve) => {
-      if (name === "install" || streaming) kill = () => resolve(null);
+      if (name === "install" || streaming || args === "auth login")
+        kill = () => resolve(null);
       else setTimeout(() => resolve(missing ? 127 : 0), 0);
     });
     queueMicrotask(() =>
@@ -1876,6 +1881,71 @@ it("stops a sign-in still running when Set up Claude closes", async () => {
   } finally {
     release();
     interactive.hold = undefined;
+    interactive.signIn = false;
+    cancel.mockRestore();
+  }
+});
+
+it("restores pending sign-in controls after unmount and can cancel and retry", async () => {
+  interactive.signIn = true;
+  interactive.process = true;
+  const cancel = vi.spyOn(ClaudeSetup.prototype, "cancel");
+  let view: ReturnType<typeof render> | undefined;
+  const processes: { kill(): Promise<void> }[] = [];
+  try {
+    const { type, spawn } = installed({ keySaved: false });
+    const Action = type.CreateAction;
+    if (!Action) throw new Error("Missing creation action");
+    const user = userEvent.setup();
+    view = render(<Action disabled={false} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Add Claude API key" }),
+    );
+    let dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
+    await user.click(within(dialog).getByRole("button", { name: "Sign in" }));
+    const signIns = () =>
+      spawn.mock.calls.filter(
+        ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
+      );
+    await waitFor(() => expect(signIns()).toHaveLength(1));
+    const index = spawn.mock.calls.findIndex(
+      ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
+    );
+    const process = await spawn.mock.results[index]?.value;
+    if (!process) throw new Error("Sign-in process missing");
+    processes.push(process);
+    const kill = vi.spyOn(process, "kill");
+    view.unmount();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(kill).not.toHaveBeenCalled();
+
+    view = render(<Action disabled={false} />);
+    dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
+    expect(
+      within(dialog).queryByRole("button", { name: "Sign in" }),
+    ).toBeNull();
+    expect(signIns()).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await process.exited;
+    expect(kill).toHaveBeenCalledTimes(1);
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Sign in" }),
+    );
+    await waitFor(() => expect(signIns()).toHaveLength(2));
+    const secondIndex = spawn.mock.calls.findIndex(
+      ([, options], next) =>
+        next > index && options?.args?.slice(-2).join(" ") === "auth login",
+    );
+    const secondProcess = await spawn.mock.results[secondIndex]?.value;
+    if (!secondProcess) throw new Error("Second sign-in process missing");
+    processes.push(secondProcess);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await within(dialog).findByRole("button", { name: "Sign in" });
+    expect(nativeKey.saved).toBe(false);
+  } finally {
+    for (const process of processes) await process.kill();
+    view?.unmount();
+    interactive.process = false;
     interactive.signIn = false;
     cancel.mockRestore();
   }

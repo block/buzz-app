@@ -587,7 +587,10 @@ export function createTabs({
   }) {
     const { state, signedOut } = useCredentials(agent);
     const notify = useToastNotification();
-    const [open, setOpen] = useState(false);
+    // Passive Back may have hidden the action while its provider kept working.
+    const [open, setOpen] = useState(
+      () => signedOut && state.running === "sign-in",
+    );
     const openNow = useRef(open);
     openNow.current = open;
     const notifyNow = useRef(notify);
@@ -620,6 +623,13 @@ export function createTabs({
         <Dialog
           open={open && signedOut}
           title="Set up Claude"
+          actions={
+            signingIn && (
+              <Button variant="ghost" onClick={() => void setup.cancel()}>
+                Cancel
+              </Button>
+            )
+          }
           onOpenChange={(next) => {
             setOpen(next);
             if (!next && setup.snapshot().running === "sign-in")

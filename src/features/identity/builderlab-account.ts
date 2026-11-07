@@ -4,6 +4,7 @@ import { oauthTarget } from "../../bundled/builderlab/oauth/browser";
 import type { Credential } from "../../bundled/builderlab/session";
 import {
   ApiFailure,
+  backedUpKeyList,
   boundKey,
   check,
   quota,
@@ -302,11 +303,7 @@ function backedUpKeys(response: HostResponse) {
   } catch {
     return undefined;
   }
-  if (!Array.isArray(keys)) return undefined;
-  const listed = keys.map((key) =>
-    typeof key === "string" ? boundKey({ pubkey_hex: key }) : null,
-  );
-  return listed.every((key) => key !== null) ? listed : undefined;
+  return backedUpKeyList(keys);
 }
 
 function owned(community: NonNullable<Reply["communities"]>[number]) {

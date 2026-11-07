@@ -200,6 +200,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         api={communities}
         active={active}
         sharedSignIn
+        onRestore={() => openSettings("identity")}
       />
     ) : null;
   };

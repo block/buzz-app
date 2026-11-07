@@ -144,6 +144,53 @@ it("forwards only allowlisted fields to the configured Builderlab", async () => 
   );
 });
 
+it("reads backed-up keys only where native backup allows Builderlab", async () => {
+  let builderlab = false;
+  const status = { body: { backup_nostr_pubkeys: ["a".repeat(64)] } };
+  const { backend, signIn, requests } = setup(
+    { ...signedIn, "/v1/buzz/nsec-backups/status": status },
+    { nsec_backup_state: () => ({ builderlab }) },
+  );
+  await signIn();
+  await expect(backend.send("backups")).resolves.toEqual({
+    status: 200,
+    value: {},
+  });
+  expect(requests.some(({ url }) => url.includes("nsec-backups"))).toBe(false);
+  builderlab = true;
+  await expect(backend.send("backups")).resolves.toEqual({
+    status: 200,
+    value: status.body,
+  });
+  expect(requests.at(-1)).toMatchObject({
+    url: `${API}/v1/buzz/nsec-backups/status`,
+    method: "POST",
+    body: "{}",
+  });
+});
+
+it("does not read backups for a sign-in that replaced the one that asked", async () => {
+  let answer: (state: { builderlab: boolean }) => void = () => {};
+  const { backend, signIn, requests } = setup(
+    {
+      ...signedIn,
+      "/v1/buzz/nsec-backups/status": { body: { backup_nostr_pubkeys: [] } },
+    },
+    {
+      nsec_backup_state: () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    },
+  );
+  await signIn("first");
+  const read = backend.send("backups");
+  await signIn("second");
+  answer({ builderlab: true });
+  await expect(read).rejects.toThrow("Builderlab session changed");
+  expect(requests.some(({ url }) => url.includes("nsec-backups"))).toBe(false);
+});
+
 it("passes structured errors through with their status and rejects others", async () => {
   let reply: Reply = {
     status: 409,

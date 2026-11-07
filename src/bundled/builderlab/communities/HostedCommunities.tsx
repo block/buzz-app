@@ -31,6 +31,7 @@ import {
 } from "../../../shared/design-system/icons";
 import {
   ApiFailure,
+  backedUpKeyList,
   boundKey,
   check,
   clearPendingDeletion,
@@ -70,11 +71,14 @@ export function HostedCommunities({
   api,
   active,
   sharedSignIn = false,
+  onRestore,
 }: {
   api: Api;
   active(): boolean;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
+  /** Opens where Buzz signs out, so first run can restore the account's backed-up key. */
+  onRestore?: (() => void) | undefined;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -381,6 +385,25 @@ export function HostedCommunities({
     Boolean(identity) && (!bound || (Boolean(local) && bound !== local));
   // Acting requires this device's key to be known and to match the account's.
   const ready = bound !== null && bound === local;
+  // Whether the account's key, not this device's, is backed up, by first
+  // run's rule. A failed read hides restore.
+  const [backedUp, setBackedUp] = useState(false);
+  const restorable = Boolean(onRestore && mismatch && bound && local);
+  useEffect(() => {
+    setBackedUp(false);
+    if (!restorable) return;
+    let current = true;
+    api
+      .call("backups")
+      .then((reply) => {
+        const keys = backedUpKeyList(reply.backup_nostr_pubkeys);
+        if (current && keys && bound) setBackedUp(keys.includes(bound));
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [api, restorable, bound]);
   const deletionEnabled =
     auth?.capabilities?.can_delete_buzz_communities === true;
   // A handoff belongs to the bound identity: whenever it changes, by a local
@@ -612,6 +635,18 @@ export function HostedCommunities({
                 >
                   Switch to this device’s identity
                 </Button>
+                {backedUp && onRestore && (
+                  <>
+                    <p className="text-body-sm text-muted">
+                      The account’s key is backed up. To use it on this device,
+                      save this device’s key, sign out of Buzz, then sign in
+                      with the same Builderlab account when Buzz opens again.
+                    </p>
+                    <Button disabled={busy} onClick={onRestore}>
+                      Open Identity to sign out
+                    </Button>
+                  </>
+                )}
               </section>
             ) : (
               <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-body-sm">

@@ -255,6 +255,33 @@ it.each([
     });
   },
 );
+it("rejects an invisible name and clears the field error when it gains content", async () => {
+  const user = userEvent.setup();
+  const onCreate = vi.fn(async () => {});
+  render(
+    <CreateChannelDialog
+      {...setupProps()}
+      open
+      onOpenChange={() => {}}
+      onCreate={onCreate}
+    />,
+  );
+  const name = screen.getByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "\u200b" } });
+  expect(name).toHaveAttribute("aria-invalid", "true");
+  expect(name).toHaveAccessibleDescription(/at least one visible character/);
+  expect(screen.getByRole("button", { name: "Create channel" })).toBeDisabled();
+  await user.keyboard("{Enter}");
+  expect(onCreate).not.toHaveBeenCalled();
+  fireEvent.change(name, { target: { value: "👩‍💻" } });
+  expect(name).not.toHaveAttribute("aria-invalid", "true");
+  await user.click(screen.getByRole("button", { name: "Create channel" }));
+  expect(onCreate).toHaveBeenCalledExactlyOnceWith({
+    name: "👩‍💻",
+    visibility: "open",
+  });
+});
+
 it("caps the description at 1,000 characters", async () => {
   const user = userEvent.setup();
   render(

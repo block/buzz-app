@@ -3653,6 +3653,39 @@ it("catch-up reads a viewed mention but replaces only ordinary message marks", a
   expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
 });
 
+it("catch-up does not read a mention arriving while its activity save commits", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([channelMetadata(h, "stream")]);
+  const retained = message(h.alice, "room", "retained mention", 11, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const bottom = message(h.alice, "room", "bottom", 30);
+  h.emit([retained, bottom]);
+  await flush();
+  const lease = h.session.unread.reading("room");
+  const held = h.holdCommit();
+  const pending = lease.catchUp(bottom.id);
+  await held.committed;
+  const incoming = message(h.alice, "room", "later arrival", 12, [
+    ["p", h.viewer.pubkey],
+  ]);
+  try {
+    h.emit([incoming]);
+    expect(h.session.unread.attention("room", incoming.id).unread).toBe(true);
+  } finally {
+    held.release();
+  }
+  await pending;
+  expect(h.session.unread.attention("room", retained.id).unread).toBe(false);
+  expect(h.session.unread.attention("room", incoming.id).unread).toBe(true);
+  expect(h.journal()?.state.frontiers).not.toHaveProperty(`msg:${incoming.id}`);
+  // Its own later observation can still read it.
+  await lease.observe([incoming.id]);
+  expect(h.session.unread.attention("room", incoming.id).unread).toBe(false);
+  lease.dispose();
+});
+
 it("catch-up leaves a mention marked unread unread", async () => {
   const h = setup();
   h.grant("room");

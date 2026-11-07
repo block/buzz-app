@@ -110,6 +110,33 @@ it("edits deliberately, cancels every field, and sends all fields only on Save",
     expect(screen.getByRole("button", { name: "Edit details" })).toHaveFocus(),
   );
 });
+it("blocks an invisible rename and preserves a corrected Unicode name", async () => {
+  const h = harness();
+  const user = userEvent.setup();
+  render(
+    <ChannelDetailsEditor
+      scope="community:viewer"
+      capability={h.capability}
+      channel={channel}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit details" }));
+  const name = screen.getByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "\u200b" } });
+  expect(name).toHaveAttribute("aria-invalid", "true");
+  expect(name).toHaveAccessibleDescription(/at least one visible character/);
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await user.keyboard("{Enter}");
+  expect(h.save).not.toHaveBeenCalled();
+  fireEvent.change(name, { target: { value: "👩‍💻" } });
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.save).toHaveBeenCalledWith(
+    base,
+    { ...base, name: "👩‍💻" },
+    expect.any(AbortSignal),
+  );
+});
+
 it("retains rejected edits and preserves them through an explicit authority reload", async () => {
   const h = harness();
   const user = userEvent.setup();

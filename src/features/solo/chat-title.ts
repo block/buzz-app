@@ -1,7 +1,10 @@
 import { stageChatCards } from "../messages/composer-chat-cards";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
-import { canonicalDetailsName } from "../relay/channel-details-protocol";
+import {
+  canonicalDetailsName,
+  channelNameHasContent,
+} from "../relay/channel-details-protocol";
 import { isBuzzLink } from "../navigation/buzz-links";
 import { scanMarkdown } from "../relay/message-content";
 
@@ -50,18 +53,17 @@ function chatTitle(
   // A link-only prompt falls back to its cards, then "Chat".
   const source =
     withoutLeadingBuzzLinks(body) || (draft.chatCards ?? []).join("\n\n");
-  return (
-    canonicalDetailsName(
-      [
-        ...(readableLinks ? readableLinkLabels(source) : source).replace(
-          /\s+/g,
-          " ",
-        ),
-      ]
-        .slice(0, 80)
-        .join(""),
-    ) || "Chat"
+  const title = canonicalDetailsName(
+    [
+      ...(readableLinks ? readableLinkLabels(source) : source).replace(
+        /\s+/g,
+        " ",
+      ),
+    ]
+      .slice(0, 80)
+      .join(""),
   );
+  return channelNameHasContent(title) ? title : "Chat";
 }
 
 /** Project link labels only; code and unrelated authored source remain literal. */

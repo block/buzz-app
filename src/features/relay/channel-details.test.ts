@@ -6,6 +6,7 @@ import {
   channelJoinRole,
   canonicalDetailsName,
   detailsSettings,
+  detailsDraftErrors,
   detailsTemplate,
   validateDetailsTemplate,
 } from "./channel-details-protocol";
@@ -14,6 +15,8 @@ import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { ReadFilter } from "./events";
+
+import nameCases from "./channel-names.fixture.json";
 
 const key = new Uint8Array(32).fill(2),
   relayKey = new Uint8Array(32).fill(3);
@@ -1157,3 +1160,34 @@ it("keeps a region label when an editor replaces the label set with empty", asyn
   await h.owner.capability.save(base, { ...base, labels: [] });
   expect((await h.owner.capability.load(id)).labels).toEqual([region]);
 });
+
+// Same cases as buzz-core/tests/fixtures/channel-names.json.
+it.each(nameCases.invalid)(
+  "rejects a name without visible content: %j",
+  (name) => {
+    expect(detailsDraftErrors({ ...draft, name }).name).toMatch(/channel name/);
+    const command = detailsTemplate(id, draft, draft);
+    command.tags[1] = ["name", name];
+    expect(() => validateDetailsTemplate(command)).toThrow(/channel name/);
+  },
+);
+it.each(nameCases.valid)("preserves valid Unicode in a rename: %j", (name) => {
+  expect(detailsDraftErrors({ ...draft, name }).name).toBeUndefined();
+  expect(detailsTemplate(id, { ...draft, name }, draft).tags).toContainEqual([
+    "name",
+    name,
+  ]);
+});
+it.each(["\u200b", "\u200c\u200d", "\ufe0f"])(
+  "rejects invisible renames before signing: %j",
+  async (name) => {
+    const h = harness();
+    const base = await h.owner.capability.load(id);
+    await expect(
+      h.owner.capability.save(base, { ...draft, name }),
+    ).rejects.toThrow(/visible character/);
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  },
+);

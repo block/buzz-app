@@ -1,4 +1,7 @@
-import { canonicalDetailsName } from "./channel-details-protocol";
+import {
+  canonicalDetailsName,
+  channelNameHasContent,
+} from "./channel-details-protocol";
 import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
@@ -614,6 +617,10 @@ export function createChannelWrites(
       const about = description?.trim();
       if (!name || [...name].length > 120)
         throw new Error("Use a channel name between 1 and 120 characters.");
+      if (!channelNameHasContent(name))
+        throw new Error(
+          "Enter a channel name with at least one visible character.",
+        );
       if (about && [...about].length > 1000)
         throw new Error("Keep the channel description under 1,000 characters.");
       if (options.labels?.includes(SOLO_LABEL))
@@ -658,6 +665,10 @@ export function createChannelWrites(
       if (!channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
+      if (!channelNameHasContent(canonicalDetailsName(title)))
+        throw new Error(
+          "Enter a chat name with at least one visible character.",
+        );
       if (
         ttlSeconds !== undefined &&
         (!Number.isInteger(ttlSeconds) ||

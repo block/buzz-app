@@ -25,7 +25,10 @@ import { bindNames, type IdentityNames } from "../identity-names/service";
 import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
-import { canonicalDetailsName } from "./channel-details-protocol";
+import {
+  canonicalDetailsName,
+  channelNameHasContent,
+} from "./channel-details-protocol";
 import { channelIdentityUnsupported } from "./channel-labels";
 import { createWorkflows } from "../workflows/capability";
 import {
@@ -2078,7 +2081,7 @@ export function createRelaySession(
           canvasHead: async (id) => (await channelKit.canvas.read(id))?.id,
           async preflight(input) {
             if (
-              !canonicalDetailsName(input.name) ||
+              !channelNameHasContent(canonicalDetailsName(input.name)) ||
               [...canonicalDetailsName(input.name)].length > 120 ||
               (input.description && [...input.description].length > 1000) ||
               !["open", "private"].includes(input.visibility) ||

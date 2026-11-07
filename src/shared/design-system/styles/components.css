@@ -514,7 +514,8 @@
     margin-inline-start: -1px;
   }
   /* The focused half's ring stays above its neighbour. */
-  .buzz-split-button > .buzz-button:focus-visible {
+  .buzz-split-button > .buzz-button:focus-visible,
+  :where(.buzz-dialog) .buzz-split-button > .buzz-button:focus {
     z-index: 1;
   }
   /* Preserve fill avatars and pointer-origin Tab traversal in WebKit. */

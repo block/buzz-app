@@ -373,6 +373,10 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
+- **Search while offline**: while a community is offline or still connecting,
+  search finds and opens the conversations saved on this device, and a line
+  under the results says so. Messages, people and open channels are searched
+  once it connects; while it is offline, **Retry connection** tries again.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still

@@ -585,6 +585,34 @@ it("hides cached marks on successful disable, retains history, and reconciles af
   }
 });
 
+it("starts a new authority when a refresh changes whether search returns heads", async () => {
+  vi.useFakeTimers();
+  const searchable = { ...authority, searchable: true as const };
+  const refresh = vi
+    .fn<(_signal: AbortSignal) => Promise<VerifiedProfileAuthority | null>>()
+    .mockResolvedValueOnce(searchable)
+    .mockResolvedValueOnce(searchable)
+    .mockResolvedValueOnce(authority);
+  const h = harness(refresh);
+  try {
+    h.directory.ensure([alice.pubkey]); // refreshes run while someone is wanted
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    const first = h.directory.authority();
+    expect(first).toEqual(searchable);
+    // An equal refresh keeps the object.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(h.directory.authority()).toBe(first);
+    // Dropping the flag must not leave a searchable authority behind.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(refresh).toHaveBeenCalledTimes(3);
+    expect(h.directory.authority()).toEqual(authority);
+    expect(h.directory.authority()).not.toBe(first);
+  } finally {
+    h.directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
 it("preserves the last successful discovery on failed or malformed refresh, with cache disclosure", async () => {
   vi.useFakeTimers();
   const refresh = vi

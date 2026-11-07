@@ -375,7 +375,7 @@ function ChannelGeneralAccessEditor({
                       ? "Only chat members will have access."
                       : privacyConsequence(choice.visibility)
                   : "",
-              solo && choice.visibility === "private"
+              (solo || policy) && choice.visibility === "private"
                 ? soloRetainedAccessWarning(base, mayHaveGuestMembers)
                 : "",
               solo &&

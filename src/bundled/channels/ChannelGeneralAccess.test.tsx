@@ -593,7 +593,7 @@ const recordPolicy = {
   visibilityDescription: (visibility: "private" | "public") =>
     visibility === "public"
       ? "Everyone can read this record and its retained revisions."
-      : "Only invited people can read this record.",
+      : "Only record members can read this record.",
 };
 
 it("uses plugin policy for choices and disclosure while saving fresh signed details", async () => {
@@ -662,10 +662,14 @@ it.each(["Private", "View only"])(
     expect(confirm).toHaveTextContent(
       "You won’t be able to switch back to Public here.",
     );
-    if (option === "Private")
+    if (option === "Private") {
       expect(confirm).toHaveTextContent(
         recordPolicy.visibilityDescription("private"),
       );
+      expect(confirm).toHaveTextContent(
+        "People who already joined remain members and keep their access until you remove them in People.",
+      );
+    }
     expect(h.save).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(control).toHaveFocus());
@@ -690,6 +694,30 @@ it.each(["Private", "View only"])(
     expect(
       screen.queryByRole("option", { name: "Public" }),
     ).not.toBeInTheDocument();
+  },
+);
+
+it.each([undefined, true, false])(
+  "discloses retained plugin View only readers unless Guests are ruled out: %s",
+  async (mayHaveGuestMembers) => {
+    const h = harness();
+    const user = userEvent.setup();
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        policy={recordPolicy}
+        {...(mayHaveGuestMembers === undefined ? {} : { mayHaveGuestMembers })}
+      />,
+    );
+    await select(user, "General access", "Private");
+    const confirm = await screen.findByRole("alertdialog");
+    const warning =
+      "People who joined while it was View only are members and keep reading until you remove them in People.";
+    if (mayHaveGuestMembers === false)
+      expect(confirm).not.toHaveTextContent(warning);
+    else expect(confirm).toHaveTextContent(warning);
+    expect(h.save).not.toHaveBeenCalled();
   },
 );
 

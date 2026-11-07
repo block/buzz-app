@@ -126,7 +126,7 @@ return h(ctx.conversation.ui.MembersDialog, {
       allowPublic: false,
       visibilityDescription: (visibility) => visibility === "public"
         ? "Everyone in this community can read this record and its revisions."
-        : "Only invited people can read this record.",
+        : "Only record members can read this record.",
     },
   }),
 });
@@ -152,7 +152,11 @@ GeneralAccess policy supplies a generic subject and visibility-change disclosure
 `allowPublic: false` removes Public participation while keeping Private and View
 only. Existing Public access is displayed as Public; reducing it confirms that
 the picker cannot restore it. Its capability retains signed fresh-read, save and
-uncertain-write recovery behavior. Copy link uses `shareLink` and grants no access. Omitted overrides preserve chat/channel
+uncertain-write recovery behavior. Switching to Private also warns that people
+who already joined keep access until removed in People. Pass
+`mayHaveGuestMembers: false` only when signed roles verify there are no Guests;
+this suppresses the View only reader warning, never the Public member warning.
+Copy link uses `shareLink` and grants no access. Omitted overrides preserve chat/channel
 behavior. Hosts predating this extension lack the two UI entries; check their
 presence before offering sharing when supporting those hosts.
 

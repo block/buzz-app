@@ -228,17 +228,19 @@ impl OwnerMedia {
         }
     }
     /// Drops every read and body, as a new page or a closed window starts none.
+    /// A publication already writing keeps its body counted until it drops it.
     pub(crate) fn clear(&self) {
         let mut state = self.lock();
-        for (_, op) in state.ops.drain() {
-            if let Op::Fetching {
-                cancel: Some(cancel),
-                ..
-            } = op
-            {
-                let _ = cancel.send(());
+        state.ops.retain(|_, op| match op {
+            Op::Fetching { cancel, .. } => {
+                if let Some(cancel) = cancel.take() {
+                    let _ = cancel.send(());
+                }
+                false
             }
-        }
+            Op::Staged(_) => false,
+            Op::Publishing { .. } => true,
+        });
         state.cancelled.clear();
     }
     /// Holds the next publication at `at`: returns its arrival and its release.

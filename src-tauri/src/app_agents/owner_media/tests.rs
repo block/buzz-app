@@ -339,8 +339,10 @@ fn a_staged_body_is_taken_once_by_its_own_agent_before_it_expires() {
     let taken = media.take("a", "agent", relay).unwrap();
     assert_eq!(taken.body, PNG.as_bytes());
     assert_eq!(media.take("a", "agent", relay).err().unwrap(), NOTHING);
-    // Until its publication drops it, the body still counts, even past a discard.
+    // Until its publication drops it, the body still counts, even past a
+    // discard or a reload.
     media.discard("a");
+    media.clear();
     let counted = (1, taken.body.capacity() as u64);
     assert_eq!(media.held(), counted);
     drop(taken);

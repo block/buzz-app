@@ -1711,7 +1711,8 @@ terminal, which keeps Escape and Option+Arrow for the shell.
   conversation is not among the rows, next starts from the top and previous from the
   bottom. A conversation listed in two sections is stepped over once. The shortcuts
   are unavailable, leaving the key alone, while the sidebar renders no rows (for
-  example behind another page's own sidebar). Stepping activates the row's own
+  example behind another page's own sidebar) or focus is in a text field outside the
+  composer, which keeps Option+Arrow for editing. Stepping activates the row's own
   button, so it takes the exact path of a click: the saved selection, navigation
   intent, session staleness guard and Solo's immediate activation. The list scrolls
   just far enough to show the row, and nothing above it moves.

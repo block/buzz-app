@@ -131,7 +131,7 @@ it.each([false, true])(
       const head = wire.next();
       // Pages leave notices out, so joins cannot crowd messages from them.
       expect([...(head.filters[0]?.kinds ?? [])].sort((a, b) => a - b)).toEqual(
-        [9, 40002, 40008, 48100, 48103],
+        [9, 40002, 40008, 45001, 45003, 48100, 48103],
       );
       const hello = message(viewer, "a", "Hello", 20);
       head.respond([

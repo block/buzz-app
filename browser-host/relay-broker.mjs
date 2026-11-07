@@ -579,7 +579,9 @@ export function validMessageDeletion(event) {
     new Set(targets.map(([, id]) => id)).size === targets.length &&
     kinds.length > 0 &&
     kinds.length <= 3 &&
-    kinds.every(([, kind]) => ["7", "9", "40002"].includes(kind))
+    kinds.every(([, kind]) =>
+      ["7", "9", "40002", "45001", "45003"].includes(kind),
+    )
   );
 }
 

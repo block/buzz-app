@@ -24,9 +24,9 @@ const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
 /** The relay's `thread_window` row allowlist excludes legacy diffs (kind 40008). */
-const STRICT_WINDOW_KINDS = [9, 40002];
+const STRICT_WINDOW_KINDS = [9, 40002, 45001, 45003];
 const contentKind = (event: EventData) =>
-  [9, 40002, 40008].includes(event.kind);
+  [9, 40002, 40008, 45001, 45003].includes(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
 /** Relay thread-cursor order (seconds, id); rendered order is `compareMessages`. */
@@ -684,7 +684,7 @@ export function createThreadView({
         page++
       ) {
         const filter: ReadFilter = {
-          kinds: [9, 40002, 40008],
+          kinds: [9, 40002, 40008, 45001, 45003],
           "#h": [channelId],
           "#e": [rootId],
           depth_limit: 100,

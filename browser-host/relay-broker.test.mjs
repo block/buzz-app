@@ -4,7 +4,45 @@ import {
   createUpstream,
   validFilters,
   validMessageTemplate,
+  validMessageDeletion,
 } from "./relay-broker.mjs";
+
+test("forum deletion uses the bounded message-deletion host capability", () => {
+  const event = {
+    kind: 5,
+    content: "",
+    created_at: 123,
+    tags: [
+      ["h", "forum"],
+      ["e", "a".repeat(64)],
+      ["k", "45001"],
+    ],
+  };
+  for (const kind of ["7", "9", "40002", "45001", "45003"]) {
+    event.tags[2][1] = kind;
+    assert.equal(validMessageDeletion(event), true);
+  }
+  for (const kind of ["45002", "30620", "0", "45003:extra"]) {
+    event.tags[2][1] = kind;
+    assert.equal(validMessageDeletion(event), false);
+  }
+  event.tags[2][1] = "45003";
+  assert.equal(validMessageDeletion({ ...event, content: "not empty" }), false);
+  assert.equal(
+    validMessageDeletion({
+      ...event,
+      tags: event.tags.filter(([tag]) => tag !== "h"),
+    }),
+    false,
+  );
+  assert.equal(
+    validMessageDeletion({
+      ...event,
+      tags: [...event.tags, ["e", "a".repeat(64)]],
+    }),
+    false,
+  );
+});
 
 test("read broker accepts non-channel finite reads without relaxing filter budgets", () => {
   for (const filter of [

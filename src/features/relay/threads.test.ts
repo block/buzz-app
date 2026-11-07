@@ -380,7 +380,7 @@ it("keeps exact forward page cursors separate from concurrent live rows and auxi
   expect(page.filters).toEqual([
     { ids: [root.id], "#h": ["a"], limit: 1 },
     {
-      kinds: [40002, 40008, 9],
+      kinds: [40002, 40008, 45001, 45003, 9],
       "#h": ["a"],
       "#e": [root.id],
       depth_limit: 100,
@@ -434,7 +434,7 @@ it("pages same-second ties, counts non-rendered content and keeps short pages co
     thread_cursor_id: tied[1]?.id,
   });
   const other = signed(alice, {
-    kind: 45003,
+    kind: 45002,
     content: "other content kind",
     created_at: 11,
     tags: [

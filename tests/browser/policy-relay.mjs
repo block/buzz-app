@@ -230,7 +230,7 @@ export function policyRelay({
             limit: 1,
           });
           expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([
-            9, 40002, 40008,
+            9, 40002, 40008, 45001, 45003,
           ]);
           for (const filter of filters)
             report.queries.push({

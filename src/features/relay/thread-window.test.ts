@@ -33,7 +33,7 @@ function bounds(
         "relay.example:8443",
         viewer.pubkey,
         channel,
-        root.id,
+        filter["#e"]?.[0],
         filter.limit,
         filter.depth_limit ?? 100,
         [...new Set(filter.kinds)].sort((a, b) => a - b),
@@ -47,7 +47,7 @@ function bounds(
     tags: [
       ["d", `tw:1:${digest}`],
       ["h", channel],
-      ["e", root.id],
+      ["e", filter["#e"]?.[0] ?? root.id],
     ],
     content: JSON.stringify({
       version: 1,
@@ -67,6 +67,7 @@ async function setup(
   answer: (
     filter: ReadFilter,
   ) => readonly RelayEvent[] | Promise<readonly RelayEvent[]>,
+  threadRoot = root,
 ) {
   const requests: ReadFilter[][] = [];
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
@@ -91,16 +92,80 @@ async function setup(
     },
   });
   cleanup.push(owner.dispose);
-  traffic.receive([root, roster(relay, channel, [viewer.pubkey])]);
+  traffic.receive([threadRoot, roster(relay, channel, [viewer.pubkey])]);
   return {
     ...owner,
     traffic,
     requests,
     fetcher,
-    view: owner.session.thread(channel, root.id),
+    view: owner.session.thread(channel, threadRoot.id),
     transport,
   };
 }
+it("reads a forum root and mixed forum/chat replies through signed windows with tied cursors", async () => {
+  const post = signed(author, {
+    kind: 45001,
+    content: "Forum",
+    created_at: 1,
+    tags: [["h", channel]],
+  });
+  const replies = [45003, 9, 45003]
+    .map((kind, index) =>
+      signed(author, {
+        kind,
+        content: `Comment ${index}`,
+        created_at: 10,
+        tags: [
+          ["h", channel],
+          ["e", post.id, "", "reply"],
+        ],
+      }),
+    )
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const first = replies[0];
+  assert.exists(first);
+  const h = await setup((filter) => {
+    if (filter.ids) return [post];
+    expect(filter.kinds).toEqual([40002, 45001, 45003, 9]);
+    const page = filter.before_id ? replies.slice(1) : [first];
+    return [
+      ...page,
+      bounds(
+        filter,
+        filter.before_id
+          ? null
+          : { created_at: first.created_at, id: first.id },
+      ),
+    ];
+  }, post);
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    root: { id: post.id },
+    canLoadMore: true,
+  });
+  const late = signed(author, {
+    kind: 45003,
+    content: "Live comment",
+    created_at: 20,
+    tags: [
+      ["h", channel],
+      ["e", post.id, "", "reply"],
+    ],
+  });
+  h.traffic.receive([late]);
+  await h.view.loadMore();
+  expect(h.requests.at(-1)?.[0]).toMatchObject({
+    thread_window: true,
+    until: 10,
+    before_id: first.id,
+  });
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+    ...replies.map((row) => row.id),
+    late.id,
+  ]);
+  expect(h.view.snapshot().canLoadMore).toBe(false);
+});
 it("matches the Rust binding vector and normalized authority, including IPv6 and ports", async () => {
   expect(
     await threadBinding(

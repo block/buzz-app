@@ -537,7 +537,7 @@ fn valid_message_deletion(event: &EventTemplate) -> bool {
         && (1..=3).contains(&kinds.len())
         && kinds
             .iter()
-            .all(|tag| matches!(tag[1].as_str(), "7" | "9" | "40002"))
+            .all(|tag| matches!(tag[1].as_str(), "7" | "9" | "40002" | "45001" | "45003"))
 }
 
 fn validate_workflow_template(event: &EventTemplate) -> Result<()> {

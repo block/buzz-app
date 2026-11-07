@@ -152,6 +152,23 @@ jobs:
         run: ./bin/node scripts/test-agent-command.mjs
       - name: Bundled buzz CLI
         run: ./bin/node scripts/test-buzz-cli.mjs
+
+  node_integration:
+    if: github.event_name != 'workflow_dispatch'
+    name: Node integration
+    runs-on: ubuntu-24.04
+    # Keep integration tests independent of the native compilation budget.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # Plugin CLI/bridge fixtures compile their own standalone Rust targets.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: node-integration
+          save-if: ${{ github.event_name == 'push' }}
       - name: All Node integration tests
         run: ./bin/node --test tests/integration/*.test.mjs
 
@@ -490,7 +507,7 @@ jobs:
   required:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
     if: always() && github.event_name != 'workflow_dispatch'
-    needs: [javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection]
+    needs: [javascript, native, node_integration, measurements, browser_fixture, browser, media_recorder, agent_protection]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -498,12 +515,13 @@ jobs:
         env:
           JAVASCRIPT: ${{ needs.javascript.result }}
           NATIVE: ${{ needs.native.result }}
+          NODE_INTEGRATION: ${{ needs.node_integration.result }}
           MEASUREMENTS: ${{ needs.measurements.result }}
           FIXTURE: ${{ needs.browser_fixture.result }}
           BROWSER: ${{ needs.browser.result }}
           MEDIA_RECORDER: ${{ needs.media_recorder.result }}
           AGENT_PROTECTION: ${{ needs.agent_protection.result }}
         run: |
-          for result in "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$FIXTURE" "$BROWSER" "$MEDIA_RECORDER" "$AGENT_PROTECTION"; do
+          for result in "$JAVASCRIPT" "$NATIVE" "$NODE_INTEGRATION" "$MEASUREMENTS" "$FIXTURE" "$BROWSER" "$MEDIA_RECORDER" "$AGENT_PROTECTION"; do
             test "$result" = success || exit 1
           done

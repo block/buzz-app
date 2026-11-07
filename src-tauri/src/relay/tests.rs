@@ -1081,6 +1081,10 @@ fn shared_kind_five_signer_accepts_message_and_reaction_deletion_only_in_broker_
     assert!(validate_event("https://relay.test", &event).is_ok());
     event.tags[2][1] = "40002".into();
     assert!(validate_event("https://relay.test", &event).is_ok());
+    for kind in ["45001", "45003"] {
+        event.tags[2][1] = kind.into();
+        assert!(validate_event("https://relay.test", &event).is_ok());
+    }
     event.tags[2][1] = "30620".into();
     assert!(validate_event("https://relay.test", &event).is_err());
     event.tags[2][1] = "9".into();

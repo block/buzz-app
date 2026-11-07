@@ -227,11 +227,11 @@ export function createMessages(
       throw new Error("Choose between 1 and 100 events to remove");
     const originals = ids.map((id) => {
       const event = find(id);
-      if (!event || ![7, 9, 40002].includes(event.kind))
+      if (!event || ![7, 9, 40002, 45001, 45003].includes(event.kind))
         throw new Error("Load the message or reaction before removing it");
       const agentOwnerRemoval =
         !!viewer &&
-        event.kind !== 7 &&
+        [9, 40002].includes(event.kind) &&
         messageAuthor(event, signingAuthority) === authorization?.agentId &&
         authorization.ownerId === viewer;
       if (
@@ -503,7 +503,10 @@ export function createMessages(
     report: publishReport
       ? (messageId: string, type: ReportType, note = "") => {
           const original = find(messageId);
-          if (!original || ![9, 40002, 40008].includes(original.kind))
+          if (
+            !original ||
+            ![9, 40002, 40008, 45001, 45003].includes(original.kind)
+          )
             return Promise.reject(
               new Error("Load the message before reporting it"),
             );

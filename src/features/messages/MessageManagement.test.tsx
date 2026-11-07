@@ -6,6 +6,10 @@ import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import type { ComposerInputElement } from "./composer-dom";
 import { MessageComposer } from "./MessageComposer";
+import { MessageRow } from "./MessageRow";
+import { lastEditableMessage } from "./useMessageEdit";
+import type { ComposerTool } from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import {
   act,
   cleanup,
@@ -82,7 +86,8 @@ async function fixture(
   {
     outboxStorage = { load: () => [], save() {} },
     viewer = keypair(),
-  }: { outboxStorage?: OutboxStorage; viewer?: Key } = {},
+    kind = 9,
+  }: { outboxStorage?: OutboxStorage; viewer?: Key; kind?: number } = {},
 ) {
   let role = viewerRole,
     rosterTime = 1700000000;
@@ -103,8 +108,9 @@ async function fixture(
         : agentOwner === "other"
           ? keypair()
           : undefined;
-  const original = message(
-    own ? viewer : (agent ?? peer),
+  const originalAuthor = own ? viewer : (agent ?? peer);
+  const template = message(
+    originalAuthor,
     "room",
     chatCard
       ? "[Session: Saved work](buzz://channel/source)"
@@ -127,6 +133,8 @@ async function fixture(
       ...(originalMention ? [["p", peer.pubkey]] : []),
     ],
   );
+  const original =
+    kind === 9 ? template : signed(originalAuthor, { ...template, kind });
   let agentProfile =
     agent && agentOwnerKey
       ? eventDto(
@@ -225,7 +233,7 @@ async function fixture(
         return [];
       },
       writer: {
-        kinds: [9, 40003, 5],
+        kinds: [9, 7, 40003, 5],
         async sign(template) {
           return signed(viewer, template);
         },
@@ -391,9 +399,13 @@ it("edits in the composer, retains a rejected change and retries the same operat
   );
 });
 
-it.each(["member", "guest"] as const)(
-  "offers confirmed owner-agent deletion and retry to a joined %s",
-  async (role) => {
+it.each(
+  (["member", "guest"] as const).flatMap((role) =>
+    [9, 40002, 45001, 45003].map((kind) => ({ role, kind })),
+  ),
+)(
+  "offers owner-agent deletion only for chat kinds ($role, kind $kind)",
+  async ({ role, kind }) => {
     const h = await fixture(
       false,
       false,
@@ -404,16 +416,29 @@ it.each(["member", "guest"] as const)(
       false,
       undefined,
       role,
+      { kind },
     );
-    const item = await screen.findByRole("menuitem", {
-      name: "Delete message",
-    });
     await waitFor(() =>
       expect(h.owner.session.profiles.owner?.(h.original.pubkey)).toBe(
         h.owner.session.viewer,
       ),
     );
-    expect(item).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: /follow thread/i }),
+      ).toBeVisible(),
+    );
+    if (kind === 45001 || kind === 45003) {
+      expect(
+        screen.queryByRole("menuitem", { name: "Delete message" }),
+      ).toBeNull();
+      expect(h.publications).toHaveLength(0);
+      return;
+    }
+    const item = await screen.findByRole("menuitem", {
+      name: "Delete message",
+    });
+    await waitFor(() => expect(item).toBeVisible());
     fireEvent.click(item);
     const confirmation = await screen.findByRole("alertdialog", {
       name: "Delete message?",
@@ -895,24 +920,134 @@ it("cancelling deletion never publishes", async () => {
   expect(h.owner.session.channels.window("room").rows).toHaveLength(1);
 });
 
-it("recovers an uncertain deletion after the row and dialog disappear", async () => {
-  const h = await fixture();
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Delete message" }),
-  );
-  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
-  await waitFor(() => expect(h.publications).toHaveLength(1));
-  await act(async () =>
-    h.publication(0).result.reject(new Error("Connection lost")),
-  );
-  fireEvent.click(await screen.findByText("Close", { exact: true }));
-  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  expect(screen.queryByRole("button", { name: "Message actions" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
-  await waitFor(() => expect(h.publications).toHaveLength(2));
-  expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
-  await act(async () => h.publication(1).result.resolve());
-});
+it.each([9, 45001, 45003])(
+  "offers edit/reaction/read actions only for chat rows, preserving forum deletion (kind %s)",
+  async (kind) => {
+    const h = await fixture(
+      true,
+      false,
+      false,
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      "member",
+      { kind },
+    );
+    const session = h.owner.session;
+    const rows = session.channels.window("room").rows;
+    const row = rows[0];
+    assert.exists(row);
+    // The popup mounts before its asynchronous positioning makes it visible.
+    // Establish that boundary before checking either present or absent actions.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: "Delete message" }),
+      ).toBeVisible(),
+    );
+    expect(!!screen.queryByRole("menuitem", { name: "Edit message" })).toBe(
+      kind === 9,
+    );
+    expect(!!screen.queryByRole("menuitem", { name: /^Mark (un)?read$/ })).toBe(
+      kind === 9,
+    );
+    expect(lastEditableMessage(session, rows)?.id).toBe(
+      kind === 9 ? row.id : undefined,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menuitem", { name: "Delete message" }),
+      ).toBeNull(),
+    );
+    const keys: { unread: boolean; remove: boolean }[] = [];
+    const KeyActions = () => {
+      const actions = useMessageKeyActions(session);
+      assert.exists(actions);
+      keys.push({
+        unread: actions.canMarkUnread(row),
+        remove: actions.canDelete(row),
+      });
+      return null;
+    };
+    render(
+      <MessageManagement session={session} channelId="room">
+        <KeyActions />
+      </MessageManagement>,
+    );
+    expect(keys.at(-1)).toEqual({ unread: kind === 9, remove: true });
+    const none: never[] = [];
+    const tools: Contribution<ComposerTool>[] = [
+      {
+        key: "forum-test-picker",
+        pluginId: "forum-test-picker",
+        revision: "one",
+        id: "forum-test-picker",
+        title: "Picker",
+        component: () => null,
+        reactionComponent: () => <button type="button">Choose reaction</button>,
+      },
+    ];
+    render(
+      <MessageRow
+        row={row}
+        session={session}
+        scope="forum-compatibility"
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => tools, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    expect(!!screen.queryByRole("button", { name: "Choose reaction" })).toBe(
+      kind === 9,
+    );
+    expect(h.publications).toHaveLength(0);
+  },
+);
+
+it.each([9, 45001, 45003])(
+  "recovers an uncertain deletion after the row and dialog disappear (kind %s)",
+  async (kind) => {
+    const h = await fixture(
+      true,
+      false,
+      false,
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      "member",
+      { kind },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete message" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(h.publications).toHaveLength(1));
+    await act(async () =>
+      h.publication(0).result.reject(new Error("Connection lost")),
+    );
+    fireEvent.click(await screen.findByText("Close", { exact: true }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(
+      screen.queryByRole("button", { name: "Message actions" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry message update" }),
+    );
+    await waitFor(() => expect(h.publications).toHaveLength(2));
+    expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
+    await act(async () => h.publication(1).result.resolve());
+  },
+);
 
 it.each(["failed", "unknown"] as const)(
   "disables %s own-message deletion retry after demotion to Guest",

@@ -260,6 +260,23 @@ test("classic-scrollbar cases run exactly once, after the measurements, without 
     assert.ok(!spec.tags.includes("classic-scrollbars"), spec.title);
 });
 
+test("Node integration runs once independently of native compilation", () => {
+  const { jobs } = parse(workflow);
+  const command = "./bin/node --test tests/integration/*.test.mjs";
+  const owners = Object.entries(jobs).filter(([, job]) =>
+    job.steps?.some((step) => step.run === command),
+  );
+  assert.deepEqual(
+    owners.map(([name]) => name),
+    ["node_integration"],
+  );
+  assert.equal(jobs.node_integration.needs, undefined);
+  assert.equal(
+    jobs.node_integration.if,
+    "github.event_name != 'workflow_dispatch'",
+  );
+});
+
 test("required gate executes its real shell and rejects every unsuccessful lane", () => {
   const required = job("required");
   const { jobs } = parse(workflow);
@@ -274,12 +291,13 @@ test("required gate executes its real shell and rejects every unsuccessful lane"
   assert.doesNotMatch(required, /^ {8}if:/m);
   assert.match(
     required,
-    /^ {4}needs: \[javascript, native, measurements, browser_fixture, browser, media_recorder, agent_protection\]$/m,
+    /^ {4}needs: \[javascript, native, node_integration, measurements, browser_fixture, browser, media_recorder, agent_protection\]$/m,
   );
   assert.doesNotMatch(required, /continue-on-error/);
   const lanes = [
     "JAVASCRIPT",
     "NATIVE",
+    "NODE_INTEGRATION",
     "MEASUREMENTS",
     "FIXTURE",
     "BROWSER",

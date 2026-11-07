@@ -276,6 +276,29 @@ it.each(["new", "linked", "agent"])(
   },
 );
 
+it("keeps task drafts out of Solo workspaces and New chat opens an ordinary draft", async () => {
+  const f = fixture();
+  const target = soloDraftTarget(scope, {
+    agent,
+    task: {
+      region: "buzz.region:example:work",
+      draftId: "33333333-3333-4333-8333-333333333333",
+    },
+  });
+  act(() => f.navigate(target));
+  expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+  expect(screen.getByRole("button", { name: /^Planning/ })).toBeVisible();
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "New chat or workspace" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
+  expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
+  expect(
+    await screen.findByRole("button", { name: "New chat" }),
+  ).toHaveAttribute("aria-current", "page");
+});
+
 it("keeps the open, unread and working chats listed past a workspace's cap", () => {
   const f = fixture(false, false, undefined, undefined, 10);
   const listed = () =>

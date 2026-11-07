@@ -849,14 +849,32 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(recipient()).toHaveAttribute("readonly");
+  // The eighth pick keeps the list open and swaps it for the limit, since
+  // "8 people selected" alone doesn't say eight is the most.
+  expect(recipient()).toHaveFocus();
+  expect(recipient()).toHaveAttribute("aria-expanded", "true");
+  expect(recipient()).toHaveAttribute("placeholder", "8 people selected");
+  expect(
+    screen.getByText("You can message up to 8 people at once."),
+  ).toHaveAttribute("role", "status");
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
   await t.user.keyboard("{Tab}");
   expect(screen.getByRole("textbox")).toHaveFocus();
   await t.user.click(recipient());
+  expect(
+    await screen.findByText("You can message up to 8 people at once."),
+  ).toHaveAttribute("role", "status");
   await t.user.keyboard("{Enter}");
   expect(
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(t.directMessages.open).not.toHaveBeenCalled();
+  await t.user.keyboard("{Backspace}");
+  expect(
+    screen.getAllByRole("button", { name: /^Remove Person/ }),
+  ).toHaveLength(7);
+  expect(recipient()).not.toHaveAttribute("readonly");
+  expect(await screen.findAllByRole("option")).not.toHaveLength(0);
 });
 
 it("shows selected recipient artwork without opening or sending, and updates it on removal", async () => {

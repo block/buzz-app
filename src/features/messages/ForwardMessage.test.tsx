@@ -244,6 +244,7 @@ function setup({
     messages,
     outbox,
     operations: () => operations,
+    publish,
     choices,
     profiles,
   };
@@ -274,6 +275,31 @@ it("keeps the verified name after choosing a forwarding recipient", async () => 
   );
   expect(
     screen.getByRole("button", { name: "Remove Verified recipient" }),
+  ).toBeInTheDocument();
+});
+
+it("closes the people list once its one person is chosen and explains the limit when To is used again", async () => {
+  const user = userEvent.setup();
+  setup();
+  await choose(user);
+  const to = screen.getByRole("combobox", { name: "Message recipients" });
+  // The full field says so itself; no hint covers the note below it.
+  expect(to).toHaveFocus();
+  expect(to).toHaveAttribute("aria-expanded", "false");
+  expect(to).toHaveAttribute("placeholder", "1 person selected");
+  expect(screen.queryByText(/one person/i)).not.toBeInTheDocument();
+  await user.click(to);
+  expect(
+    await screen.findByText(
+      "One person at a time. Remove them to choose someone else.",
+    ),
+  ).toHaveAttribute("role", "status");
+  await user.keyboard("{Backspace}");
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery Chen" }),
+  ).not.toBeInTheDocument();
+  expect(
+    await screen.findByRole("option", { name: /Morgan Lee/ }),
   ).toBeInTheDocument();
 });
 
@@ -326,6 +352,74 @@ it("forwards a note and permalink through the chosen person's DM and retires the
   ).not.toBeInTheDocument();
   expect(messages.send).toHaveBeenCalledTimes(1);
 });
+
+it("opens the forwarded message in the DM from the success notice, with the source behind it", async () => {
+  const user = userEvent.setup();
+  const { navigation } = setup();
+  const source = navigation.snapshot().entry.target;
+  await choose(user);
+  await user.click(screen.getByRole("button", { name: "Forward" }));
+  await screen.findByText("Message forwarded to Avery Chen");
+  // Forwarding leaves you where you were; the notice is the way on.
+  expect(navigation.snapshot().entry.target).toEqual(source);
+  await user.click(
+    screen.getByRole("button", { name: "Open your DM with Avery Chen" }),
+  );
+  await waitFor(() =>
+    expect(navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer, communityOrigin: "https://relay.example" },
+      channelId: destination,
+      messageId: "e".repeat(64),
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Message forwarded to Avery Chen"),
+    ).not.toBeInTheDocument(),
+  );
+  act(() => navigation.back());
+  expect(navigation.snapshot().entry.target).toEqual(source);
+});
+
+it.each([
+  ["Enter", "{Enter}"],
+  ["Space", " "],
+])(
+  "reaches the success notice's link by Tab and opens the DM with %s",
+  async (_key, press) => {
+    const user = userEvent.setup();
+    const { navigation } = setup();
+    const source = navigation.snapshot().entry.target;
+    await choose(user);
+    await user.click(screen.getByRole("button", { name: "Forward" }));
+    const link = await screen.findByRole("button", {
+      name: "Open your DM with Avery Chen",
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Forward message" }),
+      ).not.toBeInTheDocument(),
+    );
+    // F6 is Sonner's hotkey for the stack; user-event has no F6 key code.
+    fireEvent.keyDown(document.body, { key: "F6", code: "F6" });
+    expect(link.closest("[data-sonner-toaster]")).toHaveFocus();
+    await user.tab();
+    await user.tab();
+    expect(link).toHaveFocus();
+    await user.keyboard(press);
+    await waitFor(() =>
+      expect(navigation.snapshot().entry.target).toMatchObject({
+        kind: "conversation",
+        channelId: destination,
+        messageId: "e".repeat(64),
+      }),
+    );
+    act(() => navigation.back());
+    expect(navigation.snapshot().entry.target).toEqual(source);
+  },
+);
 
 it("preserves the selection and note across Back/Forward; Cancel retires the visit", async () => {
   const user = userEvent.setup();
@@ -392,7 +486,7 @@ it("keeps an uncertain send locked and retries its exact event without another D
 
 it("restores a saved forward after reload and confirms its exact event instead of sending again", async () => {
   const user = userEvent.setup();
-  const { directMessages, messages, outbox, operations } = setup({
+  const { navigation, directMessages, messages, outbox, operations } = setup({
     saved: [pendingForward()],
   });
   await user.click(screen.getByRole("button", { name: "Forward source" }));
@@ -421,6 +515,40 @@ it("restores a saved forward after reload and confirms its exact event instead o
   );
   expect(outbox.acknowledge).toHaveBeenCalledWith("9".repeat(64));
   expect(operations()).toEqual([]);
+  // The notice names the recovery payload's person and opens its h-tag DM.
+  await user.click(
+    await screen.findByRole("button", { name: "Open your DM with Avery Chen" }),
+  );
+  await waitFor(() =>
+    expect(navigation.snapshot().entry.target).toMatchObject({
+      channelId: destination,
+      messageId: "9".repeat(64),
+    }),
+  );
+});
+
+it("names and opens the saved forward's DM when the outbox loads it after another person is picked", async () => {
+  const user = userEvent.setup();
+  const { navigation, directMessages, messages, outbox, publish } = setup();
+  directMessages.open.mockResolvedValueOnce(
+    "22222222-2222-4222-8222-222222222222",
+  );
+  // The outbox finishes loading mid-submit with a forward to Avery pending.
+  outbox.ready = async () => publish([pendingForward()]);
+  await user.click(screen.getByRole("button", { name: "Forward source" }));
+  await user.click(await screen.findByRole("option", { name: /Morgan Lee/ }));
+  await user.click(screen.getByRole("button", { name: "Forward" }));
+  await screen.findByText("Message forwarded to Avery Chen");
+  await user.click(
+    screen.getByRole("button", { name: "Open your DM with Avery Chen" }),
+  );
+  await waitFor(() =>
+    expect(navigation.snapshot().entry.target).toMatchObject({
+      channelId: destination,
+      messageId: "9".repeat(64),
+    }),
+  );
+  expect(messages.send).not.toHaveBeenCalled();
 });
 
 it("blocks another forward while a saved one is pending and offers to review it", async () => {
@@ -478,6 +606,11 @@ it("retains an editable draft when opening the DM fails", async () => {
   await user.type(note, "Try again");
   await user.click(screen.getByRole("button", { name: "Forward" }));
   await screen.findByRole("alert");
+  // The error notice reports the failure; there is no sent message to open.
+  await screen.findByRole("button", { name: "Dismiss notification" });
+  expect(
+    screen.queryByRole("button", { name: /^Open your DM/ }),
+  ).not.toBeInTheDocument();
   expect(note).toBeEnabled();
   expect(note).toHaveValue("Try again");
   expect(messages.send).not.toHaveBeenCalled();

@@ -231,9 +231,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
 - **Forward message** in a message's hover actions or message menu sends its link
-  to one person in the current community, with an optional note. Buzz opens or
-  creates the direct message for you. The link previews the original message;
-  the recipient still needs access to its conversation. Forwarding is unavailable
+  to one person in the current community, with an optional note. Buzz sends it
+  in your direct message with them, starting one if needed, and you stay where
+  you are; select the confirmation notice while it's showing to open the
+  forwarded message in that DM. The link previews the original message; the
+  recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
 
 - Only explicit additions by another member and removals appear as centered

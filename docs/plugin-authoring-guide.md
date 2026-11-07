@@ -108,6 +108,9 @@ The plugin controls `value`/`onChange` (Markdown), `editing`, `source`/
 `onSourceChange`, and `linkOpen`/`onLinkOpenChange`. Supply `maxLength` as the
 serialized editing budget and `onSave` for Cmd/Ctrl+Enter. `disabled` locks editor
 and formatting actions while the plugin's save or access policy requires it.
+Adopt accepted changes in local state synchronously and persist them separately.
+Keeping `value` unchanged declines a change; both modes restore that accepted
+value, including when returning from source to rich text.
 The component performs no relay writes and stores no drafts; saving, byte limits,
 conflicts, permissions and pending navigation remain the plugin's responsibility.
 

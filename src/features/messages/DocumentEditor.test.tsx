@@ -92,6 +92,53 @@ it("round-trips rich formatting into controlled source and accepts external repl
   ).toHaveTextContent("replacement");
 });
 
+it("restores a declined rich edit to the controlled value", async () => {
+  const change = vi.fn();
+  const h = mount({ onChange: change });
+  const user = userEvent.setup();
+  const input = screen.getByRole("textbox", {
+    name: "Document body",
+  }) as ComposerInputElement;
+  act(() => {
+    input.focus();
+    input.setSelectionRange(0, 5);
+  });
+  await user.click(screen.getByRole("button", { name: /^Bold$/ }));
+  expect(change).toHaveBeenLastCalledWith("**Hello** world");
+  expect(change).toHaveBeenCalledTimes(1);
+  expect(input).toHaveTextContent("Hello world");
+  expect(input.querySelector("strong")).toBeNull();
+  h.rerender({ onChange: change, source: true });
+  expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
+    "Hello world",
+  );
+});
+
+it("keeps a declined source edit out of rich mode", () => {
+  const change = vi.fn();
+  const h = mount({ onChange: change, source: true });
+  const source = screen.getByRole("textbox", { name: "Markdown" });
+  fireEvent.change(source, { target: { value: "Rejected text" } });
+  expect(change).toHaveBeenLastCalledWith("Rejected text");
+  expect(source).toHaveValue("Hello world");
+  h.rerender({ onChange: change, source: false });
+  expect(
+    screen.getByRole("textbox", { name: "Document body" }),
+  ).toHaveTextContent("Hello world");
+  expect(change).toHaveBeenCalledTimes(1);
+});
+
+it("loads accepted source content when returning to rich mode", () => {
+  const h = mount({ source: true });
+  fireEvent.change(screen.getByRole("textbox", { name: "Markdown" }), {
+    target: { value: "**Accepted** source" },
+  });
+  h.rerender({ source: false });
+  const input = screen.getByRole("textbox", { name: "Document body" });
+  expect(input).toHaveTextContent("Accepted source");
+  expect(input.querySelector("strong")).toHaveTextContent("Accepted");
+});
+
 it("keeps save shortcuts and selection restoration at the controlled editor boundary", () => {
   const h = mount();
   const input = screen.getByRole("textbox", {

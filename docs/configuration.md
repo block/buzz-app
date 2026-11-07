@@ -20,6 +20,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native and frontend build: sign-in servers added to the built-in one, each with its adapter prefix and community hosts; empty opts out. See below. |
+| `federated-identity.json` | Native startup: local deployment descriptor for builds without any compiled sign-in servers. See [runtime configuration](#federated-identity-runtime-configuration). |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
 | `BUZZ_DEV_FIRST_RUN_ACCOUNT` | Dev server only: replaces first run's kgoose reads and writes (including the key link, the unlink and the saved-community add), its key backup and backup recovery. Builds define it empty. See [below](#first-run-account-seed-development). |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
@@ -238,6 +239,71 @@ grant rebuild together; browser-only development needs a Vite restart. Productio
 web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
+
+## Federated identity runtime configuration
+
+A desktop built with no compiled sign-in servers can use one JSON descriptor
+from `federated-identity.json`. Standard builds include the built-in Builderlab
+server and ignore this file. To package an unconfigured desktop, explicitly
+set `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` to an empty value during the build;
+leaving both build inputs unset keeps Builderlab. The existing build rules also
+produce no compiled servers when `BUZZ_BUILDERLAB_URL` is empty or points to
+another deployment without added servers, or in a `tauri dev` run with a pinned
+viewer and no added servers. Those builds read the file too. A local file cannot
+add to, replace, or disable any compiled server.
+
+This enables native organization sign-in, NIP-FI relay assertions, and authenticated requests
+from installed plugins with a matching `host.federatedIdentity.authority` grant.
+It does not grant relay membership, change a plugin's approved operations, or
+turn sign-in into a one-time enrollment check. The relay must enforce NIP-FI.
+
+Quit Buzz, obtain the nonsecret descriptor from a trusted deployment operator,
+and save it at the release app's federation state location:
+
+| Platform | File |
+| --- | --- |
+| macOS | `~/Library/Application Support/.xyz.block.buzz.desktop.federated-session/federated-identity.json` |
+| Linux | `${XDG_DATA_HOME:-$HOME/.local/share}/.xyz.block.buzz.desktop.federated-session/federated-identity.json` |
+| Windows | `%APPDATA%\.xyz.block.buzz.desktop.federated-session\federated-identity.json` |
+
+Create the parent directory if absent. On macOS/Linux use a regular file owned
+by the current user or root, with no group/world write access (for example mode
+`0600`). Symlinks and special files are refused. Windows relies on the user's
+normal application-data ACLs; the loader does not validate Windows ACLs. Protect
+the file and its parent directory from untrusted writers. Never install a
+configuration merely because an untrusted relay, message or plugin recommends it:
+it chooses the authority that receives sign-in requests and issues assertions.
+No credentials belong in this file.
+
+Restart Buzz. Once a Buzz key is set up, **Settings → Buzz → Identity →
+Organization sign-in** shows the configured authority; `at-launch` uses the
+existing launch sign-in flow. The file is read only at startup, not watched.
+A missing file leaves the app unconfigured; an unreadable, unsafe, malformed or
+oversized file stops startup with a diagnostic naming the file, not its contents.
+The existing 8192-byte limit and HTTPS/host validation apply. A compiled authority
+always wins, even over an invalid local file; invalid compiled policy never falls
+back to the file.
+
+This file shares the federation store's scope: all app identifiers and profiles
+using that native store see it. Debug builds use the separate
+`.xyz.block.buzz.desktop.federated-session.debug` directory. The file survives
+sign-out and wiping local app data. To remove local deployment configuration,
+sign out of the organization first, quit Buzz, remove the file, and restart.
+Removing only the file does not erase previously stored secure sessions. This
+never disables a compiled authority or a relay's SSO requirement.
+
+Native sessions remain isolated by profile and the normalized descriptor's identity
+fingerprint. Changing authority, adapter, API path or community hosts selects a new
+session slot. Changing only `organization` or `signIn` retains the session. An
+identical compiled descriptor and runtime descriptor use the same session slot.
+
+**Onboarding and bundled integrations are separate.** A runtime descriptor does
+not retarget the compiled Builderlab URL, its plugin grants, first-run email
+sign-in, key linking or backup. Those remain as shipped, with their own account
+and credential. New users still need the existing Buzz key setup flow; this is
+not first-run provisioning through an arbitrary enterprise identity provider.
+Installed deployment-specific plugins can use the native session with matching
+explicit grants. Do not promise that the bundled Builderlab plugin will use it.
 
 ## First-run account seed (development)
 

@@ -5,6 +5,7 @@ pub(crate) mod agent;
 pub(crate) mod assertion;
 pub(crate) mod config;
 pub(crate) mod protocol;
+mod runtime;
 pub(crate) mod socket;
 pub(crate) mod store;
 
@@ -161,11 +162,13 @@ pub(crate) struct FederatedIdentity(Arc<Inner>);
 
 impl FederatedIdentity {
     pub(crate) fn new() -> Result<Self, String> {
-        let servers = option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG")
-            .filter(|raw| !raw.is_empty())
-            .map(Config::parse_list)
-            .transpose()?
-            .unwrap_or_default();
+        Self::from_root(
+            store::root()?,
+            option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG"),
+        )
+    }
+    fn from_root(root: std::path::PathBuf, compiled: Option<&str>) -> Result<Self, String> {
+        let servers = runtime::resolve(compiled, &root.join(runtime::FILE_NAME))?;
         let profile = std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into());
         if profile.is_empty() || profile.len() > 128 {
             return Err("Invalid federated identity profile".into());
@@ -173,13 +176,14 @@ impl FederatedIdentity {
         let mut servers = servers.into_iter().map(Some);
         let first = servers.next().flatten();
         let peers = servers
-            .map(|config| Self::open(config, &profile, Vec::new()))
+            .map(|config| Self::open(root.clone(), config, &profile, Vec::new()))
             .collect::<Result<_, _>>()?;
-        Self::open(first, &profile, peers)
+        Self::open(root, first, &profile, peers)
     }
     /// Each server's sessions are stored under its own descriptor, so a
     /// build's first server keeps the sessions it saved as the only one.
     fn open(
+        root: std::path::PathBuf,
         config: Option<Config>,
         profile: &str,
         peers: Vec<FederatedIdentity>,
@@ -194,7 +198,7 @@ impl FederatedIdentity {
         let account = format!("{:x}", Sha256::digest(format!("{profile}\0{fingerprint}")));
         let store = Arc::new(store::SecureStore {
             account: account.clone(),
-            root: store::root()?,
+            root,
             bundled: store::BUNDLED,
         });
         Ok(Self::build(config, fingerprint, account, store, peers))

@@ -15,6 +15,7 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Select } from "../../shared/design-system/ui/Select";
 import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import { useListedChannel } from "../relay/listed-channel";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import messages from "../messages/Messages.module.css";
 import { AgentsContext, useAgents, useAgent } from "./react";
@@ -78,6 +79,13 @@ export function AgentConnectionSetup({
   rows?: readonly ChannelMessage[];
 }) {
   const agents = useContext(AgentsContext);
+  // Follow roster changes that land without a parent render.
+  const roster =
+    useListedChannel(
+      session.channels,
+      channel?.id,
+      (listed) => listed?.members,
+    ) ?? channel?.members;
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -150,7 +158,7 @@ export function AgentConnectionSetup({
     channel &&
     (channel.channelType === "stream" || channel.channelType === "forum") &&
     session.viewer &&
-    channel.members?.includes(session.viewer) &&
+    roster?.includes(session.viewer) &&
     !channel.archived &&
     !channel.readOnly &&
     !channel.cached &&
@@ -165,7 +173,8 @@ export function AgentConnectionSetup({
             session.viewer,
           ),
         ]
-          .filter(([key]) => isAgent(key))
+          // Only a current member can reply here.
+          .filter(([key]) => isAgent(key) && roster.includes(key))
           .map(([mentioned, message]) => (
             <Candidate
               key={`${session.scope}:${channel.id}:${mentioned}`}

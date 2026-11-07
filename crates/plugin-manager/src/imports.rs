@@ -605,6 +605,15 @@ struct Git {
     federated_header: Option<String>,
     retired: Option<Box<dyn Fn() -> bool + Send>>,
 }
+/// HTTPS imports cannot prompt or use credential helpers, so point private repositories at SSH.
+fn git_failure(stderr: &str) -> String {
+    let hint = if stderr.contains("could not read Username") {
+        " Private repositories need an SSH URL, such as git@github.com:owner/repo.git."
+    } else {
+        ""
+    };
+    format!("Git could not read this repository: {stderr}{hint}")
+}
 impl Git {
     fn new() -> Result<Self> {
         Ok(Self {
@@ -729,10 +738,7 @@ impl Git {
                         return Err("Git could not read the protected repository".into());
                     }
                     let text = read_output(errors, 4096)?;
-                    return Err(format!(
-                        "Git could not read this repository: {}",
-                        String::from_utf8_lossy(&text).trim()
-                    ));
+                    return Err(git_failure(String::from_utf8_lossy(&text).trim()));
                 }
                 return read_output(output, limit);
             }
@@ -1095,6 +1101,18 @@ fn directory_size(root: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn https_credential_failures_suggest_ssh() {
+        let prompt =
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+        assert!(git_failure(prompt).ends_with(
+            "Private repositories need an SSH URL, such as git@github.com:owner/repo.git."
+        ));
+        assert_eq!(
+            git_failure("fatal: repository not found"),
+            "Git could not read this repository: fatal: repository not found"
+        );
+    }
     fn uploaded(files: &[(&str, &str)]) -> FolderUpload {
         FolderUpload {
             source: "example".into(),
@@ -1751,8 +1769,8 @@ mod tests {
             "ssh://git@github.com/block/plugins.git"
         );
         assert_eq!(
-            repository_url("org-49461806@github.com:squareup/buzz-context-manager.git").unwrap(),
-            "ssh://org-49461806@github.com/squareup/buzz-context-manager.git"
+            repository_url("org-1@github.com:example-org/example-plugin.git").unwrap(),
+            "ssh://org-1@github.com/example-org/example-plugin.git"
         );
         assert_eq!(
             repository_url("dev.user@git.example.org:team/repo.git").unwrap(),
@@ -2280,7 +2298,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn access_rule_socket_reaches_git() {
-        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+        use std::os::unix::{fs::symlink, net::UnixListener};
 
         let home = tempfile::tempdir_in("/tmp").unwrap();
         let socket = home.path().join("team.sock");
@@ -2303,8 +2321,12 @@ mod tests {
         let bin = home.path().join("bin");
         fs::create_dir(&bin).unwrap();
         let executable = bin.join("git");
-        fs::write(&executable, "#!/bin/sh\n/usr/bin/printenv SSH_AUTH_SOCK\n").unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        // A parallel fork can retain a runtime-written executable's writer (ETXTBSY).
+        symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ssh-auth-sock.sh"),
+            &executable,
+        )
+        .unwrap();
         let mut command = git.command();
         command.env("PATH", &bin);
         let output = git.run_command(command, 1024).unwrap();

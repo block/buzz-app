@@ -356,18 +356,20 @@ pub fn valid_id(id: &str) -> Result<()> {
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
 /// Exact Apps domain paired with the build's login origin, or empty when native SSO is unconfigured.
 pub const BUILDERLAB_APPS_DOMAIN: &str = env!("BUZZ_BUILDERLAB_APPS_DOMAIN");
+/// The `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` build input, or empty when unset.
+const BUILDERLAB_APPS_CONTROL_PLANE: &str = env!("BUZZ_BUILDERLAB_APPS_CONTROL_PLANE");
 /// The Apps Platform control plane of the tenant whose Builderlab sign-in
 /// `origin` is, which the bundled Builderlab plugin deploys apps to through
-/// the native FI session. Kept in step with
+/// the native FI session: the build's own control plane for its login origin,
+/// otherwise the public tenants. Kept in step with
 /// `src/bundled/builderlab/apps/environment.ts`.
 pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
+    if !BUILDERLAB_APPS_CONTROL_PLANE.is_empty() && origin == BUILDERLAB_ORIGIN {
+        return Some(BUILDERLAB_APPS_CONTROL_PLANE);
+    }
     match origin {
         "https://app.builderlab.xyz" => Some("https://compose-ctrl.builderlab.xyz"),
         "https://app.builderlabstaging.xyz" => Some("https://compose-ctrl.builderlabstaging.xyz"),
-        "https://block.builderlab.xyz" => Some("https://compose-ctrl.block.builderlab.xyz"),
-        "https://block.builderlabstaging.xyz" => {
-            Some("https://compose-ctrl.block.builderlabstaging.xyz")
-        }
         _ => None,
     }
 }
@@ -433,6 +435,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         }
     });
     vec![
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/mesh-compute/manifest.json"
+        ))
+        .expect("mesh manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
             .expect("huddles manifest"),
         builderlab,
@@ -468,10 +474,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("github manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/drafts-sent/manifest.json"
-        ))
-        .expect("drafts-sent manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
             .expect("reminders manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
@@ -539,7 +541,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
-            | "buzz.drafts-sent"
             | "buzz.repos"
             | "buzz.agents"
             | "buzz.claude-code"
@@ -2466,14 +2467,6 @@ mod tests {
         assert_eq!(
             super::apps_control_plane("https://app.builderlabstaging.xyz"),
             Some("https://compose-ctrl.builderlabstaging.xyz")
-        );
-        assert_eq!(
-            super::apps_control_plane("https://block.builderlab.xyz"),
-            Some("https://compose-ctrl.block.builderlab.xyz")
-        );
-        assert_eq!(
-            super::apps_control_plane("https://block.builderlabstaging.xyz"),
-            Some("https://compose-ctrl.block.builderlabstaging.xyz")
         );
         assert_eq!(
             super::apps_control_plane("https://builderlab.example"),

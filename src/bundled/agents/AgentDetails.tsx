@@ -93,6 +93,8 @@ export function AgentDetails({
   initialTranscript,
   close,
   openConversation,
+  openLink,
+  canOpenLink,
   communities,
   openSettings,
   historyPresentation,
@@ -113,6 +115,9 @@ export function AgentDetails({
   close?: () => void;
   /** Opens a turn's conversation from its activity; see AgentViewProps. */
   openConversation?: AgentViewProps["openConversation"];
+  /** Opens a link from a plugin's tab; see AgentAddedTab. */
+  openLink?: ((target: string) => boolean) | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   communities?: CommunityReader | undefined;
   openSettings?: ((section: string) => void) | undefined;
 }) {
@@ -505,6 +510,8 @@ export function AgentDetails({
               initialTranscript={initialTranscript}
               close={close}
               openConversation={openConversation}
+              openLink={openLink}
+              canOpenLink={canOpenLink}
               settingsHost={settings.settingsHost}
               onDiscard={settings.discard}
               memories={memories}

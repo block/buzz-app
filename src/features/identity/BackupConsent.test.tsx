@@ -85,7 +85,7 @@ it.each([
 );
 
 it("a build whose Builderlab doesn't host a community asks even for a hosted one", () => {
-  for (const hosts of [["buzz.block.builderlab.xyz"], [], undefined])
+  for (const hosts of [["buzz.acme.builderlab.xyz"], [], undefined])
     expect(
       decideBackup(
         consent(),

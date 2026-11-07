@@ -1962,13 +1962,13 @@ it.each([["bb-public compiled", publicServers]])(
 );
 
 it.each([
-  ["bb-public", publicServers, "buzz.block.builderlab.xyz"],
+  ["bb-public", publicServers, "buzz.acme.builderlab.xyz"],
   ["no", async () => [], "design.communities.buzz.xyz"],
 ])(
   "a build with %s sign-in server that does not cover a landing URL pauses on the ordinary connect choice: %s",
   async (_, servers, host) => {
     // Another Builderlab deployment: the built-in server's hosts don't apply.
-    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://block.builderlab.xyz");
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://acme.builderlab.xyz");
     const relay = landingRelay(`https://${host}`);
     const connect = vi.fn();
     const identity = createIdentity();
@@ -7559,14 +7559,14 @@ it.each(["unavailable", "not_offered"] as const)(
 );
 
 /** A compiled list whose only server hosts none of the landing's communities. */
-const blockServers = async (): Promise<SessionSnapshot[]> =>
+const acmeServers = async (): Promise<SessionSnapshot[]> =>
   (await publicServers()).map((server) => ({
     ...server,
     authority: server.authority && {
       ...server.authority,
-      id: "bb-block",
-      identityOrigin: "https://block.builderlab.xyz",
-      communityHosts: ["buzz.block.builderlab.xyz"],
+      id: "bb-acme",
+      identityOrigin: "https://acme.builderlab.xyz",
+      communityHosts: ["buzz.acme.builderlab.xyz"],
     },
   }));
 
@@ -7623,7 +7623,7 @@ it("ignores a lookup for an earlier address once another address is looked up", 
   await act(async () => answers[0]?.resolve(await publicServers()));
   expect(connect).not.toHaveBeenCalled();
   // …and the new address's genuine "not hosted" still applies.
-  await act(async () => answers[1]?.resolve(await blockServers()));
+  await act(async () => answers[1]?.resolve(await acmeServers()));
   expect(
     await screen.findByRole("heading", { name: "Connect to your community" }),
   ).toBeVisible();

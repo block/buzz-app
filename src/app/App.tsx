@@ -29,6 +29,7 @@ import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthoriz
 import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
+import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
   useEffect,
@@ -668,6 +669,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           companion={pageOwnsCompanion ? undefined : companion}
           pages={startup === "ready" ? route.pages : []}
           selected={workspace.selected}
+          target={workspace.target}
           navigationAttempt={workspace.attempt}
           onSelect={select}
           tone={presentation.tone}
@@ -687,6 +689,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           <MediaMenuDownloadNotice />
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />
+          <TeamUpdateReview agents={services.agents} />
           {!settings && startup === "recovery" ? (
             <RecoveryScreen plugins={plugins} />
           ) : !settings &&

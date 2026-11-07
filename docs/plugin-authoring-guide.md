@@ -67,7 +67,33 @@ export function apply(ctx) {
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
-| `pluginInstaller` (optional) | Ask the owner to install another plugin | `await ctx.reflect.get("pluginInstaller")?.requestInstall({ repository, reference, path?, commit? })` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"`. It never installs silently. |
+| `pluginInstaller` (optional) | Ask the owner to install another plugin or check installation status | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. |
+
+The installation-status methods may be missing on older hosts even when `pluginInstaller` is available, so feature-check each method before calling it. `getInstallationStatus` returns `"installed"` when the manifest ID is in the ready catalog, `"absent"` when it is not, and `"unavailable"` while the catalog is not ready. Installed status is independent of whether the plugin is enabled, contributes UI, or came from a particular install source. A subscription reports later status changes; subscribe first, then read the current status to avoid missing a change between the read and subscription. Own the subscription with `ctx.effect`:
+
+```js
+const installer = ctx.reflect.get("pluginInstaller");
+if (typeof installer?.getInstallationStatus === "function") {
+  const status = installer.getInstallationStatus("example.hello");
+  // Use "installed", "absent" or "unavailable"; a missing method is not "absent".
+}
+
+ctx.effect(() => {
+  const installer = ctx.reflect.get("pluginInstaller");
+  if (typeof installer?.subscribeInstallationStatus !== "function") return;
+  const unsubscribe = installer.subscribeInstallationStatus(
+    "example.hello",
+    (status) => {
+      // Respond to a status change.
+    },
+  );
+  if (typeof installer.getInstallationStatus === "function") {
+    const current = installer.getInstallationStatus("example.hello");
+    // Read the current status after subscribing.
+  }
+  return unsubscribe;
+});
+```
 
 ## Host access (`manifest.host`)
 

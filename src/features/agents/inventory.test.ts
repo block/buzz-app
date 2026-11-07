@@ -2,6 +2,9 @@ import { expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import { keypair, signed, roster, metadata } from "../relay/testing";
 import { combineInventory, inventoryReader } from "./inventory";
+import { seedAgents } from "../messages/remembered-mentions";
+import type { ChannelMessage } from "../relay/contracts";
+import type { ReadTransport } from "../relay/transport";
 
 it("combines exact keys and explicit profile links without joining equal names or lossy slug collisions", () => {
   const key = "a".repeat(64);
@@ -141,7 +144,7 @@ it("actual session reads owner-signed relay inventory and clears/disposes it", a
   expect(query.mock.calls[0]?.[0]).toEqual([
     { kinds: [30175, 30177], authors: [viewer.pubkey], limit: 200 },
   ]);
-  expect(query.mock.calls[0]?.[3]).toBe("background");
+  expect(query.mock.calls[0]?.[3]).toBe("foreground");
   expect(
     owner.session.agentLibrary.snapshot().identities[0]?.definitionId,
   ).toBe("profile:brain");
@@ -151,6 +154,83 @@ it("actual session reads owner-signed relay inventory and clears/disposes it", a
   owner.dispose();
   expect(owner.session.agentLibrary.snapshot().status).toBe("unavailable");
 });
+
+it.each([false, true])(
+  "restores the Solo agent during a long background read (local inventory: %s)",
+  async (local) => {
+    vi.useFakeTimers();
+    const viewer = keypair();
+    const agent = "a".repeat(64);
+    const row = signed(viewer, {
+      kind: 30177,
+      tags: [["d", agent]],
+      content: '{"name":"Agent"}',
+    });
+    let release!: (events: import("../relay/events").RelayEvent[]) => void;
+    const query = vi.fn<ReadTransport["query"]>(async (filters) => {
+      if (filters[0]?.kinds?.includes(30078))
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      return filters[0]?.kinds?.includes(30177) ? [row] : [];
+    });
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: keypair().pubkey,
+      media: () => undefined,
+      query,
+      ...(local
+        ? {
+            readAgentLibrary: async () => ({
+              definitions: [],
+              identities: [{ pubkey: agent, name: "Local Agent" }],
+            }),
+          }
+        : {}),
+    });
+    const background = owner.session.read(
+      [{ kinds: [30078], authors: [viewer.pubkey], limit: 1 }],
+      { priority: "background", deadlineMs: 30_000 },
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(release).toBeTypeOf("function");
+      const loading = owner.session.agentLibrary.refresh();
+      await vi.advanceTimersByTimeAsync(10_001);
+      await loading;
+      expect(owner.session.agentChoices.snapshot()).toMatchObject({
+        complete: true,
+        identities: [{ pubkey: agent }],
+      });
+      expect(owner.session.agentChoices.snapshot().error).toBeUndefined();
+      const previous: ChannelMessage = {
+        id: "previous",
+        channelId: "solo",
+        authorId: viewer.pubkey,
+        createdAt: 1,
+        content: "Hello",
+        mentions: [agent],
+        attachments: [],
+        reactions: [],
+        replyCount: 0,
+        participants: [],
+      };
+      expect(seedAgents(owner.session, "solo", [previous], () => true)).toEqual(
+        [agent],
+      );
+      expect(
+        query.mock.calls.filter(([filters]) =>
+          filters[0]?.kinds?.includes(30177),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      release([]);
+      await background;
+      owner.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("recovers retained demand after establishment and stops recovery when demand is released", async () => {
   const viewer = keypair();

@@ -183,6 +183,16 @@ function HuddleCapsuleContent({
   if (call.phase !== "connected") return null;
   return (
     <div className={styles.capsuleWrap}>
+      {call.error && (
+        <ToastNotice
+          title="Agent voice stopped"
+          description={call.error}
+          closeLabel="Dismiss agent voice error"
+          onDismiss={() => {
+            if (call.id) huddles.voiceError(call.id);
+          }}
+        />
+      )}
       {presentation.error && (
         <ToastNotice
           title="Couldn’t update Huddle"

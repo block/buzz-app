@@ -41,6 +41,9 @@ export interface ChannelLifecycleCapability {
   load(
     channelId: string,
     signal?: AbortSignal,
+    /** The channel's relay records the caller already read, so its answer and
+     * these rights share one snapshot; omitted, load reads them. */
+    records?: readonly RelayEvent[],
   ): Promise<ChannelLifecycleSettings>;
   run(
     action: ChannelLifecycleCommand,
@@ -175,9 +178,10 @@ export function createChannelLifecycle({
     // Which action needs owner-agent evidence; "any" checks for every action
     // the channel's state allows and false skips the optional profile reads.
     need: OwnedAgentAction | "any" | false = "any",
+    records?: readonly RelayEvent[],
   ) {
     assertAccess(id);
-    const events = await read([39000, 39001, 39002], id, signal);
+    const events = records ?? (await read([39000, 39001, 39002], id, signal));
     assertAccess(id);
     const settings = lifecycleSettings(events, id, viewer, relayAuthor);
     const metadata = lifecycleRecord(events, 39000, id, relayAuthor);
@@ -357,10 +361,17 @@ export function createChannelLifecycle({
       refresh = operation;
       return operation;
     },
-    async load(value: string, caller?: AbortSignal) {
+    async load(
+      value: string,
+      caller?: AbortSignal,
+      records?: readonly RelayEvent[],
+    ) {
       const id = lifecycleChannelId(value);
       return owned({ id, caller }, (signal) =>
-        retryRead(() => reread(signal, () => load(id, signal)), signal),
+        retryRead(
+          () => reread(signal, () => load(id, signal, "any", records)),
+          signal,
+        ),
       );
     },
     async run(

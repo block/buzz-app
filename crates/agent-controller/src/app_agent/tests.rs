@@ -260,7 +260,10 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
     let key = agent.read_key(&credentials).unwrap();
     let first = agent.profile_event(&key).unwrap();
     assert_eq!(first["kind"], 0);
-    assert_eq!(first["content"], r#"{"bot":true,"name":"Ada"}"#);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(first["content"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"bot":true,"name":"Ada"})
+    );
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     assert_eq!(first["tags"], serde_json::json!([saved]));
     // An accepted profile from the future: the next must still be newer.
@@ -284,7 +287,10 @@ fn renames_and_profiles_replace_the_last_accepted_profile() {
     assert_eq!(renamed.profile, Some(published(future)));
     let next = renamed.profile_event(&key).unwrap();
     assert_eq!(next["created_at"], future + 1);
-    assert_eq!(next["content"], r#"{"bot":true,"name":"Bea"}"#);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(next["content"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"bot":true,"name":"Bea"})
+    );
 }
 
 #[test]
@@ -310,8 +316,13 @@ fn a_set_picture_is_published_and_can_be_cleared() {
     assert_eq!(pictured.picture.as_deref(), Some(url));
     assert!(!pictured.profile_is_current());
     assert_eq!(
-        pictured.profile_event(&key).unwrap()["content"],
-        format!(r#"{{"bot":true,"name":"Ada","picture":"{url}"}}"#)
+        serde_json::from_str::<serde_json::Value>(
+            pictured.profile_event(&key).unwrap()["content"]
+                .as_str()
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::json!({"bot":true,"name":"Ada","picture":url})
     );
     agents.set_picture(&agent.pubkey, RELAY, None).unwrap();
     assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap().picture, None);
@@ -525,6 +536,32 @@ fn signs_artifact_revisions_without_a_timeline_ms_tag() {
 }
 
 #[test]
+fn signs_audio_auth_for_only_the_challenge_in_its_own_community() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
+    let auth = agent.audio_auth(&key, "relay-challenge").unwrap();
+    assert_eq!(auth["kind"], 22242);
+    assert_eq!(auth["pubkey"], agent.pubkey);
+    assert_eq!(auth["content"], "");
+    let tags: Vec<Vec<String>> = serde_json::from_value(auth["tags"].clone()).unwrap();
+    assert_eq!(
+        tags,
+        [
+            vec!["relay".to_owned(), RELAY.to_owned()],
+            vec!["challenge".to_owned(), "relay-challenge".to_owned()],
+            saved
+        ]
+    );
+    assert!(agent.audio_auth(&key, "").is_err());
+    assert!(agent.audio_auth(&key, &"c".repeat(4097)).is_err());
+    let other = Secret::generate().unwrap();
+    assert!(agent.audio_auth(&other, "relay-challenge").is_err());
+}
+
+#[test]
 fn signs_git_auth_for_one_repository_in_its_own_community() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
@@ -706,8 +743,8 @@ fn an_adopted_key_keeps_its_identity_picture_and_shared_saved_key() {
         .profile_event(&agent.read_key(&credentials).unwrap())
         .unwrap();
     assert_eq!(
-        profile["content"],
-        r#"{"about":"Reviews pull requests","bot":true,"name":"Ada","picture":"https://relay.example/media/a.png"}"#
+        serde_json::from_str::<serde_json::Value>(profile["content"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"about":"Reviews pull requests","bot":true,"name":"Ada","picture":"https://relay.example/media/a.png"})
     );
     // Once here, it is not taken over again.
     let again = adopt("https://a.example/b.png");

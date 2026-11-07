@@ -284,10 +284,41 @@ function ReviewShell({
   const [commentsMotion, setCommentsMotion] = useState(false);
   const [selectedComment, setSelectedComment] = useState<string>();
   const profiles = useRowProfiles(session.profiles, replies);
+  const [currentTime, setCurrentTime] = useState(initialTime);
+  const [includeTime, setIncludeTime] = useState(true);
+  const mediaAttachments = useMemo(() => {
+    const seen = new Set<string>();
+    return [
+      ...galleryAttachments,
+      ...editMessages.flatMap((row) => row.attachments),
+      attachment,
+    ].filter(
+      (item) =>
+        (item.kind === "image" || item.kind === "video") &&
+        !!safeMessageUrl(item.url) &&
+        !seen.has(item.url) &&
+        !!seen.add(item.url),
+    );
+  }, [attachment, editMessages, galleryAttachments]);
+  const attachmentOwner = editMessages.find((row) =>
+    row.attachments.some((item) => item.url === attachment.url),
+  );
+  const videoCount = mediaAttachments.filter(
+    (item) => item.kind === "video",
+  ).length;
+  const timecodeApplies = (row: ChannelMessage) => {
+    if (row.mediaTargetUrl) return row.mediaTargetUrl === attachment.url;
+    if (videoCount === 1) return true;
+    // Older timed replies were always rooted at the thread, so their exact
+    // gallery target cannot be recovered. Preserve their previous broad
+    // visibility instead of hiding them from reply-owned videos.
+    if (row.replyParentId === rootId) return true;
+    return row.replyParentId === attachmentOwner?.id;
+  };
   const markers = timecodesSeekable
     ? replies.flatMap((row) => {
         const parsed = parseMediaTimeReply(row.content);
-        if (!parsed) return [];
+        if (!parsed || !timecodeApplies(row)) return [];
         const displayId = row.workflowOwnerId ?? row.authorId;
         const profile = profiles.get(displayId);
         const name = profile?.name ?? displayId.slice(0, 10);
@@ -305,22 +336,6 @@ function ReviewShell({
         ];
       })
     : [];
-  const [currentTime, setCurrentTime] = useState(initialTime);
-  const [includeTime, setIncludeTime] = useState(true);
-  const mediaAttachments = useMemo(() => {
-    const seen = new Set<string>();
-    return [
-      ...galleryAttachments,
-      ...editMessages.flatMap((row) => row.attachments),
-      attachment,
-    ].filter(
-      (item) =>
-        (item.kind === "image" || item.kind === "video") &&
-        !!safeMessageUrl(item.url) &&
-        !seen.has(item.url) &&
-        !!seen.add(item.url),
-    );
-  }, [attachment, editMessages, galleryAttachments]);
   const mixedGallery =
     mediaAttachments.length > 1 &&
     mediaAttachments.some((item) => item.kind === "video");
@@ -469,6 +484,7 @@ function ReviewShell({
                   scope={scope}
                   extensions={extensions}
                   selectAttachment={selectAttachment}
+                  canSeekTimecode={timecodeApplies}
                   {...(attachment.kind === "video" && timecodesSeekable
                     ? { seek }
                     : {})}
@@ -498,7 +514,11 @@ function ReviewShell({
                     threadRootId={rootId}
                     editMessages={editMessages}
                     {...(attachment.kind === "video" && includeTime
-                      ? { mediaTimeSeconds: currentTime }
+                      ? {
+                          mediaTimeSeconds: currentTime,
+                          replyParentId: attachmentOwner?.id ?? rootId,
+                          mediaTargetUrl: attachment.url,
+                        }
                       : {})}
                     hideMediaTimeIndicator
                   />
@@ -561,6 +581,8 @@ function ReviewShell({
               scope={scope}
               channelId={channelId}
               rootId={rootId}
+              replyParentId={attachmentOwner?.id ?? rootId}
+              mediaTargetUrl={attachment.url}
               videoRef={video}
               extensions={extensions}
             />
@@ -594,6 +616,7 @@ function ReviewComments({
   scope,
   extensions,
   seek,
+  canSeekTimecode,
   selectAttachment,
 }: {
   channelId: string;
@@ -605,6 +628,7 @@ function ReviewComments({
   scope: string;
   extensions?: ConversationExtensions | undefined;
   seek?: (seconds: number) => void;
+  canSeekTimecode(row: ChannelMessage): boolean;
   selectAttachment(attachment: Attachment, initialTime: number): void;
 }) {
   const profiles = useRowProfiles(session.profiles, replies);
@@ -674,7 +698,7 @@ function ReviewComments({
                 onOpenMediaReview={(_rowId, attachment, seconds) =>
                   selectAttachment(attachment, seconds)
                 }
-                {...(seek ? { onMediaTime: seek } : {})}
+                {...(seek && canSeekTimecode(row) ? { onMediaTime: seek } : {})}
               />
             </div>
           );

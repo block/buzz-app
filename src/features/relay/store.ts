@@ -30,6 +30,7 @@ import {
   type Priority,
 } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
+import type { ReadTransport } from "./transport";
 import {
   NOTICE_PAGE_SIZE,
   noticeFilter,
@@ -215,11 +216,15 @@ export function createChannelStore(
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
+        verifyStored?: ReadTransport["verifyStored"];
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
         rosterChanged?(strong?: boolean): void;
         /** The relay advertises NIP-CL; label lookups are refused without it. */
         channelIdentity?: true | undefined;
+        /** A `viewerLookup` read these channels' metadata, or a mounted
+         * link named a channel already known. */
+        resolved?(ids: readonly string[]): void;
       })
     | null,
   directory: ProfileDirectory,
@@ -322,6 +327,10 @@ export function createChannelStore(
     : null;
   // Restored metadata needs confirmation independently of roster progress/retries.
   const pendingMetadata = new Set<string>();
+  /** A `confirmMetadata` read is in flight; one that failed left its
+   * confirmation owed to the next discovery, as a failed roster read would. */
+  let confirmingMetadata = false,
+    metadataOwed = false;
   const checkedMetadata = new Set<string>();
   const heads = new ByteLru<Head>(maxHeads, maxHeadBytes);
   const windows = new Map<string, WindowState>();
@@ -385,6 +394,9 @@ export function createChannelStore(
       ? true
       : undefined;
   }
+  function savedMetadata(id: string) {
+    return pendingMetadata.has(id) ? (true as const) : undefined;
+  }
   function setList(next: ChannelList, discoveryChanged = false) {
     const previous = new Map(
       list.channels.map((channel) => [channel.id, channel]),
@@ -394,6 +406,7 @@ export function createChannelStore(
       if (!retained.has(id)) checkedMetadata.delete(id);
     const channels = next.channels.map((channel) => {
       const pending = metadataPending(channel.id);
+      const metadataCached = savedMetadata(channel.id);
       const preview =
         windows.get(channel.id)?.preview ??
         tails.peek(channel.id)?.preview ??
@@ -403,6 +416,7 @@ export function createChannelStore(
         old.name === channel.name &&
         old.description === channel.description &&
         old.metadataPending === pending &&
+        old.metadataCached === metadataCached &&
         old.visibility === channel.visibility &&
         old.joinRole === channel.joinRole &&
         old.viewerRole === channel.viewerRole &&
@@ -423,7 +437,12 @@ export function createChannelStore(
         sameKeys(old.owners, channel.owners) &&
         sameKeys(old.participants, channel.participants)
         ? old
-        : Object.freeze({ ...channel, metadataPending: pending, preview });
+        : Object.freeze({
+            ...channel,
+            metadataPending: pending,
+            ...(metadataCached ? { metadataCached } : {}),
+            preview,
+          });
     });
     const sameChannels =
       channels.length === list.channels.length &&
@@ -834,6 +853,42 @@ export function createChannelStore(
     };
     void persistence.write(record).catch(() => {});
     return signature;
+  }
+  /** Missing evidence cannot keep an earlier public preview readable: an
+   * exact metadata read that omits a preview's metadata, with no newer
+   * version arriving since `started`, denies it until a lookup finds it
+   * public again (attendance's retry, a link or a search). */
+  function omittedPreview(
+    id: string,
+    events: readonly RelayEvent[],
+    started: ReadonlyMap<string, RelayEvent | undefined>,
+  ) {
+    return (
+      !!transport &&
+      !events.some(
+        (event) =>
+          event.kind === 39000 &&
+          event.pubkey === transport.relayAuthor &&
+          tag(event, "d") === id,
+      ) &&
+      unchangedPreview(id, started.get(id))
+    );
+  }
+  function unchangedPreview(id: string, version: RelayEvent | undefined) {
+    return (
+      !!discovery &&
+      (!!discovery.get(id)?.readOnly ||
+        discovery.suspendedChannels().includes(id)) &&
+      version === discovery.metadataVersion(id)
+    );
+  }
+  /** Denies the previews a multi-batch pass found omitted, once it ends, so
+   * their revocation does not cancel it. A membership grant or newer
+   * metadata that arrived in a later batch keeps the channel. */
+  function denyOmitted(omitted: ReadonlyMap<string, RelayEvent | undefined>) {
+    for (const [id, version] of omitted)
+      if (!discovery?.authorized(id) && unchangedPreview(id, version))
+        denyChannel(id, new Error("Conversation is unavailable"));
   }
   function denyChannel(channelId: string, error: unknown) {
     // A chat still starting is not there to deny yet; only a refused or
@@ -1305,7 +1360,11 @@ export function createChannelStore(
     profileSave = undefined;
     if (!persistence?.writeProfiles || !profilesRestored || disposed) return;
     const events = directory.recent(PROFILE_CACHE_BASE);
-    const signature = events.map((event) => event.id).join(":");
+    // Sorted, so reads that only reorder the LRU never rewrite the mirror.
+    const signature = events
+      .map((event) => event.id)
+      .sort()
+      .join(":");
     if (signature === mirrored) return;
     mirrored = signature;
     void persistence.writeProfiles(events).catch(() => {
@@ -1326,18 +1385,24 @@ export function createChannelStore(
     try {
       if (!Array.isArray(saved) || saved.length > PROFILE_CACHE_BASE) return;
       const profiles: RelayEvent[] = [];
-      for (let index = 0; index < saved.length; index += 12) {
-        for (const value of saved.slice(index, index + 12)) {
-          try {
-            const event = eventDto(JSON.parse(JSON.stringify(value)));
-            if (event.kind === 0) profiles.push(event);
-          } catch {
-            /* One bad record cannot discard the other names. */
+      // Any host failure or bad record falls back to checking one by one.
+      const verified = await transport?.verifyStored?.(saved).catch(() => {});
+      if (disposed || generation !== cleared) return;
+      if (verified)
+        profiles.push(...verified.filter((event) => event.kind === 0));
+      else
+        for (let index = 0; index < saved.length; index += 12) {
+          for (const value of saved.slice(index, index + 12)) {
+            try {
+              const event = eventDto(JSON.parse(JSON.stringify(value)));
+              if (event.kind === 0) profiles.push(event);
+            } catch {
+              /* One bad record cannot discard the other names. */
+            }
           }
+          await yieldToHost();
+          if (disposed || generation !== cleared) return;
         }
-        await yieldToHost();
-        if (disposed || generation !== cleared) return;
-      }
       directory.accept(profiles);
       if (!options.cachedOnly && profiles.length)
         void directory
@@ -1720,6 +1785,10 @@ export function createChannelStore(
     let readingRoster = true;
     let denyAllOnFailure = true;
     let outcome: RosterRefresh = { state: "deferred" };
+    /** Previews the pass's metadata reads omitted (see `denyOmitted`),
+     * denied only once every batch has been read. */
+    const omittedPreviews = new Map<string, RelayEvent | undefined>();
+    let metadataRead = false;
     try {
       const ids = new Set<string>();
       let scannedBytes = 0;
@@ -1912,12 +1981,20 @@ export function createChannelStore(
         if (complete && !applyDiscovery([], complete, started)) return;
       }
       if (complete) transport.rosterComplete?.();
-      const wanted = [...ids].filter(
-        (id) =>
-          discovery.authorized(id) &&
-          !named.has(id) &&
-          (force || pendingMetadata.has(id) || !discovery.named(id)),
+      // Saved metadata of a channel the viewer has not joined, as a public
+      // preview's, is read again here too: the roster read never returns it.
+      const outsideRoster = [...pendingMetadata].filter(
+        (id) => !ids.has(id) && authorized(id),
       );
+      const wanted = [
+        ...[...ids].filter(
+          (id) =>
+            discovery.authorized(id) &&
+            !named.has(id) &&
+            (force || pendingMetadata.has(id) || !discovery.named(id)),
+        ),
+        ...outsideRoster,
+      ];
       generation = epoch;
       readingRoster = false;
       denyAllOnFailure = false;
@@ -1927,24 +2004,38 @@ export function createChannelStore(
       controller = new AbortController();
       controllers.add(controller);
       for (let offset = 0; offset < wanted.length; offset += DISCOVERY_LIMIT) {
+        const batch = wanted.slice(offset, offset + DISCOVERY_LIMIT);
+        const versions = new Map(
+          batch.map((id) => [id, discovery.metadataVersion(id)]),
+        );
         const metadata = await transport.read(
           [
             {
               kinds: [39000],
+              authors: [transport.relayAuthor],
               ...consistency,
-              "#d": wanted.slice(offset, offset + DISCOVERY_LIMIT),
+              "#d": batch,
               limit: DISCOVERY_LIMIT,
             },
           ],
           { signal: controller.signal },
         );
         if (disposed || generation !== epoch) return;
-        for (const id of wanted.slice(offset, offset + DISCOVERY_LIMIT))
-          checkedMetadata.add(id);
+        for (const id of batch) checkedMetadata.add(id);
         applyDiscovery(metadata);
+        for (const id of batch)
+          if (
+            !discovery.authorized(id) &&
+            omittedPreview(id, metadata, versions)
+          )
+            omittedPreviews.set(id, versions.get(id));
         if (disposed || generation !== epoch) return;
       }
-      if (!disposed && generation === epoch) outcome = { state: "verified" };
+      metadataRead = true;
+      if (!disposed && generation === epoch) {
+        outcome = { state: "verified" };
+        metadataOwed = false;
+      }
     } catch (error) {
       if (disposed || generation !== epoch) return;
       outcome = isAbort(error)
@@ -2002,11 +2093,12 @@ export function createChannelStore(
         rosterRefresh = Object.freeze(outcome);
         // Stale work cannot consume a newer hint or certify freshness. A failed
         // read waits for deliberate retry/a later hint instead of draining work.
-        if (
+        const again =
           (listAgain || (generation !== epoch && revokedEpoch === epoch)) &&
-          outcome.state !== "error"
-        )
-          void discover(true);
+          outcome.state !== "error";
+        // Before a queued pass starts: a denial retires the reads in flight.
+        if (metadataRead) denyOmitted(omittedPreviews);
+        if (again) void discover(true);
         else transport.rosterChanged?.();
         if (outcome.state === "verified")
           for (const id of windows.keys()) revalidateCached(id);
@@ -2166,7 +2258,6 @@ export function createChannelStore(
         )
       )
         denyChannel(id, new Error("Conversation is unavailable"));
-      // Missing evidence cannot keep an earlier public preview readable.
       if (
         !events.some(
           (event) =>
@@ -2175,15 +2266,12 @@ export function createChannelStore(
             tag(event, "d") === id,
         )
       ) {
-        if (
-          (discovery.get(id)?.readOnly ||
-            discovery.suspendedChannels().includes(id)) &&
-          started.get(id) === discovery.metadataVersion(id)
-        )
+        if (omittedPreview(id, events, started))
           denyChannel(id, new Error("Conversation is unavailable"));
       } else if (!discovery.named(id))
         throw new Error("Channel metadata capacity unavailable");
     }
+    if (settings?.viewerLookup) transport.resolved?.(ids);
     if (settings?.consistency === "strong")
       await readCreations(
         ids.flatMap((id) => {
@@ -2660,10 +2748,11 @@ export function createChannelStore(
                 : 0,
             );
       if (unresolved.length) {
-        await resolve(
-          unresolved,
-          readSignal ? { ...settings, signal: readSignal } : settings,
-        );
+        await resolve(unresolved, {
+          ...settings,
+          ...(readSignal ? { signal: readSignal } : {}),
+          viewerLookup: true,
+        });
         const stale = new Set(
           unresolved.filter((id) => {
             const current = discovery.metadataVersion(id);
@@ -2840,7 +2929,8 @@ export function createChannelStore(
         }),
       ),
     ];
-    if (ids.length) await resolve(ids, settings, true);
+    if (ids.length)
+      await resolve(ids, { ...settings, viewerLookup: true }, true);
     if (disposed || generation !== epoch)
       throw new DOMException("Stale channel lookup", "AbortError");
     return ids
@@ -3186,7 +3276,10 @@ export function createChannelStore(
     if (disposed || !transport || !discovery || options.cachedOnly) return;
     // Discovery's admission, not a found name, decides: a left channel's
     // messages need a fresh lookup.
-    if (list.status !== "ready" || discovery.get(id)) return;
+    if (list.status !== "ready") return;
+    // A known channel needs no lookup, but a link names it in the viewer's
+    // own traffic, as the lookup would have had it been unknown.
+    if (discovery.get(id)) return transport.resolved?.([id]);
     const state = currentReferences();
     if (
       state.queue.has(id) ||
@@ -3208,7 +3301,7 @@ export function createChannelStore(
       for (let start = 0; start < ids.length; start += 128) {
         const batch = ids.slice(start, start + 128);
         for (const id of batch) state.pending.add(id);
-        resolve(batch, { priority: "background" }).then(
+        resolve(batch, { priority: "background", viewerLookup: true }).then(
           () => {
             if (generation !== epoch) return;
             for (const id of batch) {
@@ -3266,7 +3359,14 @@ export function createChannelStore(
     list: () => list,
     get: (id: string) => {
       const channel = discovery?.get(id);
-      return channel && { ...channel, metadataPending: metadataPending(id) };
+      const metadataCached = savedMetadata(id);
+      return (
+        channel && {
+          ...channel,
+          metadataPending: metadataPending(id),
+          ...(metadataCached ? { metadataCached } : {}),
+        }
+      );
     },
     start(channel: Parameters<NonNullable<ChannelQueries["start"]>>[0]) {
       if (disposed || !transport || !discovery) return;
@@ -3957,16 +4057,22 @@ export function createChannelStore(
   return {
     queries,
     roster: () => rosterRefresh,
-    /** A full roster read is still due: the last one did not verify, or a
-     * retired exact confirmation left a strong read owed. */
-    rosterOwed: () => rosterRefresh.state !== "verified" || strongListAgain,
+    /** A full roster read is still due: the last one did not verify, a
+     * retired exact confirmation left a strong read owed, or a metadata
+     * confirmation failed. */
+    rosterOwed: () =>
+      rosterRefresh.state !== "verified" || strongListAgain || metadataOwed,
     /** Preserve a retired exact confirmation's routing without scheduling work.
      * The next refresh/Retry owns dispatch and the existing cooldown. */
     requireStrongListRead() {
       if (!disposed) strongListAgain = true;
     },
     retryList() {
-      if (rosterRefresh.state === "error" || rosterRefresh.state === "deferred")
+      if (
+        rosterRefresh.state === "error" ||
+        rosterRefresh.state === "deferred" ||
+        metadataOwed
+      )
         void discover(true);
     },
     restore,
@@ -3987,6 +4093,90 @@ export function createChannelStore(
     accept,
     clearCache,
     dispose,
+    /** A dropped stream also ends the relay's confirmation of the metadata
+     * of every channel the viewer can read, joined or a public preview: the
+     * channel may turn private meanwhile, and the replay after a reconnect
+     * can arrive before a read asks again. Until a fresh read, the metadata
+     * counts as only saved (`metadataCached`), and the next discovery or
+     * `confirmMetadata` reads it again. */
+    staleMetadata() {
+      if (disposed || !transport || !discovery) return;
+      let changed = false;
+      for (const id of discovery.metadataIds())
+        if (authorized(id) && !pendingMetadata.has(id)) {
+          pendingMetadata.add(id);
+          changed = true;
+        }
+      if (changed) setList(list, true);
+    },
+    /** Reads again the metadata still unconfirmed, as after a continuous
+     * resume that skips the roster read and so the discovery that would. In
+     * discovery's bounded batches, beside a discovery already reading it.
+     * One that does not finish, failed or cancelled, owes a discovery
+     * (`rosterOwed`), which recovery and Retry dispatch within the relay's
+     * cooldown. */
+    async confirmMetadata() {
+      if (
+        disposed ||
+        !transport ||
+        !discovery ||
+        options.cachedOnly ||
+        confirmingMetadata ||
+        listBusy
+      )
+        return;
+      const ids = [...pendingMetadata].filter(authorized);
+      if (!ids.length) return;
+      const generation = epoch;
+      const controller = new AbortController();
+      controllers.add(controller);
+      confirmingMetadata = true;
+      let finished = false;
+      const omittedPreviews = new Map<string, RelayEvent | undefined>();
+      try {
+        for (let offset = 0; offset < ids.length; offset += DISCOVERY_LIMIT) {
+          const batch = ids.slice(offset, offset + DISCOVERY_LIMIT);
+          const versions = new Map(
+            batch.map((id) => [id, discovery.metadataVersion(id)]),
+          );
+          const metadata = await transport.read(
+            [
+              {
+                kinds: [39000],
+                authors: [transport.relayAuthor],
+                "#d": batch,
+                limit: DISCOVERY_LIMIT,
+              },
+            ],
+            { signal: controller.signal, priority: "background", fresh: true },
+          );
+          if (disposed || generation !== epoch) return;
+          applyDiscovery(metadata);
+          for (const id of batch)
+            if (
+              !discovery.authorized(id) &&
+              omittedPreview(id, metadata, versions)
+            )
+              omittedPreviews.set(id, versions.get(id));
+        }
+        finished = true;
+        denyOmitted(omittedPreviews);
+      } catch (error) {
+        if (
+          !disposed &&
+          generation === epoch &&
+          error instanceof ReadError &&
+          error.retryAfterMs !== undefined
+        )
+          listRetryAt = performance.now() + error.retryAfterMs;
+      } finally {
+        controllers.delete(controller);
+        confirmingMetadata = false;
+        // A revocation elsewhere cancels this read too, but not the need.
+        if (!finished && !disposed && [...pendingMetadata].some(authorized))
+          metadataOwed = true;
+      }
+    },
     /** A disconnected stream invalidates a head's freshness lease, not its content.
      * Inactive cached heads will revalidate when demanded, without an all-roster read.
      * The session drops its queued catch-ups with the stream, so an empty window

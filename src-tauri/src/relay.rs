@@ -2330,3 +2330,63 @@ fn media_type(value: Option<&str>) -> (String, bool) {
 }
 #[cfg(test)]
 mod tests;
+
+/// A native plugin's relay read (NIP-11, or one filter), on the same bounded,
+/// authenticated HTTP client as other native relay reads.
+pub(crate) async fn plugin_read(
+    host: &IdentityHost,
+    community: &str,
+    filter: Option<serde_json::Value>,
+) -> Result<serde_json::Value> {
+    let (path, method) = if filter.is_some() {
+        ("/query", "POST")
+    } else {
+        ("/", "GET")
+    };
+    let url = request_url(community, path, method)?;
+    let body = filter.map(|filter| serde_json::json!([filter]).to_string());
+    let response = send(
+        host,
+        None,
+        url,
+        method,
+        body,
+        method == "POST",
+        MAX_RESPONSE,
+    )
+    .await?;
+    if !(200..300).contains(&response.status) {
+        return Err("Relay read failed".into());
+    }
+    serde_json::from_str(&response.body).map_err(|_| "Invalid relay response".into())
+}
+
+/// Publishes an event the signed-in identity already signed, for a native
+/// plugin's host adapter; it never signs or publishes arbitrary events.
+pub(crate) async fn plugin_publish(
+    host: &IdentityHost,
+    community: &str,
+    event: serde_json::Value,
+) -> Result<()> {
+    verify_owned_event(host, &event).await?;
+    let url = request_url(community, "/events", "POST")?;
+    let response = send(
+        host,
+        None,
+        url,
+        "POST",
+        Some(event.to_string()),
+        true,
+        MAX_RESPONSE,
+    )
+    .await?;
+    let receipt: serde_json::Value =
+        serde_json::from_str(&response.body).map_err(|_| "Invalid publication receipt")?;
+    if !(200..300).contains(&response.status)
+        || receipt["accepted"] != true
+        || receipt["event_id"] != event["id"]
+    {
+        return Err("Relay did not accept the publication".into());
+    }
+    Ok(())
+}

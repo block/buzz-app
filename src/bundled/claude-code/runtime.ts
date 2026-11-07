@@ -22,6 +22,7 @@ import {
   unverifiedSynced,
 } from "../../features/agents/agent-config";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
@@ -68,6 +69,7 @@ import {
 import { AgentSessions, localSessions, Spare } from "./sessions";
 import { protectionHistoryEntry } from "./security";
 import {
+  readLatestTurns,
   readSessionTitle,
   readTranscript,
   type Conversation,
@@ -160,8 +162,8 @@ const where = ({ workspace, model, effort }: Config) => ({
 /** How Claude lists the session tools: in full up front only those marked
  * `alwaysLoad`, and the rest by name until its tool search loads them, with
  * the server's instructions saying what they are. */
-const listing = (added: readonly AddedTool[]): Listing => ({
-  instructions: sessionHint(added),
+const listing = (added: readonly AddedTool[], owner = false): Listing => ({
+  instructions: sessionHint(added, owner),
   tool: ({ load, ...tool }) =>
     load === "always"
       ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
@@ -467,6 +469,20 @@ export class ClaudeRuntime {
     if (remote) this.confirmedRemote.add(agent);
     return remote;
   }
+  /** A file as the agent's processes read one here: in its saved workspace.
+   * On an execution target only a conversation's session can read it. */
+  async workspaceFile(agent: Agent, path: string, signal: AbortSignal) {
+    if (await this.isRemote(agent.key))
+      throw new Error(
+        `This agent reads files only in a conversation on its execution target, not ${path}`,
+      );
+    return readFile(
+      this.spawn,
+      this.resolveConfig(agent.config).workspace,
+      path,
+      signal,
+    );
+  }
 
   /** The models the agent's next turn can run on, with their effort levels.
    * Without a pick it uses its own: the configured one, or else the one its
@@ -604,6 +620,44 @@ export class ClaudeRuntime {
       (transcript) =>
         transcript && { ...transcript, turns: prompts.shown(transcript.turns) },
     );
+  }
+  /** The latest whole turns of a conversation's saved session, or undefined
+   * when it has none to read that way. Its sessions' prompts are shown
+   * once: not again on a session whose earlier turns `held` keeps. */
+  async latestTurns(
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+    held: readonly TranscriptTurn[],
+  ) {
+    if (await this.inspect?.(conversation.agent)) return undefined;
+    const read = await readLatestTurns(
+      this.spawn,
+      workspace,
+      conversation,
+      working,
+      signal,
+      (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+    );
+    if (!read) return undefined;
+    // Turns older than all `held` keeps are left.
+    const ids = new Set(held.map((turn) => turn.turnId));
+    const turns = read.slice(
+      Math.max(
+        read.findIndex((turn) => ids.has(turn.turnId)),
+        0,
+      ),
+    );
+    const at = held.findIndex((turn) => turn.turnId === turns[0]?.turnId);
+    const kept = new Set(
+      held.slice(0, Math.max(at, 0)).map((t) => t.sessionId),
+    );
+    return this.prompts(conversation.agent)
+      .shown(turns)
+      .map((turn, index) =>
+        kept.has(turn.sessionId) ? (turns[index] ?? turn) : turn,
+      );
   }
   /** What each of the agent's sessions started with. */
   private prompts(agent: AgentKey) {
@@ -1344,7 +1398,7 @@ export class ClaudeRuntime {
           context,
           message,
           this.added(),
-          listing(this.added()),
+          listing(this.added(), !!client?.ownerAccess),
         );
       };
     const saved = this.savedSessions(agent);

@@ -83,7 +83,7 @@ import type {
   Profile,
 } from "../relay/contracts";
 import { readView, viewRevision, writeView } from "../../shared/view-state";
-import { clearDraft } from "../../bundled/drafts-sent/drafts";
+import { clearDraft } from "../drafts-sent/drafts";
 import { followupDraft } from "./mention-draft";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
@@ -4987,7 +4987,8 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     screen.getByRole("button", { name: "Model for Honey's next run" });
   // Writes the message and mentions an agent before any pick is made.
   const write = async (name: string, text: string) => {
-    await h.user.type(h.input(), text);
+    await h.user.click(h.input());
+    await h.user.paste(text);
     await h.user.click(screen.getByRole("button", { name }));
   };
   const send = async () => {
@@ -6731,6 +6732,29 @@ it("prefixes thread replies with the selected media time and clears it after sen
   expect(h.input()).toHaveValue("");
 });
 
+it("binds a timed thread reply to its selected media attachment", async () => {
+  const mediaTargetUrl = "https://fixture.test/second.mp4";
+  const h = mount({
+    threadRootId: "root",
+    replyParentId: "parent",
+    mediaTimeSeconds: 21,
+    mediaTargetUrl,
+  });
+  await h.user.type(h.input(), "love this cut");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.reply).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "root",
+    "⏱ 0:21 — love this cut",
+    [],
+    [],
+    "parent",
+    [],
+    {},
+    mediaTargetUrl,
+  );
+});
+
 it("lets the visible media time indicator dismiss without sending", async () => {
   const clearMediaTime = vi.fn();
   const h = mount({
@@ -6803,6 +6827,45 @@ it("retains rejected intent and clears the draft only after the outbox accepts i
   expect(h.messages.reply).toHaveBeenCalledTimes(2);
   expect(h.input()).toHaveValue("");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("leads the placeholder's channel name with its sidebar icon", () => {
+  const h = mount();
+  const lead = () =>
+    h.input().parentElement?.querySelector(':scope > [aria-hidden="true"]');
+  expect(screen.getByRole("textbox", { name: "Message #General" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toHaveTextContent(/^$/);
+  expect(lead()).toHaveAttribute("data-lead", "Message");
+  expect(lead()).toHaveAttribute("data-name", "General");
+  expect(lead()?.querySelector("svg.tabler-icon-hash")).not.toBeNull();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+    private: true,
+  };
+  const session = {
+    ...h.session,
+    channels: {
+      ...h.session.channels,
+      get: () => channel,
+      list: () => ({ status: "ready" as const, channels: [channel] }),
+    },
+  };
+  h.retarget({ session });
+  expect(screen.getByRole("textbox", { name: "Message General" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toHaveAttribute("data-name", "General");
+  expect(lead()?.querySelector("svg.tabler-icon-lock")).not.toBeNull();
+  expect(lead()?.querySelector("svg.tabler-icon-hash")).toBeNull();
+  h.retarget({ session, threadRootId: "root" });
+  expect(screen.getByRole("textbox", { name: "Reply to thread" })).toBe(
+    h.input(),
+  );
+  expect(lead()).toBeNull();
 });
 
 it("labels simultaneous composers independently and prevents disabled or unsupported writes", async () => {
@@ -10109,7 +10172,7 @@ it.each(["Do nothing", "Invite"])(
   },
 );
 
-it("Enter on a deliberately focused Invite adds a nonmember before sending", async () => {
+it("Enter right after the prompt opens invites a nonmember and sends", async () => {
   const h = mount();
   const add = vi.fn(async () => {});
   const list = {
@@ -10126,10 +10189,7 @@ it("Enter on a deliberately focused Invite adds a nonmember before sending", asy
   act(() => h.commands().insertMention(first));
   fireEvent.submit(screen.getByRole("form"));
   const invite = screen.getByRole("button", { name: "Invite" });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
-  );
-  invite.focus();
+  await waitFor(() => expect(invite).toHaveFocus());
   await userEvent.setup().keyboard("{Enter}");
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(add).toHaveBeenCalledWith("channel", first.pubkey);
@@ -10230,8 +10290,9 @@ it.each([
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "Honey is in oss.example.com. Bringing it here adds the same agent",
     );
-    // Enter on the initial focus declines: nothing joins, sends, or is lost.
+    // Enter on the highlighted Don't bring declines: nothing joins, sends, or is lost.
     const safe = screen.getByRole("button", { name: "Don't bring" });
+    expect(safe).toHaveAttribute("data-variant", "prominent");
     await waitFor(() => expect(safe).toHaveFocus());
     await userEvent.setup().keyboard("{Enter}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -10312,7 +10373,7 @@ it("brings several agents in, then adds them together", async () => {
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
 });
 
-it.each(["close", "escape", "enter"])(
+it.each(["close", "escape"])(
   "%s preserves the captured draft and returns focus without adding or sending",
   async (action) => {
     const h = mount();
@@ -10339,14 +10400,11 @@ it.each(["close", "escape", "enter"])(
     );
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+      expect(screen.getByRole("button", { name: "Invite" })).toHaveFocus(),
     );
     if (action === "close")
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    else
-      await userEvent
-        .setup()
-        .keyboard(action === "enter" ? "{Enter}" : "{Escape}");
+    else await userEvent.setup().keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
@@ -11095,7 +11153,6 @@ describe("repository resource picker", () => {
             p.homes.mock.calls.filter(([id]) => id === "channel").length,
           ).toBeGreaterThan(1),
         );
-        expect(trigger()).toBeDisabled();
         // Closing formatting fades the toolbar back in; wait for that entrance.
         await waitFor(() => expect(trigger()).toBeVisible());
         expect(trigger()).toBeDisabled();

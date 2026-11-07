@@ -9,7 +9,15 @@ import { reactionTarget } from "../relay/reaction-target";
 
 export const ATTENTION_SCHEMA = "agent-attention/v1";
 
-export type Interest = Readonly<{ type: "interest"; instructions: string }>;
+export type Interest = Readonly<{
+  type: "interest";
+  /** What the owner sees as the Interest's name. */
+  title?: string;
+  /** One or two sentences under the title on the owner's card. */
+  summary?: string;
+  instructions: string;
+  paused?: boolean;
+}>;
 export type ClassifierQuestion = Readonly<{
   question: string;
   true?: string;
@@ -303,8 +311,13 @@ export function validateObject(
     if (parsed.space === "interest") {
       if (object.type !== "interest")
         fail('An interest/ value has type "interest"');
-      fields(object, ["type", "instructions"]);
+      fields(object, ["type", "instructions"], ["title", "summary", "paused"]);
+      if (object.paused !== undefined && typeof object.paused !== "boolean")
+        fail("paused must be true or false");
       filled(object.instructions, "instructions", TEXT_LIMIT);
+      if (object.title !== undefined && !label(object.title, "title").trim())
+        fail("title is empty");
+      if (object.summary !== undefined) filled(object.summary, "summary", 1024);
     } else if (object.type === "event") eventWatch(object);
     else if (object.type === "timer") timer(object);
     else if (object.type === "source") {
@@ -511,4 +524,13 @@ export function sourceCompleted(
     object?.value.type === "source" &&
     runs?.[object.slug] === sourceSignature(object)
   );
+}
+
+/** Interest pause leaves each watch's own enabled setting intact. */
+export function interestPaused(
+  attention: Readonly<Record<string, AttentionObject>>,
+  id: string,
+): boolean {
+  const value = attention[`interest/${id}`]?.value;
+  return value?.type === "interest" && value.paused === true;
 }

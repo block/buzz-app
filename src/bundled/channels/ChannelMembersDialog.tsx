@@ -1,4 +1,5 @@
 import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
+import { useHeaderChannel } from "../../features/relay/listed-channel";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -46,7 +47,11 @@ import {
   readSearchUsage,
   recordChoice,
 } from "../../features/search/usage";
-import { matchPerson } from "../../features/search/person-match";
+import {
+  matchPerson,
+  matchTier,
+  normalizeName,
+} from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
 import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
@@ -63,6 +68,7 @@ import { soloChatLink } from "../../features/solo/share";
 import {
   formatPublicKey,
   publicKeyLabels,
+  typedPublicKey,
 } from "../../shared/identity/public-key";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -446,14 +452,7 @@ export function ChannelMembersButton({
   const open = presentation ? presentation.open : localOpen;
   const setOpen = presentation ? presentation.onOpenChange : setLocalOpen;
   const trigger = useRef<HTMLButtonElement>(null);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
-  );
-  const channel =
-    list.channels.find((item) => item.id === channelId) ??
-    session.channels.get?.(channelId);
+  const access = useHeaderChannel(session.channels, channelId, memberAccess);
   return (
     <>
       {conversationName !== undefined ? (
@@ -462,7 +461,7 @@ export function ChannelMembersButton({
           session={session}
           channelId={channelId}
           name={conversationName}
-          access={memberAccess(channel)}
+          access={access}
           detail={owner && soloOwnerLabel(owner)}
           aria-expanded={open}
           onClick={() => setOpen(true)}
@@ -594,6 +593,7 @@ export function ChannelMembersDialog({
   const [messageError, setMessageError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
+  const apply = useRef<HTMLButtonElement>(null);
   const [changeError, setChangeError] = useState<{
     session: RelaySession;
     channelId: string;
@@ -618,7 +618,13 @@ export function ChannelMembersDialog({
   const previousSelection = useRef(selection);
   useLayoutEffect(() => {
     if (selection !== previousSelection.current)
-      (selection ? cancel.current : input.current)?.focus();
+      // Enter confirms reversible changes; removal starts on Cancel.
+      (selection
+        ? selection.role !== "remove" && !apply.current?.disabled
+          ? apply.current
+          : cancel.current
+        : input.current
+      )?.focus();
     previousSelection.current = selection;
   }, [selection]);
   const scrollport = useRef<HTMLElement>(null);
@@ -764,6 +770,21 @@ export function ChannelMembersDialog({
       : ""
     : rosterReadError;
   const text = query.trim();
+  // Fold the query once per render, not once per member name.
+  const folded = [...normalizeName(query)];
+  const nameMatches = (name: string | undefined) =>
+    !!name && matchTier(name, folded) !== undefined;
+  // Npubs of this roster: every keystroke rescans each member, and a bounded
+  // shared cache would miss on every lookup once the roster outgrows it.
+  const npubs = useMemo(() => new Map<string, string>(), []);
+  const npubOf = (key: string) => {
+    let npub = npubs.get(key);
+    if (npub === undefined) {
+      npub = npubEncode(key);
+      npubs.set(key, npub);
+    }
+    return npub;
+  };
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new query or explicit refresh rereads stored choice/visit scores.
   const usage = useMemo(
     () => readSearchUsage(session.scope),
@@ -936,9 +957,12 @@ export function ChannelMembersDialog({
         formatPublicKey(key) ??
         "Unknown member",
     );
+  // A whole key or npub, with or without `nostr:`, finds its owner.
+  const typedKey = typedPublicKey(text);
   // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
     !text ||
+    key === typedKey ||
     [
       searchProfiles.get(key)?.name,
       searchProfiles.get(key)?.username,
@@ -946,20 +970,11 @@ export function ChannelMembersDialog({
       verifiedOf(key)?.username,
       verifiedOf(key)?.fullName,
       ...(searchProfiles.get(key)?.profileNames ?? []),
-    ].some((name) => name && matchPerson(name, query)) ||
-    `${name} ${key} ${npubEncode(key)}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase());
-  // People to add use the shared name rule, like the relay's people page; a
-  // whole key or npub finds its owner.
-  const addable = (key: string, ...names: (string | undefined)[]) => {
-    const typed = query.trim().toLowerCase();
-    return (
-      names.some((name) => name && matchPerson(name, query)) ||
-      typed === key ||
-      typed === npubEncode(key)
-    );
-  };
+    ].some(nameMatches) ||
+    `${name} ${key} ${npubOf(key)}`.toLowerCase().includes(text.toLowerCase());
+  // People to add use the shared name rule, like the relay's people page.
+  const addable = (key: string, ...names: (string | undefined)[]) =>
+    key === typedKey || names.some(nameMatches);
   // Label once per member: a fallback label bech32-encodes the key, too costly
   // to repeat for every member of a large roster on each render.
   const memberLabels = new Map([...members].map((key) => [key, label(key)]));
@@ -1226,8 +1241,8 @@ export function ChannelMembersDialog({
       usage,
       picked,
     ).map(({ person }) => person);
-    // Name ranking must not discard exact-key lookups or other relay matches
-    // (for example a profile's NIP-05). Keep those after the shared name matches.
+    // Name ranking lists an exact-key match first but drops other relay
+    // matches (for example a profile's NIP-05). Keep those after its rows.
     const rankedKeys = new Set(ranked.map((person) => person.pubkey));
     const ordered = [
       ...ranked,
@@ -1876,6 +1891,7 @@ export function ChannelMembersDialog({
               Cancel
             </Button>
             <Button
+              ref={apply}
               variant={
                 selection.role === "remove" ? "destructive" : "prominent"
               }
@@ -2378,16 +2394,13 @@ export function ChannelMembersDialog({
             <>
               <Button
                 ref={cancelShare}
+                variant="prominent"
                 disabled={share.busy}
                 onClick={share.cancelConfirmation}
               >
                 Cancel
               </Button>
-              <Button
-                variant="prominent"
-                loading={share.busy}
-                onClick={() => void share.confirm()}
-              >
+              <Button loading={share.busy} onClick={() => void share.confirm()}>
                 Share
               </Button>
             </>

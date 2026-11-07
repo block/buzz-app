@@ -65,9 +65,9 @@ export function ActivityPanel({
   return (
     <ActivityFeed
       agent={agent}
+      openConversation={openConversation}
       activity={activity}
       openSettings={openSettings}
-      openConversation={openConversation}
       names={names}
     />
   );
@@ -134,6 +134,9 @@ function ActivityFeed({
     <ActivityTranscript
       transcript={transcript}
       agentName={agent.name}
+      agentKey={agent.key}
+      agentPicture={agent.picture}
+      community={agent.relay}
       state={(turnId) => state.get(turnId)}
       follow={false}
       openConversation={openConversation}

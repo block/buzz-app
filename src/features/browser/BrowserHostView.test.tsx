@@ -40,6 +40,7 @@ function fakePlatform(): BrowserPlatform {
     available: true,
     attach: vi.fn(async () => "session-1"),
     setBounds: vi.fn(async () => {}),
+    setMediaSuspended: vi.fn(async () => {}),
     navigate: vi.fn(async () => {}),
     action: vi.fn(async () => {}),
     status: vi.fn(async () => ({

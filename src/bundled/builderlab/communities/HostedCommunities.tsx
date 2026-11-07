@@ -61,6 +61,8 @@ type Confirm = {
   title: string;
   description: string;
   action: string;
+  /** Both start on Cancel: permanent shows the action in red, guarded highlights Cancel. */
+  caution?: "permanent" | "guarded";
   run(): Promise<void>;
 };
 
@@ -87,6 +89,7 @@ export function HostedCommunities({
   const [action, setAction] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   const [transfer, setTransfer] = useState<Community | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Community | null>(null);
   const [pendingDeletion, setPendingDeletion] =
@@ -589,6 +592,7 @@ export function HostedCommunities({
                       description:
                         "The key your account uses now will be permanently unlinked. It can never be linked to a Builderlab account again. If this device’s key was unlinked before, Builderlab refuses it too, and your account is left with no key.",
                       action: "Switch identity",
+                      caution: "permanent",
                       run: async () => {
                         check(
                           await api.call("unbind"),
@@ -816,6 +820,7 @@ export function HostedCommunities({
                                     description:
                                       "New and existing connections stop and the address stays reserved. Archiving can’t be undone from here without unarchiving, and the community keeps counting toward your quota — it isn’t deleted.",
                                     action: "Archive",
+                                    caution: "guarded",
                                     run: () =>
                                       mutate(
                                         "archive",
@@ -949,15 +954,27 @@ export function HostedCommunities({
           title={confirm.title}
           description={confirm.description}
           pending={busy}
+          initialFocus={confirm.caution ? undefined : proceed}
           onClose={() => setConfirm(null)}
           {...(failure ? { children: failure } : {})}
           actions={
             <>
-              <Button disabled={busy} onClick={() => setConfirm(null)}>
+              <Button
+                variant={confirm.caution === "guarded" ? "prominent" : "subtle"}
+                disabled={busy}
+                onClick={() => setConfirm(null)}
+              >
                 Cancel
               </Button>
               <Button
-                variant="prominent"
+                ref={proceed}
+                variant={
+                  confirm.caution === "permanent"
+                    ? "destructive"
+                    : confirm.caution
+                      ? "subtle"
+                      : "prominent"
+                }
                 loading={busy}
                 onClick={() =>
                   void run("confirm", confirm.run).then(

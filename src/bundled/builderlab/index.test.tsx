@@ -323,11 +323,30 @@ it.each([undefined, false, true])(
       );
       const user = userEvent.setup();
       await user.click(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+        screen.getByRole("button", { name: "Log in to Builderlab, attention" }),
       );
-      await screen.findByRole("button", {
+      const dialog = await screen.findByRole("dialog", { name: "Builderlab" });
+      await user.click(
+        within(dialog).getByRole("button", { name: "Sign in with Builderlab" }),
+      );
+      await within(dialog).findByRole("button", {
         name: "Identity → Organization sign-in",
       });
+      if (capability !== true) {
+        expect(
+          within(dialog).getByText(
+            "Builderlab remote agents are unavailable for this account.",
+          ),
+        ).toBeVisible();
+      }
+      await user.keyboard("{Escape}");
+      if (capability !== true) {
+        const status = screen.getByText("Unavailable for this account", {
+          selector: ".buzz-preference-row-description span",
+        });
+        await waitFor(() => expect(status).toHaveFocus());
+        expect(status).toHaveAttribute("tabindex", "-1");
+      }
       const type = agents.types()[0];
       if (!type?.remote) throw new Error("Missing Builderlab agent type");
       if (capability === true) {
@@ -337,18 +356,20 @@ it.each([undefined, false, true])(
         expect(type.provider?.snapshot().readiness).toBe("ready");
       } else {
         expect(
-          screen.getByRole("heading", { name: "Coming soon" }),
+          screen.getByRole("heading", { name: "Remote agents" }),
         ).toBeInTheDocument();
-        expect(
-          screen.getByRole("button", { name: "Coming soon, attention" }),
-        ).toBeEnabled();
+        const row = screen
+          .getByText("Builderlab", { selector: ".buzz-preference-row-label" })
+          .closest(".buzz-preference-row");
+        expect(row).toHaveTextContent("Unavailable for this account");
+        expect(row?.querySelector("button")).toBeNull();
         await expect(
           type.remote.provision({
             name: "Helper",
             community: "wss://community.example",
             signal: new AbortController().signal,
           }),
-        ).rejects.toThrow("coming soon");
+        ).rejects.toThrow("unavailable for this account");
         // The known-communities sync follows sign-in, not the remote agents gate.
         expect(
           identity
@@ -359,14 +380,6 @@ it.each([undefined, false, true])(
             ),
         ).toHaveLength(0);
         expect(localStorage.length).toBe(0);
-        await user.click(
-          screen.getByRole("button", { name: "Coming soon, attention" }),
-        );
-        const dialog = screen.getByRole("dialog", { name: "Builderlab" });
-        expect(
-          within(dialog).getByText(/remote agents are coming soon/),
-        ).toBeVisible();
-        await user.keyboard("{Escape}");
       }
       capability = capability !== true;
       await act(() => identity.service.signOut());
@@ -383,7 +396,7 @@ it.each([undefined, false, true])(
         expect(type.provider?.snapshot().readiness).toBe("ready");
       } else {
         expect(
-          screen.getByRole("heading", { name: "Coming soon" }),
+          screen.getByRole("heading", { name: "Remote agents" }),
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("attention");
       }
@@ -475,7 +488,9 @@ it.each([true, false])(
       ).toBeEnabled();
       expect(
         await screen.findByText(
-          canUseRemoteAgents ? "No remote agents yet." : "Coming soon",
+          canUseRemoteAgents
+            ? "No remote agents yet."
+            : "Unavailable for this account",
         ),
       ).toBeInTheDocument();
       // Communities share the one sign-in and its identity link.

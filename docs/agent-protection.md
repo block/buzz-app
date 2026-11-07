@@ -241,8 +241,7 @@ cover restored history, compaction and retries. Deferred provider jobs and paylo
 rewrite callbacks are refused. Image-generation and classifier request shapes without explicit conversation messages are refused. An approved shell command is one action; its
 internal syscalls are not separately reviewed.
 
-The separate [Buzz Security plugin](https://github.com/squareup/buzz-plugin-security)
-owns the protected Codex/Goose source pins, patches, builds, release assets and
+The separate Buzz Security plugin owns the protected Codex/Goose source pins, patches, builds, release assets and
 native boundary fixtures. Buzz packages only its ordinary Goose runtime; ordinary
 Codex retains its independent updater. Installing the security plugin supplies
 the protected engines on demand, without compiling them during Buzz development.

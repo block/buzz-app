@@ -503,7 +503,7 @@ test.describe("automatic catch-up after membership rows", () => {
   });
 });
 
-// AIDA-2318: a burst of joins filled the first history page, so the messages
+// A burst of joins filled the first history page, so the messages
 // unread counted never loaded and opening the channel could not read them.
 test.describe("a join burst longer than a history page", () => {
   test.use({ membershipBurst: 40, historyCounts: { [alphaId]: 20, beta: 1 } });

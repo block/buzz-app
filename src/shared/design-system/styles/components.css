@@ -1556,7 +1556,10 @@
       > .navigation-card-row [aria-expanded="true"][aria-haspopup="menu"]
     ),
     [data-context-menu-present]
-  ):not(:has(> .navigation-card-row [aria-current="page"])) {
+  ):not(
+    :has(> .navigation-card-row [aria-current="page"]),
+    :has(> .navigation-card-row [aria-current="true"])
+  ) {
     background: var(--affordance-panel-hover);
   }
   .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
@@ -1565,6 +1568,18 @@
     background: var(--surface-sidebar-selected);
   }
   .navigation-card:has(> .navigation-card-row [aria-current="page"])
+    > :is(.navigation-card-row, .navigation-card-footer) {
+    --text-subtle: var(--text-row-selected-subtle);
+  }
+  /* Collection selection is neutral; route selection above keeps sidebar paint. */
+  .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
+    > .navigation-card-row [aria-current="true"]
+  ) {
+    background: var(--affordance-selected);
+  }
+  .navigation-card:not([data-tone="tonal"], [data-tone="inset"]):has(
+      > .navigation-card-row [aria-current="true"]
+    )
     > :is(.navigation-card-row, .navigation-card-footer) {
     --text-subtle: var(--text-row-selected-subtle);
   }
@@ -1885,6 +1900,25 @@
     color: var(--text-metadata);
   }
 
+  /* Quiet count: a circle for one digit, a pill for more. */
+  .buzz-count-badge {
+    @apply text-caption;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    min-inline-size: 1lh;
+    block-size: 1lh;
+    padding-inline: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--affordance-subtle);
+    color: var(--text-subtle);
+    font-variant-numeric: tabular-nums;
+  }
+  .navigation-item[data-selected] .buzz-count-badge {
+    background: var(--surface-row-selected-detail);
+    color: var(--text-row-selected-detail);
+  }
+
   /* SidebarNavigation copies main's compact sidebar appearance. Keep this global:
      applying nested shared selectors inside CSS Modules would rename their targets. */
   .buzz-sidebar-navigation {
@@ -2124,7 +2158,9 @@
   .buzz-menu-popup {
     min-width: 11.5rem;
     max-width: min(20rem, var(--available-width), calc(100vw - var(--space-4)));
-    max-height: min(24rem, var(--available-height));
+    /* No fixed cap: macOS hides overlay scrollbars until scrolled, so rows past one look
+       absent. Only a viewport too short for the menu still scrolls. */
+    max-height: var(--available-height);
     overflow-y: auto;
     @apply floating-surface;
     color: var(--text-standard);

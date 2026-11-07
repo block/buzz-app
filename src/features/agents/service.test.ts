@@ -52,6 +52,7 @@ import {
   type AgentHandle,
   AgentsService,
   type AgentType,
+  type AgentVoiceSeat,
   type ConfigBinding,
   type Delivery,
   type Trigger,
@@ -90,7 +91,9 @@ import {
   fakeNative,
   fakeRelay,
   groupDm,
+  lobby,
   other,
+  plaza,
   sibling,
   steps,
   viewer,
@@ -167,8 +170,10 @@ async function setup({
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
   history = [] as RelayEvent[],
+  pendingChannels = [] as string[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
+  voice = undefined as AgentType<Config>["voice"],
   jev = undefined as FakeJev | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
   sessionControls = undefined as
@@ -179,6 +184,7 @@ async function setup({
   syncedSettings = undefined as AgentType<Config>["syncedSettings"],
   protection = undefined as true | undefined,
   retire = undefined as AgentType<Config>["retire"],
+  readFile = undefined as AgentType<Config>["readFile"],
   /** How `run` answers, from the first delivery on. */
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
@@ -190,6 +196,8 @@ async function setup({
   starting = false,
   /** The Buzz settings agents' runs can change. */
   deviceSettings = undefined as DeviceSettings | undefined,
+  /** The echo type's plugin revision: "bundled" for a bundled harness. */
+  revision = "one",
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -204,6 +212,7 @@ async function setup({
   const native = fakeNative(identities);
   fake.listed.push(...listed);
   fake.history.push(...history);
+  for (const id of pendingChannels) fake.pending.add(id);
   const authorize = vi.fn(
     async (_: string, __: AbortSignal) =>
       ["auth", viewer, "", "f".repeat(128)] as const,
@@ -233,7 +242,7 @@ async function setup({
     deviceSettings,
   );
   const plugin = ctx.extend({
-    pluginOwner: Object.freeze({ id: "example", revision: "one" }),
+    pluginOwner: Object.freeze({ id: "example", revision }),
   });
   const run =
     vi.fn<(delivery: Delivery<Config>) => void | Promise<void>>(answer);
@@ -290,8 +299,10 @@ async function setup({
       ],
     }),
     run,
+    ...(voice ? { voice } : {}),
     ...(protection ? { protection } : {}),
     ...(retire ? { retire } : {}),
+    ...(readFile ? { readFile } : {}),
     ...(runOnce ? { runOnce } : {}),
     ...(sessionControls
       ? {
@@ -335,10 +346,14 @@ async function setup({
     reconnecting: fake.reconnecting,
     recover: fake.recover,
     unrouted: fake.unrouted,
+    learned: fake.learned,
+    opened: fake.opened,
+    pending: fake.pending,
     memories: fake.memories,
     archives: fake.archives,
     session: fake.session,
     history: fake.history,
+    attended: fake.attended,
     authorize,
     plugin,
     watching,
@@ -1184,6 +1199,55 @@ it.each(["edit", "delete"])(
     expect(service.find(bot)?.attention).toEqual(before);
   },
 );
+
+it.each(["pause", "delete"])(
+  "rejects a stale interest %s without overwriting a newer edit",
+  async (operation) => {
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const expected = service.find(bot)?.attention["interest/default"];
+    if (expected?.value.type !== "interest") throw new Error("fixture");
+    await service.save(bot, {
+      attention: {
+        "interest/default": {
+          ...expected.value,
+          instructions: "New instructions",
+        },
+      },
+    });
+    const before = service.find(bot)?.attention;
+    await expect(
+      service.save(bot, {
+        attentionExpected: { "interest/default": expected },
+        attention: {
+          "interest/default":
+            operation === "pause" ? { ...expected.value, paused: true } : null,
+        },
+      }),
+    ).rejects.toThrow(/changed/);
+    expect(service.find(bot)?.attention).toEqual(before);
+  },
+);
+
+it("rejects deleting a displayed interest when a new child was added without saving a partial deletion", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const interest = service.find(bot)?.attention["interest/default"];
+  const watch = service.find(bot)?.attention["watch/channel"];
+  if (!interest || watch?.value.type !== "event") throw new Error("fixture");
+  await service.save(bot, { attention: { "watch/new": { ...watch.value } } });
+  const before = service.find(bot)?.attention;
+  await expect(
+    service.save(bot, {
+      attentionExpected: {
+        "interest/default": interest,
+        "watch/channel": watch,
+      },
+      attention: { "watch/channel": null, "interest/default": null },
+    }),
+  ).rejects.toThrow(/Remove or move/);
+  expect(service.find(bot)?.attention).toEqual(before);
+});
 
 it("sets a watch's target enabled value without changing its configuration", async () => {
   const { service } = await setup();
@@ -2297,6 +2361,163 @@ it("starts each run from the start resolver, local with no synced revisions", as
   expect(run.mock.calls[0]?.[0]).toMatchObject({
     config: { reply: "local" },
     revisions: [],
+  });
+});
+
+describe("voice launch and transcripts", () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  it("resolves synced opening config and refuses an unresolved launch", async () => {
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    let synced = false;
+    const f = await setup({
+      voice,
+      binding: () =>
+        synced ? { instructions: { mode: "synced", subject } } : {},
+    });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await f.service.save(bot, {
+        config: { reply: "local", instructions: "stale local" },
+      });
+      const agent = f.service.find(bot);
+      const open = f.service
+        .types()
+        .find((type) => type.key === "example/echo")?.voice;
+      if (!agent || !open) throw new Error("Missing voice fixture");
+      const pipe = {
+        agent,
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        output: async () => {},
+        ended: () => {},
+      };
+      synced = true;
+      await expect(open(pipe)).rejects.toThrow(
+        "Waiting for this agent's config to sync",
+      );
+      expect(voice).not.toHaveBeenCalled();
+      const head = finalizeEvent(
+        {
+          kind: 45010,
+          created_at: 1,
+          content: JSON.stringify({ version: 1, text: "synced instructions" }),
+          tags: [["op", "create"]],
+        },
+        generateSecretKey(),
+      ) as RelayEvent;
+      const store = internals(f.service).configStore;
+      store.applyRead(subject, store.capture(subject), {
+        kind: "head",
+        event: head,
+      });
+      await open(pipe);
+      expect(voice.mock.calls[0]?.[0]).toMatchObject({
+        config: { reply: "local", instructions: "synced instructions" },
+      });
+      expect(voice.mock.calls[0]?.[0].revisions).toEqual([head.id]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+  it("refuses protected voice before calling a runtime without protection integration", async () => {
+    const identities: AgentIdentity[] = [];
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    const f = await setup({ identities, voice });
+    try {
+      await f.service.create({ type: "example/echo", name: "Worker" });
+      const identity = identities[0];
+      if (!identity) throw new Error("Missing native identity");
+      identities[0] = {
+        ...identity,
+        protection: { provider: "example", policy: {} },
+        protectionRevision: 1,
+      };
+      await f.service.refresh();
+      await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+      const agent = f.service.find(bot);
+      const open = f.service
+        .types()
+        .find((type) => type.key === "example/echo")?.voice;
+      if (!agent || !open) throw new Error("Missing voice fixture");
+      await expect(
+        open({
+          agent,
+          conversation: { channelId: channel },
+          signal: new AbortController().signal,
+          output: async () => {},
+          ended: () => {},
+        }),
+      ).rejects.toThrow(
+        "This runtime does not support the agent's protection policy",
+      );
+      expect(voice).not.toHaveBeenCalled();
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+  it("publishes final h-only transcripts without triggering its own agent", async () => {
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    const f = await setup({ voice });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await f.service.save(bot, {
+        attentionEnabled: true,
+        attention: { ...chat, "watch/channel": null },
+      });
+      await settle();
+      const agent = f.service.find(bot);
+      const open = f.service
+        .types()
+        .find((type) => type.key === "example/echo")?.voice;
+      if (!agent || !open) throw new Error("Missing voice fixture");
+      const controller = new AbortController();
+      await open({
+        agent,
+        conversation: { channelId: channel },
+        signal: controller.signal,
+        output: async () => {},
+        ended: () => {},
+      });
+      const seat = voice.mock.calls[0]?.[0];
+      if (!seat) throw new Error("Missing opened seat");
+      await seat.transcript("agent", "Spoken answer");
+      const lines = await published(f.native, 9);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        pubkey: bot,
+        tags: [["h", channel]],
+        content: "Echo (transcribed by Echo): Spoken answer",
+      });
+      await seat.transcript("owner", "  ");
+      controller.abort();
+      await seat.transcript("owner", "late");
+      expect(await published(f.native, 9)).toHaveLength(1);
+      f.emit({ events: lines, channelId: channel });
+      await settle();
+      expect(f.run).not.toHaveBeenCalled();
+      f.emit({
+        events: [event("voice-control", { tags: [["h", channel]] })],
+        channelId: channel,
+      });
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
   });
 });
 
@@ -4900,6 +5121,55 @@ const tick = {
   },
 } as const;
 
+it("records each timer wake in its activity", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() =>
+    expect(service.find(bot)?.attentionHistory?.["watch/tick"]).toEqual({
+      lastWokeAt: 1_060,
+      events: [{ at: 1_060, text: "check in" }],
+    }),
+  );
+});
+
+it("pauses an interest's timer without changing its enabled setting and resumes overdue work", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      ...tick,
+      "interest/default": {
+        type: "interest",
+        instructions: "Be brief.",
+        paused: true,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).not.toHaveBeenCalled();
+  expect(service.find(bot)?.attention["watch/tick"]?.value).toMatchObject({
+    enabled: true,
+  });
+  await service.save(bot, {
+    attention: {
+      "interest/default": {
+        type: "interest",
+        instructions: "Be brief.",
+        paused: false,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
 it("keeps a settings change still being saved when a timer saves its progress", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const disk = new Map<string, string>();
@@ -6509,26 +6779,38 @@ it("classifies a reply without its parent when the parent lookup does not answer
   }
 });
 
-it("sends nothing to the classifier for a watch stopped while its event waited", async () => {
-  const jev = fakeJev();
-  let known!: (value: boolean) => void;
-  jev.status.mockImplementationOnce(
-    () => new Promise<boolean>((resolve) => (known = resolve)),
-  );
-  const { service, run, emit } = await classifiedAgent(jev);
-  emit({ events: [event("w")] });
-  await settle();
-  const watch = service.find(bot)?.attention["watch/channel"]?.value;
-  if (watch?.type !== "event") throw new Error("no watch");
-  await service.save(bot, {
-    attention: { "watch/channel": { ...watch, enabled: false } },
-  });
-  known(true);
-  await settle();
-  await settle();
-  expect(jev.decide).not.toHaveBeenCalled();
-  expect(run).not.toHaveBeenCalled();
-});
+it.each(["watch", "interest"])(
+  "sends nothing to the classifier for a paused %s while its event waited",
+  async (target) => {
+    const jev = fakeJev();
+    let known!: (value: boolean) => void;
+    jev.status.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (known = resolve)),
+    );
+    const { service, run, emit } = await classifiedAgent(jev);
+    emit({ events: [event("w")] });
+    await settle();
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("no watch");
+    await service.save(bot, {
+      attention:
+        target === "watch"
+          ? { "watch/channel": { ...watch, enabled: false } }
+          : {
+              [`interest/${watch.interest_id}`]: {
+                type: "interest",
+                instructions: "Be brief.",
+                paused: true,
+              },
+            },
+    });
+    known(true);
+    await settle();
+    await settle();
+    expect(jev.decide).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  },
+);
 
 it("a copy of the app that does not hold the agent sends nothing to the classifier", async () => {
   const jev = fakeJev();
@@ -8616,6 +8898,339 @@ it("answers a mention catch-up reads from while it listened, not one from before
   }
 });
 
+it.each([
+  ["its watch does not match it, nothing", [7], []],
+  ["its watch matches it, the watch", [9], ["watch"]],
+] as const)(
+  "gives no mention turn from a channel the app hears only for a watch: when %s wakes",
+  async (_, kinds, types) => {
+    const { service, run, emit, attended } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/plaza": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [plaza],
+          kinds: [...kinds],
+        },
+      },
+    });
+    await vi.waitFor(() => expect([...attended].flat()).toContain(plaza));
+    // Without the watch, the app would not hear plaza: it is neither joined
+    // nor opened. A mention in a channel the owner is in still wakes it.
+    emit({
+      events: [
+        event("plaza", {
+          tags: [
+            ["h", plaza],
+            ["p", bot],
+          ],
+        }),
+        event("open", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1 + types.length));
+    await settle();
+    expect(
+      run.mock.calls.map(([delivery]) => [
+        delivery.trigger.type,
+        delivery.trigger.type === "mention" || delivery.trigger.type === "watch"
+          ? delivery.trigger.event.id.replace(/0+$/, "")
+          : undefined,
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["mention", "open"],
+        ...types.map((type) => [type, "plaza"]),
+      ]),
+    );
+    expect(run).toHaveBeenCalledTimes(1 + types.length);
+  },
+);
+
+it("wakes a watch turned back on for nothing its channel's new route replays from the time it was off", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, emit, attended } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const watch = {
+      type: "event",
+      interest_id: "default",
+      enabled: true,
+      since: 1,
+      channels: [plaza],
+      kinds: [],
+    } as const;
+    const enable = (enabled: boolean) =>
+      service.save(bot, {
+        attentionEnabled: true,
+        attention: { "watch/plaza": { ...watch, enabled } },
+      });
+    const kept = () => [...attended].flat().includes(plaza);
+    await enable(true);
+    await vi.waitFor(() => expect(kept()).toBe(true));
+    await vi.advanceTimersByTimeAsync(10_000);
+    // Off: its channel is no longer kept live, so nothing there is heard.
+    await enable(false);
+    await vi.waitFor(() => expect(kept()).toBe(false));
+    await vi.advanceTimersByTimeAsync(30_000);
+    const off = Math.floor(Date.now() / 1000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await enable(true);
+    await vi.waitFor(() => expect(kept()).toBe(true));
+    await vi.advanceTimersByTimeAsync(1_000);
+    const on = Math.floor(Date.now() / 1000);
+    // The new route sends its last minutes again: one sent while the watch
+    // was off, and one since.
+    emit({
+      replay: true,
+      channelId: plaza,
+      events: [
+        event("off", { created_at: off, tags: [["h", plaza]] }),
+        event("fresh", { created_at: on + 1, tags: [["h", plaza]] }),
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(woke(run)).toEqual(["fresh"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes a watch turned on while a replay waits for room for nothing from before it started", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, emit, attended } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const watch = {
+      type: "event",
+      interest_id: "default",
+      since: 1,
+      channels: [plaza],
+      kinds: [],
+    } as const;
+    const save = (late: boolean) =>
+      service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/early": { ...watch, enabled: true },
+          "watch/late": { ...watch, enabled: late },
+        },
+      });
+    const by = (slug: string) =>
+      run.mock.calls.flatMap(([input]) => {
+        const { trigger } = input as {
+          trigger: { slug?: string; event: RelayEvent };
+        };
+        return trigger.slug === slug
+          ? [trigger.event.id.replace(/0+$/, "")]
+          : [];
+      });
+    await save(false);
+    await vi.waitFor(() => expect([...attended].flat()).toContain(plaza));
+    await vi.advanceTimersByTimeAsync(1_000);
+    const sent = Math.floor(Date.now() / 1000);
+    const ids = Array.from({ length: 80 }, (_, index) => `w${index}x`);
+    emit({
+      replay: true,
+      channelId: plaza,
+      events: ids.map((id) =>
+        event(id, { created_at: sent, tags: [["h", plaza]] }),
+      ),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // More than the agent takes at once: the rest wait for room.
+    expect(by("watch/early").length).toBeLessThan(80);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await save(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const on = Math.floor(Date.now() / 1000);
+    emit({
+      replay: true,
+      channelId: plaza,
+      events: [event("after", { created_at: on + 1, tags: [["h", plaza]] })],
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(by("watch/early")).toHaveLength(81);
+    expect(by("watch/late")).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes a watch turned on while a replay waits for its roster for nothing from before it started", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, emit, confirm } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const watch = {
+      type: "event",
+      interest_id: "default",
+      since: 1,
+      channels: "all",
+      kinds: [],
+    } as const;
+    const save = (late: boolean) =>
+      service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/early": { ...watch, enabled: true },
+          "watch/late": { ...watch, enabled: late },
+        },
+      });
+    const by = (slug: string) =>
+      run.mock.calls.flatMap(([input]) => {
+        const { trigger } = input as {
+          trigger: { slug?: string; event: RelayEvent };
+        };
+        return trigger.slug === slug
+          ? [trigger.event.id.replace(/0+$/, "")]
+          : [];
+      });
+    await save(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const sent = Math.floor(Date.now() / 1000);
+    emit({
+      replay: true,
+      events: [event("held", { created_at: sent, tags: [["h", "saved"]] })],
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await save(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    confirm("saved", [viewer, bot]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(by("watch/early")).toEqual(["held"]);
+    expect(by("watch/late")).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("answers a replayed mention that waited for room as it arrived, though its channel was closed since", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const { service, run, emit, attended, opened } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/plaza": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [plaza],
+          kinds: [7],
+        },
+      },
+    });
+    await vi.waitFor(() => expect([...attended].flat()).toContain(plaza));
+    // The owner has plaza open, so the app hears it for the owner.
+    opened.add(plaza);
+    const now = Math.floor(Date.now() / 1000);
+    const ids = Array.from({ length: 70 }, (_, index) => `m${index}x`);
+    emit({
+      replay: true,
+      events: [
+        ...ids.map((id) =>
+          event(id, {
+            created_at: now + 1,
+            tags: [
+              ["h", channel],
+              ["p", bot],
+            ],
+          }),
+        ),
+        event("plaza", {
+          created_at: now + 1,
+          tags: [
+            ["h", plaza],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    // Some wait for the next rate window, plaza's last among them.
+    expect(woke(run)).not.toContain("plaza");
+    expect(run.mock.calls.length).toBeLessThan(ids.length + 1);
+    // Closed while it waits; the watch still keeps plaza live.
+    opened.delete(plaza);
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(woke(run)).toContain("plaza");
+    expect(
+      run.mock.calls.find(
+        ([delivery]) =>
+          delivery.trigger.type === "mention" &&
+          delivery.trigger.event.id.startsWith("plaza"),
+      ),
+    ).toBeDefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  ["the owner's app knew it", false, false, "mention"],
+  ["only agents' lookups found it", true, false, "catch-up"],
+  [
+    "only agents' lookups found it when read, though the owner's did since",
+    true,
+    true,
+    "catch-up",
+  ],
+] as const)(
+  "answers a mention catch-up reads in a public channel only if %s",
+  async (_, learnedOnly, learnedSince, type) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const start = nowSeconds();
+      const { service, run, history, recover, learned, session } = await setup({
+        identities: [echo],
+      });
+      if (learnedSince) {
+        // The owner's own lookup finds it right after the read asks.
+        const unattended = session.unattended.bind(session);
+        vi.spyOn(session, "unattended").mockImplementation((id, live) => {
+          const result = unattended(id, live);
+          if (id === plaza && !live) learned.delete(plaza);
+          return result;
+        });
+      }
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: {
+          "watch/all": { ...chat["watch/chat"], channels: "all" },
+        },
+      });
+      await settle();
+      if (learnedOnly) learned.add(plaza);
+      vi.setSystemTime((start + 60) * 1000);
+      history.push(
+        eventDto(message(author, plaza, "new", start + 30, [["p", bot]])),
+      );
+      recover();
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+      await settle();
+      expect(heard(run)).toEqual(["new"]);
+      expect(run.mock.calls[0]?.[0]).toMatchObject({ trigger: { type } });
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
 it("wakes nothing from the time its attention was off", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
@@ -8706,7 +9321,7 @@ it("wakes nothing from the time its watch was off, also when it is turned on aft
   }
 });
 
-it("wakes a watch only for channels the agent is in, even when it watches all", async () => {
+it("wakes a watch only for channels the agent may read, even when it watches all", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
@@ -8729,15 +9344,333 @@ it("wakes a watch only for channels the agent is in, even when it watches all", 
       event("unknown", { tags: [["h", "elsewhere"]] }),
       event("bare", { kind: 1, tags: [] }),
       event("open"),
+      // Public channels anyone may read, though the agent is in neither.
+      event("lobby", { tags: [["h", lobby]] }),
+      event("plaza", { tags: [["h", plaza]] }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(3);
+  expect(woke(run)).toEqual(["open", "lobby", "plaza"]);
+});
+
+it("listens in a public channel it is not in, but delivers a watch's turn only where it is a member", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const watch = {
+    type: "event",
+    interest_id: "default",
+    enabled: true,
+    since: 1,
+    channels: [lobby],
+    kinds: [9],
+  } as const;
+  await service.save(bot, {
+    attention: {
+      "watch/here": { ...watch, channel },
+      "watch/there": { ...watch, channel: lobby },
+    },
+  });
+  emit({ events: [event("hello", { tags: [["h", lobby]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  // An addressed watch's turn runs in its channel.
+  const trigger = run.mock.calls[0]?.[0].trigger as {
+    channel?: string;
+    text?: string;
+  };
+  expect(trigger.channel).toBe(channel);
+  expect(trigger.text).toContain('watch "here"');
+});
+
+it("does not listen in a public channel it is not in that is hidden or a DM", async () => {
+  const { service, run, emit, session } = await setup();
+  const hidden = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b";
+  const dm = "6f7a8b9c-0d1e-4f2a-9b3c-4d5e6f7a8b9c";
+  const get = session.channels.get;
+  vi.spyOn(session.channels, "get").mockImplementation((id: string) =>
+    id === hidden || id === dm
+      ? ({
+          id,
+          name: id,
+          visibility: "public",
+          readOnly: true,
+          members: [other],
+          ...(id === hidden ? { hidden: true } : { channelType: "dm" }),
+        } as never)
+      : get?.(id),
+  );
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, {
+    attention: {
+      "watch/public": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: [hidden, dm, plaza],
+        kinds: [9],
+      },
+    },
+  });
+  emit({
+    events: [
+      event("hidden", { tags: [["h", hidden]] }),
+      event("dm", { tags: [["h", dm]] }),
+      event("plaza", { tags: [["h", plaza]] }),
     ],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   await settle();
-  expect(run).toHaveBeenCalledTimes(1);
-  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
-    slug: "watch/everything",
-    event: { id: "open".padEnd(64, "0") },
+  expect(woke(run)).toEqual(["plaza"]);
+});
+
+it.each([
+  ["saved public", "private", []],
+  ["saved public", "public", ["lobby"]],
+  ["saved private", "public", ["lobby"]],
+  ["not read yet", "public", ["lobby"]],
+] as const)(
+  "holds an event of a channel it is not in while the metadata is %s, then hears it as fresh metadata says (%s)",
+  async (saved, fresh, wakes) => {
+    const { service, run, emit, session, confirm } = await setup();
+    // The owner's roster is fresh, and the agent is not in it. The relay has
+    // not confirmed the channel's metadata yet.
+    let metadata: "saved" | "private" | "public" = "saved";
+    const list = session.channels.list;
+    vi.spyOn(session.channels, "list").mockImplementation(() => {
+      const current = list();
+      return {
+        ...current,
+        channels: current.channels.map((row) => {
+          if (row.id !== lobby) return row;
+          const { visibility: _, ...rest } = row;
+          if (metadata === "private") return rest;
+          if (metadata === "public")
+            return { ...rest, visibility: "public" as const };
+          if (saved === "not read yet")
+            return { ...rest, metadataPending: true };
+          return {
+            ...rest,
+            ...(saved === "saved public"
+              ? { visibility: "public" as const }
+              : {}),
+            metadataCached: true as const,
+          };
+        }),
+      };
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, { attentionEnabled: true, attention: everything });
+    emit({ events: [event("lobby", { tags: [["h", lobby]] })] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    metadata = fresh;
+    confirm(lobby, [viewer]);
+    await settle();
+    if (wakes.length)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(woke(run)).toEqual(wakes);
+  },
+);
+
+it("holds a public channel's catch-up until its metadata is known, and hears it in a watch of every channel", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  try {
+    const { service, run, history, recover, storage, pending, session } =
+      await setup({ identities: [echo] });
+    const now = nowSeconds();
+    vi.setSystemTime(now * 1000);
+    const watch = { ...chat["watch/chat"], channels: [plaza] };
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { "watch/channel": null, "watch/plaza": watch },
+    });
+    await settle();
+    vi.setSystemTime((now + 60) * 1000);
+    history.push(eventDto(message(author, plaza, "missed", now + 30)));
+    // Read now, it would come back empty: the session drops a channel's
+    // events until it knows the channel.
+    pending.add(plaza);
+    recover();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+    expect(heard(run)).toEqual([]);
+    expect(
+      Object.values(readCheckpoints(storage)).map(({ through }) => through),
+    ).toEqual([now]);
+    pending.delete(plaza);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle();
+    await settle();
+    expect(heard(run)).toEqual(["missed"]);
+    // A watch of every channel hears it too, though it is not live, from the
+    // read of what live does not cover.
+    await service.save(bot, {
+      attention: {
+        "watch/plaza": null,
+        "watch/all": { ...chat["watch/chat"], channels: "all" },
+      },
+    });
+    await settle();
+    const later = nowSeconds();
+    history.push(eventDto(message(author, plaza, "posted", later + 1)));
+    await vi.advanceTimersByTimeAsync(45_000);
+    await settle();
+    await settle();
+    expect(heard(run)).toEqual(["missed", "posted"]);
+    // Its read asks the session to resolve the channels it finds.
+    expect(
+      vi
+        .mocked(session.read)
+        .mock.calls.filter(([filters]) => filters[0]?.until !== undefined)
+        .map(([filters, options]) => [
+          !!filters[0]?.["#h"],
+          !!options?.resolveChannels,
+        ]),
+    ).toContainEqual([false, true]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("holds a public channel's catch-up after a restart, before it is attended, until its metadata is known", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    vi.setSystemTime(start * 1000);
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/plaza": { ...chat["watch/chat"], channels: [plaza] },
+      },
+    });
+    await settle();
+    first.connect(false);
+    vi.setSystemTime((start + 60) * 1000);
+    // Restarted: the session does not know plaza yet.
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [eventDto(message(author, plaza, "missed", start + 30))],
+      pendingChannels: [plaza],
+    });
+    await settle();
+    await settle();
+    second.pending.delete(plaza);
+    vi.setSystemTime((start + 90) * 1000);
+    second.recover();
+    await settle();
+    await settle();
+    await settle();
+    expect(heard(second.run)).toEqual(["missed"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps the channels its enabled watches name live while attention is on", async () => {
+  const { service, attended } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = {
+    type: "event",
+    interest_id: "default",
+    enabled: true,
+    since: 1,
+    kinds: [9],
+  } as const;
+  await service.save(bot, {
+    attention: {
+      "watch/plaza": { ...watch, channels: [plaza, channel] },
+      "watch/all": { ...watch, channels: "all" },
+      "watch/off": { ...watch, enabled: false, channels: [lobby] },
+    },
   });
+  await settle();
+  expect([...attended]).toEqual([]);
+  await service.save(bot, { attentionEnabled: true });
+  await settle();
+  // A watch of "all" hears what the session listens to already.
+  expect([...attended].map((ids) => [...ids].sort())).toEqual([
+    [channel, plaza].sort(),
+  ]);
+  await service.save(bot, { attentionEnabled: false });
+  await settle();
+  expect([...attended]).toEqual([]);
+});
+
+it("keeps a channel live while its watches change, never dropping one both sets name", async () => {
+  const { service, attended } = await setup();
+  // What is attended after each attend or stop, in order.
+  const seen: string[][] = [];
+  const union = () => [...new Set([...attended].flat())].sort();
+  const add = attended.add.bind(attended);
+  const remove = attended.delete.bind(attended);
+  attended.add = (ids) => {
+    add(ids);
+    seen.push(union());
+    return attended;
+  };
+  attended.delete = (ids) => {
+    const removed = remove(ids);
+    seen.push(union());
+    return removed;
+  };
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = {
+    type: "event",
+    interest_id: "default",
+    enabled: true,
+    since: 1,
+    kinds: [9],
+  } as const;
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: { "watch/plaza": { ...watch, channels: [plaza] } },
+  });
+  await settle();
+  expect(union()).toContain(plaza);
+  expect(union()).not.toContain(lobby);
+  seen.length = 0;
+  await service.save(bot, {
+    attention: { "watch/plaza": { ...watch, channels: [plaza, lobby] } },
+  });
+  await settle();
+  expect(union()).toEqual(expect.arrayContaining([lobby, plaza]));
+  expect(seen.length).toBeGreaterThan(0);
+  for (const ids of seen) expect(ids).toContain(plaza);
+});
+
+it("keeps no channel live for an agent another copy of the app holds", async () => {
+  const { service, attended, native, emit } = await setup();
+  native.claim.mockResolvedValue(false);
+  await service.create({ type: "example/echo", name: "Echo" });
+  const watch = {
+    type: "event",
+    interest_id: "default",
+    enabled: true,
+    since: 1,
+    kinds: [9],
+  } as const;
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: { "watch/plaza": { ...watch, channels: [plaza] } },
+  });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalled());
+  await settle();
+  expect([...attended]).toEqual([]);
+  // Once this copy holds it, its watched channels go live.
+  native.claim.mockResolvedValue(true);
+  emit({ events: [event("2", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect([...attended].flat()).toContain(plaza));
 });
 
 it("answers an unmentioned one-to-one DM as conversation even when a watch matches it", async () => {
@@ -9826,6 +10759,8 @@ it("adds plugins' tools to every session, each name once", async () => {
     { ...tool, description: "" },
     { ...tool, inputSchema: { type: "string" } },
     { ...tool, inputSchema: { type: "object", default: 1n } },
+    { ...tool, name: "owner_channel_list" },
+    { ...tool, name: "owner_message_list" },
   ])
     expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
   expect(service.tools()).toHaveLength(1);
@@ -12008,6 +12943,175 @@ it("changes instructions in place and discards a dismissed change draft", async 
   expect(native.setType).not.toHaveBeenCalled();
 });
 
+it("reads synced instructions it can't use as unavailable, not empty", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  const f = await setup({
+    binding: () => ({ instructions: { mode: "synced", subject } }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle?.readAgents) throw new Error("Missing read handle");
+  const store = internals(f.service).configStore;
+  const head = (content: string, op = "create", problem?: string) => {
+    const event = finalizeEvent(
+      { kind: 45010, created_at: 1, content, tags: [["op", op]] },
+      generateSecretKey(),
+    ) as RelayEvent;
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event,
+      ...(problem && { problem }),
+    });
+    return event;
+  };
+  const read = () => handle.readAgents?.(bot);
+  // Unavailable: nothing confirmed yet.
+  expect(await read()).toEqual({
+    pubkey: bot,
+    name: "Echo",
+    type: "example/echo",
+    unavailable: expect.any(String),
+  });
+  head(JSON.stringify({ version: 1 }), "create", "No instructions text");
+  expect(await read()).toMatchObject({ unavailable: expect.any(String) });
+  expect(await read()).not.toHaveProperty("revision");
+  head("", "delete");
+  expect(await read()).toMatchObject({ unavailable: expect.any(String) });
+  expect(await read()).not.toHaveProperty("revision");
+  // Empty instructions that are valid stay a synced success.
+  const empty = head(JSON.stringify({ version: 1, text: "" }));
+  expect(await read()).toMatchObject({ synced: true, revision: empty.id });
+  expect(await read()).not.toHaveProperty("unavailable");
+  await f.ctx.fiber.dispose();
+});
+
+it("reads the owner's agents and teams, and saves only a reviewed team draft", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  const team = await service.saveTeam({
+    draft: crypto.randomUUID(),
+    name: "Crew",
+    instructions: "Ship.",
+    members: [bot, sibling],
+  });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.readAgents || !handle.readTeams || !handle.updateTeam)
+    throw new Error("Missing config handles");
+  expect(await handle.readAgents()).toEqual([
+    expect.objectContaining({ pubkey: bot, name: "Parent" }),
+    expect.objectContaining({ pubkey: sibling, name: "Child" }),
+    {
+      pubkey: hostedKey,
+      name: "Sky",
+      type: "example/cloud",
+      unavailable: "Its provider keeps its config",
+    },
+  ]);
+  expect(await handle.readAgents("Child")).toMatchObject({
+    pubkey: sibling,
+    type: "example/echo",
+    synced: false,
+  });
+  await expect(handle.readAgents("Nobody")).rejects.toThrow("no agent");
+  // Synced config the owner can read is returned, read only.
+  const internals = service as unknown as {
+    callerOrigin(agent: unknown): string;
+    communityConfigs: Map<string, unknown>;
+  };
+  const origin = internals.callerOrigin(service.find(bot));
+  const before = internals.communityConfigs.get(origin);
+  const readInstructions = vi.fn(async () => ({
+    instructions: "Fly.",
+    revision: "r1",
+  }));
+  internals.communityConfigs.set(origin, {
+    binding: () => undefined,
+    ...(before as object),
+    readInstructions,
+  });
+  try {
+    // A named local agent reads no remote one.
+    await handle.readAgents("Child");
+    expect(readInstructions).not.toHaveBeenCalled();
+    expect(await handle.readAgents("Sky")).toEqual({
+      pubkey: hostedKey,
+      name: "Sky",
+      type: "example/cloud",
+      instructions: "Fly.",
+      revision: "r1",
+      synced: true,
+    });
+    expect(readInstructions).toHaveBeenCalledWith(hostedKey);
+  } finally {
+    if (before) internals.communityConfigs.set(origin, before);
+    else internals.communityConfigs.delete(origin);
+  }
+  expect(await handle.readTeams(team.id)).toEqual({
+    id: team.id,
+    name: "Crew",
+    instructions: "Ship.",
+    members: [
+      { pubkey: bot, name: "Parent" },
+      { pubkey: sibling, name: "Child" },
+    ],
+    synced: false,
+  });
+  await expect(handle.updateTeam({ team: "Crew" })).rejects.toThrow(
+    "at least one change",
+  );
+  const { requestId } = await handle.updateTeam({
+    team: "Crew",
+    instructions: "Ship carefully.",
+  });
+  expect(service.teamUpdateRequests()).toEqual([
+    expect.objectContaining({
+      id: requestId,
+      team: team.id,
+      base: { name: "Crew", instructions: "Ship." },
+      instructions: "Ship carefully.",
+    }),
+  ]);
+  expect(await handle.readTeams("Crew")).toMatchObject({
+    instructions: "Ship.",
+  });
+  await service.approveTeamUpdate(requestId, {
+    name: "Crew",
+    instructions: "Ship with care.",
+  });
+  expect(await handle.readTeams("Crew")).toMatchObject({
+    instructions: "Ship with care.",
+    members: [{ pubkey: bot }, { pubkey: sibling }],
+  });
+  expect(service.teamUpdateRequests()).toEqual([]);
+  // A draft over a team that changed since is refused, and kept to dismiss.
+  const stale = await handle.updateTeam({ team: team.id, name: "Squad" });
+  await service.saveTeam({
+    id: team.id,
+    name: "Crew",
+    instructions: "Elsewhere.",
+    members: [bot, sibling],
+  });
+  await expect(
+    service.approveTeamUpdate(stale.requestId, {
+      name: "Squad",
+      instructions: "Elsewhere.",
+    }),
+  ).rejects.toThrow("changed since");
+  service.dismissTeamUpdate(stale.requestId);
+  expect(service.teamUpdateRequests()).toEqual([]);
+});
+
 it("drafts a proposed picture for the owner to save, and refuses one that is not an HTTPS image", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });
@@ -13304,6 +14408,7 @@ it.each([
           bot,
           new AbortController().signal,
           () => {},
+          ["agent"],
         ),
       ).rejects.toThrow("External apps are not enabled for this community.");
       expect(serveMcp).not.toHaveBeenCalled();
@@ -13397,6 +14502,7 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
       bot,
       controller.signal,
       admitted,
+      ["agent"],
     );
     const call = handler;
     if (!call) throw new Error("Missing server handler");
@@ -13455,52 +14561,39 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
   },
 );
 
-describe("external private Solo creation", () => {
+describe("full external agent access", () => {
   async function fixture(
     scopes: readonly import("./external-connection").ExternalScope[] = [
-      "create",
+      "agent",
     ],
+    options: Pick<NonNullable<Parameters<typeof setup>[0]>, "readFile"> = {},
   ) {
     vi.stubEnv(
       "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
       "https://relay.example.test",
     );
-    const f = await setup();
-    const saved = vi.fn<NonNullable<RelaySession["mainAgent"]>["read"]>(
-      async () => sibling,
-    );
-    const libraryRead = vi.fn(async () => ({
-      definitions: [],
-      identities: [{ pubkey: sibling, name: "Saved remote Bestie" }],
-    }));
-    const lifetime = new AbortController();
-    const choices = createAgentChoices({
-      scope: `https://relay.example.test:${viewer}`,
-      library: createAgentLibrary(libraryRead).queries,
-      native: {
-        snapshot: f.service.local,
-        subscribe: f.service.subscribe,
-        refresh: () => f.service.refresh(),
-      },
-      archives: {
-        snapshot: () => ({
-          status: "ready",
-          archived: [...f.archives.archived],
-        }),
-        subscribe: () => () => {},
-        state: (key) => f.archives.state(key),
-        ensure: f.archives.ensure,
-        refresh: f.archives.refresh,
-      },
-      signal: lifetime.signal,
+    let mood: SettingValue = "calm";
+    const write = vi.fn((next: SettingValue) => {
+      mood = next;
     });
-    Object.assign(f.session, {
-      mainAgent: { read: saved, write: vi.fn(async () => {}) },
-      agentChoices: choices,
+    const f = await setup({
+      ...options,
+      deviceSettings: createDeviceSettings([
+        {
+          key: "example.mood",
+          description: "A mood.",
+          schema: { type: "string", enum: ["calm", "busy"] },
+          read: () => ({ value: mood }),
+          write,
+        },
+      ]),
+    });
+    Object.assign(f.session.agentChoices, {
+      snapshot: () => ({ selectable: [{ pubkey: bot }] }),
+      subscribe: () => () => {},
     });
     let handler: import("../host/service").McpHandler | undefined;
     const closed = runnerGate();
-    const close = vi.fn(async () => closed.resolve());
     f.ctx.provide("host", {
       serveMcp: async (receive: import("../host/service").McpHandler) => {
         handler = receive;
@@ -13508,7 +14601,7 @@ describe("external private Solo creation", () => {
           url: "http://127.0.0.1:1234/mcp",
           headers: [],
           closed: closed.promise,
-          close,
+          close: async () => closed.resolve(),
         };
       },
     } as unknown as import("../host/service").Host);
@@ -13517,269 +14610,202 @@ describe("external private Solo creation", () => {
     const owner = f.ctx.extend({
       pluginOwner: { id: "buzz.agents", revision: "one" },
     });
-    const controller = new AbortController();
     const server = await owner.agents.connectExternal(
       bot,
-      controller.signal,
+      new AbortController().signal,
       () => {},
       scopes,
     );
-    const call = handler;
-    if (!call) throw new Error("Missing external server handler");
-    f.native.publish.mockClear();
-    f.native.query.mockImplementation(async (_member, filters) => {
-      const created = f.native.publish.mock.calls.find(
-        ([, value]) => value.kind === 9007,
-      )?.[1];
-      if (!created) return [];
-      const id = created.tags?.find(([key]) => key === "h")?.[1] as string;
-      const kind = (filters[0] as { kinds?: number[] } | undefined)?.kinds?.[0];
-      if (kind === 39000)
-        return [
-          event("metadata", {
-            kind,
-            tags: [
-              ["d", id],
-              ["name", "Triage"],
-              ["private"],
-              ["t", "stream"],
-              ["t", "buzz.solo"],
-              ["t", "buzz.session.named"],
-            ],
-          }),
-        ];
-      if (kind === 39002)
-        return [
-          event("roster", {
-            kind,
-            tags: [
-              ["d", id],
-              ["p", bot, "", "owner"],
-              ...(created.tags ?? [])
-                .filter(([key]) => key === "p")
-                .map((tag) => [...tag]),
-            ],
-          }),
-        ];
-      return [];
-    });
+    const send = handler;
+    if (!send) throw new Error("Missing external server handler");
+    let id = 0;
+    const message = (method: string, params: object = {}) =>
+      send({ id: ++id, method, params }) as Promise<{
+        result: {
+          tools: { name: string }[];
+          _meta: object;
+          content: { text: string }[];
+          isError?: true;
+        };
+      }>;
+    const names = async () =>
+      (await message("tools/list")).result.tools.map((tool) => tool.name);
     return {
       ...f,
-      saved,
-      libraryRead,
-      controller,
-      close,
-      create: (args: Record<string, unknown> = { name: "Triage" }) =>
-        call({
-          id: 1,
-          method: "tools/call",
-          params: { name: "channel_create", arguments: args },
-        }),
+      write,
+      message,
+      names,
+      call: (name: string, args: object) =>
+        message("tools/call", { name, arguments: args }),
       cleanup: async () => {
         await server.close();
-        lifetime.abort();
         await f.ctx.fiber.dispose();
       },
     };
   }
 
-  it.each([sibling, bot])(
-    "uses native owner/caller and the account-saved worker %s",
-    async (worker) => {
-      const f = await fixture();
-      try {
-        f.saved.mockResolvedValueOnce(worker);
-        const reply = await f.create();
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.stringMatching(/^created /),
-        );
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.not.stringContaining("did not keep the Solo label"),
-        );
-        expect(f.saved).toHaveBeenCalledOnce();
-        expect(f.libraryRead).toHaveBeenCalledOnce();
-        expect(f.native.publish).toHaveBeenCalledOnce();
-        expect(f.native.publish).toHaveBeenCalledWith(
-          { pubkey: bot, relay: "wss://relay.example.test" },
-          {
-            kind: 9007,
-            content: "",
-            tags: [
-              ["h", expect.any(String)],
-              ["name", "Triage"],
-              ["visibility", "private"],
-              ["channel_type", "stream"],
-              ["t", "buzz.solo"],
-              ["t", "buzz.session.named"],
-              ["p", viewer],
-              ...(worker === bot ? [] : [["p", worker]]),
-            ],
-          },
-        );
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.stringContaining(`added ${viewer}`),
-        );
-        if (worker !== bot)
-          expect(reply).toHaveProperty(
-            "result.content.0.text",
-            expect.stringContaining(`added ${worker}`),
-          );
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
-
-  it.each([
-    "unset",
-    "missing",
-    "invalid",
-    "unavailable",
-    "archived",
-    "unreadable",
-    "unsupported",
-  ])(
-    "fails before publication when the configured worker is %s",
-    async (reason) => {
-      const f = await fixture();
-      try {
-        if (reason === "unset") f.saved.mockResolvedValueOnce(undefined);
-        else if (reason === "missing") f.saved.mockResolvedValueOnce(null);
-        else if (reason === "invalid")
-          f.saved.mockResolvedValueOnce("not-a-key");
-        else if (reason === "unavailable")
-          f.saved.mockResolvedValueOnce("e".repeat(64));
-        else if (reason === "archived") f.archives.archived.add(sibling);
-        else if (reason === "unreadable")
-          f.saved.mockRejectedValueOnce(new Error("offline"));
-        else Object.assign(f.session, { mainAgent: undefined });
-        const reply = await f.create();
-        expect(reply).toHaveProperty("result.isError", true);
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          expect.stringMatching(
-            /Bestie.*Buzz|Bestie could not be read|Bestie is not available/,
-          ),
-        );
-        expect(f.native.publish).not.toHaveBeenCalled();
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
-
-  it("requires new consent without even looking up the configured worker", async () => {
-    const f = await fixture(["read", "post"]);
+  it("acts with the agent's run authority and follows plugins' tools", async () => {
+    const f = await fixture();
     try {
-      expect(await f.create()).toHaveProperty("result._meta.buzz/error", {
-        code: "authorization_required",
-        required_scopes: ["create"],
+      const tasks = f.ctx.extend({
+        pluginOwner: Object.freeze({ id: "buzz.tasks", revision: "one" }),
       });
-      expect(f.saved).not.toHaveBeenCalled();
-      expect(f.libraryRead).not.toHaveBeenCalled();
-      expect(f.native.publish).not.toHaveBeenCalled();
+      const added = tasks.plugin({
+        inject: ["agents"],
+        apply: (plugin: Context) =>
+          plugin.agents.addTool({
+            name: "tasks_create",
+            description: "Create a task.",
+            inputSchema: { type: "object", properties: { title: {} } },
+            call: async (_client, context, args) =>
+              `created ${String(args.title)} ${JSON.stringify(context)}`,
+          }),
+      });
+      await added;
+      expect(await f.names()).toEqual(
+        expect.arrayContaining([
+          "send",
+          "settings_set",
+          "plugin_list",
+          "tasks_create",
+        ]),
+      );
+      expect(
+        await f.call("settings_set", { key: "example.mood", value: "busy" }),
+      ).not.toHaveProperty("result.isError");
+      expect(f.write).toHaveBeenCalledExactlyOnceWith("busy");
+      expect(await f.call("tasks_create", { title: "Ship" })).toHaveProperty(
+        "result.content.0.text",
+        "created Ship {}",
+      );
+      await added.dispose();
+      expect(await f.names()).not.toContain("tasks_create");
+      expect(await f.call("tasks_create", { title: "Ship" })).toHaveProperty(
+        "result.isError",
+        true,
+      );
     } finally {
       await f.cleanup();
     }
   });
 
-  it.each(["library", "refresh"])(
-    "offers retry guidance when the worker's %s lookup fails",
-    async (source) => {
-      const f = await fixture();
-      try {
-        if (source === "library")
-          f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
-        else
-          vi.spyOn(f.service, "refresh").mockRejectedValueOnce(
-            new Error("inventory offline"),
-          );
-        const reply = await f.create();
-        expect(reply).toHaveProperty("result.isError", true);
-        expect(reply).toHaveProperty(
-          "result.content.0.text",
-          "Your saved Bestie could not be checked. Check the community connection and try again.",
-        );
-        expect(f.native.publish).not.toHaveBeenCalled();
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
-
-  it("uses a verified local Bestie despite a partial library failure", async () => {
+  it("reads the agent's memory, and files only where its type reads them", async () => {
     const f = await fixture();
     try {
-      f.saved.mockResolvedValueOnce(bot);
-      f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
-      expect(await f.create()).toHaveProperty(
+      f.memories.set(bot, "Ship on Fridays.");
+      f.memories.set(sibling, "Another agent's memory.");
+      const reply = await f.call("mem_get", { slug: "core" });
+      expect(reply.result.content[0]?.text).toContain("Ship on Fridays.");
+      expect(reply.result.content[0]?.text).not.toContain("Another agent");
+      // The echo type reads no files outside its turns: its native refusal.
+      expect(
+        await f.call("send", {
+          channel,
+          text: "x",
+          audience: "everyone",
+          files: ["/etc/hosts"],
+        }),
+      ).toHaveProperty(
         "result.content.0.text",
-        expect.stringMatching(/^created /),
+        "This agent cannot read /etc/hosts",
       );
-      expect(f.native.publish).toHaveBeenCalledOnce();
+      expect(f.native.publish).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: 9 }),
+      );
     } finally {
       await f.cleanup();
     }
   });
 
-  it("reports native publication refusal without claiming that a Solo exists", async () => {
-    const f = await fixture();
+  it("reads a file the way the agent's type does, in its saved workspace", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const readFile = vi.fn(
+      async (_agent: Agent<Config>, _path: string, signal: AbortSignal) => {
+        await held;
+        signal.throwIfAborted();
+        return new TextEncoder().encode("notes");
+      },
+    );
+    const f = await fixture(["agent"], { readFile });
     try {
-      f.native.publish.mockRejectedValueOnce(
-        new Error("This member cannot join the Solo."),
-      );
-      const reply = await f.create();
-      expect(reply).toHaveProperty("result.isError", true);
-      expect(reply).toHaveProperty(
+      const sent = f.call("send", {
+        channel,
+        text: "Notes attached",
+        audience: "everyone",
+        files: ["notes.txt"],
+      });
+      await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+      const [agent, path, signal] = readFile.mock.calls[0] ?? [];
+      expect(agent).toMatchObject({ key: bot, config: { reply: "ok" } });
+      expect(path).toBe("notes.txt");
+      expect(signal?.aborted).toBe(false);
+      release();
+      expect(await sent).not.toHaveProperty("result.isError");
+      expect(f.native.upload).toHaveBeenCalled();
+    } finally {
+      release();
+      await f.cleanup();
+    }
+    // Closing the connection cancels what it still reads.
+    expect(readFile.mock.calls[0]?.[2].aborted).toBe(true);
+  });
+
+  it("hands off as the app, never as the agent's own conversation or a watch", async () => {
+    const root = "e".repeat(64);
+    const f = await fixture();
+    f.native.query.mockImplementation(async (_member, filters) => {
+      const [filter] = filters as { kinds?: number[]; ids?: string[] }[];
+      if (filter?.kinds?.includes(39000))
+        return [event("meta", { kind: 39000, tags: [["d", channel]] })];
+      return filter?.ids?.includes(root) ? [event(root)] : [];
+    });
+    try {
+      expect(
+        await f.call("self_handoff", { channel, thread: root, text: "Look" }),
+      ).toHaveProperty(
         "result.content.0.text",
-        "This member cannot join the Solo.",
+        `Handed off to thread ${root}.`,
       );
-      expect(f.native.publish).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      const { trigger } = f.run.mock.calls[0]?.[0] ?? {};
+      expect(trigger).toMatchObject({
+        type: "plugin",
+        from: { external: true },
+        channel,
+        root,
+        text: "Look",
+      });
+      expect(trigger).not.toHaveProperty("plugin");
+      expect(trigger).not.toHaveProperty("from.channel");
     } finally {
       await f.cleanup();
     }
   });
 
-  it.each(["account", "inventory"])(
-    "revokes creation during the pending %s lookup",
-    async (stage) => {
-      const f = await fixture();
-      const started = runnerGate(),
-        release = runnerGate();
-      if (stage === "account")
-        f.saved.mockImplementationOnce(async () => {
-          started.resolve();
-          await release.promise;
-          return sibling;
-        });
-      else
-        f.libraryRead.mockImplementationOnce(async () => {
-          started.resolve();
-          await release.promise;
-          return {
-            definitions: [],
-            identities: [{ pubkey: sibling, name: "Bestie" }],
-          };
-        });
-      const outcome = f.create().catch((error) => error);
-      try {
-        await started.promise;
-        f.controller.abort();
-      } finally {
-        release.resolve();
-      }
-      try {
-        expect(await outcome).toBeInstanceOf(Error);
-        await vi.waitFor(() => expect(f.close).toHaveBeenCalled());
-        expect(f.native.publish).not.toHaveBeenCalled();
-      } finally {
-        await f.cleanup();
-      }
-    },
-  );
+  it("grants an older narrow approval nothing until the owner approves full access", async () => {
+    const f = await fixture(["read", "post", "create"]);
+    try {
+      expect((await f.message("tools/list")).result._meta).toEqual({
+        "buzz/grantedScopes": [],
+        "buzz/supportedScopes": ["agent"],
+      });
+      const published = f.native.publish.mock.calls.length;
+      expect(
+        await f.call("send", { channel, text: "x", audience: "everyone" }),
+      ).toHaveProperty("result._meta.buzz/error", {
+        code: "authorization_required",
+        required_scopes: ["agent"],
+      });
+      expect(f.write).not.toHaveBeenCalled();
+      expect(f.native.publish).toHaveBeenCalledTimes(published);
+    } finally {
+      await f.cleanup();
+    }
+  });
 });
 
 it.each(["return", "throw"])(
@@ -15438,4 +16464,124 @@ describe("Buzz settings", () => {
       expect(write).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("Owner tools", () => {
+  const root = "e".repeat(64);
+  /** The agent's handle from a run. */
+  async function running(f: Awaited<ReturnType<typeof setup>>) {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const handle = runnerGate<AgentHandle>();
+    f.run.mockImplementationOnce(async ({ agent }) => {
+      handle.resolve(agent);
+    });
+    f.plugin.agents.wake(bot, { channel, root, text: "hi" });
+    return handle.promise;
+  }
+  const list = (agent: AgentHandle) =>
+    callSessionTool(
+      appClient(agent, {
+        read: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+      }),
+      {},
+      "owner_channel_list",
+      {},
+    );
+
+  it("read the owner's channels as the owner, only on the run's handle", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await setup({ revision: "bundled" });
+    try {
+      const agent = await running(f);
+      expect(f.plugin.agents.handle(bot)).not.toHaveProperty("ownerAccess");
+      const answer = JSON.parse(String(await list(agent)));
+      expect(answer.executedAs).toEqual({
+        agent: bot,
+        owner: viewer,
+        community: "https://relay.example.test",
+      });
+      // The agent is not in `private`; its owner is, in a role the list
+      // does not say.
+      expect(answer.channels).toContainEqual(
+        expect.objectContaining({ id: "private", role: "unknown", members: 1 }),
+      );
+      expect(answer.partial).toBe(false);
+
+      f.signIn(other);
+      await expect(list(agent)).rejects.toThrow("not connected");
+      f.connect(false);
+      await expect(list(agent)).rejects.toThrow("not connected");
+    } finally {
+      await f.ctx.fiber.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("are not given to an installed harness plugin's runs", async () => {
+    vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", "https://relay.example.test");
+    const f = await setup();
+    try {
+      const agent = await running(f);
+      expect(agent).not.toHaveProperty("ownerAccess");
+      await expect(list(agent)).rejects.toThrow("nothing was read");
+    } finally {
+      await f.ctx.fiber.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    "",
+    "https://other.example.test",
+    "https://relay.example.test.evil.test",
+    "https://relay.example.test:8443",
+  ])(
+    "are not offered outside the enabled communities (%s)",
+    async (enabled) => {
+      vi.stubEnv("VITE_BUZZ_OWNER_MCP_COMMUNITIES", enabled);
+      const f = await setup({ revision: "bundled" });
+      try {
+        const agent = await running(f);
+        expect(agent).not.toHaveProperty("ownerAccess");
+        await expect(list(agent)).rejects.toThrow("nothing was read");
+      } finally {
+        await f.ctx.fiber.dispose();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+});
+
+it("tells a transcript only of an agent's new or changed steps", async () => {
+  const f = await setup();
+  const pubkey = "a".repeat(64);
+  const listener = vi.fn();
+  const stop = f.service.subscribeSteps(`${pubkey}@other.example`, listener);
+  const begin = (messageId: string, agent = pubkey) =>
+    f.activity.begin({
+      scope: "s",
+      agent,
+      channelId: "c",
+      messageId,
+      threadRootId: messageId,
+    });
+  const one = begin("m1");
+  const two = begin("m2");
+  expect(listener).not.toHaveBeenCalled();
+  one.step("Read", "a.txt");
+  two.step("Bash", "ls");
+  expect(listener).toHaveBeenCalledTimes(2);
+  // The same step again, another agent's step, or a turn ending is no new step.
+  one.step("Read", "a.txt");
+  begin("m3", "b".repeat(64)).step("Read");
+  one.finish({ ok: true });
+  expect(listener).toHaveBeenCalledTimes(2);
+  two.step("Edit", "b.txt");
+  expect(listener).toHaveBeenCalledTimes(3);
+  stop();
+  two.step("Read", "c.txt");
+  expect(listener).toHaveBeenCalledTimes(3);
 });

@@ -22,6 +22,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { npubEncode } from "nostr-tools/nip19";
 import * as communityConfig from "../../features/agents/community-config";
 import { SyncedTeams, teamArtifact } from "../../features/agents/team-config";
 import type { RelayEvent } from "../../features/relay/events";
@@ -1125,6 +1126,26 @@ it("a current team blocks a same-name person during delayed Space resolution", a
       new AbortController().signal,
     );
     expect(result).toBeNull();
+  } finally {
+    h.library.dispose();
+  }
+});
+
+it("a team named like a pasted npub does not block its owner during delayed Space resolution", async () => {
+  const h = fixture();
+  try {
+    const key = npubEncode(h.agent.pubkey);
+    const result = await resolveSpaceMention(
+      h.session,
+      {
+        channelId: "parent",
+        selected: [],
+        teamNames: () => [key, `${key} Crew`],
+      },
+      key,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ pubkey: h.agent.pubkey });
   } finally {
     h.library.dispose();
   }

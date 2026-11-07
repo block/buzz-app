@@ -105,7 +105,7 @@ export function HuddleLauncher(props: Props) {
   const target = [context.scope, context.viewer, context.channelId].join("\n");
   const [confirming, setConfirming] = useState<string>();
   if (confirming && confirming !== target) setConfirming(undefined);
-  const cancel = useRef<HTMLButtonElement>(null);
+  const proceed = useRef<HTMLButtonElement>(null);
   const active = ["connecting", "connected", "leaving"].includes(call.phase);
   const here =
     call.phase === "connected" &&
@@ -167,14 +167,13 @@ export function HuddleLauncher(props: Props) {
         <AlertDialog
           title="Start a huddle?"
           description="Your microphone will turn on, and others in this conversation can join."
-          initialFocus={cancel}
+          initialFocus={proceed}
           onClose={close}
           actions={
             <>
-              <Button ref={cancel} onClick={close}>
-                Cancel
-              </Button>
+              <Button onClick={close}>Cancel</Button>
               <Button
+                ref={proceed}
                 variant="primary"
                 onClick={() => {
                   close();

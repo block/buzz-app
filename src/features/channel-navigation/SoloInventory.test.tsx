@@ -24,6 +24,7 @@ import {
   outsider,
   root,
   scope,
+  viewer,
 } from "../../app/shell/sidebar-testing";
 stubAvatarBrowserApis();
 afterEach(() => {
@@ -307,6 +308,77 @@ it("keeps the open, unread and working chats listed past a workspace's cap", () 
   });
   expect(listed()).toContain("newer-9");
   expect(listed()).not.toContain("newer-8");
+});
+
+it("renders again only the Solo row whose chat changed", () => {
+  const renders = new Map<string, number>();
+  const icons: readonly Contribution<ChatIcon>[] = [
+    {
+      id: "render-count",
+      key: "test/render-count",
+      pluginId: "test",
+      revision: "one",
+      component: ({ channelId, fallback }) => {
+        renders.set(channelId, (renders.get(channelId) ?? 0) + 1);
+        return fallback;
+      },
+    },
+  ];
+  const f = fixture(false, false, undefined, undefined, 0, {
+    snapshot: () => icons,
+    subscribe: () => () => {},
+  });
+  expect(renders.get(id)).toBeGreaterThan(0);
+  renders.clear();
+  f.roster((channels) =>
+    channels.map((channel) =>
+      channel.id === other ? { ...channel, name: "Renamed" } : channel,
+    ),
+  );
+  expect(screen.getByRole("button", { name: /^Renamed/ })).toBeInTheDocument();
+  expect(renders.get(other)).toBeGreaterThan(0);
+  // Planning's chat did not change, so its row did not render again.
+  expect(renders.has(id)).toBe(false);
+});
+
+it("renames and opens settings for a chat the roster delivers after mount", async () => {
+  const f = fixture();
+  Object.assign(f.session, {
+    channelDetails: {
+      ...f.session.channelDetails,
+      available: true,
+      load: vi.fn(async (channelId: string) => ({
+        channelId,
+        name: "Fresh",
+        description: "",
+        visibility: "private",
+        labels: ["buzz.solo"],
+        canEdit: true,
+        version: "one",
+      })),
+    },
+  });
+  f.replaceSession();
+  f.roster((channels) => [
+    ...channels,
+    { id: "fresh", name: "Fresh", channelType: "solo", creator: viewer },
+  ]);
+  const user = userEvent.setup();
+  // Rows read their actions when used: a row added after mount must reach
+  // the actions of the current render, not those of the first one.
+  await user.click(
+    await screen.findByRole("button", { name: "Actions for Fresh" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  expect(screen.getByRole("textbox", { name: "Chat name" })).toHaveValue(
+    "Fresh",
+  );
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Actions for Fresh" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
+  );
+  expect(await screen.findByRole("dialog")).toBeVisible();
 });
 
 it("describes a Solo row as Shared only when its Shared mark renders", () => {

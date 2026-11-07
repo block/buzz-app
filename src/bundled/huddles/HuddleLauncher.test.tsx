@@ -154,7 +154,9 @@ it("moves idle Solo huddles to the menu while preserving Team's header action", 
       name: "Start a huddle?",
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
+      expect(
+        screen.getByRole("button", { name: "Start huddle" }),
+      ).toHaveFocus(),
     );
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(dialog).not.toBeInTheDocument();

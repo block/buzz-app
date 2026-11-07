@@ -19,6 +19,7 @@ import {
   nativeRelayRequest,
   nativeRelaySigner,
   nativeWriteKinds,
+  verifyNativeStored,
 } from "./native";
 import { keypair, message, nativeSignatureChecks, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
@@ -165,6 +166,21 @@ beforeEach(() => {
   });
 });
 
+it("verifies stored events through native signature checks without connecting", async () => {
+  vi.mocked(invoke).mockClear();
+  const profile = signed(viewer, { kind: 0, tags: [], content: "{}" });
+  const restored = await verifyNativeStored([
+    JSON.parse(JSON.stringify(profile)),
+  ]);
+  expect(restored.map((event) => event.id)).toEqual([profile.id]);
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "relay_verify_signatures",
+  ]);
+  await expect(
+    verifyNativeStored([{ ...profile, content: "changed" }]),
+  ).rejects.toThrow();
+  expect(requests).toEqual([]);
+});
 it("requires the relay self key, never its operator contact pubkey", async () => {
   vi.mocked(invoke).mockResolvedValueOnce({
     status: 200,

@@ -42,12 +42,11 @@ between everyone in the owner's workspace and only the owner, and
 `apps_community` grants or revokes a Buzz community at the grant revision it just
 read. `apps_visibility` keeps existing viewers and community grants.
 
-BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
-boundary: the server must grant Builderlab access to the current workspace/account.
-Existing workspace early-preview enablement can provide that access; these tools
-do not enable a workspace or bypass its policy. A denied request preserves the
-server's permission error. Check the contract before choosing a profile because
-BBPublic need not support static hosting.
+Every tenant uses the same authenticated control-plane boundary: the server must
+grant Builderlab access to the current workspace/account. These tools do not
+enable a workspace or bypass its policy. A denied request preserves the server's
+permission error. Check the contract before choosing a profile because a tenant
+need not support static hosting.
 
 After an accepted deployment, readiness errors preserve its app, version,
 deployment and rollout IDs. `apps_status` checks those exact IDs without uploading
@@ -235,9 +234,11 @@ access. Live development signs in through the development broker instead. A
 build with neither has no Builderlab: the plugin registers nothing.
 
 The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
-`true` enables remote agents. Otherwise, Settings and the Agents provider show
-“Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
-this capability.
+`true` enables remote agents. Otherwise, Harness defaults and Builderlab Settings
+show “Unavailable for this account”; the provider dialog explains the same
+restriction. The Harness defaults row has no action. Account management stays in
+Settings → Builderlab, and no Beekeeper requests are sent. Sign out and back in
+to refresh this capability.
 
 The plugin also offers Builderlab as a Decisions API provider. It reads
 `capabilities.can_use_builderlab_decisions` the same way, but only explicit

@@ -6,7 +6,7 @@ const CLIENT: &str = "buzz-cli";
 
 async fn pair_request(service: &CredentialService, params: &[&str]) -> (StatusCode, Value) {
     let body = json!({ "id": "p", "method": "pair", "params": params }).to_string();
-    respond(service, None, Some(1), body.as_bytes()).await
+    respond(service, None, Some(1), body.as_bytes(), None).await
 }
 
 /// The id of the request the page was asked about, once it was.
@@ -416,7 +416,7 @@ async fn revocation_while_a_paired_request_runs_withholds_the_result() {
             let (service, waiting) = (fixture.service.clone(), token.clone());
             let body = json!({ "id": "1", "method": method, "params": params }).to_string();
             let request = tokio::spawn(async move {
-                respond(&service, Some(&waiting), Some(1), body.as_bytes()).await
+                respond(&service, Some(&waiting), Some(1), body.as_bytes(), None).await
             });
             // Admitted: it spent one request of its rate, and now waits at the call.
             while !fixture
@@ -557,6 +557,56 @@ async fn an_approval_saved_during_a_revoke_all_returns_no_token() {
     assert!(reply.1["result"].is_null() || reply.1["result"].as_str().unwrap().is_empty());
     clearing.await.unwrap();
     assert!(fixture.keychain.value.lock().unwrap().is_none());
+}
+
+/// Approved, then its community is removed while its record is being saved:
+/// the removal waits for the save, which removes the record, and the token is
+/// never returned.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approval_saved_during_a_community_removal_returns_no_token() {
+    let fixture = fixture();
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    *fixture.keychain.gate.lock().unwrap() = Some(super::super::keychain::Gate {
+        entered,
+        release: release_rx,
+    });
+    let service = fixture.service.clone();
+    let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.answer(&id, true);
+    tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())
+        .await
+        .unwrap();
+    let service = fixture.service.clone();
+    let removing =
+        tokio::spawn(async move { service.0.pairings.set_communities(Vec::new()).await });
+    // Wait until the removal has published its list; it cannot complete
+    // while the save is paused.
+    while fixture
+        .service
+        .0
+        .pairings
+        .communities
+        .lock()
+        .unwrap()
+        .as_ref()
+        != Some(&Vec::new())
+    {
+        tokio::task::yield_now().await;
+    }
+    assert!(!removing.is_finished());
+    release.send(()).unwrap();
+    removing.await.unwrap();
+    // Once the removal completed, no token is saved.
+    assert!(fixture.keychain.value.lock().unwrap().is_none());
+    let (status, reply) = pairing.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+    assert_eq!(
+        reply["message"],
+        format!("{RELAY} isn't a community in Buzz; add it first")
+    );
+    assert!(reply["result"].is_null() || reply["result"].as_str().unwrap().is_empty());
 }
 
 /// Approved after a revoke-all has been saved: nothing is saved.
@@ -765,7 +815,7 @@ async fn a_second_app_over_the_same_pairings_serves_none_of_them() {
         IdentityHost::fixture(),
     );
     let body = json!({ "id": "1", "method": "get_public_key", "params": [] }).to_string();
-    let reply = respond(&second, Some(&token), Some(1), body.as_bytes()).await;
+    let reply = respond(&second, Some(&token), Some(1), body.as_bytes(), None).await;
     assert_eq!(
         error(&reply),
         (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
@@ -852,4 +902,153 @@ async fn an_expired_sign_in_asks_for_a_new_one() {
         .as_str()
         .unwrap()
         .contains("sign in again in Buzz"));
+}
+
+#[tokio::test]
+async fn a_community_not_saved_here_is_refused_before_anyone_is_asked() {
+    let fixture = fixture();
+    for relay in [
+        "wss://other.example",
+        "wss://relay.example/team/",
+        "wss://relay.example/?team=a",
+        "ws://relay.example",
+    ] {
+        let (status, reply) = pair_request(&fixture.service, &[CLIENT, relay]).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+        assert_eq!(reply["error"], "denied");
+        assert_eq!(
+            reply["message"],
+            format!("{relay} isn't a community in Buzz; add it first")
+        );
+    }
+    assert!(fixture.notices.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_saved_community_matches_as_a_whole_normalized_url() {
+    let fixture = fixture();
+    // The page reports communities as HTTP or WebSocket URLs.
+    fixture
+        .service
+        .0
+        .pairings
+        .set_communities(vec!["https://relay.example".into()])
+        .await;
+    let service = fixture.service.clone();
+    let pairing =
+        tokio::spawn(
+            async move { pair_request(&service, &[CLIENT, "WSS://Relay.Example:443/"]).await },
+        );
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.answer(&id, false);
+    assert_eq!(
+        pairing.await.unwrap().1["message"],
+        "Pairing was declined in Buzz"
+    );
+}
+
+#[tokio::test]
+async fn pairing_waits_until_the_page_reports_its_communities() {
+    let fixture = fixture();
+    *fixture.service.0.pairings.communities.lock().unwrap() = None;
+    let (status, reply) = pair_request(&fixture.service, &[CLIENT, RELAY]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{reply}");
+    assert!(fixture.notices.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn removing_the_community_declines_the_waiting_request() {
+    let fixture = fixture();
+    let service = fixture.service.clone();
+    let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.set_communities(Vec::new()).await;
+    let (status, reply) = pairing.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+    assert_eq!(
+        reply["message"],
+        format!("{RELAY} isn't a community in Buzz; add it first")
+    );
+    // The prompt closed, and a late Allow issues nothing.
+    assert!(fixture
+        .notices
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|notice| matches!(notice, Notice::Closed(closed) if *closed == id)));
+    fixture.service.0.pairings.answer(&id, true);
+    assert!(fixture.keychain.value.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn the_caller_is_looked_up_only_for_a_request_that_is_asked() {
+    let fixture = fixture();
+    let pairings = &fixture.service.0.pairings;
+    let unlooked = || async { panic!("a refused request looked up its caller") };
+    let human = || async { crate::credential_service::pairing::Human::Absent };
+    let refused = pairings
+        .pair(CLIENT, "wss://other.example", unlooked, human)
+        .await;
+    assert_eq!(refused.err().unwrap().code, "denied");
+    // One request waits; the next is rate limited without a lookup.
+    let service = fixture.service.clone();
+    let waiting = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    let ready = || fixture.service.human();
+    let limited = pairings.pair(CLIENT, RELAY, unlooked, ready).await;
+    assert_eq!(limited.err().unwrap().code, "rate_limited");
+    pairings.answer(&id, false);
+    waiting.await.unwrap();
+}
+
+const REMOVED: &str = "wss://removed.example";
+
+/// A request for a removed community ended `code`, with nothing asked and
+/// nothing left pending: the remaining community pairs unthrottled.
+async fn a_removal_left_nothing_waiting(fixture: &Fixture, code: &str) {
+    assert_eq!(code, "denied");
+    assert!(fixture.notices.lock().unwrap().is_empty());
+    let service = fixture.service.clone();
+    let next = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
+    let id = asked(&fixture.notices).await;
+    fixture.service.0.pairings.answer(&id, false);
+    let (status, reply) = next.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{reply}");
+    assert_eq!(reply["message"], "Pairing was declined in Buzz");
+}
+
+#[tokio::test]
+async fn a_removal_during_identity_loading_asks_nothing() {
+    let fixture = fixture();
+    let pairings = &fixture.service.0.pairings;
+    pairings
+        .set_communities(vec![RELAY.into(), REMOVED.into()])
+        .await;
+    let removing = std::sync::atomic::AtomicBool::new(true);
+    let human = || async {
+        if removing.swap(false, Ordering::SeqCst) {
+            pairings.set_communities(vec![RELAY.into()]).await;
+        }
+        fixture.service.human().await
+    };
+    let unlooked = || async { panic!("a removed request looked up its caller") };
+    let removed = pairings.pair(CLIENT, REMOVED, unlooked, human).await;
+    a_removal_left_nothing_waiting(&fixture, removed.err().unwrap().code).await;
+}
+
+#[tokio::test]
+async fn a_removal_during_the_process_lookup_asks_nothing() {
+    let fixture = fixture();
+    let pairings = &fixture.service.0.pairings;
+    pairings
+        .set_communities(vec![RELAY.into(), REMOVED.into()])
+        .await;
+    let lookup = || async {
+        pairings.set_communities(vec![RELAY.into()]).await;
+        Some("buzz".to_owned())
+    };
+    let removed = pairings
+        .pair(CLIENT, REMOVED, lookup, || fixture.service.human())
+        .await;
+    a_removal_left_nothing_waiting(&fixture, removed.err().unwrap().code).await;
 }

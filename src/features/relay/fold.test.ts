@@ -93,6 +93,28 @@ describe("message fold", () => {
       expect(plain?.pluginRequest).toBeUndefined();
     }
   });
+  it("reads one safe signed media target without accepting ambiguous tags", () => {
+    const root = message(alice, channel, "Two videos", 1);
+    const url = "https://fixture.test/second.mp4";
+    const reply = (targets: readonly string[][]) =>
+      message(bob, channel, "⏱ 0:21 — 😍", 2, [
+        ["e", root.id, "", "reply"],
+        ...targets,
+      ]);
+    const fold = (targets: readonly string[][]) =>
+      foldMessages(channel, relay.pubkey, [root, reply(targets)], {
+        includeReplies: true,
+      })[1]?.mediaTargetUrl;
+    expect(fold([["buzz:media", url]])).toBe(url);
+    expect(fold([["buzz:media", "javascript:alert(1)"]])).toBeUndefined();
+    expect(
+      fold([
+        ["buzz:media", url],
+        ["buzz:media", "https://fixture.test/other.mp4"],
+      ]),
+    ).toBeUndefined();
+    expect(fold([["buzz:media", url, "extra"]])).toBeUndefined();
+  });
 
   it("preserves diff patch bytes and signed metadata without Markdown attachment projection", () => {
     const content =

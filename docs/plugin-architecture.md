@@ -100,6 +100,16 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+A bundled plugin may own Rust as a Cargo workspace member under
+`bundled/<plugin>/<crate>/`, including its Tauri commands (Mesh:
+`bundled/mesh-compute/compute/`). Its host adapter is one `src-tauri/src/<plugin>.rs`
+module that lends it narrow identity/relay access and exposes `setup` and
+`commands`; `lib.rs` only manages its state, routes its command prefix, and calls
+its shutdown. The crate must not enable Tauri features, entitlements or app
+config for the whole host. Source colocation does not make Rust dynamically
+installable. When adding such a crate, include its path in the Rust input
+selection in `scripts/check-push.mjs` and cover that selection in the hook tests.
+
 ## Open a Git import from a link
 
 Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>][&path=<encoded-folder>][&commit=<hex>]`
@@ -313,8 +323,20 @@ type PluginInstaller = {
     path?: string; // relative folder inside the repository
     commit?: string; // 40- or 64-hex; install exactly this commit
   }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+  getInstallationStatus(
+    id: string,
+  ): "installed" | "absent" | "unavailable";
+  subscribeInstallationStatus(
+    id: string,
+    listener: (status: "installed" | "absent" | "unavailable") => void,
+  ): () => void;
 };
 ```
+
+These status methods may be missing on an older host even when the optional
+service is available. Feature-check each method before calling it; see the
+[plugin authoring guide](plugin-authoring-guide.md#extension-points) for
+status semantics and subscription-lifetime guidance.
 
 `requestInstall` never installs silently. It opens Settings → Plugins with the Git
 source prefilled and read-only, and the user still chooses **Find**, reviews the
@@ -558,7 +580,15 @@ which uploads of local files use. The kit grants nothing `ctx.agents` and
 A plugin, bundled or installed, can add a tab to the settings of agents
 running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
-`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
+`{ agent, open, canOpen }`; it reads and saves through the plugin's own `ctx.agents`.
+`open(target)` opens a link, such as a `nostr:npub…` profile, where the tab is
+shown: the profile panel opens it beside the conversation and the Agents page
+selects that agent. `canOpen(target)` says whether `open` can open that link
+there, so the tab can show it as plain text when it can't. `open` returns true
+once it has opened the link, and false otherwise: either it can't, or the host
+first asks whether to discard unsaved edits and opens the link only if the
+person agrees. So false is not an error. Both are absent where the tab can open
+nothing. An
 optional `when(agent)` limits the tab to the agents it returns true for, and an
 optional `subscribe(listener)` tells the host when `when` may answer
 differently, so the tab appears or goes without a reload. A `when` that throws
@@ -865,7 +895,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos, Usage, Reminders and Workflows are off by default for fresh installs. Feedback, Diff viewer, Identity
+Todos, Usage, Reminders, Workflows and Shared compute are off by default for fresh installs. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -920,8 +950,10 @@ placement in Channels → Channel actions. Channels owns the menu, selected chan
 tab geometry, focus, and close behavior; it opens the **exact active contribution**
 without resolving a target matcher. Eligibility is evaluated again at activation
 against the current connected session, selected non-cached channel and membership.
-Disabling or replacing a plugin retires its open tab; a channel change or loss of
-eligibility closes it and unmounts its archive reader. `eligible` also decides
+Disabling or replacing a plugin retires its open tab, and loss of eligibility closes
+it. A channel change unmounts it with the rest of the channel's tabs; the tab stays
+open in that channel's workspace and remounts, after eligibility is checked again,
+when the viewer returns, until they close it. `eligible` also decides
 archived-channel availability; exclude `channel.archived` if the panel writes.
 Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
@@ -929,7 +961,7 @@ the panel must independently verify access before reading any sensitive data and
 fence asynchronous reads on revocation. Channels registers **View canvas** this
 way. Canvas has no separate plugin toggle; Solo,
 Todos, and agents use the same session capability. Its editor keeps the channel's
-draft locally, so reopening after a channel change restores it. Members of archived
+draft locally, so returning to the channel or reopening Canvas restores it. Members of archived
 channels can read Canvas and History, but cannot edit, save, or restore through the panel.
 A retained unpublished draft is labeled as local; History shows the saved versions.
 
@@ -1017,7 +1049,10 @@ A panel may additionally contribute `channelLauncher: ComponentType<ChannelLaunc
 Channels renders these in its conversation header with public `context`, `pressed`,
 `available()`, `toggle(target)` and the channel's `canOpen`/`open`. The page owns one selected channel panel, placed
 in the bottom drawer by default or the existing companion column when the contribution
-sets `channelPlacement: "side"`. With `channelPlacement: "tab"` the launcher instead
+sets `channelPlacement: "side"`. The bottom drawer closes when the viewer leaves the
+channel. A side-column panel stays open in the channel's workspace: leaving the channel
+or page unmounts it, and returning shows it again until the viewer closes it, another
+channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
@@ -1072,6 +1107,7 @@ Unordered checkbox items in that section are shown, including nested tasks. Nest
 Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
+People who can’t write the channel’s Canvas, such as guests, see Todos read-only.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
 the convenience UI, not the saved list: Channel actions → View canvas remains editable.
 

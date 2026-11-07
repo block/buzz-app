@@ -45,8 +45,10 @@ type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
 // Require the canonical scheme here. The native URL parser may already have
 // normalized its case before this bridge receives it. Every address outside the
-// Buzz link grammar, unknown hosts included, parses to null; the app has no link
-// form of its own beyond the Buzz ones.
+// Buzz link grammar, unknown hosts included, parses to null. Beyond the Buzz
+// forms, the app answers only bare `buzz://` and `buzz://sign-in`, and only at
+// OS ingress (`bindDeepLinks`); they parse to null too, so content keeps them as
+// plain text.
 const buzzLink = (url: unknown) =>
   typeof url === "string" && url.startsWith("buzz:")
     ? parseBuzzLink(url)
@@ -117,6 +119,10 @@ export function deepLinkStep(
     return { fail: "invalid-target" };
   }
 }
+
+// Bare `buzz://`, with Windows' optional root path; any query or fragment is
+// ignored, as unknown parameters are on Buzz links.
+const OPEN_APP_LINK = /^buzz:\/\/\/?(?:[?#].*)?$/;
 
 /** Latest intent wins, as with a user's navigation. At most one unbound URL is
  * retained. Once bound, the ordinary controller owns presentation and retry. */
@@ -275,17 +281,24 @@ export function bindDeepLinks(
         }
         if (closed || started.id !== host.navigation.snapshot().attempt.id)
           continue;
+        // Two ingress-only links name no destination; neither is held, bound
+        // or rejected, and they follow different selection rules:
+        // - Bare `buzz://` (Builderlab's "Open Buzz app") only asks for the
+        //   app, which native has already brought forward. Selection skips it,
+        //   so it never displaces a real link, in this batch or already held.
+        // - `buzz://sign-in` (the account pages' "Open Buzz") wins selection
+        //   like any other latest link, so earlier links in this batch are
+        //   dropped, then asks first-run to sign in again
+        //   (`identity/sign-in-requests.ts`). A link already held stays held.
         let url: string | undefined;
         for (let index = urls.length - 1; index >= 0; index--) {
           const candidate = urls[index];
-          if (typeof candidate === "string") {
+          if (typeof candidate === "string" && !OPEN_APP_LINK.test(candidate)) {
             url = candidate;
             break;
           }
         }
         if (url === undefined) continue;
-        // `buzz://sign-in` names no destination: first-run signs in again
-        // (`identity/sign-in-requests.ts`). Never held, bound or rejected.
         if (isSignInLink(url)) {
           requestSignIn();
           continue;

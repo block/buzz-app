@@ -3,6 +3,7 @@ import { isTransientFailure } from "../relay/errors";
 import type { RelayEvent, ReadFilter } from "../relay/events";
 import type { Outbox, LocalEvents } from "../relay/outbox";
 import type { ChannelKitHost } from "./host";
+import type { ChannelSummary } from "../relay/contracts";
 import {
   CanvasConflictError,
   isDefinitiveCanvasConflict,
@@ -486,3 +487,6 @@ export function createChannelKit({
 export type Resume = { id?: string | undefined; enqueued(id: string): void };
 export type ChannelKit = ReturnType<typeof createChannelKit>["capability"];
 export type ChannelCanvas = ReturnType<typeof createChannelKit>["canvas"];
+/** Canvas and Todos show a channel read-only until the viewer can write it. */
+export const canvasReadOnly = (channel: ChannelSummary | undefined) =>
+  !channel || !!channel.archived || !!channel.readOnly || !!channel.cached;

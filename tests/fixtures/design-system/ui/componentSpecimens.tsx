@@ -51,6 +51,7 @@ import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorks
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
   DotsThreeIcon,
+  TrashIcon,
   ArrowLeftIcon,
   HashIcon,
   ChatCircleIcon,
@@ -66,6 +67,7 @@ import {
   type ThemeMode,
 } from "../../../../src/shared/design-system/ui/ThemePicker";
 import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/KeyboardShortcut";
+import { CountBadge } from "../../../../src/shared/design-system/ui/CountBadge";
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
@@ -1330,6 +1332,32 @@ function NavigationItemSpecimen() {
         </div>
       </SpecimenGroup>
       <SpecimenGroup
+        label="Card — selected item in a collection"
+        code={`<NavigationCard>
+  <NavigationItem label="Selected draft" selected aria-current="true" />
+</NavigationCard>`}
+      >
+        <div className="component-navigation-section-demo">
+          <NavigationCard>
+            <NavigationItem
+              label="Selected draft"
+              selected
+              aria-current="true"
+            />
+            <IconButton
+              aria-label="Delete selected draft"
+              variant="bare"
+              icon={<TrashIcon size={16} />}
+            />
+          </NavigationCard>
+          <NavigationItem
+            label="Selected sent message"
+            selected
+            aria-current="true"
+          />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Card — multiline destination and independent detail action"
         code={`<NavigationCard tone="tonal" footer={<Button size="sm">View details</Button>}>
   <NavigationItem label="A destination with supporting text" multiline selected />
@@ -2336,6 +2364,23 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     </div>
   ),
   "theme-picker": ThemePickerSpecimen,
+  "count-badge": () => (
+    <div className="flex w-64 flex-col gap-1">
+      <NavigationItem
+        label="Drafts & sent"
+        trailing={<CountBadge count={5} label="5 drafts" />}
+      />
+      <NavigationItem
+        label="Drafts & sent"
+        selected
+        trailing={<CountBadge count={42} label="42 drafts" />}
+      />
+      <NavigationItem
+        label="Drafts & sent"
+        trailing={<CountBadge count={1200} label="1200 drafts" />}
+      />
+    </div>
+  ),
   "keyboard-shortcut": () => (
     <div className="flex flex-wrap gap-3">
       <KeyboardShortcut text="⇧⌘K" label="Shift Command K" />

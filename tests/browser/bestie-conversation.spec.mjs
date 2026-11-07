@@ -1,5 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
+import { clickRow } from "./timeline.mjs";
 
 // Browser-only integration: native layout, split geometry, retained DOM while
 // dragging a thread between panes, focus, and responsive/theme/text-size treatment.
@@ -169,10 +170,11 @@ test("Bestie stays within a block host with multiline history at narrow widths",
   await page.goto("/tests/fixtures/bestie-conversation.html?long");
   const composer = page.getByRole("textbox", { name: "Message Bestie" });
   await expect(composer).toBeInViewport();
-  await page
-    .getByRole("button", { name: "View thread: 1 reply" })
-    .first()
-    .click();
+  // The timeline opens at its latest message, and clickRow does not scroll.
+  await clickRow(
+    page,
+    page.getByRole("button", { name: "View thread: 1 reply" }).last(),
+  );
   await expect(
     page.getByRole("textbox", { name: "Reply to thread" }),
   ).toBeInViewport();

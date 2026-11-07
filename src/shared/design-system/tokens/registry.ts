@@ -1195,6 +1195,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "surface-status-success",
+        variable: "--surface-status-success",
+        pointsAt: "citrus step 9",
+        use: "Completed task fill, paired with text-on-status-success.",
+        status: "core",
+      },
+      {
+        token: "surface-status-danger",
+        variable: "--surface-status-danger",
+        pointsAt: "red light step 11",
+        use: "Failed task fill, paired with text-on-status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status-success",
+        variable: "--text-on-status-success",
+        pointsAt: "citrus ink",
+        use: "Foreground on solid Citrus completed task status.",
+        status: "core",
+      },
+      {
+        token: "text-on-status",
+        variable: "--text-on-status",
+        pointsAt: "white",
+        use: "Foreground on solid failed task status.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-success",
         variable: "--affordance-success",
         pointsAt: "green-3 light / green-3 dark",
@@ -1744,10 +1772,6 @@ export const TYPE_FAMILIES = [
     use: "Code, keys and identifiers, set in the xsmall detail role at 12/16.",
   },
 ];
-
-/** Source for the primitive ladder and resolved roles displayed below. */
-export const TYPE_SOURCE =
-  "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json";
 
 /** Active size primitives, with xsmall sharing the 12px step. */
 export const TYPE_RAMPS = [

@@ -53,7 +53,12 @@ pub(super) fn saved(source: PortSource, record: &Value, records: &[Value]) -> Sa
             .or_else(|| definition.and_then(|row| row["runtime"].as_str()))
             .unwrap_or("buzz-agent")
     };
-    let runtime = if record["backend"]["type"].as_str() == Some("provider") {
+    let backend = if harness {
+        &record["imported"]["record"]["backend"]
+    } else {
+        &record["backend"]
+    };
+    let runtime = if backend["type"].as_str() == Some("provider") {
         "hosted"
     } else {
         runtime(command)
@@ -111,6 +116,22 @@ mod tests {
                 effort: None
             }
         );
+    }
+
+    #[test]
+    fn classifies_imported_provider_harnesses_as_hosted() {
+        for command in ["goose", "custom-wrapper"] {
+            let mut record = json!({
+                "harness": {"command": command},
+                "imported": {"record": {"backend": {"type": "provider"}}}
+            });
+            assert_eq!(saved(PortSource::Harness, &record, &[]).runtime, "hosted");
+            record["imported"]["record"]["backend"]["type"] = json!("local");
+            assert_eq!(
+                saved(PortSource::Harness, &record, &[]).runtime,
+                runtime(command)
+            );
+        }
     }
 
     #[test]

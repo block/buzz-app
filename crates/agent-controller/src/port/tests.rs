@@ -54,6 +54,24 @@ fn key() -> Secret {
 }
 
 #[test]
+fn lists_imported_provider_harness_with_hosted_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = key();
+    write(
+        stores(dir.path()).harness,
+        json!({"version": 1, "agents": [{
+            "pubkey": agent.pubkey(), "relayUrl": "wss://relay.example", "name": "Hosted",
+            "harness": {"command": "goose"},
+            "imported": {"record": {"backend": {"type": "provider"}, "backend_agent_id": "remote"}}
+        }]}),
+    );
+    let found = stores(dir.path()).list();
+    assert!(found.warnings.is_empty());
+    assert_eq!(found.agents.len(), 1);
+    assert_eq!(found.agents[0].connection.runtime, "hosted");
+}
+
+#[test]
 fn lists_each_identity_once_preferring_the_harness_copy() {
     let dir = tempfile::tempdir().unwrap();
     let (shared, old, dev) = (key(), key(), key());

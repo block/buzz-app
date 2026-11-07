@@ -89,6 +89,11 @@ function fake(
   const client: BuzzClient = {
     key: me,
     pubkey: me,
+    effectiveEdit: vi.fn(async (id: string) => {
+      const found = events.find((event) => event.id === id);
+      if (!found) throw new Error("No effective edit fixture");
+      return found;
+    }),
     query: vi.fn(async (filters: readonly Filter[]) => {
       const newest = [...events, ...kept].sort(
         (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),

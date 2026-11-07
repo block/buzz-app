@@ -76,6 +76,25 @@ same local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
+## Message edits
+
+The shared MCP `edit` tool retains the latest live attachment set, including an
+empty set left by a previous edit. Both app-hosted and standalone agents resolve
+that state as the agent through the version-1 `effective_edit` primary lookup on
+`/query`; they verify the signed original/replacement and their target/channel.
+The exact filter uses kinds `[9,40002,40008]`. Deploy the relay support from
+[buzz#9226](https://github.com/block/buzz/pull/9226) before releasing this client.
+An old relay's array response, inaccessible target, invalid response or failed
+lookup aborts without publishing. There is no original-attachment fallback.
+
+The tool waits until the second after the observed head before requesting a
+signature, reusing the bounded wait for notes/canvas. If that second is over five
+seconds ahead, it asks the caller to retry when the clock catches up. Concurrent
+writers still use relay ordering; this is not compare-and-swap. The relay must
+authorize every carried file for the signing agent; an owner's access does not
+grant the agent private-media access, and denial never causes an automatic retry
+with files stripped.
+
 ## External app authorization
 
 The build flag `BUZZ_EXTERNAL_MCP_COMMUNITIES` lists the allowed community

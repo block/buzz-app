@@ -639,14 +639,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = tag(target, "h");
     if (!channel) throw new Error(`${id} is not a channel message.`);
     const content = required(args, "text");
+    if (!tools.client.effectiveEdit)
+      throw new Error("This host cannot obtain effective edit state.");
+    const effective = await tools.client.effectiveEdit(id, channel);
+    const after = (effective.created_at + 1) * 1000;
+    if (after - Date.now() > 5000)
+      throw new Error(
+        "The message was just changed; try again when the clock catches up.",
+      );
+    await waitUntil(after);
     await tools.client.publish({
       kind: 40003,
       content,
-      // An edit replaces the attachments too, so it keeps the message's.
+      // An edit replaces attachments too, including an explicitly empty set.
       tags: [
         ["h", channel],
         ["e", id],
-        ...target.tags.filter((t) => t[0] === "imeta"),
+        ...effective.tags.filter((t) => t[0] === "imeta"),
         ...(await tools.emoji(content)),
       ],
     });

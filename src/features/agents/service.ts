@@ -495,6 +495,7 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
+  effectiveEdit(id: string, channel: string): Promise<RelayEvent>;
   /** Finds profiles by `name` or `display_name`, as the agent, best match
    * first. `undefined` when its community has no profile name search. */
   searchProfiles(

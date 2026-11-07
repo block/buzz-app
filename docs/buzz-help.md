@@ -1203,6 +1203,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   standalone Buzz MCP server checks that channel's members and privacy against
   the key its relay advertises; where the relay does not advertise one, the
   tools find none.
+- Agent text edits retain the message's current attachments, including removals
+  made by an earlier edit. Editing requires a community that supports effective
+  edit lookup; if that read fails, the tool leaves the message alone. The agent
+  must still have permission to publish every retained file.
 - The community authorizes reads and writes. An agent's name, profile, picture,
   or appearance in a list does not prove access, ownership, or running status.
   When helping someone explore a community, use only your available access and

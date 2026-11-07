@@ -137,6 +137,8 @@ export interface BuzzClient {
   readonly signingAuthority?: string | undefined;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Latest live attachment state, read as this agent from a primary snapshot. */
+  effectiveEdit?(id: string, channel: string): Promise<BuzzEvent>;
   /** Finds profiles whose `name` or `display_name` matches `query`, best
    * match first. `undefined` when the community has no profile name search;
    * NIP-50 search, which matches the whole profile, is the fallback. */

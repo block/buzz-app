@@ -788,6 +788,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding-inline-start: var(--space-1);
 }
 .composerInput {
+  @apply text-message;
   box-sizing: border-box;
   position: relative;
   min-width: 0;

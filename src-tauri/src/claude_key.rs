@@ -1,10 +1,23 @@
 //! The Anthropic API key Buzz's Claude runs with, in OSS builds. Native code
-//! owns it: it is kept in the OS credential store under Buzz's own item and
-//! never sent back to the webview. Native code adds it to the environment of
-//! the Claude processes `buzz.claude-code` starts that ask for it
+//! owns it: it is kept in the OS credential store under Buzz's own item, and
+//! no command returns it. Native code adds it to the environment of the
+//! Claude processes `buzz.claude-code` starts that ask for it
 //! (`plugin_host_process_spawn`'s `secrets`). On macOS the item is created by
 //! the Buzz binary, so only that binary reads it without a prompt; an agent's
-//! shell cannot.
+//! shell cannot read it from the store.
+//!
+//! What this does not guarantee:
+//! - Claude's own children (its Bash tool, hooks and MCP servers) inherit its
+//!   environment, so commands a Claude agent runs can read the key. Claude
+//!   scrubs it from them only with `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, which
+//!   also strips `SSH_AUTH_SOCK`, `GIT_*` and every `*TOKEN`/`*KEY`
+//!   variable, so Buzz does not set it.
+//! - `claude-sh` is `bash -c` with a script the caller supplies, so code that
+//!   can start it as `buzz.claude-code` can print the key back. Keeping it
+//!   out of the webview is the plugin's convention (`auth.tsx`), not
+//!   something native code enforces: like the rest of Buzz's threat model,
+//!   this trusts installed plugin code. What native code does enforce is
+//!   that no other plugin or process is given the key (`may_have`).
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
@@ -44,8 +57,10 @@ pub(crate) trait KeyStore: Send + Sync {
 
 pub(crate) struct ClaudeKey {
     store: Arc<dyn KeyStore>,
-    /// `None` until read: the store is asked once, then kept current by set. A failed read is not kept.
-    key: Mutex<Option<Option<Zeroizing<String>>>>,
+    /// The key last read or saved. Only a key is kept: with none, every ask
+    /// reads the store again, because another Buzz on this computer, or a
+    /// development copy sharing its item, may save one.
+    key: Mutex<Option<Zeroizing<String>>>,
 }
 
 impl ClaudeKey {
@@ -58,22 +73,35 @@ impl ClaudeKey {
             key: Mutex::new(None),
         }
     }
-    /// The saved key, or `None` when there is none. A store that cannot be
-    /// read is an error, not a missing key.
+    /// Reads the store into the kept key. A store that cannot be read is an
+    /// error, not a missing key, and leaves the kept key as it was.
+    async fn reread(
+        &self,
+        key: &mut Option<Zeroizing<String>>,
+    ) -> Result<Option<Zeroizing<String>>, String> {
+        // The store can block on a consent dialog.
+        let store = self.store.clone();
+        let read = tokio::task::spawn_blocking(move || store.read())
+            .await
+            .map_err(|_| "Secure storage is unavailable".to_string())??;
+        key.clone_from(&read);
+        Ok(read)
+    }
+    /// The key a Claude process starts with: the kept one, or else the
+    /// store's, or `None` when there is none.
     pub(crate) async fn key(&self) -> Result<Option<Zeroizing<String>>, String> {
         let mut key = self.key.lock().await;
-        if key.is_none() {
-            // The store can block on a consent dialog.
-            let store = self.store.clone();
-            let read = tokio::task::spawn_blocking(move || store.read())
-                .await
-                .map_err(|_| "Secure storage is unavailable".to_string())??;
-            *key = Some(read);
+        if key.is_some() {
+            return Ok(key.clone());
         }
-        Ok(key.as_ref().and_then(|k| k.clone()))
+        self.reread(&mut key).await
     }
+    /// Whether a key is saved, read from the store each time: the app's
+    /// explicit check, which also picks up a key another Buzz replaced or
+    /// removed for the processes started after it.
     pub(crate) async fn configured(&self) -> Result<bool, String> {
-        Ok(self.key().await?.is_some())
+        let mut key = self.key.lock().await;
+        Ok(self.reread(&mut key).await?.is_some())
     }
     /// Saves `value`, loosely checked as Anthropic's form: one `sk-ant-` word.
     pub(crate) async fn set(&self, value: &str) -> Result<(), String> {
@@ -94,7 +122,7 @@ impl ClaudeKey {
         tokio::task::spawn_blocking(move || store.replace(&write))
             .await
             .map_err(|_| "Secure storage is unavailable".to_string())??;
-        *key = Some(Some(saved));
+        *key = Some(saved);
         Ok(())
     }
 }

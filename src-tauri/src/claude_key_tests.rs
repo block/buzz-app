@@ -26,15 +26,18 @@ fn host(store: &Arc<FakeStore>) -> ClaudeKey {
     ClaudeKey::with(Box::new(store.clone()))
 }
 
+fn kept(key: Result<Option<Zeroizing<String>>, String>) -> Option<String> {
+    key.unwrap().map(|k| k.as_str().to_owned())
+}
+
 #[tokio::test]
 async fn a_saved_key_takes_effect_without_reading_the_store_again() {
     let store = Arc::new(FakeStore::default());
     let key = host(&store);
     assert!(!key.configured().await.unwrap());
     key.set("  sk-ant-api03-new_KEY  ").await.unwrap();
-    assert!(key.configured().await.unwrap());
     assert_eq!(
-        key.key().await.unwrap().as_deref().map(String::as_str),
+        kept(key.key().await).as_deref(),
         Some("sk-ant-api03-new_KEY")
     );
     assert_eq!(
@@ -42,6 +45,32 @@ async fn a_saved_key_takes_effect_without_reading_the_store_again() {
         Some("sk-ant-api03-new_KEY")
     );
     assert_eq!(*store.reads.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn no_key_is_not_kept_so_one_saved_elsewhere_is_used() {
+    let store = Arc::new(FakeStore::default());
+    let key = host(&store);
+    assert_eq!(kept(key.key().await), None);
+    // Another Buzz on this computer saves one.
+    *store.key.lock().unwrap() = Some("sk-ant-elsewhere".into());
+    assert_eq!(kept(key.key().await).as_deref(), Some("sk-ant-elsewhere"));
+    // Kept from then on.
+    assert_eq!(kept(key.key().await).as_deref(), Some("sk-ant-elsewhere"));
+    assert_eq!(*store.reads.lock().unwrap(), 2);
+}
+
+#[tokio::test]
+async fn a_check_rereads_a_key_replaced_or_removed_elsewhere() {
+    let store = Arc::new(FakeStore::default());
+    let key = host(&store);
+    key.set("sk-ant-old").await.unwrap();
+    *store.key.lock().unwrap() = Some("sk-ant-new".into());
+    assert!(key.configured().await.unwrap());
+    assert_eq!(kept(key.key().await).as_deref(), Some("sk-ant-new"));
+    *store.key.lock().unwrap() = None;
+    assert!(!key.configured().await.unwrap());
+    assert_eq!(kept(key.key().await), None);
 }
 
 #[tokio::test]
@@ -76,6 +105,10 @@ async fn an_unreadable_store_is_an_error_and_is_read_again() {
     *store.unreadable.lock().unwrap() = false;
     assert!(key.configured().await.unwrap());
     assert_eq!(*store.reads.lock().unwrap(), 2);
+    // A failed check keeps the key processes start with.
+    *store.unreadable.lock().unwrap() = true;
+    assert!(key.configured().await.is_err());
+    assert_eq!(kept(key.key().await).as_deref(), Some("sk-ant-k"));
 }
 
 #[test]

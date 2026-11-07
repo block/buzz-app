@@ -256,6 +256,12 @@ until focus enters. This preserves body-field or first-action focus; Base UI
 retains ownership of touch behavior. Explicit `initialFocus` overrides remain
 authoritative. Close then participates in the normal Tab cycle.
 
+When a confirmation does not intentionally start on its primary action, pass an
+explicit `initialFocus` ref to Cancel (or its equivalent safe dismissal action).
+Do not let the header Close control become an accidental alternative default.
+Keep established primary-action defaults and form-field focus targets. A dialog
+without a separate cancellation action can retain Close as its starting point.
+
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
 behavior explicitly. An asynchronous operation must not gain a dismissal path that
 loses work. Keep failure and recovery in the modal with entered values intact.

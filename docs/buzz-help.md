@@ -201,6 +201,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - In dialogs, a ring shows which button has keyboard focus, including when the
   dialog opens after a click. Enter or Space activates that button; Tab moves
   focus. The filled action button can be different from the focused button.
+  Confirmations that do not start on their primary action focus Cancel or the
+  equivalent safe dismissal action; forms can start in the relevant field.
 
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into

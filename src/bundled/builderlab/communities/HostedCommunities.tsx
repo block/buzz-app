@@ -1025,6 +1025,7 @@ function DeleteCommunityDialog({
   close(): void;
   onDelete(): void;
 }) {
+  const cancel = useRef<HTMLButtonElement>(null);
   const [host, setHost] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
   const expected = community.normalized_host ?? "";
@@ -1035,12 +1036,13 @@ function DeleteCommunityDialog({
       open
       onOpenChange={(open) => !open && close()}
       size="compact"
+      initialFocus={cancel}
       title={`Permanently delete ${name}?`}
       description="This starts an irreversible deletion."
       preventClose={pending}
       actions={
         <>
-          <Button disabled={pending} onClick={close}>
+          <Button ref={cancel} disabled={pending} onClick={close}>
             Cancel
           </Button>
           <Button
@@ -1148,6 +1150,7 @@ function TransferDialog({
   close(): void;
   onTransfer(npub: string): void;
 }) {
+  const cancel = useRef<HTMLButtonElement>(null);
   const [recipient, setRecipient] = useState("");
   const valid = /^npub1[02-9ac-hj-np-z]{58}$/.test(recipient);
   return (
@@ -1155,11 +1158,12 @@ function TransferDialog({
       open
       onOpenChange={(open) => !open && close()}
       preventClose={busy}
+      initialFocus={cancel}
       title="Transfer ownership"
       description={`Transfer ${name} to another person. You become a regular member. The recipient needs a connected Buzz identity first, and this can’t be undone.`}
       actions={
         <>
-          <Button disabled={busy} onClick={close}>
+          <Button ref={cancel} disabled={busy} onClick={close}>
             Cancel
           </Button>
           <Button

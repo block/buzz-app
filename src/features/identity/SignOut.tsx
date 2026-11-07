@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -41,6 +41,7 @@ export function SignOutDialog({
   identity: Identity;
   onClose(): void;
 }) {
+  const cancel = useRef<HTMLButtonElement>(null);
   const [touched, setTouched] = useState(false);
   const [haveKey, setHaveKey] = useState(false);
   const [wipe, setWipe] = useState(false);
@@ -75,13 +76,19 @@ export function SignOutDialog({
   }
   return (
     <AlertDialog
+      initialFocus={cancel}
       title="Sign out of Buzz?"
       description="Signing out removes your private key from this device. Your key is how you sign in, so save it before you continue. You’ll need it to sign back in as this identity."
       onClose={onClose}
       pending={pending}
       actions={
         <>
-          <Button type="button" disabled={pending} onClick={onClose}>
+          <Button
+            ref={cancel}
+            type="button"
+            disabled={pending}
+            onClick={onClose}
+          >
             Cancel
           </Button>
           <Button

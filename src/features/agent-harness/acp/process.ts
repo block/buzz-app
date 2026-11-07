@@ -76,6 +76,9 @@ export class AcpProcess {
   private capabilities: Readonly<Record<string, unknown>> = {};
   /** Whether the harness names untitled sessions, read once. */
   private naming: Promise<boolean> | undefined;
+  private shared: Promise<HostMcpServer> | undefined;
+  private readonly toolsBySession = new Map<string, ToolServer>();
+  private anyTools: ToolServer | undefined;
 
   private constructor(
     private readonly process: HostProcess,
@@ -96,6 +99,7 @@ export class AcpProcess {
         void session.server?.close();
       }
       this.sessions.clear();
+      void this.shared?.then((server) => server.close());
       return code;
     });
   }
@@ -264,7 +268,16 @@ export class AcpProcess {
     if (tools) {
       if (!this.serve)
         throw new Error(`This ${hooks.label} serves no Buzz tools`);
-      server = await this.serve((message) => this.mcp(tools, session, message));
+      if (hooks.sharedMcp) {
+        this.anyTools = tools;
+        this.shared ??= this.serve((message) => this.sharedMcp(message), {
+          sharedSession: true,
+        });
+        server = await this.shared;
+      } else
+        server = await this.serve((message) =>
+          this.mcp(tools, session, message),
+        );
     }
     const buzz: McpServer | undefined = server && {
       type: "http",
@@ -277,6 +290,14 @@ export class AcpProcess {
     // already left `sessions`.
     let stopped = false;
     void server?.closed.then(() => {
+      if (hooks.sharedMcp) {
+        this.shared = undefined;
+        for (const open of [...this.sessions.values()]) {
+          open.fail(STOPPED);
+          void this.close(open);
+        }
+        return;
+      }
       stopped = true;
       if (session && this.sessions.get(session.id) === session) {
         session.fail(STOPPED);
@@ -314,7 +335,7 @@ export class AcpProcess {
     session = new AcpSession(
       this,
       sessionId,
-      server,
+      hooks.sharedMcp ? undefined : server,
       launch.choice,
       { provider, model: "" },
       prompting && !standard ? systemPrompt : "",
@@ -322,6 +343,7 @@ export class AcpProcess {
     session.offer(opened);
     session.named = named;
     this.sessions.set(sessionId, session);
+    if (tools && hooks.sharedMcp) this.toolsBySession.set(sessionId, tools);
     launch.onSession?.(session);
     if (stopped) {
       void this.close(session);
@@ -357,6 +379,7 @@ export class AcpProcess {
     let ending = this.closing.get(session.id);
     if (!ending) {
       if (!this.sessions.delete(session.id)) return;
+      this.toolsBySession.delete(session.id);
       ending = this.end(session);
       this.closing.set(session.id, ending);
       const settled = (failure?: unknown) => {
@@ -509,6 +532,26 @@ export class AcpProcess {
         error: { code: -32601, message: `Buzz does not handle ${method}` },
       };
     return this.write(reply).catch(() => undefined);
+  }
+  private async sharedMcp(message: unknown): Promise<Wire | undefined> {
+    const { id, method = "", params } = (message ?? {}) as Wire;
+    if (id === undefined || id === null) return undefined;
+    if (method !== "tools/call") {
+      if (!this.anyTools) return undefined;
+      return this.mcp(this.anyTools, undefined, message);
+    }
+    const meta = (params?._meta ?? {}) as Record<string, unknown>;
+    const sessionId = meta["ai.opencode/sessionID"];
+    const session =
+      typeof sessionId === "string" ? this.sessions.get(sessionId) : undefined;
+    const tools = session && this.toolsBySession.get(session.id);
+    if (!session || !tools)
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32602, message: "Unknown session for this tool call" },
+      };
+    return this.mcp(tools, session, message);
   }
   /** One MCP message for a session's Buzz tools, answered with its JSON-RPC
    * response; a notification gets none. A final message that succeeded ends

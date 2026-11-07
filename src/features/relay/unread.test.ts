@@ -4514,3 +4514,94 @@ it("live content events extend the evidence index and match a full rebuild", () 
   };
   expect(run(true)).toBe(run(false));
 });
+
+it("opening a channel quiets its row while its messages and threads stay unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const own = message(h.viewer, "room", "my thread", 11);
+  const reply = message(h.alice, "room", "reply to me", 12, [
+    ["e", own.id, "", "reply"],
+  ]);
+  const mention = message(h.alice, "room", "mention", 13, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const ordinary = message(h.alice, "room", "ordinary", 14);
+  h.emit([channelMetadata(h, "stream"), own, reply, mention, ordinary]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 3,
+    attentionCount: 2,
+    row: { observedCount: 3, attentionCount: 2, threadCount: 1 },
+  });
+  const revision = h.session.unread.revision();
+
+  // Opening quiets the row at once, before the visit is ready.
+  const entered = h.session.unread.enterChannel("room");
+  const quiet = { observedCount: 0, attentionCount: 0, threadCount: 0 };
+  expect(h.snapshot()).toMatchObject({ observedCount: 3, row: quiet });
+  await entered;
+  // What arrives during the visit is seen too.
+  const during = message(h.alice, "room", "reply during visit", 15, [
+    ["e", own.id, "", "reply"],
+  ]);
+  h.emit([during]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 4, row: quiet });
+
+  h.session.unread.leaveChannel("room");
+  expect(h.snapshot()).toMatchObject({ observedCount: 4, row: quiet });
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers["seen:room"]).toBe(15),
+  );
+  // Seeing reads nothing: thread dots, Activity and the timeline keep their
+  // unread, and a reader's entry evidence outlives the save.
+  expect(h.snapshot()).toMatchObject({ observedCount: 4, attentionCount: 3 });
+  expect(h.session.unread.activity("room").items).toEqual([
+    expect.objectContaining({ rootId: own.id, unreadCount: 2 }),
+  ]);
+  for (const { id } of [reply, mention, ordinary, during])
+    expect(h.session.unread.attention("room", id).unread).toBe(true);
+  expect(h.session.unread.revision()).toBe(revision);
+
+  // A later reply lights the row again.
+  h.emit([
+    message(h.alice, "room", "later reply", 16, [["e", own.id, "", "reply"]]),
+  ]);
+  expect(h.snapshot().row).toEqual({
+    observedCount: 1,
+    attentionCount: 1,
+    threadCount: 1,
+  });
+});
+
+it("a saved seen mark quiets the row after reload; marked unread still shows", async () => {
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { "seen:room": 12 }, overrides: {} },
+  }));
+  h.grant("room");
+  const seen = message(h.alice, "room", "seen", 11);
+  const later = message(h.alice, "room", "later", 13);
+  h.emit([seen, later]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 2,
+    row: { observedCount: 1 },
+  });
+  await h.session.unread.markMessageUnread("room", seen.id);
+  expect(h.snapshot().row?.observedCount).toBe(2);
+});
+
+it("leaving a channel whose row shows nothing new writes no seen mark", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([message(h.alice, "room", "only", 11)]);
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers["seen:room"]).toBe(11),
+  );
+  const saved = h.journal();
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await flush();
+  expect(h.journal()).toBe(saved);
+});

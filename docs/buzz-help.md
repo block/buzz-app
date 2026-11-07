@@ -297,6 +297,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   later. It may also be absent when unread evidence is incomplete, or when read
   intent or the read evidence needed to locate the boundary changes before it is
   established.
+- **Opening a channel or DM** clears its sidebar row: the bold name, the mention
+  dot and the thread dot. The macOS Dock dot follows the rows. Nothing is marked
+  read: unread threads keep their dots in the conversation and in Activity →
+  Threads, and **New messages** still marks where you left off. Anything that
+  arrives after you leave lights the row again, and **Mark as unread** still
+  shows on it.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
@@ -311,7 +317,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
-  nothing typed lists up to six of your other unread channels and DMs first,
+  nothing typed lists up to six of your other channels and DMs whose rows show unread first,
   most recently active first, and selects the first, so Enter opens it, instead
   of reopening where you left it. A conversation unread only through thread
   replies previews its newest unread reply and opens it in its thread. Muted

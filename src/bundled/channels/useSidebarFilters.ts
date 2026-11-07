@@ -77,17 +77,23 @@ export function useSidebarFilters(
   return visible;
 }
 
-/** Whether a channel shows unread messages, a manual mark or unread threads. */
-export function channelHasUnread(unread: UnreadCapability, channelId: string) {
+/** Whether a channel has unread messages, a manual mark or unread threads.
+ * `shown` asks what its row shows instead, which opening the channel quiets. */
+export function channelHasUnread(
+  unread: UnreadCapability,
+  channelId: string,
+  shown = false,
+) {
   const state = unread.snapshot({ kind: "channel", channelId });
+  if (state.manual !== "none") return true;
+  if (shown && state.row) return state.row.observedCount > 0;
   return (
-    state.manual !== "none" ||
     (state.observedCount ?? 0) > 0 ||
     (unread.activity(channelId).items?.length ?? 0) > 0
   );
 }
 
-/** Channels among `ids` (a JSON id array) with unread messages or threads. */
+/** Channels among `ids` (a JSON id array) whose rows show unread. */
 export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
   const targets = useMemo(
     () =>
@@ -113,7 +119,7 @@ export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
     () =>
       JSON.stringify(
         targets
-          .filter((target) => channelHasUnread(unread, target.channelId))
+          .filter((target) => channelHasUnread(unread, target.channelId, true))
           .map((target) => target.channelId),
       ),
     [targets, unread],

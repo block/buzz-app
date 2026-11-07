@@ -75,6 +75,20 @@ catch-up (including a message taller than the viewport):
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
+- `seen:<channel>` quiets the channel's sidebar row, and reads nothing.
+  Opening a channel (`enterChannel`) hides everything in the row, including what
+  arrives during the visit; leaving it (`leaveChannel`) saves the newest
+  retained verified event timestamp. The channel snapshot's `row` counts
+  (`observedCount`, `attentionCount`, `threadCount`) leave out evidence at or
+  before that cut. The sidebar row, its floating unread cues, the sidebar
+  **Unreads** filter, unread-first search and the Dock indicator follow `row`.
+  Thread dots, Activity, the channel activity popover, the **New messages**
+  divider, mark-read menus and every `observedCount` keep the unread. Explicit
+  unread intent still shows. A leave whose row shows nothing that the saved
+  mark would not already hide writes nothing. These saves do not advance
+  `revision()`, so a reader's entry evidence outlives them; another window's
+  saves still do. A channel read covers the mark, which retention keeps last
+  and never treats as override ancestry.
 - Both keys use verified event timestamps, never wall time. Neither enters generic
   channel/thread inheritance or remote override baselines. Channel catch-up ends
   a local manual unread on the channel itself; message and thread manual-unread
@@ -441,7 +455,7 @@ Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
 The sync journal has a 96 KiB serialized-blob budget. Under pressure, up to three
 quarters of that budget keeps channel
 marks (`<channel>`) first, then thread marks (`thread:`), then catch-up marks
-(`activity:`, `thread-activity:`), then message marks: a channel or thread mark covers
+(`activity:`, `thread-activity:`), then message marks, then row marks (`seen:`): a channel or thread mark covers
 many messages, so losing it makes much more old history unread, and recent catch-up
 must never push out a quiet channel's mark. The last quarter, and any room the broad
 marks leave, goes by persisted local interaction order across all marks, so the newest

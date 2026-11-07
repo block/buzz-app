@@ -193,6 +193,63 @@ it("keeps memory images and raw HTML inert and unsafe links inactive", async () 
 const channelId = "11111111-1111-4111-8111-111111111111";
 const buzzUrl = `buzz://message?channel=${channelId}&id=${"e".repeat(64)}`;
 
+it("preserves memory link focus and notice across fresh parent link props", async () => {
+  const session = createRelaySession({
+    viewer: pubkey,
+    relayAuthor: "d".repeat(64),
+    media: () => undefined,
+    query: async () => [],
+  });
+  const open = vi.fn(() => false);
+  const nextOpen = vi.fn(() => true);
+  const view = setup(
+    async () => ({
+      entries: [entry("core", `[Read evidence](${buzzUrl})`)],
+      partial: false,
+    }),
+    undefined,
+    { session: session.session, registry: undefined, open },
+  );
+  const parent = (open: MemoryLinks["open"]) => (
+    <MemoryPanel
+      agents={scopeAgents}
+      agent={agent}
+      memories={view.memories}
+      links={{ session: session.session, registry: undefined, open }}
+    />
+  );
+  try {
+    await openCore();
+    const link = screen.getByRole("link", { name: "Read evidence" });
+    fireEvent.click(link);
+    expect(open).toHaveBeenCalledExactlyOnceWith(buzzUrl);
+    expect(link).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "This Buzz link couldn’t be opened here.",
+    );
+
+    view.rerender(parent(open));
+    expect(screen.getByRole("link", { name: "Read evidence" })).toBe(link);
+    expect(link).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "This Buzz link couldn’t be opened here.",
+    );
+
+    // A stable component must still read the latest navigation callback.
+    view.rerender(parent(nextOpen));
+    expect(screen.getByRole("link", { name: "Read evidence" })).toBe(link);
+    expect(link).toHaveFocus();
+    expect(screen.getByRole("status")).toBeVisible();
+    fireEvent.click(link);
+    expect(nextOpen).toHaveBeenCalledExactlyOnceWith(buzzUrl);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("status")).toBeNull();
+  } finally {
+    view.unmount();
+    session.dispose();
+  }
+});
+
 it("links bare and labelled Buzz URLs in prose without changing code or nesting links", async () => {
   const { container } = setup(async () => ({
     entries: [

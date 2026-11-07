@@ -5,7 +5,14 @@ import { Header } from "../../shared/design-system/ui/Header";
 // memory the same way, encrypted to the owner, so the app shows it once: `core`
 // (what each run is given) first, then the slugs the agent reads on demand.
 import { useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -66,9 +73,35 @@ const REMARK = [remarkGfm, remarkBreaks, remarkMemoryLinks];
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const MONTH_SECONDS = 30 * 24 * 60 * 60;
 const TWO_MONTHS_SECONDS = 2 * MONTH_SECONDS;
+const MemoryLinksContext = createContext<MemoryLinks | undefined>(undefined);
 const MARKDOWN: Components = {
   // Memories are private context; don't fetch remote images when they open.
   img: ({ alt }) => alt ?? null,
+  // Keep link instances mounted while parent views update their link services.
+  a: ({ href, children }) => {
+    const links = useContext(MemoryLinksContext);
+    if (!href || !parseBuzzLink(href))
+      return href ? (
+        <a href={href} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      ) : (
+        children
+      );
+    const label = labelText(children);
+    return (
+      <MessageLink
+        url={href}
+        label={label === href ? undefined : label}
+        registry={links?.registry}
+        session={links?.session}
+        scope={links?.session.scope}
+        onOpenLink={(url) => links?.open(url) ?? false}
+      >
+        {label === href ? undefined : children}
+      </MessageLink>
+    );
+  },
 };
 
 /** Keeps the view for exactly as long as its plaintext is rendered, so session
@@ -411,41 +444,17 @@ function MemoryBody({
     return <div className={styles.plain}>{body}</div>;
   return (
     <div className={styles.markdown}>
-      <Markdown
-        remarkPlugins={REMARK}
-        urlTransform={(url) =>
-          parseBuzzLink(url) ? url : defaultUrlTransform(url)
-        }
-        components={{
-          ...MARKDOWN,
-          a: (props) => {
-            const { href, children } = props;
-            if (!href || !parseBuzzLink(href))
-              return href ? (
-                <a href={href} target="_blank" rel="noreferrer">
-                  {children}
-                </a>
-              ) : (
-                children
-              );
-            const label = labelText(children);
-            return (
-              <MessageLink
-                url={href}
-                label={label === href ? undefined : label}
-                registry={links?.registry}
-                session={links?.session}
-                scope={links?.session.scope}
-                onOpenLink={(url) => links?.open(url) ?? false}
-              >
-                {label === href ? undefined : children}
-              </MessageLink>
-            );
-          },
-        }}
-      >
-        {body}
-      </Markdown>
+      <MemoryLinksContext value={links}>
+        <Markdown
+          remarkPlugins={REMARK}
+          urlTransform={(url) =>
+            parseBuzzLink(url) ? url : defaultUrlTransform(url)
+          }
+          components={MARKDOWN}
+        >
+          {body}
+        </Markdown>
+      </MemoryLinksContext>
     </div>
   );
 }

@@ -29,6 +29,7 @@ import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthoriz
 import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
+import { TeamCreationReview } from "../bundled/agents/TeamCreationReview";
 import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
@@ -711,6 +712,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />
           <TeamUpdateReview agents={services.agents} />
+          <TeamCreationReview agents={services.agents} />
           {!settings && startup === "recovery" ? (
             <RecoveryScreen plugins={plugins} />
           ) : !settings &&

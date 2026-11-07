@@ -488,6 +488,10 @@ export type AgentHandle = Readonly<{
   updateTeam?(
     input: TeamUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** An owner-reviewed new team of the owner's agents here. */
+  createTeam?(
+    input: TeamCreationInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins, as the agent may read and change them. */
   plugins?: AgentPlugins | undefined;
   /** On a run's handle only: wakes this agent in another of its
@@ -1161,6 +1165,24 @@ export type TeamUpdateRequest = Readonly<{
   name?: string;
   instructions?: string;
 }>;
+/** `members` are pubkeys or exact names of the owner's agents here. */
+export type TeamCreationInput = Readonly<{
+  name: string;
+  instructions?: string;
+  members?: readonly string[];
+}>;
+/** An unsaved new team request. Only the owner-facing review may approve it,
+ * and only while each member is still one of the owner's agents there. */
+export type TeamCreationRequest = Readonly<{
+  id: string;
+  requester: string;
+  requesterName: string;
+  owner: string;
+  community: string;
+  name: string;
+  instructions: string;
+  members: readonly Readonly<{ pubkey: string; name: string }>[];
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1393,6 +1415,16 @@ export type Agents = {
     id: string,
     input: Pick<Team, "name" | "instructions">,
   ): Promise<void>;
+  /** Local, unsaved new team requests; closing a review discards one. */
+  teamCreationRequests(): readonly TeamCreationRequest[];
+  dismissTeamCreation(id: string): void;
+  /** Creates the reviewed team with the request's members, in the
+   * requester's community, refused once a member is no longer the owner's
+   * agent there. */
+  approveTeamCreation(
+    id: string,
+    input: Pick<Team, "name" | "instructions">,
+  ): Promise<Team>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1907,6 +1939,7 @@ export class AgentsService extends Service implements Agents {
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
   private teamUpdates: readonly TeamUpdateRequest[] = [];
+  private teamCreations: readonly TeamCreationRequest[] = [];
   private readonly approving = new Set<string>();
   /** Every saved membership, deleted ones included: native's list is the
    * agent list, and `records` only adds settings to it. */
@@ -2422,6 +2455,40 @@ export class AgentsService extends Service implements Agents {
         this.notify();
         return { requestId: next.id, saved: false };
       },
+      createTeam: async (agent, proposed) => {
+        const community = this.callerOrigin(agent);
+        const name = proposed.name.trim();
+        if (!name) throw new Error("Name the team");
+        const owned = this.ownedAgents(agent.owner, community);
+        const members = [
+          ...new Map(
+            (proposed.members ?? []).map((target) => {
+              const found = pick(
+                owned,
+                target,
+                (item) => [item.pubkey, item.name],
+                "agent",
+              );
+              return [found.pubkey, found] as const;
+            }),
+          ).values(),
+        ];
+        if (this.pendingRequests() >= 16)
+          throw new Error("Review the pending agent requests first");
+        const next: TeamCreationRequest = {
+          id: crypto.randomUUID(),
+          requester: agent.pubkey,
+          requesterName: agent.name,
+          owner: agent.owner,
+          community,
+          name,
+          instructions: proposed.instructions ?? "",
+          members,
+        };
+        this.teamCreations = [...this.teamCreations, next];
+        this.notify();
+        return { requestId: next.id, saved: false };
+      },
       plugins: (agent) =>
         this.ctx.pluginRequests?.forAgent({
           pubkey: agent.pubkey,
@@ -2587,14 +2654,19 @@ export class AgentsService extends Service implements Agents {
           const teamUpdates = this.teamUpdates.filter(
             (request) => request.owner === viewer,
           );
+          const teamCreations = this.teamCreations.filter(
+            (request) => request.owner === viewer,
+          );
           if (
             kept.length !== this.requests.length ||
             updates.length !== this.updates.length ||
-            teamUpdates.length !== this.teamUpdates.length
+            teamUpdates.length !== this.teamUpdates.length ||
+            teamCreations.length !== this.teamCreations.length
           ) {
             this.requests = kept;
             this.updates = updates;
             this.teamUpdates = teamUpdates;
+            this.teamCreations = teamCreations;
             this.notify();
           }
           this.watch();
@@ -3547,8 +3619,75 @@ export class AgentsService extends Service implements Agents {
       this.approving.delete(id);
     }
   }
+  teamCreationRequests = () => this.teamCreations;
+  dismissTeamCreation = (id: string) => {
+    if (this.approving.has(id)) return;
+    this.teamCreations = this.teamCreations.filter(
+      (request) => request.id !== id,
+    );
+    this.teamDrafts.delete(id);
+    this.notify();
+  };
+  async approveTeamCreation(
+    id: string,
+    { name, instructions }: Pick<Team, "name" | "instructions">,
+  ) {
+    const request = this.teamCreations.find((item) => item.id === id);
+    if (!request || this.approving.has(id))
+      throw new Error("No such pending team request");
+    const owned = new Set(
+      this.ownedAgents(request.owner, request.community).map(
+        (agent) => agent.pubkey,
+      ),
+    );
+    if (request.members.some(({ pubkey }) => !owned.has(pubkey)))
+      throw new Error(
+        "A proposed member is no longer your agent there; close this and ask again",
+      );
+    // Homed where the requester asked from, as a team made there by hand: a
+    // community that syncs teams keeps it, otherwise this device does.
+    const home = this.teamDrafts.get(id) ?? this.newTeamHome(request.community);
+    this.approving.add(id);
+    try {
+      if (home) this.teamDrafts.set(id, home);
+      const team = await this.saveTeam({
+        name,
+        instructions,
+        members: request.members.map(({ pubkey }) => pubkey),
+        ...(home && { draft: id }),
+      });
+      this.teamCreations = this.teamCreations.filter((item) => item.id !== id);
+      this.notify();
+      return team;
+    } finally {
+      this.approving.delete(id);
+    }
+  }
   private pendingRequests() {
-    return this.requests.length + this.updates.length + this.teamUpdates.length;
+    return (
+      this.requests.length +
+      this.updates.length +
+      this.teamUpdates.length +
+      this.teamCreations.length
+    );
+  }
+  /** The owner's agents in `origin`: those on this device and those its
+   * Agents page lists from elsewhere, as `agent_read` reads them. */
+  private ownedAgents(owner: string, origin: string) {
+    const held = this.identities.filter(
+      (identity) =>
+        !identity.deleted &&
+        !identity.deleting &&
+        identity.owner === owner &&
+        originOf(identity.relay) === origin,
+    );
+    return [
+      ...held,
+      ...this.listedAgents(
+        origin,
+        new Set(held.map((identity) => identity.pubkey)),
+      ).filter((item) => item.owner === owner && !item.unfinished),
+    ].map(({ pubkey, name }) => ({ pubkey, name }));
   }
   /** The community `agent` asks from. */
   private callerOrigin(agent: Agent) {

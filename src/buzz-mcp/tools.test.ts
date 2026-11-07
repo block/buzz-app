@@ -4097,6 +4097,42 @@ it("reads agents and teams and drafts team changes without members", async () =>
     instructions: "",
   });
 });
+it("drafts a new team with only its named members", async () => {
+  const { client } = fake([]);
+  await expect(
+    callTool(client, {}, "team_create", { name: "Crew" }),
+  ).rejects.toThrow("unavailable");
+  client.createTeam = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  for (const args of [{}, { name: " " }, { name: 1 }])
+    await expect(callTool(client, {}, "team_create", args)).rejects.toThrow(
+      "required",
+    );
+  expect(client.createTeam).not.toHaveBeenCalled();
+  expect(
+    JSON.parse(
+      (await callTool(client, {}, "team_create", {
+        name: " Crew ",
+        members: ["Builder", " ", 7, " Checker "],
+      })) as string,
+    ),
+  ).toEqual({ requestId: "draft", saved: false });
+  expect(client.createTeam).toHaveBeenLastCalledWith({
+    name: "Crew",
+    members: ["Builder", "Checker"],
+  });
+  await callTool(client, {}, "team_create", {
+    name: "Pair",
+    instructions: "",
+    members: [],
+  });
+  expect(client.createTeam).toHaveBeenLastCalledWith({
+    name: "Pair",
+    instructions: "",
+  });
+});
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(

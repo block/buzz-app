@@ -2563,6 +2563,12 @@ export function createRelaySession(
               .map((event) => [event.id, event]),
           ).values(),
         ],
+        (channelId) => {
+          if (isTaskChannel(session, channelId))
+            throw new Error(
+              "Thread replies cannot be copied to a task conversation.",
+            );
+        },
       ),
       /** UI eligibility only; signing/publication recheck the same role proof. */
       canRetry(event: Pick<EventData, "kind" | "tags">) {

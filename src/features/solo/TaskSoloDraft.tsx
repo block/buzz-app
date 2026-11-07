@@ -45,6 +45,8 @@ import { taskHeaderUI } from "./TaskHeaderTitle";
 import { regionLabels } from "./region-labels";
 import { useDefaultAgent } from "./default-agent";
 import composerStyles from "../messages/Messages.module.css";
+import type { MentionPicks } from "../relay/messages";
+import { MAX_PENDING } from "../relay/outbox";
 
 const noopSubscribe = () => () => {};
 const noSnapshot = () => undefined;
@@ -168,7 +170,11 @@ export function TaskSoloDraft({
         }
       : undefined;
   };
-  async function start(draft: MentionDraft, files: AttachmentDraft) {
+  async function start(
+    draft: MentionDraft,
+    files: AttachmentDraft,
+    picks?: MentionPicks,
+  ) {
     if (attempt.current || !context) return;
     const selection = snapshot(draft);
     const controller = new AbortController();
@@ -328,6 +334,8 @@ export function TaskSoloDraft({
           files.clear();
           writeView(scope, `${key}:new-draft`, "");
         }
+        if (saved.delivery === "accepted" || saved.delivery === "seen")
+          await session.outbox.acknowledge(saved.event.id);
         onStarted(recovery.channelId);
         return;
       }
@@ -389,6 +397,10 @@ export function TaskSoloDraft({
         throw new Error(
           "The prepared task has changed. Review its agents and retry.",
         );
+      if (session.outbox.snapshot().length > MAX_PENDING - 2)
+        throw new Error(
+          "Resolve or dismiss pending operations before creating a task.",
+        );
       const claim = await context.mode.markChannelStarted(
         {
           draftId: input.draftId,
@@ -439,6 +451,12 @@ export function TaskSoloDraft({
           channelId: prepared.channelId,
           regionLabel: context.label,
         }),
+        [],
+        Object.fromEntries(
+          Object.entries(picks ?? {}).filter(
+            ([pubkey]) => pubkey === input.primary,
+          ),
+        ),
       );
       await session.outbox.whenPrepared(firstEvent);
       signal.throwIfAborted();
@@ -510,8 +528,8 @@ export function TaskSoloDraft({
               <Header draft={input} {...controls} ui={taskHeaderUI} />
             ) : null;
           },
-          submit: (draft, files) => {
-            void start(draft, files);
+          submit: (draft, files, _addressed, picks) => {
+            void start(draft, files, picks);
           },
         }}
       />

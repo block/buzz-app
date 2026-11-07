@@ -1138,6 +1138,20 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     if (save && !editing.target) {
+      if (taskChannel || taskDraft) {
+        if (
+          projectComposerDocument(
+            readComposerDocument(captured, []),
+          ).tokens.some(
+            (item) =>
+              !item.node.attrs.recipient &&
+              identityLink(item.node.attrs.source),
+          )
+        )
+          throw new Error(
+            "Select an eligible task agent from the chooser before sending this identity link.",
+          );
+      }
       if (submission) {
         const saved = writeView(scope, draftKey, next);
         unsavedDraft.current = !saved;
@@ -2855,18 +2869,6 @@ function Composer({
       let references: readonly string[] = [];
       let recipients = capturedRecipients.map((item) => item.pubkey);
       if (taskChannel) {
-        if (
-          projectComposerDocument(
-            readComposerDocument(captured, []),
-          ).tokens.some(
-            (item) =>
-              !item.node.attrs.recipient &&
-              identityLink(item.node.attrs.source),
-          )
-        )
-          throw new Error(
-            "Select an eligible task agent from the chooser before sending this identity link.",
-          );
         recipients = resolveTaskRecipients(session, channelId, recipients);
       }
       const queueFollowUp =

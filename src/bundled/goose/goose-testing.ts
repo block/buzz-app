@@ -91,6 +91,12 @@ export type FakeMcpServer = {
  * in-memory MCP servers those processes reach. */
 export function fakeSpawn(
   options: Readonly<{
+    /** Shared device config, including secrets (masked by config/read). */
+    config?: Map<string, unknown>;
+    configWrite?: (
+      method: string,
+      params: Record<string, unknown>,
+    ) => Promise<void>;
     /** Whether goose says it can reach HTTP MCP servers. */
     http?: boolean;
     home?: string;
@@ -198,6 +204,7 @@ export function fakeSpawn(
     const reply = (id: number | string | undefined, result: unknown) =>
       send({ jsonrpc: "2.0", ...(id !== undefined && { id }), result });
     const running = new Map<string, FakeTurn>();
+    const liveInteractions = new Set<string>();
     const fake: FakeGoose = {
       id,
       options: process,
@@ -286,7 +293,33 @@ export function fakeSpawn(
         case "_goose/unstable/session/system-prompt/set":
           fake.prompts.set(sessionId, String(params.text));
           return reply(id, {});
+        case "_goose/unstable/session/live-voice/start":
+          if (running.has(sessionId) || liveInteractions.has(sessionId))
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: { code: -32603, message: "Goose is already working" },
+            });
+          liveInteractions.add(sessionId);
+          return reply(id, {
+            interactionId: `voice-${sessionId}`,
+            answerSdp: "answer",
+          });
+        case "_goose/unstable/session/live-voice/stop":
+          liveInteractions.delete(sessionId);
+          return reply(id, {});
         case "session/prompt": {
+          // Mirrors ActiveRunRegistry::start_prompt_run: the reservation
+          // spans the entire interaction, including quiet delegation gaps.
+          if (liveInteractions.has(sessionId))
+            return send({
+              jsonrpc: "2.0",
+              ...(id !== undefined && { id }),
+              error: {
+                code: -32603,
+                message: "Live voice interaction is active",
+              },
+            });
           const runId = `run-${fake.turns.length + 1}`;
           const text = (params.prompt as { text: string }[])
             .map((block) => block.text)
@@ -375,8 +408,30 @@ export function fakeSpawn(
                   ? (options.namingDisabled ?? null)
                   : params.key === "DATABRICKS_MODEL_FILTER"
                     ? (options.modelFilter ?? null)
-                    : null,
+                    : options.config?.has(String(params.key))
+                      ? params.isSecret
+                        ? "********"
+                        : options.config.get(String(params.key))
+                      : null,
           });
+        case "_goose/unstable/config/upsert":
+        case "_goose/unstable/config/remove":
+          void (async () => {
+            try {
+              await options.configWrite?.(method, params);
+              if (method.endsWith("/remove"))
+                options.config?.delete(String(params.key));
+              else options.config?.set(String(params.key), params.value);
+              reply(id, {});
+            } catch {
+              send({
+                jsonrpc: "2.0",
+                ...(id !== undefined && { id }),
+                error: { code: -32603, message: "Config write failed" },
+              });
+            }
+          })();
+          return;
         case "_goose/unstable/defaults/read":
           return reply(id, defaults ?? {});
         case "_goose/unstable/defaults/save": {

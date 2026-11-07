@@ -7,6 +7,7 @@ import {
   DEFAULT_CONFIG,
   type GooseRuntime,
 } from "../../src/bundled/goose/runtime";
+import { GooseVoiceSettings } from "../../src/bundled/goose/voice-settings";
 import { GooseSetup } from "../../src/bundled/goose/setup";
 import { createTabs } from "../../src/bundled/goose/tabs";
 import { GooseHistory } from "../../src/bundled/goose/transcript";
@@ -31,7 +32,9 @@ const fake = fakeSpawn({
 });
 const { SettingsTab } = createTabs({
   setup: new GooseSetup(fake),
-  runtime: {} as GooseRuntime,
+  runtime: {
+    voiceSettings: new GooseVoiceSettings(fake, localStorage, () => {}),
+  } as GooseRuntime,
   history: new GooseHistory(undefined),
 });
 const width = Number(new URLSearchParams(location.search).get("width"));

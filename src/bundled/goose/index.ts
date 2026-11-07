@@ -92,6 +92,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   agents.register<Config>({
     id: TYPE_ID,
+    voice: async (seat) => {
+      if (typeof RTCPeerConnection !== "function")
+        throw new Error("Voice is unsupported on this device");
+      if (seat.agent.protection)
+        throw new Error("Voice is unavailable for protected agents");
+      const handle = agents.handle(seat.agent.key);
+      if (!handle) throw new Error("The Goose agent is not running");
+      return runtime.voice(seat, handle);
+    },
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,
     title: "Goose",

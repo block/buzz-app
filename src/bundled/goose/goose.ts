@@ -61,6 +61,11 @@ export const ENV: Readonly<Record<string, string | null>> = {
   BUZZ_RELAY_URL: null,
   GOOSE_PROVIDER: null,
   GOOSE_MODEL: null,
+  GOOSE_LIVE_VOICE_ENABLED: "false",
+  GOOSE_LIVE_VOICE_ENDPOINT: null,
+  GOOSE_LIVE_VOICE_MODEL: null,
+  GOOSE_LIVE_VOICE_API_KEY: null,
+  GOOSE_LIVE_VOICE: null,
 };
 
 /** A packaged Databricks workspace, which goose prefers to its own config. */
@@ -74,6 +79,10 @@ export const GOOSE: AcpHooks = {
   program: "goose",
   missing: "goose-acp is missing from this Buzz build.",
   env: ENV,
+  clientCapabilities: { _meta: { goose: { customNotifications: true } } },
+  acceptSessionUpdate: (update) =>
+    (update._meta as { goose?: { liveTranscript?: unknown } } | undefined)
+      ?.goose?.liveTranscript !== true,
   // goose is asked to close every session, advertised or not.
   closeSession: "always",
   // goose names an untitled session with a model call, unless its config

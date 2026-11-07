@@ -164,6 +164,7 @@ type Live = {
   /** When it last took in a message or ended a turn. */
   at: number;
   timer?: ReturnType<typeof setTimeout>;
+  retained?: boolean;
 };
 
 export class AgentSessions {
@@ -208,6 +209,17 @@ export class AgentSessions {
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.session.working;
   }
+  /** Includes admission in progress and retained voice sessions, not only turns. */
+  get quiescent() {
+    return (
+      !this.opens.size &&
+      !this.opening.size &&
+      !this.once.size &&
+      ![...this.live.values()].some(
+        (live) => live.retained || live.session.working,
+      )
+    );
+  }
   /** Whether the work conversation or one-off turn `key`'s session runs now
    * still runs, unstopped and in that session, when asked later. */
   current(key: string): () => boolean {
@@ -221,6 +233,64 @@ export class AgentSessions {
   serving(key: string) {
     const live = this.live.get(key) ?? this.once.get(key);
     return live && { sessionId: live.session.id, process: live.process };
+  }
+  /** Retains the room's ordinary session while a harness voice interaction owns it. */
+  async retain(key: string, signal: AbortSignal, title?: string) {
+    for (;;) {
+      signal.throwIfAborted();
+      if (this.disposed) throw new Error(`${this.options.label} was stopped`);
+      const pending = this.opening.get(key);
+      if (pending) {
+        await pending;
+        continue;
+      }
+      let live = this.live.get(key);
+      if (
+        live &&
+        (!live.session.open || (!live.session.busy && this.stale(live)))
+      ) {
+        this.drop(key, live);
+        live = undefined;
+      }
+      if (!live) {
+        const opening = this.open(
+          key,
+          title,
+          (opened) => this.disposed || this.adopt(key, opened),
+        );
+        const reserved = opening.then(() => ({}));
+        this.opening.set(key, reserved);
+        try {
+          await opening;
+        } finally {
+          if (this.opening.get(key) === reserved) this.opening.delete(key);
+        }
+        continue;
+      }
+      if (live.retained)
+        throw new Error("This conversation already has a voice seat");
+      live.retained = true;
+      live.session.observeExternalRuns(true);
+      this.touch(key, live);
+      const held = live;
+      let released = false;
+      return {
+        sessionId: live.session.id,
+        process: live.process,
+        idle: () => held.session.idle(),
+        reserve: () => held.session.reserveExternal(),
+        select: () => held.session.select(),
+        externalIdle: () => held.session.externalIdle(),
+        interrupt: () => held.session.interruptExternalRun(),
+        release: () => {
+          if (released) return;
+          released = true;
+          held.retained = false;
+          held.session.observeExternalRuns(false);
+          if (this.live.get(key) === held) this.touch(key, held);
+        },
+      };
+    }
   }
   /** Conversations with a session, whether each is working, and when each
    * last took in a message or ended a turn. */
@@ -301,7 +371,9 @@ export class AgentSessions {
       if (!live) break;
       if (
         !live.session.open ||
-        (!live.session.busy && (this.stale(live) || this.leveled(live, effort)))
+        (!live.retained &&
+          !live.session.busy &&
+          (this.stale(live) || this.leveled(live, effort)))
       ) {
         this.drop(key, live);
         break;
@@ -487,11 +559,12 @@ export class AgentSessions {
     }
   }
 
-  /** Closes idle sessions opened with old settings; busy ones close when they
-   * next fall idle. */
-  reconfigure() {
+  /** Closes idle sessions opened with old settings. A process environment
+   * refresh retires every idle session, even with an unchanged fingerprint. */
+  reconfigure(all = false) {
     for (const [key, live] of this.live)
-      if (!live.session.busy && this.stale(live)) this.drop(key, live);
+      if (!live.retained && !live.session.working && (all || this.stale(live)))
+        this.drop(key, live);
   }
 
   /** Like `dispose()`, then resolves once every session it opened, or was
@@ -635,6 +708,7 @@ export class AgentSessions {
     this.live.set(key, live);
     // Not idle while the message it opened for is still on its way to it.
     live.slot.idle = () =>
+      !live.retained &&
       !live.session.busy &&
       this.live.get(key) === live &&
       !this.opening.has(key);
@@ -678,7 +752,8 @@ export class AgentSessions {
     const settled = await sent;
     if (this.live.get(key) === live) {
       this.touch(key, live);
-      if (!live.session.busy && this.stale(live)) this.drop(key, live);
+      if (!live.retained && !live.session.busy && this.stale(live))
+        this.drop(key, live);
     }
     return settled;
   }
@@ -708,7 +783,7 @@ export class AgentSessions {
     this.pool.touch(live.slot);
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
-      if (live.session.busy) this.countdown(key, live);
+      if (live.retained || live.session.busy) this.countdown(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
   }

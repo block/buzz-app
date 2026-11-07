@@ -1,3 +1,5 @@
+import { GooseVoiceSettings } from "./voice-settings";
+import { openVoice } from "./voice";
 // Turns Agents deliveries into goose turns. Each agent of this type runs in
 // its own `goose-acp` process; a delivery becomes a prompt in the harness format,
 // sent to the agent's ACP session for its conversation; a watch or timer wake
@@ -24,6 +26,7 @@ import {
   fromOwner,
   type Agent,
   type AgentHandle,
+  type AgentVoiceSeat,
   type Agents,
   type Delivery,
   type StandaloneTurn,
@@ -63,7 +66,13 @@ import {
   type ServeMcp,
   type ToolServer,
 } from "./goose";
-import { AgentProcess, AgentSessions, localSessions } from "./sessions";
+import { STOP_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
+import {
+  AgentProcess,
+  AgentSessions,
+  localSessions,
+  abortable,
+} from "./sessions";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -150,6 +159,16 @@ type Entry = {
 
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
+  readonly voiceSettings: GooseVoiceSettings;
+  private readonly voiceSeats = new Set<AbortController>();
+  private readonly refreshVoice = new Set<Entry>();
+
+  private refreshVoiceProcess(entry: Entry) {
+    if (!this.refreshVoice.has(entry) || !entry.sessions.quiescent) return;
+    this.refreshVoice.delete(entry);
+    entry.goose.refresh();
+    entry.sessions.reconfigure(true);
+  }
   private readonly memoryReads = new MemoryReads();
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<
@@ -171,7 +190,132 @@ export class GooseRuntime {
       "",
     /** Agent storage, where what each session started with is kept. */
     private readonly agentStore: AgentStore = localStore(),
-  ) {}
+  ) {
+    const desktop =
+      host.spawn && host.resolveDirectory
+        ? {
+            spawn: host.spawn.bind(host),
+            resolveDirectory: host.resolveDirectory.bind(host),
+          }
+        : undefined;
+    this.voiceSettings = new GooseVoiceSettings(desktop, storage, (enabled) => {
+      if (!enabled) for (const seat of this.voiceSeats) seat.abort();
+      for (const entry of this.agents.values()) {
+        this.refreshVoice.add(entry);
+        this.refreshVoiceProcess(entry);
+      }
+    });
+  }
+
+  async voice(seat: AgentVoiceSeat, agent: AgentHandle) {
+    seat.signal.throwIfAborted();
+    if (!this.voiceSettings.enabled)
+      throw new Error("Turn on Goose voice in settings first.");
+    if (seat.agent.protection || agent.protection)
+      throw new Error("Voice is unavailable for protected agents");
+    const entry = this.entry(agent.key, config(seat.config));
+    entry.handle = agent;
+    entry.team = seat.team ?? "";
+    const { channelId } = seat.conversation;
+    const abort = new AbortController();
+    const signal = AbortSignal.any([
+      seat.signal,
+      entry.lifetime.signal,
+      abort.signal,
+    ]);
+    const held = await entry.sessions.retain(
+      channelId,
+      signal,
+      sessionTitle(entry.name, channelId),
+    );
+    this.voiceSeats.add(abort);
+    let media: Awaited<ReturnType<typeof openVoice>> | undefined;
+    let promptChanged = false;
+    let openingDone!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      openingDone = resolve;
+    });
+    let closing: Promise<void> | undefined;
+    const close = () => {
+      if (closing) return closing;
+      signal.removeEventListener("abort", onAbort);
+      abort.abort();
+      closing = (async () => {
+        await opened;
+        try {
+          await media?.close();
+          // Before admission, the busy task belongs to typed work. Canceling
+          // this opening must release its lease without waiting for that task.
+          if (!promptChanged) return;
+          held.interrupt();
+          await held.externalIdle();
+          await held.process
+            .request(
+              "_goose/unstable/session/system-prompt/set",
+              {
+                sessionId: held.sessionId,
+                mode: "append",
+                key: "buzz-voice",
+                text: "",
+              },
+              STOP_TIMEOUT_MS,
+            )
+            .catch(() => undefined); // The process may already have exited.
+        } finally {
+          held.release();
+          this.voiceSeats.delete(abort);
+          for (const pending of this.refreshVoice)
+            this.refreshVoiceProcess(pending);
+        }
+      })();
+      return closing;
+    };
+    const onAbort = () => {
+      void close();
+      if (!seat.signal.aborted) seat.ended(new Error("Goose voice stopped"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      await abortable(held.idle(), signal);
+      signal.throwIfAborted();
+      held.reserve();
+      await held.select();
+      signal.throwIfAborted();
+      entry.contexts.set(channelId, { channel: channelId, topLevel: true });
+      promptChanged = true;
+      await held.process.request(
+        "_goose/unstable/session/system-prompt/set",
+        {
+          sessionId: held.sessionId,
+          mode: "append",
+          key: "buzz-voice",
+          text: `Voice work acts for owner ${agent.owner}. Buzz tools default to room ${channelId} at top level. Answer delegated spoken requests in a few plain spoken sentences as your final answer; the voice model speaks it. Do not use send merely to repeat that spoken answer.`,
+        },
+        REQUEST_TIMEOUT_MS,
+      );
+      signal.throwIfAborted();
+      media = await openVoice(
+        held.process,
+        held.sessionId,
+        {
+          ...seat,
+          signal,
+          ended: (error) => {
+            void close();
+            seat.ended(error);
+          },
+        },
+        (run) => this.voiceSettings.start(signal, run),
+      );
+      signal.throwIfAborted();
+      openingDone();
+      return { input: media.input, close };
+    } catch (error) {
+      openingDone();
+      await close();
+      throw error;
+    }
+  }
 
   /** What each of the agent's sessions started with. */
   prompts(agent: AgentKey) {
@@ -814,6 +958,7 @@ export class GooseRuntime {
         (handler) => this.serve(handler),
         undefined,
         () => entry.handle,
+        () => this.voiceSettings.enabled,
       ),
       contexts: new Map(),
       policies: new Map(),
@@ -890,6 +1035,7 @@ export class GooseRuntime {
         (handler) => this.serve(handler),
         protection,
         () => entry.handle,
+        () => this.voiceSettings.enabled,
       );
       const worker = entry.worker;
       const { stopping } = entry;
@@ -909,7 +1055,10 @@ export class GooseRuntime {
           title: title ?? "",
           conversation: conversation ?? null,
         }),
-      onChange: () => this.notify(),
+      onChange: () => {
+        this.notify();
+        this.refreshVoiceProcess(entry);
+      },
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({
         provider: entry.config.provider.trim(),

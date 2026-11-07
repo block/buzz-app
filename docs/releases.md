@@ -230,6 +230,11 @@ The pin covers macOS and Linux ARM64/x64 and Windows x64 MSVC.
 The upstream macOS executable requires macOS 12.0; Buzz's packaged minimum is
 12.0 too, raised from the previous source build's 11.0 deployment target.
 
+For a local Goose rig, `GOOSE_ACP_BIN=/abs/path/goose-acp just desktop` stages
+that executable instead, with the same macOS system-library check. Only `--dev`
+runs accept it; a package build refuses it. The next run without it restores the
+pinned bytes.
+
 Downloads are cached under `target/goose-acp-download`. Every run checks the
 archive SHA-256 before reading its sole expected executable member, then repairs
 missing or changed staged bytes by atomic replacement. No source checkout or

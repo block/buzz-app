@@ -21,6 +21,7 @@ import type { Agent } from "../../features/agents/service";
 import { fakeSpawn } from "./goose-testing";
 import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
+import { GooseVoiceSettings } from "./voice-settings";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 import { localSessions } from "./sessions";
@@ -32,7 +33,9 @@ import { localStore } from "../../features/agents/store";
 
 /** New agent's fields read no sessions. */
 const unused = {
-  runtime: {} as GooseRuntime,
+  runtime: {
+    voiceSettings: new GooseVoiceSettings(fakeSpawn(), localStorage, () => {}),
+  } as GooseRuntime,
   history: new GooseHistory(undefined),
 };
 

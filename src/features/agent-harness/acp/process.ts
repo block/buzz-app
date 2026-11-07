@@ -64,6 +64,17 @@ type Pending = {
 
 export class AcpProcess {
   readonly exited: Promise<number | null>;
+  private readonly notifications = new Set<
+    (method: string, params: Record<string, unknown>) => void
+  >();
+  onNotification(
+    listener: (method: string, params: Record<string, unknown>) => void,
+  ) {
+    this.notifications.add(listener);
+    return () => {
+      this.notifications.delete(listener);
+    };
+  }
   private readonly sessions = new Map<string, AcpSession>();
   /** Sessions whose close is in flight or failed, by id. */
   private readonly closing = new Map<string, Promise<Error | undefined>>();
@@ -173,7 +184,7 @@ export class AcpProcess {
         "initialize",
         {
           protocolVersion: 1,
-          clientCapabilities: {},
+          clientCapabilities: hooks.clientCapabilities ?? {},
           clientInfo: { name: "buzz", version: "1" },
         },
         REQUEST_TIMEOUT_MS,
@@ -483,6 +494,8 @@ export class AcpProcess {
     }
     if (id === undefined || id === null) {
       if (method === "session/update") this.update(message.params ?? {});
+      for (const listener of this.notifications)
+        listener(method, message.params ?? {});
       return;
     }
     void this.answer(id, method, message.params ?? {});
@@ -490,7 +503,8 @@ export class AcpProcess {
   private update(params: Record<string, unknown>) {
     const session = this.sessions.get(String(params.sessionId));
     const update = params.update as Record<string, unknown> | undefined;
-    if (session && update) session.update(update);
+    if (session && update && this.hooks.acceptSessionUpdate?.(update) !== false)
+      session.update(update);
   }
   /** Answers what the harness asks its client: since tools run without
    * asking, any permission prompt with allow. */

@@ -9,6 +9,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useMemo,
   useState,
@@ -43,6 +44,7 @@ import {
   PopoverTrigger,
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
+import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
 import type { MessageLinkOrigin } from "./MessageRow";
@@ -234,11 +236,13 @@ export function TypingIndicator({
   canOpenActivity,
   openActivity,
   previousAuthor,
+  latestMessage,
   inFlow = false,
   audience = "all",
 }: {
   audience?: "all" | "humans" | "agents";
   previousAuthor?: string | undefined;
+  latestMessage?: LatestMessage | undefined;
   inFlow?: boolean;
   session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>;
   channelId: string;
@@ -459,7 +463,7 @@ export function TypingIndicator({
       ? undefined
       : firstStep;
   const visibleStep = activityStepLabel(previewText);
-  return (
+  const content = (
     <>
       {/* Establish the live region before the first working/typing transition. */}
       {audience !== "agents" && (
@@ -595,6 +599,121 @@ export function TypingIndicator({
         </div>
       )}
     </>
+  );
+  return inFlow ? (
+    <ActivityLane latestMessage={latestMessage}>{content}</ActivityLane>
+  ) : (
+    content
+  );
+}
+
+type LatestMessage = Pick<ChannelMessage, "id" | "createdAt">;
+const laneHold = (lane: HTMLElement) =>
+  Number.parseFloat(lane.style.minHeight) || 0;
+const laneContent = (lane: HTMLElement) =>
+  [...lane.children].reduce(
+    (height, child) => height + child.getBoundingClientRect().height,
+    0,
+  );
+const holdLane = (lane: HTMLElement, height: number) => {
+  lane.style.minHeight = height > 0 ? `${height}px` : "";
+};
+
+/**
+ * The in-flow row ending or shrinking under a bottom reader would slide every
+ * visible row down. Its lane keeps the tallest height it reached until the next
+ * message at the end takes that space, the reader is well clear of it, or the
+ * app is hidden. Remounting, as on reload or a thread switch, starts empty.
+ */
+function ActivityLane({
+  latestMessage,
+  children,
+}: {
+  latestMessage: LatestMessage | undefined;
+  children: ReactNode;
+}) {
+  const lane = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = lane.current;
+    const scroller = element?.closest<HTMLElement>("[data-message-scroller]");
+    if (
+      !element ||
+      !scroller ||
+      typeof ResizeObserver === "undefined" ||
+      typeof IntersectionObserver === "undefined"
+    )
+      return;
+    const release = () => holdLane(element, laneContent(element));
+    let shown = true;
+    const resize = new ResizeObserver(() => {
+      const height = element.getBoundingClientRect().height;
+      if (height > laneHold(element)) holdLane(element, height);
+    });
+    // 80px past the end, like the hosts' bottom threshold: giving the space
+    // back there cannot move visible rows or put the reader back at the bottom.
+    const view = new IntersectionObserver(
+      ([entry]) => {
+        shown = !!entry?.isIntersecting;
+        if (!shown) release();
+      },
+      { root: scroller, rootMargin: "0px 0px 80px 0px" },
+    );
+    const change = new MutationObserver(() => {
+      if (!shown || document.hidden) release();
+    });
+    const visibility = () => {
+      if (document.hidden) release();
+    };
+    resize.observe(element);
+    view.observe(element);
+    change.observe(element, { childList: true });
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      resize.disconnect();
+      view.disconnect();
+      change.disconnect();
+      document.removeEventListener("visibilitychange", visibility);
+    };
+  }, []);
+  const latest = useRef(latestMessage);
+  useLayoutEffect(() => {
+    const element = lane.current;
+    const previous = latest.current;
+    if (!element || previous?.id === latestMessage?.id) return;
+    latest.current = latestMessage;
+    const scroller = element.closest("[data-message-scroller]");
+    const rows = scroller?.querySelectorAll<HTMLElement>("[data-message-id]");
+    const last = rows?.[rows.length - 1];
+    // Only a message directly above the lane can take its space; one landing
+    // higher would push the rows between it and the lane down.
+    if (!last || !latestMessage || last.dataset.messageId !== latestMessage.id)
+      return;
+    // Deleting the latest message also changes it, to an older one. Only an
+    // arrival after the previous latest message takes the space.
+    const before =
+      previous &&
+      scroller?.querySelector(`[data-message-id="${CSS.escape(previous.id)}"]`);
+    if (
+      previous &&
+      latestMessage.createdAt <= previous.createdAt &&
+      !(
+        before &&
+        before.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING
+      )
+    )
+      return;
+    holdLane(
+      element,
+      Math.max(
+        laneContent(element),
+        laneHold(element) - last.getBoundingClientRect().height,
+      ),
+    );
+  }, [latestMessage]);
+  return (
+    <div ref={lane} data-activity-lane="">
+      {children}
+    </div>
   );
 }
 

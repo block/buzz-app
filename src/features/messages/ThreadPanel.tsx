@@ -1947,6 +1947,7 @@ function ThreadMessages({
               channelId={channelId}
               threadRootId={rootId}
               previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
+              latestMessage={rows.at(-1)}
               openActivity={onOpenLink}
               canOpenActivity={canOpenLink}
             />

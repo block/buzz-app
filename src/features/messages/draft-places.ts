@@ -106,17 +106,6 @@ function useDraftSnapshot<T>(
   return useSyncExternalStore(subscribe, get, get);
 }
 
-/** Whether a channel, or any thread in it, holds a draft. A boolean, so a row
- * re-renders only when its own answer changes, not on every keystroke. */
-export function useChannelDraft(
-  session: Session | undefined,
-  channelId: string,
-) {
-  return useDraftSnapshot(session, (places) =>
-    places.some((place) => place.channelId === channelId),
-  );
-}
-
 // Draft keys whose composer is on screen, so their markers stay out of the way.
 const showing = new Map<string, number>();
 const showingListeners = new Set<() => void>();

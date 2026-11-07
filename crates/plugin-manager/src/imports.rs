@@ -2298,7 +2298,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn access_rule_socket_reaches_git() {
-        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+        use std::os::unix::{fs::symlink, net::UnixListener};
 
         let home = tempfile::tempdir_in("/tmp").unwrap();
         let socket = home.path().join("team.sock");
@@ -2321,8 +2321,12 @@ mod tests {
         let bin = home.path().join("bin");
         fs::create_dir(&bin).unwrap();
         let executable = bin.join("git");
-        fs::write(&executable, "#!/bin/sh\n/usr/bin/printenv SSH_AUTH_SOCK\n").unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        // A parallel fork can retain a runtime-written executable's writer (ETXTBSY).
+        symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ssh-auth-sock.sh"),
+            &executable,
+        )
+        .unwrap();
         let mut command = git.command();
         command.env("PATH", &bin);
         let output = git.run_command(command, 1024).unwrap();

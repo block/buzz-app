@@ -23,8 +23,14 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Context } from "@deepseek-ai/cordis";
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
   AgentCreateProps,
@@ -38,6 +44,7 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
+import type { SyncState } from "../../features/agents/team-migration";
 import { localStore } from "../../features/agents/state";
 import {
   chooseDefaultAgent,
@@ -300,6 +307,8 @@ function setup(
   } as unknown as RegisteredAgentType;
   const created = agent("Nova", 3);
   const types = [type, ...more];
+  // Local teams kept from moving by their editor.
+  const held = new Set<string>();
   const agents = {
     types: () => types,
     snapshot: () => snapshot,
@@ -388,6 +397,17 @@ function setup(
       ({ id }: Pick<TeamChange, "id" | "draft">, _community?: string) =>
         !id || !!snapshot.teams.find((team) => team.id === id)?.revision,
     ),
+    teamSync: vi.fn(
+      (id: string): SyncState =>
+        snapshot.teams.find((team) => team.id === id)?.revision
+          ? { synced: "wss://relay.example" }
+          : { local: undefined },
+    ),
+    agentSync: vi.fn((): SyncState | undefined => undefined),
+    holdTeam: vi.fn((id: string) => {
+      held.add(id);
+      return () => held.delete(id);
+    }),
     core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
@@ -419,6 +439,10 @@ function setup(
     registerHook: vi.fn(),
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,
+    teamHistory: () => undefined,
+    teamUpdateRequests: () => [],
+    dismissTeamUpdate: vi.fn(),
+    approveTeamUpdate: vi.fn(async () => {}),
     addedTabs: () =>
       linkTab
         ? [
@@ -471,7 +495,21 @@ function setup(
     snapshot = { ...snapshot, ...patch };
     for (const listener of listeners) listener();
   };
-  return { agents, echoProvider, types, show, change, relay, ...view };
+  /** Tells subscribers something changed, with the same snapshot. */
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  return {
+    agents,
+    echoProvider,
+    types,
+    show,
+    change,
+    notify,
+    relay,
+    held,
+    ...view,
+  };
 }
 
 it("offers a plugin tab's links only to the agents it can open", async () => {
@@ -2591,7 +2629,7 @@ it("neither counts nor adds a member another account on this device has", async 
 it("makes a team of chosen agents and lists it with its members", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
-  const { agents } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
+  const { agents, notify } = setup([ada, agent("Bo", 2), agent("Cy", 3)]);
   await user.click(screen.getByRole("tab", { name: "Your teams" }));
   expect(screen.queryByRole("grid", { name: "Teams" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "New team" }));
@@ -2620,7 +2658,14 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   expect(card).toHaveTextContent("Ada, Cy");
 
   await user.click(card);
-  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  const form = screen.getByRole("form", { name: "Edit Crew" });
+  expect(form).toHaveTextContent("Only on this Mac");
+  // A move that fails while the editor is open shows at once.
+  agents.teamSync.mockReturnValue({ local: "failed" });
+  act(() => notify());
+  expect(form).toHaveTextContent(
+    "Only on this Mac. Moving it to the community failed; Buzz will try again.",
+  );
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   let dialog = await screen.findByRole("alertdialog", { name: "Delete Crew?" });
   expect(dialog).toHaveAccessibleDescription(
@@ -2660,6 +2705,44 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await waitFor(() =>
     expect(screen.getByRole("tab", { name: "Your teams" })).toHaveFocus(),
   );
+});
+
+it("keeps a local team with a draft from moving, so its editor stays open, and lets it move once saved", async () => {
+  const ada = agent("Ada", 1);
+  const local = {
+    id: "local-team",
+    name: "Crew",
+    instructions: "Before",
+    members: [ada.pubkey],
+  };
+  const view = setup([ada], { teams: [local] });
+  const user = userEvent.setup();
+  // What a move does unless the team is held: its synced copy replaces it.
+  const move = () =>
+    act(() => {
+      if (!view.held.has(local.id))
+        view.change({
+          teams: [{ ...local, id: "moved-team", revision: "confirmed" }],
+        });
+    });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+      name: "Crew",
+    }),
+  );
+  const box = screen.getByRole("textbox", { name: "Instructions" });
+  await user.clear(box);
+  await user.type(box, "UNSAVED DRAFT");
+  expect(view.agents.holdTeam).toHaveBeenCalledWith(local.id);
+  move();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "UNSAVED DRAFT",
+  );
+  // Back to what it opened with, nothing is held.
+  await user.clear(box);
+  await user.type(box, "Before");
+  expect(view.held.has(local.id)).toBe(false);
 });
 
 it("offers hosted agents as members, warning that they may not get the instructions", async () => {
@@ -3609,6 +3692,21 @@ it.each(["error", "unavailable"] as const)(
     ).toBeVisible();
   },
 );
+
+it("says in Settings where an agent's config lives, and why it is only here", async () => {
+  const user = userEvent.setup();
+  const { agents, notify } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+  await user.click(screen.getByRole("tab", { name: "Settings" }));
+  // Still checking: no line, until the relay turns out not to sync.
+  expect(screen.queryByText("Only on this Mac")).not.toBeInTheDocument();
+  agents.agentSync.mockReturnValue({ local: "unsupported" });
+  act(() => notify());
+  expect(screen.getByText("Only on this Mac")).toBeVisible();
+  expect(
+    screen.getByText("This community's relay doesn't sync agent settings."),
+  ).toBeVisible();
+});
 
 it("keeps the copy and delete rows in Settings, below the agent identity", async () => {
   const user = userEvent.setup();
@@ -5761,6 +5859,107 @@ it("opens a restored version address in Settings, closes on Back, and retires on
   ).toHaveAttribute("aria-expanded", "false");
 });
 
+it("opens a team's version link in its editor", async () => {
+  const id = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const revision = {
+    id: "a".repeat(64),
+    pubkey: "o".repeat(64),
+    sig: "b".repeat(128),
+    kind: 45010,
+    created_at: 1700000000,
+    content: JSON.stringify({ version: 1, name: "Crew", instructions: "Hi." }),
+    tags: [
+      ["h", "c"],
+      ["d", "team"],
+      ["type", "buzz.team"],
+      ["op", "create"],
+      ["team", id],
+    ],
+  };
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { team: id, revision: "" } },
+  } as const;
+  const opened = {
+    ...base,
+    route: {
+      version: 1,
+      params: { team: id, revision: `instructions/${revision.id}` },
+    },
+  } as const;
+  const navigator = {
+    snapshot: () => ({ entry: { id: "version", target: opened } }),
+    open: vi.fn(),
+    dismiss: vi.fn(),
+  } as unknown as Navigation;
+  const navigation = {
+    entryId: "version",
+    target: opened,
+    signal: new AbortController().signal,
+    position: () => undefined,
+    savePosition() {},
+    passThrough: () => () => {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  } as unknown as PageNavigation;
+  const view = setup([], {
+    teams: [
+      {
+        id,
+        name: "Crew",
+        instructions: "Hi.",
+        members: [],
+        revision: revision.id,
+      },
+    ],
+    page: { navigation, navigator },
+  });
+  Object.assign(view.agents, {
+    teamHistory: (team: string) =>
+      team === id
+        ? {
+            read: vi.fn(async () => [revision]),
+            revise: vi.fn(),
+            sides: [
+              {
+                side: "instructions",
+                expected: {
+                  channel: "c",
+                  d: "team",
+                  type: "buzz.team",
+                  team: id,
+                },
+                head: revision,
+                version: 0,
+              },
+            ],
+          }
+        : undefined,
+  });
+  view.rerender(
+    <AgentsPage
+      agents={view.agents}
+      relay={view.relay}
+      navigation={navigation}
+      navigator={navigator}
+    />,
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Instructions version Current" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("form", { name: "Edit Crew", hidden: true }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Previous versions", hidden: true }),
+  ).toHaveAttribute("aria-expanded", "true");
+});
+
 it("opens Create agent from an agent card's link and retires the link's visits when it closes", async () => {
   const user = userEvent.setup();
   const base = {
@@ -5882,4 +6081,792 @@ it("explains an agent card that can't be loaded, and retries it", async () => {
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+describe("team editor visits", () => {
+  const id = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const visit = {
+    ...page,
+    route: { version: 1, params: { team: id } },
+  } as const;
+  const crew = (revision: string, instructions: string) => ({
+    id,
+    name: "Crew",
+    instructions,
+    members: [agent("Ada", 1).pubkey],
+    revision,
+  });
+  function at(target: OpenTarget, entryId: string) {
+    const navigator = {
+      snapshot: () => ({ entry: { id: entryId, target } }),
+      open: vi.fn(),
+      dismiss: vi.fn(),
+    } as unknown as Navigation;
+    const navigation = {
+      entryId,
+      target,
+      signal: new AbortController().signal,
+      position: () => undefined,
+      savePosition() {},
+      passThrough: () => () => {},
+      forSession: () => navigation,
+      resolve: () => true,
+      complete: () => true,
+    } as unknown as PageNavigation;
+    return { navigation, navigator };
+  }
+
+  it("opens a team card as a visit that Back and Forward leave and return to", async () => {
+    const user = userEvent.setup();
+    const start = at(page, "page");
+    const view = setup([agent("Ada", 1)], {
+      teams: [crew("r1", "Hi.")],
+      page: start,
+    });
+    await user.click(screen.getByRole("tab", { name: "Your teams" }));
+    await user.click(
+      within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+        name: "Crew",
+      }),
+    );
+    expect(start.navigator.open).toHaveBeenCalledWith(visit);
+    expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+    const show = (where: ReturnType<typeof at>) =>
+      view.rerender(
+        <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+      );
+    show(at(visit, "team"));
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+    show(at(page, "page"));
+    expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+    show(at(visit, "team"));
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  });
+
+  it("ends the team's visit when its editor closes", async () => {
+    const user = userEvent.setup();
+    const where = at(visit, "team");
+    setup([agent("Ada", 1)], { teams: [crew("r1", "Hi.")], page: where });
+    await user.click(
+      within(screen.getByRole("form", { name: "Edit Crew" })).getByRole(
+        "button",
+        { name: "Close" },
+      ),
+    );
+    expect(where.navigator.dismiss).toHaveBeenCalledOnce();
+    const [matches, fallback] = vi.mocked(where.navigator.dismiss).mock
+      .calls[0] as unknown as [(target: OpenTarget) => boolean, OpenTarget];
+    expect(fallback).toEqual(page);
+    expect(matches(visit)).toBe(true);
+    expect(
+      matches({
+        ...page,
+        route: {
+          version: 1,
+          params: { team: id, revision: `instructions/${"a".repeat(64)}` },
+        },
+      }),
+    ).toBe(true);
+    expect(matches(page)).toBe(false);
+  });
+
+  const ada = agent("Ada", 1).pubkey;
+  const bo = agent("Bo", 2).pubkey;
+  /** Edits the open team, lets `elsewhere` save over it, reverts its
+   * instructions to "Before." as `reverted`, then saves. */
+  async function revert({
+    edit,
+    elsewhere,
+    reverted,
+  }: {
+    edit(user: ReturnType<typeof userEvent.setup>): Promise<void>;
+    elsewhere?: ReturnType<typeof crew>;
+    reverted: ReturnType<typeof crew>;
+  }) {
+    const user = userEvent.setup();
+    const revision = (n: number, text: string) => ({
+      id: `${n}`.repeat(64),
+      pubkey: "o".repeat(64),
+      sig: "b".repeat(128),
+      kind: 45010,
+      created_at: 1700000000 + n,
+      content: JSON.stringify({ version: 1, name: "Crew", instructions: text }),
+      tags: [
+        ["ar", "1"],
+        ["h", "c"],
+        ["d", "team"],
+        ["type", "buzz.team"],
+        ["title", "Crew"],
+        ["op", n ? "update" : "create"],
+        ["team", id],
+        ...(n ? [["prev", "0".repeat(64)]] : []),
+      ],
+    });
+    const [now, before] = [revision(1, "Now."), revision(0, "Before.")];
+    const view = setup([agent("Ada", 1), agent("Bo", 2)], {
+      teams: [crew(now.id, "Now.")],
+      page: at(visit, "team"),
+    });
+    Object.assign(view.agents, {
+      teamHistory: () => ({
+        read: vi.fn(async () => [now, before]),
+        revise: vi.fn(async () => {
+          view.change({ teams: [reverted] });
+          return { status: "accepted" };
+        }),
+        sides: [
+          {
+            side: "instructions",
+            expected: { channel: "c", d: "team", type: "buzz.team", team: id },
+            head: now,
+            version: 0,
+          },
+        ],
+      }),
+    });
+    view.change({});
+    await edit(user);
+    if (elsewhere) view.change({ teams: [elsewhere] });
+    const older = {
+      ...page,
+      route: {
+        version: 1,
+        params: { team: id, revision: `instructions/${before.id}` },
+      },
+    } as const;
+    view.rerender(
+      <AgentsPage
+        agents={view.agents}
+        relay={view.relay}
+        {...at(older, "version")}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Revert to this" }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Instructions", hidden: true }),
+      ).toHaveValue("Before."),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save", hidden: true }));
+    await vi.waitFor(() => expect(view.agents.saveTeam).toHaveBeenCalled());
+    return vi.mocked(view.agents.saveTeam).mock.calls[0]?.[0];
+  }
+  const rename = async (user: ReturnType<typeof userEvent.setup>) => {
+    const name = screen.getByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "Night crew");
+  };
+
+  it("takes a revert's instructions and version but keeps the other edits", async () => {
+    const saved = await revert({
+      edit: async (user) => {
+        await rename(user);
+        await user.click(screen.getByRole("checkbox", { name: "Bo" }));
+      },
+      reverted: crew("2".repeat(64), "Before."),
+    });
+    expect(saved).toMatchObject({
+      opened: { revision: "2".repeat(64) },
+      name: "Night crew",
+      instructions: "Before.",
+      members: [ada, bo],
+    });
+  });
+
+  it("takes another device's rename and new member with a revert", async () => {
+    const renamed = {
+      ...crew("2".repeat(64), "Now."),
+      name: "Day crew",
+      members: [ada, bo],
+    };
+    const saved = await revert({
+      edit: async () => {},
+      elsewhere: renamed,
+      reverted: {
+        ...renamed,
+        revision: "3".repeat(64),
+        instructions: "Before.",
+      },
+    });
+    expect(saved).toMatchObject({
+      opened: { revision: "3".repeat(64) },
+      name: "Day crew",
+      instructions: "Before.",
+      members: [ada, bo],
+    });
+  });
+
+  it("keeps an edit over another device's rename a conflict after a revert", async () => {
+    const renamed = { ...crew("2".repeat(64), "Now."), name: "Day crew" };
+    const saved = await revert({
+      edit: rename,
+      elsewhere: renamed,
+      reverted: {
+        ...renamed,
+        revision: "3".repeat(64),
+        instructions: "Before.",
+      },
+    });
+    expect(saved).toMatchObject({
+      opened: { revision: "1".repeat(64) },
+      name: "Night crew",
+    });
+  });
+
+  it("leaves an editor with unsaved edits open on Back", async () => {
+    const view = setup([agent("Ada", 1)], {
+      teams: [crew("r1", "Hi.")],
+      page: at(visit, "team"),
+    });
+    await rename(userEvent.setup());
+    const show = (where: ReturnType<typeof at>) =>
+      view.rerender(
+        <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+      );
+    show(at(page, "page"));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Night crew",
+    );
+    const agentVisit = {
+      ...page,
+      route: { version: 1, params: { agent: agent("Ada", 1).pubkey } },
+    } as const;
+    show(at(agentVisit, "agent"));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Night crew",
+    );
+    show(at(visit, "team"));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Night crew",
+    );
+  });
+
+  describe("between two teams", () => {
+    const other = "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182";
+    const second = {
+      ...crew("s1", "There."),
+      id: other,
+      name: "Second",
+    };
+    const otherVisit = {
+      ...page,
+      route: { version: 1, params: { team: other } },
+    } as const;
+    const open = (options: Parameters<typeof setup>[1] = {}) => {
+      const view = setup([agent("Ada", 1)], {
+        teams: [crew("r1", "Hi."), second],
+        page: at(otherVisit, "second"),
+        ...options,
+      });
+      const show = (where: ReturnType<typeof at>) => {
+        view.rerender(
+          <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+        );
+        return where;
+      };
+      return { view, show };
+    };
+
+    it("keeps a dirty editor open on Back to another team, and Forward finds it", async () => {
+      const user = userEvent.setup();
+      const { show } = open();
+      const name = screen.getByRole("textbox", { name: "Name" });
+      await user.clear(name);
+      await user.type(name, "Unsaved Second");
+      show(at(visit, "team"));
+      expect(screen.getByRole("form", { name: "Edit Second" })).toBeVisible();
+      show(at(otherVisit, "second"));
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Unsaved Second",
+      );
+    });
+
+    it("keeps an editor whose Save runs, then dismisses its own visits", async () => {
+      const user = userEvent.setup();
+      const { view, show } = open();
+      let finish = () => {};
+      vi.mocked(view.agents.saveTeam).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ ...second, revision: "s2" });
+          }),
+      );
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      const first = show(at(visit, "team"));
+      expect(screen.getByRole("form", { name: "Edit Second" })).toBeVisible();
+      finish();
+      await vi.waitFor(() =>
+        expect(screen.getByRole("form", { name: "Edit Crew" })).toBeVisible(),
+      );
+      const ended = vi.mocked(first.navigator.dismiss).mock.calls[0]?.[0] as (
+        visit: OpenTarget,
+      ) => boolean;
+      expect(ended(otherVisit)).toBe(true);
+      expect(ended(visit)).toBe(false);
+    });
+
+    it("keeps an editor whose Save was refused", async () => {
+      const user = userEvent.setup();
+      const { view, show } = open();
+      vi.mocked(view.agents.saveTeam).mockRejectedValueOnce(
+        new Error("Refused"),
+      );
+      const name = screen.getByRole("textbox", { name: "Name" });
+      await user.type(name, "!");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await screen.findByText("Refused");
+      show(at(visit, "team"));
+      expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+        "Second!",
+      );
+    });
+  });
+
+  it("asks before a team's visit discards an agent's unsaved settings", async () => {
+    const user = userEvent.setup();
+    const ada = agent("Ada", 1);
+    const agentVisit = {
+      ...page,
+      route: { version: 1, params: { agent: ada.pubkey } },
+    } as const;
+    const view = setup([ada], {
+      dirtySettings: true,
+      teams: [crew("r1", "Hi.")],
+      page: at(agentVisit, "agent"),
+    });
+    const show = (where: ReturnType<typeof at>) =>
+      view.rerender(
+        <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+      );
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+    show(at(visit, "team"));
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Keep editing" }),
+    );
+    expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+    show(at(agentVisit, "agent-again"));
+    expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue(
+      "Ada says hi!",
+    );
+    show(at(visit, "team-again"));
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Discard changes" }),
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeVisible();
+  });
+
+  it("opens the routed team's card after Keep editing, with no new visit", async () => {
+    const user = userEvent.setup();
+    const ada = agent("Ada", 1);
+    const agentVisit = {
+      ...page,
+      route: { version: 1, params: { agent: ada.pubkey } },
+    } as const;
+    const view = setup([ada], {
+      dirtySettings: true,
+      teams: [crew("r1", "Hi.")],
+      page: at(agentVisit, "agent"),
+    });
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+    const where = at(visit, "team");
+    view.rerender(
+      <AgentsPage agents={view.agents} relay={view.relay} {...where} />,
+    );
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Keep editing" }),
+    );
+    await user.click(screen.getByRole("tab", { name: "Your teams" }));
+    await user.click(
+      within(screen.getByRole("list", { name: "Teams" })).getByRole("button", {
+        name: "Crew",
+      }),
+    );
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Discard changes" }),
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeVisible();
+    expect(where.navigator.open).not.toHaveBeenCalled();
+  });
+
+  it("leaves an editor open on Back while its Save runs, then closes it", async () => {
+    const user = userEvent.setup();
+    const view = setup([agent("Ada", 1)], {
+      teams: [crew("r1", "Hi.")],
+      page: at(visit, "team"),
+    });
+    let finish = () => {};
+    vi.mocked(view.agents.saveTeam).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(crew("r2", "Hi."));
+        }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    view.rerender(
+      <AgentsPage
+        agents={view.agents}
+        relay={view.relay}
+        {...at(page, "page")}
+      />,
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+    view.rerender(
+      <AgentsPage
+        agents={view.agents}
+        relay={view.relay}
+        {...at(
+          {
+            ...page,
+            route: { version: 1, params: { agent: agent("Ada", 1).pubkey } },
+          },
+          "agent",
+        )}
+      />,
+    );
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+    expect(view.agents.saveTeam).toHaveBeenCalled();
+    finish();
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull(),
+    );
+  });
+});
+
+it("leaves the next team's draft alone when a closed editor's Save finishes", async () => {
+  const A = {
+    id: "1a2b3c4d-5e6f-4a70-8b9c-0d1e2f3a4b5c",
+    name: "Crew A",
+    instructions: "A",
+    members: [agent("Ada", 1).pubkey],
+    revision: "rA",
+  };
+  const B = {
+    ...A,
+    id: "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182",
+    name: "Crew B",
+    instructions: "B",
+    revision: "rB",
+  };
+  const C = {
+    ...A,
+    id: "3b3c4d5e-6f70-4a81-9b2c-3d4e5f607182",
+    name: "Crew C",
+    instructions: "C",
+    revision: "rC",
+  };
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const host = createNavigationController(createMemoryHistory(base));
+  const navigator = host.navigation;
+  function Host({ agents, relay }: { agents: Agents; relay: RelayData }) {
+    const { entry, attempt } = useSyncExternalStore(
+      navigator.subscribe,
+      navigator.snapshot,
+    );
+    const navigation = useMemo(() => {
+      const request: PageNavigation = {
+        entryId: entry.id,
+        target: entry.target,
+        signal: attempt.signal,
+        position: () => undefined,
+        savePosition() {},
+        passThrough: () => () => {},
+        forSession: () => request,
+        resolve: () => true,
+        complete: () => true,
+      };
+      return request;
+    }, [entry, attempt]);
+    useEffect(() => {
+      host.complete(attempt, { status: "opened" });
+    }, [attempt]);
+    return (
+      <AgentsPage
+        agents={agents}
+        relay={relay}
+        navigator={navigator}
+        navigation={navigation}
+      />
+    );
+  }
+  const view = setup([agent("Ada", 1)], { teams: [A, B, C] });
+  let finish!: () => void;
+  const pending = new Promise<typeof B>((resolve) => {
+    finish = () => resolve(B);
+  });
+  vi.mocked(view.agents.saveTeam).mockReturnValueOnce(pending);
+  try {
+    view.rerender(<Host agents={view.agents} relay={view.relay} />);
+    act(() => {
+      void navigator.open({
+        ...base,
+        route: { version: 1, params: { team: A.id } },
+      });
+    });
+    await screen.findByRole("form", { name: "Edit Crew A" });
+    act(() => {
+      void navigator.open({
+        ...base,
+        route: { version: 1, params: { team: B.id } },
+      });
+    });
+    await userEvent
+      .setup()
+      .click(
+        within(
+          await screen.findByRole("form", { name: "Edit Crew B" }),
+        ).getByRole("button", { name: "Save" }),
+      );
+    expect(view.agents.saveTeam).toHaveBeenCalledOnce();
+    act(() => navigator.back());
+    await userEvent
+      .setup()
+      .click(
+        within(screen.getByRole("form", { name: "Edit Crew B" })).getByRole(
+          "button",
+          { name: "Close" },
+        ),
+      );
+    const name = within(
+      await screen.findByRole("form", { name: "Edit Crew A" }),
+    ).getByRole("textbox", { name: "Name" });
+    fireEvent.change(name, { target: { value: "Unsaved A" } });
+    act(() => {
+      void navigator.open({
+        ...base,
+        route: { version: 1, params: { team: C.id } },
+      });
+    });
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Unsaved A",
+    );
+    await act(async () => finish());
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+      "Unsaved A",
+    );
+  } finally {
+    finish();
+    view.unmount();
+    host.dispose();
+  }
+});
+
+describe("a team Save that finishes after its editor is gone", () => {
+  const base = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+  } as const;
+  const B = {
+    id: "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182",
+    name: "Crew B",
+    instructions: "Before",
+    members: [agent("Ada", 1).pubkey],
+    revision: "rB",
+  };
+  const visit = {
+    ...base,
+    route: { version: 1, params: { team: B.id } },
+  } as const;
+  async function fixture({
+    save = true,
+    refresh = true,
+    nativeHistory = false,
+  } = {}) {
+    const host = createNavigationController(createMemoryHistory(base));
+    // Browser history applies a dismissal on a later task, after Save's
+    // completion has run.
+    const navigator: typeof host.navigation = nativeHistory
+      ? {
+          ...host.navigation,
+          dismiss: (...args) => {
+            setTimeout(() => host.navigation.dismiss(...args));
+          },
+        }
+      : host.navigation;
+    const view = setup([agent("Ada", 1)], { teams: [B] });
+    function Host() {
+      const { entry, attempt } = useSyncExternalStore(
+        navigator.subscribe,
+        navigator.snapshot,
+      );
+      const navigation = useMemo(() => {
+        const request: PageNavigation = {
+          entryId: entry.id,
+          target: entry.target,
+          signal: attempt.signal,
+          position: () => undefined,
+          savePosition() {},
+          passThrough: () => () => {},
+          forSession: () => request,
+          resolve: () => true,
+          complete: () => true,
+        };
+        return request;
+      }, [entry, attempt]);
+      useEffect(() => {
+        host.complete(attempt, { status: "opened" });
+      }, [attempt]);
+      // App/PageView swaps the page subtree when the registered page changes.
+      return entry.target.kind === "page" &&
+        entry.target.pluginId === "buzz.agents" ? (
+        <AgentsPage
+          agents={view.agents}
+          relay={view.relay}
+          navigator={navigator}
+          navigation={navigation}
+        />
+      ) : (
+        <p>Other page</p>
+      );
+    }
+    let resolve!: () => void, reject!: () => void;
+    const pending = new Promise<typeof B>((r, j) => {
+      resolve = () => {
+        if (refresh)
+          view.change({
+            teams: [
+              { ...B, instructions: "Submitted draft", revision: "rSaved" },
+            ],
+          });
+        r(B);
+      };
+      reject = () => j(new Error("Late refusal"));
+    });
+    vi.mocked(view.agents.saveTeam).mockReturnValueOnce(pending);
+    view.rerender(<Host />);
+    act(() => {
+      void navigator.open(visit);
+    });
+    const form = await screen.findByRole("form", { name: "Edit Crew B" });
+    fireEvent.change(
+      within(form).getByRole("textbox", { name: "Instructions" }),
+      { target: { value: "Submitted draft" } },
+    );
+    if (save) {
+      await userEvent
+        .setup()
+        .click(within(form).getByRole("button", { name: "Save" }));
+      expect(view.agents.saveTeam).toHaveBeenCalledOnce();
+    }
+    const visitId = navigator.snapshot().entry.id;
+    return {
+      view,
+      host,
+      navigator,
+      resolve,
+      reject,
+      visitId,
+      dispose() {
+        view.unmount();
+        host.dispose();
+      },
+    };
+  }
+  it("closes the dirty editor and ends its visit on Close", async () => {
+    const f = await fixture({ save: false });
+    try {
+      await userEvent
+        .setup()
+        .click(
+          within(screen.getByRole("form", { name: "Edit Crew B" })).getByRole(
+            "button",
+            { name: "Close" },
+          ),
+        );
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+      expect(f.navigator.snapshot().entry.target).toEqual(base);
+    } finally {
+      f.dispose();
+    }
+  });
+
+  it("closes the editor once its Save succeeds, before the saved team arrives", async () => {
+    const f = await fixture({ refresh: false, nativeHistory: true });
+    try {
+      await act(async () => f.resolve());
+      // The dismissal lands on a later task; wait for it, then check the form.
+      await waitFor(() =>
+        expect(f.navigator.snapshot().entry.target).toEqual(base),
+      );
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+    } finally {
+      f.dispose();
+    }
+  });
+
+  it("ends B's visits after leaving the Agents page entirely", async () => {
+    const f = await fixture();
+    try {
+      act(() => {
+        void f.navigator.open({
+          version: 1,
+          kind: "page",
+          pluginId: "test.other",
+          pageId: "other",
+        });
+      });
+      expect(screen.getByText("Other page")).toBeVisible();
+      await act(async () => f.resolve());
+      const retained = f.navigator
+        .snapshot()
+        .retainedVisits?.includes(f.visitId);
+      act(() => f.navigator.back());
+      const reopened = !!screen.queryByRole("form", { name: "Edit Crew B" });
+      expect(reopened, "Back must skip B's completed presentation").toBe(false);
+      expect(retained).toBe(false);
+    } finally {
+      f.dispose();
+    }
+  });
+  it("ends B's visits if B disappears while Save runs", async () => {
+    const f = await fixture();
+    try {
+      act(() => f.view.change({ teams: [] }));
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+      await act(async () => f.resolve());
+      expect(f.navigator.snapshot().retainedVisits).not.toContain(f.visitId);
+    } finally {
+      f.dispose();
+    }
+  });
+  it("ends B's visits after switching the internal section", async () => {
+    const f = await fixture();
+    try {
+      await userEvent
+        .setup()
+        .click(screen.getByRole("tab", { name: "Your agents" }));
+      expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
+      await act(async () => f.resolve());
+      expect(f.navigator.snapshot().retainedVisits).not.toContain(f.visitId);
+    } finally {
+      f.dispose();
+    }
+  });
 });

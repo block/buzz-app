@@ -38,7 +38,12 @@ export function DraftsSentNavigation({
   return (
     <NavigationItem
       label="Drafts & sent"
-      icon={<SendIcon size={16} strokeWidth={2.5} aria-hidden="true" />}
+      icon={
+        // Same icon box as plugin page rows, so this row shares their columns.
+        <span className="shell-page-icon">
+          <SendIcon size={16} strokeWidth={2.5} aria-hidden="true" />
+        </span>
+      }
       selected={
         target.kind === "page" &&
         target.pluginId === "buzz.channels" &&

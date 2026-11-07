@@ -1406,7 +1406,7 @@ it("selects the exact match on Space from a publication React has not rendered y
  * name decided on Space, and a settled empty result once a Space is typed.
  * `mounted` runs in that effect before the publication, after the host has
  * committed what it shows for the query on its own. */
-function mountTypeahead(mounted?: (query: string) => void) {
+function mountTypeahead(mounted?: (query: string) => void, viewer?: string) {
   function Completion({ query, publish }: ComposerCompletionProps) {
     useEffect(() => {
       mounted?.(query.query);
@@ -1443,13 +1443,17 @@ function mountTypeahead(mounted?: (query: string) => void) {
   ];
   const empty: [] = [];
   const none = { snapshot: () => empty, subscribe: () => () => {} };
-  const h = mount({
-    extensions: {
-      tools: none,
-      inline: none,
-      completions: { snapshot: () => completions, subscribe: () => () => {} },
+  const h = mount(
+    {
+      extensions: {
+        tools: none,
+        inline: none,
+        completions: { snapshot: () => completions, subscribe: () => () => {} },
+      },
     },
-  });
+    undefined,
+    viewer,
+  );
   return {
     ...h,
     /** The popup's row labels, or null while the popup is not in the document. */
@@ -1572,6 +1576,87 @@ it("still closes the popup when the query closes, on Escape, and on a Space that
   expect(input).toHaveValue("@Honey ");
   expect(h.rows()).toBeNull();
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it.each([
+  { key: "," },
+  { key: "." },
+  { key: ";" },
+  { key: "'" },
+  { key: "!", shiftKey: true },
+  { key: "?", shiftKey: true },
+  { key: ":", shiftKey: true },
+  { key: ")", shiftKey: true },
+  { key: '"', shiftKey: true },
+  // A Mac types curly quotes with Option and Shift held.
+  { key: "’", altKey: true, shiftKey: true },
+  { key: "”", altKey: true, shiftKey: true },
+])(
+  "selects the exact match on closing punctuation and keeps it after the mention: %j",
+  (keys) => {
+    const h = mountTypeahead();
+    const input = h.input();
+    input.focus();
+    h.fill("@honey");
+    expect(fireEvent.keyDown(input, keys)).toBe(false);
+    expect(input).toHaveValue(`@Honey${keys.key}`);
+    expect(input.selectionStart).toBe(7);
+    expect(h.rows()).toBeNull();
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      `@Honey${keys.key}`,
+      [first.pubkey],
+      [],
+    );
+  },
+);
+
+it.each([
+  { key: "-" },
+  { key: "/" },
+  { key: " ", shiftKey: true },
+  { key: ",", ctrlKey: true },
+  { key: ",", metaKey: true },
+])(
+  "leaves other keys and shortcuts to the editor after an exact match: %j",
+  (keys) => {
+    const h = mountTypeahead();
+    const input = h.input();
+    input.focus();
+    h.fill("@honey");
+    expect(fireEvent.keyDown(input, keys)).toBe(true);
+    expect(input).toHaveValue("@honey");
+    expect(h.rows()).toEqual(["Honey honey"]);
+  },
+);
+
+it("keeps closing punctuation literal in code", async () => {
+  const h = mountTypeahead();
+  h.input().focus();
+  act(() => h.input().toggleFormat("code"));
+  await h.user.keyboard("@honey");
+  expect(h.rows()).toEqual(["Honey honey"]);
+  await h.user.keyboard(",");
+  expect(h.input()).toHaveValue("@honey,");
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).toBeNull();
+});
+
+it("keeps closing punctuation after the link a typed name becomes while editing", async () => {
+  // Edits add references, never recipients.
+  const h = mountTypeahead(undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(screen.getByText("Editing message")).toBeVisible();
+  h.fill("@honey");
+  expect(fireEvent.keyDown(h.input(), { key: "," })).toBe(false);
+  const link = `[@Honey](${profileTarget(first.pubkey)}),`;
+  expect(h.input().value).toBe(link);
+  await h.user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(h.messages.edit).toHaveBeenCalledOnce();
+  expect(h.messages.edit.mock.calls[0]?.[1]).toBe(link);
 });
 
 it.each(["click", "Enter", "Tab"])(
@@ -7430,6 +7515,20 @@ it("keeps the typed colon after a partial shortcode and never accepts emoji on S
   expect(fireEvent.keyDown(h.input(), { key: " " })).toBe(true);
   expect(h.input()).toHaveValue("hello :-1");
 });
+
+// Option may close a mention, never a shortcode.
+it.each([{ altKey: true }, { altKey: true, shiftKey: true }])(
+  "leaves an Option colon to the editor after an exact shortcode: %j",
+  async (keys) => {
+    const h = mountEmojiTypeahead();
+    h.fill("hello :-1");
+    await screen.findByRole("option", { name: ":-1:" });
+    expect(fireEvent.keyDown(h.input(), { key: ":", ...keys })).toBe(true);
+    expect(h.input()).toHaveValue("hello :-1");
+    expect(colon(h.input())).toBe(false);
+    expect(h.input()).toHaveValue("hello 👎");
+  },
+);
 
 it.each(["at 10:30"])(
   "leaves the colon in times and URLs alone: %s",
@@ -14086,15 +14185,15 @@ function mountPendingMention(
     /** How many `@` queries the provider has been mounted for. */
     queries: () => publishes.length,
     publish,
-    /** Type `@name`, publish an undecided result for it, then type Space.
+    /** Type `@name`, publish an undecided result for it, then type `key`.
      * Returns the keydown's default-prevented state inverted: false when held. */
-    hold(name: string, outcome: Promise<CompletionResolution>) {
+    hold(name: string, outcome: Promise<CompletionResolution>, key = " ") {
       resolve.mockImplementation(() => outcome);
       h.fill(`@${name}`);
       act(() => {
         publish()({ items: [], spacePending: { name, resolve } });
       });
-      return fireEvent.keyDown(h.input(), { key: " " });
+      return fireEvent.keyDown(h.input(), { key });
     },
     chip: (name: string) =>
       within(h.input()).queryByRole("img", {
@@ -14130,6 +14229,30 @@ it("holds an undecided name on Space, then settles it into the recipient without
     expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
       "channel",
       "@Honey ",
+      [first.pubkey],
+      [],
+    );
+  } finally {
+    outcome.resolve(null);
+  }
+});
+
+it("holds an undecided name on closing punctuation, which stays after the chip", async () => {
+  const h = mountPendingMention();
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+  const outcome = deferred<MentionRecipient | null>();
+  try {
+    expect(h.hold("honey", outcome.promise, "'")).toBe(false);
+    expect(h.input()).toHaveValue("@honey'");
+    expect(h.chip("honey")).toHaveAttribute("aria-busy", "true");
+    await h.user.keyboard("s turn");
+    await act(async () => outcome.resolve(first));
+    expect(h.input()).toHaveValue("@Honey's turn");
+    expect(h.chip("honey")).toBeNull();
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "@Honey's turn",
       [first.pubkey],
       [],
     );
@@ -14438,6 +14561,42 @@ it("keeps the separator typed after the words a pending chip extends over, so la
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([mira.pubkey]);
 });
 
+it("extends a chip held on punctuation over the rest of the longer directory name it starts", async () => {
+  // A member name still loading keeps `Pat O` from selecting, so `'` holds
+  // it. The search then finds `Pat O'Brien`; the words typed after the chip
+  // start with the `'` that held it and complete that name.
+  const h = mountDirectoryMention();
+  const pat = { pubkey: "f".repeat(64), name: "Pat O'Brien" };
+  h.setProfiles(new Map([[first.pubkey, { name: "Pat O" }]]));
+  await h.user.type(h.input(), "@Pat O");
+  await screen.findByText("Searching community…");
+  await h.user.keyboard("'");
+  expect(h.input()).toHaveValue("@Pat O'");
+  expect(h.chip("Pat O")).toHaveAttribute("aria-busy", "true");
+  await h.user.keyboard("Brien");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [pat], hasMore: false });
+  await waitFor(() => expect(h.input()).toHaveValue("@Pat O'Brien"));
+  expect(h.chip("Pat O")).toBeNull();
+  expect(h.chip("Pat O'Brien")).toBeNull();
+  expect(h.recipients()).toHaveLength(1);
+  h.submit();
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Pat O'Brien is not in this channel.",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /^(Do nothing|Send anyway)$/ }),
+  );
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Pat O'Brien",
+    [],
+  ]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([pat.pubkey]);
+});
+
 it("selects a longer directory name on the Space that completes it when its page arrived before the first Space", async () => {
   // The slow typist: a known longer name declines the first Space outright
   // (`continuedMention`), the query stays open, and the second Space selects.
@@ -14456,6 +14615,57 @@ it("selects a longer directory name on the Space that completes it when its page
   expect(h.recipients()).toHaveLength(1);
   expect(h.people).toHaveBeenCalledOnce();
 });
+
+it.each(["'s turn", ", please look", '" said hi'])(
+  "tags a member whose full name is typed straight into %j",
+  async (rest) => {
+    const h = mountDirectoryMention();
+    await h.user.type(h.input(), `@Other Member${rest}`);
+    expect(h.input()).toHaveValue(`@Other Member${rest}`);
+    expect(h.recipients()).toHaveLength(1);
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      `@Other Member${rest}`,
+      [first.pubkey],
+      [],
+    );
+  },
+);
+
+it.each([
+  ["Pat O", "Pat O'Brien"],
+  ["Wes", "Wes’s Honey"],
+])(
+  "types punctuation after %j into the query while the known %j continues with it",
+  async (shorter, longer) => {
+    const h = mountDirectoryMention();
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: shorter }],
+        [second.pubkey, { name: longer }],
+      ]),
+    );
+    await h.user.type(h.input(), `@${shorter}`);
+    await screen.findByRole("option", { name: new RegExp(longer) });
+    const key = longer.charAt(shorter.length);
+    await h.user.keyboard(key);
+    expect(h.input()).toHaveValue(`@${shorter}${key}`);
+    expect(
+      screen.queryByRole("region", { name: "Explicit mentions" }),
+    ).toBeNull();
+    // The query now continues only the longer name, which the rest selects.
+    await h.user.keyboard(`${longer.slice(shorter.length + 1)},`);
+    expect(h.input()).toHaveValue(`@${longer},`);
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      `@${longer},`,
+      [second.pubkey],
+      [],
+    );
+  },
+);
 
 it("extends a pending chip to the one longer name the typed words complete when several continue it", async () => {
   const h = mountDirectoryMention();

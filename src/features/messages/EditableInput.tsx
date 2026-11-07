@@ -747,16 +747,19 @@ export function EditableInput({
       text: string,
       recipient?: MentionRecipient | readonly MentionRecipient[],
       range?: { start: number; end: number },
-      terminator?: ":",
+      terminator?: string,
       focus = true,
       onTooLong?: () => void,
     ) => {
       if (!editable() || composing.current || editor.composing) return false;
+      // The key that ended a name follows its mention in place of the space;
+      // only text records its terminator before converting.
+      const after = (recipient && terminator) || " ";
+      if (recipient) terminator = undefined;
       if (terminator) {
         const source = projection();
         if (
           !range ||
-          recipient ||
           !editor.state.selection.empty ||
           source.source(editor.state.selection.from) !== range.end
         )
@@ -811,7 +814,7 @@ export function EditableInput({
                     null,
                     marks,
                   ),
-              composerSchema.text(" ", marks),
+              composerSchema.text(after, marks),
             ]),
           ),
         );
@@ -985,10 +988,12 @@ export function EditableInput({
       return editor.state !== before;
     };
     /** The typed `@name` becomes one atom the host resolves later: one undo
-     * step, like a selected mention, and the caret moves past its space. */
+     * step, like a selected mention, and the caret moves past the key that
+     * ended it. */
     const insertPendingMention = (
       name: string,
       range: { start: number; end: number },
+      terminator = " ",
     ): string | false => {
       if (!editable() || composing.current || editor.composing) return false;
       const source = projection();
@@ -1015,7 +1020,7 @@ export function EditableInput({
             null,
             marks,
           ),
-          composerSchema.text(" ", marks),
+          composerSchema.text(terminator, marks),
         ]),
       );
       tr.setSelection(

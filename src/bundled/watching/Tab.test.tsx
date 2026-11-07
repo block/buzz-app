@@ -576,25 +576,7 @@ it("explains Attention to a new agent and switches it on this device", async () 
   );
   expect(screen.getByRole("region", { name: "Start watching" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Attention" })).toBeTruthy();
-  expect(screen.getByText(/Send Bo a message/)).toBeTruthy();
-  expect(screen.queryByRole("switch")).toBeNull();
-  expect(screen.queryByRole("button")).toBeNull();
-  act(() => {
-    snapshot = {
-      ...snapshot,
-      running: snapshot.running.map((agent) => ({
-        ...agent,
-        attention: {
-          "interest/task": {
-            slug: "interest/task",
-            modifiedAt: 1,
-            value: { type: "interest", instructions: "Follow this work" },
-          },
-        },
-      })),
-    };
-    changed();
-  });
+  expect(screen.queryByText(/Send Bo a message/)).toBeNull();
   const toggle = screen.getByRole("button", {
     name: "Attention status for Bo",
   });
@@ -609,6 +591,18 @@ it("explains Attention to a new agent and switches it on this device", async () 
   expect(save).toHaveBeenLastCalledWith("membership-b", {
     attentionEnabled: true,
   });
+  act(() => {
+    snapshot = {
+      ...snapshot,
+      running: snapshot.running.map((agent) => ({
+        ...agent,
+        attentionEnabled: true,
+      })),
+    };
+    changed();
+  });
+  expect(screen.getByRole("region", { name: "Start watching" })).toBeTruthy();
+  expect(screen.getByText(/Send Bo a message/)).toBeTruthy();
 });
 
 it("says why an agent's watches are not shown", async () => {

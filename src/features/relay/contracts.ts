@@ -323,6 +323,11 @@ export interface ChannelQueries {
   readDirectory?(options?: {
     signal?: AbortSignal | undefined;
   }): Promise<{ partial: boolean }>;
+  /** Whether the relay holds any stream or forum channel this viewer can
+   * see, open, private or archived; DMs, Solo chats and system channels do
+   * not count, though a full batch of only Solo chats counts as not empty.
+   * One read of a few events. Names no channel, never grants access. */
+  anyChannel?(options?: { signal?: AbortSignal | undefined }): Promise<boolean>;
   /** Member counts for browsing, from a joined channel's roster or an open
    * channel's relay-signed one, kept a few minutes. A channel without a
    * roster is left out of `counts`; `failed` names the ids whose read
@@ -344,6 +349,10 @@ export interface ChannelQueries {
    * withheld answers) and when it ends. Absent when no lookup can run, as in
    * a cached-only store. */
   refer?(channelId: string): () => void;
+  /** A cached-only store: saved conversations while Buzz can't reach the
+   * relay. It reads nothing, so `loadOlder` adds no rows, until a connected
+   * session replaces it. */
+  readonly cachedOnly?: true;
   /** Exact re-read of one already-listed channel's roster, merged into the
    * ready list. `resolve` admits channels the list lacks; this confirms a
    * membership change on one it already carries, without a full rediscovery.

@@ -58,6 +58,20 @@ the requesting agent once the request is valid, stripped of metadata as the
 owner's own avatar upload is. The draft carries only its HTTPS URL, which starts the
 review's avatar picker, and saving sets it as the owner's own avatar change
 does. Change requests share the creation requests' local bound and lifetime.
+
+`agent_read` returns one of the owner's agents in the caller's community, by
+pubkey or exact name, or all of them: name, type, instructions (null for a type
+without them), whether they sync and the current instructions revision. A
+hosted agent or one on another device gives its synced instructions when the
+owner can read them here (read only, never creating or moving its config),
+and otherwise `unavailable` saying why.
+`team_read` returns the teams Your teams shows in that community, by id or
+exact name, or all of them: name, instructions, members, whether the team syncs
+and its revision. `team_update` submits an unsaved draft of a team's new name
+or instructions, never its members. The owner reviews it in a dialog; saving
+writes the team as Save in its editor does and is refused once the team's
+name, instructions or revision changed since the draft. Team requests share the
+same local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
@@ -180,8 +194,7 @@ secret in a link, workspace, log, or agent tool result.
 A reconnect link uses version 2 and adds `pairing_id`, `counter`, and `proof`.
 The client saves an increased counter before opening the link. Buzz accepts
 only a greater counter and saves it before it starts a fresh session. A lost
-handshake can skip a counter. A counter is a positive integer of at most
-999999999999999. The proof is unpadded base64url HMAC-SHA256 with the decoded
+handshake can skip a counter. A counter is a positive integer of at most 999999999999999. The proof is unpadded base64url HMAC-SHA256 with the decoded
 reconnect secret as its key. Its input is the UTF-8 JSON array, with no spaces:
 
 ```text
@@ -800,8 +813,9 @@ The host retains recipient intent, inline editing and avatar removal even if the
 chooser is unavailable because activation failed.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
-Typing a name alone does not notify anyone. Plain Space after a unique exact name
-selects its recipient; ambiguous names require Tab, Enter or click. While the
+Typing a name alone does not notify anyone. Plain Space or closing punctuation
+after a unique exact name selects its recipient; ambiguous names require Tab,
+Enter or click. While the
 chooser is still waiting on members, names, agents or a directory search, Space
 holds the name as a pending chip (a spinner in place of its `@`) and applies the
 same rule once the evidence arrives, within 8 s, or returns it to prose; sending
@@ -837,13 +851,13 @@ Two parts of the app decide who you can mention:
 
 The composer accepts these people:
 
-| Where you write | Who you can mention |
-| --- | --- |
-| Channel or forum | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
-| DM | Anyone. People outside the DM are named but not notified. |
-| Solo chat | Chat members, plus your agents (a send adds the tagged ones). |
-| New DM, before it is created | Only the people you chose for the DM. |
-| Archived or read-only channel | Nobody. |
+| Where you write               | Who you can mention                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| Channel or forum              | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
+| DM                            | Anyone. People outside the DM are named but not notified.                                |
+| Solo chat                     | Chat members, plus your agents (a send adds the tagged ones).                            |
+| New DM, before it is created  | Only the people you chose for the DM.                                                    |
+| Archived or read-only channel | Nobody.                                                                                  |
 
 Everywhere, the composer refuses invalid keys and people known to be archived.
 You can always mention yourself. If archive state is unknown, the mention is
@@ -896,8 +910,11 @@ recipients among the destination's members plus the draft recipients.
 
 Plain Space selects only a unique exact name/alias/label across the full uncapped
 candidate set, and only if that identity is displayed and still eligible. A known
-longer name beginning with that name plus a space prevents selection, unless it is
-another name of that same identity. Partial names, ambiguous names, modified Space,
+longer name that continues the query, with any separator, prevents selection,
+unless it is another name of that same identity. Closing punctuation (`, . ! ? ; : )`
+and `' ’ " ”`) selects under the same rule and stays after the mention
+([mentions README §5](../src/bundled/mentions/README.md#5-space-or-closing-punctuation-selects-only-an-exact-unique-name)).
+Partial names, ambiguous names, modified Space,
 IME composition, code and protected literal ranges keep ordinary editing behavior. Selection rechecks available evidence and
 stores only `{pubkey, name}`; qualifiers are presentation, not wire data. A Space
 the chooser cannot decide yet, because its evidence is still loading, holds the
@@ -1124,8 +1141,23 @@ in its home record and applies everywhere.
   community takes the team's section from the home
   channel's last confirmed copy, and with none its start waits rather than use
   local fields. Changes and Delete (which archives the home channel) run online,
-  one at a time per team, and report anything left part way. Existing local
-  teams are not migrated.
+  one at a time per team, and report anything left part way.
+  A local team whose members are all the owner's agents in one community that
+  syncs teams moves there once its config channels are up and its agent
+  records are read: it is imported under an id fixed by its local id, so a
+  retry after a crash or disconnect lands in the same team, and the local copy
+  goes only once the relay copy is confirmed. Each move's community is saved
+  before its first write; a failed move is retried on the next connection. A
+  move never writes over a relay team this device didn't create: if the
+  community already has a different copy (as when another copy of the app moved
+  the team first and it was edited there), nothing is written, the team stays
+  local and its status line says "A different copy of this team is already in
+  <community>". Only once this device's own create is confirmed do its local
+  edits win over the relay copy on a retry. Likewise, Delete of a team whose move began archives the relay copy only once this device's create is confirmed; otherwise it removes the local team and leaves the relay alone. A team whose editor has unsaved
+  changes or a Save running doesn't move until they settle. Its status line
+  says why a team stays on this device: its agents are in different
+  communities, the relay doesn't sync teams, or its move failed and will be
+  retried.
 - **Hosted agents** stay in one community, as their provider holds the key.
   Only a synced team homed there can have them as members, so the team editor
   offers them only for such a team, or for a new one that will sync there. One
@@ -1145,7 +1177,6 @@ its channels on a best-effort basis.
 Protocol source: old Buzz `b9392d9` `docs/nips/NIP-IA.md`, especially relay identity,
 snapshot format and snapshot/delta consistency. Tests use the actual session and
 HTTP broker/verified transport, including corrupted signature rejection.
-
 
 ## Agent Activity plugin
 
@@ -1616,7 +1647,6 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
-
 
 ## Attention subscriptions
 

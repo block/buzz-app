@@ -19,6 +19,7 @@ import {
 } from "../../bundled/builderlab/oauth/first-run";
 import type { Credential } from "../../bundled/builderlab/session";
 import { communityDestination } from "../communities/destination";
+import { accountConsents } from "../communities/account-consent";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
 import type { FoundCommunity } from "../communities/find-community";
 import type { createInviteIntent } from "../communities/invite-intent";
@@ -256,9 +257,11 @@ export function Welcome({
   // The code of the invite link `finding` came from, claimed on Join; "" for
   // a bare address. Every submit sets it with `finding`.
   const [inviteCode, setInviteCode] = useState("");
-  // Whether `finding` is the community just created, which its owner joins
-  // without Join Community. Every submit sets it with `finding`.
-  const [created, setCreated] = useState(false);
+  // Whether `finding` joins without Join Community: the community just
+  // created, or one the signed-in account already consented to
+  // (`accountConsents`). Every submit sets it with `finding`; Back from a
+  // failed join clears it.
+  const [joinAtOnce, setJoinAtOnce] = useState(false);
   const [joinError, setJoinError] = useState<{
     title: string;
     error: string;
@@ -663,7 +666,7 @@ export function Welcome({
   const find = (origin: string, code = "", justCreated = false) => {
     setFinding(origin);
     setInviteCode(code);
-    setCreated(justCreated);
+    setJoinAtOnce(justCreated || accountConsents(federatedIdentity, origin));
   };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
@@ -1209,8 +1212,8 @@ export function Welcome({
           />
         ) : joinError ? (
           // Back returns to the find page, which looks the community up again,
-          // through Join Community even for a created one: another automatic
-          // join would leave no way out of a join that keeps failing.
+          // through Join Community: another automatic join would leave no way
+          // out of a join that keeps failing.
           <Failure
             title={joinError.title}
             error={joinError.error}
@@ -1218,7 +1221,7 @@ export function Welcome({
               admitted
                 ? undefined
                 : () => {
-                    setCreated(false);
+                    setJoinAtOnce(false);
                     setJoinError(undefined);
                   }
             }
@@ -1242,7 +1245,10 @@ export function Welcome({
             url={finding}
             onCancel={() => setFinding(undefined)}
             onJoin={(found, consent) => join(found, consent, inviteCode)}
-            autoJoin={created}
+            autoJoin={joinAtOnce}
+            consentGiven={(found) =>
+              accountConsents(federatedIdentity, found.url)
+            }
             titleId="welcome-title"
           />
         ) : creating && reads.current ? (
@@ -1254,7 +1260,7 @@ export function Welcome({
             onCreated={(origin) => {
               setCreating(false);
               // Kept in the field, as a typed address is, so after Cancel its
-              // Continue finds the new community again, through Join Community.
+              // Continue finds the new community again.
               setEntered(new URL(origin).host);
               find(origin, "", true);
             }}

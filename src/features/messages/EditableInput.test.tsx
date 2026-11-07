@@ -3624,14 +3624,40 @@ it("returns a pending chip to its typed query when a name character is typed rig
   expect(h.draft().recipients).toEqual([]);
   act(() => h.input.undo(false));
   expect(h.draft().pending?.map((item) => item.id)).toEqual([id]);
-  // Punctuation is a name boundary and keeps the chip, as for a recipient.
-  const p = mount("@mira");
-  act(() => {
-    p.input.insertPendingMention("mira", { start: 0, end: 5 });
-  });
-  await p.user.keyboard("{Backspace},");
-  expect(p.input).toHaveValue("@mira,");
-  expect(p.draft().pending).toHaveLength(1);
+  // Punctuation and quotes are name boundaries and keep the chip, as for a
+  // recipient.
+  for (const character of [",", "'", "’"]) {
+    const p = mount("@mira");
+    act(() => {
+      p.input.insertPendingMention("mira", { start: 0, end: 5 });
+    });
+    await p.user.keyboard(`{Backspace}${character}`);
+    expect(p.input).toHaveValue(`@mira${character}`);
+    expect(p.draft().pending).toHaveLength(1);
+  }
+});
+it("keeps a recipient when a quote or apostrophe follows its chip, however the character arrives", async () => {
+  for (const character of ["'", "’", '"', "”"]) {
+    const h = mount();
+    act(() => h.input.insertText("", miraExample));
+    await h.user.keyboard(`{Backspace}${character}s`);
+    expect(h.input).toHaveValue(`@Mira Example${character}s`);
+    expect(h.draft().recipients).toEqual([
+      { ...miraExample, start: 0, end: 13 },
+    ]);
+  }
+  // macOS smart quotes after a picked chip: with no chooser open, the `'`
+  // keystroke is typed natively, then the system substitutes `’` for it with
+  // no keydown of its own.
+  const h = mount();
+  act(() => h.input.insertText("", honey));
+  await h.user.keyboard("{Backspace}'");
+  expect(h.input).toHaveValue("@Honey'");
+  const after = h.input.querySelector("[data-source]")?.nextSibling;
+  if (!(after instanceof Text)) throw new Error("No text after the chip");
+  await act(async () => after.replaceData(0, 1, "’"));
+  expect(h.input).toHaveValue("@Honey’");
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
 });
 it("leaves a pending chip to the identity link that adopts it, without restoring its typed query", async () => {
   const h = mount("[@honey", { links: true });

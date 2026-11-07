@@ -1,14 +1,19 @@
 import { visibleTeams } from "../../features/agents/visible-teams";
 import { profileKey } from "../../features/profiles/target";
-import type { OpenTarget } from "../../features/navigation/targets";
+import type { JsonValue } from "../../features/navigation/targets";
 import {
-  agentHistoryActive,
-  agentHistoryRoute,
-  agentHistoryTarget,
+  historyActive,
+  historyRoute,
+  historyTarget,
+  teamRoute,
 } from "./routes";
-import { historyPresentation } from "../../features/agents/history-presentation";
+import {
+  historyPresentation,
+  type HistoryPresentation,
+} from "../../features/agents/history-presentation";
+import { ConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
-import { AgentDetails } from "./AgentDetails";
+import { AgentDetails, useSyncLine } from "./AgentDetails";
 import { communityDestination } from "../../features/communities/destination";
 import { communityIcon } from "../../features/communities/community-icon";
 import { communityName } from "../../features/communities/names";
@@ -388,13 +393,96 @@ export function AgentsPage({
     routed && navigation.target.kind === "page"
       ? agentRoute(navigation.target.route?.params)
       : undefined;
-  const historyParams =
-    navigation?.target.kind === "page" && routedAgent === selected?.pubkey
-      ? navigation.target.route?.params
-      : undefined;
   const routedEntry = navigation?.entryId;
+  // Opened for one of your teams, such as from a version link.
+  const routedTeam =
+    routed && navigation.target.kind === "page"
+      ? teamRoute(navigation.target.route?.params)
+      : undefined;
+  // An editor with unsaved edits or a Save running, which Back leaves open
+  // as it leaves an agent's panel.
+  const teamBusy = useRef(false);
+  const onTeamBusy = useCallback((busy: boolean) => {
+    teamBusy.current = busy;
+  }, []);
+  // Read as a team's visit arrives, not a reason to apply it again.
+  const leave = useRef({ browse, editingTeam });
+  leave.current = { browse, editingTeam };
   useEffect(() => {
-    if (!routedAgent || !routedEntry) return;
+    if (!routedEntry) return;
+    const { browse, editingTeam } = leave.current;
+    if (!routedTeam) {
+      // Back past a team's visit closes its editor; a new team has none.
+      if (!teamBusy.current)
+        setEditingTeam((open) => (open === "new" ? open : undefined));
+      return;
+    }
+    // Another team's visit leaves a busy editor open too; its own versions
+    // still open in it.
+    if (teamBusy.current && editingTeam !== routedTeam) return;
+    // An agent's unsaved edits are asked about first, as choosing another is.
+    browse(undefined, () => {
+      setSharedSelection(undefined);
+      setTab("teams");
+      setEditingTeam(routedTeam);
+    });
+  }, [routedTeam, routedEntry]);
+  // Opening a team is a visit Back and Forward move between, and closing its
+  // editor ends the visit.
+  const editTeam = (id: string | undefined) => {
+    if (
+      !navigation ||
+      !navigator ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "page" ||
+      navigator.snapshot().entry.id !== navigation.entryId ||
+      id === "new"
+    ) {
+      setEditingTeam(id);
+      return;
+    }
+    // The team already routed here, as after Keep editing, has no new visit
+    // to open, so it opens as Back would have opened it.
+    if (id && id === routedTeam) {
+      browse(undefined, () => {
+        setSharedSelection(undefined);
+        setTab("teams");
+        setEditingTeam(id);
+      });
+      return;
+    }
+    const page = agentProviderTarget(navigation.target);
+    if (id) {
+      void navigator.open({
+        ...page,
+        route: { version: 1, params: { team: id } },
+      });
+      return;
+    }
+    // The editor closes here, as the route won't close a busy one, and its
+    // visits end too; the team Back reached, if another, opens in its place.
+    const closing = editingTeam ?? routedTeam;
+    setEditingTeam(routedTeam === closing ? undefined : routedTeam);
+    if (closing) endTeamVisits(closing);
+  };
+  // Ends a team's visits in this page's account and community, and nothing
+  // else: a Save that finishes after its editor went away still ends them.
+  const endTeamVisits = (id: string) => {
+    if (!navigator || navigation?.target.kind !== "page" || id === "new")
+      return;
+    const page = agentProviderTarget(navigation.target);
+    const pageKey = targetKey(page);
+    navigator.dismiss(
+      (visit) =>
+        visit.kind === "page" &&
+        teamRoute(visit.route?.params) === id &&
+        targetKey(agentProviderTarget(visit)) === pageKey,
+      page,
+    );
+  };
+  useEffect(() => {
+    // Back to an agent's visit leaves a busy team editor open too.
+    if (!routedAgent || !routedEntry || teamBusy.current) return;
     setEditingTeam(undefined);
     setSharedSelection(undefined);
     setTab("yours");
@@ -588,6 +676,31 @@ export function AgentsPage({
     navigator &&
     ((section: string) =>
       void navigator.open({ version: 1, kind: "settings", section }));
+  // The version history of the agent or team shown, read from this visit's
+  // route only when it is that subject's.
+  const presentationFor = (
+    subject: Readonly<{ agent: string } | { team: string }>,
+    route: (value: JsonValue | undefined) => string | undefined,
+  ) => {
+    if (
+      !navigation ||
+      !navigator ||
+      navigation.signal.aborted ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    const page = navigation.target;
+    if (page.kind !== "page") return;
+    const id = "agent" in subject ? subject.agent : subject.team;
+    const params =
+      route(page.route?.params) === id ? page.route?.params : undefined;
+    return historyPresentation(
+      navigator,
+      historyRoute(params, route),
+      (selection) => historyTarget(page, subject, selection),
+      historyActive(params, route),
+    );
+  };
   const panel = selected ? (
     selected.unfinished || selected.place === "elsewhere" ? (
       <AgentPeek
@@ -602,25 +715,10 @@ export function AgentsPage({
       />
     ) : (
       <AgentDetails
-        historyPresentation={
-          navigation &&
-          navigator &&
-          !navigation.signal.aborted &&
-          navigator.snapshot().entry.id === navigation.entryId &&
-          navigation.target.kind === "page"
-            ? historyPresentation(
-                navigator,
-                agentHistoryRoute(historyParams),
-                (selection) =>
-                  agentHistoryTarget(
-                    navigation.target as Extract<OpenTarget, { kind: "page" }>,
-                    selected.pubkey,
-                    selection,
-                  ),
-                agentHistoryActive(historyParams),
-              )
-            : undefined
-        }
+        historyPresentation={presentationFor(
+          { agent: selected.pubkey },
+          agentRoute,
+        )}
         communities={communities}
         messageAction={(variant) => (
           <AgentMessageButton
@@ -699,8 +797,15 @@ export function AgentsPage({
               teams={teams}
               editing={editing}
               removing={removing}
-              onEdit={setEditingTeam}
+              onEdit={editTeam}
               onRemove={removeTeam}
+              onSaved={endTeamVisits}
+              onBusy={onTeamBusy}
+              historyPresentation={
+                editing && editing !== "new"
+                  ? presentationFor({ team: editing }, teamRoute)
+                  : undefined
+              }
               newTeam={!toolbarAction && newTeamMenu}
             />
           )}
@@ -2324,6 +2429,9 @@ function Teams({
   removing,
   onEdit,
   onRemove,
+  onSaved,
+  onBusy,
+  historyPresentation,
   newTeam,
 }: {
   agents: Agents;
@@ -2335,6 +2443,9 @@ function Teams({
   removing: Team | undefined;
   onEdit(id: string | undefined): void;
   onRemove(team: Team): Promise<void>;
+  onSaved(id: string): void;
+  onBusy(busy: boolean): void;
+  historyPresentation?: HistoryPresentation | undefined;
   newTeam: ReactNode;
 }) {
   const team =
@@ -2348,6 +2459,9 @@ function Teams({
         saved={saved}
         {...(team ? { team } : {})}
         onRemove={onRemove}
+        historyPresentation={historyPresentation}
+        onBusy={onBusy}
+        onSaved={onSaved}
         onDone={() => onEdit(undefined)}
       />
     );
@@ -2380,11 +2494,17 @@ function Teams({
   );
 }
 
+const sameMembers = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((pubkey) => b.includes(pubkey));
+
 function TeamEditor({
   agents,
   saved,
   team,
   onRemove,
+  historyPresentation,
+  onBusy,
+  onSaved,
   onDone,
 }: {
   agents: Agents;
@@ -2392,8 +2512,23 @@ function TeamEditor({
   team?: Team;
   /** Deletes the team, keeping this editor open until that ends. */
   onRemove(team: Team): Promise<void>;
+  historyPresentation?: HistoryPresentation | undefined;
+  onBusy(busy: boolean): void;
+  /** Ends the saved team's visits, even once this editor is gone. */
+  onSaved(id: string): void;
   onDone(): void;
 }) {
+  // A saved revert, until the team shows its new version.
+  const [reverted, setReverted] = useState(false);
+  const synced = team && agents.teamHistory(team.id);
+  const history = synced && {
+    ...synced,
+    revise: async (...args: Parameters<typeof synced.revise>) => {
+      const outcome = await synced.revise(...args);
+      if (outcome.status === "accepted") setReverted(true);
+      return outcome;
+    },
+  };
   const [name, setName] = useState(team?.name ?? "");
   const [instructions, setInstructions] = useState(team?.instructions ?? "");
   const [members, setMembers] = useState<readonly string[]>(
@@ -2407,10 +2542,60 @@ function TeamEditor({
     setError("");
     setDeleting(open);
   };
+  const done = useRef(onDone);
+  done.current = onDone;
+  // A Save that finishes after this editor is gone leaves whatever editor
+  // replaced it alone; its team's visits still end through `onSaved`.
+  useEffect(
+    () => () => {
+      done.current = () => {};
+    },
+    [],
+  );
   // What a synced Save revises, and a new team's id for every retry.
-  const [opened] = useState(team);
+  const [opened, setOpened] = useState(team);
+  const nameEdited = !!opened && name !== opened.name;
+  const membersEdited = !!opened && !sameMembers(members, opened.members);
+  const busy =
+    pending ||
+    (opened
+      ? nameEdited || membersEdited || instructions !== opened.instructions
+      : !!(name.trim() || instructions || members.length));
+  useEffect(() => {
+    onBusy(busy);
+    return () => onBusy(false);
+  }, [busy, onBusy]);
+  // A revert takes its instructions, and the saved name and members unless
+  // edited here. An edit over a newer saved change keeps the opened version,
+  // so Save is refused as a conflict rather than undoing that change.
+  useEffect(() => {
+    if (!reverted || !team || !opened || team.revision === opened.revision)
+      return;
+    setReverted(false);
+    setInstructions(team.instructions);
+    if (!nameEdited) setName(team.name);
+    if (!membersEdited) setMembers(team.members);
+    if (
+      !(nameEdited && team.name !== opened.name) &&
+      !(membersEdited && !sameMembers(team.members, opened.members))
+    )
+      setOpened(team);
+  }, [reverted, team, opened, nameEdited, membersEdited]);
   const [draft] = useState(() => crypto.randomUUID());
   const which = opened ? { id: opened.id } : { draft };
+  // While it has unsaved changes or a Save running, a local team isn't moved
+  // to its community, which would close this editor.
+  const held =
+    !!opened &&
+    (pending ||
+      name !== opened.name ||
+      instructions !== opened.instructions ||
+      members.length !== opened.members.length ||
+      members.some((pubkey) => !opened.members.includes(pubkey)));
+  useEffect(
+    () => (held && opened ? agents.holdTeam(opened.id) : undefined),
+    [agents, held, opened],
+  );
   // Each hosted agent picked, as listed then in the only community with it.
   const [picked, setPicked] = useState<ReadonlyMap<string, Agent>>(
     () => new Map(),
@@ -2453,9 +2638,13 @@ function TeamEditor({
     if (pending) return;
     setPending(true);
     setError("");
+    const ended = onSaved;
+    const id = opened?.id;
     try {
       await work();
-      onDone();
+      if (id) ended(id);
+      // The latest, as Back may have moved on while it ran.
+      done.current();
     } catch (reason) {
       setError(message(reason));
       setPending(false);
@@ -2492,6 +2681,7 @@ function TeamEditor({
         }
         onClose={onDone}
       />
+      {team && <TeamSyncLine agents={agents} id={team.id} />}
       <Field label="Name">
         <Input
           autoFocus
@@ -2526,6 +2716,12 @@ function TeamEditor({
           onChange={(event) => setInstructions(event.target.value)}
         />
       </Field>
+      {history && (
+        <ConfigHistoryRow
+          history={history}
+          presentation={historyPresentation}
+        />
+      )}
       <Section title="Members">
         {choices.length ? (
           <div className="grid gap-2">
@@ -2619,5 +2815,16 @@ function TeamEditor({
         </AlertDialog>
       )}
     </form>
+  );
+}
+
+/** Where the team lives: synced in its community, or only on this device. */
+function TeamSyncLine({ agents, id }: { agents: Agents; id: string }) {
+  const line = useSyncLine(agents, () => agents.teamSync(id), "team");
+  if (!line) return null;
+  return (
+    <p className="m-0 text-body-sm text-secondary">
+      {line.reason ? `${line.title}. ${line.reason}` : line.title}
+    </p>
   );
 }

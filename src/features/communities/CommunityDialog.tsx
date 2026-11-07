@@ -15,6 +15,8 @@ import { nativeIdentityEnabled } from "../identity/service";
 import { isTransientFailure, readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
 import { admitCommunity, completeJoin, type Current } from "./join";
+import { consentAsked, type JoinPolicy } from "./join-policy";
+import { ACCOUNT_CONSENT, accountConsents } from "./account-consent";
 import { CommunitySignIn } from "../federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../federated-identity/service";
 import { OnboardingBack } from "../identity/OnboardingBack";
@@ -155,9 +157,12 @@ export function CommunityDialog({
     void submit();
   });
   const policy = info?.policy;
-  const allowed =
-    (!policy?.age_attestation_required || adult) &&
-    (!(policy?.terms_markdown || policy?.privacy_markdown) || agreed);
+  // The signed-in account's consent covers a community its server hosts, so
+  // the access step asks for none.
+  const consentGiven =
+    !!destination && accountConsents(federatedIdentity, destination.url);
+  const asked = consentAsked(policy, consentGiven);
+  const allowed = (!asked.age || adult) && (!asked.agreement || agreed);
   const current: Current = (entry) =>
     mounted.current && (!entry || journal?.current(entry) === true);
   function showProfile(
@@ -170,6 +175,24 @@ export function CommunityDialog({
     );
     focusProfile.current = true;
     setStep("profile");
+  }
+  /** The access step's admission, with the account's consent when it covers `url`. */
+  async function admit(
+    community: string,
+    url: string,
+    joinPolicy: JoinPolicy | null | undefined,
+  ) {
+    const admission = await admitCommunity({
+      community,
+      journal,
+      code,
+      policy: joinPolicy,
+      consent: accountConsents(federatedIdentity, url)
+        ? ACCOUNT_CONSENT
+        : { adult, agreed },
+      current,
+    });
+    if (admission) showProfile(admission.found, admission.entry);
   }
   async function submit() {
     if (uploading || unavailable) return;
@@ -211,22 +234,34 @@ export function CommunityDialog({
         if (!signal.aborted && current(pending)) {
           setInfo(value);
           if (found && (found.exists || pending)) showProfile(found, pending);
-          else setStep("access");
+          else if (
+            !accountConsents(federatedIdentity, next.url) ||
+            (!found && !code.trim())
+          )
+            setStep("access");
+          else {
+            // The account's consent leaves the access step nothing to ask
+            // (no code is needed, or one is given), so Continue goes on to its
+            // admission. A refusal is shown there, where a code can be entered.
+            await admit(next.id, next.url, value.policy).catch(
+              (reason: unknown) => {
+                if (current()) {
+                  setStep("access");
+                  if (
+                    value.membershipRequired === true &&
+                    readErrorKind(reason) === "denied"
+                  )
+                    setNeedsInvite(true);
+                }
+                throw reason;
+              },
+            );
+          }
         }
       });
     } else if (step === "access") {
-      if (!allowed) return;
-      await work(async () => {
-        const admission = await admitCommunity({
-          community: id,
-          journal,
-          code,
-          policy,
-          consent: { adult, agreed },
-          current,
-        });
-        if (admission) showProfile(admission.found, admission.entry);
-      });
+      if (!allowed || !destination) return;
+      await work(() => admit(id, destination.url, policy));
     } else {
       if (!profile.name.trim()) return;
       await work(async () => {
@@ -468,7 +503,7 @@ export function CommunityDialog({
                     />
                   </Field>
                 )}
-                {policy && (
+                {policy && !consentGiven && (
                   <div className={styles.policy}>
                     {(policy.terms_markdown || policy.privacy_markdown) && (
                       <Checkbox

@@ -804,7 +804,8 @@ it("offers a known member for Tab while agents load, then appends late agents", 
     expect(completionLabels(publish)).toEqual(["Member"]);
     expect(result().items[0]?.canSelect?.("Tab")).toBe(true);
     expect(result().spaceId).toBeUndefined();
-    expect(result().items[0]?.canSelect?.(" ")).toBe(false);
+    for (const key of [" ", ",", "’"])
+      expect(result().items[0]?.canSelect?.(key), key).toBe(false);
     view.rerender(<MentionCompletion {...props} />);
     await act(async () => release());
     await waitFor(() =>
@@ -3480,6 +3481,11 @@ it("saved teams resolve exact keys, block automatic Space and revoke a changed c
       ]),
     );
     expect(h.result()?.spaceId).toBeUndefined();
+    // The team's longer name blocks every key that ends the typed name.
+    const member = h.result()?.items.find((item) => item.id === h.member);
+    expect(member?.canSelect?.("Enter")).toBe(true);
+    for (const key of [" ", ",", "'", "’", ")"])
+      expect(member?.canSelect?.(key), key).toBe(false);
     const selected = h.choice();
     if (!selected) throw new Error("Team missing");
     expect(selected.canSelect?.("Enter")).toBe(true);

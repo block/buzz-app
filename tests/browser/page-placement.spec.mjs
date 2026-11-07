@@ -71,7 +71,7 @@ test("shared navigation preserves drafts and history across Solo and header page
   // Pick the original conversation from the shared sidebar to restore its draft.
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
-    .getByRole("button", { name: "Alpha Draft", exact: true })
+    .getByRole("button", { name: "Alpha", exact: true })
     .click();
   await expect(composer).toHaveText("Keep this draft");
   const reminders = topbar.getByRole("tab", { name: "Reminders", exact: true });

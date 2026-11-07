@@ -356,7 +356,18 @@ open the relay's `/api/join-policy/terms` and `/privacy` pages outside the app. 
 name, description, member count, owner or invite badge is shown: none is knowable
 before joining. **Join** sits to the right of **Cancel**, as in every dialog
 footer, and is always labelled Join: shown consent boxes gate it, they do not
-rename it. Lookup failures are classified, not echoed: an unreachable relay or an
+rename it. A signed-in Builderlab account's consent covers a community its
+server hosts (`accountConsents` in `src/features/communities/account-consent.ts`:
+the session's `communityHosts`, matched as native matches them). Account setup
+records a date of birth, which kgoose refuses for anyone under 18, and agrees to
+the Buzz Terms of Service and Privacy Policy that Builderlab-hosted relays
+publish as their policy. Such a community shows no boxes, and its Join attests
+both, so an invite claim confirms the person's age. Its **Continue** from Join a
+community, or a listed owned community, joins at once without Join Community, as
+a just-created community does, unless it comes back from a failed join. The
+in-app dialog likewise skips its access step for such a community when no code
+is needed or one was given. An imported key with no account, and a community no
+signed-in server hosts, still ask. Lookup failures are classified, not echoed: an unreachable relay or an
 unusable policy answer offers **Cancel** and **Retry** (a missing policy counts as
 "none" only once NIP-11 confirmed a Buzz relay); a non-Buzz address or a Buzz
 relay with no community bound to that host offers **Cancel** only.

@@ -473,7 +473,8 @@ export function RecipientPicker({
           className={styles.toField}
           onClick={focus}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
+            // Escape closes an open list; otherwise it is the host's.
+            if (event.key === "Escape" && open && !disabled) {
               event.stopPropagation();
               setOpen(false);
             }
@@ -563,9 +564,11 @@ export function RecipientPicker({
                 const last = selected.at(-1);
                 if (last) remove(last.pubkey);
               } else if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                setOpen(false);
+                if (open && !disabled) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpen(false);
+                }
               } else if (
                 event.key === "Tab" &&
                 !event.shiftKey &&

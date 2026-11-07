@@ -1,8 +1,22 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  MenuItem,
+  MenuPopup,
+  MenuRoot,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
@@ -10,6 +24,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { OutboxRecovery, OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import { ForwardMessageProvider, useForwardMessage } from "./ForwardMessage";
+import { MessageActionBar } from "./MessageActionBar";
 import { MessageMarkdown } from "./MessageMarkdown";
 
 const viewer = "a".repeat(64),
@@ -107,9 +122,11 @@ function pendingForward(note = "Saved note"): OutgoingEvent {
 function setup({
   saved = [] as OutgoingEvent[],
   nested = false,
+  content = <Trigger />,
 }: {
   saved?: OutgoingEvent[];
   nested?: boolean;
+  content?: ReactNode;
 } = {}) {
   const history = createMemoryHistory();
   const controller = createNavigationController(history);
@@ -213,10 +230,10 @@ function setup({
             scope={scope}
             navigation={navigation}
           >
-            <Trigger />
+            {content}
           </ForwardMessageProvider>
         ) : (
-          <Trigger />
+          content
         )}
       </ForwardMessageProvider>
     </ToastProvider>,
@@ -584,5 +601,178 @@ it.each([true, false])(
     );
     expect(messages.send).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  },
+);
+
+it("closes the people list on Escape, then the dialog, retiring its visit", async () => {
+  const user = userEvent.setup();
+  const { navigation } = setup();
+  await user.click(screen.getByRole("button", { name: "Forward source" }));
+  const dialog = await screen.findByRole("dialog", { name: "Forward message" });
+  // Focusing To opens the people list.
+  await screen.findByRole("listbox", { name: "People" });
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("listbox", { name: "People" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(dialog).toBeInTheDocument();
+  expect(navigation.snapshot().entry.target).toHaveProperty(
+    "forward",
+    messageId,
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  ).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Forward message" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(navigation.snapshot().entry.target).not.toHaveProperty("forward");
+  act(() => navigation.back());
+  act(() => navigation.forward());
+  expect(
+    screen.queryByRole("dialog", { name: "Forward message" }),
+  ).not.toBeInTheDocument();
+});
+
+function MenuForward({ children }: { children?: ReactElement }) {
+  const forward = useForwardMessage();
+  return (
+    <MessageActionBar
+      copyText={() => "Message"}
+      link={`buzz://message?channel=alpha&id=${messageId}`}
+      onForward={() =>
+        forward?.({ channelId: "alpha", id: messageId } as ChannelMessage)
+      }
+    >
+      {children}
+    </MessageActionBar>
+  );
+}
+async function chooseForward(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Forward message" }),
+  );
+  await screen.findByRole("dialog", { name: "Forward message" });
+}
+async function cancelForward(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Forward message" }),
+    ).not.toBeInTheDocument(),
+  );
+}
+
+it.each(["Cancel", "Escape"])(
+  "returns focus to More message actions when Forward from its keyboard-opened menu is dismissed with %s",
+  async (dismissal) => {
+    const user = userEvent.setup();
+    setup({ content: <MenuForward /> });
+    const more = screen.getByRole("button", { name: "More message actions" });
+    more.focus();
+    await user.keyboard("{Enter}");
+    const item = await screen.findByRole("menuitem", {
+      name: "Forward message",
+    });
+    await user.keyboard("{End}");
+    expect(item).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog", { name: "Forward message" });
+    // The item Forward started from left with the menu.
+    expect(item).not.toBeInTheDocument();
+    if (dismissal === "Cancel") await cancelForward(user);
+    else {
+      await screen.findByRole("listbox", { name: "People" });
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("listbox", { name: "People" }),
+        ).not.toBeInTheDocument(),
+      );
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Forward message" }),
+        ).not.toBeInTheDocument(),
+      );
+    }
+    await waitFor(() => expect(more).toHaveFocus());
+  },
+);
+
+it("returns focus to More message actions, not an earlier control, when a press opened its menu without focusing it", async () => {
+  const user = userEvent.setup();
+  setup({
+    content: (
+      <>
+        <MenuRoot>
+          <MenuTrigger render={<button type="button">Elsewhere</button>} />
+          <MenuPopup>
+            <MenuItem>Unrelated action</MenuItem>
+          </MenuPopup>
+        </MenuRoot>
+        <MenuForward />
+      </>
+    ),
+  });
+  const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+  await user.click(elsewhere);
+  await screen.findByRole("menu");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(elsewhere).toHaveFocus());
+  // WebKit opens the menu on press without focusing its button.
+  const more = screen.getByRole("button", { name: "More message actions" });
+  fireEvent.pointerDown(more, { pointerType: "mouse", button: 0 });
+  fireEvent.mouseDown(more, { button: 0, detail: 1 });
+  await chooseForward(user);
+  await cancelForward(user);
+  await waitFor(() => expect(more).toHaveFocus());
+});
+
+it.each([
+  ["right-click", "First"],
+  ["Shift+F10", "Second"],
+])(
+  "returns focus to the context menu's own target when Forward from a %s menu is cancelled",
+  async (opening, target) => {
+    const user = userEvent.setup();
+    setup({
+      content: (
+        <MenuForward>
+          <div data-testid="row">
+            <button type="button">First</button>
+            <button type="button">Second</button>
+          </div>
+        </MenuForward>
+      ),
+    });
+    if (opening === "right-click") {
+      fireEvent.contextMenu(screen.getByTestId("row"), {
+        clientX: 20,
+        clientY: 20,
+        button: 2,
+      });
+      await chooseForward(user);
+    } else {
+      screen.getByRole("button", { name: "Second" }).focus();
+      await user.keyboard("{Shift>}{F10}{/Shift}");
+      const item = await screen.findByRole("menuitem", {
+        name: "Forward message",
+      });
+      await user.keyboard("{End}");
+      expect(item).toHaveFocus();
+      await user.keyboard("{Enter}");
+      await screen.findByRole("dialog", { name: "Forward message" });
+    }
+    await cancelForward(user);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: target })).toHaveFocus(),
+    );
   },
 );

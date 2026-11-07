@@ -314,7 +314,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
-  nothing typed lists up to six of your other channels and DMs whose rows show unread first,
+  nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
   of reopening where you left it. A conversation unread only through thread
   replies previews its newest unread reply and opens it in its thread. Muted

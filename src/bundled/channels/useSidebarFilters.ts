@@ -32,7 +32,7 @@ export function useSidebarFilters(
         : [],
     ),
   );
-  const unreadSet = useUnreadChannelIds(unread, ids);
+  const unreadSet = useUnreadChannelIds(unread, ids, true);
   const [clock, tick] = useState(0);
   const now = Date.now();
   let nextExpiry = Infinity;
@@ -93,8 +93,14 @@ export function channelHasUnread(
   );
 }
 
-/** Channels among `ids` (a JSON id array) whose rows show unread. */
-export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
+/** Channels among `ids` (a JSON id array) with unread messages or threads.
+ * `shown` asks what their rows show instead: the sidebar's Unreads filter
+ * follows the rows, while search still leads with every unread conversation. */
+export function useUnreadChannelIds(
+  unread: UnreadCapability,
+  ids: string,
+  shown = false,
+) {
   const targets = useMemo(
     () =>
       (JSON.parse(ids) as string[]).map((channelId) => ({
@@ -119,10 +125,12 @@ export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
     () =>
       JSON.stringify(
         targets
-          .filter((target) => channelHasUnread(unread, target.channelId, true))
+          .filter((target) =>
+            channelHasUnread(unread, target.channelId, shown),
+          )
           .map((target) => target.channelId),
       ),
-    [targets, unread],
+    [targets, unread, shown],
   );
   const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
   return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);

@@ -81,9 +81,9 @@ catch-up (including a message taller than the viewport):
   retained verified event timestamp. The channel snapshot's `row` counts
   (`observedCount`, `attentionCount`, `threadCount`) leave out evidence at or
   before that cut. The sidebar row, its floating unread cues, the sidebar
-  **Unreads** filter, unread-first search and the Dock indicator follow `row`.
-  Thread dots, Activity, the channel activity popover, the **New messages**
-  divider, mark-read menus and every `observedCount` keep the unread. Explicit
+  **Unreads** filter and the Dock indicator follow `row`. Thread dots,
+  Activity, the channel activity popover, unread-first search, the **New
+  messages** divider, mark-read menus and every `observedCount` keep the unread. Explicit
   unread intent still shows. A leave whose row shows nothing that the saved
   mark would not already hide writes nothing. These saves do not advance
   `revision()`, so a reader's entry evidence outlives them; another window's

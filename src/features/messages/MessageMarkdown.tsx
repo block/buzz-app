@@ -501,12 +501,17 @@ export function MessageMarkdown({
   onOpenLink,
   canOpenLink,
   participantProfiles,
+  linkLabels,
   largeEmoji = false,
   interactive = true,
   edited = false,
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
+  /** Host-resolved display labels for message links a session would
+   * otherwise read (a companion shows main's); display only, like the
+   * directory's channel names. */
+  linkLabels?: ReadonlyMap<string, string> | undefined;
   session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -543,6 +548,7 @@ export function MessageMarkdown({
       onOpenLink={onOpenLink}
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
+      linkLabels={linkLabels}
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
@@ -567,6 +573,7 @@ function PreparedMessageMarkdown({
   onOpenLink,
   canOpenLink,
   participantProfiles,
+  linkLabels,
   resolveName,
   largeEmoji = false,
   interactive = true,
@@ -585,7 +592,9 @@ function PreparedMessageMarkdown({
       <MessageLink
         url={url}
         label={label}
-        directoryLabel={channelLinkLabel(url, directory.channels)}
+        directoryLabel={
+          linkLabels?.get(url) ?? channelLinkLabel(url, directory.channels)
+        }
         registry={extensions?.links}
         onOpenLink={onOpenLink}
         canOpenLink={canOpenLink}

@@ -77,6 +77,9 @@ pub(crate) struct DiscussionRow {
     mentions: Vec<String>,
     #[serde(default)]
     mention_names: std::collections::BTreeMap<String, String>,
+    /// Labels main resolved for message links in `text`, by URL (pop-outs).
+    #[serde(default)]
+    pub(crate) link_labels: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     edited: bool,
     #[serde(default)]
@@ -227,6 +230,11 @@ impl DiscussionRow {
                 e.source_content.len() <= 65536 && e.attachment_source_id.len() <= 128
             })
             && self.membership.as_ref().is_none_or(|m| m.valid())
+            && self.link_labels.len() <= 64
+            && self
+                .link_labels
+                .iter()
+                .all(|(url, label)| url.len() <= 8192 && label.len() <= 1000)
             && self.actions.len() <= 32
             && self
                 .actions
@@ -764,6 +772,7 @@ mod tests {
                 text: "Hello".into(),
                 mentions: vec!["cd".repeat(32)],
                 mention_names: [("cd".repeat(32), "Taylor".into())].into(),
+                link_labels: Default::default(),
                 edited: false,
                 attachment_seams: vec![3],
                 mention_references: vec!["ef".repeat(32)],

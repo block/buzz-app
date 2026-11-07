@@ -60,6 +60,7 @@ import {
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
@@ -127,8 +128,12 @@ export type MessageRowProps = {
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   /** Resolves names, channels and mentions where the row is shown without
-   * `session`, which would also offer its controls. */
-  references?: RelaySession | undefined;
+   * `session`, which would also offer its controls. A companion's bridge
+   * session carries main's channel list and profiles. */
+  references?: RelaySession | ComposerSession | undefined;
+  /** Host-resolved labels for message links, by URL, where `references`
+   * cannot read the linked message (a companion shows main's). */
+  linkLabels?: ReadonlyMap<string, string> | undefined;
   scope?: string | undefined;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -250,6 +255,7 @@ function MessageRowContent({
   overflowItems,
   reactionSlot,
   participantProfiles,
+  linkLabels,
   layout = "timeline",
   compactAvatar = false,
   viewer = session?.viewer,
@@ -743,6 +749,7 @@ function MessageRowContent({
       onOpenLink={openLink}
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
+      linkLabels={linkLabels}
       largeEmoji={emojiOnly}
       edited={editedInBody && displayRow.edited}
     />
@@ -1364,6 +1371,7 @@ function MessageRowContent({
                       onOpenLink={openLink}
                       canOpenLink={canOpenLink}
                       participantProfiles={participantProfiles}
+                      linkLabels={linkLabels}
                     />
                   ))}
                 </div>

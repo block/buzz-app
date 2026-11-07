@@ -789,6 +789,33 @@ mod tests {
         assert!(!r.valid());
     }
     #[test]
+    fn link_labels_are_bounded_per_row() {
+        let mut r = row("r1", "https://media/a", "a.pdf");
+        let link = |n: usize| format!("buzz://message?channel=c&id={:0>64x}", n);
+        r.link_labels = (0..64)
+            .map(|i| (link(i), "Ada in #design".into()))
+            .collect();
+        assert!(r.valid());
+        r.link_labels = (0..65)
+            .map(|i| (link(i), "Ada in #design".into()))
+            .collect();
+        assert!(!r.valid());
+        r.link_labels = [(link(0), "x".repeat(1001))].into();
+        assert!(!r.valid());
+        r.link_labels = [("u".repeat(8193), "Ada in #design".into())].into();
+        assert!(!r.valid());
+        let decoded: DiscussionRow = serde_json::from_value(serde_json::json!({
+            "id": "r", "authorId": "a", "channelId": "c", "author": "Ada", "picture": null,
+            "text": "see", "time": 1, "delivery": "seen", "attachments": [],
+            "linkLabels": { "buzz://message?channel=c&id=1": "Ada in #design" }
+        }))
+        .unwrap();
+        assert_eq!(
+            decoded.link_labels["buzz://message?channel=c&id=1"],
+            "Ada in #design"
+        );
+    }
+    #[test]
     fn labels_are_recognized_by_prefix() {
         assert!(is_popout("popout-1234"));
         assert!(!is_popout("main"));

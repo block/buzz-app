@@ -191,6 +191,7 @@ export function createHuddleComposerOwner(
       media,
       tools: extensions?.tools.snapshot().map((t) => t.key) ?? [],
       completions: extensions?.completions?.snapshot().map((t) => t.key) ?? [],
+      links: extensions?.links?.snapshot().map((t) => t.key) ?? [],
     };
   }
   function publish() {
@@ -749,6 +750,7 @@ export function createHuddleComposerOwner(
     session.typing.subscribe(publish),
     extensions?.tools.subscribe(publish),
     extensions?.completions?.subscribe(publish),
+    extensions?.links?.subscribe(publish),
   ];
   return {
     token,

@@ -15,6 +15,7 @@ import type {
   ComposerTool,
   ContributionReader,
   InlineRenderer,
+  LinkRenderer,
 } from "../conversation/contracts";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -32,6 +33,8 @@ export type CompanionRowCapabilities = {
         session: ReactionSession;
         tools: ContributionReader<ComposerTool>;
         inline: ContributionReader<InlineRenderer>;
+        /** Link renderers main has enabled, so links label as they do there. */
+        links?: ContributionReader<LinkRenderer> | undefined;
       }
     | undefined;
   /** The owner's persistence scope, for message links. */
@@ -126,6 +129,25 @@ export function CompanionRows({
           <div key={row.id}>
             <MessageRow
               row={message}
+              // The bridge session carries main's channel list and profiles:
+              // channel links and Solo chips label as in main. Message
+              // links take main's projected labels (`linkLabels`); the
+              // companion never reads a linked message itself.
+              references={reactions?.session}
+              extensions={
+                reactions
+                  ? {
+                      tools: reactions.tools,
+                      inline: reactions.inline,
+                      ...(reactions.links ? { links: reactions.links } : {}),
+                    }
+                  : undefined
+              }
+              linkLabels={
+                row.linkLabels
+                  ? new Map(Object.entries(row.linkLabels))
+                  : undefined
+              }
               scope={scope}
               viewer={reactions?.session.viewer}
               onReply={

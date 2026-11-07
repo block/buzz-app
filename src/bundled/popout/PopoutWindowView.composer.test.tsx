@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup as cleanupReact,
   fireEvent,
   render,
@@ -13,6 +14,7 @@ import { composerDOMFixture } from "../../features/messages/composer-testing";
 import type { PopoutView } from "../../features/popout/window";
 import { createRelaySession } from "../../features/relay/session";
 import { useHuddleComposer } from "../huddles/HuddleComposer";
+import { linkRenderer } from "../links";
 import { PopoutWindowView } from "./PopoutWindowView";
 
 // The pop-out editor through the real owner/client bridge: what main
@@ -336,4 +338,95 @@ it("asks before leaving a view while a voice note is being recorded", async () =
   );
   fireEvent.click(screen.getByRole("button", { name: "Discard and continue" }));
   expect(act).toHaveBeenCalledWith("openThread", root.id);
+});
+
+it("labels links as main does: its enabled link renderer, channel names from its list and its byline for message links, in rows and the editor", async () => {
+  const h = harness();
+  const design = {
+    id: "design",
+    name: "design",
+    channelType: "stream" as const,
+    members: [h.session.viewer],
+  };
+  const session = {
+    ...h.session,
+    channels: {
+      ...h.session.channels,
+      list: () => ({ ...h.session.channels.list(), channels: [design] }),
+    },
+  };
+  const owner = createHuddleComposerOwner(
+    session,
+    h.room,
+    "parent",
+    {
+      tools: { snapshot: () => [], subscribe: () => () => {} },
+      links: {
+        snapshot: () => [
+          {
+            ...linkRenderer,
+            key: "buzz.links/links",
+            pluginId: "buzz.links",
+            revision: "bundled",
+          },
+        ],
+        subscribe: () => () => {},
+      },
+    },
+    () => true,
+  );
+  cleanup.push(() => owner.dispose());
+  const client = createHuddleComposerClient(owner.token);
+  cleanup.push(() => client.dispose());
+  await vi.waitFor(() =>
+    expect(client.snapshot().data?.links).toEqual(["buzz.links/links"]),
+  );
+  const message = `buzz://message?channel=design&id=${"9".repeat(64)}`;
+  const unknown = `buzz://message?channel=design&id=${"8".repeat(64)}`;
+  const mounted = render(
+    <PopoutWindowView
+      view={{
+        ...view(h),
+        composer: owner.token,
+        root: {
+          ...(view(h).root as NonNullable<PopoutView["root"]>),
+          text: `See ${message}, ${unknown} and buzz://channel/design`,
+          linkLabels: { [message]: "Bea in #design" },
+        },
+      }}
+      act={vi.fn()}
+    />,
+  );
+  // Main's byline for the link it has read; the channel's name for one it
+  // hasn't, and for a channel link; each with the renderer's icon.
+  // The renderer arrives with the bridge's first snapshot.
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("link", { name: "Bea in #design" })
+        .querySelector('[data-link-kind="message"]'),
+    ).toBeTruthy(),
+  );
+  const pending = screen.getByRole("link", { name: "design" });
+  expect(pending.getAttribute("href")).toBe(unknown);
+  expect(pending.querySelector('[data-link-kind="message"]')).toBeTruthy();
+  const channel = screen.getByRole("link", { name: "#design" });
+  expect(channel.querySelector('[data-link-kind="channel"]')).toBeTruthy();
+  // The editor decorates a pasted message link with the same renderer.
+  const input = await screen.findByRole("textbox", { name: "Reply to thread" });
+  act(() => {
+    input.focus();
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? `${message} ` : ""),
+      },
+    });
+  });
+  await waitFor(() =>
+    expect(
+      mounted.container.querySelector('form [data-link-kind="message"]')
+        ?.textContent,
+    ).toBe("design"),
+  );
 });

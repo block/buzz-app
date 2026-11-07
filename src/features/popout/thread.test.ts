@@ -1061,3 +1061,171 @@ it("classifies typing as main's indicator does: thread work at a shown root is t
   // its thread, not the channel's status line.
   expect(conversation.snapshot().typing).toBeUndefined();
 });
+
+it("labels bare message links as main's byline does, through the shared author lookups, and releases lookups that leave the view", async () => {
+  const h = fixture();
+  const AUTHOR = "f".repeat(64);
+  const LINKED = "9".repeat(64);
+  const OTHER = "8".repeat(64);
+  const url = `buzz://message?channel=design&id=${LINKED}`;
+  const other = `buzz://message?channel=design&id=${OTHER}`;
+  // The linked channel is listed and confirmed; "dm" or Solo would keep the
+  // existing presentation, so neither is named.
+  const design: ChannelSummary = {
+    id: "design",
+    name: "design",
+    channelType: "stream",
+    members: [AUTHOR, VIEWER],
+  };
+  const solo: ChannelSummary = {
+    id: "solo",
+    name: "Solo",
+    channelType: "solo",
+  };
+  const linked = (id: string, channelId: string): ChannelMessage => ({
+    id,
+    channelId,
+    authorId: AUTHOR,
+    createdAt: 1,
+    content: "Linked",
+    attachments: [],
+    mentions: [],
+    reactions: [],
+    replyCount: 0,
+    participants: [],
+  });
+  // Exact reads main's links would run: resolve the first on demand, hold
+  // the second to prove a released lookup never labels.
+  const reads = new Map<
+    string,
+    { settle(row?: ChannelMessage): void; disposed: boolean }
+  >();
+  const session = {
+    ...h.session,
+    names: {
+      resolve: (pubkey: string, fallback: string) =>
+        pubkey === AUTHOR ? "Ada" : fallback,
+      subscribe: () => () => {},
+      snapshot: () => 0,
+    },
+    profiles: { ...h.session.profiles, ensure: vi.fn(async () => {}) },
+    channels: {
+      ...h.session.channels,
+      list: () => ({ ...h.session.channels.list(), channels: [design, solo] }),
+      window: () => ({
+        channelId: "design",
+        status: "ready",
+        rows: [],
+        hasMore: false,
+        loadingOlder: false,
+        error: undefined,
+        freshness: "cached",
+      }),
+    },
+    thread: (channelId: string, id: string, options?: { exact?: boolean }) => {
+      if (id === ROOT && !options?.exact)
+        return h.session.thread(channelId, id);
+      let snapshot: ThreadSnapshot = {
+        status: "loading",
+        error: undefined,
+        canLoadMore: false,
+        limited: false,
+        root: undefined,
+        replies: [],
+      };
+      const listeners = new Set<() => void>();
+      const entry = {
+        disposed: false,
+        settle(row?: ChannelMessage) {
+          snapshot = row
+            ? {
+                ...snapshot,
+                status: "ready",
+                target: row,
+                targetStatus: "ready",
+              }
+            : { ...snapshot, status: "error", error: "gone" };
+          for (const listener of listeners) listener();
+        },
+      };
+      reads.set(id, entry);
+      return {
+        snapshot: () => snapshot,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        refresh: async () => {},
+        loadMore: async () => {},
+        retarget: async () => "selected" as const,
+        dispose: () => {
+          entry.disposed = true;
+        },
+      };
+    },
+  } as unknown as RelaySession;
+  const root = () => {
+    const current = h.snapshot.current.root;
+    if (!current) throw new Error("fixture root");
+    return current;
+  };
+  const settle = (id: string, row: ChannelMessage) => {
+    const read = reads.get(id);
+    if (!read) throw new Error(`no read for ${id}`);
+    read.settle(row);
+  };
+  const changed = vi.fn();
+  const thread = createPopoutThread(session, "channel", ROOT, changed);
+  clean.push(() => thread.dispose());
+  h.snapshot.current = {
+    ...h.snapshot.current,
+    root: {
+      ...root(),
+      content: `See ${url} and [the other](${other}) and buzz://message?channel=solo&id=${OTHER}`,
+    },
+  };
+
+  // Projecting the rows starts a lookup only for the bare link in a named
+  // channel; the labelled link keeps its label and the Solo link its chip.
+  expect(thread.snapshot().root?.linkLabels).toBeUndefined();
+  // Lookups start after the commit that mounted them, as for links.
+  await vi.waitFor(() => expect([...reads.keys()]).toEqual([LINKED]));
+  settle(LINKED, linked(LINKED, "design"));
+  expect(changed).toHaveBeenCalled();
+  expect(thread.snapshot().root?.linkLabels).toEqual({
+    [url]: "Ada in #design",
+  });
+  // A found author is kept for the session, as main's links keep it.
+  expect(session.profiles.ensure).toHaveBeenCalledWith([AUTHOR], "background");
+
+  // A link that leaves the shown rows releases its lookup before a new one
+  // is held; a message link to no one yet named stays unlabelled.
+  h.snapshot.current = {
+    ...h.snapshot.current,
+    root: { ...root(), content: `Now ${other}` },
+  };
+  expect(thread.snapshot().root?.linkLabels).toBeUndefined();
+  await vi.waitFor(() => expect([...reads.keys()]).toEqual([LINKED, OTHER]));
+  // Gone before its author arrived: the pending read is cancelled with it.
+  h.snapshot.current = {
+    ...h.snapshot.current,
+    root: { ...root(), content: "No links" },
+  };
+  expect(thread.snapshot().root?.linkLabels).toBeUndefined();
+  expect(reads.get(OTHER)?.disposed).toBe(true);
+  // Shown again: a new lookup; the found author needs none.
+  h.snapshot.current = {
+    ...h.snapshot.current,
+    root: { ...root(), content: `Both ${url} ${other}` },
+  };
+  expect(thread.snapshot().root?.linkLabels).toEqual({
+    [url]: "Ada in #design",
+  });
+  reads.delete(OTHER);
+  await vi.waitFor(() => expect(reads.has(OTHER)).toBe(true));
+  settle(OTHER, linked(OTHER, "design"));
+  expect(thread.snapshot().root?.linkLabels).toEqual({
+    [url]: "Ada in #design",
+    [other]: "Ada in #design",
+  });
+});

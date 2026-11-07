@@ -613,6 +613,13 @@ available rather than silently discarding it.
 
 ## Choosing and customizing agents
 
+- Open an agent’s **Memory** tab and expand a memory to read it with Markdown
+  formatting, including headings, lists, code, tables, and line breaks. Memory
+  images stay as text rather than loading remote content. **Copy full body** in
+  a memory’s context menu copies its original Markdown.
+  Buzz links use the app’s link labels and previews and open their destination
+  in the same community. Links inside code stay as text.
+
 - Buzz supports different agent types, including Claude, Codex, Goose, and Pi.
   A **harness** is the software that runs an agent; a **model** is the AI it
   uses. Available types and models depend on the platform, active plugins, and

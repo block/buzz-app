@@ -13,7 +13,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { formatFullTimestamp } from "../../shared/datetime";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createAgentMemories, type MemoryListing } from "./memory";
-import { MemoryPanel } from "./MemoryPanel";
+import { MemoryPanel, type MemoryLinks } from "./MemoryPanel";
+import { createRelaySession } from "../relay/session";
+import { matchesEvent } from "../relay/projection";
+import { keypair, signed } from "../relay/testing";
+import { LinkLabel, linkKind } from "../../bundled/links/InlineLink";
 import type { Agent } from "./service";
 import type { AgentScopeReader } from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
@@ -58,6 +62,7 @@ function setup(
     onPage?: (page: MemoryListing) => void,
   ) => Promise<MemoryListing>,
   communities?: CommunityReader,
+  links?: MemoryLinks,
 ) {
   const owner = createAgentMemories(vi.fn(read), "c".repeat(64), () => true);
   return {
@@ -69,6 +74,7 @@ function setup(
         agent={agent}
         memories={owner.capability}
         communities={communities}
+        links={links}
       />,
       {
         wrapper: ToastProvider,
@@ -127,6 +133,220 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   );
   expect(within(references).getByText("Cold detail.")).toBeVisible();
   expect(within(references).queryByText("core")).not.toBeInTheDocument();
+});
+
+it("renders rich memory blocks and preserves authored line breaks", async () => {
+  const { container } = setup(async () => ({
+    entries: [
+      entry(
+        "core",
+        "# Priorities\n\nFirst line.\nSecond line.\n\n" +
+          "- **Keep** context\n- *Read* sources\n\n" +
+          "> Remember why.\n\n`inline`\n\n```ts\nconst safe = true;\n```\n\n" +
+          "| Topic | Status |\n| --- | --- |\n| Memory | Ready |\n\n" +
+          "[Guide](https://example.com/guide)",
+      ),
+    ],
+    partial: false,
+  }));
+  await openCore();
+  expect(
+    screen.getByRole("heading", { name: "Priorities", level: 1 }),
+  ).toBeVisible();
+  const paragraph = screen.getByText(/First line/);
+  expect(paragraph.querySelector("br")).toBeInTheDocument();
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  expect(screen.getByText("Keep").tagName).toBe("STRONG");
+  expect(screen.getByText("Read").tagName).toBe("EM");
+  expect(container.querySelector("blockquote")).toHaveTextContent(
+    "Remember why.",
+  );
+  expect(container.querySelector("pre > code")).toHaveTextContent(
+    "const safe = true;",
+  );
+  expect(screen.getByRole("table")).toHaveTextContent("MemoryReady");
+  expect(screen.getByRole("link", { name: "Guide" })).toHaveAttribute(
+    "href",
+    "https://example.com/guide",
+  );
+});
+
+it("keeps memory images and raw HTML inert and unsafe links inactive", async () => {
+  const { container } = setup(async () => ({
+    entries: [
+      entry(
+        "core",
+        "![Private diagram](https://example.com/private.png)\n\n" +
+          '<img src="https://example.com/track.png">\n\n' +
+          "[Unsafe](javascript:alert%281%29)",
+      ),
+    ],
+    partial: false,
+  }));
+  await openCore();
+  expect(screen.getByText("Private diagram")).toBeVisible();
+  expect(screen.getByText("Unsafe")).toBeVisible();
+  expect(container.querySelector("img, script, iframe")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+});
+
+const channelId = "11111111-1111-4111-8111-111111111111";
+const buzzUrl = `buzz://message?channel=${channelId}&id=${"e".repeat(64)}`;
+
+it("links bare and labelled Buzz URLs in prose without changing code or nesting links", async () => {
+  const { container } = setup(async () => ({
+    entries: [
+      entry(
+        "core",
+        `Evidence: ${buzzUrl}. Next.\n\n` +
+          `[Read **evidence**](${buzzUrl})\n\n<${buzzUrl}>\n\n` +
+          `\`${buzzUrl}\`\n\n\`\`\`text\n${buzzUrl}\n\`\`\`\n\n` +
+          `[External](https://example.com/?ref=${buzzUrl})\n\n` +
+          "buzz://unknown\n\n[Invalid](buzz://message?channel=design&id=bad)",
+      ),
+    ],
+    partial: false,
+  }));
+  await openCore();
+  const anchors = screen.getAllByRole("link");
+  expect(
+    anchors.filter((link) => link.getAttribute("href") === buzzUrl),
+  ).toHaveLength(3);
+  expect(
+    screen.getByRole("link", { name: "Read evidence" }).querySelector("strong"),
+  ).toHaveTextContent("evidence");
+  expect(screen.getByText(/^Evidence:/)).toHaveTextContent(
+    `Evidence: ${buzzUrl}. Next.`,
+  );
+  expect(
+    [...container.querySelectorAll("code")].map((node) =>
+      node.textContent?.trim(),
+    ),
+  ).toEqual([buzzUrl, buzzUrl]);
+  expect(container.querySelector("a a, code a")).toBeNull();
+  expect(screen.getByRole("link", { name: "External" })).toHaveAttribute(
+    "href",
+    `https://example.com/?ref=${buzzUrl}`,
+  );
+  expect(screen.getByText("buzz://unknown")).toBeVisible();
+  expect(screen.getByText("Invalid").closest("a")).toBeNull();
+  fireEvent.click(within(screen.getByText(/^Evidence:/)).getByRole("link"));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This Buzz link couldn’t be opened here.",
+  );
+});
+
+it("resolves shared message labels and icons only when expanded and opens the original destination", async () => {
+  const viewer = keypair(),
+    relay = keypair(),
+    author = keypair();
+  const linked = signed(author, {
+    kind: 9,
+    content: "Evidence from the linked message",
+    tags: [["h", channelId]],
+  });
+  const url = `buzz://message?channel=${channelId}&id=${linked.id}`;
+  const events = [
+    signed(relay, {
+      kind: 39000,
+      content: "",
+      tags: [
+        ["d", channelId],
+        ["name", "research"],
+        ["t", "stream"],
+      ],
+    }),
+    signed(relay, {
+      kind: 39001,
+      content: "",
+      tags: [
+        ["d", channelId],
+        ["p", viewer.pubkey, "owner"],
+      ],
+    }),
+    signed(relay, {
+      kind: 39002,
+      content: "",
+      tags: [
+        ["d", channelId],
+        ["p", viewer.pubkey],
+        ["p", author.pubkey],
+      ],
+    }),
+    signed(author, {
+      kind: 0,
+      content: JSON.stringify({ name: "Carl" }),
+      tags: [],
+    }),
+    linked,
+  ];
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async (filters) =>
+      events.filter((event) =>
+        filters.some((filter) => matchesEvent(event, filter)),
+      ),
+  });
+  const registry = {
+    subscribe: () => () => {},
+    snapshot: () => renderers,
+  };
+  const renderers = [
+    {
+      id: "links",
+      key: "test/links",
+      pluginId: "test",
+      revision: "one",
+      title: "Links",
+      matches: (url: string) => linkKind(url) !== null,
+      component: ({ url }: { url: string }) => <LinkLabel href={url} />,
+    },
+  ];
+  const open = vi.fn(() => true);
+  const thread = vi.fn(owner.session.thread);
+  let view: ReturnType<typeof setup> | undefined;
+  try {
+    owner.session.channels.ensureList();
+    await vi.waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    view = setup(
+      async () => ({
+        entries: [entry("core", `${url}\n\n${url}`)],
+        partial: false,
+      }),
+      undefined,
+      { session: { ...owner.session, thread }, registry, open },
+    );
+    await screen.findByRole("button", { name: "core" });
+    expect(thread).not.toHaveBeenCalled();
+    await openCore();
+    const anchors = await screen.findAllByRole("link", {
+      name: "Carl in #research",
+    });
+    expect(anchors).toHaveLength(2);
+    const first = anchors[0];
+    if (!first) throw new Error("Missing resolved memory link");
+    expect(
+      anchors[0]?.querySelector('[data-link-kind="message"] svg'),
+    ).not.toBeNull();
+    expect(thread).toHaveBeenCalledTimes(1);
+    fireEvent.click(first);
+    expect(open).toHaveBeenCalledExactlyOnceWith(url);
+    // A later open still uses the shared session cache.
+    await openCore();
+    await openCore();
+    await screen.findAllByRole("link", { name: "Carl in #research" });
+    expect(thread).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getAllByRole("link", { name: "Carl in #research" })[0],
+    ).toHaveAttribute("data-preview-card-trigger");
+  } finally {
+    view?.unmount();
+    owner.dispose();
+  }
 });
 
 it("explains memory scope for the current community and follows its presentation", async () => {

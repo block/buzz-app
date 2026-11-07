@@ -62,6 +62,7 @@ import {
   ManagedPluginUpdate,
   ManagedPlugins,
   UrlPluginInstallReview,
+  UrlPluginDetails,
 } from "./ManagedPlugins";
 import { managedBy, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
@@ -531,24 +532,33 @@ function PluginDetails({
           {...(authorizeGit ? { authorizeGit } : {})}
         />
       )}
-      {plugin.source === "external" && plugins.imports && !managed && (
-        <PluginImport
-          key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
-          initialUpdateAvailable={initialUpdateAvailable}
-          actionTarget={actionTarget}
-          onUpdateAvailableChange={onUpdateAvailableChange}
-          reviewRequested={reviewRequested}
-          onReviewHandled={onReviewHandled}
-          holdReview={holdReview}
-          statusTarget={installedStatus}
-          returnFocus={() => close.current}
-          updateId={plugin.manifest.id}
-          plugins={plugins}
-          catalog={catalog}
-          busy={busy}
-          {...(authorizeGit ? { authorizeGit } : {})}
-        />
-      )}
+      {plugin.source === "external" &&
+        !managed &&
+        plugin.updateSource &&
+        "url" in plugin.updateSource && (
+          <UrlPluginDetails source={plugin.updateSource} />
+        )}
+      {plugin.source === "external" &&
+        plugins.imports &&
+        !managed &&
+        !(plugin.updateSource && "url" in plugin.updateSource) && (
+          <PluginImport
+            key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
+            initialUpdateAvailable={initialUpdateAvailable}
+            actionTarget={actionTarget}
+            onUpdateAvailableChange={onUpdateAvailableChange}
+            reviewRequested={reviewRequested}
+            onReviewHandled={onReviewHandled}
+            holdReview={holdReview}
+            statusTarget={installedStatus}
+            returnFocus={() => close.current}
+            updateId={plugin.manifest.id}
+            plugins={plugins}
+            catalog={catalog}
+            busy={busy}
+            {...(authorizeGit ? { authorizeGit } : {})}
+          />
+        )}
       {sections.length > 0 && (
         // biome-ignore lint/a11y/useSemanticElements: This names links to Settings sections, not a fieldset of form controls.
         <p

@@ -151,7 +151,7 @@ it("reviews at the pinned commit, then installs and enables only after confirmat
     screen.getByRole("button", { name: "Review and install example.managed" }),
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Managed example Plugin access",
   });
   await within(dialog).findByText(`Commit: ${commit}`);
   expect(git).toHaveBeenCalledExactlyOnceWith(
@@ -212,7 +212,7 @@ it("reviews a URL recommendation from its pinned artifact without Git", async ()
     screen.getByRole("button", { name: "Review and install example.managed" }),
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Managed example Plugin access",
   });
   expect(url).toHaveBeenCalledExactlyOnceWith(
     "https://cdn.example.com/example.managed.json",
@@ -767,7 +767,7 @@ it("reviews a plugin's URL install request and reports the install", async () =>
   Object.assign(manager.imports, { url });
   const { requests, outcome } = showRequest(manager);
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Managed example Plugin access",
   });
   expect(
     await within(dialog).findByText(`SHA-256: ${artifact.sha256}`),

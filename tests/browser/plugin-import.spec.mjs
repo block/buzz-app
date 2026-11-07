@@ -1761,7 +1761,7 @@ test("a linked preview can close during acquisition and a later link still opens
 
 const artifactSha =
   "13fca413ba8975075fdec01a0087be6114ace8d935055f7d9ab1d57dd8e706a5";
-const artifactUrl = `https://global.block-artifacts.com/artifactory/agents/support-assets/buzz-plugins/artifacts/example.artifact-${artifactSha}.json`;
+const artifactUrl = `https://plugins.example.org/artifacts/example.artifact-${artifactSha}.json`;
 const artifactPlugin = [
   {
     path: ".",
@@ -1782,7 +1782,7 @@ async function recommendArtifact(page, sha256 = artifactSha) {
     {
       status: "ready",
       path: "/fixture/managed-plugins.json",
-      source: "Block",
+      source: "Example Org",
       problems: [],
       plugins: [{ id: "example.artifact", url: artifactUrl, sha256 }],
     },
@@ -1824,7 +1824,7 @@ test("a recommended plugin URL installs the pinned artifact without Git", async 
   await servesArtifact(page);
   await openRecommendedPlugins(page, app.origin);
   const recommended = page.getByRole("region", {
-    name: "Recommended by Block",
+    name: "Recommended by Example Org",
     exact: true,
   });
   await expect(recommended).toContainText(artifactUrl);
@@ -1832,11 +1832,11 @@ test("a recommended plugin URL installs the pinned artifact without Git", async 
     .getByRole("button", { name: "Review and install example.artifact" })
     .click();
   const review = page.getByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Artifact Plugin access",
     exact: true,
   });
   await expect(review).toContainText(`SHA-256: ${artifactSha}`);
-  await expect(review).toContainText("Recommended by Block");
+  await expect(review).toContainText("Recommended by Example Org");
   await review
     .getByRole("button", { name: "Install plugin", exact: true })
     .click();
@@ -1896,7 +1896,7 @@ test("an artifact link reviews and installs the pinned URL", async ({
   await servesArtifact(page);
   await page.goto(app.origin);
   const review = page.getByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Artifact Plugin access",
     exact: true,
   });
   await expect(review).toContainText("Requested by A link");
@@ -1906,6 +1906,16 @@ test("an artifact link reviews and installs the pinned URL", async ({
     .getByRole("button", { name: "Install plugin", exact: true })
     .click();
   await expect(review).toBeHidden();
+  await settingsDialog(page)
+    .getByRole("button", { name: "View Artifact details", exact: true })
+    .click();
+  const updates = page.getByRole("region", {
+    name: "Plugin updates",
+    exact: true,
+  });
+  await expect(updates).toContainText(artifactUrl);
+  await expect(updates).toContainText(`SHA-256: ${artifactSha}`);
+  await expect(page.getByText(/No saved source/)).toHaveCount(0);
   expect(await importCalls(page)).toEqual([
     {
       command: "plugin_import_url",

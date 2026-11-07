@@ -454,11 +454,17 @@ export function ManagedPluginReview({
       }}
       initialFocus={cancel}
       title={
-        ready
-          ? updating
-            ? `Update ${name}`
-            : "Review plugin access"
-          : `Review ${entry?.id ?? "plugin"}`
+        ready ? (
+          updating ? (
+            `Update ${name}`
+          ) : (
+            <>
+              Review <strong>{name} Plugin</strong> access
+            </>
+          )
+        ) : (
+          `Review ${entry?.id ?? "plugin"}`
+        )
       }
       description={
         ready && !updating
@@ -655,5 +661,31 @@ export function UrlPluginInstallReview({
         onClose?.();
       }}
     />
+  );
+}
+
+/** Details for a plugin installed from a pinned artifact URL, which has no update check. */
+export function UrlPluginDetails({
+  source,
+}: {
+  source: Readonly<{ url: string; sha256: string }>;
+}) {
+  return (
+    <section aria-label="Plugin updates" className="text-body-sm">
+      <h3 className={`${importStyles.sourceHeading} text-caption`}>
+        Source URL
+      </h3>
+      <code className={`${importStyles.sourcePath} break-all`}>
+        {source.url}
+      </code>
+      <p className="mb-2 mt-1 break-all text-caption text-muted">
+        SHA-256: {source.sha256}
+      </p>
+      <p className="m-0 text-muted">
+        This plugin was installed from a single pinned file. To update it,
+        install the newer version from the plugin marketplace or a new install
+        link.
+      </p>
+    </section>
   );
 }

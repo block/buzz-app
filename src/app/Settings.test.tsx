@@ -2879,6 +2879,33 @@ it("allows Add to install while an independent folder check is pending, includin
   );
 });
 
+it("shows a URL-installed plugin's pinned file instead of offering a folder or Git update", async () => {
+  const fixture = reviewPluginFixture();
+  const sha256 = "e".repeat(64);
+  const checkFolder = vi.fn();
+  Object.assign(fixture.external, {
+    updateSource: { url: "https://plugins.example.org/zebra.json", sha256 },
+  });
+  Object.assign(fixture.manager, {
+    imports: { checkFolder, discard: vi.fn(async () => {}) },
+  });
+  act(fixture.publish);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  const updates = await screen.findByRole("region", {
+    name: "Plugin updates",
+  });
+  expect(updates).toHaveTextContent("https://plugins.example.org/zebra.json");
+  expect(updates).toHaveTextContent(`SHA-256: ${sha256}`);
+  expect(updates).toHaveTextContent(/plugin marketplace or a new install link/);
+  expect(screen.queryByText(/No saved source/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Check for updates" }),
+  ).toBeNull();
+  expect(checkFolder).not.toHaveBeenCalled();
+});
+
 const pinned = "0123456789abcdef0123456789abcdef01234567";
 const managedPolicy = (...states: ("missing" | "current" | "outdated")[]) => ({
   status: "ready" as const,
@@ -2942,7 +2969,7 @@ it("recommends managed plugins in Settings and points to them from navigation", 
     }),
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Managed Plugin access",
   });
   await within(dialog).findByRole("button", { name: "Install plugin" });
   expect(git).toHaveBeenCalledWith(
@@ -3225,7 +3252,7 @@ it("reviews a requested plugin artifact in place of the add dialog and cancels i
     market,
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Artifact Plugin access",
   });
   expect(
     await within(dialog).findByText(`SHA-256: ${"d".repeat(64)}`),

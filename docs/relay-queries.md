@@ -738,9 +738,23 @@ list (media review, Huddles), or a timeline scrolled away from its newest
 message, keep Up opening the latest eligible own message directly. Enter/the send arrow saves;
 Escape or × cancels. Edits retain raw attachment Markdown and leave original
 notification recipients unchanged. Edit text never overwrites the new-message
-draft or its undo history. Pending edits lock the editor until delivery; failed
-or unknown outcomes offer retry of the same outbox event. Missing or concurrently
-changed targets are rejected without losing the user's input.
+draft or its undo history. An unsaved edit is kept separately, one per
+conversation or thread and outside Drafts, and reopens when its composer returns
+and the message loads, until Save or Cancel. If a restored channel head lacks the
+message, it waits for the revalidated head. A new-message draft written while no
+composer has the edit open keeps it closed until Edit is chosen. It does not reopen in a media
+review's composer, or while another composer in the window has it open; choosing
+Edit there resumes it and returns the other composer to its draft. While another
+composer has a different message's edit open there, choosing Edit asks to finish
+or cancel that edit first. Choosing Edit on another message opens the kept edit in
+its place with the same request; if the kept edit's message is not among that
+composer's rows, as when it was deleted, choosing Edit again discards it. A kept
+edit that cannot be written is cleared and reported, so nothing reopens older text;
+its text stays in that composer, which does not hand it over until a retry saves
+it. Pending edits lock the editor until
+delivery; failed or unknown outcomes offer retry of the same outbox event.
+Missing or concurrently changed targets are rejected without losing the user's
+input.
 
 Persistence uses incremental asynchronous IndexedDB transactions partitioned by
 community and viewer. Only changed records are written; the earlier localStorage

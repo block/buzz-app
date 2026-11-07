@@ -43,6 +43,7 @@ import {
   markdownRanges,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
+import { useKeptEdit } from "./use-kept-edit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
@@ -106,6 +107,7 @@ import {
   useCallback,
   useId,
   useLayoutEffect,
+  useReducer,
   useRef,
   useState,
   useMemo,
@@ -158,6 +160,11 @@ import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
+import {
+  fetchPastedImages,
+  pastedFiles,
+  pastedInlineImages,
+} from "./composer-clipboard";
 import { composerMarkdown } from "./composer-markdown";
 import type {
   ComposerInputElement,
@@ -177,6 +184,11 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   channels: [],
 };
 const noSubscription = () => () => {};
+const editAttachmentNotice = "Finish editing before attaching new files.";
+/** What the composer reports. A report that a kept rewrite of another message
+ * cannot open here names that message: Edit chosen while it shows discards
+ * the rewrite. */
+type Report = { error: string; discard?: string };
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -334,6 +346,9 @@ export type MessageComposerProps = {
   autoFocus?: boolean | RefObject<HTMLElement | null>;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
+  /** Reopens an unsaved edit kept from an earlier mount unasked; choosing Edit
+   * resumes it either way. */
+  resumeEdit?: boolean;
   disabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
   submission?: {
@@ -520,6 +535,7 @@ function Composer({
   autoFocus = false,
   focusRequest,
   hideMediaTimeIndicator = false,
+  resumeEdit = true,
   disabled: requestedDisabled = false,
   submission,
   soloConversation,
@@ -565,6 +581,9 @@ function Composer({
     (threadRootId
       ? `draft:${channelId}:thread:${threadRootId}`
       : `draft:${channelId}`);
+  // An unsaved message edit is kept beside the draft, never in it, so Drafts
+  // does not list it.
+  const editKey = submission ? undefined : draftKey.replace(/^draft:/, "edit:");
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);
@@ -1081,7 +1100,9 @@ function Composer({
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
+    if (save && editing.target) keepEdit(next);
     if (save && !editing.target) {
+      keptEdit.drafted();
       if (submission) {
         const saved = writeView(scope, draftKey, next);
         unsavedDraft.current = !saved;
@@ -1110,7 +1131,21 @@ function Composer({
     setStorageFailed(result === "failed");
     return result;
   }
-  const [error, setError] = useState<string>();
+  /** Keeps the open edit's text for a remount or another composer. A queued
+   * follow-up's edit belongs to its queue lease, so it leaves the record of a
+   * sent message's edit alone. */
+  function keepEdit(draft = valueRef.current) {
+    const target = editing.target;
+    if (target && !("saveDraft" in target))
+      keptEdit.keep(target.id, editing.base(), draft);
+  }
+  // A plain message replaces any report, and with it a discard it named.
+  const [report, setError] = useReducer(
+    (_: Report | undefined, next: Report | string | undefined) =>
+      typeof next === "string" ? { error: next } : next,
+    undefined,
+  );
+  const error = report?.error;
   const [pasteTooLong, setPasteTooLong] = useState(false);
   const [attachmentError, setAttachmentError] =
     useState<Readonly<{ title: string; description: string }>>();
@@ -1124,6 +1159,7 @@ function Composer({
   const editing = useMessageEdit(session, () => {
     const saved = beforeEdit.current;
     if (!saved) return;
+    keptEdit.closed();
     valueRef.current = saved.value;
     updateDraft(saved.value);
     saved.restore();
@@ -1358,7 +1394,7 @@ function Composer({
     )
       return;
     if (editing.target) {
-      refuseAttachment("Finish editing before attaching new files.");
+      refuseAttachment(editAttachmentNotice);
       return;
     }
     if (!canAttach) {
@@ -1394,6 +1430,15 @@ function Composer({
       );
     }
   }
+  // Pictures read after their paste attach to the composer as it is then,
+  // never once it unmounts.
+  const attachLate = useEffectEvent((files: readonly File[]) => {
+    if (live.current) attachFiles(files);
+  });
+  // Send waits while they are read, as it does for a failed file, so a paste
+  // stays one message. An edit reads none, so its Save never waits.
+  const [pictureReads, setPictureReads] = useState(0);
+  const attachmentsBlocked = attachments.blocked || pictureReads > 0;
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -1574,7 +1619,11 @@ function Composer({
     caret.current = undefined;
   });
   const requestDeletion = useMessageDeletion();
-  const startEdit = useEffectEvent((row: ChannelMessage) => {
+  /** Opens `row` in the editor, with its kept unsaved edit if there is one.
+   * A quiet start, resuming that edit unasked, neither reports a message that
+   * can no longer be edited nor moves focus. False: this composer cannot edit
+   * now. */
+  const startEdit = useEffectEvent((row: ChannelMessage, quiet = false) => {
     if (
       !permitted.current ||
       editingDisabled ||
@@ -1582,36 +1631,60 @@ function Composer({
       submission ||
       !input.current
     )
-      return;
-    const current = editableRows().find((item) => item.id === row.id);
-    if (!current || !lastEditableMessage(session, [current])) {
-      setError("This message is no longer available to edit.");
-      return;
+      return false;
+    const editableRow = (id: string) => {
+      const item = editableRows().find((item) => item.id === id);
+      return item && lastEditableMessage(session, [item]) ? item : undefined;
+    };
+    const current = editableRow(row.id);
+    if (!current) {
+      if (!quiet) setError("This message is no longer available to edit.");
+      return true;
     }
     if (editing.target) {
+      if (quiet) return true;
       setError("Finish or cancel your current edit first.");
       input.current.focus();
-      return;
+      return true;
     }
+    const opening = keptEdit.open(current, editableRow, quiet, report?.discard);
+    if (!opening) {
+      if (!quiet) setError("Finish or cancel your current edit first.");
+      return true;
+    }
+    if ("discard" in opening) {
+      setError({
+        error:
+          "Your unsaved edit of another message can't be opened here. Choose Edit again to discard it.",
+        discard: opening.discard,
+      });
+      return true;
+    }
+    const { kept } = opening;
     completion.invalidate();
     beforeEdit.current = {
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    const next = stageChatCards(
-      mentionDraft(
-        editing.start(current, (body) =>
-          composerMarkdown(stageChatCards(mentionDraft(body), channels())),
-        ),
-      ),
-      channels(),
+    const body = editing.start(
+      opening.row,
+      (body) =>
+        composerMarkdown(stageChatCards(mentionDraft(body), channels())),
+      kept?.base,
     );
+    const next = stageChatCards(kept?.draft ?? mentionDraft(body), channels());
     valueRef.current = next;
     updateDraft(next);
     input.current.reset(next);
     setLinkEdit(null);
-    caret.current = next.text.length;
-    setError(undefined);
+    if (!quiet || document.activeElement === input.current)
+      caret.current = next.text.length;
+    setError(
+      opening.redirected
+        ? "Finish or cancel your current edit first."
+        : undefined,
+    );
+    return true;
   });
   const startQueuedEdit = (id: string) => {
     if (
@@ -1657,6 +1730,40 @@ function Composer({
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
+  // A thread's rows and load signal arrive as props, which re-render it.
+  const subscribeResume = useCallback(
+    (listener: () => void) =>
+      threadRootId
+        ? noSubscription()
+        : (session.channels.subscribeWindow?.(channelId, listener) ??
+          noSubscription()),
+    [threadRootId, session.channels, channelId],
+  );
+  const keptEdit = useKeptEdit({
+    scope,
+    key: editKey,
+    resume: resumeEdit,
+    find: (id) => {
+      const row = editableRows().find((item) => item.id === id);
+      if (row) return row;
+      // A thread has loaded once it supplies the viewer's latest message
+      // there, a channel once its history is revalidated: a cached head, as
+      // restored after a reload, can predate the message.
+      if (threadRootId) return threadSeed ? "missing" : undefined;
+      const history = session.channels.window?.(channelId);
+      return history?.status === "ready" && history.freshness !== "cached"
+        ? "missing"
+        : undefined;
+    },
+    subscribe: subscribeResume,
+    ready: active && !editingDisabled,
+    blocked: !!error,
+    reopen: (row) => startEdit(row, true),
+    close: () => {
+      editing.close();
+      focusRestoredDraft.current = false;
+    },
+  });
   useEffect(() => {
     if (!editScope) return;
     const start = (row: ChannelMessage) => startEdit(row);
@@ -2491,10 +2598,12 @@ function Composer({
         }
         return;
       }
-      editing.save(
+      const submitted = editing.save(
         composerMarkdown(valueRef.current),
         editableRows().find((row) => row.id === editing.target?.id),
       );
+      // The outbox keeps a submitted edit, a failed one included.
+      if (submitted) keptEdit.saved();
       return;
     }
     if (
@@ -2505,7 +2614,7 @@ function Composer({
       admission.current ||
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
-      attachments.blocked ||
+      attachmentsBlocked ||
       sendPending ||
       sendAttempt.current ||
       !outbox
@@ -3285,11 +3394,22 @@ function Composer({
           }
         }}
         onPasteCapture={(event) => {
-          const files = Array.from(event.clipboardData.items)
-            .filter((item) => item.kind === "file")
-            .map((item) => item.getAsFile())
-            .filter((file): file is File => file !== null);
-          if (!files.length) return;
+          const files = pastedFiles(event.clipboardData);
+          if (!files.length) {
+            // The editor pastes the text; pictures only in its HTML follow.
+            // An edit cannot take them, and a read could finish after it
+            // closes, in the draft it returns to, so it refuses them unread.
+            const images = pastedInlineImages(event.clipboardData);
+            if (images.length && editing.target)
+              refuseAttachment(editAttachmentNotice);
+            else if (images.length) {
+              setPictureReads((count) => count + 1);
+              void fetchPastedImages(images)
+                .then(attachLate)
+                .finally(() => setPictureReads((count) => count - 1));
+            }
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           attachFiles(files);
@@ -3731,7 +3851,7 @@ function Composer({
                 admitting ||
                 sending ||
                 submission?.disabled ||
-                (!editing.target && attachments.blocked) ||
+                (!editing.target && attachmentsBlocked) ||
                 (!draft.trim() &&
                   !chatCards?.length &&
                   ((!!submission && !submission.allowAttachmentOnly) ||
@@ -3795,6 +3915,17 @@ function Composer({
             Could not save model and effort for this chat on this device. The
             current choices remain until this composer closes.
           </p>
+        )}
+        {editing.target && keptEdit.storageFailed && (
+          <div>
+            <p role="alert">
+              Could not save this edit on this device. Your changes are kept
+              here.
+            </p>
+            <Button type="button" onClick={() => keepEdit()}>
+              Retry edit save
+            </Button>
+          </div>
         )}
         {!editing.target &&
           !submission &&

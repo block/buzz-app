@@ -389,6 +389,14 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
+- **Pasting from Excel, Numbers, Word or Keynote** inserts the copied text, even
+  though those apps also copy a picture of it. A picture or file copied on its
+  own attaches where uploads are available.
+- **Pasting rich text with pictures** from TextEdit, Notes, Pages or Mail
+  inserts the text and, in the macOS app, attaches its pictures where uploads
+  are available. Send waits until they attach, so the paste sends as one
+  message. In a message edit, and in browsers such as Chrome, only the text
+  pastes.
 - In the composer, Enter sends and Shift+Enter adds a new line by default.
   **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
   outside Apple platforms) swaps that on this device: Enter adds a line and
@@ -415,6 +423,17 @@ revokes all of them, and a pairing unused for 30 days expires.
   and, when you are elsewhere, can open it (except a huddle). Your message and
   files are back in that conversation's composer. Do not
   promise support for every file type or size.
+- **Editing a message** keeps your unsaved changes when you switch channels,
+  close the thread or restart Buzz, and the edit reopens when you come back.
+  If you start a new message before it reopens, it stays closed, and an image
+  or video review's comments do not reopen it. If it does not reopen,
+  choose **Edit message** on that message again. That also moves the edit out of
+  another composer that has it open, such as the thread under a review. Save or
+  Cancel ends it. Choosing **Edit message** on another message there opens the
+  unsaved edit first; if its message is not shown there, choosing Edit again
+  discards it. If Buzz cannot save your changes on this device, the composer
+  says so, and they stay only in that composer until a retry saves them.
+  Unsaved edits are not listed in Drafts.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

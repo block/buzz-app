@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { AgentSettings } from "./AgentSettings";
+import type { Agents } from "../features/agents/service";
+import { memoryStorage } from "../features/agents/test-fakes";
 import {
   rememberAgentsPreference,
   setRememberAgentsPreference,
@@ -21,6 +23,60 @@ afterEach(() => {
   setRememberAgentsPreference(true);
   setKeepAwakePreference({ mode: "off", after: 60 });
   localStorage.clear();
+});
+
+it("retains a shared-instruction draft and save error while its Settings section is hidden", async () => {
+  const storage = memoryStorage();
+  const set = vi
+    .spyOn(storage, "set")
+    .mockRejectedValueOnce(new Error("Retry this save."));
+  const types: never[] = [];
+  const agents = {
+    storage,
+    types: () => types,
+    subscribe: () => () => {},
+  } as unknown as Agents;
+  const owner = "a".repeat(64);
+  const user = userEvent.setup();
+  const page = (active: boolean) => (
+    <div hidden={!active}>
+      <AgentSettings
+        agents={agents}
+        owner={owner}
+        active={active}
+        keepAwakeAvailable={false}
+      />
+    </div>
+  );
+  const view = render(page(true), { wrapper: ToastProvider });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", {
+        name: "Instructions for your local agents",
+      }),
+    ).toBeEnabled(),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Instructions for your local agents" }),
+    "Keep this unsaved draft.",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Retry this save.",
+  );
+  view.rerender(page(false));
+  expect(screen.queryByRole("textbox")).toBeNull();
+  view.rerender(page(true));
+  expect(screen.getByRole("textbox")).toHaveValue("Keep this unsaved draft.");
+  expect(screen.getByRole("alert")).toHaveTextContent("Retry this save.");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "saved on this device",
+  );
+  expect(set).toHaveBeenLastCalledWith(
+    `buzz.owner-instructions.v1:${owner}`,
+    "Keep this unsaved draft.",
+  );
 });
 
 it("offers keeping the Mac awake only where the app can, with a wait after agents finish", async () => {

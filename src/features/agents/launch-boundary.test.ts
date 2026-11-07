@@ -574,7 +574,18 @@ it("starts Goose sessions from the synced copies, with no relay request online o
   });
   const f = await setup(
     "goose",
-    (relay, _reads, core) => gooseRun(new GooseRuntime(host, relay, core)),
+    (relay, _reads, core) =>
+      gooseRun(
+        new GooseRuntime(
+          host,
+          relay,
+          core,
+          undefined,
+          undefined,
+          undefined,
+          memoryStorage(),
+        ),
+      ),
     { ...GOOSE_LOCAL },
     seeded,
     synced(),
@@ -610,7 +621,18 @@ it("refuses to start from deleted synced settings once: no launch, the reason on
   const { seeded } = heads("buzz/goose", { model: "synced-model" });
   const f = await setup(
     "goose",
-    (relay, _reads, core) => gooseRun(new GooseRuntime(host, relay, core)),
+    (relay, _reads, core) =>
+      gooseRun(
+        new GooseRuntime(
+          host,
+          relay,
+          core,
+          undefined,
+          undefined,
+          undefined,
+          memoryStorage(),
+        ),
+      ),
     { ...GOOSE_LOCAL },
     [[settingsSubject, deleted], seeded[1] as [Subject, RelayEvent]],
     synced(),
@@ -697,7 +719,18 @@ it.each([
       });
       const f = await setup(
         "goose",
-        (relay, _reads, core) => gooseRun(new GooseRuntime(host, relay, core)),
+        (relay, _reads, core) =>
+          gooseRun(
+            new GooseRuntime(
+              host,
+              relay,
+              core,
+              undefined,
+              undefined,
+              undefined,
+              memoryStorage(),
+            ),
+          ),
         { ...GOOSE_LOCAL },
         seeded,
         synced(),

@@ -12,7 +12,7 @@ import {
 } from "../../features/agents/activity-transcript";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
-import { localStore } from "../../features/agents/state";
+import { fileStore, localStore } from "../../features/agents/state";
 import type {
   Agent,
   AgentHandle,
@@ -45,6 +45,48 @@ afterEach(() => {
 const self = "c".repeat(64);
 const alice = "a".repeat(64);
 const channel = "chan-1";
+
+it("picks up shared owner instructions when an idle session refreshes, and removes them after Clear", async () => {
+  const f = setup();
+  const key = `buzz.owner-instructions.v1:${alice}`;
+  const run = async (id: string) => {
+    await f.deliver({
+      type: "mention",
+      event: message(id, "@Claude reply", {
+        tags: [
+          ["h", channel],
+          ["e", "1".repeat(64), "", "reply"],
+        ],
+      }),
+    });
+    await f.workingUntil.mock.calls.at(-1)?.[0];
+    return f
+      .claudes()
+      .filter((process) => process.prompts.length)
+      .at(-1);
+  };
+  const system = (process: Awaited<ReturnType<typeof run>>) =>
+    String(
+      (
+        process?.received.find(
+          (wire) =>
+            (wire.request as { subtype?: string })?.subtype === "initialize",
+        )?.request as { appendSystemPrompt?: string }
+      )?.appendSystemPrompt,
+    );
+  const first = await run("2");
+  expect(system(first)).not.toContain("<owner-instructions>");
+  f.data.set(key, "Prefer short answers.");
+  const second = await run("3");
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(system(second)).toContain(
+    "<owner-instructions>\nPrefer short answers.\n</owner-instructions>",
+  );
+  f.data.delete(key);
+  expect(system(await run("4"))).not.toContain("<owner-instructions>");
+  f.runtime.dispose();
+});
 const promptContent = (text: string | undefined) =>
   promptMessage(promptSections(text ?? "")).text;
 const message = (
@@ -66,6 +108,7 @@ const message = (
 function setup(
   thread: readonly EventData[] = [],
   options: Readonly<{
+    storage?: ConstructorParameters<typeof ClaudeRuntime>[3];
     hold?: boolean;
     starting?: Promise<void>;
     workflowAuthority?: string;
@@ -189,7 +232,7 @@ function setup(
     host,
     (key) => ownerReads(relay, pubkeyOf(key)),
     core,
-    storage,
+    options.storage ?? storage,
     config,
     () => added,
     options.repositories,
@@ -3280,3 +3323,103 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     f.runtime.dispose();
   }
 });
+
+it.each(["Save", "Clear"] as const)(
+  "never submits unsettled owner instructions from rejected %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${alice}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const native = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async (saved) => {
+        if (saved === key) {
+          await gate;
+          throw new Error("Write failed.");
+        }
+      },
+    );
+    const storage = { ...native, read: vi.fn(native.read) };
+    const f = setup([], { storage });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writing = storage
+      .set(key, action === "Save" ? "Rejected preference." : null)
+      .catch((error: Error) => error.message);
+    const running = Promise.resolve(
+      f.deliver({ type: "mention", event: message("2", "@Claude reply") }),
+    ).then(
+      () => "submitted",
+      (error: Error) => error.message,
+    );
+    try {
+      await vi.waitFor(() => expect(storage.read).toHaveBeenCalledWith(key));
+      expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(0);
+      release();
+      expect(await writing).toBe("Write failed.");
+      expect(await running).toBe("Write failed.");
+      expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(0);
+      expect(storage.get(key)).toBe("Committed preference.");
+    } finally {
+      release();
+      await writing;
+      await running;
+      f.runtime.dispose();
+      error.mockRestore();
+    }
+  },
+);
+
+it.each(["abort", "stale"] as const)(
+  "does not submit a standalone turn when a settled preference read becomes %s",
+  async (action) => {
+    const key = `buzz.owner-instructions.v1:${alice}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const nativeStore = fileStore(
+      new Map([[key, "Committed preference."]]),
+      async () => {},
+      undefined,
+      async () => {
+        await gate;
+        return "Committed preference.";
+      },
+    );
+    const read = vi.fn(nativeStore.read);
+    const storage = { ...nativeStore, read };
+    const f = setup([], { storage });
+    const abort = new AbortController();
+    let current = true;
+    const running = f.runtime
+      .runOnce({
+        delivery: {
+          ...{ agent: f.agent, config: DEFAULT_CONFIG },
+          current: () => current,
+        },
+        key: "preference-read",
+        signal: abort.signal,
+        prompt: async () => "Check the build.",
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0])
+      .catch(() => ({ ok: false }));
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledWith(key));
+      expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(0);
+      if (action === "abort") {
+        abort.abort(new Error("Canceled preference read"));
+        expect(await running).toMatchObject({ ok: false });
+      } else {
+        current = false;
+      }
+      release();
+      await running;
+      expect(f.claudes().flatMap((process) => process.prompts)).toHaveLength(0);
+    } finally {
+      release();
+      await running;
+      f.runtime.dispose();
+    }
+  },
+);

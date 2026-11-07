@@ -1,3 +1,4 @@
+import { settledSharedInstructions } from "../../features/agents/shared-instructions";
 import { openVoice } from "./voice";
 import { isHuddleRoom } from "../../features/huddle/lifecycle";
 import type {
@@ -1454,6 +1455,12 @@ export class CodexRuntime {
         signal.throwIfAborted();
         const rpc = await server.opening;
         const memory = await this.core(agent.key, signal);
+        const ownerInstructions = await settledSharedInstructions(
+          this.storage,
+          agent.owner,
+          signal,
+        );
+        signal.throwIfAborted();
         const instructions =
           Object.values(
             turnContext(
@@ -1462,6 +1469,7 @@ export class CodexRuntime {
               request.team,
               memory,
               this.repositories(reads.scope),
+              ownerInstructions,
             ),
           )
             .map((item) => item.value)
@@ -1910,7 +1918,13 @@ export class CodexRuntime {
       const text = await prompt();
       if (text === undefined) return { ok: true };
       const memory = await this.core(agent.key, signal);
+      const ownerInstructions = await settledSharedInstructions(
+        this.storage,
+        agent.owner,
+        signal,
+      );
       signal.throwIfAborted();
+      if (!delivery.current()) return { ok: true };
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
         {
@@ -1938,6 +1952,7 @@ export class CodexRuntime {
             team,
             memory,
             this.repositories(scope),
+            ownerInstructions,
           ),
         },
       );
@@ -2749,9 +2764,10 @@ export class CodexRuntime {
       if (request.adopted !== undefined) {
         ready();
       } else {
-        const [context, memory] = await Promise.all([
+        const [context, memory, ownerInstructions] = await Promise.all([
           this.history(request, signal),
           this.core(request.agent.key, signal),
+          settledSharedInstructions(this.storage, agent.owner, signal),
         ]);
         const wake = request.wake && {
           ...request.wake,
@@ -2772,6 +2788,7 @@ export class CodexRuntime {
           request.team,
           memory,
           this.repositories(request.scope),
+          ownerInstructions,
         );
         if (this.target && !resuming)
           await this.save(request, entry, key, {

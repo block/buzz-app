@@ -138,19 +138,24 @@ async function fixture() {
     },
   });
   const started = vi.fn();
-  const mounted = render(
+  const view = (focusRequest?: number | AbortSignal) => (
     <StrictMode>
       <TaskSoloDraft
         session={region.session}
         scope={region.scope}
+        focusRequest={focusRequest}
         route={{ region: source.handle.label, draftId }}
         agent={agent}
         extensions={extensions}
         onStarted={started}
       />
-    </StrictMode>,
+    </StrictMode>
   );
+  const mounted = render(view());
   return {
+    focus(request?: number | AbortSignal) {
+      mounted.rerender(view(request));
+    },
     ...region,
     ready,
     sent,
@@ -288,6 +293,29 @@ it("keeps the pending label without granting a revoked agent permission to start
       f.ready.resolve();
       f.sent.resolve();
     });
+    f.mounted.unmount();
+  }
+});
+
+it("focuses a new task navigation request and preserves user focus between requests", async () => {
+  const f = await fixture();
+  const elsewhere = document.createElement("button");
+  document.body.append(elsewhere);
+  try {
+    await waitFor(() => expect(selected()).toBeEnabled());
+    elsewhere.focus();
+    f.focus();
+    expect(elsewhere).toHaveFocus();
+    const first = new AbortController().signal;
+    f.focus(first);
+    expect(screen.getByRole("textbox")).toHaveFocus();
+    elsewhere.focus();
+    f.focus(first);
+    expect(elsewhere).toHaveFocus();
+    f.focus(new AbortController().signal);
+    expect(screen.getByRole("textbox")).toHaveFocus();
+  } finally {
+    elsewhere.remove();
     f.mounted.unmount();
   }
 });

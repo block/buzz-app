@@ -43,3 +43,10 @@ it("uses the caret, rejects invalid offsets, and bounds the query", () => {
   const text = `#${"a".repeat(160)}`;
   expect(channelQuery(text, text.length)).toBeNull();
 });
+it("matches after fullwidth and CJK punctuation, also at the scan bound", () => {
+  for (const text of ["看看，#ge", "好。#ge", "（#ge", "「#ge"]) {
+    expect(channelQuery(text, text.length)?.start).toBe(text.lastIndexOf("#"));
+  }
+  const bound = `，#${"a".repeat(159)}`;
+  expect(channelQuery(bound, bound.length)?.start).toBe(1);
+});

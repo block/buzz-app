@@ -277,7 +277,7 @@ function ScopedSidebar({
                 {...frame}
               >
                 {/* Relay outages for every inventory recover through one
-                    automatic owner; its notice is the single Retry. */}
+                    automatic owner; its one notice shows on every page. */}
                 {!connection.cached && (
                   <RecoveryNotice recovery={connection.session.recovery} />
                 )}

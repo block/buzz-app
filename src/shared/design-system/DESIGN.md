@@ -1482,10 +1482,13 @@ Sonner is the toast behavior owner; other matching controls use Base UI. ToastNo
 owns its state and recovery: unmounting the source removes its notification,
 without reporting user dismissal. Gate notices from hidden Settings sections
 explicitly; portals do not inherit a hidden ancestor. Keep form errors and
-blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recovery:
-keep it in the conversation flow immediately above the composer, with bounded
-overflow, so Send and companion-panel controls remain usable. Its retry policy
-and diagnostics belong to Channels; it does not enter the floating toast stack.
+blocked-page recovery inline. Relay connection recovery is the exception: it
+retries on its own, so after a 30-second quiet delay it shows one buttonless
+notice in the toast stack on every page, and other surfaces do not repeat it.
+Channel LiveStatus keeps failures that recovery does not retry in the
+conversation flow immediately above the composer, with bounded overflow, so Send
+and companion-panel controls remain usable. Its retry policy and diagnostics
+belong to Channels; it does not enter the floating toast stack.
 
 A notice can make its body open a related destination with `navigation`. The
 body has a hover state and a keyboard action. Its explicit buttons and Dismiss
@@ -1499,8 +1502,10 @@ Use a finite timeout for transient feedback. Recovery defaults to no expiry and
 no dismissal unless the source supplies onDismiss; preserve all recovery actions.
 The expanded, bounded, scrollable stack keeps every recovery action available.
 It sits at the bottom right with safe-area insets, including narrow windows; do
-not add feature-specific top offsets. F6 enters notifications, Tab reaches actions. Modals
-remain above the stack. Content updates do not restart expiry; timeout changes do.
+not add feature-specific top offsets. Surfaces docked at the bottom of the
+window (the composer, the preview's Join notice) call `useToastClearance` with
+their element, and the stack rises above them so a notice never covers Send.
+F6 enters notifications, Tab reaches actions. Modals remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead, except for the

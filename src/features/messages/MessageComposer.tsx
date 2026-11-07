@@ -49,6 +49,7 @@ import { useListedChannel } from "../relay/listed-channel";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
+import { useToastClearance } from "../../shared/design-system/ui/Toast";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -1267,6 +1268,8 @@ function Composer({
     { ids: readonly string[]; owner: Element | null } | undefined
   >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  // Notices float above the composer, not over Send.
+  useToastClearance(form);
   const notify = useToastNotification();
   const handOffFocus = useEffectEvent(() => {
     if (!form.current?.contains(document.activeElement)) return;

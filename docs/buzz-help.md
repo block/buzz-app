@@ -309,6 +309,10 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Offline**: when Buzz can't reach a community, it shows the conversations
   saved on this device. Once Buzz reconnects, you can load messages older than
   those, and the top of the conversation says so.
+- **Losing the connection**: Buzz keeps retrying on its own and says nothing
+  for the first 30 seconds. If it still can't connect, a notice at the bottom
+  right says "Buzz is having trouble connecting" until it reconnects. There is
+  nothing to press.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private

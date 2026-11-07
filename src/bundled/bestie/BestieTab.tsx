@@ -417,7 +417,7 @@ function FeatureSwitch({
                 : // Attention reads off while no plugin shows it, as when the
                   // Watching plugin is off.
                   checked && feature.timer && !agent.attentionEnabled
-                  ? "Paused: watches aren't running on this device. Turn on the Watching plugin."
+                  ? "Paused: watches aren't running on this device. Turn on the Attention plugin."
                   : feature.description
         }
         checked={checked}

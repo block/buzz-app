@@ -15,6 +15,7 @@ import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelView } from "../../features/panels/PanelView";
 import styles from "./Channels.module.css";
+import { focusDock } from "./useCoveredByDock";
 
 const launcherOrder = (key: string) =>
   key === "buzz.huddles/huddles" ? 2 : key === "buzz.github/object" ? 1 : 0;
@@ -110,14 +111,23 @@ export function useChannelPanels(
       activeOpening.current = undefined;
     };
   }, [selected]);
+  // A launcher under a floating dock is inert until the close commits, so it
+  // takes focus then. A dock that still covers it keeps focus instead.
+  const focusUncovered = useRef<HTMLElement>(undefined);
+  useLayoutEffect(() => {
+    const trigger = focusUncovered.current;
+    focusUncovered.current = undefined;
+    const cover = trigger?.isConnected && trigger.closest("[inert]");
+    if (cover) focusDock(cover.parentElement);
+    else if (trigger?.isConnected) trigger.focus();
+  });
   const hide = (opening: Opening) => {
     if (activeOpening.current !== opening) return;
     setOpened(undefined);
     const trigger = opening.trigger ?? triggers.current.get(opening);
-    const target = trigger?.isConnected
-      ? trigger
-      : side?.fallbackFocus?.current;
-    target?.focus();
+    if (trigger?.closest("[inert]")) focusUncovered.current = trigger;
+    else if (trigger?.isConnected) trigger.focus();
+    else side?.fallbackFocus?.current?.focus();
   };
   const openingContext = (opening: Opening): PanelContext => ({
     channelId: opening.context.channelId,
@@ -187,7 +197,9 @@ export function useChannelPanels(
       </div>
     ),
     side: selected?.panel.channelPlacement === "side" && (
+      // Its own landing, like PanelCard's, for focus handed to a floating dock.
       <Panel
+        tabIndex={-1}
         aria-label={`${selected.panel.title} panel`}
         onKeyDown={(event) => {
           // Shift+Escape is Mark all as read, not a dismissal.

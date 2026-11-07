@@ -35,6 +35,7 @@ import { createPortal, flushSync } from "react-dom";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { useChannelPanels } from "./useChannelPanels";
+import { focusDock } from "./useCoveredByDock";
 import {
   entryPane,
   panelContentTarget,
@@ -163,8 +164,19 @@ export function useConversationTabs({
   );
   const splitTrigger = useRef<HTMLButtonElement>(null);
   const focusSplit = useRef(false);
+  // An opener under a floating pane is inert until the close commits, so its
+  // target resolves then. A pane that still covers it keeps focus instead.
+  const focusUncovered =
+    useRef<() => HTMLElement | null | undefined>(undefined);
   // The opening control remounts in the main header when the pane closes.
   useLayoutEffect(() => {
+    const resolve = focusUncovered.current;
+    focusUncovered.current = undefined;
+    const target = resolve?.();
+    const cover = target?.isConnected && target.closest("[inert]");
+    if (cover) focusDock(cover.parentElement);
+    else if (target?.isConnected) target.focus({ preventScroll: true });
+    else if (resolve) focusSplit.current = true;
     if (focusSplit.current) {
       const target = splitTrigger.current ?? fallbackFocus?.current;
       target?.focus({ preventScroll: true });
@@ -512,8 +524,11 @@ export function useConversationTabs({
       false,
     );
     if (!remaining.length) {
-      const target = trigger?.isConnected ? trigger : fallbackFocus?.current;
-      if (target) target.focus({ preventScroll: true });
+      const resolve = () =>
+        trigger?.isConnected ? trigger : fallbackFocus?.current;
+      const target = resolve();
+      if (target?.closest("[inert]")) focusUncovered.current = resolve;
+      else if (target) target.focus({ preventScroll: true });
       else focusSplit.current = true;
     }
   };

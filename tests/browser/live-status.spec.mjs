@@ -86,8 +86,14 @@ test.describe("held setup", () => {
   });
 });
 
+// A narrow pane covers the conversation that shows the notice, removing it
+// from the accessibility tree; it must still be there, once.
 const notice = (page) =>
-  page.getByRole("status", { name: "Reconnecting to relay…", exact: true });
+  page.getByRole("status", {
+    name: "Reconnecting to relay…",
+    exact: true,
+    includeHidden: true,
+  });
 const retryNow = (page) =>
   notice(page).getByRole("button", { name: "Retry now", exact: true });
 

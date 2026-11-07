@@ -392,16 +392,19 @@ function ScopedSidebar({
                 )}
                 {connection.status === "error" && !connection.retrying && (
                   <>
-                    <CommunitySignIn
-                      identity={communityIdentity(
-                        props.federatedIdentity,
-                        connection.origin,
-                      )}
-                      error={connection.error}
-                      retry={props.relay.retry}
-                      relay={connection.origin}
-                      memberships={props.memberships}
-                    />
+                    {/* Messages offers the sign-in a refusal asks for. */}
+                    {connection.refusal !== "sign-in" && (
+                      <CommunitySignIn
+                        identity={communityIdentity(
+                          props.federatedIdentity,
+                          connection.origin,
+                        )}
+                        error={connection.error}
+                        retry={props.relay.retry}
+                        relay={connection.origin}
+                        memberships={props.memberships}
+                      />
+                    )}
                     {!refused && (
                       <Button onClick={props.relay.retry}>Try again</Button>
                     )}

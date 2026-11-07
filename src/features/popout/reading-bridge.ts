@@ -23,7 +23,8 @@ const channelName = (token: string) => `buzz.popout.reading.${token}`;
 export function createReadingOwner(
   reading: Pick<UnreadCapability, "reading" | "revision">,
   channelId: string,
-  rootId: string,
+  /** The thread this window shows, or none for a conversation timeline. */
+  rootId: string | undefined,
   /** Ids this window currently presents; nothing else is ever claimed read. */
   known: () => ReadonlySet<string>,
   enabled: () => boolean,

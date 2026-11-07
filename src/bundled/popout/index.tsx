@@ -57,13 +57,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return true;
   };
   const messageTarget = (
-    target: { channelId: string; threadRootId: string },
-    messageId: string,
+    target: { channelId: string; threadRootId?: string | undefined },
+    messageId: string | undefined,
   ) => {
     const connection = ctx.relay.snapshot();
     if (!connection.viewer || !connection.origin) return null;
+    const channel = encodeURIComponent(target.channelId);
+    // A conversation frame points at the channel; a thread frame at the
+    // message within its thread.
     return buzzLinkTarget(
-      `buzz://message?channel=${encodeURIComponent(target.channelId)}&id=${messageId}&thread=${target.threadRootId}`,
+      messageId
+        ? `buzz://message?channel=${channel}&id=${messageId}${target.threadRootId ? `&thread=${target.threadRootId}` : ""}`
+        : `buzz://channel/${channel}`,
       { viewer: connection.viewer, communityOrigin: connection.origin },
     );
   };
@@ -110,7 +115,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ctx.panels.requestOpen({
           target: activityTarget,
           channelId: target.channelId,
-          rootId: target.threadRootId,
+          ...(target.threadRootId ? { rootId: target.threadRootId } : {}),
         });
       });
     },

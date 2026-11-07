@@ -76,7 +76,6 @@ function Action({
     identity.snapshot,
     identity.snapshot,
   );
-  const [failure, setFailure] = useState("");
   // A switch outlives the signed-in state that offered it: sign-out ends
   // that state, so its progress and recovery are kept here.
   const [switching, setSwitching] = useState<Switching | null>(null);
@@ -133,11 +132,46 @@ function Action({
   )
     return null;
   if (state.status === "signed-in") return null;
+  return (
+    <>
+      <p className="text-body-sm">
+        This community requires {serverName(state.authority)} sign-in.
+      </p>
+      <SignInButton identity={identity} state={state} retry={retry} />
+    </>
+  );
+}
+
+/** Whether a community refusing a missing or expired sign-in can be answered
+ * by signing in to its server here: what to name, and whether it expired. */
+export function signInPrompt(state: SessionSnapshot | undefined) {
+  if (!state?.authority || state.status === "signed-in") return null;
+  return {
+    server: serverName(state.authority),
+    expired: state.status === "reauthentication-required",
+  };
+}
+
+/** Sign in (or cancel one in progress), then retry what was refused. Its
+ * own failure, or the session's, shows beneath it. */
+export function SignInButton({
+  identity,
+  state,
+  retry,
+  variant,
+}: {
+  identity: FederatedIdentity;
+  state: SessionSnapshot;
+  retry: () => void;
+  variant?: "primary";
+}) {
+  const [failure, setFailure] = useState("");
+  if (!state.authority) return null;
   const server = serverName(state.authority);
   return (
     <>
-      <p className="text-body-sm">This community requires {server} sign-in.</p>
       <Button
+        {...(variant ? { variant } : {})}
         onClick={() => {
           setFailure("");
           const operation =

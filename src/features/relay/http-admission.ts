@@ -31,7 +31,56 @@ export type ApiFailure = Readonly<{
   /** A relay-shaped 401/403. An edge or proxy page (for example a VPN still
    * reconnecting) has the same status but is not the relay's answer. */
   denied?: true;
+  /** The relay refused this account at its front door, for every request in
+   * the community, not one item: its sign-in ended or it has no access. */
+  admission?: CommunityRefusal;
 }>;
+export type CommunityRefusal = "sign-in" | "access";
+/** The relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`): plain
+ * text with one trailing LF, decided before any route. Exact bytes and status
+ * only; any other text, such as an edge proxy's page, stays untrusted. Each maps
+ * to its Nostr wording so logs and the broker's JSON carry the same reason.
+ * `authorization unavailable` (503) is an outage and stays one. */
+const COMMUNITY_REFUSALS: ReadonlyMap<
+  string,
+  { status: number; error: string; admission: CommunityRefusal }
+> = new Map([
+  [
+    "authentication required\n",
+    {
+      status: 401,
+      error: "auth-required: authentication required",
+      admission: "sign-in",
+    },
+  ],
+  [
+    "evidence rejected\n",
+    {
+      status: 403,
+      error: "restricted: evidence rejected",
+      admission: "sign-in",
+    },
+  ],
+  [
+    "authorization denied\n",
+    {
+      status: 403,
+      error: "restricted: authorization denied",
+      admission: "access",
+    },
+  ],
+]);
+/** Native rejects a request that needs a sign-in it no longer has with this
+ * string (src-tauri `federated_identity/assertion.rs`), before sending it. */
+const NATIVE_SIGN_IN_REQUIRED = "Federated sign-in is required";
+function communityRefusal(
+  status: number,
+  text: string,
+): ApiFailure | undefined {
+  const refusal = COMMUNITY_REFUSALS.get(text);
+  if (!refusal || refusal.status !== status) return undefined;
+  return { error: refusal.error, denied: true, admission: refusal.admission };
+}
 const MAX_ERROR_BYTES = 4096;
 /** Only a correlated relay quota reason becomes a shared API cooldown. Local
  * broker concurrency 429 and arbitrary response text must not impersonate it. */
@@ -75,6 +124,19 @@ export function apiFailure(status: number, value: unknown): ApiFailure {
     "Live stream capacity reached",
     "Relay unreachable",
   ];
+  // The broker forwards a community refusal it already classified as JSON.
+  const forwarded = [...COMMUNITY_REFUSALS.values()].find(
+    (refusal) =>
+      refusal.status === status &&
+      refusal.error === reason &&
+      refusal.admission === body.admission,
+  );
+  if (forwarded)
+    return {
+      error: forwarded.error,
+      denied: true,
+      admission: forwarded.admission,
+    };
   return {
     error: known.includes(reason) ? reason : `Relay request failed (${status})`,
     ...(body.sent === false ? { sent: false } : {}),
@@ -109,7 +171,10 @@ export async function readApiFailure(
     try {
       body = JSON.parse(text);
     } catch {
-      return apiFailure(response.status, undefined);
+      return (
+        communityRefusal(response.status, text) ??
+        apiFailure(response.status, undefined)
+      );
     }
     const failure = apiFailure(response.status, body);
     const allowed = failure.quota ? undefined : reason?.(body, response.status);
@@ -135,7 +200,9 @@ type Ticket = {
 /** One host/principal API lane, bounded like the broker's six-request ceiling.
  * Available capacity dispatches immediately; only server cooldowns pause starts.
  * Cooldowns reject queued work rather than spending a read's 10s deadline. */
-export function createApiAdmission() {
+export function createApiAdmission(
+  onRefusal?: (kind: CommunityRefusal) => void,
+) {
   let pausedUntil = 0,
     active = 0,
     preparing = 0,
@@ -166,6 +233,10 @@ export function createApiAdmission() {
     }
   }
   return {
+    /** A request in this lane met a community-wide refusal. */
+    refused(kind: CommunityRefusal) {
+      onRefusal?.(kind);
+    },
     /** Lossy snapshot lease; never consumes ordinary slots or start credit. */
     tryPresence() {
       if (
@@ -264,11 +335,22 @@ export async function admittedApiRequest(
 ): Promise<Response> {
   return lane.run(
     async () => {
-      const response = await request();
+      let response: Response;
+      try {
+        response = await request();
+      } catch (error) {
+        if (
+          error === NATIVE_SIGN_IN_REQUIRED ||
+          (error instanceof Error && error.message === NATIVE_SIGN_IN_REQUIRED)
+        )
+          lane.refused("sign-in");
+        throw error;
+      }
       if (response.ok) return response;
       const failure = await readApiFailure(response, reason);
       if (failure.quota === "api" && failure.retryAfterMs !== undefined)
         lane.pause(failure.retryAfterMs);
+      if (failure.admission) lane.refused(failure.admission);
       const headers = new Headers(response.headers);
       headers.delete("content-length");
       headers.delete("content-encoding");

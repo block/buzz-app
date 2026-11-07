@@ -19,6 +19,7 @@ import {
 } from "../../features/channel-navigation/routes";
 
 import { fixture, owners, id, viewer, scope } from "./sidebar-testing";
+import { federatedFixture } from "../../features/federated-identity/testing";
 import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
 import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
 import { PrimarySidebar } from "./PrimarySidebar";
@@ -1048,6 +1049,38 @@ it("collapsing the contributed Solo section in All hides its ordinary chats", as
   }
 });
 
+// Messages offers the sign-in a refused, signed-out community needs; the
+// sidebar's own sign-in prompt would be a second copy of it.
+it("leaves a sign-in refusal's sign-in to Messages", () => {
+  const h = federatedFixture();
+  const f = fixture(
+    true,
+    false,
+    undefined,
+    undefined,
+    0,
+    undefined,
+    undefined,
+    {
+      federatedIdentity: h.service,
+    },
+  );
+  const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
+  // A connection failure with native's sign-in error asks for sign-in here.
+  f.connection({ status: "error", error: "Federated sign-in is required" });
+  expect(
+    within(sidebar()).getByRole("button", {
+      name: "Sign in with builderlab.example",
+    }),
+  ).toBeVisible();
+  // A refusal of that sign-in is the page's to answer.
+  f.connection({ denied: true, refusal: "sign-in" });
+  expect(
+    within(sidebar()).queryByRole("button", { name: /Sign in|Try again/ }),
+  ).toBeNull();
+  expect(within(sidebar()).queryByText(/sign-in/)).toBeNull();
+});
+
 it("shows Try again beside a settled failure, and Connecting while the connection retries", async () => {
   const f = fixture(true);
   const retry = vi.spyOn(f.relay, "retry");
@@ -1060,19 +1093,18 @@ it("shows Try again beside a settled failure, and Connecting while the connectio
     .setup()
     .click(within(sidebar()).getByRole("button", { name: "Try again" }));
   expect(retry).toHaveBeenCalledOnce();
-  // A refusal is about access, not the connection.
+  // A refusal is about access, not the connection, and the page reports it:
+  // the sidebar neither repeats it nor offers a second Try again.
   f.connection({
     status: "error",
     error: "ReadError: Relay read failed (403)",
     denied: true,
   });
-  expect(
-    within(sidebar()).getByText("You don’t have access to this community."),
-  ).toBeVisible();
   expect(within(sidebar()).queryByText("Couldn’t load channels.")).toBeNull();
+  expect(within(sidebar()).queryByText(/have access/)).toBeNull();
   expect(
-    within(sidebar()).getByRole("button", { name: "Try again" }),
-  ).toBeVisible();
+    within(sidebar()).queryByRole("button", { name: "Try again" }),
+  ).toBeNull();
   for (const working of [
     { status: "connecting" },
     { status: "error", error, retrying: true },

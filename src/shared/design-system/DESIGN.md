@@ -256,10 +256,13 @@ until focus enters. This preserves body-field or first-action focus; Base UI
 retains ownership of touch behavior. Explicit `initialFocus` overrides remain
 authoritative. Close then participates in the normal Tab cycle.
 
-When a confirmation does not intentionally start on its primary action, pass an
-explicit `initialFocus` ref to Cancel (or its equivalent safe dismissal action).
-Do not let the header Close control become an accidental alternative default.
-Keep established primary-action defaults and form-field focus targets. A dialog
+For a simple confirmation, generally pass an explicit `initialFocus` ref to
+Cancel (or its equivalent safe dismissal action), so the focused footer action
+makes it clear that Enter cancels. Preserve intentional primary-action defaults.
+When a confirmation requires a field or checkbox gate, start at the relevant
+body control instead; the gate prevents accidental submission. Keep existing
+form-field focus targets. Do not let header Close become an accidental
+alternative default when Cancel is the intended starting point. A dialog
 without a separate cancellation action can retain Close as its starting point.
 
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
@@ -763,7 +766,9 @@ Buttons use a 2px `border-focus` outline with a 2px offset, fitting the existing
 4px focus allowance in scrolling dialog footers. In Dialog and AlertDialog,
 the focused button always shows this ring, including automatic focus after pointer
 entry: it identifies what Enter will activate without changing the primary and
-secondary action styling. Other button contexts and control recipes are gated on
+secondary action styling. This applies to focused body and header buttons as well
+as footer actions. A focused split-button half paints its ring above its neighbour.
+Other button contexts and control recipes are gated on
 the app-root modality fact `html[data-keyboard-navigation]`, so ordinary pointer
 use leaves no keyboard ring. Keep focusability, Tab order, input modality, selection,
 and focus restoration intact, and do not add a local replacement ring where a

@@ -74,13 +74,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 // A build whose auth.tsx signs in interactively, as Block's does: its
-// ClaudeAuth has a sign-in step, which here saves the credentials.
-const interactive = vi.hoisted(() => ({ signIn: false }));
+// ClaudeAuth has a sign-in step, which here saves the credentials once its
+// `claude auth login` ends, which `held` keeps running until it is killed.
+const interactive = vi.hoisted(() => ({ signIn: false, held: false }));
 vi.mock("./auth", async (actual) => {
   const real = await actual<typeof import("./auth")>();
   class ClaudeAuth extends real.ClaudeAuth {
     override readonly signIn = interactive.signIn
-      ? async () => {
+      ? async (step: import("./auth").Step) => {
+          await step("claude", ["auth", "login"], "Sign-in");
           nativeKey.saved = true;
         }
       : undefined;
@@ -247,9 +249,10 @@ function applied({
     // Buzz's launcher answers 127 when it has no copy.
     const missing = name === "claude" && args === "--version" && !available;
     const streaming = args.includes("--input-format stream-json");
+    const held = interactive.held && args === "auth login";
     let kill: () => void = () => undefined;
     const exited = new Promise<number | null>((resolve) => {
-      if (name === "install" || streaming) kill = () => resolve(null);
+      if (name === "install" || streaming || held) kill = () => resolve(null);
       else setTimeout(() => resolve(missing ? 127 : 0), 0);
     });
     queueMicrotask(() =>
@@ -1104,6 +1107,74 @@ it.each([false, true])(
     }
   },
 );
+
+it("cancels the sign-in it started when Set up Claude closes, and holds the key form meanwhile", async () => {
+  Object.assign(interactive, { signIn: true, held: true });
+  try {
+    const { type } = installed({ keySaved: false });
+    const Configuration = type.CreateConfiguration;
+    if (!Configuration) throw new Error("Missing creation configuration");
+    const onDecline = vi.fn();
+    render(
+      <ToastProvider>
+        <Configuration
+          config={DEFAULT_CONFIG}
+          disabled={false}
+          harnessControl={<div>Harness row</div>}
+          onDecline={onDecline}
+          onChange={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+    const user = userEvent.setup();
+    const dialog = await screen.findByRole("dialog", { name: "Set up Claude" });
+    const signIn = within(dialog).getByRole("button", { name: "Sign in" });
+    await waitFor(() => expect(signIn).toBeEnabled());
+    await user.click(signIn);
+    // Pending, it stays in place; a key saved now would be overwritten.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Sign in" }),
+      ).toBeDisabled(),
+    );
+    await user.type(
+      within(dialog).getByLabelText("Anthropic API key"),
+      "sk-ant-api03-pasted",
+    );
+    // Focusable while disabled, as the key form's button is.
+    expect(
+      within(dialog).getByRole("button", { name: "Save key" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Enter}");
+    expect(nativeKey.saves).toEqual([]);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Set up Claude" }),
+      ).toBeNull(),
+    );
+    expect(onDecline).toHaveBeenCalledTimes(1);
+    // The abandoned login ends there, choosing nothing.
+    await waitFor(() =>
+      expect(type.provider?.snapshot()).toMatchObject({
+        readiness: "attention",
+      }),
+    );
+    expect(nativeKey.saved).toBe(false);
+    // Opening it again finds no sign-in still pending.
+    await user.click(
+      screen.getByRole("button", { name: "Add Claude API key" }),
+    );
+    const again = await screen.findByRole("dialog", { name: "Set up Claude" });
+    await waitFor(() =>
+      expect(
+        within(again).getByRole("button", { name: "Sign in" }),
+      ).toBeEnabled(),
+    );
+  } finally {
+    Object.assign(interactive, { signIn: false, held: false });
+  }
+});
 
 it("saves settings as one config", async () => {
   const Settings = tab(installed().type, 0);

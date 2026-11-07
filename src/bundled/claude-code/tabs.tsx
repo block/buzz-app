@@ -9,6 +9,7 @@ import { ProviderDialogActions } from "../../features/agents/ProviderDialogActio
 // Claude's provider controls, New agent choices, and agent settings.
 import {
   type ReactNode,
+  useCallback,
   useEffect,
   useRef,
   useId,
@@ -623,6 +624,15 @@ export function createTabs({
     const ready = !!state.status && !signedOut && !resolving;
     useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const [asking, setAsking] = useState(false);
+    // A sign-in this surface started, which closing or leaving it cancels,
+    // so an abandoned browser flow can't later switch every Claude agent.
+    const ownSignIn = useRef(false);
+    const cancelOwnSignIn = useCallback(() => {
+      if (ownSignIn.current && setup.snapshot().running === "sign-in")
+        void setup.cancel();
+      ownSignIn.current = false;
+    }, []);
+    useEffect(() => cancelOwnSignIn, [cancelOwnSignIn]);
     // Once per arrival: after a key is saved, a later sign-out asks in the row.
     const asked = useRef(false);
     useEffect(() => {
@@ -686,6 +696,7 @@ export function createTabs({
           onOpenChange={(next) => {
             if (next) return;
             setAsking(false);
+            cancelOwnSignIn();
             // Only the person closes it this way: credentials close it
             // through `signedOut`. Closing without them turns Claude down.
             onDecline?.();
@@ -695,14 +706,19 @@ export function createTabs({
             {/* A build that signs in interactively (`auth.signIn`) starts
              * it here, as Claude's Settings dialog does; a key's form saves
              * on its own. */}
-            {setup.auth.signIn && !signingIn && (
+            {setup.auth.signIn && (
               <div>
+                {/* Kept while pending, so focus and size stay; Close cancels. */}
                 <Button
                   size="sm"
                   variant="prominent"
+                  loading={signingIn}
                   // A check under way would skip the one sign-in ends with.
                   disabled={props.disabled || !!state.running || state.checking}
-                  onClick={() => void setup.run("sign-in")}
+                  onClick={() => {
+                    ownSignIn.current = true;
+                    void setup.run("sign-in");
+                  }}
                 >
                   Sign in
                 </Button>

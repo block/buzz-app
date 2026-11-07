@@ -205,10 +205,11 @@ it("renders comment mentions as names even though comment links stay inert", asy
     />,
   );
   await screen.findByText(/^Ask/);
-  const mentions = screen.getAllByText("Tyler", {
-    selector: "[data-mention-kind]",
-  });
-  expect(mentions).toHaveLength(2);
+  const mentions = [...document.querySelectorAll("[data-mention-kind]")];
+  expect(mentions.map((mention) => mention.textContent)).toEqual([
+    "Tyler",
+    "Tyler",
+  ]);
   for (const mention of mentions) {
     expect(mention).toHaveAttribute("data-mention-kind", "person");
     expect(mention.tagName).toBe("SPAN");

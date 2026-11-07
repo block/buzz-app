@@ -305,6 +305,7 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
+                      sidebarRows={props.sidebarRows}
                       renderContents={(ordinary, header, pendingClick) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}

@@ -367,3 +367,7 @@
     display: none;
   }
 }
+
+[data-solo-group][aria-expanded="false"] .groupCaret {
+  transform: rotate(-90deg);
+}

@@ -273,6 +273,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
+  When a plugin adds sort modes, each workspace menu (and **Chats**) gets a
+  **Sort** submenu; Solo keeps recent-first by default.
 - **Activity** (the bell in the sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by

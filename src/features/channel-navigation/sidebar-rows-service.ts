@@ -10,12 +10,16 @@ import { isSidebarSortMode, type SidebarSortMode } from "../relay/sidebar-sort";
 
 export type SidebarRow = Readonly<{
   id: string;
-  kind: "team" | "dm";
+  kind: "team" | "dm" | "solo";
   label: string;
+  /** Team: the section key. Solo: the workspace id, or "" for unfiled chats. */
   sectionKey: string;
   channel: ChannelSummary;
   unread: UnreadSnapshot;
+  /** An agent is currently working in the channel. */
+  working: boolean;
 }>;
+export type SidebarRowGroup = Readonly<{ id: string; label: string }>;
 export type SidebarRowSortMode = Readonly<{
   id: string;
   label: string;
@@ -29,6 +33,8 @@ export type SidebarRowContribution = Readonly<{
     Default: ReactElement | null,
   ) => ReactElement | null;
   sortModes?: readonly SidebarRowSortMode[];
+  /** Solo only: rows sharing a group id fold under one collapsible heading. */
+  group?: (row: SidebarRow) => SidebarRowGroup | null | undefined;
 }>;
 export type RegisteredSidebarRows = Contribution<SidebarRowContribution>;
 export type SidebarRows = Readonly<{
@@ -91,6 +97,7 @@ export class SidebarRowsService extends Service implements SidebarRows {
       typeof value.id !== "string" ||
       !idPattern.test(value.id) ||
       (value.render !== undefined && typeof value.render !== "function") ||
+      (value.group !== undefined && typeof value.group !== "function") ||
       (value.sortModes !== undefined &&
         (!Array.isArray(value.sortModes) ||
           new Set(value.sortModes.map((mode) => mode?.id)).size !==
@@ -122,14 +129,21 @@ export function sidebarRow(
   channel: ChannelSummary,
   sectionKey: string,
   unread: UnreadSnapshot,
+  working = false,
 ): SidebarRow {
   return {
     id: channel.id,
-    kind: channel.channelType === "dm" ? "dm" : "team",
+    kind:
+      channel.channelType === "dm"
+        ? "dm"
+        : channel.channelType === "solo"
+          ? "solo"
+          : "team",
     label: channel.name,
     sectionKey,
     channel,
     unread,
+    working,
   };
 }
 
@@ -158,4 +172,47 @@ export function sortSidebarRows<T>(
   } catch {
     return rows;
   }
+}
+
+/**
+ * Annotates rows with the first valid group a contribution returns, then
+ * gathers each group's rows at its first member's position. Rows are never
+ * dropped; a throwing or invalid callback is ignored for that row.
+ */
+export function groupSidebarRows<T>(
+  rows: readonly T[],
+  entries: readonly RegisteredSidebarRows[],
+  data: (row: T) => SidebarRow,
+): readonly Readonly<{ row: T; group?: SidebarRowGroup }>[] {
+  type Item = Readonly<{ row: T; group?: SidebarRowGroup }>;
+  const grouping = entries.filter((entry) => entry.group);
+  if (!grouping.length) return rows.map((row) => ({ row }));
+  const annotated = rows.map((row): Item => {
+    for (const entry of grouping) {
+      try {
+        const group = entry.group?.(data(row));
+        if (
+          group &&
+          typeof group.id === "string" &&
+          idPattern.test(group.id) &&
+          typeof group.label === "string" &&
+          group.label.trim()
+        )
+          return { row, group: { id: group.id, label: group.label } };
+      } catch {
+        // An invalid group leaves the row ungrouped by that contribution.
+      }
+    }
+    return { row };
+  });
+  const emitted = new Set<string>();
+  return annotated.flatMap((item): Item[] => {
+    const group = item.group;
+    if (!group) return [item];
+    if (emitted.has(group.id)) return [];
+    emitted.add(group.id);
+    return annotated
+      .filter((member) => member.group?.id === group.id)
+      .map((member) => ({ row: member.row, group }));
+  });
 }

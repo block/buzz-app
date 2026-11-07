@@ -1,7 +1,11 @@
 import { Context } from "@deepseek-ai/cordis";
-import { expect, it } from "vitest";
-import type { SidebarRowContribution } from "./sidebar-rows-service";
-import { SidebarRowsService } from "./sidebar-rows-service";
+import { describe, expect, it } from "vitest";
+import type {
+  RegisteredSidebarRows,
+  SidebarRow,
+  SidebarRowContribution,
+} from "./sidebar-rows-service";
+import { groupSidebarRows, SidebarRowsService } from "./sidebar-rows-service";
 
 it("orders active scopes by contribution key and removes registrations on disable and teardown", async () => {
   const root = new Context();
@@ -66,6 +70,7 @@ it.each([
     { sortModes: [{ id: "one", label: "One", compare: null }] },
   ],
   ["non-function renderer", "example.plugin", { render: false }],
+  ["non-function group", "example.plugin", { group: "working" }],
   [
     "incompatible owner id",
     "MixedCase",
@@ -101,3 +106,70 @@ it.each([
     }
   },
 );
+
+const rowOf = (id: string, working = false) =>
+  ({ id, label: id, working }) as SidebarRow;
+const entry = (
+  key: string,
+  group: SidebarRowContribution["group"],
+): RegisteredSidebarRows =>
+  ({
+    id: key,
+    key,
+    pluginId: key,
+    revision: "1",
+    version: 1,
+    group,
+  }) as RegisteredSidebarRows;
+const grouped = (
+  ids: string[],
+  entries: RegisteredSidebarRows[],
+): [string, string | undefined][] =>
+  groupSidebarRows(ids, entries, rowOf).map(({ row, group }) => [
+    row,
+    group?.id,
+  ]);
+const working = (row: SidebarRow) =>
+  row.id.startsWith("w") ? { id: "working", label: "Working" } : null;
+
+describe("groupSidebarRows", () => {
+  it("leaves rows untouched without group contributions", () => {
+    expect(grouped(["a", "b"], [])).toEqual([
+      ["a", undefined],
+      ["b", undefined],
+    ]);
+    expect(grouped(["a"], [entry("render-only", undefined)])).toEqual([
+      ["a", undefined],
+    ]);
+  });
+
+  it("gathers each group at its first member and keeps every row", () => {
+    expect(
+      grouped(["a", "w1", "b", "w2", "c"], [entry("one", working)]),
+    ).toEqual([
+      ["a", undefined],
+      ["w1", "working"],
+      ["w2", "working"],
+      ["b", undefined],
+      ["c", undefined],
+    ]);
+  });
+
+  it("uses the first valid group and ignores throws and invalid results", () => {
+    const entries = [
+      entry("a", () => {
+        throw new Error("boom");
+      }),
+      entry("b", () => ({ id: "Bad Id", label: "Bad" })),
+      entry("c", () => ({ id: "blank", label: "  " })),
+      entry("d", () => undefined),
+      entry("e", () => ({ id: "first", label: "First" })),
+      entry("f", () => ({ id: "second", label: "Second" })),
+    ];
+    expect(grouped(["x", "y"], entries)).toEqual([
+      ["x", "first"],
+      ["y", "first"],
+    ]);
+    expect(grouped(["x"], entries.slice(0, 4))).toEqual([["x", undefined]]);
+  });
+});

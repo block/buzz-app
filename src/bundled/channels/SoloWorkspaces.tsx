@@ -1,4 +1,20 @@
 import { FadingLabel } from "./FadingLabel";
+import { SortSubmenu } from "./SortSubmenu";
+import { ContributedChannelRow } from "./ChannelSidebarItem";
+import { ContributionBoundary } from "../../features/conversation/ContributionBoundary";
+import {
+  groupSidebarRows,
+  sidebarRow,
+  sidebarRowSortModes,
+  sortSidebarRows,
+  type RegisteredSidebarRows,
+  type SidebarRowGroup,
+} from "../../features/channel-navigation/sidebar-rows-service";
+import { useSidebarRowUnread } from "../../features/channel-navigation/useSidebarRowUnread";
+import {
+  isSidebarSortMode,
+  type SidebarSortMode,
+} from "../../features/relay/sidebar-sort";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
@@ -21,10 +37,12 @@ import {
 } from "../../features/channel-navigation/ChannelSidebarDnd";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -62,7 +80,13 @@ export type ChatListItem = Readonly<{
   title: string;
   /** Stays listed past a workspace's cap, like the open or an unread chat. */
   pinned?: boolean;
+  /** Needed for plugin sorting, grouping and row decoration. */
+  channel?: ChannelSummary | undefined;
+  working?: boolean;
+  selected?: boolean;
 }>;
+
+const noSidebarRows: readonly RegisteredSidebarRows[] = [];
 
 /** Each workspace lists its most recent chats; Show more adds a step. */
 export const SOLO_CHAT_CAP = 7;
@@ -80,7 +104,10 @@ export function SoloWorkspaces({
   onConverted,
   visit,
   draft,
+  sidebarRows = noSidebarRows,
 }: {
+  /** Plugin row contributions: sort modes, groups and decoration. */
+  sidebarRows?: readonly RegisteredSidebarRows[] | undefined;
   draft?: { projectId?: string | undefined; content: ReactNode } | undefined;
   onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
@@ -134,6 +161,56 @@ export function SoloWorkspaces({
   });
   // Chats listed past the cap (pinned, or just moved in) stay listed until the
   // workspace folds, so a row never disappears while someone is using it.
+  const sortKey = "solo:sort";
+  const [sorts, setSorts] = useState<Record<string, SidebarSortMode>>(() => {
+    const saved = readView<unknown>(scope, sortKey, {});
+    return saved && typeof saved === "object" && !Array.isArray(saved)
+      ? Object.fromEntries(
+          Object.entries(saved).filter(
+            (entry): entry is [string, SidebarSortMode] =>
+              isSidebarSortMode(entry[1]),
+          ),
+        )
+      : {};
+  });
+  const openGroupsKey = "solo:open-groups";
+  const [openGroups, setOpenGroups] = useState<string[]>(() => {
+    const saved = readView<unknown>(scope, openGroupsKey, []);
+    return Array.isArray(saved)
+      ? saved.filter((key): key is string => typeof key === "string")
+      : [];
+  });
+  const sortModes = useMemo(
+    () => sidebarRowSortModes(sidebarRows),
+    [sidebarRows],
+  );
+  const renderEntries = useMemo(
+    () => sidebarRows.filter((entry) => entry.render),
+    [sidebarRows],
+  );
+  const hiddenRows = useRef(new Map<string, object>());
+  const [, setHiddenVersion] = useState(0);
+  const setRowHidden = useCallback((id: string, hidden: boolean) => {
+    const registration = {};
+    if (hidden) {
+      hiddenRows.current.set(id, registration);
+      setHiddenVersion((version) => version + 1);
+    } else if (hiddenRows.current.delete(id))
+      setHiddenVersion((version) => version + 1);
+    return () => {
+      if (hiddenRows.current.get(id) === registration) {
+        hiddenRows.current.delete(id);
+        setHiddenVersion((version) => version + 1);
+      }
+    };
+  }, []);
+  const needsRows = sidebarRows.some(
+    (entry) => entry.sortModes?.length || entry.group,
+  );
+  const rowUnread = useSidebarRowUnread(
+    session.unread,
+    JSON.stringify(needsRows ? chats.map((item) => item.id) : []),
+  );
   const [held, setHeld] = useState<ReadonlySet<string>>(() => new Set());
   const hold = useCallback((ids: readonly string[]) => {
     setHeld((current) =>
@@ -226,15 +303,63 @@ export function SoloWorkspaces({
       return next;
     });
   }, [draftProject, scope]);
+  const sortOf = (projectId: string): SidebarSortMode => {
+    const saved = sortModes.length ? sorts[projectId] : undefined;
+    return saved &&
+      (saved === "recent" ||
+        saved === "alpha" ||
+        sortModes.some((mode) => mode.id === saved))
+      ? saved
+      : "recent";
+  };
+  const arranged = (
+    projectId: string,
+    rows: readonly ChatListItem[],
+  ): (ChatListItem & { group?: SidebarRowGroup })[] => {
+    const mode = sortOf(projectId);
+    const known = rows.filter((item) => item.channel);
+    const unknown = rows.filter((item) => !item.channel);
+    const data = (item: ChatListItem) =>
+      sidebarRow(
+        item.channel as ChannelSummary,
+        projectId,
+        rowUnread.get(item.id) ??
+          session.unread.snapshot({ kind: "channel", channelId: item.id }),
+        item.working ?? false,
+      );
+    const sorted =
+      mode === "alpha"
+        ? [...known].sort(
+            (a, b) =>
+              a.title.localeCompare(b.title) || a.id.localeCompare(b.id),
+          )
+        : sortSidebarRows(
+            known,
+            sortModes.find((candidate) => candidate.id === mode),
+            data,
+          );
+    return [
+      ...groupSidebarRows(sorted, sidebarRows, data).map(({ row, group }) =>
+        group ? { ...row, group } : row,
+      ),
+      ...unknown,
+    ];
+  };
   const projects = [
     ...groups.map((group) => ({
       ...group,
-      rows: chats.filter((item) => assigned[item.id] === group.id),
+      rows: arranged(
+        group.id,
+        chats.filter((item) => assigned[item.id] === group.id),
+      ),
     })),
     {
       id: "",
       name: "Chats",
-      rows: chats.filter((item) => !ids.has(assigned[item.id] ?? "")),
+      rows: arranged(
+        "",
+        chats.filter((item) => !ids.has(assigned[item.id] ?? "")),
+      ),
     },
   ];
   // A collapse request takes effect after the editor closes. Keep its draft and
@@ -246,6 +371,18 @@ export function SoloWorkspaces({
     if (prepareSoloMove(session, id)) return;
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
+    const item = chats.find((chat) => chat.id === id);
+    if (item?.channel) {
+      const landed = groupSidebarRows([item], sidebarRows, () =>
+        sidebarRow(
+          item.channel as ChannelSummary,
+          projectId ?? "",
+          session.unread.snapshot({ kind: "channel", channelId: id }),
+          item.working ?? false,
+        ),
+      )[0]?.group;
+      if (landed) toggleGroup(`${projectId ?? ""}/${landed.id}`, true);
+    }
     hold([id]);
     setRowFocus(id);
     void saving.catch(() => {
@@ -328,31 +465,57 @@ export function SoloWorkspaces({
     )
     .map((project) => {
       // A list that shrank back under the cap has nothing to fold.
+      // Grouped rows bypass the cap, so Show more and less count only the rest.
+      const ungrouped = project.rows.filter((item) => !item.group);
       const extra =
-        project.rows.length > SOLO_CHAT_CAP ? (expanded[project.id] ?? 0) : 0;
+        ungrouped.length > SOLO_CHAT_CAP ? (expanded[project.id] ?? 0) : 0;
       const limit = SOLO_CHAT_CAP + extra;
       // Rows arrive newest first; chats kept past the cap keep that order.
+      let position = 0;
       const listed = project.rows.filter(
-        (item, index) =>
-          index < limit ||
+        (item) =>
+          item.group ||
+          position++ < limit ||
           item.pinned ||
           item.id === renaming ||
           held.has(item.id),
       );
+      const listedUngrouped = listed.filter((item) => !item.group);
       return {
         ...project,
         listed,
         extra,
-        overflow: listed.slice(limit).map((item) => item.id),
+        overflow: listedUngrouped.slice(limit).map((item) => item.id),
         // Retained chats that are no longer pinned can fold even when unexpanded.
         foldable:
           extra > 0 ||
-          listed
+          listedUngrouped
             .slice(limit)
             .some((item) => !item.pinned && item.id !== renaming),
         hidden: project.rows.length - listed.length,
       };
     });
+  const groupOpen = (
+    projectId: string,
+    groupId: string,
+    rows: readonly (ChatListItem & { group?: SidebarRowGroup })[],
+  ) =>
+    openGroups.includes(`${projectId}/${groupId}`) ||
+    rows.some(
+      (item) =>
+        item.group?.id === groupId && (item.selected || item.id === renaming),
+    );
+  const toggleGroup = (key: string, open: boolean) => {
+    const next = openGroups.filter((item) => item !== key);
+    if (open) next.push(key);
+    setOpenGroups(next);
+    writeView(scope, openGroupsKey, next);
+  };
+  const setSort = (projectId: string, mode: SidebarSortMode) => {
+    const next = { ...sorts, [projectId]: mode };
+    setSorts(next);
+    writeView(scope, sortKey, next);
+  };
   const soloNeighborsRef = handoff?.soloNeighbors;
   useLayoutEffect(() => {
     if (!soloNeighborsRef) return;
@@ -360,9 +523,17 @@ export function SoloWorkspaces({
       rows: project.rows,
       shown: collapsed.includes(project.id)
         ? []
-        : project.listed.map((item) => item.id),
+        : project.listed
+            .filter(
+              (item) =>
+                !item.group ||
+                groupOpen(project.id, item.group.id, project.listed),
+            )
+            .map((item) => item.id),
     }));
-    const neighbors = (id: string) => soloNeighbors(shown, id);
+    // Plugin-hidden rows report after layout, so they are checked on use.
+    const neighbors = (id: string) =>
+      soloNeighbors(shown, id).filter((key) => !hiddenRows.current.has(key));
     soloNeighborsRef.current = neighbors;
     return () => {
       if (soloNeighborsRef.current === neighbors)
@@ -481,37 +652,50 @@ export function SoloWorkspaces({
               id={`project-${project.id}`}
               title={project.name}
               className={undefined}
-              enabled={!!project.id}
+              enabled={!!project.id || sortModes.length > 0}
               content={
                 <>
-                  <MenuItem onClick={() => setSettingsFor(project)}>
-                    Workspace settings
-                  </MenuItem>
-                  <MenuItem
-                    tone="danger"
-                    data-delete-solo-project=""
-                    disabled={
-                      !preferences.sectionRemovalWritable ||
-                      !!deleting ||
-                      renamingProject === project.id
-                    }
-                    onClick={() => {
-                      setDeleting(project.id);
-                      setProjectError("");
-                      void preferences
-                        .removeSection(project.id)
-                        .catch((error: unknown) => {
-                          setProjectError(
-                            error instanceof Error
-                              ? error.message
-                              : "Workspace could not be deleted. Try again.",
-                          );
-                        })
-                        .finally(() => setDeleting(undefined));
-                    }}
-                  >
-                    Delete workspace
-                  </MenuItem>
+                  {sortModes.length > 0 && (
+                    <SortSubmenu
+                      title={project.name}
+                      value={sortOf(project.id)}
+                      modes={sortModes}
+                      closeOnClick
+                      onChange={(mode) => setSort(project.id, mode)}
+                    />
+                  )}
+                  {project.id && (
+                    <>
+                      <MenuItem onClick={() => setSettingsFor(project)}>
+                        Workspace settings
+                      </MenuItem>
+                      <MenuItem
+                        tone="danger"
+                        data-delete-solo-project=""
+                        disabled={
+                          !preferences.sectionRemovalWritable ||
+                          !!deleting ||
+                          renamingProject === project.id
+                        }
+                        onClick={() => {
+                          setDeleting(project.id);
+                          setProjectError("");
+                          void preferences
+                            .removeSection(project.id)
+                            .catch((error: unknown) => {
+                              setProjectError(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Workspace could not be deleted. Try again.",
+                              );
+                            })
+                            .finally(() => setDeleting(undefined));
+                        }}
+                      >
+                        Delete workspace
+                      </MenuItem>
+                    </>
+                  )}
                 </>
               }
             >
@@ -572,38 +756,80 @@ export function SoloWorkspaces({
                   <div>{draft.content}</div>
                 </ChatActionsMenu>
               )}
-              {project.listed.map((item) => {
-                const channel = channels.channels.find(
-                  (channel) => channel.id === item.id,
-                );
-                if (renaming === item.id)
+              {project.listed.map((item, index) => {
+                const row = () => {
+                  const channel = channels.channels.find(
+                    (channel) => channel.id === item.id,
+                  );
+                  if (renaming === item.id)
+                    return (
+                      <SoloChatName
+                        key={item.id}
+                        session={session}
+                        id={item.id}
+                        title={item.title}
+                        close={(focus) => {
+                          setRenaming(undefined);
+                          if (focus) setRowFocus(item.id);
+                        }}
+                      />
+                    );
                   return (
-                    <SoloChatName
+                    <SoloChatEntry
                       key={item.id}
-                      session={session}
                       id={item.id}
                       title={item.title}
-                      close={(focus) => {
-                        setRenaming(undefined);
-                        if (focus) setRowFocus(item.id);
-                      }}
+                      pinned={item.pinned}
+                      working={item.working ?? false}
+                      projectKey={DROP + project.id}
+                      channel={channel}
+                      renameable={canRename(project.id, channel)}
+                      lifecycle={!!handoff}
+                      session={session}
+                      actions={entryActions}
+                      entries={renderEntries}
+                      onHiddenChange={setRowHidden}
+                      renderChat={renderChat}
+                      renderChatMenu={renderChatMenu}
                     />
                   );
+                };
+                const group = item.group;
+                if (!group) return row();
+                const open = groupOpen(project.id, group.id, project.listed);
+                const groupKey = `${project.id}/${group.id}`;
+                const emptyGroup = project.listed
+                  .filter((member) => member.group?.id === group.id)
+                  .every((member) => hiddenRows.current.has(member.id));
                 return (
-                  <SoloChatEntry
-                    key={item.id}
-                    id={item.id}
-                    title={item.title}
-                    pinned={item.pinned}
-                    projectKey={DROP + project.id}
-                    channel={channel}
-                    renameable={canRename(project.id, channel)}
-                    lifecycle={!!handoff}
-                    session={session}
-                    actions={entryActions}
-                    renderChat={renderChat}
-                    renderChatMenu={renderChatMenu}
-                  />
+                  <Fragment key={item.id}>
+                    {!emptyGroup &&
+                      project.listed[index - 1]?.group?.id !== group.id && (
+                        <NavigationItem
+                          variant="text"
+                          data-solo-group={group.id}
+                          label={group.label}
+                          aria-expanded={open}
+                          icon={
+                            <span
+                              className={`${styles.conversationIcon} ${styles.groupCaret}`}
+                              aria-hidden="true"
+                            >
+                              <CaretDownIcon size={16} />
+                            </span>
+                          }
+                          // A group held open by the selected chat records the choice
+                          // and follows it once the selection leaves.
+                          onClick={() =>
+                            toggleGroup(
+                              groupKey,
+                              !openGroups.includes(groupKey),
+                            )
+                          }
+                        />
+                      )}
+                    {open && row()}
+                  </Fragment>
                 );
               })}
               {(project.hidden > 0 || project.foldable) && (
@@ -800,29 +1026,35 @@ const SoloChatEntry = memo(function SoloChatEntry({
   id,
   title,
   pinned,
+  working,
   projectKey,
   channel,
   renameable,
   lifecycle,
   session,
   actions,
+  entries,
+  onHiddenChange,
   renderChat,
   renderChatMenu,
 }: {
   id: string;
   title: string;
   pinned: boolean | undefined;
+  working: boolean;
   projectKey: string;
   channel: ChannelSummary | undefined;
   renameable: boolean;
   lifecycle: boolean;
   session: RelaySession;
   actions: RefObject<ChatEntryActions>;
+  entries: readonly RegisteredSidebarRows[];
+  onHiddenChange: (id: string, hidden: boolean) => () => void;
   renderChat: ComponentProps<typeof SoloWorkspaces>["renderChat"];
   renderChatMenu: ((channelId: string) => ReactNode) | undefined;
 }) {
   const rename = renameable ? () => actions.current.rename(id) : undefined;
-  return (
+  const row = (
     <ChatActionsMenu
       id={id}
       title={title}
@@ -866,6 +1098,21 @@ const SoloChatEntry = memo(function SoloChatEntry({
         )}
       </DraggableChannel>
     </ChatActionsMenu>
+  );
+  if (!entries.length || !channel) return row;
+  return (
+    <ContributionBoundary fallback={row} resetIdentity={entries}>
+      <ContributedChannelRow
+        channel={channel}
+        sectionKey={projectKey.slice(DROP.length)}
+        working={working}
+        session={session}
+        entries={entries}
+        onHiddenChange={onHiddenChange}
+      >
+        {row}
+      </ContributedChannelRow>
+    </ContributionBoundary>
   );
 });
 

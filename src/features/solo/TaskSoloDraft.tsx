@@ -93,7 +93,8 @@ export function TaskSoloDraft({
     };
   });
   const current = useRef(state);
-  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState<{ primary: string | undefined }>();
+  const busy = sending !== undefined;
   const [error, setError] = useState<string>();
   const attempt = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => attempt.current?.abort(), []);
@@ -172,7 +173,7 @@ export function TaskSoloDraft({
     const selection = snapshot(draft);
     const controller = new AbortController();
     attempt.current = controller;
-    setBusy(true);
+    setSending({ primary: selection?.primary });
     setError(undefined);
     const signal = AbortSignal.any([controller.signal, context.signal]);
     try {
@@ -449,7 +450,7 @@ export function TaskSoloDraft({
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       if (attempt.current === controller) attempt.current = undefined;
-      if (!controller.signal.aborted) setBusy(false);
+      if (!controller.signal.aborted) setSending(undefined);
     }
   }
   const Header = context?.mode.header;
@@ -474,7 +475,7 @@ export function TaskSoloDraft({
             context?.region ??
             route.region.slice(route.region.lastIndexOf(":") + 1),
           policy: context?.mode.participants,
-          recipient: selected?.primary,
+          recipient: sending ? sending.primary : selected?.primary,
           selectPrimary: (pubkey, draft) => {
             if (
               attempt.current ||

@@ -255,7 +255,7 @@ export function SoloInventory({
         }
         navigator={navigator}
         draft={
-          draft
+          draft && !draft.task
             ? {
                 projectId: draft.project,
                 content: (

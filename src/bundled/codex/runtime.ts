@@ -2697,10 +2697,14 @@ export class CodexRuntime {
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
-    // Every thread whose request the turn took in hears how it ended, once.
-    const notify = (content: string) =>
-      Promise.all(
-        active.requests
+    // Each thread the turn still owes a final reply hears how it ended, once.
+    // When every request was answered, the latest still hears it.
+    const notify = (content: string) => {
+      const open = active.requests.filter(
+        (taken) => taken.finalDelivery !== true,
+      );
+      return Promise.all(
+        (open.length ? open : active.requests.slice(-1))
           .filter(
             (taken, index, all) =>
               all.findIndex((other) => other.replyRoot === taken.replyRoot) ===
@@ -2712,6 +2716,7 @@ export class CodexRuntime {
             ),
           ),
       );
+    };
     const { settings, agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;

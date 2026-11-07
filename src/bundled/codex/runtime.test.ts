@@ -3054,6 +3054,38 @@ it.each([
     );
   },
 );
+it("tells only the steered thread when the thread that started the turn already has its final reply", async () => {
+  const f = fixture();
+  vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+    status: "ready",
+    channels: [{ id: "channel", name: "test", channelType: "dm" }],
+  });
+  const otherRoot = "e".repeat(64);
+  await f.runtime.run(f.delivery("WORK_A"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.tool("send", { audience: "everyone", text: "A done", final: true });
+  await f.runtime.run(f.delivery("WORK_B", otherRoot));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((wire) => wire.method === "turn/steer")).toHaveLength(
+      1,
+    ),
+  );
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  const [answer, ...notices] = f.publish.mock.calls.map(([event]) => {
+    const { content, tags } = event as { content: string; tags: string[][] };
+    return [content, tags.find((tag) => tag[0] === "e")?.[1]];
+  });
+  expect(answer?.[0]).toBe("A done");
+  expect(notices).toEqual([
+    [
+      "Codex’s turn was interrupted. Send another mention to continue.",
+      otherRoot,
+    ],
+  ]);
+});
 it("tells the starting thread once when a steered thread's interruption notice is refused", async () => {
   const f = fixture();
   vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({

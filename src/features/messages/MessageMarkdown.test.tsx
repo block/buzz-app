@@ -1067,26 +1067,6 @@ it.each(["@Mic", `[@Mic](${profileTarget(mic)})`])(
   },
 );
 
-describe("paragraph-leading profile capsules", () => {
-  it.each(["@Mic", `[@Mic](${profileTarget(mic)})`])(
-    "aligns %s only at the paragraph start",
-    (mention) => {
-      for (const [content, leading] of [
-        [mention, true],
-        [`Hello ${mention}`, false],
-        [`Hello  \n${mention}`, false],
-      ] as const) {
-        const view = renderDom(<MessageMarkdown {...props(content)} />);
-        const capsule = view.getByRole("button", { name: "View Mic profile" });
-        expect(capsule.closest("p")?.hasAttribute("data-leading-mention")).toBe(
-          leading,
-        );
-        view.unmount();
-      }
-    },
-  );
-});
-
 it.each<[string, RenderOptions]>([
   ["a refusing opener", { canOpenLink: () => false }],
   ["no opener", { canOpenLink: undefined }],
@@ -1104,7 +1084,6 @@ it.each<[string, RenderOptions]>([
   expect(chip?.tagName).toBe("SPAN");
   expect(chip).toHaveAttribute("data-profile-target", target);
   expect(view.container.textContent).toBe("Mic");
-  expect(chip?.closest("p")).toHaveAttribute("data-leading-mention");
 });
 
 it.each([

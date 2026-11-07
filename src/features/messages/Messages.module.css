@@ -3213,14 +3213,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   font-weight: var(--type-weight-medium);
   padding-inline: var(--space-1h);
 }
-/* Align the leading sigil with prose; its capsule paints into the gutter.
-   The renderer marks actual paragraph starts, not merely first elements. */
-.messageBubble
-  > .text
-  > p[data-leading-mention]
-  > [data-mention-kind]:first-child {
-  margin-inline-start: calc(-1 * var(--space-1h));
-}
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
   background: var(--surface-panel);
@@ -3434,13 +3426,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   .text
   [data-mention-kind] {
   padding-inline-start: var(--space-half);
-}
-:where(html[data-message-density="compact"])
-  .messageBubble
-  > .text
-  > p[data-leading-mention]
-  > [data-mention-kind]:first-child {
-  margin-inline-start: calc(-1 * var(--space-half));
 }
 :where(html[data-message-density="compact"])
   .message

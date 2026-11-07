@@ -81,12 +81,13 @@ import {
   SidebarRightIcon,
   PlugIcon,
   CloudOffIcon,
-  LockIcon,
   ChatCircleIcon,
   GearIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
+import { CommunityRefusalNotice } from "./CommunityRefusalNotice";
 import type { RelaySession } from "../../features/relay/session";
 import {
   useChannelList,
@@ -147,6 +148,7 @@ export function ChannelsPage({
   archive,
   read,
   membership,
+  federatedIdentity,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
@@ -164,6 +166,8 @@ export function ChannelsPage({
   /** The open conversation's Mark as read, for the Escape shortcut. */
   read?: ReadShortcut | undefined;
   companion?: ReactNode;
+  /** Signs in again where a community refused a missing or expired sign-in. */
+  federatedIdentity?: FederatedIdentity | undefined;
 }) {
   const session = useRelayConnection(relay);
   const sessionNavigation = navigation?.forSession(relay, session);
@@ -236,29 +240,14 @@ export function ChannelsPage({
             </div>
           ) : session.status === "error" && session.denied ? (
             <div role="alert" className={styles.failed}>
-              {/* The one report of a refusal: the sidebar beside it stays
-                  quiet, and nothing behind it repeats a failed read. */}
-              <EmptyState
-                icon={<LockIcon />}
-                title={
-                  session.refusal === "sign-in"
-                    ? "Sign in again to open this community"
-                    : "You don’t have access to this community"
+              <CommunityRefusalNotice
+                refusal={session.refusal}
+                identity={
+                  (session.origin &&
+                    federatedIdentity?.forCommunity?.(session.origin)) ||
+                  federatedIdentity
                 }
-                description={
-                  session.refusal === "sign-in"
-                    ? "Your sign-in for this community has ended."
-                    : "This account isn’t a member. Ask one of its admins to add you, or switch to an account that has access."
-                }
-                action={
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => relay.retry()}
-                  >
-                    Try again
-                  </Button>
-                }
+                retry={() => relay.retry()}
               />
             </div>
           ) : session.status === "error" &&
